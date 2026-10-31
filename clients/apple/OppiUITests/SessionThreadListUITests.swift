@@ -44,6 +44,59 @@ final class SessionThreadListUITests: XCTestCase {
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    /// Lets an open or close animation finish before a frame is read.
+    private func settle(_ seconds: TimeInterval = 0.8) {
+        let rest = XCTestExpectation(description: "rest")
+        rest.isInverted = true
+        wait(for: [rest], timeout: seconds)
+    }
+
+    /// The tapped row is still on screen: the person can see the rows it opened or closed, instead of having to
+    /// scroll back down to find them.
+    private func assertStillOnScreen(_ row: XCUIElement, _ reason: String) {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(row.exists, reason)
+        XCTAssertGreaterThan(row.frame.midY, window.frame.minY, reason)
+        XCTAssertLessThan(row.frame.midY, window.frame.maxY, reason)
+    }
+
+    /// Tapping a thread's strip opens or closes the rows under it, and the strip stays where it was on screen:
+    /// the rows open and close below it, and the list does not jump to its top. Reported on device for a thread
+    /// that sat below the first screen.
+    ///
+    /// The thread link (`SCREENSHOT_THREAD_FOCUS`) opens the thread and scrolls its root into view, so the list
+    /// is deep in its 25 sessions and the fold happens away from the top, the way the person had scrolled to the
+    /// thread on the device.
+    func testAThreadStripOpensAndClosesInPlace() {
+        launch(environment: [
+            "SCREENSHOT_THREAD_FOCUS": "thread-root",
+            "SCREENSHOT_LIST_FILLER": "25",
+            "SCREENSHOT_THREAD_STOPPED_COUNT": "3",
+        ])
+
+        let strip = app.buttons["thread.nav.thread-root"]
+        XCTAssertTrue(strip.waitForExistence(timeout: 15), "The thread link should list the strip")
+        XCTAssertEqual(strip.value as? String, "Expanded", "The link should open the thread")
+        XCTAssertLessThan(strip.frame.maxY, app.windows.firstMatch.frame.maxY, "The strip should be on screen")
+
+        // Closing the thread takes rows away, so a list resting at the end of its content may have to scroll to
+        // show what is left. The strip stays on screen instead of the list landing at its top.
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Collapsed"))
+        settle()
+        assertStillOnScreen(strip, "Closing the thread lost its strip off screen")
+
+        // Opening it again is the reported tap: the rows come back under the strip, which stays where it was.
+        let closed = strip.frame.minY
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Expanded"))
+        settle()
+        XCTAssertLessThan(
+            abs(strip.frame.minY - closed), 2,
+            "Opening the thread moved its strip from \(closed) to \(strip.frame.minY)"
+        )
+    }
+
     /// Live members (an idle child from another workspace, then a working child) list in the list's
     /// own order before the fold; the finished child and its own child sit behind it until it is opened, indented
     /// under their listed parent.
