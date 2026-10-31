@@ -290,7 +290,10 @@ final class RexControl: Sendable {
 struct RexDataStream {
     enum Output: Equatable, Sendable {
         case send(Data)
+        /// The snapshot's screen (`RexTerminalStream.Piece.snapshot`).
         case snapshot(Data)
+        /// Its records after READY (`RexTerminalStream.Piece.snapshotRecords`).
+        case snapshotRecords(Data)
         case output(Data)
         case exited(code: Int)
         /// Rex closed the pane (close code 4000). Nothing follows it.
@@ -349,6 +352,7 @@ struct RexDataStream {
             return pieces.compactMap { piece in
                 switch piece {
                 case .snapshot(let snapshot): .snapshot(snapshot)
+                case .snapshotRecords(let records): .snapshotRecords(records)
                 case .output(let output): .output(output)
                 case .message(.childExited(let code)): .exited(code: code)
                 case .message: nil // Resize and theme: this client owns the size and its colors.
@@ -787,6 +791,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                         do { try await stream?.send(frame) } catch { self?.end(error.localizedDescription) }
                     }
                 case .snapshot(let snapshot): queue.pushSnapshot(snapshot, block: block)
+                case .snapshotRecords(let records): queue.pushSnapshotRecords(records, block: block)
                 case .output(let bytes): queue.push(.data(bytes))
                 case .exited(let code):
                     if let block { core.withLock { $0.exitCodes[block] = code } }

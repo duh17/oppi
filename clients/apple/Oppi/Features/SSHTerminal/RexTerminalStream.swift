@@ -69,8 +69,11 @@ enum RexDataHandshake {
 /// apply: `ESC _ rex1;<nonce>;<json> ESC \`. Only a message carrying this
 /// stream's nonce is Rex's; a look-alike a program printed stays output.
 ///
-/// The snapshot has no length prefix. Rex sends a `resize` message right after
-/// it, so the snapshot is everything before the first message of this stream.
+/// The snapshot has no length prefix, but its records are framed
+/// (`SSHTerminalSnapshotFormat`): it is cut into whole records as they
+/// arrive. Everything through READY is the screen, ready to draw; the records
+/// after it (older history, image pixels) follow as they complete, and the
+/// snapshot ends with its FINISH record. Output starts right after FINISH.
 struct RexTerminalStream {
     enum Message: Equatable, Sendable {
         case resize(columns: Int, rows: Int)
@@ -80,14 +83,27 @@ struct RexTerminalStream {
     }
 
     enum Piece: Equatable, Sendable {
+        /// The snapshot's envelope and every record through READY.
         case snapshot(Data)
+        /// Whole snapshot records after READY, the last one ending with FINISH.
+        case snapshotRecords(Data)
         case output(Data)
         case message(Message)
     }
 
-    enum Failure: Error, Equatable {
+    enum Failure: Error, Equatable, LocalizedError {
         case snapshotTooLarge
+        case notASnapshot
+
+        var errorDescription: String? {
+            switch self {
+            case .snapshotTooLarge: "This pane's screen is too large to open on this device."
+            case .notASnapshot: SSHTerminalSnapshotFormat.unreadable
+            }
+        }
     }
+
+    private enum Phase { case envelope, screen, history, output }
 
     /// The engine keeps 8 MiB of history, and Ghostty's snapshot compresses
     /// its pages; a snapshot larger than this is not one worth holding on a phone.
@@ -97,10 +113,9 @@ struct RexTerminalStream {
 
     private let marker: Data
     private var pending = Data()
-    private var snapshotDone = false
-    /// Where the snapshot's search for the first message resumes, so a large
-    /// snapshot arriving in many reads is scanned once, not once per read.
-    private var searched = 0
+    private var phase = Phase.envelope
+    /// Snapshot bytes already handed on, toward `maximumSnapshotBytes`.
+    private var snapshotBytes = 0
 
     init(nonce: UInt64) {
         marker = Data("\u{1B}_rex1;\(nonce);".utf8)
@@ -109,16 +124,9 @@ struct RexTerminalStream {
     mutating func receive(_ bytes: Data) throws -> [Piece] {
         pending.append(bytes)
         var pieces: [Piece] = []
-        if !snapshotDone {
-            let from = pending.startIndex + searched
-            guard let found = pending.range(of: marker, in: from..<pending.endIndex) else {
-                guard pending.count <= Self.maximumSnapshotBytes else { throw Failure.snapshotTooLarge }
-                searched = max(0, pending.count - marker.count + 1)
-                return []
-            }
-            pieces.append(.snapshot(Data(pending[pending.startIndex..<found.lowerBound])))
-            pending.removeSubrange(pending.startIndex..<found.lowerBound)
-            snapshotDone = true
+        if phase != .output {
+            try readSnapshot(into: &pieces)
+            guard phase == .output else { return pieces }
         }
         while !pending.isEmpty {
             guard let found = pending.range(of: marker) else {
@@ -148,6 +156,46 @@ struct RexTerminalStream {
             pending.removeSubrange(pending.startIndex..<end.upperBound)
         }
         return pieces
+    }
+
+    /// Hands on the snapshot's whole records: the screen once READY is in, then
+    /// the records after it as they complete, until FINISH.
+    private mutating func readSnapshot(into pieces: inout [Piece]) throws {
+        typealias Format = SSHTerminalSnapshotFormat
+        if phase == .envelope {
+            guard let readable = Format.envelopeIsReadable(pending) else { return }
+            guard readable else { throw Failure.notASnapshot }
+            phase = .screen
+        }
+        // Records start after the envelope until the screen is handed on.
+        var offset = phase == .screen ? Format.envelopeBytes : 0
+        var cut = 0
+        // `pending` starts where the snapshot bytes handed on so far end.
+        let base = snapshotBytes
+        func handOn(_ piece: (Data) -> Piece) {
+            pieces.append(piece(Data(pending[(pending.startIndex + cut)..<(pending.startIndex + offset)])))
+            snapshotBytes = base + offset
+            cut = offset
+        }
+        while let record = Format.record(in: pending, at: offset) {
+            guard base + offset + record.length <= Self.maximumSnapshotBytes else { throw Failure.snapshotTooLarge }
+            guard pending.count - offset >= record.length else { break }
+            offset += record.length
+            if phase == .screen, record.tag == Format.Tag.ready.rawValue {
+                handOn(Piece.snapshot)
+                phase = .history
+            } else if phase == .history, record.tag == Format.Tag.finish.rawValue {
+                handOn(Piece.snapshotRecords)
+                phase = .output
+                break
+            }
+        }
+        if phase == .history, offset > cut {
+            handOn(Piece.snapshotRecords)
+        }
+        if cut > 0 {
+            pending.removeSubrange(pending.startIndex..<(pending.startIndex + cut))
+        }
     }
 
     /// The longest end of `pending` that is a proper prefix of the marker.

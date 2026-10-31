@@ -42,6 +42,66 @@ private func upgradeAnswer(key: String, subprotocol: String) -> Data {
     Data("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-Websocket-Accept: \(RexWebSocketCodec.accept(for: key))\r\nSec-Websocket-Protocol: \(subprotocol)\r\nUpgrade: websocket\r\n\r\n".utf8)
 }
 
+/// A Ghostty snapshot of a `columns` by `rows` terminal that was written `text`.
+private func ghosttySnapshot(of text: String, columns: UInt16 = 80, rows: UInt16 = 24) throws -> Data {
+    var terminal: GhosttyTerminal?
+    try #require(ghostty_terminal_new(nil, &terminal, columns, rows) == GHOSTTY_SUCCESS)
+    defer { ghostty_terminal_free(terminal) }
+    // A new terminal keeps about a thousand rows; keep all of them, as Rex does.
+    var history = 64 * 1024 * 1024
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &history)
+    let bytes = Data(text.utf8)
+    bytes.withUnsafeBytes { ghostty_terminal_vt_write(terminal, $0.bindMemory(to: UInt8.self).baseAddress, bytes.count) }
+    var pointer: UnsafeMutablePointer<UInt8>?
+    var length = 0
+    try #require(ghostty_snapshot_encode_alloc(terminal, nil, &pointer, &length) == GHOSTTY_SUCCESS)
+    defer { ghostty_free(nil, pointer, length) }
+    return Data(bytes: try #require(pointer), count: length)
+}
+
+/// `count` numbered lines (`<name> line 0`, ...), enough to fill several history pages.
+private func numberedLines(_ count: Int, name: String = "") -> String {
+    (0..<count).map { "\(name) line \($0)" }.joined(separator: "\r\n") + "\r\n$ "
+}
+
+/// A snapshot cut where Rex's stream cuts it: the screen (every record
+/// through READY) and each whole record after it.
+private func snapshotParts(_ snapshot: Data) throws -> (screen: Data, records: [Data]) {
+    var stream = RexTerminalStream(nonce: 1)
+    var screen: Data?
+    var records: [Data] = []
+    // One byte at a time, so each record after READY comes out on its own.
+    for index in snapshot.indices {
+        for piece in try stream.receive(snapshot[index...index]) {
+            switch piece {
+            case .snapshot(let bytes): screen = bytes
+            case .snapshotRecords(let bytes): records.append(bytes)
+            case .output, .message: Issue.record("a snapshot alone has no output")
+            }
+        }
+    }
+    return (try #require(screen), records)
+}
+
+/// Hands `bytes` to `queue` the way a Rex pane's data connection does: cut by
+/// `RexTerminalStream`, `chunk` bytes at a time, with Rex's messages left out.
+private func pushRexStream(_ bytes: Data, to queue: SSHTerminalEventQueue, block: String? = nil, chunk: Int = 4096) throws {
+    var stream = RexTerminalStream(nonce: 1)
+    var index = bytes.startIndex
+    while index < bytes.endIndex {
+        let end = min(index + chunk, bytes.endIndex)
+        for piece in try stream.receive(bytes[index..<end]) {
+            switch piece {
+            case .snapshot(let screen): queue.pushSnapshot(screen, block: block)
+            case .snapshotRecords(let records): queue.pushSnapshotRecords(records, block: block)
+            case .output(let output): queue.push(.data(output))
+            case .message: break
+            }
+        }
+        index = end
+    }
+}
+
 @Suite("Rex client protocol")
 struct RexClientProtocolTests {
     /// RFC 6455's own example: a server's answer is checked against the key
@@ -120,12 +180,14 @@ struct RexClientProtocolTests {
         #expect(RexSessionConnection.base64URL("AQID_-8") == Data([1, 2, 3, 255, 239]))
     }
 
-    /// The snapshot is everything before the stream's first Rex message. Rex's
-    /// messages leave the output, even split across reads; a look-alike with
-    /// another nonce, which a program printed, stays output.
-    @Test func theTerminalStreamSplitsSnapshotOutputAndRexMessages() throws {
+    /// The snapshot is cut into whole records: the screen once READY is in,
+    /// then the records after it as they complete, through FINISH. Output
+    /// starts right after FINISH. Rex's messages leave the output, even split
+    /// across reads; a look-alike with another nonce, which a program printed,
+    /// stays output.
+    @Test func theTerminalStreamSplitsSnapshotRecordsOutputAndRexMessages() throws {
         var stream = RexTerminalStream(nonce: 42)
-        let snapshot = Data("GHOSTSNP\u{1}\u{0}binary".utf8)
+        let snapshot = try ghosttySnapshot(of: numberedLines(3000))
         let resize = Data("\u{1B}_rex1;42;{\"type\":\"resize\",\"cols\":60,\"rows\":20}\u{1B}\\".utf8)
         let forged = Data("\u{1B}_rex1;7;{\"type\":\"child_exited\",\"exit_code\":9}\u{1B}\\".utf8)
         let exited = Data("\u{1B}_rex1;42;{\"type\":\"child_exited\",\"exit_code\":3}\u{1B}\\".utf8)
@@ -133,17 +195,42 @@ struct RexClientProtocolTests {
         var pieces: [RexTerminalStream.Piece] = []
         var index = all.startIndex
         while index < all.endIndex {
-            let end = min(index + 5, all.endIndex)
+            let end = min(index + 997, all.endIndex)
             pieces += try stream.receive(all[index..<end])
             index = end
         }
         let output = pieces.reduce(into: Data()) { joined, piece in
             if case .output(let bytes) = piece { joined += bytes }
         }
-        #expect(pieces.first == .snapshot(snapshot))
+        let records = pieces.compactMap { piece -> Data? in
+            if case .snapshotRecords(let bytes) = piece { bytes } else { nil }
+        }
+        guard case .snapshot(let screen)? = pieces.first else {
+            Issue.record("the screen comes first, got \(String(describing: pieces.first))")
+            return
+        }
+        #expect(screen.count < snapshot.count / 2, "the screen is a small part of a snapshot with history")
+        #expect(SSHTerminalSnapshotFormat.record(in: screen, at: screen.count - 10)?.tag == SSHTerminalSnapshotFormat.Tag.ready.rawValue)
+        #expect(records.count > 1, "the history arrives as it completes, not all at once")
+        #expect(screen + records.reduce(Data(), +) == snapshot, "every snapshot byte, in order, and nothing else")
         #expect(pieces.contains(.message(.resize(columns: 60, rows: 20))))
         #expect(pieces.contains(.message(.childExited(code: 3))))
         #expect(output == Data("$ ls\r\n".utf8) + forged + Data("tail".utf8))
+    }
+
+    /// A stream that does not start like a snapshot ends at once, and so does
+    /// one whose record would take it past the most a phone holds, before
+    /// that record's bytes are waited for.
+    @Test func aStreamThatIsNotASnapshotOrTooLargeEnds() throws {
+        var stranger = RexTerminalStream(nonce: 1)
+        #expect(throws: RexTerminalStream.Failure.notASnapshot) { try stranger.receive(Data("GHOSTS".utf8) + Data("X".utf8)) }
+        var newer = RexTerminalStream(nonce: 1)
+        #expect(throws: RexTerminalStream.Failure.notASnapshot) { try newer.receive(Data("GHOSTSNP".utf8) + Data([2, 0])) }
+        var huge = RexTerminalStream(nonce: 1)
+        let page = Data([3, 0]) + Data([0, 0, 0, 0x7F]) + Data(repeating: 0, count: 4)
+        #expect(throws: RexTerminalStream.Failure.snapshotTooLarge) {
+            try huge.receive(Data("GHOSTSNP".utf8) + Data([1, 0]) + page)
+        }
     }
 }
 
@@ -321,11 +408,14 @@ struct RexDataStreamTests {
         welcome += Data([42, 0, 0, 0, 0, 0, 0, 0])
         #expect(stream.receive(serverFrame(.binary, welcome)).isEmpty)
 
-        let snapshot = Data("GHOSTSNP-bytes".utf8)
+        let snapshot = try ghosttySnapshot(of: "first line\r\n$ ")
+        let (screen, records) = try snapshotParts(snapshot)
         let message = { (json: String) in Data("\u{1B}_rex1;42;\(json)\u{1B}\\".utf8) }
         let body = snapshot + message(#"{"type":"resize","cols":80,"rows":24}"#) + Data("$ ls\r\n".utf8)
             + message(#"{"type":"child_exited","exit_code":2}"#)
-        #expect(stream.receive(serverFrame(.binary, body)) == [.snapshot(snapshot), .output(Data("$ ls\r\n".utf8)), .exited(code: 2)])
+        #expect(stream.receive(serverFrame(.binary, body)) == [
+            .snapshot(screen), .snapshotRecords(records.reduce(Data(), +)), .output(Data("$ ls\r\n".utf8)), .exited(code: 2),
+        ])
         #expect(stream.receive(serverFrame(.close, Data([0x0F, 0xA0]))) == [.paneClosed])
         #expect(stream.receive(serverFrame(.binary, Data("late".utf8))).isEmpty)
 
@@ -344,7 +434,7 @@ struct RexPaneEngineTests {
     /// screen it showed, at this screen's size, and output after it lands on
     /// top. Rex's terminal answered the program's queries, so this one does not.
     @Test func aSnapshotStartsTheGridAndLiveOutputContinuesIt() async throws {
-        let snapshot = try Self.snapshot(of: "first line\r\n\u{1B}[31mred\u{1B}[0m second\r\n$ ")
+        let snapshot = try ghosttySnapshot(of: "first line\r\n\u{1B}[31mred\u{1B}[0m second\r\n$ ")
         let channel = try SSHTerminalChannel(answersTerminalQueries: false)
         let fixture = RecordingConnection()
         channel.opened(fixture)
@@ -356,7 +446,7 @@ struct RexPaneEngineTests {
 
         let queue = SSHTerminalEventQueue()
         // Output glued to the snapshot's end is still output.
-        queue.pushSnapshot(snapshot + Data("l".utf8))
+        try pushRexStream(snapshot + Data("l".utf8), to: queue)
         // A device-attributes query the program printed, then output.
         queue.push(.data(Data("\u{1B}[cs\r\n".utf8)))
         queue.end("done")
@@ -403,12 +493,116 @@ struct RexPaneEngineTests {
     }
 
     /// A newer Rex may add kinds of snapshot records this Oppi does not know.
-    /// They are skipped, wherever they appear, and the pane still opens.
+    /// They are skipped, wherever they appear (before READY, between history
+    /// pages), and the pane still opens with all its history.
     @Test func aSnapshotRecordOfAnUnknownKindIsSkipped() async throws {
-        let snapshot = try Self.withUnknownRecord(try Self.snapshot(of: "first line\r\n$ "))
-        let (channel, rows) = try await Self.restore(snapshot)
+        let screen = try Self.withUnknownRecord(try ghosttySnapshot(of: "first line\r\n$ "), before: SSHTerminalSnapshotFormat.Tag.ready)
+        let (channel, rows) = try await Self.restore(screen)
         #expect(channel.reason == "stream over", "the snapshot restored; it did not end the terminal: \(channel.reason)")
         #expect(rows.prefix(2) == ["first line", "$"])
+
+        let history = try ghosttySnapshot(of: numberedLines(3000))
+        let (plain, _) = try await Self.restore(history)
+        let (skipping, _) = try await Self.restore(try Self.withUnknownRecord(history, before: SSHTerminalSnapshotFormat.Tag.page))
+        #expect(skipping.reason == "stream over", "the snapshot restored; it did not end the terminal: \(skipping.reason)")
+        #expect(skipping.engine.scrollbar.total == plain.engine.scrollbar.total)
+    }
+
+    /// A pane draws at READY: its screen restores from the records through
+    /// READY alone, and the older history follows a record at a time, ending
+    /// with exactly what one decode of the whole snapshot gives.
+    @Test func thePaneDrawsAtReadyAndItsHistoryFollowsRecordByRecord() throws {
+        let snapshot = try ghosttySnapshot(of: numberedLines(4000))
+        let (screen, records) = try snapshotParts(snapshot)
+        try #require(records.count > 3, "history pages after READY")
+
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 80, rows: 24)) { _ in }
+        try engine.beginRestore(screen)
+        #expect(Self.text(engine).contains { $0.contains("line 3999") }, "the screen draws before its history is in")
+        let atReady = engine.scrollbar.total
+        for record in records.dropLast() {
+            #expect(try engine.continueRestore(record) == false)
+        }
+        #expect(try engine.continueRestore(try #require(records.last)), "FINISH completes the snapshot")
+
+        let whole = try SSHTerminalEngine(geometry: .init(columns: 80, rows: 24)) { _ in }
+        try whole.beginRestore(screen)
+        #expect(try whole.continueRestore(records.reduce(Data(), +)))
+        #expect(engine.scrollbar.total == whole.scrollbar.total && engine.scrollbar.total > atReady)
+        engine.scrollToRow(0)
+        #expect(Self.text(engine).first == "line 0", "the oldest line arrived")
+    }
+
+    /// An image restores at READY with its placement; its pixels arrive with
+    /// a later record, and only then can the grid draw it.
+    @Test func anImagesPixelsFollowItsPlacement() throws {
+        let (screen, records) = try snapshotParts(try Data(contentsOf: TestFixtures.url("rex-kitty-image-snapshot.bin")))
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 80, rows: 24)) { _ in }
+        try engine.beginRestore(screen)
+        var frame = engine.frame()
+        var image = try #require(frame.kitty?.imagesByID[7], "the image and its placement are there at READY")
+        var graphics = try #require(frame.kittyGraphics)
+        #expect(image.resolvePixels(graphics) == nil, "its pixels are not")
+
+        #expect(try engine.continueRestore(records.reduce(Data(), +)))
+        frame = engine.frame()
+        image = try #require(frame.kitty?.imagesByID[7])
+        graphics = try #require(frame.kittyGraphics)
+        let pixels = try #require(image.resolvePixels(graphics))
+        #expect(Array(UnsafeBufferPointer(start: pixels.pointer, count: pixels.byteCount)) == [0xFF, 0x00, 0x00])
+    }
+
+    /// Ghostty drops the history pages of a terminal whose width changed since
+    /// READY. The restored terminal keeps the snapshot's width until its
+    /// history is in, then takes this screen's, so a pane opened (or rotated)
+    /// at another width still gets all of it.
+    @Test func theSnapshotsWidthHoldsUntilItsHistoryIsIn() throws {
+        let (screen, records) = try snapshotParts(try ghosttySnapshot(of: numberedLines(4000)))
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 40, rows: 10)) { _ in }
+        try engine.beginRestore(screen)
+        #expect(engine.frame().rows.first?.count == 80)
+        engine.resize(.init(columns: 50, rows: 12))
+        #expect(engine.frame().rows.first?.count == 80)
+        #expect(try engine.continueRestore(records.reduce(Data(), +)))
+        #expect(engine.frame().rows.first?.count == 50)
+        #expect(engine.frame().rows.count - engine.frame().rowsBelowViewport == 12)
+        engine.scrollToRow(0)
+        #expect(Self.text(engine).first == "line 0", "no history page was dropped")
+    }
+
+    /// Records keep their order with what follows them: output after the
+    /// snapshot lands on its finished history. A switch that overtakes a pane
+    /// mid-history drops the records it still sends: they never reach the
+    /// pane swapped in.
+    @Test func aSwitchMidHistoryDropsThePaneLeftBehindsRecords() async throws {
+        let (screenA, recordsA) = try snapshotParts(try ghosttySnapshot(of: numberedLines(4000, name: "a")))
+        let (screenB, recordsB) = try snapshotParts(try ghosttySnapshot(of: numberedLines(3000, name: "b")))
+        let channel = try SSHTerminalChannel(answersTerminalQueries: false)
+        channel.opened(RecordingConnection())
+        defer { channel.close(reason: "done") }
+        var restored: [String?] = []
+        channel.snapshotRestored = { restored.append($0) }
+        let queue = SSHTerminalEventQueue()
+        queue.pushSnapshot(screenA, block: "a")
+        queue.pushSnapshotRecords(recordsA[0], block: "a")
+        queue.pushSnapshot(screenB, block: "b")
+        for record in recordsA.dropFirst() { queue.pushSnapshotRecords(record, block: "a") }
+        for record in recordsB { queue.pushSnapshotRecords(record, block: "b") }
+        queue.push(.data(Data("after".utf8)))
+        queue.end("stream over")
+        await channel.consume(queue)
+
+        #expect(channel.reason == "stream over", "nothing failed: \(channel.reason)")
+        #expect(restored == ["a", "b"])
+        #expect(Self.text(channel.engine).contains { $0.hasSuffix("$ after") }, "output after the snapshot")
+        channel.engine.scrollToRow(0)
+        #expect(Self.text(channel.engine).first == "b line 0", "b's whole history, and none of a's")
+    }
+
+    private static func text(_ engine: SSHTerminalEngine) -> [String] {
+        let frame = engine.frame()
+        return frame.rows.prefix(frame.rows.count - frame.rowsBelowViewport)
+            .map { $0.map(\.text).joined().trimmingCharacters(in: .whitespaces) }
     }
 
     /// Restores `snapshot` the way a Rex pane's stream delivers it, then ends
@@ -417,27 +611,26 @@ struct RexPaneEngineTests {
         let channel = try SSHTerminalChannel(answersTerminalQueries: false)
         channel.opened(RecordingConnection())
         let queue = SSHTerminalEventQueue()
-        queue.pushSnapshot(snapshot)
+        try pushRexStream(snapshot, to: queue)
         queue.end("stream over")
         await channel.consume(queue)
-        let rows = channel.engine.frame().rows.map { $0.map(\.text).joined().trimmingCharacters(in: .whitespaces) }
-        return (channel, rows)
+        return (channel, text(channel.engine))
     }
 
     /// `snapshot` with a record of a kind no Ghostty defines (tag 0x7FFF)
-    /// right before READY, with the CRC32C the format requires of every
-    /// record: over the tag and payload length, then the payload.
-    private static func withUnknownRecord(_ snapshot: Data) throws -> Data {
+    /// right before the first record of kind `tag`, with the CRC32C the
+    /// format requires of every record: over the tag and payload length, then
+    /// the payload.
+    private static func withUnknownRecord(_ snapshot: Data, before tag: SSHTerminalSnapshotFormat.Tag) throws -> Data {
         let bytes = [UInt8](snapshot)
         func integer(at offset: Int, size: Int) -> Int {
             (0..<size).reduce(0) { $0 | Int(bytes[offset + $1]) << ($1 * 8) }
         }
         func littleEndian(_ value: some FixedWidthInteger) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
-        let readyTag = 5
         var offset = 10 // The "GHOSTSNP" magic and the version.
-        while integer(at: offset, size: 2) != readyTag {
+        while integer(at: offset, size: 2) != Int(tag.rawValue) {
             offset += 10 + integer(at: offset + 2, size: 4)
-            try #require(offset + 10 <= bytes.count, "the snapshot has a READY record")
+            try #require(offset + 10 <= bytes.count, "the snapshot has a record of that kind")
         }
         let payload = Data("a record from a newer Rex".utf8)
         let prefix = littleEndian(UInt16(0x7FFF)) + littleEndian(UInt32(payload.count))
@@ -448,19 +641,6 @@ struct RexPaneEngineTests {
         }
         let record = prefix + littleEndian(~crc) + payload
         return Data(bytes[..<offset]) + record + Data(bytes[offset...])
-    }
-
-    private static func snapshot(of text: String) throws -> Data {
-        var terminal: GhosttyTerminal?
-        try #require(ghostty_terminal_new(nil, &terminal, 80, 24) == GHOSTTY_SUCCESS)
-        defer { ghostty_terminal_free(terminal) }
-        let bytes = Data(text.utf8)
-        bytes.withUnsafeBytes { ghostty_terminal_vt_write(terminal, $0.bindMemory(to: UInt8.self).baseAddress, bytes.count) }
-        var pointer: UnsafeMutablePointer<UInt8>?
-        var length = 0
-        try #require(ghostty_snapshot_encode_alloc(terminal, nil, &pointer, &length) == GHOSTTY_SUCCESS)
-        defer { ghostty_free(nil, pointer, length) }
-        return Data(bytes: try #require(pointer), count: length)
     }
 }
 

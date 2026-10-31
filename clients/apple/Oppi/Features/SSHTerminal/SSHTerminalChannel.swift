@@ -50,9 +50,13 @@ final class SSHTerminalEventQueue: Sendable {
     enum Item: Sendable, Equatable {
         case event(SSHPTYEvent)
         case overflow
-        /// A Ghostty snapshot to restore before the output after it (a Rex
-        /// pane), with the block it is of.
+        /// The renderable part of a Ghostty snapshot to restore before the
+        /// output after it (a Rex pane), with the block it is of: every record
+        /// through READY.
         case snapshot(Data, block: String?)
+        /// Whole records of that snapshot after READY (older history, image
+        /// pixels), through FINISH, with the block they are of.
+        case snapshotRecords(Data, block: String?)
         /// The connection ended for a reason its transport names (a Rex pane).
         case ended(String)
     }
@@ -111,9 +115,18 @@ final class SSHTerminalEventQueue: Sendable {
 
     /// Called from the NIO event loop, in order with `push`.
     func pushSnapshot(_ snapshot: Data, block: String? = nil) {
+        append(.snapshot(snapshot, block: block))
+    }
+
+    /// Called from the NIO event loop, in order with `push`.
+    func pushSnapshotRecords(_ records: Data, block: String? = nil) {
+        append(.snapshotRecords(records, block: block))
+    }
+
+    private func append(_ item: Item) {
         let accepted = state.withLock { state in
             guard !state.finished else { return false }
-            state.items.append(.snapshot(snapshot, block: block))
+            state.items.append(item)
             return true
         }
         if accepted { continuation.yield() }
@@ -231,8 +244,11 @@ final class SSHTerminalChannel {
     @ObservationIgnored var rex: RexSessionModel?
     /// Runs after a pane's snapshot replaced the engine's terminal, with the
     /// block it is of, so the grid knows the screen it holds is that pane's
-    /// own (`SSHTerminalPaneTransition`).
+    /// own (`SSHTerminalPaneTransition`). It runs at READY, when the screen
+    /// can draw, not when the pane's older history has all arrived.
     @ObservationIgnored var snapshotRestored: ((String?) -> Void)?
+    /// The pane whose snapshot history is arriving.
+    @ObservationIgnored private var restoringBlock: String?
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a
@@ -447,6 +463,10 @@ final class SSHTerminalChannel {
                 interpret(run)
                 run.removeAll()
                 restore(snapshot, block: block)
+            case .snapshotRecords(let records, let block):
+                interpret(run)
+                run.removeAll()
+                restoreHistory(records, block: block)
             case .ended(let reason):
                 interpret(run)
                 run.removeAll()
@@ -485,21 +505,31 @@ final class SSHTerminalChannel {
                                           fileName: name)
     }
 
-    /// Starts the grid from a pane's snapshot: its screen, modes, and history.
+    /// Starts the grid from a pane's snapshot: its screen and modes, ready to
+    /// draw. Its older history follows (`restoreHistory`).
     private func restore(_ snapshot: Data, block: String?) {
         guard connected else { return }
-        let after: Data
         do {
-            after = try engine.restore(snapshot: snapshot)
+            try engine.beginRestore(snapshot)
         } catch {
-            close(reason: "This pane's screen could not be read. Its Rex may be newer than this Oppi.")
+            close(reason: SSHTerminalSnapshotFormat.unreadable)
             return
         }
+        restoringBlock = block
         if engine.title != title { title = engine.title }
         refreshWorkingDirectory()
-        // Output that arrived with the snapshot, before Rex's first message.
-        interpret(after)
         snapshotRestored?(block)
+    }
+
+    /// The snapshot's older history and image pixels. Records of a pane that
+    /// is no longer the one restoring (a switch overtook it) are dropped.
+    private func restoreHistory(_ records: Data, block: String?) {
+        guard connected, block == restoringBlock else { return }
+        do {
+            try engine.continueRestore(records)
+        } catch {
+            close(reason: SSHTerminalSnapshotFormat.unreadable)
+        }
     }
 
     private func interpret(_ bytes: Data) {

@@ -288,7 +288,15 @@ final class SSHTerminalEngine {
     private var kittyStoreScreenIsAlternate: Bool?
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
-    /// The last `setColors`, applied again to a terminal `restore` brings in.
+    /// A snapshot's history and image pixels still arriving (`continueRestore`).
+    /// The decoder borrows `terminal` and must be freed before it.
+    private var snapshotDecoder: GhosttySnapshotDecoder?
+    private var snapshotFeed: SSHTerminalSnapshotFeed?
+    /// The restored terminal's width while its history arrives. Ghostty drops
+    /// every later history page of a terminal whose width changed since READY,
+    /// so a resize keeps this width until the snapshot is complete.
+    private var restoringColumns: Int?
+    /// The last `setColors`, applied again to a terminal `beginRestore` brings in.
     private var defaultColors: (
         foreground: GhosttyColorRgb, background: GhosttyColorRgb, dark: Bool,
         palette: [UInt8: GhosttyColorRgb], cursor: GhosttyColorRgb?
@@ -326,8 +334,7 @@ final class SSHTerminalEngine {
         // Apply the cell pixel size now, not only on the first remote resize:
         // Kitty placement geometry is computed in terminal pixels, so a zero
         // cell size would collapse every image until the first resize.
-        ghostty_terminal_resize(terminal, UInt16(geometry.columns), UInt16(geometry.rows),
-                                UInt32(geometry.cellWidth), UInt32(geometry.cellHeight))
+        applyTerminalSize()
         var historyLimit: Int = 8 * 1024 * 1024
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &historyLimit)
         // Ghostty default: DEC 1007 on. Set both the live value and the RIS
@@ -349,36 +356,35 @@ final class SSHTerminalEngine {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, nil)
     }
 
-    /// Replaces the terminal with the one a Ghostty snapshot describes (a Rex
-    /// pane's screen, modes, and history), configured as this engine's own and
-    /// sized to this screen. The program's output that follows applies on top.
-    /// The terminal before it is dropped: nothing on it outlives the call.
-    /// Returns any bytes after the snapshot's end, which are output.
-    func restore(snapshot: Data) throws -> Data {
-        var restored: GhosttyTerminal?
-        var consumed = 0
-        let result: GhosttyResult = snapshot.withUnsafeBytes { raw in
-            var decoder: GhosttySnapshotDecoder?
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress,
-                  ghostty_snapshot_decoder_new_buf(nil, &decoder, base, raw.count) == GHOSTTY_SUCCESS else {
-                return GHOSTTY_INVALID_VALUE
-            }
-            // The decoder borrows `raw`; it is done with it once freed here.
-            defer { ghostty_snapshot_decoder_free(decoder) }
-            let result = ghostty_snapshot_decoder_decode(decoder, &restored)
-            // Without the offset, nothing after the snapshot is known to be
-            // output: none is drawn rather than snapshot bytes as text.
-            if ghostty_snapshot_decoder_get(decoder, GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET, &consumed) != GHOSTTY_SUCCESS {
-                consumed = raw.count
-            }
-            return result
+    /// Replaces the terminal with the one a Ghostty snapshot's renderable part
+    /// describes (a Rex pane's screen, modes, and cursor: every record through
+    /// READY), configured as this engine's own and sized to this screen. Its
+    /// older history and image pixels follow through `continueRestore`, so the
+    /// screen draws before they arrive. The terminal before it is dropped:
+    /// nothing on it outlives the call, and neither does a restore it was in.
+    func beginRestore(_ prefix: Data) throws {
+        // The terminal it restored into is about to go; it needs no resize.
+        restoringColumns = nil
+        abandonRestore()
+        let feed = SSHTerminalSnapshotFeed(prefix: prefix)
+        var decoder: GhosttySnapshotDecoder?
+        let reader = GhosttyReader(read: snapshotFeedRead, userdata: Unmanaged.passUnretained(feed).toOpaque())
+        guard ghostty_snapshot_decoder_new(nil, &decoder, reader) == GHOSTTY_SUCCESS, let decoder else {
+            throw SSHTerminalError.engineUnavailable
         }
-        guard result == GHOSTTY_SUCCESS, let restored else { throw SSHTerminalError.snapshotUnreadable }
+        var imageStorage = UInt64(Self.kittyImageStorageLimit)
+        ghostty_snapshot_decoder_set(decoder, GHOSTTY_SNAPSHOT_DECODER_OPT_KITTY_IMAGE_STORAGE_LIMIT, &imageStorage)
+        var restored: GhosttyTerminal?
+        guard ghostty_snapshot_decoder_ready(decoder, &restored) == GHOSTTY_SUCCESS, let restored else {
+            ghostty_snapshot_decoder_free(decoder)
+            throw SSHTerminalError.snapshotUnreadable
+        }
         // The selection gesture tracks places in the old terminal's pages. The
         // render state copies what it reads on every update and is rebuilt in
         // full below (`forceFullRebuild`), so it carries over.
         var gesture: GhosttySelectionGesture?
         guard ghostty_selection_gesture_new(nil, &gesture) == GHOSTTY_SUCCESS else {
+            ghostty_snapshot_decoder_free(decoder)
             ghostty_terminal_free(restored)
             throw SSHTerminalError.engineUnavailable
         }
@@ -386,6 +392,11 @@ final class SSHTerminalEngine {
         ghostty_terminal_free(terminal)
         terminal = restored
         selectionGesture = gesture
+        snapshotDecoder = decoder
+        snapshotFeed = feed
+        var columns: UInt16 = 0
+        ghostty_terminal_get(restored, GHOSTTY_TERMINAL_DATA_COLS, &columns)
+        restoringColumns = Int(columns)
         configureTerminal(restored: true)
         if let colors = defaultColors {
             setColors(foreground: colors.foreground, background: colors.background, dark: colors.dark,
@@ -414,10 +425,65 @@ final class SSHTerminalEngine {
         pwdChanged = true
         readTitleAndFolder()
         notePictureChange(output: true)
-        return consumed < snapshot.count ? Data(snapshot[(snapshot.startIndex + consumed)...]) : Data()
+    }
+
+    /// Adds whole snapshot records that follow READY (older history pages,
+    /// image pixels), decoding every one whose bytes are all here. True once
+    /// the snapshot is complete, or when no restore is in progress. A record
+    /// that does not decode ends the restore and throws; the terminal keeps the
+    /// screen and whatever history came before it.
+    @discardableResult
+    func continueRestore(_ records: Data) throws -> Bool {
+        guard let decoder = snapshotDecoder, let feed = snapshotFeed else { return true }
+        feed.append(records: records)
+        var stepped = false
+        defer {
+            if stepped {
+                forceFullRebuild = true
+                notePictureChange()
+            }
+        }
+        while feed.canStep {
+            let result = ghostty_snapshot_decoder_next(decoder)
+            stepped = true
+            if result == GHOSTTY_NO_VALUE {
+                abandonRestore()
+                return true
+            }
+            guard result == GHOSTTY_SUCCESS else {
+                abandonRestore()
+                throw SSHTerminalError.snapshotUnreadable
+            }
+            feed.stepped()
+        }
+        return false
+    }
+
+    /// Ends a restore in progress, keeping the history it brought, and gives
+    /// the terminal this screen's width if it was held for the decoder.
+    private func abandonRestore() {
+        guard let decoder = snapshotDecoder else { return }
+        ghostty_snapshot_decoder_free(decoder)
+        snapshotDecoder = nil
+        snapshotFeed = nil
+        if let columns = restoringColumns {
+            restoringColumns = nil
+            guard columns != geometry.columns else { return }
+            applyTerminalSize()
+            forceFullRebuild = true
+        }
+    }
+
+    /// Sizes the terminal to `geometry`, but at the width a snapshot was
+    /// restored at while its history is still arriving (`restoringColumns`).
+    private func applyTerminalSize() {
+        ghostty_terminal_resize(terminal, UInt16(restoringColumns ?? geometry.columns), UInt16(geometry.rows),
+                                UInt32(geometry.cellWidth), UInt32(geometry.cellHeight))
     }
 
     isolated deinit {
+        // The decoder borrows the terminal.
+        ghostty_snapshot_decoder_free(snapshotDecoder)
         ghostty_selection_gesture_event_free(selectionRelease)
         ghostty_selection_gesture_event_free(selectionDrag)
         ghostty_selection_gesture_event_free(selectionPress)
@@ -495,8 +561,7 @@ final class SSHTerminalEngine {
         geometry = value
         notePictureChange()
         forceFullRebuild = true
-        ghostty_terminal_resize(terminal, UInt16(value.columns), UInt16(value.rows),
-                                UInt32(value.cellWidth), UInt32(value.cellHeight))
+        applyTerminalSize()
         flushReplies()
     }
 
@@ -1670,4 +1735,127 @@ enum SSHTerminalError: Error {
     case engineUnavailable, disconnected, pasteTooLarge, unsafePaste
     /// A Ghostty snapshot (a Rex pane's screen) this libghostty cannot decode.
     case snapshotUnreadable
+}
+
+/// Ghostty's snapshot framing (`ghostty/vt/snapshot.h`): a ten-byte envelope,
+/// "GHOSTSNP" and a little-endian u16 version, then records of a u16 tag, a
+/// u32 payload length, a u32 CRC32C, and the payload. Reading the framing is
+/// enough to cut a stream into whole records; the decoder checks the rest.
+enum SSHTerminalSnapshotFormat {
+    /// Why a terminal whose snapshot does not decode closes.
+    static let unreadable = "This pane's screen could not be read. Its Rex may be newer than this Oppi."
+    static let magic = Data("GHOSTSNP".utf8)
+    static let version: UInt16 = 1
+    static let envelopeBytes = 10
+    static let headerBytes = 10
+
+    enum Tag: UInt16 {
+        case page = 3, history = 4, ready = 5, finish = 6
+        case kittyImagePayload = 9, kittyImagePagePlacements = 10
+    }
+    /// Tags this format version defines; the decoder skips records of any other.
+    static let knownTags: ClosedRange<UInt16> = 1...10
+
+    /// Whether `bytes` start with a snapshot envelope this client can frame.
+    /// Nil until all ten bytes are in.
+    static func envelopeIsReadable(_ bytes: Data) -> Bool? {
+        guard bytes.count >= envelopeBytes else {
+            // A stream that already differs from the magic is no snapshot.
+            let head = bytes.prefix(magic.count)
+            return head.elementsEqual(magic.prefix(head.count)) ? nil : false
+        }
+        let start = bytes.startIndex
+        return bytes[start..<(start + 8)].elementsEqual(magic)
+            && UInt16(bytes[start + 8]) | UInt16(bytes[start + 9]) << 8 == version
+    }
+
+    /// The tag and whole length (header and payload) of the record starting
+    /// `offset` bytes into `bytes`. Nil until its header is in.
+    static func record(in bytes: Data, at offset: Int) -> (tag: UInt16, length: Int)? {
+        guard bytes.count - offset >= headerBytes else { return nil }
+        let start = bytes.startIndex + offset
+        let tag = UInt16(bytes[start]) | UInt16(bytes[start + 1]) << 8
+        let payload = (0..<4).reduce(0) { $0 | Int(bytes[start + 2 + $1]) << ($1 * 8) }
+        return (tag, headerBytes + payload)
+    }
+}
+
+/// The bytes an incremental snapshot decode reads, as whole records arrive
+/// after READY. Ghostty reads them synchronously inside `ready` and `next`,
+/// and a read that finds nothing is permanent end-of-file. So `next` is only
+/// called once every record it will read is here (`canStep`): one call
+/// consumes the HISTORY manifests before a page, the page, and the header of
+/// the record after it (and that record too when it is the page's Kitty
+/// placements); or one image's pixels; or FINISH.
+private final class SSHTerminalSnapshotFeed {
+    private var bytes: Data
+    private var read = 0
+    /// Tags of the whole records after READY that `next` has not consumed.
+    private var pending: [UInt16] = []
+    private var finished = false
+
+    init(prefix: Data) { bytes = prefix }
+
+    func append(records: Data) {
+        // Drop what the decoder has read once it is a large share of the buffer.
+        if read > 1 << 20, read * 2 > bytes.count {
+            bytes.removeSubrange(bytes.startIndex..<(bytes.startIndex + read))
+            read = 0
+        }
+        var offset = 0
+        while let record = SSHTerminalSnapshotFormat.record(in: records, at: offset), offset + record.length <= records.count {
+            pending.append(record.tag)
+            if record.tag == SSHTerminalSnapshotFormat.Tag.finish.rawValue { finished = true }
+            offset += record.length
+        }
+        bytes.append(records)
+    }
+
+    /// The number of pending records the next `next` call consumes, or nil
+    /// when a record it reads has not arrived.
+    private var nextUnit: Int? {
+        typealias Tag = SSHTerminalSnapshotFormat.Tag
+        let ends: Set<UInt16> = [Tag.page.rawValue, Tag.finish.rawValue, Tag.kittyImagePayload.rawValue]
+        // HISTORY manifests, and records of kinds the decoder skips, come before the record that ends the call.
+        guard let end = pending.firstIndex(where: { ends.contains($0) }) else { return nil }
+        guard pending[end] == Tag.page.rawValue else { return end + 1 }
+        // After a page the decoder reads the header of the next record of a
+        // kind it knows (skipping any other), to see whether it is the page's placements.
+        guard let following = pending[(end + 1)...].firstIndex(where: SSHTerminalSnapshotFormat.knownTags.contains) else { return nil }
+        return pending[following] == Tag.kittyImagePagePlacements.rawValue ? following + 1 : end + 1
+    }
+
+    /// Whether `next` can run without reading past what has arrived.
+    var canStep: Bool { finished ? !pending.isEmpty : nextUnit != nil }
+
+    /// `next` returned for one call's worth of records.
+    func stepped() {
+        guard let unit = nextUnit else {
+            // With FINISH in, every record is here; the decoder's end decides.
+            pending.removeAll()
+            return
+        }
+        pending.removeFirst(unit)
+    }
+
+    /// Ghostty's reader callback.
+    func fill(_ destination: UnsafeMutablePointer<UInt8>, capacity: Int) -> Int {
+        let count = min(capacity, bytes.count - read)
+        guard count > 0 else { return 0 }
+        let start = bytes.startIndex + read
+        bytes.copyBytes(to: destination, from: start..<(start + count))
+        read += count
+        return count
+    }
+}
+
+/// Feeds Ghostty's decoder from the engine's `SSHTerminalSnapshotFeed`. Running
+/// out is a fatal read, not end-of-file: the feed only lets the decoder go on
+/// when its records are all in, so an empty read would be a framing bug.
+private let snapshotFeedRead: GhosttyReaderFn = { userdata, buffer, capacity, read in
+    guard let userdata, let buffer, let read else { return false }
+    let feed = Unmanaged<SSHTerminalSnapshotFeed>.fromOpaque(userdata).takeUnretainedValue()
+    let count = feed.fill(buffer, capacity: capacity)
+    read.pointee = count
+    return count > 0
 }
