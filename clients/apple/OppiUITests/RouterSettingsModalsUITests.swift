@@ -236,6 +236,17 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
 
         assertReviewSheet { self.tapScrolledIntoView(prompt) }
+
+        // A schedule's prompt carries the same pencil as an Agent's: the reader
+        // edits the schedule's own prompt in place (its save and conflict are
+        // the transport and owner tests').
+        tapScrolledIntoView(prompt)
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "The schedule prompt reader has no pencil")
+        XCTAssertTrue(app.buttons["document.edit.more"].exists, "The prompt reader keeps Edit with Session beside the pencil")
+        tapBarButton(app.buttons["fullScreen.code.close"])
+        XCTAssertTrue(waitForDisappearance(of: pencil), "Its dismiss control must close the review sheet")
+
         assertCompactOppiBar(page: "schedule-detail")
     }
 

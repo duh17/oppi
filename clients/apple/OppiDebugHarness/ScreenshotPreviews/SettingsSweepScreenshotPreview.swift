@@ -735,7 +735,10 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     private func answer() {
         let path = request.url?.path ?? ""
         let methodPrefix = "\(request.httpMethod ?? "GET") "
-        if let patchHandler = Self.patchHandler,
+        // Only a write asks the handler: a read answers from `routes`, or a
+        // record's read would come back as the write's summary shape.
+        if request.httpMethod != "GET",
+           let patchHandler = Self.patchHandler,
            let answered = patchHandler(path, Self.requestBody(of: request)) {
             let response = HTTPURLResponse(
                 url: request.url ?? URL(fileURLWithPath: "/"),
