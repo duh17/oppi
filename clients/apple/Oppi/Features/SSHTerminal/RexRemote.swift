@@ -650,10 +650,18 @@ final class RexMonitor: SSHTerminalOverviewSource {
     @ObservationIgnored private var resyncRequested = false
     @ObservationIgnored private var resyncWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var backoff: Task<Void, Never>?
+    /// The open stream's control connection once it has read the server,
+    /// which the calls the person makes (`createSession`, `setLabel`,
+    /// `destroy`) go over: it is attached to every session (`session.attach_all`),
+    /// which Rex needs of a caller that destroys one.
+    @ObservationIgnored private var control: RexControl?
 
     var available: Bool { snapshot != nil }
     /// `run` has stopped for good (no `nc`, no Rex), until `retry()`.
     var gaveUp: Bool { absence?.givesUp == true }
+    /// Rex can be asked to change things: it has been read, and the stream
+    /// has not failed since.
+    var canManage: Bool { snapshot != nil && failure == nil }
     /// Waiting panes that are still known to wait: a Rex that stopped answering
     /// does not keep the badge lit with its last report.
     var needsAttention: Int { failure == nil ? snapshot?.needsAttention ?? 0 : 0 }
@@ -770,6 +778,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
             stream.close()
             if generation == mine {
                 self.inbox = nil
+                self.control = nil
                 publishing = false
                 publishTask?.cancel()
                 publishTask = nil
@@ -782,6 +791,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
             try await control.open()
             try await bootstrap(control, inbox, generation: mine)
             synced = true
+            self.control = control
             onFinding?(.reached)
             for await _ in inbox.wake {
                 let events = inbox.drain()
@@ -930,6 +940,54 @@ final class RexMonitor: SSHTerminalOverviewSource {
             publishTask = nil
             publish()
         }
+    }
+
+    // MARK: Changing Rex
+
+    /// The calls below change Rex, and the monitor's own events show the
+    /// result (`session_created`, `session_view_changed`, `session_destroyed`):
+    /// nothing here edits the snapshot. A refusal (`RexClientError.refused`)
+    /// reaches the caller as it came.
+    private func openControl() throws -> RexControl {
+        guard let control else { throw RexClientError.connectionClosed }
+        return control
+    }
+
+    /// A new session with one window holding a shell. The server picks its
+    /// name. Returns the shell's pane, to open it.
+    func createSession() async throws -> RexPaneTarget {
+        let control = try openControl()
+        let answer = try await control.call("session.create", [
+            "initial_windows": [["layout": ["block": ["flavor": "com.superlogical.terminal.shell"]]]],
+        ])
+        struct Created: Decodable {
+            struct Window: Decodable {
+                let blockIDs: [String]?
+                enum CodingKeys: String, CodingKey { case blockIDs = "block_ids" }
+            }
+            let sessionID: String
+            let initialWindows: [Window]?
+            enum CodingKeys: String, CodingKey { case sessionID = "session_id", initialWindows = "initial_windows" }
+        }
+        guard let created = try? JSONDecoder().decode(Created.self, from: answer),
+              let block = created.initialWindows?.first?.blockIDs?.first else {
+            throw RexClientError.unreadable("the new session")
+        }
+        // The caller owns the blocks it creates; the terminal that opens the
+        // pane takes it for itself, so this one gives its claim back.
+        _ = try? await control.call("session.disown_block", ["session_id": created.sessionID, "block_ids": [block]])
+        return RexPaneTarget(sessionID: created.sessionID, blockID: block, label: "Shell")
+    }
+
+    /// Names a session. An empty label (or only white space) restores the name
+    /// Rex chose when it made the session.
+    func setLabel(_ label: String, ofSession id: String) async throws {
+        _ = try await openControl().call("session.set_label", ["session_id": id, "label": label])
+    }
+
+    /// Destroys a session and closes every pane in it.
+    func destroy(session id: String) async throws {
+        _ = try await openControl().call("session.destroy", ["session_id": id])
     }
 
     func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {

@@ -17,7 +17,11 @@ struct SSHTerminalRexListSession: Hashable, Sendable {
     /// The pane rows are showing under it.
     let isExpanded: Bool
 
-    init(_ session: RexSnapshot.Session, expanded: Bool = false) {
+    /// Rex can be asked to rename or close it (the row offers those).
+    let manages: Bool
+
+    init(_ session: RexSnapshot.Session, expanded: Bool = false, manages: Bool = false) {
+        self.manages = manages
         let panes = session.windows.flatMap(\.panes)
         sessionID = session.sessionID
         title = session.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Session"
@@ -125,11 +129,13 @@ struct SSHTerminalRexListRow: Hashable, Sendable {
         /// The host would ask for a password, a trust decision, or Face ID: the
         /// tab never does that on its own, so the row is the person's go-ahead.
         case tapToConnect
+        /// Makes a session with a shell and opens it; `busy` while a change to Rex runs.
+        case newSession(busy: Bool)
 
-        /// A session, a pane, and the connect row take a tap; the rest only read.
+        /// A session, a pane, and the connect and new rows take a tap; the rest only read.
         var isAction: Bool {
             switch self {
-            case .session, .pane, .tapToConnect: true
+            case .session, .pane, .tapToConnect, .newSession: true
             case .header, .window, .placeholder, .failure: false
             }
         }
@@ -160,6 +166,11 @@ struct SSHTerminalRexListState: Equatable {
     var needsYou = 0
     /// The sessions showing their panes.
     var expanded: Set<String> = []
+    /// Rex can be changed from here: sessions can be made, renamed, and closed.
+    var canManage = false
+    /// A change is in flight, and why the last one failed.
+    var managing = false
+    var manageFailure: String?
 }
 
 extension SSHTerminalRexListRow {
@@ -182,6 +193,9 @@ extension SSHTerminalRexListRow {
         if let reason = state.absence?.advice ?? state.failure {
             reasons.append(.init(id: "reason", kind: .failure(reason)))
         }
+        if let failure = state.manageFailure {
+            reasons.append(.init(id: "action", kind: .failure(failure)))
+        }
         rows += connection + reasons
         if state.absence?.givesUp == true { return rows }
         guard let snapshot = state.snapshot else {
@@ -193,7 +207,7 @@ extension SSHTerminalRexListRow {
         }
         for session in snapshot.sessions {
             let expanded = state.expanded.contains(session.sessionID)
-            rows.append(.init(id: "session|" + session.sessionID, kind: .session(.init(session, expanded: expanded))))
+            rows.append(.init(id: "session|" + session.sessionID, kind: .session(.init(session, expanded: expanded, manages: state.canManage))))
             guard expanded else { continue }
             // A session with several windows groups its panes under each window's name.
             let namesWindows = session.windows.count > 1
@@ -210,6 +224,7 @@ extension SSHTerminalRexListRow {
                 }
             }
         }
+        if state.canManage || state.managing { rows.append(.init(id: "new", kind: .newSession(busy: state.managing))) }
         return rows
     }
 }
@@ -227,7 +242,10 @@ extension SSHTerminalRexFollower {
             absence: monitor.absence,
             failure: monitor.failure,
             needsYou: monitor.needsAttention,
-            expanded: expandedSessions
+            expanded: expandedSessions,
+            canManage: monitor.canManage,
+            managing: managing,
+            manageFailure: manageFailure
         )
     }
 }
@@ -270,51 +288,40 @@ final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
     }
 }
 
-/// A session row. It is two accessibility elements, as the host row is: the
-/// row (identifier, label, value, button trait; activation opens the session,
-/// as a touch does) and its disclosure, which shows or hides the panes. The
-/// cell itself is a container (`accessibilityElements`), so a test finds
-/// `app.buttons[id]` and `app.buttons[id + ".disclosure"]`. The row's custom
-/// actions carry what a swipe has (and the disclosure), so VoiceOver reaches
-/// all of it. A touch on the row is the collection view's selection, which the
-/// screen routes to the same owner.
+/// A session row: two buttons, as the host row is (its own text drawn in a
+/// button, not in a list content configuration, which would make the cell one
+/// element): the row (identifier, label, value; a touch and VoiceOver's
+/// activation both open the session) and its disclosure, which shows or hides
+/// the panes. A test finds `app.buttons[id]` and `app.buttons[id + ".disclosure"]`.
+/// The row's custom actions carry what a swipe has, and the disclosure, so
+/// VoiceOver reaches all of it.
 final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
-    /// The element over the row's content: not a control, so a touch falls
-    /// through to the cell's selection.
-    private final class RowElement: UIView {
-        var perform: (() -> Void)?
-
-        override func accessibilityActivate() -> Bool {
-            guard let perform else { return false }
-            perform()
-            return true
-        }
-    }
-
-    private let rowElement = RowElement()
+    private let rowButton = UIButton(type: .system)
     private let disclosure = UIButton(type: .system)
-    private var toggle: (() -> Void)?
+    private var performAction: UIAction?
+    private var toggleAction: UIAction?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isAccessibilityElement = false
-        rowElement.translatesAutoresizingMaskIntoConstraints = false
-        rowElement.isAccessibilityElement = true
-        rowElement.accessibilityTraits = .button
-        contentView.addSubview(rowElement)
+        rowButton.translatesAutoresizingMaskIntoConstraints = false
+        rowButton.contentHorizontalAlignment = .leading
+        contentView.addSubview(rowButton)
         NSLayoutConstraint.activate([
-            rowElement.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            rowElement.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            rowElement.topAnchor.constraint(equalTo: contentView.topAnchor),
-            rowElement.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            rowButton.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            rowButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            rowButton.topAnchor.constraint(equalTo: contentView.topAnchor),
+            rowButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            rowButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
-        disclosure.addAction(UIAction { [weak self] _ in self?.toggle?() }, for: .touchUpInside)
-        disclosure.accessibilityTraits = .button
         disclosure.accessibilityLabel = "Panes"
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The row's two buttons, in reading order: for a test, and VoiceOver.
+    var rowElement: UIView { rowButton }
+    var disclosureElement: UIView { disclosure }
 
     /// Resets what a reused cell carried, then sets the row's. `actions` are
     /// the row's custom actions (rename, close); the disclosure's is added here.
@@ -322,42 +329,71 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         _ session: SSHTerminalRexListSession, identifier: String, themeID: ThemeID,
         actions: [UIAccessibilityCustomAction], perform: @escaping () -> Void, toggle: @escaping () -> Void
     ) {
-        self.toggle = toggle
-        rowElement.perform = perform
-        rowElement.accessibilityIdentifier = identifier
-        rowElement.accessibilityLabel = session.accessibilityLabel
-        rowElement.accessibilityValue = session.status.label
-        rowElement.accessibilityHint = "Open this Rex session"
+        let palette = themeID.palette
+        var conf = UIButton.Configuration.plain()
+        conf.title = session.title
+        conf.subtitle = session.detail
+        conf.titleAlignment = .leading
+        conf.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+            var out = $0
+            out.font = .preferredFont(forTextStyle: .body)
+            out.foregroundColor = UIColor(palette.fg)
+            return out
+        }
+        conf.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+            var out = $0
+            out.font = .preferredFont(forTextStyle: .footnote)
+            out.foregroundColor = UIColor(palette.comment)
+            return out
+        }
+        conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
+        rowButton.configuration = conf
+        rowButton.accessibilityIdentifier = identifier
+        rowButton.accessibilityLabel = session.accessibilityLabel
+        rowButton.accessibilityValue = session.status.label
+        rowButton.accessibilityHint = "Open this Rex session"
+        if let performAction { rowButton.removeAction(performAction, for: .touchUpInside) }
+        let open = UIAction { _ in perform() }
+        performAction = open
+        rowButton.addAction(open, for: .touchUpInside)
+
         var accessories = statusAccessories(for: session.status, themeID: themeID)
         var custom = actions
+        if let toggleAction { disclosure.removeAction(toggleAction, for: .touchUpInside) }
+        toggleAction = nil
         if session.hasPanes {
-            var conf = UIButton.Configuration.plain()
-            conf.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small))
-            conf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8)
-            conf.baseForegroundColor = UIColor(themeID.palette.comment)
-            disclosure.configuration = conf
+            var chevron = UIButton.Configuration.plain()
+            chevron.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small))
+            chevron.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8)
+            chevron.baseForegroundColor = UIColor(palette.comment)
+            disclosure.configuration = chevron
             disclosure.transform = session.isExpanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
             disclosure.accessibilityIdentifier = identifier + ".disclosure"
             disclosure.accessibilityValue = session.isExpanded ? "Expanded" : "Collapsed"
+            let flip = UIAction { _ in toggle() }
+            toggleAction = flip
+            disclosure.addAction(flip, for: .touchUpInside)
             accessories.append(.customView(configuration: .init(customView: disclosure, placement: .trailing())))
-            custom.append(UIAccessibilityCustomAction(name: session.isExpanded ? "Hide Panes" : "Show Panes") { [weak self] _ in
-                self?.toggle?()
+            custom.append(UIAccessibilityCustomAction(name: session.isExpanded ? "Hide Panes" : "Show Panes") { _ in
+                toggle()
                 return true
             })
-            accessibilityElements = [rowElement, disclosure]
+            accessibilityElements = [rowButton, disclosure]
         } else {
-            accessibilityElements = [rowElement]
+            accessibilityElements = [rowButton]
         }
-        rowElement.accessibilityCustomActions = custom
+        rowButton.accessibilityCustomActions = custom
         self.accessories = accessories
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        toggle = nil
-        rowElement.perform = nil
-        rowElement.accessibilityIdentifier = nil
-        rowElement.accessibilityCustomActions = nil
+        if let performAction { rowButton.removeAction(performAction, for: .touchUpInside) }
+        if let toggleAction { disclosure.removeAction(toggleAction, for: .touchUpInside) }
+        performAction = nil
+        toggleAction = nil
+        rowButton.accessibilityIdentifier = nil
+        rowButton.accessibilityCustomActions = nil
         disclosure.accessibilityIdentifier = nil
         disclosure.transform = .identity
         accessories = []

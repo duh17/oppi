@@ -84,3 +84,41 @@ struct Confirmation {
         return alert
     }
 }
+
+/// An alert that asks for one line of text (a name), with a default button
+/// that hands it back and Cancel. The one text prompt: screens describe it and
+/// call `present(from:onSubmit:)`, so none builds a `UIAlertController` for it.
+struct TextPrompt {
+    var title: String
+    var message: String?
+    var placeholder = ""
+    /// What the field starts with.
+    var text = ""
+    /// The default button.
+    var actionTitle: String
+    var cancelTitle = String(localized: "Cancel")
+    var fieldIdentifier: String?
+    var actionIdentifier: String?
+
+    /// Presents the prompt over `screen`. `onSubmit` gets the field's text, as typed.
+    /// - Returns: the controller, so a screen can refuse to stack a second one.
+    @MainActor
+    @discardableResult
+    func present(from screen: UIViewController, onSubmit: @escaping (String) -> Void) -> UIAlertController {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = placeholder
+            field.text = text
+            field.accessibilityIdentifier = fieldIdentifier
+        }
+        let submit = UIAlertAction(title: actionTitle, style: .default) { [weak alert] _ in
+            onSubmit(alert?.textFields?.first?.text ?? "")
+        }
+        submit.accessibilityIdentifier = actionIdentifier
+        alert.addAction(submit)
+        alert.addAction(UIAlertAction(title: cancelTitle, style: .cancel))
+        alert.preferredAction = submit
+        Router.topPresenter(from: screen).present(alert, animated: true)
+        return alert
+    }
+}

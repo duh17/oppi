@@ -479,7 +479,7 @@ struct SSHTerminalRexSectionTests {
     /// `standIn` makes a host's Rex when it is not the preview's.
     private func mountTab(
         _ profiles: [SSHTerminalProfile], registry: SSHTerminalRegistry = SSHTerminalRegistry(),
-        standIn: ((SSHTerminalProfile) -> any RexStreamHost)? = nil
+        standIn: (@MainActor (SSHTerminalProfile) -> any RexStreamHost)? = nil
     ) throws -> Rig {
         let built = Built()
         let store = hosts.store
@@ -549,10 +549,8 @@ struct SSHTerminalRexSectionTests {
         return cells.sorted { $0.frame.minY < $1.frame.minY }
     }
 
-    private func rowElement(_ cell: SSHTerminalRexListSessionCell) -> UIView? { cell.accessibilityElements?.first as? UIView }
-    private func disclosure(_ cell: SSHTerminalRexListSessionCell) -> UIView? {
-        cell.accessibilityElements?.dropFirst().first as? UIView
-    }
+    private func rowElement(_ cell: SSHTerminalRexListSessionCell) -> UIView? { cell.rowElement }
+    private func disclosure(_ cell: SSHTerminalRexListSessionCell) -> UIView? { cell.disclosureElement }
 
     private func collectionView(_ list: UIViewController) -> UICollectionView? {
         func find(_ view: UIView) -> UICollectionView? {
@@ -708,8 +706,8 @@ struct SSHTerminalRexSectionTests {
             "oppi, in oppi, 2 windows \u{00B7} 3 panes \u{00B7} 1 needs you", "dotfiles, in dotfiles, 1 pane",
         ])
         #expect(found.map { $0.accessibilityValue } == ["Needs approval", "Idle"])
-        #expect(found.allSatisfy { $0.accessibilityTraits.contains(.button) && $0.isAccessibilityElement })
-        #expect(sessionCells(in: rig).allSatisfy { !$0.isAccessibilityElement }, "the cell is a container of the row and its disclosure")
+        #expect(found.allSatisfy { $0 is UIButton }, "real buttons: the UI test finds them as buttons")
+
     }
 
     /// A touch and VoiceOver's activation open the session the same way, on the
@@ -734,7 +732,8 @@ struct SSHTerminalRexSectionTests {
         let openPane = follower.monitor.openPane
         follower.monitor.openPane = { opened.append($0); openPane?($0) }
         let cell = try #require(sessionCells(in: rig).first { self.rowElement($0)?.accessibilityIdentifier?.hasSuffix(oppiSession) == true })
-        #expect(try #require(rowElement(cell)).accessibilityActivate())
+        // The row's button and a touch on the cell run the same owner action.
+        try #require(rowElement(cell) as? UIButton).sendActions(for: .touchUpInside)
         try tap(cell, in: rig)
         #expect(opened.map(\.blockID) == [claudeBlock, claudeBlock], "activation and a touch run the same action")
         #expect(follower.session.channel === open && follower.session.showsTerminal)
@@ -774,26 +773,26 @@ struct SSHTerminalRexSectionTests {
         defer { rig.tearDown() }
         let prefix = "sshTerminal.rexList.\(rexHost.id.uuidString)."
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { self.sessionCells(in: rig).count == 2 })
-        #expect(rexIDs(in: rig, prefix: prefix) == ["header", oppiSession, dotfilesSession], "collapsed at first")
+        #expect(rexIDs(in: rig, prefix: prefix) == ["header", oppiSession, dotfilesSession, "new"], "collapsed at first")
 
         let oppi = try #require(sessionCells(in: rig).first)
         let button = try #require(disclosure(oppi) as? UIButton)
         #expect(button.accessibilityIdentifier == prefix + oppiSession + ".disclosure")
-        #expect(button.accessibilityValue == "Collapsed" && button.accessibilityTraits.contains(.button))
+        #expect(button.accessibilityValue == "Collapsed")
         button.sendActions(for: .touchUpInside)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix).count > 3
+            return self.rexIDs(in: rig, prefix: prefix).count > 4
         })
         // Two windows: each is named over its panes.
         let ids = rexIDs(in: rig, prefix: prefix)
         #expect(ids == ["header", oppiSession, "window:01a18a26-6645-713c-97f1-2f1058c8c82f", claudeBlock, piBlock,
-                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession])
+                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession, "new"])
         let first = try #require(sessionCells(in: rig).first)
         let expandedButton = try #require(disclosure(first) as? UIButton)
         #expect(expandedButton.accessibilityValue == "Expanded")
         let actions = try #require(rowElement(first)?.accessibilityCustomActions)
-        #expect(actions.map(\.name) == ["Hide Panes"], "VoiceOver reaches the disclosure through the row too")
+        #expect(actions.map(\.name) == ["Rename", "Close Session", "Hide Panes"], "VoiceOver reaches the disclosure through the row too")
 
         // A pane row reads as the pane, with its folder and who waits.
         let pane = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == prefix + claudeBlock })
@@ -805,7 +804,7 @@ struct SSHTerminalRexSectionTests {
         rig.navigation.popViewController(animated: false)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix).count == 8
+            return self.rexIDs(in: rig, prefix: prefix).count == 9
         })
 
         // Hide them again.
@@ -814,7 +813,7 @@ struct SSHTerminalRexSectionTests {
         again.sendActions(for: .touchUpInside)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix) == ["header", self.oppiSession, self.dotfilesSession]
+            return self.rexIDs(in: rig, prefix: prefix) == ["header", self.oppiSession, self.dotfilesSession, "new"]
         })
     }
 
@@ -846,6 +845,195 @@ struct SSHTerminalRexSectionTests {
         let row = try #require(sessionCells(in: rig).first)
         try tap(row, in: rig)
         #expect(opened.last?.blockID == claudeBlock)
+    }
+
+    // MARK: Changing Rex
+
+    private func json(_ request: RexFakeHost.Request) throws -> NSDictionary {
+        try #require(try JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? NSDictionary)
+    }
+
+    /// A follower reading a fake Rex that keeps its state (`RexFakeWorld`), ready to change it.
+    private func managedFollower(_ world: RexFakeWorld) async throws -> SSHTerminalRexFollower {
+        let follower = makeFollower(rexHost, stream: RexPreviewStreamHost(world: world))
+        follower.sync(active: true)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.canManage })
+        return follower
+    }
+
+    private func titles(_ follower: SSHTerminalRexFollower) -> [String] { sessions(of: follower).map(\.title) }
+
+    /// New Rex Session asks Rex for a session with one window holding a shell,
+    /// opens that shell's pane, hands the claim on it back, and the list gains
+    /// the session from Rex's own event.
+    @Test func creatingASessionAsksForAShellWindowOpensItAndTheListFollowsRex() async throws {
+        let world = RexFakeWorld.preview()
+        let follower = try await managedFollower(world)
+        defer { follower.close() }
+        var opened: [RexPaneTarget] = []
+        follower.monitor.openPane = { opened.append($0) }
+
+        await follower.createSession()
+        let create = try #require(world.requests("session.create").first)
+        let shell: NSDictionary = ["initial_windows": [["layout": ["block": ["flavor": "com.superlogical.terminal.shell"]]]]]
+        #expect(try json(create) == shell, "no name: Rex chooses one")
+        #expect(opened == [RexPaneTarget(sessionID: "session:new-1", blockID: "block:new-1-1", label: "Shell")])
+        let disown = try #require(world.requests("session.disown_block").first)
+        #expect(try json(disown) == ["session_id": "session:new-1", "block_ids": ["block:new-1-1"]] as NSDictionary)
+        #expect(follower.manageFailure == nil && follower.canManage)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.titles(follower) == ["oppi", "dotfiles", "new-session-1"] }, "the list follows the event")
+    }
+
+    @Test func renamingSendsTheTrimmedNameAnEmptyOneRestoresRexsAndTheListFollows() async throws {
+        let world = RexFakeWorld.preview()
+        let follower = try await managedFollower(world)
+        defer { follower.close() }
+
+        await follower.rename(session: oppiSession, to: "  work  ")
+        #expect(try json(try #require(world.requests("session.set_label").last)) == ["session_id": oppiSession, "label": "work"] as NSDictionary)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.titles(follower) == ["work", "dotfiles"] })
+
+        await follower.rename(session: oppiSession, to: "   ")
+        #expect(try json(try #require(world.requests("session.set_label").last)) == ["session_id": oppiSession, "label": ""] as NSDictionary)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.titles(follower) == ["oppi", "dotfiles"] }, "Rex gave the session its own name back")
+    }
+
+    @Test func closingDestroysTheSessionAndItLeavesTheList() async throws {
+        let world = RexFakeWorld.preview()
+        let follower = try await managedFollower(world)
+        defer { follower.close() }
+        await follower.close(session: dotfilesSession)
+        #expect(try json(try #require(world.requests("session.destroy").first)) == ["session_id": dotfilesSession] as NSDictionary)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.titles(follower) == ["oppi"] })
+        #expect(follower.manageFailure == nil)
+    }
+
+    /// A refusal shows under the heading as Rex said it, the list stays as it
+    /// was, and the next change that works clears it.
+    @Test func aRefusalShowsInlineAndTheNextSuccessClearsIt() async throws {
+        let world = RexFakeWorld.preview()
+        let follower = try await managedFollower(world)
+        defer { follower.close() }
+        var opened = 0
+        follower.monitor.openPane = { _ in opened += 1 }
+
+        world.refuse("session.create", code: "conflict", message: "the server has as many sessions as it allows")
+        await follower.createSession()
+        #expect(follower.manageFailure == "Could not create a session. Rex refused: the server has as many sessions as it allows")
+        #expect(opened == 0 && titles(follower) == ["oppi", "dotfiles"])
+        let listed = SSHTerminalRexListRow.rows(hostName: "h", state: follower.listState)
+        #expect(listed.contains { $0.id == "action" && $0.kind == .failure(follower.manageFailure ?? "") })
+
+        world.refuse("session.destroy", code: "session_not_found", message: "no such session")
+        await follower.close(session: "session:gone")
+        #expect(follower.manageFailure == "Could not close the session. Rex refused: no such session")
+
+        world.refuse("session.create", code: nil)
+        await follower.createSession()
+        #expect(follower.manageFailure == nil && opened == 1)
+    }
+
+    @Test func withNoStreamNothingCanBeChangedAndTheCallSaysSo() async throws {
+        let follower = makeFollower(rexHost, stream: RexPreviewStreamHost(world: RexFakeWorld.preview()))
+        defer { follower.close() }
+        #expect(!follower.canManage)
+        await follower.close(session: oppiSession)
+        #expect(follower.manageFailure == "Could not close the session. The connection to Rex closed.")
+    }
+
+    /// Calls a UIAlertAction's handler, as a tap on its button would.
+    private func press(_ title: String, in alert: UIAlertController) throws {
+        let action = try #require(alert.actions.first { $0.title == title }, "no \(title) button")
+        typealias Handler = @convention(block) (UIAlertAction) -> Void
+        let block = try #require(action.value(forKey: "handler") as AnyObject?)
+        unsafeBitCast(block, to: Handler.self)(action)
+    }
+
+    private func customAction(_ name: String, of cell: SSHTerminalRexListSessionCell) throws -> UIAccessibilityCustomAction {
+        try #require(rowElement(cell)?.accessibilityCustomActions?.first { $0.name == name }, "no \(name) action")
+    }
+
+    /// Close is asked about first, and nothing is sent until it is confirmed;
+    /// Rename takes a name in an alert. Both are on the row as custom actions,
+    /// beside the swipe.
+    @Test func closingNeedsAConfirmationAndRenamingTakesAName() async throws {
+        let world = RexFakeWorld.preview()
+        let rig = try mountTab([rexHost], standIn: { _ in RexPreviewStreamHost(world: world) })
+        defer { rig.tearDown() }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return self.sessionCells(in: rig).count == 2 && self.rowElement(self.sessionCells(in: rig)[0])?.accessibilityCustomActions?.isEmpty == false
+        })
+        let dotfilesCell = try #require(sessionCells(in: rig).last)
+        #expect(rowElement(dotfilesCell)?.accessibilityCustomActions?.map(\.name) == ["Rename", "Close Session", "Show Panes"])
+
+        // Close: an alert names the session and says what ends; Cancel sends nothing.
+        _ = try customAction("Close Session", of: dotfilesCell).actionHandler?(try customAction("Close Session", of: dotfilesCell))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController is UIAlertController })
+        var alert = try #require(rig.list.presentedViewController as? UIAlertController)
+        #expect(alert.title == "Close session \u{201C}dotfiles\u{201D}?" && alert.message == "Every pane's program ends.")
+        #expect(alert.actions.map(\.style) == [.destructive, .cancel])
+        #expect(world.requests("session.destroy").isEmpty, "asking is not closing")
+        try press("Cancel", in: alert)
+        await rig.list.dismiss(animated: false)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { world.requests("session.destroy").isEmpty })
+
+        // Rename: the field starts with the name; the new one goes to Rex.
+        _ = try customAction("Rename", of: dotfilesCell).actionHandler?(try customAction("Rename", of: dotfilesCell))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController is UIAlertController })
+        alert = try #require(rig.list.presentedViewController as? UIAlertController)
+        #expect(alert.title == "Rename Session" && alert.textFields?.first?.text == "dotfiles")
+        alert.textFields?.first?.text = "config"
+        try press("Rename", in: alert)
+        await rig.list.dismiss(animated: false)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { world.requests("session.set_label").count == 1 })
+        #expect(try json(world.requests("session.set_label")[0]) == ["session_id": dotfilesSession, "label": "config"] as NSDictionary)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return self.sessionCells(in: rig).compactMap { self.rowElement($0)?.accessibilityLabel }.contains { $0.hasPrefix("config,") }
+        })
+
+        // Confirmed, close sends the call and the row goes.
+        let renamed = try #require(sessionCells(in: rig).last)
+        _ = try customAction("Close Session", of: renamed).actionHandler?(try customAction("Close Session", of: renamed))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController is UIAlertController })
+        alert = try #require(rig.list.presentedViewController as? UIAlertController)
+        #expect(alert.title == "Close session \u{201C}config\u{201D}?")
+        try press("Close Session", in: alert)
+        await rig.list.dismiss(animated: false)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { world.requests("session.destroy").count == 1 })
+        #expect(try json(world.requests("session.destroy")[0]) == ["session_id": dotfilesSession] as NSDictionary)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return self.sessionCells(in: rig).count == 1
+        })
+    }
+
+    /// The row after the sessions makes one and opens it.
+    @Test func theNewSessionRowCreatesAndOpensTheShell() async throws {
+        let world = RexFakeWorld.preview()
+        let rig = try mountTab([rexHost], standIn: { _ in RexPreviewStreamHost(world: world) })
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[rexHost.id])
+        var opened: [RexPaneTarget] = []
+        follower.monitor.openPane = { opened.append($0) }
+        let id = "sshTerminal.rexList.\(rexHost.id.uuidString).new"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return self.actionCells(in: rig).contains { $0.accessibilityIdentifier == id }
+        })
+        let row = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == id })
+        #expect(row.accessibilityLabel == "New Rex Session")
+        try tap(row, in: rig)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { opened.count == 1 })
+        #expect(opened[0].sessionID == "session:new-1")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return self.sessionCells(in: rig).count == 3
+        })
     }
 
     @Test func theTabStopsReadingWhenItDisappearsAndReadsAgainOnReturn() async throws {

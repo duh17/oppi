@@ -188,6 +188,7 @@ final class SSHTerminalRexFollower {
     /// The screen shows again: sign in if the connection is gone.
     func appeared() {
         silentCache = nil
+        manageFailure = nil
         if !isConnected { markNeedsConnection() }
     }
 
@@ -274,6 +275,48 @@ final class SSHTerminalRexFollower {
         stopReading()
         session.closeRexSessions()
         markNeedsConnection()
+    }
+
+    /// A change to Rex (new, rename, close) is in flight, or the last one's
+    /// failure, shown under the heading until the next one or a refresh.
+    private(set) var managing = false
+    private(set) var manageFailure: String?
+
+    /// Rex can be changed now: it has been read, the stream is up, and no
+    /// other change is in flight.
+    var canManage: Bool { monitor.canManage && !managing }
+
+    private func manage(_ what: String, _ work: () async throws -> Void) async {
+        guard !managing else { return }
+        managing = true
+        manageFailure = nil
+        defer { managing = false }
+        do {
+            try await work()
+        } catch is CancellationError {
+        } catch {
+            manageFailure = "\(what) \(error.localizedDescription)"
+        }
+    }
+
+    /// Makes a session with a shell and opens it.
+    func createSession() async {
+        await manage("Could not create a session.") {
+            let pane = try await monitor.createSession()
+            monitor.openPane?(pane)
+        }
+    }
+
+    func rename(session sessionID: String, to label: String) async {
+        await manage("Could not rename the session.") {
+            try await monitor.setLabel(label.trimmingCharacters(in: .whitespacesAndNewlines), ofSession: sessionID)
+        }
+    }
+
+    func close(session sessionID: String) async {
+        await manage("Could not close the session.") {
+            try await monitor.destroy(session: sessionID)
+        }
     }
 
     /// The sessions whose panes the list shows. Kept for the follower's life,

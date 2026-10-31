@@ -230,7 +230,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 switch self?.rexRows[item]?.kind {
                 case .session:
                     collectionView.dequeueConfiguredReusableCell(using: rexSessionCell, for: indexPath, item: item)
-                case .pane, .tapToConnect:
+                case .pane, .tapToConnect, .newSession:
                     collectionView.dequeueConfiguredReusableCell(using: rexActionCell, for: indexPath, item: item)
                 default:
                     collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
@@ -472,7 +472,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             cell.indentationLevel = 1
             cell.accessibilityIdentifier = "\(prefix).\(windowID)"
             cell.accessibilityTraits = .header
-        case .session, .pane, .tapToConnect:
+        case .session, .pane, .tapToConnect, .newSession:
             break
         }
         cell.contentConfiguration = content
@@ -506,6 +506,19 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 value: pane.status.label,
                 hint: "Open this pane"
             ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
+        case .newSession(let busy):
+            content.text = busy ? "Working\u{2026}" : "New Rex Session"
+            content.textProperties.color = UIColor(busy ? palette.comment : palette.blue)
+            content.image = UIImage(systemName: "plus")
+            content.imageProperties.tintColor = UIColor(busy ? palette.comment : palette.blue)
+            cell.accessories = []
+            cell.indentationLevel = 0
+            cell.configureAction(
+                identifier: "\(prefix).new",
+                label: "New Rex Session",
+                value: busy ? "Working" : nil,
+                hint: "Makes a session with a shell and opens it"
+            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
         case .tapToConnect:
             content.text = "Tap to connect"
             content.textProperties.color = UIColor(palette.blue)
@@ -526,22 +539,60 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private func configureRexSession(_ cell: SSHTerminalRexListSessionCell, item: Item) {
         guard case .rexRow(let hostID, let id) = item, case .session(let session)? = rexRows[item]?.kind else { return }
         let themeID = sshTerminalThemeID
-        let palette = themeID.palette
-        var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
-        content.textProperties.font = .preferredFont(forTextStyle: .body)
-        content.text = session.title
-        content.secondaryText = session.detail
-        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-        cell.contentConfiguration = content
+        cell.contentConfiguration = nil
         cell.indentationLevel = 0
         cell.configureSession(
             session, identifier: "sshTerminal.rexList.\(hostID.uuidString).\(session.sessionID)", themeID: themeID,
-            actions: [],
+            actions: session.manages ? [
+                UIAccessibilityCustomAction(name: "Rename") { [weak self] _ in
+                    self?.renameRexSession(host: hostID, id: id)
+                    return true
+                },
+                UIAccessibilityCustomAction(name: "Close Session") { [weak self] _ in
+                    self?.closeRexSession(host: hostID, id: id)
+                    return true
+                },
+            ] : [],
             perform: { [weak self] in self?.activateRexRow(host: hostID, id: id) },
             toggle: { [weak self] in self?.toggleRexSession(host: hostID, id: id) }
         )
+    }
+
+    /// The session a row stands for and the follower that can change it now,
+    /// resolved when the action runs from the row's identity.
+    private func manageableSession(host hostID: UUID, id: String) -> (follower: SSHTerminalRexFollower, sessionID: String, name: String)? {
+        guard let follower = rexHosts[hostID]?.follower, follower.canManage,
+              case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return nil }
+        let label = follower.monitor.snapshot?.sessions.first { $0.sessionID == session.sessionID }?.label
+        return (follower, session.sessionID, label ?? "")
+    }
+
+    /// Rename: a text field with the session's name. An empty name gives the
+    /// session back the name Rex chose for it.
+    private func renameRexSession(host hostID: UUID, id: String) {
+        guard let target = manageableSession(host: hostID, id: id) else { return }
+        TextPrompt(
+            title: "Rename Session", message: "Leave it empty to use the name Rex chose.",
+            placeholder: "Session name", text: target.name, actionTitle: "Rename",
+            fieldIdentifier: "sshTerminal.rexList.rename.field", actionIdentifier: "sshTerminal.rexList.rename.confirm"
+        ).present(from: self) { name in
+            Task { await target.follower.rename(session: target.sessionID, to: name) }
+        }
+    }
+
+    /// Close asks first: every pane's program ends.
+    private func closeRexSession(host hostID: UUID, id: String) {
+        guard let target = manageableSession(host: hostID, id: id) else { return }
+        let name = target.name.isEmpty ? "Session" : target.name
+        Confirmation(
+            title: "Close session \u{201C}\(name)\u{201D}?",
+            message: "Every pane's program ends.",
+            actionTitle: "Close Session",
+            style: .alert,
+            actionIdentifier: "sshTerminal.rexList.close.confirm"
+        ).present(from: self, anchor: nil) {
+            Task { await target.follower.close(session: target.sessionID) }
+        }
     }
 
     /// Shows or hides a session's panes. Resolved from the row's identity when it runs.
@@ -562,6 +613,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case .pane(let pane):
             guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
             follower.open(session: pane.sessionID, pane: pane.blockID)
+        case .newSession:
+            guard follower.canManage else { return }
+            Task { await follower.createSession() }
         case .tapToConnect:
             follower.connect()
         default:
@@ -570,8 +624,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     private func swipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard let item = dataSource?.itemIdentifier(for: indexPath), case .host(let id) = item,
-              let profile = profiles.first(where: { $0.id == id }) else { return nil }
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
+        if case .rexRow(let hostID, let id) = item { return rexSwipeActions(host: hostID, id: id) }
+        guard case .host(let id) = item, let profile = profiles.first(where: { $0.id == id }) else { return nil }
         let delete = UIContextualAction(style: .destructive, title: "Delete Host") { [weak self] _, _, done in
             self?.confirmDelete(profile)
             done(true)
@@ -580,6 +635,25 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         // UIContextualAction is not UIAccessibilityIdentification: there is no
         // public accessibilityIdentifier (SwiftUI swipe had sshTerminal.host.delete).
         let config = UISwipeActionsConfiguration(actions: [delete])
+        config.performsFirstActionWithFullSwipe = false
+        return config
+    }
+
+    /// A session's swipe: Rename, and Close, which asks first (so a full swipe
+    /// must not run it, and the row stays until the person confirms). Only
+    /// while Rex can be changed.
+    private func rexSwipeActions(host hostID: UUID, id: String) -> UISwipeActionsConfiguration? {
+        guard manageableSession(host: hostID, id: id) != nil else { return nil }
+        let rename = UIContextualAction(style: .normal, title: "Rename") { [weak self] _, _, done in
+            self?.renameRexSession(host: hostID, id: id)
+            done(false)
+        }
+        rename.backgroundColor = UIColor(sshTerminalThemeID.palette.blue)
+        let close = UIContextualAction(style: .destructive, title: "Close") { [weak self] _, _, done in
+            self?.closeRexSession(host: hostID, id: id)
+            done(false)
+        }
+        let config = UISwipeActionsConfiguration(actions: [close, rename])
         config.performsFirstActionWithFullSwipe = false
         return config
     }

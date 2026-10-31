@@ -505,6 +505,61 @@ final class RouterModalSitesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// A session on the Terminal tab is closed only after a confirmation,
+    /// renamed from an alert (the list follows Rex's event), and a new one is
+    /// made and opened by the row after the sessions.
+    func testTerminalTabClosesRenamesAndCreatesRexSessions() {
+        launch(screen: "ssh-terminal-rex-list")
+        let prefix = "sshTerminal.rexList.5E5E5E5E-0000-4000-8000-000000000001."
+        let dotfiles = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
+        XCTAssertTrue(dotfiles.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
+
+        // Close asks first, and Cancel leaves the session where it is.
+        dotfiles.swipeLeft()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "A swipe must offer Close")
+        XCTAssertTrue(app.buttons["Rename"].exists, "A swipe must offer Rename")
+        attachScreenshot("terminal-tab-rex-swipe")
+        close.tap()
+        let confirm = app.alerts["Close session \u{201C}dotfiles\u{201D}?"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Close must ask first")
+        XCTAssertTrue(confirm.staticTexts["Every pane's program ends."].exists)
+        attachScreenshot("terminal-tab-rex-close-confirm")
+        confirm.buttons["Cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(of: confirm))
+        XCTAssertTrue(dotfiles.exists, "Cancel must leave the session")
+
+        // Rename: the name goes to Rex and the row follows its event.
+        dotfiles.swipeLeft()
+        app.buttons["Rename"].tap()
+        let field = app.textFields["sshTerminal.rexList.rename.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename must ask for a name")
+        XCTAssertEqual(field.value as? String, "dotfiles")
+        attachScreenshot("terminal-tab-rex-rename")
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 12) + "config")
+        // The alert's preferred button is in the tree twice, one inside the other, with the same identifier.
+        app.buttons["sshTerminal.rexList.rename.confirm"].firstMatch.tap()
+        XCTAssertTrue(waitFor(dotfiles.label.hasPrefix("config,"), timeout: 10), "The row must take the new name from Rex's event")
+
+        // Closing it, confirmed, removes it.
+        dotfiles.swipeLeft()
+        app.buttons["Close"].tap()
+        let again = app.alerts["Close session \u{201C}config\u{201D}?"]
+        XCTAssertTrue(again.waitForExistence(timeout: 5))
+        // Same nested duplicate of the alert's preferred button as Rename's.
+        app.buttons["sshTerminal.rexList.close.confirm"].firstMatch.tap()
+        XCTAssertTrue(waitForDisappearance(of: dotfiles, timeout: 10), "A closed session must leave the list")
+        attachScreenshot("terminal-tab-rex-closed")
+
+        // New Rex Session opens the shell it makes.
+        let new = app.cells[prefix + "new"]
+        XCTAssertTrue(new.waitForExistence(timeout: 5), "New Rex Session is missing")
+        new.tap()
+        XCTAssertTrue(app.buttons["sshTerminal.bar.rexPanes"].waitForExistence(timeout: 15), "New Rex Session must open the new shell")
+        assertRunning()
+    }
+
     func testProgramStatusPopoverOpensAndClosesOnOutsideTap() {
         launch(screen: "ssh-terminal-status-blocked")
         let glyph = app.buttons["sshTerminal.programStatus"]
