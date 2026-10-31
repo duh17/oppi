@@ -103,6 +103,63 @@ extension APIClient {
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
+    /// CAS patch of an Agent's prompt alone, as the in-app editor writes it: the
+    /// text and its append/replace mode, nothing else. An empty text clears the
+    /// custom prompt instead of failing validation (the server refuses an empty one).
+    func updateAgentInstructions(
+        agentId: String,
+        expectedVersion: Int,
+        mode: AgentInstructionMode,
+        text: String
+    ) async throws -> StoredAgentDefinition {
+        struct Instructions: Encodable {
+            let mode: AgentInstructionMode
+            let text: String
+        }
+        struct Patch: Encodable {
+            let instructions: Instructions?
+
+            private enum CodingKeys: String, CodingKey { case instructions }
+
+            // An empty prompt must reach the server as an explicit null (which
+            // clears the custom prompt), not as an omitted field.
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                if let instructions {
+                    try c.encode(instructions, forKey: .instructions)
+                } else {
+                    try c.encodeNil(forKey: .instructions)
+                }
+            }
+        }
+        let encodedId = try percentEncodePathSegment(agentId)
+        let patchBody = Patch(
+            instructions: text.isEmpty ? nil : Instructions(mode: mode, text: text)
+        )
+        let data = try await patch(
+            "/agents/\(encodedId)?expectedVersion=\(expectedVersion)",
+            body: patchBody
+        )
+        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+    }
+
+    /// CAS patch of a Schedule's prompt alone. The prompt is required, so the
+    /// server refuses an empty one.
+    func updateAgentSchedulePrompt(
+        scheduleId: String,
+        expectedVersion: Int,
+        prompt: String
+    ) async throws -> AgentScheduleSummary {
+        struct Action: Encodable { let prompt: String }
+        struct Patch: Encodable { let action: Action }
+        let encodedId = try percentEncodePathSegment(scheduleId)
+        let data = try await patch(
+            "/schedules/\(encodedId)?expectedVersion=\(expectedVersion)",
+            body: Patch(action: Action(prompt: prompt))
+        )
+        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+    }
+
     func updateAgentNative(
         agentId: String,
         name: String,
@@ -116,11 +173,13 @@ extension APIClient {
         previouslyHadLaunchConstraints: Bool = false,
         tools: [String]? = nil,
         excludeTools: [String]? = nil,
-        noTools: AgentNoToolsMode? = nil
+        noTools: AgentNoToolsMode? = nil,
+        expectedVersion: Int? = nil
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
+        let query = expectedVersion.map { "?expectedVersion=\($0)" } ?? ""
         let data = try await patch(
-            "/agents/\(encodedAgentId)",
+            "/agents/\(encodedAgentId)\(query)",
             body: NativeAgentUpdateBody(
                 name: name,
                 description: description,
@@ -268,11 +327,13 @@ extension APIClient {
         scheduleId: String,
         name: String,
         trigger: AgentScheduleTrigger,
-        action: AgentScheduleAction
+        action: AgentScheduleAction,
+        expectedVersion: Int? = nil
     ) async throws -> AgentScheduleSummary {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
+        let query = expectedVersion.map { "?expectedVersion=\($0)" } ?? ""
         let data = try await patch(
-            "/schedules/\(encodedScheduleId)",
+            "/schedules/\(encodedScheduleId)\(query)",
             body: NativeScheduleUpdateBody(
                 name: name,
                 trigger: trigger,

@@ -233,9 +233,12 @@ final class SettingsSweepPreviewController: PreviewRootController {
             if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] != "1" {
                 Self.seedSSHHosts()
             }
-        case "agents":
+        case "agents", "agents-prompt-conflict":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
+            if page == "agents-prompt-conflict" {
+                Self.seedConflictingAgentPromptDraft(serverId: server.id)
+            }
         case "pairing-approval":
             connection.pendingPairingApprovals = [Self.pendingApproval]
         default:
@@ -392,7 +395,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // `-failed`: the schedules request answers 404; `-loading` is held by
             // `SCREENSHOT_SWEEP_READ_DELAY`.
             return stack { ScheduleListViewController(root: root) }
-        case "agents":
+        case "agents", "agents-prompt-conflict":
             return stack { AgentListViewController(root: root) }
         case "agents-pi", "agents-pi-file":
             return stack { PiAgentDetailViewController(root: root) }
@@ -467,6 +470,19 @@ final class SettingsSweepPreviewController: PreviewRootController {
         ScreenshotVolatileDefaults.apply(values)
     }
 
+    /// An Agent's prompt with unsaved edits from an older version on this
+    /// device: the editor opens in Conflict, the state a save that lost a race
+    /// reaches, so a capture can show the banner.
+    private static func seedConflictingAgentPromptDraft(serverId: String) {
+        let identity = WorkspaceFileEditIdentity(serverId: serverId, agentId: agent.id)
+        try? WorkspaceFileDraftStore.shared.save(WorkspaceFileDraft(
+            identity: identity,
+            baseEtag: String(agent.version - 1),
+            bytes: Data("Review the change against the HIG, and its copy too.".utf8),
+            updatedAt: Date()
+        ))
+    }
+
     private static let workspace = Workspace(
         id: "preview-ws", name: "oppi-dev", createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
     )
@@ -495,6 +511,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             workspaceId: "preview-ws", prompt: "Summarize yesterday's sessions.", agentId: nil,
             model: nil, thinkingLevel: nil, worktreeId: nil, name: nil
         ),
+        version: 0,
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )
 
@@ -508,6 +525,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         struct AgentBody: Encodable { let agent: StoredAgentDefinition }
         struct Schedules: Encodable { let schedules: [AgentScheduleSummary] }
         struct ScheduleBody: Encodable { let schedule: AgentSchedule }
+        struct ScheduleSummaryBody: Encodable { let schedule: AgentScheduleSummary }
         struct McpFlowBody: Encodable { let flow: McpAuthFlowSnapshot }
         struct Providers: Encodable { let providers: [ProviderAuthProviderStatus] }
 
@@ -521,6 +539,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             action: AgentScheduleActionSummary(
                 type: .newSession, workspaceId: "preview-ws", sessionId: nil, agentId: nil, promptChars: 31
             ),
+            version: schedule.version,
             createdAt: schedule.createdAt, updatedAt: schedule.updatedAt, archivedAt: nil
         )
         let mcpFlow = McpAuthFlowSnapshot(
@@ -603,6 +622,38 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
+        // A save answers with the record at its next version and the text the
+        // request carried, as the server does: the editor sees Saved and the
+        // screen behind it the change. The saved Agent keeps the fox the icon
+        // capture looks for.
+        SettingsSweepFixtureURLProtocol.patchHandler = { path, body in
+            let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            if path == "/agents/\(agent.id)" {
+                var saved = agent
+                if let instructions = object["instructions"] as? [String: Any] {
+                    saved.definition.instructions = AgentInstructions(
+                        mode: (instructions["mode"] as? String) == "replace" ? .replace : .append,
+                        text: instructions["text"] as? String ?? ""
+                    )
+                } else if object.keys.contains("instructions") {
+                    saved.definition.instructions = nil
+                }
+                saved.icon = .emoji("🦊")
+                saved.definition.icon = .emoji("🦊")
+                saved.version = agent.version + 1
+                return json(AgentBody(agent: saved))
+            }
+            if path == "/schedules/\(schedule.id)" {
+                var saved = scheduleSummary
+                saved.version = schedule.version + 1
+                if let action = object["action"] as? [String: Any],
+                   let prompt = action["prompt"] as? String {
+                    saved.action.promptChars = prompt.count
+                }
+                return json(ScheduleSummaryBody(schedule: saved))
+            }
+            return nil
+        }
         // The catalog request answers 404, so a sync fails.
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
@@ -643,6 +694,9 @@ final class SettingsSweepWrites {
 /// `"METHOD /path"` key answers that method first. Anything else is a 404.
 final class SettingsSweepFixtureURLProtocol: URLProtocol {
     nonisolated(unsafe) static var routes: [String: Data] = [:]
+    /// Answers a write from its own body (a saved record at its next version).
+    /// Nil falls through to `routes`.
+    nonisolated(unsafe) static var patchHandler: ((String, Data) -> Data?)?
     /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
     private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
@@ -681,6 +735,21 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     private func answer() {
         let path = request.url?.path ?? ""
         let methodPrefix = "\(request.httpMethod ?? "GET") "
+        if let patchHandler = Self.patchHandler,
+           let answered = patchHandler(path, Self.requestBody(of: request)) {
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(fileURLWithPath: "/"),
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )
+            if let response {
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            }
+            client?.urlProtocol(self, didLoad: answered)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
             ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
         var headers = ["Content-Type": "application/json"]
@@ -703,7 +772,7 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     override func stopLoading() {}
 
     /// URLSession hands a protocol its body as a stream.
-    private static func sortedJSONBody(of request: URLRequest) -> String {
+    private static func requestBody(of request: URLRequest) -> Data {
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open()
@@ -715,6 +784,12 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
                 data.append(buffer, count: count)
             }
         }
+        return data
+    }
+
+    /// URLSession hands a protocol its body as a stream.
+    private static func sortedJSONBody(of request: URLRequest) -> String {
+        let data = requestBody(of: request)
         guard let object = try? JSONSerialization.jsonObject(with: data),
               let sorted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
             return ""

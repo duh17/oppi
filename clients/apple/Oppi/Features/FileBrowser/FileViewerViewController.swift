@@ -1106,7 +1106,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         // Reappearing over an open editor must not reload over the buffer.
         if editOwner.isEditing,
            let identity = editOwner.identity,
-           identity == editSubject(for: currentSelection.path).editIdentity {
+           identity == editSubject(for: currentSelection.path).editIdentity(serverId: configuration.serverId) {
             return
         }
 

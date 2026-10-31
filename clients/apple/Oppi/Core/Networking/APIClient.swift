@@ -2060,9 +2060,12 @@ actor APIClient: ClientLogUploading {
     func fileEditingCapability(
         for owner: WorkspaceFileEditIdentity.Owner
     ) -> ServerInfo.WorkspaceFileEditingCapability? {
-        let capability = switch owner {
+        let capability: ServerInfo.WorkspaceFileEditingCapability? = switch owner {
         case .workspace: workspaceFileEditing
         case .skill: skillFileEditing
+        // A record's prompt is edited through its own route, which every server of
+        // this version answers; it has no file-editing capability to check.
+        case .agent, .schedule: nil
         }
         guard let capability, capability.version >= 1, capability.maxBytes > 0 else { return nil }
         return capability
@@ -2071,7 +2074,7 @@ actor APIClient: ClientLogUploading {
     /// The editor's read: the exact bytes with their strong ETag. Only on
     /// servers that advertise editing for the identity's owner.
     func readFileForEditing(_ identity: WorkspaceFileEditIdentity) async throws -> WorkspaceFileDiskSnapshot {
-        guard fileEditingCapability(for: identity.owner) != nil else {
+        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil else {
             throw CocoaError(.featureUnsupported)
         }
         let url = try makeFileEditURL(identity)
@@ -2105,7 +2108,8 @@ actor APIClient: ClientLogUploading {
         bytes: Data,
         ifMatch: String
     ) async -> WorkspaceFileWriteOutcome {
-        guard fileEditingCapability(for: identity.owner) != nil, !ifMatch.isEmpty, ifMatch != "*" else {
+        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil,
+              !ifMatch.isEmpty, ifMatch != "*" else {
             return .rejected(status: 0, message: "Editing is not available on this server")
         }
         let data: Data
@@ -2147,6 +2151,7 @@ actor APIClient: ClientLogUploading {
         let origin: CurrentFileOrigin = switch identity.owner {
         case .workspace(let workspaceId, let worktreeId): .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
         case .skill(let skillId): .skill(skillId: skillId)
+        case .agent, .schedule: throw CocoaError(.featureUnsupported)
         }
         return try makeCurrentFileURL(origin, path: identity.path)
     }

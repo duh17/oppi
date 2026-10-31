@@ -494,7 +494,12 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             id: showsDefinitionReview && agent != nil ? "definition" : nil,
             presentation: .sheet,
             root: root,
-            clear: { [weak self] in self?.showsDefinitionReview = false },
+            clear: { [weak self] in
+                self?.showsDefinitionReview = false
+                // The prompt may have been edited in place: the row and the version
+                // this page holds follow the server.
+                self?.setNeedsLoad()
+            },
             screen: { [weak self] in
                 .controller {
                     ReviewableControlMarkdownViewController(
@@ -503,7 +508,11 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                         targetId: agent?.id ?? "",
                         targetName: agent?.name ?? "",
                         sourceLabel: "\(agent?.name ?? "") definition",
-                        sourcePath: "Agents/\(agent?.id ?? "")/Definition.md"
+                        sourcePath: "Agents/\(agent?.id ?? "")/Definition.md",
+                        // The pencil edits the prompt alone, not the pieced-together
+                        // document, and keeps the Agent's append/replace mode.
+                        subject: agent.map { .agentInstructions(agentId: $0.id) } ?? .snapshot,
+                        agentInstructionMode: agent?.definition.instructions?.mode ?? .append
                     )
                 }
             }

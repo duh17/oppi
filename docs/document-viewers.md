@@ -123,7 +123,11 @@ The editor has syntax color, line numbers, a current-line band, a status line (L
 
 ## Editing Skill files
 
-The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's pencil opens the editor on it, and the **…** beside the pencil holds **Edit with Session**, which starts an Oppi Control session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills offer only **Edit with Session** or stay read-only, as does every Skill on a server without Skill editing. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only. The Agent definition, Schedule prompt, and Pi `SYSTEM.md` readers have no pencil yet; their **…** holds **Edit with Session**.
+The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's pencil opens the editor on it, and the **…** beside the pencil holds **Edit with Session**, which starts an Oppi Control session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills offer only **Edit with Session** or stay read-only, as does every Skill on a server without Skill editing. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only.
+
+## Editing an Agent's or a schedule's prompt
+
+An Agent's prompt reader and a schedule's prompt reader have the same pencil and **…**, and the pencil opens the same editor on the prompt itself, not on the definition the reader pieces together. An Agent's prompt is its custom system prompt: the editor shows **Append** or **Replace**, which is how Pi reads it, and an Agent with no custom prompt opens on an empty one. Emptying the prompt saves the Agent without a custom prompt. A schedule's prompt is the text a run sends, so it is never empty. Saves carry the version the editor read: if the Agent or schedule changed on the server first, autosave stops and the editor shows **Conflict**, and **Review Changes** compares the server's version with your draft. The Pi `SYSTEM.md` reader has no pencil; its **…** holds **Edit with Session**.
 
 ## Export
 

@@ -164,16 +164,20 @@ final class ScheduleEditDraft {
                 scheduleId: schedule.id,
                 name: name,
                 trigger: trigger,
-                action: action
+                action: action,
+                // The version this form opened: a prompt edited elsewhere meanwhile
+                // is a conflict, not a silent overwrite.
+                expectedVersion: schedule.version
             )
             var updated = schedule
             updated.name = summary.name
             updated.trigger = trigger
             updated.action = action
+            updated.version = summary.version
             updated.updatedAt = summary.updatedAt
             return Saved(schedule: updated, summary: summary)
         } catch {
-            self.error = error.localizedDescription
+            self.error = RecordVersionConflict.message(for: error) ?? error.localizedDescription
             return nil
         }
     }

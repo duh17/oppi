@@ -1,22 +1,37 @@
 import CryptoKit
 import Foundation
 
-/// One editable file: server + owner + owner-relative path. A workspace file
+/// One editable document: server + owner + owner-relative path. A workspace file
 /// names its checkout (a nil worktree means main; a set worktree never falls
-/// back to main). A Skill file is one of an editable Skill's own files. No other
-/// origin (host, session) is editable.
+/// back to main). A Skill file is one of an editable Skill's own files. An Agent
+/// prompt and a Schedule prompt are records the editor writes through their own
+/// endpoints, tagged by the record's version. No other origin (host, session) is
+/// editable.
 struct WorkspaceFileEditIdentity: Hashable, Sendable {
-    /// The `/files/current` origin that reads and writes the file.
+    /// What reads and writes the document.
     enum Owner: Hashable, Sendable {
-        /// `origin=workspace`.
+        /// `origin=workspace` on `/files/current`.
         case workspace(id: String, worktreeId: String?)
-        /// `origin=skill`.
+        /// `origin=skill` on `/files/current`.
         case skill(id: String)
+        /// An Agent's `instructions.text`, read and written with `GET`/`PATCH /agents/:id`.
+        case agent(id: String)
+        /// A Schedule's `action.prompt`, read and written with `GET`/`PATCH /schedules/:id`.
+        case schedule(id: String)
+
+        /// A document served by `/files/current`, which the server advertises
+        /// editing for. A record's prompt is edited through its own route.
+        var isFile: Bool {
+            switch self {
+            case .workspace, .skill: true
+            case .agent, .schedule: false
+            }
+        }
     }
 
     let serverId: String
     let owner: Owner
-    /// Workspace- or Skill-relative path.
+    /// Workspace- or Skill-relative path; the document's name for a record's prompt.
     let path: String
 
     init(serverId: String, workspaceId: String, worktreeId: String?, path: String) {
@@ -32,12 +47,27 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         self.path = path
     }
 
+    init(serverId: String, agentId: String) {
+        self.serverId = serverId
+        self.owner = .agent(id: agentId)
+        // A name for the diff, the grammar, and the conflict sheet.
+        self.path = "Instructions.md"
+    }
+
+    init(serverId: String, scheduleId: String) {
+        self.serverId = serverId
+        self.owner = .schedule(id: scheduleId)
+        self.path = "Prompt.md"
+    }
+
     /// Stable file-name key for protected draft storage.
     var storageKey: String {
         let parts: [String] = switch owner {
         // The workspace key predates Skill files; changing it would strand drafts.
         case .workspace(let workspaceId, let worktreeId): ["v1", serverId, workspaceId, worktreeId ?? "", path]
         case .skill(let skillId): ["skill-v1", serverId, skillId, path]
+        case .agent(let agentId): ["agent-v1", serverId, agentId]
+        case .schedule(let scheduleId): ["schedule-v1", serverId, scheduleId]
         }
         let raw = parts.joined(separator: "\u{0}")
         return SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -47,14 +77,18 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
 /// Flat keys, so drafts stored before Skill files decode as workspace files.
 extension WorkspaceFileEditIdentity: Codable {
     private enum CodingKeys: String, CodingKey {
-        case serverId, workspaceId, worktreeId, skillId, path
+        case serverId, workspaceId, worktreeId, skillId, agentId, scheduleId, path
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let serverId = try container.decode(String.self, forKey: .serverId)
         let path = try container.decode(String.self, forKey: .path)
-        if let skillId = try container.decodeIfPresent(String.self, forKey: .skillId) {
+        if let agentId = try container.decodeIfPresent(String.self, forKey: .agentId) {
+            self.init(serverId: serverId, agentId: agentId)
+        } else if let scheduleId = try container.decodeIfPresent(String.self, forKey: .scheduleId) {
+            self.init(serverId: serverId, scheduleId: scheduleId)
+        } else if let skillId = try container.decodeIfPresent(String.self, forKey: .skillId) {
             self.init(serverId: serverId, skillId: skillId, path: path)
         } else {
             self.init(
@@ -76,6 +110,10 @@ extension WorkspaceFileEditIdentity: Codable {
             try container.encodeIfPresent(worktreeId, forKey: .worktreeId)
         case .skill(let skillId):
             try container.encode(skillId, forKey: .skillId)
+        case .agent(let agentId):
+            try container.encode(agentId, forKey: .agentId)
+        case .schedule(let scheduleId):
+            try container.encode(scheduleId, forKey: .scheduleId)
         }
     }
 }

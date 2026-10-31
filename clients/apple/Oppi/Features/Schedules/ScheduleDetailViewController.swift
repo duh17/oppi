@@ -517,7 +517,12 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             id: showPromptReader && schedule != nil ? "prompt" : nil,
             presentation: .sheet,
             root: root,
-            clear: { [weak self] in self?.showPromptReader = false },
+            clear: { [weak self] in
+                self?.showPromptReader = false
+                // The prompt may have been edited in place: the row and the version
+                // this page holds follow the server.
+                self?.setNeedsLoad()
+            },
             screen: {
                 .controller {
                     // Opened only from the loaded schedule's prompt row.
@@ -528,7 +533,10 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                         targetId: schedule.id,
                         targetName: schedule.name,
                         sourceLabel: "\(schedule.name) prompt",
-                        sourcePath: "Schedules/\(schedule.id)/Prompt.md"
+                        sourcePath: "Schedules/\(schedule.id)/Prompt.md",
+                        // The pencil edits the schedule's own prompt, saved against
+                        // the version this screen read.
+                        subject: .schedulePrompt(scheduleId: schedule.id)
                     )
                 }
             }

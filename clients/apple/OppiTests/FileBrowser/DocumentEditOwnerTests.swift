@@ -111,6 +111,7 @@ struct DocumentEditOwnerTests {
 
     private func owner(
         subject: DocumentEditSubject,
+        serverId: String? = nil,
         capability: ServerInfo.WorkspaceFileEditingCapability?,
         snapshot: WorkspaceFileDiskSnapshot = WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""),
         outcome: WorkspaceFileReadOutcome? = nil,
@@ -133,6 +134,7 @@ struct DocumentEditOwnerTests {
         )
         return DocumentEditOwner(
             subject: subject,
+            serverId: serverId,
             agentAction: agentAction,
             backend: { backend },
             draftStore: draftStore ?? self.draftStore(),
@@ -371,5 +373,74 @@ struct DocumentEditOwnerTests {
         owner.beginEditing()
         #expect(owner.isEditing)
         #expect(owner.session?.status == .deleted, "reopening never writes")
+    }
+
+    // MARK: A record's prompt
+
+    /// An Agent's prompt is a document the owner can open, and its editor
+    /// carries Pi's append/replace mode.
+    @Test func agentPromptOpensTheEditorWithItsModeControl() async {
+        let owner = owner(
+            subject: .agentInstructions(agentId: "agent-1"),
+            serverId: "srv",
+            capability: capability,
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data("Review the diff.".utf8), etag: "2"),
+            transport: savedTransport
+        )
+
+        #expect(await owner.read() == .bytes(
+            WorkspaceFileDiskSnapshot(bytes: Data("Review the diff.".utf8), etag: "2"),
+            draftText: nil
+        ))
+        #expect(owner.identity == WorkspaceFileEditIdentity(serverId: "srv", agentId: "agent-1"))
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"])
+
+        owner.beginEditing()
+        let page = owner.makeEditorPage(checkoutSubtitle: nil)
+        page?.loadViewIfNeeded()
+        #expect(page?.modeControl != nil, "an Agent's prompt shows the mode control")
+        #expect(page?.modeControl?.selectedSegmentIndex == 0, "a prompt that appends opens on Append")
+        #expect(page?.modeControl?.accessibilityValue == "Append to Pi's prompt")
+
+        page?.modeControl?.selectedSegmentIndex = 1
+        page?.modeControl?.sendActions(for: .valueChanged)
+        #expect(owner.agentInstructionMode == .replace, "the control is the owner's mode")
+        #expect(page?.modeControl?.accessibilityValue == "Replace Pi's prompt")
+    }
+
+    /// A Schedule's prompt has no mode, and neither does a file.
+    @Test func onlyAnAgentPromptShowsTheModeControl() async {
+        let schedule = owner(
+            subject: .schedulePrompt(scheduleId: "schedule-1"),
+            serverId: "srv",
+            capability: capability,
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data("Summarize.".utf8), etag: "4"),
+            transport: savedTransport
+        )
+        _ = await schedule.read()
+        schedule.beginEditing()
+        let schedulePage = schedule.makeEditorPage(checkoutSubtitle: nil)
+        schedulePage?.loadViewIfNeeded()
+        #expect(schedulePage?.modeControl == nil)
+        #expect(schedule.identity == WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-1"))
+
+        let file = owner(subject: workspaceSubject(), capability: capability, transport: savedTransport)
+        _ = await file.read()
+        file.beginEditing()
+        let filePage = file.makeEditorPage(checkoutSubtitle: nil)
+        filePage?.loadViewIfNeeded()
+        #expect(filePage?.modeControl == nil)
+    }
+
+    /// A prompt subject with no server has nothing to write, so no pencil.
+    @Test func promptWithoutAServerHasNoPencil() async {
+        let owner = owner(
+            subject: .agentInstructions(agentId: "agent-1"),
+            capability: capability,
+            agentAction: DocumentAgentEditAction { }
+        )
+
+        #expect(await owner.read() == .ownRead)
+        #expect(identifiers(owner) == ["document.edit.more"])
     }
 }

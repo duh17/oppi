@@ -15,7 +15,13 @@ final class DocumentEditEditorPage: UIViewController {
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     /// Applies Use Disk Version to the owner's state, whichever sheet asked.
     private let onUseDisk: @MainActor () -> Void
+    /// The Agent prompt's append/replace mode, when this document has one.
+    private let instructionMode: AgentInstructionMode?
+    private let onInstructionModeChange: @MainActor (AgentInstructionMode) -> Void
     private let checkoutLabel = UILabel()
+    /// Made in `viewDidLoad`, where the change can reach the owner.
+    private(set) var modeControl: UISegmentedControl?
+    private let modeLabel = UILabel()
     /// The banner's two controls are the page's own sheets.
     private lazy var banner = WorkspaceFileEditBannerView(
         session: session,
@@ -31,6 +37,8 @@ final class DocumentEditEditorPage: UIViewController {
         session: WorkspaceFileEditSession,
         checkoutSubtitle: String?,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        instructionMode: AgentInstructionMode? = nil,
+        onInstructionModeChange: @escaping @MainActor (AgentInstructionMode) -> Void = { _ in },
         onDone: @escaping @MainActor () -> Void,
         onTogglePreview: @escaping @MainActor () -> Void,
         makePreview: @escaping (String) -> UIViewController,
@@ -39,6 +47,8 @@ final class DocumentEditEditorPage: UIViewController {
         self.session = session
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
         self.onUseDisk = onUseDisk
+        self.instructionMode = instructionMode
+        self.onInstructionModeChange = onInstructionModeChange
         editor = WorkspaceFileEditorViewController(
             session: session,
             onDone: onDone,
@@ -63,6 +73,18 @@ final class DocumentEditEditorPage: UIViewController {
         return barItems.items
     }
 
+    /// A reader with no editor of its own presents this page in a navigation
+    /// stack of its own; then the page puts its bar on its own navigation item.
+    /// (Embedded in a viewer, the viewer's bar is the one that shows them.)
+    override func updateProperties() {
+        super.updateProperties()
+        guard navigationController?.topViewController === self else { return }
+        let items = barButtons
+        if navigationItem.rightBarButtonItems?.elementsEqual(items, by: ===) != true {
+            navigationItem.rightBarButtonItems = items
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         let header = UIStackView()
@@ -75,6 +97,21 @@ final class DocumentEditEditorPage: UIViewController {
         checkoutLabel.adjustsFontForContentSizeCategory = true
         checkoutLabel.accessibilityIdentifier = "workspace-file-editor.checkout"
         header.addArrangedSubview(Self.padded(checkoutLabel, horizontal: 12, vertical: 4))
+
+        if let instructionMode {
+            let control = Self.makeModeControl(instructionMode) { [weak self] mode in
+                self?.onInstructionModeChange(mode)
+            }
+            modeControl = control
+            modeLabel.text = String(localized: "Pi's system prompt")
+            modeLabel.font = .preferredFont(forTextStyle: .caption1)
+            modeLabel.adjustsFontForContentSizeCategory = true
+            modeLabel.numberOfLines = 0
+            let row = UIStackView(arrangedSubviews: [modeLabel, control])
+            row.axis = .vertical
+            row.spacing = 4
+            header.addArrangedSubview(Self.padded(row, horizontal: 12, vertical: 4))
+        }
 
         header.addArrangedSubview(banner)
 
@@ -190,5 +227,51 @@ final class DocumentEditEditorPage: UIViewController {
             label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontal),
         ])
         return container
+    }
+
+    private static func padded(_ content: UIView, horizontal: CGFloat, vertical: CGFloat) -> UIView {
+        let container = UIView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: container.topAnchor, constant: vertical),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vertical),
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontal),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontal),
+        ])
+        return container
+    }
+
+    /// Append or replace: which half of Pi's system prompt this text is. Short
+    /// titles for the control; the segments speak the full choice.
+    private static func makeModeControl(
+        _ mode: AgentInstructionMode,
+        onChange: @escaping @MainActor (AgentInstructionMode) -> Void
+    ) -> UISegmentedControl {
+        let control = UISegmentedControl(items: [
+            String(localized: "Append"),
+            String(localized: "Replace"),
+        ])
+        control.selectedSegmentIndex = mode == .append ? 0 : 1
+        control.accessibilityIdentifier = "agentPromptEditor.mode"
+        control.accessibilityLabel = String(localized: "Prompt Mode")
+        control.accessibilityValue = modeTitle(mode)
+        control.addAction(
+            UIAction { [weak control] _ in
+                guard let control else { return }
+                let chosen: AgentInstructionMode = control.selectedSegmentIndex == 1 ? .replace : .append
+                control.accessibilityValue = modeTitle(chosen)
+                onChange(chosen)
+            },
+            for: .valueChanged
+        )
+        return control
+    }
+
+    private static func modeTitle(_ mode: AgentInstructionMode) -> String {
+        switch mode {
+        case .append: String(localized: "Append to Pi's prompt")
+        case .replace: String(localized: "Replace Pi's prompt")
+        }
     }
 }

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SwiftUI
 import Testing
@@ -157,6 +158,53 @@ struct WorkspaceFileEditSessionTests {
         // A Skill id that equals a workspace id is still a different file.
         let skill = WorkspaceFileEditIdentity(serverId: "s", skillId: "w", path: "a.md")
         #expect(skill.storageKey != main.storageKey)
+        // A record's prompt is its own draft: per server, per record, and apart
+        // from any file whose id happens to match.
+        let agent = WorkspaceFileEditIdentity(serverId: "s", agentId: "w")
+        let schedule = WorkspaceFileEditIdentity(serverId: "s", scheduleId: "w")
+        #expect(agent.storageKey != main.storageKey)
+        #expect(agent.storageKey != skill.storageKey)
+        #expect(agent.storageKey != schedule.storageKey)
+        #expect(agent.storageKey != WorkspaceFileEditIdentity(serverId: "t", agentId: "w").storageKey)
+        #expect(schedule.storageKey != WorkspaceFileEditIdentity(serverId: "t", scheduleId: "w").storageKey)
+    }
+
+    /// A prompt's draft key is its own namespace, and the file keys drafts
+    /// already on disk are stored under are byte-identical.
+    @Test func promptDraftKeysAreANewNamespaceAndFileKeysAreUnchanged() {
+        let agent = WorkspaceFileEditIdentity(serverId: "srv", agentId: "agent-design")
+        let schedule = WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-nightly")
+
+        func digest(_ parts: [String]) -> String {
+            let raw = parts.joined(separator: "\u{0}")
+            return SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        #expect(agent.storageKey == digest(["agent-v1", "srv", "agent-design"]))
+        #expect(schedule.storageKey == digest(["schedule-v1", "srv", "schedule-nightly"]))
+        // The old namespaces still produce the old keys.
+        #expect(WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md").storageKey
+            == digest(["v1", "srv", "w1", "", "notes.md"]))
+        #expect(WorkspaceFileEditIdentity(serverId: "srv", skillId: "skill_1", path: "refs/a.md").storageKey
+            == digest(["skill-v1", "srv", "skill_1", "refs/a.md"]))
+    }
+
+    /// A prompt identity round-trips through the draft store's encoding, and the
+    /// path it carries is its own name (the prompt text is not in the key).
+    @Test func promptIdentitiesRoundTrip() throws {
+        let agent = WorkspaceFileEditIdentity(serverId: "srv", agentId: "agent-design")
+        let schedule = WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-nightly")
+        let decodedAgent = try JSONDecoder().decode(
+            WorkspaceFileEditIdentity.self,
+            from: JSONEncoder().encode(agent)
+        )
+        let decodedSchedule = try JSONDecoder().decode(
+            WorkspaceFileEditIdentity.self,
+            from: JSONEncoder().encode(schedule)
+        )
+        #expect(decodedAgent == agent)
+        #expect(decodedSchedule == schedule)
+        #expect(agent.path == "Instructions.md")
+        #expect(schedule.path == "Prompt.md")
     }
 
     @Test func draftsStoredBeforeSkillFilesStillDecodeAndSkillDraftsRoundTrip() throws {

@@ -318,14 +318,17 @@ final class AgentNativeEditDraft {
                 previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil,
                 tools: toolPolicy.tools,
                 excludeTools: toolPolicy.excluded,
-                noTools: toolPolicy.noTools
+                noTools: toolPolicy.noTools,
+                // The version this form opened: a prompt edited in the editor
+                // meanwhile is a conflict, not a silent overwrite.
+                expectedVersion: agent.version
             )
             if let serverId = connection.currentServerId {
                 AppPreferences.ChatDisplay.setAgentStyle(chatStyle, serverId: serverId, agentId: agent.id)
             }
             return updated
         } catch {
-            self.error = error.localizedDescription
+            self.error = RecordVersionConflict.message(for: error) ?? error.localizedDescription
             return nil
         }
     }

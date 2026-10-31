@@ -36,6 +36,45 @@ final class DocumentEditOwner {
                 transport: .api(api)
             )
         }
+
+        /// An Agent's prompt: its own route, its own version tag. The server
+        /// advertises no file-editing capability for a record, so the prompt's
+        /// limit is this client's (the server has none).
+        static func agentInstructions(
+            api: APIClient,
+            agentId: String,
+            mode: @escaping @Sendable () async -> AgentInstructionMode
+        ) -> Backend {
+            let transport = WorkspaceFileEditTransport.agentInstructions(
+                api: api,
+                agentId: agentId,
+                mode: mode
+            )
+            return Backend(
+                capability: { _ in recordPromptCapability },
+                read: { await transport.read($0) },
+                transport: transport
+            )
+        }
+
+        /// A Schedule's prompt, read and written with the schedule's version.
+        static func schedulePrompt(api: APIClient, scheduleId: String) -> Backend {
+            let transport = WorkspaceFileEditTransport.schedulePrompt(api: api, scheduleId: scheduleId)
+            return Backend(
+                capability: { _ in recordPromptCapability },
+                read: { await transport.read($0) },
+                transport: transport
+            )
+        }
+
+        /// What a reader may type into a record's prompt. A prompt is text a
+        /// person wrote; this only keeps a runaway buffer out of the editor.
+        static let recordPromptMaxBytes = 1_048_576
+
+        private static let recordPromptCapability = ServerInfo.WorkspaceFileEditingCapability(
+            version: 1,
+            maxBytes: recordPromptMaxBytes
+        )
     }
 
     enum ReadResult: Equatable {
@@ -62,6 +101,11 @@ final class DocumentEditOwner {
     let handlers: Handlers
     /// Edit with Session, when the screen offers one.
     let agentAction: DocumentAgentEditAction?
+    /// The server a record's prompt lives on. A file subject carries its own.
+    let serverId: String?
+    /// The Agent prompt's append/replace mode: what the editor's control shows
+    /// and what the next save sends. A new prompt appends to Pi's own.
+    private(set) var agentInstructionMode: AgentInstructionMode
 
     private let backendSource: @MainActor () -> Backend?
     /// Construction context for the editor page's conflict sheet.
@@ -97,6 +141,8 @@ final class DocumentEditOwner {
 
     init(
         subject: DocumentEditSubject,
+        serverId: String? = nil,
+        agentInstructionMode: AgentInstructionMode = .append,
         agentAction: DocumentAgentEditAction? = nil,
         backend: @escaping @MainActor () -> Backend?,
         reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil,
@@ -106,6 +152,8 @@ final class DocumentEditOwner {
         onChange: @escaping @MainActor () -> Void
     ) {
         self.subject = subject
+        self.serverId = serverId
+        self.agentInstructionMode = agentInstructionMode
         self.agentAction = agentAction
         self.backendSource = backend
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
@@ -131,7 +179,7 @@ final class DocumentEditOwner {
     /// editor's base is exactly the bytes the reader shows.
     func read() async -> ReadResult {
         let generation = generation
-        guard let identity = subject.editIdentity,
+        guard let identity = subject.editIdentity(serverId: serverId),
               subject.fileType?.previewCategory == .text,
               let backend = backendSource() else {
             reset()
@@ -342,6 +390,8 @@ final class DocumentEditOwner {
             session: session,
             checkoutSubtitle: checkoutSubtitle,
             reviewCommentSelectionScope: reviewCommentSelectionScope,
+            instructionMode: showsInstructionMode ? agentInstructionMode : nil,
+            onInstructionModeChange: { [weak self] mode in self?.setAgentInstructionMode(mode) },
             onDone: { [weak self] in self?.endEditing() },
             onTogglePreview: { [weak self] in
                 self?.editorPage?.togglePreview()
@@ -352,6 +402,19 @@ final class DocumentEditOwner {
         )
         editorPage = page
         return page
+    }
+
+    /// Only an Agent's prompt carries Pi's append/replace mode.
+    private var showsInstructionMode: Bool {
+        if case .agentInstructions = subject { return true }
+        return false
+    }
+
+    /// The mode control's one writer. The next save sends it.
+    func setAgentInstructionMode(_ mode: AgentInstructionMode) {
+        guard agentInstructionMode != mode else { return }
+        agentInstructionMode = mode
+        onChange()
     }
 
     /// Repaints the open editor and applies a replaced draft.

@@ -239,6 +239,55 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertCompactOppiBar(page: "schedule-detail")
     }
 
+    /// An Agent's prompt opens in our editor from the reader's pencil, with
+    /// Pi's append/replace mode; typing saves through the Agent, and Done
+    /// returns to the reader showing what was typed. The "…" keeps Edit with
+    /// Session beside the pencil.
+    func testAgentPromptReaderEditsInPlace() {
+        launch(page: "agents")
+        let row = app.buttons["agents.row.agent-design"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Agents list did not load")
+        row.tap()
+        let definition = app.buttons["agents.detail.definition"]
+        XCTAssertTrue(definition.waitForExistence(timeout: 10), "Agent detail did not load")
+        tapScrolledIntoView(definition)
+
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "The prompt reader has no pencil")
+        let more = app.buttons["document.edit.more"]
+        XCTAssertTrue(more.exists, "The prompt reader keeps Edit with Session beside the pencil")
+        attachScreenshot("agent-prompt-reader")
+        assertRunning()
+
+        tapBarButton(pencil)
+        let text = app.textViews["workspace-file-editor.text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "The pencil did not open the editor")
+        let mode = app.segmentedControls["agentPromptEditor.mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5), "The Agent prompt editor shows its mode")
+        attachScreenshot("agent-prompt-editor")
+        assertRunning()
+
+        mode.buttons["Replace"].tap()
+        text.tap()
+        text.typeText(" Ship it.")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("Ship it")),
+            "The edit must save through the Agent: \(lastWrite)"
+        )
+        XCTAssertTrue(
+            lastWrite.contains("\"mode\":\"replace\""),
+            "The mode control's choice must be what saves: \(lastWrite)"
+        )
+
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        let saved = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Ship it.", "Ship it."))
+            .firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), "The reader must show the saved prompt")
+        assertRunning()
+    }
+
     // MARK: SSH hosts
 
     func testSSHHostFormPushesAndGoesBack() {

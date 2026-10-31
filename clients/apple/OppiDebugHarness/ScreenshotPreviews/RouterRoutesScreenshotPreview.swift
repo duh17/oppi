@@ -365,6 +365,7 @@ private enum RouterRoutesFixtures {
             agentId: nil,
             promptChars: 31
         ),
+        version: 0,
         createdAt: Date(timeIntervalSince1970: 1),
         updatedAt: Date(timeIntervalSince1970: 1),
         archivedAt: nil
@@ -395,6 +396,7 @@ private enum RouterRoutesFixtures {
             worktreeId: nil,
             name: nil
         ),
+        version: 0,
         createdAt: Date(timeIntervalSince1970: 1),
         updatedAt: Date(timeIntervalSince1970: 1),
         archivedAt: nil
