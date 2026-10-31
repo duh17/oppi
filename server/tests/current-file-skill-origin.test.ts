@@ -19,6 +19,7 @@ import { createHostFileRoutes } from "../src/routes/host-files.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { ServerResourceService } from "../src/server-resource-service.js";
+import { SkillRegistry } from "../src/skills.js";
 import { makeRawRequest, MockWritableResponse } from "./harness/route-test-helpers.js";
 
 interface Fixture {
@@ -115,6 +116,27 @@ function errorOf(res: MockWritableResponse): string {
 }
 
 describe("/files/current?origin=skill", () => {
+  /// The detail a client reads (`GET /skills/:name`, from `SkillRegistry`) and the
+  /// catalog entry it listed (`GET /server/resources/skills`) must name one Skill
+  /// by one id — including when the Skill's directory is a symlink, which is how
+  /// most installed skills are. The catalog hashes the Skill's own `SKILL.md`
+  /// after resolving it; the detail's `path` is the directory Pi named.
+  it("names a symlinked Skill by the catalog's id", async () => {
+    const fixture = seed();
+    const skillsDir = join(fixture.agentDir, "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    const realDir = writeSkill(join(fixture.root, "installed"), "linked");
+    symlinkSync(realDir, join(skillsDir, "linked"));
+
+    const catalogId = await skillId(fixture, "linked");
+    const registry = new SkillRegistry([skillsDir]);
+    registry.scan();
+    const detail = registry.getDetail("linked");
+
+    expect(detail?.skill.id).toBe(catalogId);
+    expect(detail?.skill.path).toBe(join(skillsDir, "linked"));
+  });
+
   it("reads with a tag, writes with If-Match, and refuses stale or missing tags", async () => {
     const fixture = seed();
     const skillDir = writeSkill(join(fixture.agentDir, "skills"), "notes");
