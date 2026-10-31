@@ -8,9 +8,31 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         didSet { if isViewLoaded { installBarItems() } }
     }
 
+    /// How a Rex host's follower is made. The tab never prompts on its own;
+    /// the debug harness swaps in one over a stand-in Rex.
+    var makeFollower: @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
+        SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
+    }
+
+    /// Where the saved hosts live. Tests pass a store over their own defaults.
+    var profileStore: @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
+
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
     private var profiles: [SSHTerminalProfile] = []
+    /// The Rex section's hosts, by saved host: each follows its own Rex over
+    /// its own connection while this screen shows.
+    private struct RexHost {
+        let follower: SSHTerminalRexFollower
+        let chrome: SSHTerminalConnectChrome
+    }
+
+    private var rexHosts: [UUID: RexHost] = [:]
+    /// What the Rex rows drew last, by item: only a row whose inputs changed is
+    /// reconfigured, so a working pane's mark keeps animating.
+    private var rexRows: [Item: SSHTerminalRexListRow] = [:]
+    private var rexRowsThemeID: ThemeID?
+    private var isOnScreen = false
     private var connectingProfile = SSHTerminalProfile()
     private var metadataIsCorrupt = false
     private var editAfterTerminal: UUID?
@@ -19,7 +41,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case status, hosts, empty, terminal, reset }
+    private enum Section: Hashable { case status, rex(UUID), hosts, empty, terminal, reset }
     private enum Item: Hashable {
         case corrupt
         case connecting
@@ -28,6 +50,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case trustMismatch
         case addHost
         case host(UUID)
+        /// A row of a Rex host's section, by the host and the row's id there.
+        case rexRow(host: UUID, id: String)
         /// Settings > Terminal > Bottom Bar.
         case bottomBar
         case reset
@@ -74,6 +98,13 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         setNeedsUpdateProperties()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        isOnScreen = true
+        for host in rexHosts.values { host.follower.appeared() }
+        setNeedsUpdateProperties()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         reload()
@@ -81,7 +112,15 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        isOnScreen = false
         chrome?.hostDidDisappear()
+        // The monitors stop while the tab is covered; a connection stays up
+        // under a terminal it opened and is read again on return.
+        for host in rexHosts.values {
+            host.follower.stopReading()
+            host.chrome.hostDidDisappear()
+            if isMovingFromParent || isBeingDismissed { host.follower.close() }
+        }
     }
 
     override func updateProperties() {
@@ -96,17 +135,28 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         _ = session.channel
         _ = AppScenePhase.shared.isBackground
         for profile in profiles { _ = SSHTerminalRegistry.shared.terminals(for: profile.id) }
+        for host in rexHosts.values { _ = host.follower.session.showsTerminal }
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
             SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
-        if !session.showsTerminal, let id = editAfterTerminal {
+        let terminalShown = session.showsTerminal || rexHosts.values.contains { $0.follower.session.showsTerminal }
+        if !terminalShown, let id = editAfterTerminal {
             editAfterTerminal = nil
             openEditor(profileID: id)
         }
         applySnapshot()
         chrome?.sync()
+        // The tab follows Rex only while it shows, in the foreground, with
+        // nothing over it: a pane's terminal, the form, and a sign-in sheet
+        // each cover it.
+        let covered = terminalShown || editAfterTerminal != nil || presentedViewController != nil
+        let active = isOnScreen && !AppScenePhase.shared.isBackground && !covered
+        for host in rexHosts.values {
+            host.chrome.sync()
+            host.follower.sync(active: active)
+        }
     }
 
     private func installBarItems() {
@@ -153,8 +203,22 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 Router.push(SSHTerminalBarSettingsViewController(), from: self)
             }
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
+        let rexCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            self?.configureRexRow(cell, item: item)
+        }
+        let rexActionCell = UICollectionView.CellRegistration<SSHTerminalRexListActionCell, Item> { [weak self] cell, _, item in
+            self?.configureRexAction(cell, item: item)
+        }
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, item in
             switch item {
+            case .rexRow:
+                // A session and the connect row are buttons; the rest read.
+                switch self?.rexRows[item]?.kind {
+                case .session, .tapToConnect:
+                    collectionView.dequeueConfiguredReusableCell(using: rexActionCell, for: indexPath, item: item)
+                default:
+                    collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
+                }
             case .host:
                 collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
             case .bottomBar:
@@ -201,7 +265,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
-        case .host, .bottomBar:
+        case .host, .bottomBar, .rexRow:
             break
         case .reset:
             content.text = "Reset Host List"
@@ -246,6 +310,16 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             snapshot.appendSections([.status])
             snapshot.appendItems(status, toSection: .status)
         }
+        var rows: [Item: SSHTerminalRexListRow] = [:]
+        for profile in profiles {
+            guard let follower = rexHosts[profile.id]?.follower else { continue }
+            let section = Section.rex(profile.id)
+            let hostRows = SSHTerminalRexListRow.rows(hostName: profile.endpointLabel, state: follower.listState)
+            let items = hostRows.map { Item.rexRow(host: profile.id, id: $0.id) }
+            snapshot.appendSections([section])
+            snapshot.appendItems(items, toSection: section)
+            for (item, row) in zip(items, hostRows) { rows[item] = row }
+        }
         if profiles.isEmpty && !metadataIsCorrupt {
             snapshot.appendSections([.empty])
             snapshot.appendItems([.addHost], toSection: .empty)
@@ -261,10 +335,162 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             snapshot.appendSections([.reset])
             snapshot.appendItems([.reset], toSection: .reset)
         }
+        // A Rex row is redrawn only when what it draws changed (or the theme
+        // did); every other row still redraws with its screen's state.
+        let themeID = sshTerminalThemeID
+        let themeChanged = rexRowsThemeID != themeID
+        let changedRex = rows.filter { rexRows[$0.key] != $0.value || themeChanged }.map(\.key)
         if let current = dataSource?.snapshot(), current.itemIdentifiers == snapshot.itemIdentifiers {
-            snapshot.reloadItems(snapshot.itemIdentifiers)
+            snapshot.reloadItems(snapshot.itemIdentifiers.filter { rows[$0] == nil })
         }
+        snapshot.reconfigureItems(changedRex)
+        rexRows = rows
+        rexRowsThemeID = themeID
         dataSource?.apply(snapshot, animatingDifferences: false)
+    }
+
+    /// Makes, updates, and drops a follower per saved Rex host.
+    private func syncRexHosts() {
+        let wanted = profiles.filter(\.opensRexSessions)
+        for id in rexHosts.keys where !wanted.contains(where: { $0.id == id }) {
+            rexHosts[id]?.follower.close()
+            rexHosts[id]?.chrome.hostDidDisappear()
+            rexHosts[id] = nil
+        }
+        for profile in wanted {
+            if let existing = rexHosts[profile.id] {
+                existing.follower.update(profile: profile)
+            } else {
+                rexHosts[profile.id] = makeRexHost(profile)
+            }
+        }
+        collectionView.refreshControl = rexHosts.isEmpty ? nil : rexRefreshControl
+    }
+
+    private lazy var rexRefreshControl: UIRefreshControl = {
+        let control = UIRefreshControl()
+        control.addAction(UIAction { [weak self, weak control] _ in
+            Task { @MainActor in
+                await self?.refreshRexHosts()
+                control?.endRefreshing()
+            }
+        }, for: .valueChanged)
+        return control
+    }()
+
+    /// A pull reads Rex again on every host it can without asking for anything,
+    /// and tries again where it had no `nc` or no Rex.
+    private func refreshRexHosts() async {
+        let followers = rexHosts.values.map(\.follower).filter { $0.isConnected || $0.profile.connectsWithoutPrompt() }
+        let reads = followers.map { follower in Task { @MainActor in await follower.refresh() } }
+        for read in reads { await read.value }
+    }
+
+    private func makeRexHost(_ profile: SSHTerminalProfile) -> RexHost {
+        let follower = makeFollower(profile)
+        let chrome = SSHTerminalConnectChrome(
+            host: self,
+            session: follower.session,
+            profile: { [weak follower] in follower?.profile ?? SSHTerminalProfile() },
+            setProfile: { [weak follower] in follower?.profile = $0 },
+            editHost: { [weak self, weak follower] in
+                guard let follower else { return }
+                if let id = follower.session.connectedProfile?.id { self?.editAfterTerminal = id }
+                follower.session.showsTerminal = false
+            },
+            submitPassword: { [weak follower] in follower?.submitPassword($0) },
+            onSaved: { [weak follower] in follower?.profile = $0 }
+        )
+        return RexHost(follower: follower, chrome: chrome)
+    }
+
+    private func configureRexRow(_ cell: UICollectionViewListCell, item: Item) {
+        guard case .rexRow(let hostID, _) = item, let row = rexRows[item] else { return }
+        let palette = sshTerminalThemeID.palette
+        let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
+        var content = UIListContentConfiguration.subtitleCell()
+        content.textProperties.color = UIColor(palette.fg)
+        content.secondaryTextProperties.color = UIColor(palette.comment)
+        cell.accessories = []
+        cell.accessibilityTraits = []
+        switch row.kind {
+        case .header(let name, let needsYou):
+            content.text = name
+            content.textProperties.font = .preferredFont(forTextStyle: .headline)
+            content.image = SSHTerminalBarAction.rex.image()
+            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou) : "Rex"
+            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.secondaryTextProperties.color = UIColor(needsYou > 0 ? palette.orange : palette.comment)
+            cell.accessibilityIdentifier = "\(prefix).header"
+            cell.accessibilityTraits = .header
+        case .placeholder(let text):
+            content.text = text
+            content.textProperties.color = UIColor(palette.comment)
+            cell.accessibilityIdentifier = "\(prefix).\(row.id)"
+        case .failure(let text):
+            content.text = text
+            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.numberOfLines = 0
+            cell.accessibilityIdentifier = "\(prefix).\(row.id)"
+        case .session, .tapToConnect:
+            break
+        }
+        cell.contentConfiguration = content
+    }
+
+    private func configureRexAction(_ cell: SSHTerminalRexListActionCell, item: Item) {
+        guard case .rexRow(let hostID, let id) = item, let row = rexRows[item] else { return }
+        let themeID = sshTerminalThemeID
+        let palette = themeID.palette
+        let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
+        var content = UIListContentConfiguration.subtitleCell()
+        content.textProperties.color = UIColor(palette.fg)
+        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.font = .preferredFont(forTextStyle: .body)
+        switch row.kind {
+        case .session(let session):
+            content.text = session.title
+            content.secondaryText = session.summary
+            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+            cell.accessories = cell.statusAccessories(for: session.status, themeID: themeID)
+            cell.indentationLevel = 0
+            cell.configureAction(
+                identifier: "\(prefix).\(session.sessionID)",
+                label: session.accessibilityLabel,
+                value: session.status.label,
+                hint: "Open this Rex session"
+            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
+        case .tapToConnect:
+            content.text = "Tap to connect"
+            content.textProperties.color = UIColor(palette.blue)
+            cell.accessories = []
+            cell.configureAction(
+                identifier: "\(prefix).connect",
+                label: "Tap to connect",
+                value: nil,
+                hint: "Signs in to read this host's Rex sessions"
+            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
+        default:
+            break
+        }
+        cell.contentConfiguration = content
+    }
+
+    /// The one action a Rex row has, for a touch (the row's selection) and for
+    /// VoiceOver's activation: resolved from the row's identity when it runs.
+    private func activateRexRow(host hostID: UUID, id: String) {
+        guard let follower = rexHosts[hostID]?.follower, let row = rexRows[.rexRow(host: hostID, id: id)] else { return }
+        switch row.kind {
+        case .session(let session):
+            guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
+            follower.open(session: session.sessionID)
+        case .tapToConnect:
+            follower.connect()
+        default:
+            break
+        }
     }
 
     private func swipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
@@ -294,11 +520,19 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             open(profile)
         case .reset:
             confirmReset()
+        case .rexRow(let hostID, let id):
+            activateRexRow(host: hostID, id: id)
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         default:
             break
         }
+    }
+
+    /// A Rex host's heading and its notes do nothing when tapped.
+    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        guard case .rexRow = dataSource?.itemIdentifier(for: indexPath) else { return true }
+        return dataSource?.itemIdentifier(for: indexPath).flatMap { rexRows[$0]?.kind.isAction } ?? false
     }
 
     private func openEditor(profileID: UUID?) {
@@ -342,7 +576,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private func delete(_ profile: SSHTerminalProfile) {
         do {
             if session.connectedProfile?.id == profile.id { session.cancel() }
-            try SSHTerminalProfileStore().delete(id: profile.id)
+            try profileStore().delete(id: profile.id)
             SSHTerminalRegistry.shared.closeAllTerminals(of: profile.id, reason: "The host was deleted.")
             reload()
         } catch {
@@ -358,16 +592,17 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             message: "The saved host data cannot be read. This removes it so you can add your hosts again.",
             actionTitle: "Reset Host List"
         ).present(from: self, anchor: nil) { [weak self] in
-            SSHTerminalProfileStore().discardCorruptMetadata()
+            self?.profileStore().discardCorruptMetadata()
             self?.reload()
         }
     }
 
     private func reload() {
-        let store = SSHTerminalProfileStore()
+        let store = profileStore()
         metadataIsCorrupt = store.metadataIsCorrupt
         profiles = store.load()
         if metadataIsCorrupt { profiles = [] }
+        syncRexHosts()
         applySnapshot()
     }
 }

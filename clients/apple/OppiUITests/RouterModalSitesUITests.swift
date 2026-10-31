@@ -449,6 +449,32 @@ final class RouterModalSitesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// The Terminal tab leads with the saved Rex host's live sessions: one
+    /// row per session naming it, its panes, and who waits on you, with the
+    /// status as its value. A tap opens the session as a Rex terminal.
+    func testTerminalTabListsRexSessionsAndATapOpensTheTerminal() {
+        launch(screen: "ssh-terminal-rex-list")
+        let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
+        let oppi = app.cells["sshTerminal.rexList.\(hostID).session:01a18a26-6620-76be-b529-4d9ad2b36c63"]
+        let dotfiles = app.cells["sshTerminal.rexList.\(hostID).session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
+        XCTAssertTrue(oppi.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
+        XCTAssertTrue(dotfiles.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "The host's heading is missing")
+        XCTAssertEqual(oppi.label, "oppi, 3 panes \u{00B7} 1 needs you")
+        XCTAssertEqual(oppi.value as? String, "Needs approval")
+        XCTAssertEqual(dotfiles.label, "dotfiles, 1 pane")
+        XCTAssertEqual(dotfiles.value as? String, "Idle")
+        // The host's own row stays below the section.
+        XCTAssertTrue(app.buttons["sshTerminal.host.row.\(hostID)"].exists, "The Rex host's row must stay")
+        attachScreenshot("terminal-tab-rex-section")
+
+        oppi.tap()
+        let switcher = app.buttons["sshTerminal.bar.rexPanes"]
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "A tap on a session must open its Rex terminal")
+        attachScreenshot("terminal-tab-rex-opened")
+        assertRunning()
+    }
+
     func testProgramStatusPopoverOpensAndClosesOnOutsideTap() {
         launch(screen: "ssh-terminal-status-blocked")
         let glyph = app.buttons["sshTerminal.programStatus"]

@@ -145,36 +145,13 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
             content.textProperties.color = UIColor(palette.fg)
             content.textProperties.font = Self.font(focused: focused)
             content.secondaryTextProperties.color = UIColor(palette.comment)
-            cell.accessories = accessories(for: status, cell: cell)
+            cell.accessories = cell.statusAccessories(for: status, themeID: themeID)
             cell.accessibilityIdentifier = "\(prefix).item"
             cell.accessibilityTraits = row.focus == nil ? [] : .button
             cell.accessibilityValue = [status.label, focused ? "Focused" : nil].compactMap { $0 }.joined(separator: ", ")
             cell.indentationLevel = 1
         }
         cell.contentConfiguration = content
-    }
-
-    /// The same mark and label as the status glyph and session rows. A row the
-    /// multiplexer has no reading for draws neither, but keeps the mark's slot
-    /// so its name lines up with its siblings'; one it reads in a way Oppi
-    /// does not know says Unknown.
-    private func accessories(for status: SSHTerminalOverviewRow.Status, cell: SSHTerminalOverviewCell) -> [UICellAccessory] {
-        let kind: SessionStatusKind? = if case .known(let known) = status { known } else { nil }
-        cell.mark.isHidden = kind == nil
-        if let kind {
-            cell.mark.apply(status: kind, themeID: themeID, reduceMotion: UIAccessibility.isReduceMotionEnabled)
-        }
-        let mark = UICellAccessory.customView(configuration: .init(
-            customView: cell.mark, placement: .leading(), reservedLayoutWidth: .custom(20)
-        ))
-        guard let label = status.label else { return [mark] }
-        return [
-            mark,
-            .label(text: label, options: .init(
-                tintColor: kind?.tint(themeID.appTheme) ?? UIColor(themeID.palette.comment),
-                font: .preferredFont(forTextStyle: .caption1)
-            )),
-        ]
     }
 
     /// The multiplexer's focused workspace and pane read bold: focus is where
@@ -227,6 +204,29 @@ extension SSHTerminalOverviewRow.Status {
 
 /// An overview row that keeps its own status mark, so a working agent's
 /// animation survives reconfiguration instead of restarting on a new view.
-final class SSHTerminalOverviewCell: UICollectionViewListCell {
+class SSHTerminalOverviewCell: UICollectionViewListCell {
     let mark = SSHTerminalStatusMarkView(style: .row)
+
+    /// The same mark and label as the status glyph and session rows. A row the
+    /// multiplexer has no reading for draws neither, but keeps the mark's slot
+    /// so its name lines up with its siblings'; one it reads in a way Oppi
+    /// does not know says Unknown.
+    func statusAccessories(for status: SSHTerminalOverviewRow.Status, themeID: ThemeID) -> [UICellAccessory] {
+        let kind: SessionStatusKind? = if case .known(let known) = status { known } else { nil }
+        mark.isHidden = kind == nil
+        if let kind {
+            mark.apply(status: kind, themeID: themeID, reduceMotion: UIAccessibility.isReduceMotionEnabled)
+        }
+        let slot = UICellAccessory.customView(configuration: .init(
+            customView: mark, placement: .leading(), reservedLayoutWidth: .custom(20)
+        ))
+        guard let label = status.label else { return [slot] }
+        return [
+            slot,
+            .label(text: label, options: .init(
+                tintColor: kind?.tint(themeID.appTheme) ?? UIColor(themeID.palette.comment),
+                font: .preferredFont(forTextStyle: .caption1)
+            )),
+        ]
+    }
 }

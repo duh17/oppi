@@ -116,6 +116,7 @@ enum DebugHarnessLaunch {
             case "ssh-terminal": return SSHTerminalPreviewController()
             case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
             case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
+            case "ssh-terminal-rex-list": return SSHTerminalRexListPreviewController()
             case "audio-script-reader": return AudioScriptReaderPreviewController(themeStore: root.themeStore)
             default: break
             }

@@ -13,7 +13,7 @@ The Terminal tab opens an interactive shell on a host saved on this iPhone or iP
 
 For a Mac with an Ed25519 host key, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints the fingerprint.
 
-The host list leads with **Add Host** when none is saved. A row shows `user@host`, the port when it is not 22, the Run on Connect command, **Login shell**, or **Rex sessions** for a [Rex host](#a-rex-host), and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
+The Terminal tab leads with **Add Host** when no host is saved, and with a [Rex section](#rex-sessions-on-the-terminal-tab) when a saved host uses Rex. A row shows `user@host`, the port when it is not 22, the Run on Connect command, **Login shell**, or **Rex sessions** for a [Rex host](#a-rex-host), and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
 
 ## Run on Connect
 
@@ -200,6 +200,16 @@ With **Multiplexer** set to **Rex** in the host's form, tapping the host (or **C
 - **How it connects:** the screen signs in a connection of its own with the host's sign-in, asking for a password, Face ID, or host trust over the screen as the host list does. It runs no shell or PTY; it opens the one Rex stream beside, as a terminal does. It closes when you leave the screen or Oppi goes to the background, and signs in again when the screen shows again; a connection that drops while the screen shows signs in again by itself.
 - **When Rex cannot be read,** the screen says which of three things is missing, and what to do: **no usable `nc`** on the host (install a netcat that supports Unix sockets, `nc -U`, such as `netcat-openbsd`), **Rex not installed**, or **Rex not running** (start it with `rex server start`; the list fills in by itself, asked again after 15 s, doubling to 60 s). For the first two, pull down to try again once it is fixed.
 - **Open Terminal here** on a Rex host opens a login shell in the folder, as for a host without a multiplexer.
+
+### Rex sessions on the Terminal tab
+
+When a saved host has **Multiplexer** set to **Rex**, the Terminal tab leads with a **Rex** section for it, above the host list: the host's name, then one row per Rex session with its name, its pane count, and how many panes wait on you (`3 panes · 1 needs you`), and the status that leads the session on the right (a blocked pane wins over a working one). With no Rex host there is no section. Each Rex host has its own heading and rows.
+
+- **Live:** while the tab is showing, Oppi follows each Rex host the way the host's own [sessions screen](#a-rex-host) does: a connection of its own that runs no shell, and one Rex stream whose events update the rows as Rex changes. The stream stops when something covers the tab (a terminal, a form) or Oppi goes to the background, and reads Rex again on return. Nothing polls. Pull down to read Rex again, or to try again on a host that had no `nc` or no Rex.
+- **Tap a session** to open it as a [Rex terminal](#opening-a-rex-pane) on the pane Rex types into there (else its first pane). A session that already has a terminal open shows that terminal and moves it to that pane, instead of opening a second connection.
+- **It never asks on its own.** A host that would need a password, a trust decision, or Face ID to sign in (its key is not trusted yet, its password is not saved or not approved in the last 5 minutes, or its device key is not approved) shows **Tap to connect** instead; the tap signs in over the usual password, trust, and Face ID prompts, and the rows follow. After the first tap, an approval still inside its [5 minutes](#approval-reuse) lets the tab sign in by itself on the next visit. A failed sign-in says why under the heading, beside **Tap to connect** to try again. When Rex cannot be read, the section says which of the [three things](#a-rex-host) is missing.
+- **The host's row** below still opens its Rex sessions screen.
+- **VoiceOver:** each session is one button named `session, N panes, M need you` whose value is its status; tapping it and activating it do the same thing.
 
 ### Opening a Rex pane
 

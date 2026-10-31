@@ -80,7 +80,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
         // The fixture's bytes, once the terminal above is its view controller.
         playback = Task { @MainActor [weak self] in
             if status == .rexPanes {
-                await self?.playRexSession(on: channel)
+                self?.consumption = await Self.playRexSession(on: channel)
             } else {
                 self?.play(on: channel)
             }
@@ -121,8 +121,9 @@ final class SSHTerminalPreviewController: PreviewRootController {
     /// session of three panes (`RexFakeSession`), opened on the first. Its
     /// real control and data protocols run against the fake host, so a tap on
     /// the switcher menu or a minimap cell switches panes for real.
-    private func playRexSession(on channel: SSHTerminalChannel) async {
-        guard !channel.connected else { return }
+    /// Returns the task consuming the connection's events, which the caller owns.
+    static func playRexSession(on channel: SSHTerminalChannel) async -> Task<Void, Never>? {
+        guard !channel.connected else { return nil }
         let esc = "\u{1b}["
         // Three icons for the bar's switcher: programs that report status put
         // their own mark first in the title (π, ✳), a plain shell has the
@@ -139,10 +140,10 @@ final class SSHTerminalPreviewController: PreviewRootController {
         guard let connection = try? await RexSessionConnection.open(
             transport: transport, control: control,
             target: RexPaneTarget(sessionID: fake.sessionID, blockID: panes[0].block, label: "pi"), queue: queue
-        ) else { return }
+        ) else { return nil }
         channel.rex = RexSessionModel(connection: connection)
         channel.opened(connection)
-        consumption = Task { await channel.consume(queue) }
+        return Task { await channel.consume(queue) }
     }
 
     private func herdrScreen(_ esc: String) -> String {
