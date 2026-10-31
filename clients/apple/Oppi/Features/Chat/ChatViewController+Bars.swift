@@ -543,6 +543,14 @@ final class ChatBarItems {
         ) { [weak self] in self?.chat?.runTopBarAction(action) }
     }
 
+    /// The rail avatar alone, for artwork that arrived after the bar was built:
+    /// redrawing it must not rerun the chat's whole update pass.
+    func refreshRailSessionImage() {
+        guard let chat, !isSuspended else { return }
+        guard SystemVerticalBar.traitIsActive(chat.traitCollection) else { return }
+        railSessionItem.image = chat.railSessionImage()
+    }
+
     private func makeRailSessionItem() -> UIBarButtonItem {
         let item = UIBarButtonItem(title: "Session", image: nil, primaryAction: nil, menu: nil)
         item.accessibilityLabel = "Session"

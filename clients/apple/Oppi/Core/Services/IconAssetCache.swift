@@ -43,6 +43,9 @@ final class IconAssetCache {
     private let fetch: Fetch
     private let decode: Decode
     private var inFlight: [String: InFlight] = [:]
+    /// Assets this cache could not load. Its fallback is what it draws for them
+    /// until a new cache replaces it, so a failing icon never refetches in a loop.
+    private var failed: Set<String> = []
 
     init(
         fetch: @escaping Fetch,
@@ -99,8 +102,13 @@ final class IconAssetCache {
         "\(assetId):\(Int(size.rounded(.up)))"
     }
 
+    func hasFailedLoad(assetId: String) -> Bool {
+        failed.contains(assetId)
+    }
+
     func removeAll() {
         entries.removeAllObjects()
+        failed.removeAll()
         let pending = inFlight.values
         inFlight.removeAll()
         for request in pending {
@@ -153,9 +161,9 @@ final class IconAssetCache {
         Task { @MainActor [weak self] in
             do {
                 let entry = try await task.value
-                self?.finish(key: key, requestID: requestID, result: .success(entry))
+                self?.finish(key: key, assetId: assetId, requestID: requestID, result: .success(entry))
             } catch {
-                self?.finish(key: key, requestID: requestID, result: .failure(error))
+                self?.finish(key: key, assetId: assetId, requestID: requestID, result: .failure(error))
             }
         }
     }
@@ -174,7 +182,7 @@ final class IconAssetCache {
         }
     }
 
-    private func finish(key: String, requestID: UUID, result: Result<Entry, Error>) {
+    private func finish(key: String, assetId: String, requestID: UUID, result: Result<Entry, Error>) {
         guard let request = inFlight[key], request.requestID == requestID else { return }
         inFlight.removeValue(forKey: key)
 
@@ -183,6 +191,11 @@ final class IconAssetCache {
             entries.setObject(entry, forKey: key as NSString, cost: entry.cost)
             request.waiters.values.forEach { $0.resume(returning: entry.image) }
         case .failure(let error):
+            // A cancel (a reconnect clears the cache) says nothing about the
+            // asset; anything else means this cache cannot draw it.
+            if !(error is CancellationError) {
+                failed.insert(assetId)
+            }
             request.waiters.values.forEach { $0.resume(throwing: error) }
         }
     }

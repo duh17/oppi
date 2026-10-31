@@ -89,10 +89,11 @@ final class IconChoiceUIView: UIView {
             }
             // Artwork and the sandbox mark fill the frame; a symbol or an emoji
             // takes its glyph size, as it always has in a pill or a title.
-            let fillsFrame = sandbox || isArtwork(choice)
+            let contentBox = isArtwork(choice) ? frameSize : EntityIcon.box(forGlyph: glyphSize)
             imageView.image = EntityIcon.image(
                 entity,
-                size: fillsFrame ? frameSize : EntityIcon.box(forGlyph: glyphSize),
+                size: sandbox ? frameSize : contentBox,
+                contentSize: sandbox ? contentBox : nil,
                 assets: assetCache
             )
         }

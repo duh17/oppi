@@ -30,8 +30,6 @@ extension Notification.Name {
 enum EntityIcon {
     /// An SF Symbol or emoji takes 0.78 of the box it is asked for.
     private static let glyphShare: CGFloat = 0.78
-    /// A sandbox workspace's icon leaves the bottom-trailing corner to its mark.
-    private static let sandboxContentShare: CGFloat = 0.75
     private static let sandboxMarkShare: CGFloat = 0.34
     private static let sandboxMarkMinimum: CGFloat = 11
 
@@ -45,18 +43,24 @@ enum EntityIcon {
         return cache
     }()
     private static var loadsInFlight: Set<String> = []
-    /// Loads that failed, per asset and cache: the fallback is what that cache
-    /// will ever draw.
-    private static var failedLoads: Set<String> = []
 
-    /// The entity's icon, in a box `size` points square.
-    static func image(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache? = nil) -> UIImage {
+    /// The entity's icon, drawn in a `size`-point frame. A sandbox workspace's
+    /// mark sits in the frame's bottom-trailing corner and its icon takes
+    /// `contentSize` (`size` when the caller wants the whole frame), because a
+    /// row keeps its glyph size and the Guided pill steps it back for the mark.
+    static func image(
+        _ entity: IconEntity,
+        size: CGFloat,
+        contentSize: CGFloat? = nil,
+        assets: IconAssetCache? = nil
+    ) -> UIImage {
         let size = max(1, size)
-        let key = cacheKey(entity, size: size, assets: assets)
+        let content = max(1, contentSize ?? size)
+        let key = cacheKey(entity, size: size, content: content, assets: assets)
         if let cached = rasters.object(forKey: key as NSString) {
             return cached
         }
-        let drawn = draw(entity, size: size, assets: assets)
+        let drawn = draw(entity, frame: size, content: content, assets: assets)
         // Baked, not template: a `UIMenu` draws a template image in its own gray.
         let image = drawn.image.withRenderingMode(.alwaysOriginal)
         // A drawing that may still become artwork is not kept, so the next pass
@@ -77,35 +81,31 @@ enum EntityIcon {
 
     private static func draw(
         _ entity: IconEntity,
-        size: CGFloat,
+        frame: CGFloat,
+        content: CGFloat,
         assets: IconAssetCache?
     ) -> (image: UIImage, isFinal: Bool) {
         switch entity {
         case .pi:
-            return (PiAvatarRenderer.render(size: size), true)
+            return (PiAvatarRenderer.render(size: frame), true)
         case .server(_, let badge):
-            return (symbol(badge.symbolName, size: size) ?? UIImage(), true)
+            return (symbol(badge.symbolName, size: frame) ?? UIImage(), true)
         case .provider(let provider):
-            return (providerMark(provider, size: size), true)
+            return (providerMark(provider, size: frame), true)
         case .model(let model):
-            return (providerMark(modelProviderKey(model) ?? model, size: size), true)
+            return (providerMark(modelProviderKey(model) ?? model, size: frame), true)
         case .agent(let choice):
-            return iconChoice(choice, fallback: fallbackSymbol(entity), box: size, assets: assets)
+            return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
         case .workspace(let choice, let sandbox):
             guard sandbox else {
-                return iconChoice(choice, fallback: fallbackSymbol(entity), box: size, assets: assets)
+                return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
             }
-            let content = iconChoice(
-                choice,
-                fallback: fallbackSymbol(entity),
-                box: size * sandboxContentShare,
-                assets: assets
-            )
-            let image = raster(size) { rect in
-                drawCentred(content.image, in: rect)
+            let glyph = iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
+            let image = raster(frame) { rect in
+                drawCentred(glyph.image, in: rect)
                 drawSandboxMark(in: rect)
             }
-            return (image, content.isFinal)
+            return (image, glyph.isFinal)
         }
     }
 
@@ -129,7 +129,7 @@ enum EntityIcon {
             }
             // No cache can load it, or this cache's load already failed: the
             // fallback is final.
-            guard let assets, !failedLoads.contains(loadKey(assetId, assets)) else {
+            guard let assets, !assets.hasFailedLoad(assetId: assetId) else {
                 return (symbol(fallback, size: box) ?? UIImage(), true)
             }
             startLoad(assetId: assetId, size: artworkSize(box), assets: assets)
@@ -185,13 +185,7 @@ enum EntityIcon {
 
     private static func drawSandboxMark(in rect: CGRect) {
         let colors = ThemeRuntimeState.currentUIKitPalette()
-        let side = max(sandboxMarkMinimum, rect.width * sandboxMarkShare)
-        let mark = CGRect(
-            x: rect.maxX - side - rect.width * 0.02,
-            y: rect.maxY - side - rect.width * 0.02,
-            width: side,
-            height: side
-        )
+        let mark = sandboxMarkRect(inFrame: rect.width)
         colors.orange.setFill()
         UIBezierPath(ovalIn: mark).fill()
         colors.bg.setStroke()
@@ -200,10 +194,29 @@ enum EntityIcon {
         ring.stroke()
         let lock = UIImage(
             systemName: "lock.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: side * 0.52, weight: .bold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: mark.width * 0.52, weight: .bold)
         )?.withTintColor(colors.bg, renderingMode: .alwaysOriginal)
         guard let lock else { return }
         lock.draw(at: CGPoint(x: mark.midX - lock.size.width / 2, y: mark.midY - lock.size.height / 2))
+    }
+
+    /// Where a sandbox workspace's mark draws in a frame: max(11, frame * 0.34)
+    /// points against the bottom-trailing corner, the corner main let it overhang.
+    /// A raster cannot draw past its bounds, so this is as far out as it reaches.
+    static func sandboxMarkRect(inFrame frame: CGFloat) -> CGRect {
+        let side = max(sandboxMarkMinimum, frame * sandboxMarkShare)
+        return CGRect(x: frame - side, y: frame - side, width: side, height: side)
+    }
+
+    /// Where an icon's content draws in a frame: centred at the size its caller
+    /// lays out, which a sandbox workspace never shrinks on its own.
+    static func contentRect(inFrame frame: CGFloat, content: CGFloat) -> CGRect {
+        CGRect(
+            x: (frame - content) / 2,
+            y: (frame - content) / 2,
+            width: content,
+            height: content
+        )
     }
 
     // MARK: - Rasterising
@@ -240,12 +253,10 @@ enum EntityIcon {
         }
     }
 
-    /// Centred at its own size: a sandbox workspace's icon must not grow into the
-    /// room its mark needs.
+    /// Centred at its own size, in the rect its caller's content box gives it.
     private static func drawCentred(_ content: UIImage, in rect: CGRect) {
-        content.draw(
-            at: CGPoint(x: rect.midX - content.size.width / 2, y: rect.midY - content.size.height / 2)
-        )
+        let box = contentRect(inFrame: rect.width, content: content.size.width)
+        content.draw(at: CGPoint(x: box.midX - content.size.width / 2, y: box.midY - content.size.height / 2))
     }
 
     private static func aspectFit(_ content: CGSize, in rect: CGRect) -> CGRect {
@@ -267,22 +278,18 @@ enum EntityIcon {
 
     // MARK: - Genmoji loads
 
-    private static func loadKey(_ assetId: String, _ assets: IconAssetCache) -> String {
-        "\(assetId):\(ObjectIdentifier(assets))"
-    }
-
     private static func startLoad(assetId: String, size: CGFloat, assets: IconAssetCache) {
         // One load per asset, size, and cache: a replaced cache is a different
         // server's artwork, so it loads on its own.
-        let request = "\(loadKey(assetId, assets)):\(Int(size))"
+        let request = "\(assetId):\(Int(size)):\(ObjectIdentifier(assets))"
         guard loadsInFlight.insert(request).inserted else { return }
         Task { @MainActor in
-            let loaded = try? await assets.image(assetId: assetId, size: size)
-            loadsInFlight.remove(request)
-            guard loaded != nil else {
-                // Nothing announced, nothing refetched: this cache's fallback is
-                // what the icon draws from now on.
-                failedLoads.insert(loadKey(assetId, assets))
+            defer { loadsInFlight.remove(request) }
+            do {
+                _ = try await assets.image(assetId: assetId, size: size)
+            } catch {
+                // The cache remembers the failure (and ignores a cancel), so its
+                // fallback is final with nothing announced and nothing refetched.
                 return
             }
             loadGeneration += 1
@@ -292,9 +299,16 @@ enum EntityIcon {
 
     // MARK: - Cache key
 
-    private static func cacheKey(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache?) -> String {
+    /// Keyed by the exact sizes asked for: a 15.38 pt box and a 16 pt box are
+    /// different rasters, whichever caller runs first.
+    private static func cacheKey(
+        _ entity: IconEntity,
+        size: CGFloat,
+        content: CGFloat,
+        assets: IconAssetCache?
+    ) -> String {
         let cache = assets.map { "\(ObjectIdentifier($0))" } ?? "none"
-        return "\(entity)|\(Int(size.rounded(.up)))|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)"
+        return "\(entity)|\(size)|\(content)|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)"
     }
 }
 

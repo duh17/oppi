@@ -328,13 +328,13 @@ extension ChatViewController {
                 MainActor.assumeIsolated { self?.model.chatDisplayRefresh += 1 }
             },
             // The rail's avatar is the Agent's artwork: a Genmoji that finishes
-            // loading redraws the bar, not the whole chat.
+            // loading redraws that one item, not the whole chat.
             center.addObserver(
                 forName: .oppiEntityIconDidLoad,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.model.topBarRefresh += 1 }
+                MainActor.assumeIsolated { self?.barItems.refreshRailSessionImage() }
             },
             center.addObserver(
                 forName: AppPreferences.ChatTopBar.didChangeNotification,

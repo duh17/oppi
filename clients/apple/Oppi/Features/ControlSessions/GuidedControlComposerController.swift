@@ -471,9 +471,12 @@ final class GuidedControlComposerController: UIViewController {
 
     func workspaceIcon() -> UIImage {
         let workspace = model.selectedWorkspace
+        // The Guided pill stepped its content back for the mark; main drew a 12 pt
+        // icon in a 16 pt canvas.
         return EntityIcon.image(
             .workspace(workspace?.icon, sandbox: workspace?.runtime == .sandbox),
             size: 16,
+            contentSize: 12,
             assets: model.selectedServerIconAssetCache
         )
     }
