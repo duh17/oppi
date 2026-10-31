@@ -22,6 +22,12 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
     override var e2eRequiresFreshLaunch: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
+    /// This journey is about the editor's own writes, so it runs with Auto-Save on
+    /// (off by default: Done asks before writing).
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        application.launchArguments += ["-dev.chenda.Oppi.editor.autoSave", "YES"]
+    }
+
     override func seedE2EFixtures() throws {
         guard !skipSeed else { return }
         directoryName = "000-oppi-wfe-\(UUID().uuidString.prefix(8).lowercased())"

@@ -59,19 +59,45 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
             "An untouched default writes nothing: \(lastWrite)"
         )
 
-        // The first real edit creates SYSTEM.md. The fixture records the write's
-        // method and path (a text body is not summarised), so that is what this
-        // can see; the create's `If-None-Match: *` is the unit test's claim.
+        // The first real edit is the person's to save: Auto-Save is off by default,
+        // so Done asks, and Discard Changes writes nothing. The fixture records the
+        // write's method and path (a text body is not summarised), so that is what
+        // this can see; the create's `If-None-Match: *` is the unit test's claim.
         tapBarButton(pencil)
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         editor.tap()
         editor.typeText(" Ship it.")
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(
+            app.staticTexts["Create SYSTEM.md?"].waitForExistence(timeout: 5),
+            "Done must ask before creating a file Pi reads for every new session"
+        )
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label BEGINSWITH %@", "Pi uses this file for every new session on")
+            ).firstMatch.exists,
+            "the confirmation must say what else reads SYSTEM.md"
+        )
+        attachScreenshot("pi-prompt-done-confirmation")
+        tapBarButton(app.buttons["workspaceFileEditor.discard"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Discard Changes must return to the reader")
+        XCTAssertFalse(
+            lastWrite.contains("PUT /files/current"),
+            "Discard Changes writes nothing: \(lastWrite)"
+        )
+
+        // Save writes it, and the reader comes back without a second question.
+        tapBarButton(pencil)
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" Ship it.")
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        tapBarButton(app.buttons["workspaceFileEditor.save"])
         XCTAssertTrue(
             waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
-            "The edit must create the file: \(lastWrite)"
+            "Save must create the file: \(lastWrite)"
         )
-        tapBarButton(app.buttons["workspace-file-editor.done"])
-        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Save must return to the reader")
         app.buttons["fullScreen.code.close"].tap()
 
         assertCompactOppiBar(page: "agents-pi")

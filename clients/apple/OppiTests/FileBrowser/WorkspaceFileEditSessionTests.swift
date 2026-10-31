@@ -85,18 +85,21 @@ private final class Harness {
 
     func open(
         disk: Data? = nil,
-        etag: String = tag("a"),
+        etag: String? = tag("a"),
+        creatable: Bool = false,
         idleDelay: Duration = .seconds(60),
-        retryDelay: Duration = .milliseconds(20)
+        retryDelay: Duration = .milliseconds(20),
+        autoSave: Bool = true
     ) -> WorkspaceFileEditSession {
         let session = WorkspaceFileEditSession(
             identity: identity,
-            disk: WorkspaceFileDiskSnapshot(bytes: disk ?? Data(buffer.utf8), etag: etag),
+            disk: WorkspaceFileDiskSnapshot(bytes: disk ?? Data(buffer.utf8), etag: etag, creatable: creatable),
             maxBytes: 64,
             transport: scripted.transport,
             draftStore: store,
             idleDelay: idleDelay,
-            retryDelay: retryDelay
+            retryDelay: retryDelay,
+            isAutoSaveOn: Self.autoSave(autoSave)
         )!
         buffer = session.currentText
         // harness outlives the editor callback; weak would hide a use-after-free with an empty buffer
@@ -104,6 +107,11 @@ private final class Harness {
         session.attachEditor { [unowned self] in self.buffer }
         return session
     }
+
+    /// The editor's Auto-Save setting for a session this test opens. These
+    /// suites are about the session's own writes, so they run with it on unless
+    /// the test is about Auto-Save off.
+    static func autoSave(_ isOn: Bool = true) -> @MainActor () -> Bool { { isOn } }
 
     func type(_ text: String, into session: WorkspaceFileEditSession) {
         buffer += text
@@ -159,7 +167,8 @@ struct WorkspaceFileEditSessionTests {
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .milliseconds(30), retryDelay: .milliseconds(20)
+            idleDelay: .milliseconds(30), retryDelay: .milliseconds(20),
+            isAutoSaveOn: Harness.autoSave()
         )
         let created = try #require(session)
         harness.buffer = created.currentText
@@ -190,7 +199,8 @@ struct WorkspaceFileEditSessionTests {
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: seed, etag: nil, creatable: true),
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20),
+            isAutoSaveOn: Harness.autoSave()
         )!
         harness.buffer = session.currentText
         session.attachEditor { harness.buffer }
@@ -212,7 +222,8 @@ struct WorkspaceFileEditSessionTests {
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: seed, etag: nil, creatable: true),
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20),
+            isAutoSaveOn: Harness.autoSave()
         )!
         harness.buffer = session.currentText
         session.attachEditor { harness.buffer }
@@ -612,7 +623,8 @@ struct WorkspaceFileEditSessionTests {
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20),
+            isAutoSaveOn: Harness.autoSave()
         )!
         harness.buffer = session.currentText
         session.attachEditor { harness.buffer }
@@ -641,7 +653,8 @@ struct WorkspaceFileEditSessionTests {
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .seconds(60), retryDelay: .milliseconds(20)
+            idleDelay: .seconds(60), retryDelay: .milliseconds(20),
+            isAutoSaveOn: Harness.autoSave()
         )!
         harness.buffer = session.currentText
         session.attachEditor { harness.buffer }
@@ -667,23 +680,186 @@ struct WorkspaceFileEditSessionTests {
     }
 
     /// A draft kept for a file that was never created reopens on the creation it
-    /// extends, so its next save is still a create.
-    @Test func aKeptDraftWithTheCreationBaseReopensAsACreate() throws {
+    /// extends, so its next save is still a create — and reopening writes nothing:
+    /// recovery is not consent.
+    @Test func aKeptDraftWithTheCreationBaseReopensAsACreate() async {
         let harness = Harness()
-        try harness.store.save(WorkspaceFileDraft(
+        try? harness.store.save(WorkspaceFileDraft(
             identity: harness.identity, baseEtag: "*", bytes: Data("kept words".utf8), updatedAt: Date()
         ))
-        let session = WorkspaceFileEditSession(
-            identity: harness.identity,
-            disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
-            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
-            idleDelay: .seconds(60), retryDelay: .milliseconds(20)
+        let reopened = harness.open(
+            disk: Data(),
+            etag: nil,
+            creatable: true,
+            idleDelay: .milliseconds(20),
+            autoSave: false
         )
-        let reopened = try #require(session)
         #expect(reopened.recoveredDraft)
         #expect(reopened.currentText == "kept words")
         #expect(reopened.baseCondition == .absent)
-        #expect(reopened.status == .pending, "the same creation base resumes autosave")
+        #expect(reopened.status == .pending, "the kept draft is unsaved")
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(harness.scripted.writeLog.isEmpty, "reopening a creatable draft never creates the file")
+
+        reopened.saveNow()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.count == 1)
+        #expect(harness.scripted.writeLog[0].condition == .absent, "the kept draft still extends the create")
+        #expect(harness.scripted.writeLog[0].bytes == Data("kept words".utf8))
+    }
+
+    // MARK: Auto-Save
+
+    /// The walk-through with Auto-Save off: typing and its idle timer, a background
+    /// flush, the page going away, an answer nothing could read, and Review of a
+    /// create that never landed all write nothing. Reopening the kept draft writes
+    /// nothing either, and only a person's Save writes — once.
+    @Test func autoSaveOffWritesNothingUntilAPersonSaves() async {
+        let harness = Harness()
+        let session = harness.open(
+            disk: Data(),
+            etag: nil,
+            creatable: true,
+            idleDelay: .milliseconds(20),
+            autoSave: false
+        )
+        harness.type(" edited", into: session)
+        #expect(session.status == .pending)
+
+        // The idle deadline came and went: nothing was sent, and the draft has it.
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(harness.scripted.writeLog.isEmpty, "no idle save with Auto-Save off")
+        #expect(harness.store.load(harness.identity)?.bytes == Data(" edited".utf8), "the draft keeps it")
+
+        // Backgrounding flushes; the page going away detaches. Both checkpoint.
+        session.flush()
+        session.detachEditor()
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.isEmpty, "a flush and a detach only checkpoint")
+
+        // An answer nothing could read, then Review of a create that never landed.
+        session.attachEditor { harness.buffer }
+        harness.scripted.reads = [.failed]
+        _ = await session.reviewDisk()
+        harness.scripted.reads = [.creatable]
+        _ = await session.reviewDisk()
+        #expect(session.status == .pending)
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.isEmpty, "Review never sends a create the person did not ask for")
+
+        // Reopening the kept draft: still nothing written.
+        let reopened = harness.open(
+            disk: Data(),
+            etag: nil,
+            creatable: true,
+            idleDelay: .milliseconds(20),
+            autoSave: false
+        )
+        #expect(reopened.recoveredDraft)
+        #expect(reopened.currentText == " edited")
+        #expect(reopened.baseCondition == .absent)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(harness.scripted.writeLog.isEmpty, "reopening with a draft never creates")
+
+        // Done → Save: exactly one write, and no second one after it.
+        reopened.saveNow()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.count == 1)
+        #expect(harness.scripted.writeLog[0].condition == .absent)
+        #expect(harness.scripted.writeLog[0].bytes == Data(" edited".utf8))
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { reopened.status == .saved })
+        reopened.flush()
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.count == 1, "a confirmed save does not repeat itself")
+    }
+
+    /// Done → Discard Changes: nothing is written and the kept draft goes.
+    @Test func discardingWritesNothingAndDropsTheDraft() async {
+        let harness = Harness()
+        let session = harness.open(idleDelay: .milliseconds(20), autoSave: false)
+        harness.type(" thrown away", into: session)
+        // The idle timer is a checkpoint with Auto-Save off: the draft has it.
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.store.load(harness.identity) != nil)
+        #expect(harness.scripted.writeLog.isEmpty)
+
+        session.discardChanges()
+
+        #expect(harness.scripted.writeLog.isEmpty, "Discard Changes writes nothing")
+        #expect(harness.store.load(harness.identity) == nil, "the draft is gone")
+        #expect(session.hasUnsavedChanges == false)
+        #expect(session.hasUnconfirmedChanges == false)
+        #expect(session.status == .saved)
+    }
+
+    /// ⌘S and Vim's `:w` are the person's save: one write, and Done then closes
+    /// without asking again.
+    @Test func aConfirmedSaveWritesOnceAndIsNotAskedForTwice() async {
+        let harness = Harness()
+        let session = harness.open(idleDelay: .seconds(60), autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.hasUnconfirmedChanges, "Done would ask for this edit")
+
+        session.saveNow()
+
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.count == 1)
+        #expect(harness.scripted.writeLog[0].bytes == Data("hello one".utf8))
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+        #expect(session.hasUnconfirmedChanges == false)
+        session.flush()
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.count == 1, "nothing is written again after the confirmed save")
+    }
+
+    /// Auto-Save on is today's behaviour: the idle save runs unchanged.
+    @Test func autoSaveOnStillWritesAfterTheIdleDelay() async {
+        let harness = Harness()
+        let session = harness.open(idleDelay: .milliseconds(20), autoSave: true)
+        harness.type(" autosaved", into: session)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog[0].bytes == Data("hello autosaved".utf8))
+    }
+
+    /// Toggling while the editor is open takes effect at once: on starts the idle
+    /// save unsaved edits are owed, and off cancels the timer and keeps the draft.
+    @Test func togglingAutoSaveWhileOpenStartsAndStopsTheIdleSave() async {
+        let harness = Harness()
+        var isOn = false
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: tag("a")),
+            maxBytes: 64,
+            transport: harness.scripted.transport,
+            draftStore: harness.store,
+            idleDelay: .milliseconds(20),
+            retryDelay: .milliseconds(20),
+            isAutoSaveOn: { isOn }
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+
+        harness.type(" kept", into: session)
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.isEmpty, "off: no save is scheduled")
+        #expect(session.status == .pending)
+
+        isOn = true
+        session.autoSaveSettingChanged(isOn: true)
+        #expect(await eventually { harness.scripted.pending.count == 1 }, "on: the idle save starts at once")
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+
+        isOn = false
+        harness.type(" more", into: session)
+        session.autoSaveSettingChanged(isOn: false)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(harness.scripted.writeLog.count == 1, "off: the idle timer is cancelled")
+        #expect(session.status == .pending)
+        #expect(harness.store.load(harness.identity)?.bytes == Data("hello kept more".utf8), "the draft keeps it")
     }
 
     // MARK: Drafts and recovery
@@ -947,13 +1123,17 @@ struct WorkspaceFileEditRecoveryTests {
 @Suite("Workspace file editor surface")
 @MainActor
 struct WorkspaceFileEditorSurfaceTests {
-    private func makeController(_ harness: Harness) -> (WorkspaceFileEditorViewController, UIWindow) {
+    private func makeController(_ harness: Harness, autoSave: Bool = true) -> (WorkspaceFileEditorViewController, UIWindow) {
         let session = WorkspaceFileEditSession(
             identity: harness.identity,
             disk: WorkspaceFileDiskSnapshot(bytes: Data("# Title\r\nbody".utf8), etag: tag("a")),
             maxBytes: 1_024,
             transport: harness.scripted.transport,
-            draftStore: harness.store
+            draftStore: harness.store,
+            // This suite drives the editor with the session's own saves on, so a
+            // flush on the way out still writes (the Auto-Save gate's off case is
+            // `WorkspaceFileEditSessionTests`').
+            isAutoSaveOn: Harness.autoSave(autoSave)
         )!
         let controller = WorkspaceFileEditorViewController(session: session, themeID: .dark) { text in
             let preview = UIViewController()
@@ -1049,6 +1229,28 @@ struct WorkspaceFileEditorSurfaceTests {
         case .tooLarge: ("Too Large", .symbol("exclamationmark.triangle"))
         case .failed: ("Not Saved", .symbol("exclamationmark.triangle"))
         }
+    }
+
+    /// ⌘S is the person's save: with Auto-Save off it writes what is on screen,
+    /// once, and asks nothing.
+    @Test func commandSSavesAtOnceWithAutoSaveOff() async {
+        let harness = Harness()
+        let (controller, window) = makeController(harness, autoSave: false)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        textView.becomeFirstResponder()
+        textView.insertText(" saved")
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(controller.session.hasUnconfirmedChanges)
+
+        controller.codeEditor(textView, perform: "save")
+
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.count == 1)
+        #expect(harness.scripted.writeLog[0].bytes == Data("# Title\r\nbody saved".utf8))
+        #expect(controller.presentedViewController == nil, "⌘S writes: it is the save, not a question")
+        #expect(controller.session.hasUnsavedChanges, "the write is not acknowledged yet")
+        #expect(!controller.session.hasUnconfirmedChanges, "the person confirmed these bytes")
     }
 
     @Test func finishEditingDetachesAndFlushesWithoutWaiting() async {

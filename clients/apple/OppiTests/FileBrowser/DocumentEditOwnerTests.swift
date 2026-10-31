@@ -129,6 +129,7 @@ struct DocumentEditOwnerTests {
         sessionRegistry: WorkspaceFileEditSessionRegistry? = nil,
         readSpy: ReadSpy? = nil,
         handlers: DocumentEditOwner.Handlers = .init(),
+        autoSave: Bool = true,
         onChange: @escaping @MainActor () -> Void = {}
     ) -> DocumentEditOwner {
         let transport = transport ?? idleTransport
@@ -150,6 +151,7 @@ struct DocumentEditOwnerTests {
             draftStore: draftStore ?? self.draftStore(),
             registry: sessionRegistry ?? self.registry(),
             handlers: handlers,
+            isAutoSaveOn: { autoSave },
             onChange: onChange
         )
     }
@@ -570,6 +572,56 @@ struct DocumentEditOwnerTests {
         owner.beginEditing()
         #expect(owner.isEditing)
         #expect(owner.session?.status == .deleted, "reopening never writes")
+    }
+
+    // MARK: Auto-Save
+
+    /// Counts the writes the transport saw.
+    @MainActor
+    private final class WriteCount {
+        private(set) var count = 0
+        func note() { count += 1 }
+    }
+
+    /// Done with Auto-Save off (the editor's default) closes and writes nothing:
+    /// the edits stay the person's to save and live in the device draft, and the
+    /// reader still hears that the editor closed.
+    @Test func doneWithAutoSaveOffWritesNothingAndKeepsTheDraft() async throws {
+        let writes = WriteCount()
+        let saved = tag("b")
+        let transport = WorkspaceFileEditTransport(
+            read: { _ in .failed },
+            write: { _, _, _ in
+                await writes.note()
+                return .saved(etag: saved)
+            }
+        )
+        let store = draftStore()
+        var finished = 0
+        let owner = owner(
+            subject: workspaceSubject(),
+            capability: capability,
+            transport: transport,
+            draftStore: store,
+            handlers: .init(didFinishEditing: { finished += 1 }),
+            autoSave: false
+        )
+
+        _ = await owner.read()
+        owner.beginEditing()
+        let page = try #require(owner.makeEditorPage(checkoutSubtitle: nil))
+        page.loadViewIfNeeded()
+        let session = try #require(owner.session)
+        page.editor.textView.text = "kept words"
+        session.noteEdit()
+
+        owner.endEditing()
+
+        #expect(await eventually { finished == 1 }, "the reader hears the editor closed")
+        #expect(writes.count == 0, "Done with Auto-Save off writes nothing")
+        #expect(session.hasUnconfirmedChanges, "the edits are still the person's to save")
+        #expect(session.status == .pending)
+        #expect(store.load(session.identity)?.bytes == Data("kept words".utf8), "the draft keeps them")
     }
 
     // MARK: A record's prompt
