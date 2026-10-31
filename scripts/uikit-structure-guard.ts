@@ -22,13 +22,14 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *
  *  - A `UIColor(<palette>.` bridge is a ratchet of the same kind: a UIKit
  *    call site converts the palette's SwiftUI `Color` again instead of reading
- *    the colour the palette already has for UIKit (`palette.ui.fg`). The
- *    baseline keeps the opacity chains that build a one-off translucent
- *    colour (`UIColor(palette.bg.opacity(0.30))` has no `withAlphaComponent`
- *    equivalent: a palette token may itself be translucent), and
- *    `Core/Theme/ThemeCatalog.swift` and `Core/Theme/ThemePalette+UIKit.swift`,
- *    which build the UIKit palette. The guard reads the argument by name, so a
- *    bridge through a variable that is not called a palette is not seen.
+ *    the colour the palette already has for UIKit (`palette.ui.fg`). A new
+ *    translucent colour is `palette.ui.x.withAlphaComponent(a)`; `Color.opacity`
+ *    multiplies into a token's own alpha, which an imported theme may set. The
+ *    baseline keeps the older `UIColor(palette.x.opacity(a))` chains and
+ *    `Core/Theme/ThemeCatalog.swift`, where `ThemeUIKitPalette.init` is the one
+ *    place that converts palette colors for UIKit. The guard reads the argument
+ *    by name, so a bridge through a variable that is not called a palette is not
+ *    seen.
  *  - `SettingsListStyle.pin(`, `SettingsListStyle.applyTheme(`, and a hand-built
  *    `UICollectionLayoutListConfiguration(appearance: .insetGrouped)` are a
  *    ratchet of the same kind: a settings list that pins, themes, or lays
@@ -264,14 +265,10 @@ const constructs: Construct[] = [
   // "Client boundary rules current code" in the guide.
   {
     name: "UIColor(<palette>.",
-    pattern: /\bUIColor\s*\(\s*[A-Za-z_.]*palette\s*\./g,
+    pattern: /\bUIColor\s*\(\s*[A-Za-z_.?]*[pP]alette\s*\./g,
     disallowed: false,
-    exemptFiles: [
-      // Both build the UIKit colors: the shared palette type, and the iOS-only
-      // carrier that adds the tokens it leaves to SwiftUI.
-      "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift",
-      "clients/apple/Oppi/Core/Theme/ThemePalette+UIKit.swift",
-    ],
+    // The one place the conversions belong: `ThemeUIKitPalette.init`.
+    exemptFiles: ["clients/apple/Oppi/Core/Theme/ThemeCatalog.swift"],
   },
   // Alerts outside the shared presenters: see "Alerts" in the guide.
   {
@@ -526,10 +523,12 @@ baseline diff only moves entries.
 
 A UIColor(<palette>.) bridge at a UIKit call site builds the palette's colour
 from its SwiftUI Color again, which the palette's UIKit view avoids: read
-palette.ui.fg (or any other token, see ThemeUIKitTokens) instead of
-UIColor(palette.fg). The count only goes down; --update lowers the baseline
-behind it. ThemeCatalog.swift and ThemePalette+UIKit.swift are exempt because
-they build the UIKit palette.
+palette.ui.fg (or any other token, see ThemeUIKitPalette) instead of
+UIColor(palette.fg); a new translucent color is
+palette.ui.x.withAlphaComponent(a), not UIColor(palette.x.opacity(a)) (that
+multiplies into the token's own alpha, which an imported theme may set). The
+count only goes down; --update lowers the baseline behind it. ThemeCatalog.swift
+is exempt because ThemeUIKitPalette.init is where the UIKit colors come from.
 
 SettingsListStyle.pin(, SettingsListStyle.applyTheme(, and a hand-built
 UICollectionLayoutListConfiguration(appearance: .insetGrouped) outside the
