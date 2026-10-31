@@ -63,9 +63,20 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         for presenter in [fileReview, defaultPromptViewer] { presenter.anchor = self }
     }
 
-    /// Coming back from Tools keeps the selection it saved: the page loads
-    /// once, and a pull to refresh or a Retry loads again.
+    /// The Pi configuration: the base loads it once when the page appears and
+    /// keeps it (see `loadPolicy`), and again on pull to refresh, after a Retry,
+    /// or when the server or its client changes.
     override var loadPolicy: LoadPolicy { .onceUntilSubjectChanges }
+
+    /// The server and the client serving it: a connection that comes up, drops,
+    /// or is replaced is another subject, so a load in flight for the old one is
+    /// cancelled instead of landing here.
+    override func loadSubject() -> AnyHashable? {
+        AnyHashable([
+            AnyHashable(root.coordinator.activeServerId),
+            AnyHashable(root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)),
+        ])
+    }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
@@ -143,8 +154,11 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
             ])
         case .tools:
             return AnyHashable(AgentManagementPresentation.piToolsSummary(defaultTools: tools.defaultTools))
-        // The identity row and the file row hold nothing a reconfigure would
-        // disturb, so the kit's default draws them again.
+        case .file:
+            // The path is selectable text: a pass that redrew the row would drop
+            // a selection or the copy menu, so the row is keyed by it.
+            return AnyHashable(AgentManagementPresentation.globalSystemPromptPath)
+        // The identity row is labels; the kit's default draws it again.
         default:
             return super.inputs(of: item)
         }

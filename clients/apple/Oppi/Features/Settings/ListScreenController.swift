@@ -65,9 +65,10 @@ enum LoadPolicy {
     /// refresh, and when `setNeedsLoad()` asks (a Retry, a foreground return,
     /// a finished sign-in).
     case eachAppearance
-    /// A load when the page first appears, and again only when its subject
-    /// changes or `setNeedsLoad()` asks: a page back from a pushed editor keeps
-    /// what that editor saved.
+    /// A load when the page first appears, and again only after a load that
+    /// succeeded, when its subject changes, or when `setNeedsLoad()` asks: a
+    /// page back from a pushed editor keeps what that editor saved, and a page
+    /// whose first load failed (or was cancelled) tries again when it appears.
     case onceUntilSubjectChanges
 }
 
@@ -311,10 +312,17 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Runs `load()` for the page's subject now, replacing a load in flight.
     private func startLoad() {
         guard loadPolicy != .none else { return }
+        // A load for a subject the page has not loaded yet — a server that
+        // changed while the page was covered, so nothing ran on the way — still
+        // drops what the old subject showed.
+        let subject = loadSubject()
+        // A load for a subject the page has not loaded yet — a server that
+        // changed while the page was covered, so nothing ran on the way — still
+        // drops what the old subject showed.
+        if hasLoadedSubject, subject != loadedSubject { subjectDidChange() }
         loadTask?.cancel()
-        loadedSubject = loadSubject()
+        loadedSubject = subject
         hasLoadedSubject = true
-        hasLoadedOnce = true
         isLoading = true
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -323,18 +331,21 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
                 guard !Task.isCancelled else { return }
                 loadFailure = nil
                 isLoading = false
+                // Only a load that succeeded is what a page keeps: a first load
+                // that failed or was cancelled loads again when it appears.
+                hasLoadedOnce = true
             } catch {
                 // A load this page cancelled — it left, its subject changed, or
                 // another load replaced it — is not a failure, and leaves the
                 // flags to the load that replaced it.
                 guard !Task.isCancelled else { return }
-                // The page is still here and its request ended as a cancel (a
-                // superseded request, a URLSession cancel): the load is over and
-                // nothing failed.
                 isLoading = false
-                guard !error.isLoadCancellation else { return }
-                loadFailure = error.localizedDescription
+                // The page is still here and its request ended as a cancel (a
+                // superseded request, a URLSession cancel): nothing failed.
+                if !error.isLoadCancellation { loadFailure = error.localizedDescription }
             }
+            // A pull to refresh spins until the page's load settles, however it
+            // settled.
             if pullToRefreshControl.isRefreshing { pullToRefreshControl.endRefreshing() }
         }
     }

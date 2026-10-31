@@ -69,13 +69,16 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - The load ratchet (same file, same baseline) counts, in a file under
  *    `clients/apple/Oppi/Features/` that declares a subclass of
  *    `ListScreenController` (directly or through
- *    `ServerResourceDetailScreenController`), the code a page that owns its own
- *    load writes: `Task {`, `isLoadCancellation`, `Task.isCancelled`, and an
- *    `override func viewIsAppearing`. The kit owns one load task per page
+ *    `ServerResourceDetailScreenController`), the two ways a page takes over the
+ *    load the kit owns: an `override func viewIsAppearing` (a page that starts
+ *    its own load on the way in) and `isLoadCancellation` (a page that decides
+ *    for itself whether a load failed). The kit runs one task per page
  *    (`loadPolicy`, `loadSubject`, `load`, `setNeedsLoad`), so a page overrides
- *    those and never a task: a new page starts at 0 and the count only goes
- *    down. The baseline keeps the tasks a page runs for something it does
- *    itself (an archive, a run now, a sign-in cancel), which are not loads.
+ *    those and never the trigger or the outcome; a new page starts at 0 and the
+ *    count only goes down. `Task {` and `Task.isCancelled` are not counted: a
+ *    page needs its own task for an action (archive, run now, sign-in cancel),
+ *    and the kit expects the `Task.isCancelled` check after an `await` that keeps
+ *    a late answer off the screen.
  *
  *  - `UIContentUnavailableConfiguration` factory is a ratchet of the same kind: a
  *    screen's whole-screen (or list-cell) loading, empty, no-results, and failed
@@ -309,24 +312,10 @@ const constructs: Construct[] = [
     exemptFiles: [settingsBase, "clients/apple/Oppi/Features/Settings/SettingsDeclaredRows.swift"],
     pathMustMatch: featuresOnly,
   },
-  // A page that owns its load: the kit's base owns it. See "Settings pages" in the guide.
-  {
-    name: "page Task {",
-    pattern: /\bTask\s*\{/g,
-    disallowed: false,
-    pathMustMatch: featuresOnly,
-    fileMustMatch: listPageSubclass,
-  },
+  // A page that owns its load the kit gives it: see "Settings pages" in the guide.
   {
     name: "page isLoadCancellation",
     pattern: /\bisLoadCancellation\b/g,
-    disallowed: false,
-    pathMustMatch: featuresOnly,
-    fileMustMatch: listPageSubclass,
-  },
-  {
-    name: "page Task.isCancelled",
-    pattern: /\bTask\s*\.\s*isCancelled\b/g,
     disallowed: false,
     pathMustMatch: featuresOnly,
     fileMustMatch: listPageSubclass,
@@ -493,9 +482,10 @@ SettingsStore (settingToggleRow, settingChoiceRow on the settings base); see
 ${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.ts --update\`
 lowers the baseline after a page moves.
 
-A page on ListScreenController that writes Task {, isLoadCancellation,
-Task.isCancelled, or an override func viewIsAppearing owns its own load. The kit
-owns one load task per page: say loadPolicy, loadSubject(), and load() (and
+A page on ListScreenController that writes isLoadCancellation or an override
+func viewIsAppearing decides its own load's trigger or outcome. The kit owns one
+load task per page: say loadPolicy, loadSubject(), and load() (and
 subjectDidChange() when the page drops what the old subject showed), and ask for a
-load with setNeedsLoad(); see ${settingsGuide}. The count only goes down.`);
+load with setNeedsLoad(); see ${settingsGuide}. A page's own task for an action is
+fine. The count only goes down.`);
 process.exit(1);

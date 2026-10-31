@@ -97,9 +97,11 @@ class ServerResourceDetailScreenController<
     private(set) var connection: ServerConnection? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// The detail the last request returned, and whether it is newer than the
-    /// catalog row that opened the page. A successful catalog mutation is
-    /// authoritative until a later detail request succeeds.
+    /// The detail the last request returned, and whether a request that
+    /// succeeded makes it newer than the catalog row that opened the page. The
+    /// detail itself stays as long as the page does (a failed reload keeps what
+    /// it found); a successful catalog mutation is authoritative until a later
+    /// detail request succeeds.
     private(set) var detail: Detail?
     private(set) var usesDetailSummary = false
 
@@ -164,6 +166,9 @@ class ServerResourceDetailScreenController<
     /// Retry.
     override func load() async throws {
         guard page.expectedKind == nil || target.kind == page.expectedKind else { return }
+        // A Retry starts from no failure: the rows show the load, not the last
+        // one's reason.
+        clearLoadFailure()
         if switchesServer {
             guard await root.coordinator.switchToServerReady(target.serverId), !Task.isCancelled else { return }
             connection = root.coordinator.connection(for: target.serverId)
@@ -188,7 +193,10 @@ class ServerResourceDetailScreenController<
         if let summary, let store {
             state = ServerResourceDetailState(
                 summary: summary,
-                detail: usesDetailSummary ? detail : nil,
+                // What the request found, whatever the summary precedence says:
+                // after a save the catalog's summary wins until the reload
+                // lands, and the contents it found stay on screen meanwhile.
+                detail: detail,
                 loadError: loadFailure,
                 isLoading: isLoading,
                 isPending: store.isMutationPending(page.mutationKey, serverId: target.serverId),

@@ -238,7 +238,11 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             // change replaces it, and only a changed input redraws the row.
             guard let schedule else { return AnyHashable(0) }
             return AnyHashable(SchedulePresentation.prompt(in: schedule.action))
-        // A detail, caption, or no-runs row holds nothing a reconfigure would
+        case .detail(let title, let value):
+            // The value is selectable text: a pass that redrew the row would drop
+            // a selection or the copy menu, so the row is keyed by it.
+            return AnyHashable([AnyHashable(title), AnyHashable(value)])
+        // A caption or the no-runs state row holds nothing a reconfigure would
         // disturb, so the kit's default draws it again.
         default:
             return super.inputs(of: item)

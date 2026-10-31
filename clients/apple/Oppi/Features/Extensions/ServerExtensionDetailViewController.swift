@@ -148,8 +148,12 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
         ])
-        // A tool, command, warning, Retry, or loading row holds nothing a
-        // reconfigure would disturb, so the kit's default draws it again.
+        case .tool(let name), .command(let name):
+            // A contribution name is selectable text: a pass that redrew the row
+            // would drop a selection or the copy menu, so it is keyed by it.
+            AnyHashable(name)
+        // A warning, Retry, or loading row holds nothing a reconfigure would
+        // disturb, so the kit's default draws it again.
         default: super.inputs(of: item)
         }
     }

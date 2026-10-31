@@ -239,6 +239,14 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         case .prompt:
             guard let instructions = agent?.definition.instructions else { return AnyHashable(0) }
             return AnyHashable([AnyHashable(Self.systemPromptTitle(instructions.mode)), AnyHashable(instructions.text)])
+        case .value(let title, let value):
+            // The value is selectable text: a pass that redrew the row would
+            // drop a selection or the copy menu, so the row is keyed by it.
+            return AnyHashable([AnyHashable(title), AnyHashable(value)])
+        case .block(let title, let value):
+            return AnyHashable([AnyHashable(title), AnyHashable(value)])
+        case .resourceList(let title, let value):
+            return AnyHashable([AnyHashable(title), AnyHashable(value)])
         case .schedule:
             return AnyHashable(connection.workspaceStore.workspaces.isEmpty)
         case .startSession:
@@ -247,8 +255,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                 AnyHashable(connection.workspaceStore.workspaces.isEmpty),
                 AnyHashable(connection.currentServerId),
             ])
-        // A value, block, resource list, notice, or caption row holds nothing
-        // that a reconfigure would disturb, so the kit's default draws it again.
+        // A notice or caption is a label; the kit's default draws it again.
         default:
             return super.inputs(of: item)
         }
@@ -625,6 +632,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         }
         agent = try await apiClient.getAgent(agentId)
         guard !Task.isCancelled else { return }
+        // A page that just loaded says nothing of a change that failed before.
+        error = nil
         await connection.serverResourceStore.load(serverId: serverId, api: apiClient)
     }
 
