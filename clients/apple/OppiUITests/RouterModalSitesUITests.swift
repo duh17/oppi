@@ -538,8 +538,8 @@ final class RouterModalSitesUITests: XCTestCase {
         attachScreenshot("terminal-tab-rex-rename")
         field.tap()
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 12) + "config")
-        // The alert's preferred button is in the tree twice, one inside the other, with the same identifier.
-        app.buttons["sshTerminal.rexList.rename.confirm"].firstMatch.tap()
+        // The accessibility tree doubles an identified alert button (one inside the other, same identifier).
+        app.alerts["Rename Session"].buttons["sshTerminal.rexList.rename.confirm"].firstMatch.tap()
         XCTAssertTrue(waitFor(dotfiles.label.hasPrefix("config,"), timeout: 10), "The row must take the new name from Rex's event")
 
         // Closing it, confirmed, removes it.
@@ -547,8 +547,8 @@ final class RouterModalSitesUITests: XCTestCase {
         app.buttons["Close"].tap()
         let again = app.alerts["Close session \u{201C}config\u{201D}?"]
         XCTAssertTrue(again.waitForExistence(timeout: 5))
-        // Same nested duplicate of the alert's preferred button as Rename's.
-        app.buttons["sshTerminal.rexList.close.confirm"].firstMatch.tap()
+        // The accessibility tree doubles an identified alert button here too (Close is not the preferred one).
+        again.buttons["sshTerminal.rexList.close.confirm"].firstMatch.tap()
         XCTAssertTrue(waitForDisappearance(of: dotfiles, timeout: 10), "A closed session must leave the list")
         attachScreenshot("terminal-tab-rex-closed")
 

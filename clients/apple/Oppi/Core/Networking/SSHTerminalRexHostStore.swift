@@ -22,7 +22,8 @@ struct SSHTerminalRexHostStore {
     static func key(_ id: UUID) -> String { "\(prefix).\(id.uuidString)" }
 
     private static func account(_ profile: SSHTerminalProfile) -> String {
-        "\(profile.username)@\(SSHKnownHosts.entryKey(host: profile.host, port: profile.port))"
+        let value = profile.normalized()
+        return "\(value.username)@\(SSHKnownHosts.entryKey(host: value.host, port: value.port))"
     }
 
     /// Rex was seen on this host, as this account.

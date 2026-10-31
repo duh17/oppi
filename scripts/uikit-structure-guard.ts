@@ -52,9 +52,11 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - `UIAlertController(` is a ratchet of the same kind (same baseline): an
  *    error alert or a confirmation goes through `ErrorAlertPresenter` or
  *    `Confirmation` (`errorAlerts.show`, `Confirmation(...).present(from:anchor:)`),
- *    which own the replace-and-hold rules and the iPad popover anchor. Those
- *    two files are exempt. What the baseline keeps is not an error alert or a
- *    confirmation: the two text-field alerts (rename session, go to line), the
+ *    which own the replace-and-hold rules and the iPad popover anchor, and a
+ *    line of text through the shared `TextPrompt` (in ConfirmationSheet.swift,
+ *    exempt with the other file). What the baseline keeps is not an error alert
+ *    or a confirmation: the two text-field alerts (rename session, go to line;
+ *    they predate `TextPrompt`), the
  *    three choice sheets (tree navigation, resource choice, where to sign in),
  *    which anchor through `AlertAnchor.present`, and the push/Live Activity
  *    disclosure, whose third button (Privacy Policy) a `Confirmation` has no
