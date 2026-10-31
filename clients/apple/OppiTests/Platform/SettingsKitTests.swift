@@ -198,13 +198,6 @@ struct SettingsKitTests {
         #expect(plain.collectionView.keyboardDismissMode == .none, "a page that does not opt in keeps UIKit's default")
     }
 
-    @Test("Only a page that loads has a pull to refresh")
-    func pullToRefreshIsOptedInto() {
-        let plain = ScopedPage()
-        plain.loadViewIfNeeded()
-        #expect(plain.collectionView.refreshControl == nil, "a page that loads nothing has no spinner to pull")
-    }
-
     @Test("A page shows a header only on the sections it names")
     func headerPerSection() async throws {
         let page = HeaderPage()

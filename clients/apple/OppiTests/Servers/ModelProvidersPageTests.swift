@@ -79,6 +79,34 @@ struct ModelProvidersPageTests {
         }, "the page follows the switch and loads the new server instead of keeping the old rows")
     }
 
+    @Test("a request that ends as a cancel keeps the providers and reports no failure")
+    func cancelledRequestKeepsProviders() async throws {
+        let answers = ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)])
+        let routes = Self.useAnswers(["ready-server.test": answers])
+        defer { routes.end() }
+        let root = try makeRoot()
+        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
+        let window = try show(page)
+        defer { hide(window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.shownItems.contains(.provider("claude"))
+        })
+
+        // The next load's request ends as a cancel — a superseded request, a
+        // URLSession cancel. The rows this server already showed stay, and
+        // nothing is reported as failed.
+        let before = answers.statusRequests
+        answers.cancelNextStatusRequest()
+        page.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            answers.statusRequests == before + 1
+        }, "the next load asked the server")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            page.shownItems.contains(.provider("claude")) && !page.sections().contains { $0.id == .error }
+        }, "a cancelled request keeps its providers and is not a failure")
+        #expect(!page.isLoading, "the page is not left spinning")
+    }
+
     @Test("a reload that cannot read usage keeps the usage it already showed")
     func failedUsageReloadKeepsTheUsage() async throws {
         let usageReadAt = 1_700_000_000_000
@@ -233,6 +261,7 @@ private final class ProviderHostAnswers: @unchecked Sendable {
     private let quotas: ProviderQuotasInfo
     private let lock = NSLock()
     private var statusCount = 0
+    private var cancelsNextStatus = false
 
     init(
         providers: [ProviderAuthProviderStatus],
@@ -244,13 +273,21 @@ private final class ProviderHostAnswers: @unchecked Sendable {
 
     var statusRequests: Int { lock.withLock { statusCount } }
 
+    /// Ends the next usage read as a cancel instead of answering it.
+    func cancelNextStatusRequest() { lock.withLock { cancelsNextStatus = true } }
+
     /// Fails the next usage reads instead of answering them.
     var failQuotas = false
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
         switch request.url?.path {
         case let path? where path.hasSuffix("/provider-auth/status"):
-            lock.withLock { statusCount += 1 }
+            let cancels = lock.withLock {
+                statusCount += 1
+                defer { cancelsNextStatus = false }
+                return cancelsNextStatus
+            }
+            if cancels { throw URLError(.cancelled) }
             return try mockJSONResponse(encoding: Envelope(providers: providers), for: request)
         case let path? where path.hasSuffix("/server/provider-quotas"):
             if failQuotas { throw URLError(.badServerResponse) }

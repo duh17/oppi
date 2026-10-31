@@ -44,6 +44,89 @@ enum AgentsLoadStateTests {
             }, "the state row leaves once the list loads")
         }
 
+        @Test("Retry keeps its row and shows loading, with the saved Agents listed or not, then recovers")
+        func retryKeepsTheRowWhileLoading() async throws {
+            AgentsURLProtocol.reset()
+            AgentsURLProtocol.mode = .failing
+            let root = makeTestAppRoot()
+            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+            let screen = AgentListViewController(root: root)
+            let window = try Self.show(screen)
+            defer { Self.hide(window) }
+
+            // Nothing loaded yet: the failure says why and offers Retry.
+            let retry = try #require(await waitForStateRow(in: screen) {
+                $0.accessibilityTraits.contains(.button) && $0.accessibilityLabel?.isEmpty == false
+            })
+            #expect(retry.accessibilityLabel != "Server offline", "a failed request says what failed")
+            #expect(screen.presentedViewController == nil)
+
+            AgentsURLProtocol.mode = .held
+            retry.sendActions(for: .touchUpInside)
+            let loading = try #require(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Loading saved Agents…" })
+            #expect(loading === retry, "the same row, so VoiceOver focus stays on it")
+            #expect(!loading.accessibilityTraits.contains(.button))
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
+            AgentsURLProtocol.releaseHeldRequest()
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return Self.button("agents.row.reviewer", in: screen.view) != nil
+            })
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+            })
+
+            // The server drops: the loaded Agent stays and the row returns below it.
+            AgentsURLProtocol.mode = .failing
+            screen.beginAppearanceTransition(true, animated: false)
+            screen.endAppearanceTransition()
+            let again = try #require(await waitForStateRow(in: screen) { $0.accessibilityTraits.contains(.button) })
+            #expect(Self.button("agents.row.reviewer", in: screen.view) != nil,
+                    "the Agents it listed stay listed under the failure row")
+
+            // Retry with Agents listed still shows the loading row, not an empty gap.
+            AgentsURLProtocol.mode = .held
+            again.sendActions(for: .touchUpInside)
+            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Loading saved Agents…" } != nil)
+            #expect(Self.button("agents.row.reviewer", in: screen.view) != nil)
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
+            AgentsURLProtocol.releaseHeldRequest()
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+            }, "a successful retry clears the row")
+        }
+
+        @Test("a load that was running when the server went away neither sticks on loading nor shows its late answer")
+        func serverChangeMidLoadDropsTheOldResult() async throws {
+            AgentsURLProtocol.reset()
+            AgentsURLProtocol.mode = .held
+            let root = makeTestAppRoot()
+            let connection = root.coordinator.activeConnection
+            connection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+            let screen = AgentListViewController(root: root)
+            let window = try Self.show(screen)
+            defer { Self.hide(window) }
+
+            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Loading saved Agents…" } != nil)
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
+
+            // The page's subject is the server and the client serving it, so a
+            // client that goes away is another subject: the load for it is
+            // cancelled and the page ends in the offline row, not loading.
+            connection.setAPIClientForTesting(nil)
+            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server offline" } != nil,
+                    "no client ends the load instead of leaving the row loading")
+
+            AgentsURLProtocol.releaseHeldRequest(agentId: "stale")
+            #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+                screen.view.layoutIfNeeded()
+                return Self.button("agents.row.stale", in: screen.view) == nil
+                    && Self.buttons("agents.state", in: screen.view).contains { !$0.isHiddenInHierarchy && $0.accessibilityLabel == "Server offline" }
+            }, "the old server's answer is dropped")
+        }
+
         // MARK: - Helpers
 
         private func waitForStateRow(
@@ -160,6 +243,29 @@ enum AgentsLoadStateTests {
     @MainActor
     @Suite("Pi page load states")
     struct PiAgentDetailLoadStateTests {
+        @Test("a selectable text row is keyed by what it shows, so a pass leaves a selection alone")
+        func aSelectableTextRowKeepsItsKey() {
+            let root = makeTestAppRoot()
+            let agent = AgentDetailViewController(root: root, agentId: "reviewer") { _ in }
+            // The row's value is a text view: the same words are the same key, so
+            // a pass that changed nothing else leaves a selection and its copy
+            // menu where they are.
+            #expect(agent.inputs(of: .value(title: "Name", value: "Reviewer"))
+                == agent.inputs(of: .value(title: "Name", value: "Reviewer")))
+            #expect(agent.inputs(of: .value(title: "Name", value: "Reviewer"))
+                != agent.inputs(of: .value(title: "Name", value: "Other")))
+            #expect(agent.inputs(of: .block(title: "Description", value: "A"))
+                != agent.inputs(of: .block(title: "Description", value: "B")))
+            #expect(agent.inputs(of: .resourceList(title: "Skills", value: "A"))
+                == agent.inputs(of: .resourceList(title: "Skills", value: "A")))
+            let pi = PiAgentDetailViewController(root: root)
+            #expect(pi.inputs(of: .file) == pi.inputs(of: .file))
+            let detail = ServerExtensionDetailViewController(
+                target: ServerResourceDetailNavTarget(serverId: "server", kind: .extension, resourceId: "review"),
+                root: root
+            )
+            #expect(detail.inputs(of: .tool("review")) == detail.inputs(of: .tool("review")))
+        }
         private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
             screen.presentedViewController != nil || window.rootViewController?.presentedViewController != nil
         }

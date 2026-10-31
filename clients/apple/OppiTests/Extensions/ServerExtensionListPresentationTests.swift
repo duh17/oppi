@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Server Extensions presentation")
@@ -65,16 +66,78 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation.accessibilityLabel(for: row) == "Broken, Pi user settings, Error")
     }
 
-    @Test func aFailedDetailRequestLeavesTheCatalogSummaryAuthoritative() {
-        // A mutation's catalog answer is authoritative until a detail request
-        // succeeds: with no fresh detail to draw, the catalog's row wins.
-        let authoritative = extensionRow(id: "review", name: "Review", state: .on)
-
-        let rendered = resolvedServerExtensionDetailSummary(
-            catalogSummary: authoritative,
-            freshDetail: nil
+    @Test func aFailedDetailReloadAfterASaveKeepsTheSummaryAndTheContents() async throws {
+        let resourceId = "review"
+        let answers = ExtensionDetailAnswers(
+            catalog: ServerExtensionCatalog(extensions: [extensionRow(id: resourceId, name: "Review", state: .off)]),
+            detail: ServerExtensionDetail(
+                summary: extensionRow(id: resourceId, name: "Review", state: .off),
+                contributedTools: ["review"],
+                contributedCommands: ["review"]
+            ),
+            enabled: extensionRow(id: resourceId, name: "Review", state: .on)
         )
-        #expect(rendered == authoritative)
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try answers.answer(for: request)
+        })
+        defer { routes.end() }
+        let root = try makeTestAppRoot(
+            readyServerId: ExtensionDetailAnswers.serverId,
+            apiClient: makeTestURLProtocolClient(host: ExtensionDetailAnswers.host)
+        )
+        let connection = root.coordinator.activeConnection
+        // The list that opens a detail loads the catalog first: the page reads its
+        // summary from the store.
+        let api = try #require(connection.apiClient)
+        connection.serverResourceStore.switchServer(to: ExtensionDetailAnswers.serverId)
+        await connection.serverResourceStore.load(serverId: ExtensionDetailAnswers.serverId, api: api)
+        #expect(!connection.serverResourceStore.extensions(forServer: ExtensionDetailAnswers.serverId).isEmpty,
+                "the catalog the page draws its summary from")
+
+        let page = ServerExtensionDetailViewController(
+            target: ServerResourceDetailNavTarget(
+                serverId: ExtensionDetailAnswers.serverId, kind: .extension, resourceId: resourceId
+            ),
+            root: root,
+            connection: connection
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        // The detail landed: the page lists what the extension contributes.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.sections().contains { $0.id == .tools }
+        }, "the detail's contributions are listed")
+
+        // Enable saves, and the detail request that follows it fails: the
+        // catalog's answer stays authoritative, and the contributions stay.
+        answers.failDetail = true
+        let toggle = try #require(Self.switchWithIdentifier("server.extension.enabled", in: page.view))
+        toggle.setOn(true, animated: false)
+        toggle.sendActions(for: .valueChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { answers.enableRequests == 1 })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure != nil },
+                "the reload after the save failed")
+
+        page.view.layoutIfNeeded()
+        let summary = try #require(page.state?.summary)
+        #expect(summary.isServerDefaultOn, "the catalog's saved answer survives the failed reload")
+        #expect(page.sections().contains { $0.id == .tools }, "a failed reload keeps the contents it found")
+        #expect(page.sections().contains { $0.id == .commands })
+    }
+
+    /// A switch inside one of the page's rows, by the identifier the row gave it.
+    private static func switchWithIdentifier(_ identifier: String, in view: UIView) -> UISwitch? {
+        if let toggle = view as? UISwitch, toggle.accessibilityIdentifier == identifier { return toggle }
+        for subview in view.subviews {
+            if let found = switchWithIdentifier(identifier, in: subview) { return found }
+        }
+        return nil
     }
 
     @Test func healthyDetailRetrySupersedesStaleCatalogErrorForRenderingAndToggle() {
@@ -151,6 +214,49 @@ struct ServerExtensionListPresentationTests {
             warnings: [],
             isRemovable: false
         )
+    }
+}
+
+/// Answers one extension's page: its catalog, its detail, and its Enable save.
+/// The detail request can be made to fail after a save, as a server that answers
+/// the catalog and then refuses the detail does. Counts the saves.
+private final class ExtensionDetailAnswers: @unchecked Sendable {
+    static let host = "extension-detail.test"
+    static let serverId = "extension-detail-server"
+
+    private let catalog: ServerExtensionCatalog
+    private let detail: ServerExtensionDetail
+    private let enabled: ServerExtensionSummary
+    private let lock = NSLock()
+    private var enables = 0
+
+    init(catalog: ServerExtensionCatalog, detail: ServerExtensionDetail, enabled: ServerExtensionSummary) {
+        self.catalog = catalog
+        self.detail = detail
+        self.enabled = enabled
+    }
+
+    var enableRequests: Int { lock.withLock { enables } }
+
+    /// Fails every detail request, as the reload after a save can fail.
+    var failDetail = false
+
+    func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
+        let path = request.url?.path ?? ""
+        let method = request.httpMethod ?? "GET"
+        if method == "PUT", path.hasSuffix("/enabled") {
+            lock.withLock { enables += 1 }
+            return try mockJSONResponse(encoding: enabled, for: request)
+        }
+        guard method == "GET" else { return nil }
+        // The catalog, then one extension's detail. The detail route answers
+        // first in the page's life, so the exact catalog path is matched first.
+        if path.hasSuffix("/server/resources/extensions") {
+            return try mockJSONResponse(encoding: catalog, for: request)
+        }
+        guard path.contains("/server/resources/extensions/") else { return nil }
+        if failDetail { throw URLError(.cannotConnectToHost) }
+        return try mockJSONResponse(encoding: detail, for: request)
     }
 }
 

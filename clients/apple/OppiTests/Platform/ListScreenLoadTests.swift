@@ -146,6 +146,91 @@ struct ListScreenLoadTests {
         #expect(page.loads == 2)
     }
 
+    @Test("A subject that changed while the page was covered drops the old rows when it appears")
+    func subjectChangeWhileCoveredDropsTheOldRows() async throws {
+        let page = LoadPage(policy: .eachAppearance)
+        page.subject = "server-a"
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.rows == ["First"] })
+
+        // The server changes while the page is off screen: nothing reads the
+        // subject, so the next appearance starts the load for it.
+        window.rootViewController = UIViewController()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+        page.subject = "server-b"
+        page.outcome = .failure("No such server")
+        window.rootViewController = UINavigationController(rootViewController: page)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "No such server" })
+        #expect(page.subjectChanges == 1, "the page dropped what the old subject showed")
+        #expect(page.rows.isEmpty, "the old subject's rows are gone")
+    }
+
+    @Test("A request that ends as a cancel while the page waits ends the pull to refresh")
+    func aCancelledRequestEndsThePullToRefresh() async throws {
+        let page = LoadPage(policy: .eachAppearance)
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.rows == ["First"] })
+
+        let control = try #require(page.collectionView.refreshControl)
+        control.beginRefreshing()
+        #expect(control.isRefreshing, "the control spins while the page's load runs")
+        page.outcome = .cancelled
+        control.sendActions(for: .valueChanged)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loads == 2 })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !control.isRefreshing },
+                "a cancelled request still ends the spinner")
+        #expect(page.loadFailure == nil, "and it is not a failure")
+    }
+
+    @Test("A page that loads once tries again when its first load failed")
+    func onceAfterAFailedFirstLoadLoadsAgain() async throws {
+        let page = LoadPage(policy: .onceUntilSubjectChanges)
+        page.outcome = .failure("Server offline")
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "Server offline" })
+
+        // Away and back: nothing was loaded, so the page loads again instead of
+        // sitting empty with no prompt.
+        page.outcome = .success
+        window.rootViewController = UIViewController()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+        window.rootViewController = UINavigationController(rootViewController: page)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.rows == ["First"] })
+        #expect(page.loads == 2, "a failed first load is not what the page keeps")
+        #expect(page.loadFailure == nil)
+    }
+
+    @Test("setNeedsLoad during a load replaces it, and the replaced answer never lands")
+    func setNeedsLoadDuringALoadSupersedesIt() async throws {
+        let page = LoadPage(policy: .eachAppearance)
+        page.outcome = .held
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.isHolding })
+
+        // A newer load before the first answers: the old one is dropped, and the
+        // page stays loading for the one that replaced it.
+        page.answer = "Second"
+        page.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loads == 2 })
+        page.releaseHoldingLoad()
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { page.rows.isEmpty })
+        #expect(page.isLoading, "the load that replaced it is still running")
+
+        page.releaseHoldingLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.rows == ["Second"] })
+    }
+
     @Test("A row a page does not key is drawn again when what it draws changes")
     func defaultInputsRedrawAChangedRow() async throws {
         let page = UnkeyedPage()
@@ -216,7 +301,7 @@ private final class LoadPage: ListScreenController<LoadPage.Section, String> {
     private(set) var subjectChanges = 0
     private(set) var rows: [String] = []
     private(set) var isHolding = false
-    private var gate: CheckedContinuation<Void, Never>?
+    private var gates: [CheckedContinuation<Void, Never>] = []
 
     init(policy: LoadPolicy) {
         self.policy = policy
@@ -244,7 +329,7 @@ private final class LoadPage: ListScreenController<LoadPage.Section, String> {
             throw CancellationError()
         case .held:
             isHolding = true
-            await withCheckedContinuation { gate = $0 }
+            await withCheckedContinuation { gates.append($0) }
             isHolding = false
             // A cancelled load's answer is nobody's: the page drops it, as a page
             // that awaited a request does with `Task.isCancelled`.
@@ -258,10 +343,10 @@ private final class LoadPage: ListScreenController<LoadPage.Section, String> {
         [ListSection(.only, items: rows)]
     }
 
+    /// Answers the oldest load still waiting, in the order they started.
     func releaseHoldingLoad() {
-        guard let gate else { return }
-        self.gate = nil
-        gate.resume()
+        guard !gates.isEmpty else { return }
+        gates.removeFirst().resume()
     }
 }
 
