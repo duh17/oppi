@@ -9,6 +9,7 @@ import {
   type AgentScheduleAction,
   type CreateAgentScheduleRequest,
 } from "../src/agent-schedules.js";
+import { openDatabase } from "../src/sqlite-compat.js";
 
 describe("agent schedule durable core", () => {
   let dataDir: string;
@@ -142,14 +143,17 @@ describe("agent schedule durable core", () => {
     expect(restored?.archivedAt).toBeUndefined();
   });
 
-  it("bumps a schedule version on every update and refuses a stale one", () => {
+  it("bumps a schedule version only when its definition changes", () => {
     const schedule = createSchedule();
     expect(schedule.version).toBe(0);
 
-    const paused = store.pauseSchedule(schedule.id, 2_000);
-    expect(paused?.version).toBe(1);
-    const resumed = store.resumeSchedule(schedule.id, 3_000);
-    expect(resumed?.version).toBe(2);
+    // A pause, resume, archive, or restore is not a definition change: an editor
+    // holding the version it read must not conflict with them.
+    expect(store.pauseSchedule(schedule.id, 2_000)?.version).toBe(0);
+    expect(store.resumeSchedule(schedule.id, 3_000)?.version).toBe(0);
+    expect(store.archiveSchedule(schedule.id, 4_000)?.version).toBe(0);
+    expect(store.restoreSchedule(schedule.id, 5_000)?.version).toBe(0);
+
     const updated = store.updateSchedule(
       schedule.id,
       {
@@ -160,10 +164,10 @@ describe("agent schedule durable core", () => {
           model: "openai-codex/gpt-5.5",
         },
       },
-      4_000,
-      2,
+      6_000,
+      0,
     );
-    expect(updated).toMatchObject({ version: 3 });
+    expect(updated).toMatchObject({ version: 1 });
     expect(updated?.action).toMatchObject({ prompt: "New prompt" });
 
     // The version the editor read is gone: nothing is written.
@@ -171,12 +175,54 @@ describe("agent schedule durable core", () => {
       store.updateSchedule(
         schedule.id,
         { action: { type: "new_session", workspaceId: "ws-1", prompt: "Stale prompt" } },
-        5_000,
-        2,
+        7_000,
+        0,
       ),
-    ).toThrow(/Schedule version conflict: expected 2, current 3/);
+    ).toThrow(/Schedule version conflict: expected 0, current 1/);
     expect(store.getSchedule(schedule.id)?.action).toMatchObject({ prompt: "New prompt" });
-    expect(store.getSchedule(schedule.id)?.version).toBe(3);
+    expect(store.getSchedule(schedule.id)?.version).toBe(1);
+  });
+
+  /// A database created before schedules had a version opens with every
+  /// schedule at 0, so an editor's first save works there too.
+  it("adds a version to a database created before it", () => {
+    const legacyPath = join(dataDir, "legacy.db");
+    const legacy = openDatabase(legacyPath);
+    legacy.exec(`
+      CREATE TABLE agent_schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        trigger_json TEXT NOT NULL,
+        action_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        archived_at INTEGER
+      )
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO agent_schedules (id, name, status, trigger_json, action_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "legacy-1",
+        "Legacy",
+        "active",
+        JSON.stringify({ type: "at", at: 1_000, timeZone: "UTC" }),
+        JSON.stringify({ type: "new_session", workspaceId: "ws-1", prompt: "Old prompt" }),
+        1_000,
+        1_000,
+      );
+    legacy.close();
+
+    const migrated = new AgentScheduleStore(dataDir, legacyPath);
+    try {
+      expect(migrated.getSchedule("legacy-1")).toMatchObject({ name: "Legacy", version: 0 });
+      expect(migrated.updateSchedule("legacy-1", { name: "Renamed" }, 2_000)?.version).toBe(1);
+    } finally {
+      migrated.close();
+    }
   });
 
   it("manual run creates one run with a request id idempotency key", () => {

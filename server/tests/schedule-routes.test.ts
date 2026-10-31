@@ -638,6 +638,42 @@ describe("schedule routes", () => {
     expect(store.getSchedule(schedule.id)?.action).toMatchObject({ prompt: "New prompt" });
   });
 
+  /// Pausing is not a definition change, so an editor holding the version it
+  /// read can still save after someone pauses the schedule.
+  it("a pause does not make an open editor's save stale", async () => {
+    const schedule = store.createSchedule({
+      name: "Pause check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}`;
+    const version = store.getSchedule(schedule.id)?.version ?? -1;
+
+    await dispatch({
+      method: "POST",
+      path: `${path}/pause`,
+      url: new URL(`https://localhost${path}/pause`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}?expectedVersion=${version}`),
+      req: requestBody({ action: { prompt: "Saved while paused" } }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    expect(responses[0]).toMatchObject({ status: 200, data: { schedule: { status: "paused" } } });
+    expect(responses[1]).toMatchObject({ status: 200 });
+    expect(store.getSchedule(schedule.id)).toMatchObject({
+      status: "paused",
+      action: { prompt: "Saved while paused" },
+    });
+  });
+
   it("rejects unexpected schedule fields and empty updates", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",

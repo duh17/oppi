@@ -90,7 +90,11 @@ export interface AgentSchedule {
   status: AgentScheduleStatus;
   trigger: AgentScheduleTrigger;
   action: AgentScheduleAction;
-  /** Bumped by every update; a PATCH may condition on it. */
+  /**
+   * The definition's version, bumped only when the definition changes (like an Agent's).
+   * A PATCH may condition on it; pausing, resuming, archiving, and restoring leave it
+   * alone, so they never conflict an editor that is open.
+   */
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -390,7 +394,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = 'archived', version = version + 1, updated_at = ?, archived_at = ?
+         SET status = 'archived', updated_at = ?, archived_at = ?
          WHERE id = ?`,
       )
       .run(now, now, scheduleId);
@@ -401,7 +405,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = 'active', version = version + 1, updated_at = ?, archived_at = NULL
+         SET status = 'active', updated_at = ?, archived_at = NULL
          WHERE id = ? AND status = 'archived'`,
       )
       .run(now, scheduleId);
@@ -667,7 +671,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = ?, version = version + 1, updated_at = ?
+         SET status = ?, updated_at = ?
          WHERE id = ? AND status <> 'archived'`,
       )
       .run(status, now, scheduleId);
