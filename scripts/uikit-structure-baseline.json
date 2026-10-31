@@ -31,14 +31,25 @@
     "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Agents/AgentDetailViewController.swift": {
+      "page Task {": 1,
+      "page Task.isCancelled": 1
+    },
+    "clients/apple/Oppi/Features/Agents/AgentListViewController.swift": {
+      "page Task.isCancelled": 1
+    },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
       "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
-      "toggleRow(": 1
+      "toggleRow(": 1,
+      "page Task {": 3
     },
     "clients/apple/Oppi/Features/Agents/AgentToolSelectionViewController.swift": {
       ".settingsToggle(": 1
+    },
+    "clients/apple/Oppi/Features/Agents/PiAgentDetailViewController.swift": {
+      "page Task.isCancelled": 1
     },
     "clients/apple/Oppi/Features/Agents/PiToolsEditor.swift": {
       "APIClient settings write": 1
@@ -64,8 +75,18 @@
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "UIAlertController(": 1
     },
+    "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {
+      "page Task {": 1
+    },
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
-      ".settingsToggle(": 1
+      ".settingsToggle(": 1,
+      "page Task {": 5
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
+      "page Task {": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpSignInViewController.swift": {
+      "page Task {": 3
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       "AppPreferences.*.set": 1,
@@ -83,17 +104,40 @@
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
     },
+    "clients/apple/Oppi/Features/Schedules/ScheduleDetailViewController.swift": {
+      "page Task {": 2,
+      "page Task.isCancelled": 1
+    },
+    "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditViewController.swift": {
+      "page Task {": 2
+    },
     "clients/apple/Oppi/Features/Server/UsageCharts.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Servers/ModelProviderSheets.swift": {
+      "page Task {": 3
+    },
     "clients/apple/Oppi/Features/Servers/ModelProvidersViewController.swift": {
-      "UIAlertController(": 1
+      "UIAlertController(": 1,
+      "page Task {": 5,
+      "page isLoadCancellation": 1,
+      "page Task.isCancelled": 3
+    },
+    "clients/apple/Oppi/Features/Servers/PairingApprovalViewController.swift": {
+      "page Task {": 2
+    },
+    "clients/apple/Oppi/Features/Servers/ServerAboutViewController.swift": {
+      "page Task {": 2
     },
     "clients/apple/Oppi/Features/Servers/ServerNotificationsConsentAlert.swift": {
       "UIAlertController(": 1
     },
+    "clients/apple/Oppi/Features/Servers/ServerPairedDevicesViewController.swift": {
+      "page Task {": 3
+    },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
-      "toggleRow(": 1
+      "toggleRow(": 1,
+      "page Task {": 6
     },
     "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
       "AppPreferences.*.set": 1
@@ -102,7 +146,8 @@
       "APIClient settings write": 3
     },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryViewController.swift": {
-      "toggleRow(": 1
+      "toggleRow(": 1,
+      "page Task {": 2
     },
     "clients/apple/Oppi/Features/Settings/SSHPreflightViewController.swift": {
       "SettingsListStyle.pin(": 1,
@@ -123,7 +168,14 @@
     },
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
       "AppPreferences.*.set": 1,
-      "toggleRow(": 2
+      "toggleRow(": 2,
+      "page Task {": 2
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsRootViewController.swift": {
+      "page Task {": 2
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsStoragePage.swift": {
+      "page Task {": 2
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
       "FontPreferences.set": 4,
@@ -132,11 +184,39 @@
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "AppPreferences.*.set": 3
     },
+    "clients/apple/Oppi/Features/Settings/TailnetSettingsViewController.swift": {
+      "page Task {": 6,
+      "page Task.isCancelled": 3
+    },
+    "clients/apple/Oppi/Features/Settings/ThemeImportViewController.swift": {
+      "page Task {": 3,
+      "page Task.isCancelled": 3,
+      "page viewIsAppearing": 1
+    },
     "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
       "SettingsListStyle.pin(": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsViewController.swift": {
+      "page Task {": 2,
+      "page viewIsAppearing": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceExtensionsViewController.swift": {
+      "page Task {": 2,
+      "page viewIsAppearing": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceListViewController.swift": {
+      "page Task {": 3,
+      "page viewIsAppearing": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceNetworkAccessViewController.swift": {
+      "page Task {": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpViewController.swift": {
+      "page Task {": 3,
+      "page viewIsAppearing": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsModel.swift": {
       "APIClient settings write": 2
@@ -148,6 +228,10 @@
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {
       "UserDefaults.standard.set(": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsViewController.swift": {
+      "page Task {": 2,
+      "page viewIsAppearing": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
       "toggleRow(": 1

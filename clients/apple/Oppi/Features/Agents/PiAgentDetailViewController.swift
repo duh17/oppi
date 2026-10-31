@@ -22,14 +22,6 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     private var prompt: PiSystemPromptSnapshot? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    /// Why the last load failed. It shows as a state row with Retry, never an
-    /// alert; `tools.error` (a failed save) is the only alert.
-    private var loadError: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
     private var showsFilePromptReview = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -52,7 +44,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         super.init(
             title: "Pi", listIdentifier: "agents.pi.list",
             headers: true, footers: true,
-            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+            dismissesKeyboardOnDrag: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -73,7 +65,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     /// Coming back from Tools keeps the selection it saved: the page loads
     /// once, and a pull to refresh or a Retry loads again.
-    override var loadsWhenAppearing: Bool { !tools.hasLoadedTools }
+    override var loadPolicy: LoadPolicy { .onceUntilSubjectChanges }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
@@ -128,14 +120,14 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     /// Retry. It is a row, never an alert; `tools.error` (a failed save) is the
     /// only alert.
     private func stateRow() -> ListStateRow? {
-        guard let loadError else { return nil }
+        guard let loadFailure else { return nil }
         // A Retry keeps its row and turns it into the loading row.
         if !isLoading {
             return ListStateRow(
                 state: .failed(
-                    title: loadError,
+                    title: loadFailure,
                     message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
                 ),
                 identifier: "agents.pi.state"
             )
@@ -145,14 +137,16 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .identity, .file:
-            return AnyHashable(0)
         case .prompt:
             return AnyHashable([
                 AnyHashable(source == .file), AnyHashable(prompt?.content), AnyHashable(isLoading),
             ])
         case .tools:
             return AnyHashable(AgentManagementPresentation.piToolsSummary(defaultTools: tools.defaultTools))
+        // The identity row and the file row hold nothing a reconfigure would
+        // disturb, so the kit's default draws them again.
+        default:
+            return super.inputs(of: item)
         }
     }
 
@@ -287,46 +281,23 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         }
     }
 
-    /// The Pi configuration: on pull to refresh and after a Retry; the page
-    /// loads once when it appears (see `loadsWhenAppearing`).
-    override func refresh() async {
-        await load()
-    }
-
-    private func load() async {
+    /// The Pi configuration: the base loads it once when the page appears (see
+    /// `loadPolicy`), and again on pull to refresh or after a Retry.
+    override func load() async throws {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            // A cancelled load leaves the flag to the load that replaced it.
-            isLoading = false
-            loadError = "Server offline"
-            return
+            throw LoadFailure("Server offline")
         }
-        isLoading = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
-        do {
-            async let fetchedPrompt = apiClient.getPiSystemPrompt()
-            async let fetchedTools = apiClient.getPiDefaultTools()
-            async let fetchedCatalog = apiClient.listServerExtensions()
-            let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
-            guard !Task.isCancelled, isCurrent(apiClient) else { return }
-            prompt = resolvedPrompt
-            tools.apiClient = apiClient
-            tools.applyLoaded(
-                resolvedTools.defaultTools,
-                builtInTools: catalog.builtInTools,
-                optionalTools: catalog.optionalTools ?? []
-            )
-            loadError = nil
-        } catch {
-            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
-            guard !Task.isCancelled, isCurrent(apiClient), !error.isLoadCancellation else { return }
-            loadError = error.localizedDescription
-        }
-    }
-
-    /// Whether `apiClient` still serves the active server: an answer that
-    /// arrives after the connection was replaced is not this page's.
-    private func isCurrent(_ apiClient: APIClient) -> Bool {
-        root.coordinator.activeConnection.apiClient === apiClient
+        async let fetchedPrompt = apiClient.getPiSystemPrompt()
+        async let fetchedTools = apiClient.getPiDefaultTools()
+        async let fetchedCatalog = apiClient.listServerExtensions()
+        let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
+        guard !Task.isCancelled else { return }
+        prompt = resolvedPrompt
+        tools.apiClient = apiClient
+        tools.applyLoaded(
+            resolvedTools.defaultTools,
+            builtInTools: catalog.builtInTools,
+            optionalTools: catalog.optionalTools ?? []
+        )
     }
 }

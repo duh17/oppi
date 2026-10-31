@@ -29,30 +29,6 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     private var agents: [AgentDefinitionSummary] = [] {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var error: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    /// The server and API client the last load started with. The page reads
-    /// both in `updateProperties()`, so a connection that comes up, drops, or
-    /// moves to another server reloads the list without a Retry.
-    private var loadedSource: LoadSource?
-    /// The server `agents` came from.
-    private var agentsServerId: String?
-
-    private struct LoadSource: Equatable {
-        let serverId: String?
-        let client: ObjectIdentifier?
-    }
-
-    private var currentSource: LoadSource {
-        LoadSource(
-            serverId: root.coordinator.activeServerId,
-            client: root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)
-        )
-    }
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
@@ -68,7 +44,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         super.init(
             title: "Agents", listIdentifier: "agents.list",
             headers: true, footers: true,
-            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+            dismissesKeyboardOnDrag: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -90,14 +66,6 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        // The load this appearance starts is this source: marking it before the
-        // base schedules the load keeps `updateProperties` from asking for it
-        // again and cancelling the load it just started.
-        loadedSource = currentSource
-        super.viewIsAppearing(animated)
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         composer.insetContent(of: collectionView)
@@ -106,9 +74,22 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     override func updateProperties() {
         super.updateProperties()
         ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
-        // The connection or the server changed under the screen: load again.
-        if isShowing, currentSource != loadedSource { setNeedsRefresh() }
     }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The server and the client serving it: a connection that comes up, drops,
+    /// or moves to another server is another subject, so the list loads again
+    /// without a Retry.
+    override func loadSubject() -> AnyHashable? {
+        AnyHashable([
+            AnyHashable(root.coordinator.activeServerId),
+            AnyHashable(root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)),
+        ])
+    }
+
+    /// Agents of another server never stay up while this server loads.
+    override func subjectDidChange() { agents = [] }
 
     /// The sidebar toggle at the split detail root.
     private func sidebarItems() -> [UIBarButtonItem] {
@@ -150,14 +131,14 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// Saved Agents are loading, or the load failed: one row under Pi and the
     /// Agents it already has, with Retry.
     private func stateRow() -> ListStateRow? {
-        guard error != nil || (isLoading && agents.isEmpty) else { return nil }
+        guard loadFailure != nil || (isLoading && agents.isEmpty) else { return nil }
         // A Retry keeps its row and turns it into the loading row.
-        if !isLoading, let error {
+        if !isLoading, let loadFailure {
             return ListStateRow(
                 state: .failed(
-                    title: error,
+                    title: loadFailure,
                     message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
                 ),
                 identifier: "agents.state"
             )
@@ -311,44 +292,17 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         )
     }
 
-    /// The active server's saved Agents: on every appearance, on pull to
-    /// refresh, and after a Retry.
-    override func refresh() async {
-        loadedSource = currentSource
-        await loadAgents()
-    }
-
-    private func loadAgents() async {
-        // Agents of another server never stay up while this server loads.
-        if agentsServerId != root.coordinator.activeServerId {
-            agents = []
-            agentsServerId = nil
-        }
+    /// The active server's saved Agents: the base runs it on every appearance,
+    /// on pull to refresh, after a Retry, and when the server or its client
+    /// changes. Throws the reason the list's state row shows.
+    override func load() async throws {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            // A cancelled load leaves the flag to the load that replaced it.
-            isLoading = false
-            error = "Server offline"
-            return
+            throw LoadFailure("Server offline")
         }
-        isLoading = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
-        do {
-            let loaded = try await apiClient.listAgents()
-            guard !Task.isCancelled, isCurrent(apiClient) else { return }
-            agents = loaded
-            agentsServerId = root.coordinator.activeServerId
-            error = nil
-        } catch {
-            // A cancelled load leaves the row and the list as they were.
-            guard !Task.isCancelled, isCurrent(apiClient), !error.isLoadCancellation else { return }
-            self.error = error.localizedDescription
-        }
-    }
-
-    /// Whether `apiClient` still serves the active server: an answer that
-    /// arrives after the connection or the server changed is not this list's.
-    private func isCurrent(_ apiClient: APIClient) -> Bool {
-        root.coordinator.activeConnection.apiClient === apiClient
+        let loaded = try await apiClient.listAgents()
+        // A load the page cancelled (it left, or another subject's load replaced
+        // it) never replaces what this one shows.
+        guard !Task.isCancelled else { return }
+        agents = loaded
     }
 }

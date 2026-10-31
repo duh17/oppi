@@ -63,7 +63,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
     override func summary(in store: ServerResourceStore) -> ServerSkillSummary? {
         resolvedServerSkillDetailSummary(
             catalogSummary: store.skills(forServer: target.serverId).first { $0.id == target.resourceId },
-            freshDetail: loader.usesDetailSummary ? loader.detail : nil
+            freshDetail: usesDetailSummary ? detail : nil
         )
     }
 
@@ -132,7 +132,9 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.editable),
         ])
         case .browse: AnyHashable([AnyHashable(summary.name), AnyHashable(state.detail?.files.count)])
-        case .warning, .retry, .loadingContents: AnyHashable(0)
+        // A warning, Retry, or loading row holds nothing a reconfigure would
+        // disturb, so the kit's default draws it again.
+        default: super.inputs(of: item)
         }
     }
 
@@ -210,7 +212,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             )
         case .retry:
             ListScreen.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
-                self?.reload()
+                self?.setNeedsLoad()
             }
             var content = UIListContentConfiguration.cell()
             content.text = "Retry"

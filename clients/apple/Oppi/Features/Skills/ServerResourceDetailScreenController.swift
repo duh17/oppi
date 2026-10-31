@@ -87,7 +87,6 @@ class ServerResourceDetailScreenController<
 >: ListScreenController<Section, Item> {
     let target: ServerResourceDetailNavTarget
     let root: AppRootEnvironment
-    let loader: ServerResourceDetailLoader<Detail>
     /// The page's own details and where its answers come from.
     private let page: ServerResourceDetailPage<Detail>
     /// The rows' state: nil until the catalog has the resource.
@@ -98,7 +97,11 @@ class ServerResourceDetailScreenController<
     private(set) var connection: ServerConnection? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var connectTask: Task<Void, Never>?
+    /// The detail the last request returned, and whether it is newer than the
+    /// catalog row that opened the page. A successful catalog mutation is
+    /// authoritative until a later detail request succeeds.
+    private(set) var detail: Detail?
+    private(set) var usesDetailSummary = false
 
     /// The route makes the resource's server the active one on every appearance.
     let switchesServer: Bool
@@ -116,7 +119,6 @@ class ServerResourceDetailScreenController<
         self.connection = connection
         self.page = page
         switchesServer = connection == nil
-        loader = ServerResourceDetailLoader(target: target)
         super.init(title: page.title, listIdentifier: page.listIdentifier, headers: true, footers: true, dismissesKeyboardOnDrag: true)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -124,10 +126,6 @@ class ServerResourceDetailScreenController<
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        connectTask?.cancel()
-    }
 
     var palette: ThemePalette { root.themeStore.activeThemeID.palette }
 
@@ -148,22 +146,36 @@ class ServerResourceDetailScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // The server switch and the detail load run on every appearance, as the
-        // hosted screen's tasks did.
-        if switchesServer {
-            connect()
-        } else {
-            reload()
-        }
+    // MARK: - Load
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The route this page serves: another resource or another server is
+    /// another page's rows.
+    override func loadSubject() -> AnyHashable? { AnyHashable(target) }
+
+    override func subjectDidChange() {
+        detail = nil
+        usesDetailSummary = false
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        connectTask?.cancel()
-        connectTask = nil
-        loader.cancel()
+    /// Makes the resource's server the active one (when the route does), then
+    /// asks it for the detail: the base runs it on every appearance and after a
+    /// Retry.
+    override func load() async throws {
+        guard page.expectedKind == nil || target.kind == page.expectedKind else { return }
+        if switchesServer {
+            guard await root.coordinator.switchToServerReady(target.serverId), !Task.isCancelled else { return }
+            connection = root.coordinator.connection(for: target.serverId)
+        }
+        guard let connection else { return }
+        guard let apiClient = connection.apiClient else {
+            throw ServerResourceDetailLoadError.notConnected(serverName)
+        }
+        let fetched = try await page.fetch(apiClient, connection.serverResourceStore)
+        guard !Task.isCancelled else { return }
+        detail = fetched
+        usesDetailSummary = true
     }
 
     /// A load replaces the rows; they should not slide.
@@ -176,9 +188,9 @@ class ServerResourceDetailScreenController<
         if let summary, let store {
             state = ServerResourceDetailState(
                 summary: summary,
-                detail: loader.detail,
-                loadError: loader.error,
-                isLoading: loader.isLoading,
+                detail: usesDetailSummary ? detail : nil,
+                loadError: loadFailure,
+                isLoading: isLoading,
                 isPending: store.isMutationPending(page.mutationKey, serverId: target.serverId),
                 mutationError: store.mutationError(for: page.mutationKey, serverId: target.serverId),
                 mutationsAllowed: store.mutationsAllowed(for: page.catalog, serverId: target.serverId),
@@ -199,13 +211,13 @@ class ServerResourceDetailScreenController<
         }
         // Unavailable only after a load failed: a load that never finished
         // (cancelled as the screen left) is still loading when it returns.
-        guard !loader.isLoading, let error = loader.error else {
+        guard !isLoading, let loadFailure else {
             return .loading(page.loadingCaption)
         }
         return .failed(
             title: page.unavailableTitle,
-            message: error,
-            retry: RetryAction { [weak self] in self?.reload() }
+            message: loadFailure,
+            retry: RetryAction { [weak self] in self?.setNeedsLoad() }
         )
     }
 
@@ -301,35 +313,6 @@ class ServerResourceDetailScreenController<
 
     // MARK: - Data
 
-    private func connect() {
-        connectTask?.cancel()
-        let coordinator = root.coordinator
-        let serverId = target.serverId
-        let expectedKind = page.expectedKind
-        connectTask = Task { [weak self] in
-            guard expectedKind == nil || self?.target.kind == expectedKind,
-                  await coordinator.switchToServerReady(serverId), !Task.isCancelled, let self else { return }
-            connection = coordinator.connection(for: serverId)
-            reload()
-        }
-    }
-
-    /// Asks the page's server for the detail again: on appearance, and from the
-    /// Retry a failed load or a failed save leaves.
-    func reload() {
-        guard let connection else { return }
-        let apiClient = connection.apiClient
-        let serverName = serverName
-        let store = connection.serverResourceStore
-        let fetch = page.fetch
-        loader.load(target: target) {
-            guard let apiClient else {
-                throw ServerResourceDetailLoadError.notConnected(serverName)
-            }
-            return try await fetch(apiClient, store)
-        }
-    }
-
     private func setEnabled(_ enabled: Bool) {
         guard let connection, let api = connection.apiClient else { return }
         mutationVerb = enabled ? "enable" : "disable"
@@ -341,8 +324,21 @@ class ServerResourceDetailScreenController<
             guard let self, store.mutationError(for: page.mutationKey, serverId: target.serverId) == nil else {
                 return
             }
-            loader.invalidateSummaryAfterAuthoritativeMutation()
-            reload()
+            // The catalog's own answer is authoritative until the detail request
+            // that follows it succeeds.
+            usesDetailSummary = false
+            setNeedsLoad()
+        }
+    }
+}
+
+enum ServerResourceDetailLoadError: LocalizedError {
+    case notConnected(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected(let serverName):
+            "Not connected to \(serverName)."
         }
     }
 }

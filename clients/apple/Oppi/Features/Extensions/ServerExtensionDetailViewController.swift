@@ -66,7 +66,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
     override func summary(in store: ServerResourceStore) -> ServerExtensionSummary? {
         resolvedServerExtensionDetailSummary(
             catalogSummary: store.extensions(forServer: target.serverId).first { $0.id == target.resourceId },
-            freshDetail: loader.usesDetailSummary ? loader.detail : nil
+            freshDetail: usesDetailSummary ? detail : nil
         )
     }
 
@@ -148,7 +148,9 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
         ])
-        case .tool, .command, .warning, .retry, .loadingContributions: AnyHashable(0)
+        // A tool, command, warning, Retry, or loading row holds nothing a
+        // reconfigure would disturb, so the kit's default draws it again.
+        default: super.inputs(of: item)
         }
     }
 
@@ -225,7 +227,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             }
         case .retry:
             ListScreen.buttonRow(cell, identifier: "server.extension.retry", label: "Retry") { [weak self] in
-                self?.reload()
+                self?.setNeedsLoad()
             }
             var content = UIListContentConfiguration.cell()
             content.text = "Retry"

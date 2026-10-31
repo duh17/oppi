@@ -51,13 +51,11 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     private var searchText = "" {
         didSet { setNeedsUpdateProperties() }
     }
-    /// The server the catalog was last requested for, so a switch reloads once.
-    private var refreshedServerId: String?
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: "Extensions", listIdentifier: "extensions.list", headers: true, pullsToRefresh: true)
+        super.init(title: "Extensions", listIdentifier: "extensions.list", headers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -82,17 +80,21 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        // The load the appearance starts is this server's: marking it before the
-        // base schedules it keeps `updateProperties` from asking for the same
-        // server again and cancelling the load that just started.
-        refreshedServerId = coordinator.activeServerId
-        super.viewIsAppearing(animated)
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         search.hostDidAppear(self)
+    }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The active server's catalog: another server is another catalog.
+    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
+
+    /// A switched server starts its own search: the old one's query would filter
+    /// the new server's catalog for an extension it never had.
+    override func subjectDidChange() {
+        searchText = ""
+        search.setText("")
     }
 
     override func updateProperties() {
@@ -131,12 +133,6 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         super.updateProperties()
         ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
         search.setText(searchText)
-
-        // The visible server changed (the pill, a link, a pairing): load its catalog.
-        if isShowing, let activeServerId, activeServerId != refreshedServerId {
-            refreshedServerId = activeServerId
-            setNeedsRefresh()
-        }
     }
 
     /// The sidebar toggle at the split detail root.
@@ -209,7 +205,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
                 state: .failed(
                     title: "Extensions are unavailable. The selected server has no cached Extensions catalog.",
                     message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
                 ),
                 identifier: "extensions.retry"
             )
@@ -278,12 +274,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             coordinator: coordinator,
             navigation: root.navigation,
             shownServerId: { [weak self] in self?.state?.server?.id },
-            onSwitched: { [weak self] server in
+            onSwitched: { [weak self] _ in
                 guard let self else { return }
                 searchText = ""
                 search.setText("")
-                refreshedServerId = server.id
-                setNeedsRefresh()
             }
         )
     }
@@ -336,11 +330,12 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
 
     // MARK: - Data
 
-    /// The active server's Extensions catalog: on every appearance, on pull to
-    /// refresh, and when the active server changes.
-    override func refresh() async {
+    /// The active server's Extensions catalog: the base runs it on every
+    /// appearance, on pull to refresh, and when the active server changes. The
+    /// catalog's own state (loading, syncing, failed) is the store's, so the
+    /// state row stays the store's too.
+    override func load() async throws {
         guard let serverId = coordinator.activeServerId else { return }
-        refreshedServerId = serverId
         guard let connection = coordinator.connection(for: serverId),
               let api = connection.apiClient else { return }
         connection.serverResourceStore.switchServer(to: serverId)

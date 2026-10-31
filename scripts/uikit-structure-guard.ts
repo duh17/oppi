@@ -66,6 +66,17 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    navigation controller). A screen that brings its own Back conforms to
  *    `NavigationBarHiding` and calls `navigationController?.updateNavigationBar(for:animated:)`.
  *
+ *  - The load ratchet (same file, same baseline) counts, in a file under
+ *    `clients/apple/Oppi/Features/` that declares a subclass of
+ *    `ListScreenController` (directly or through
+ *    `ServerResourceDetailScreenController`), the code a page that owns its own
+ *    load writes: `Task {`, `isLoadCancellation`, `Task.isCancelled`, and an
+ *    `override func viewIsAppearing`. The kit owns one load task per page
+ *    (`loadPolicy`, `loadSubject`, `load`, `setNeedsLoad`), so a page overrides
+ *    those and never a task: a new page starts at 0 and the count only goes
+ *    down. The baseline keeps the tasks a page runs for something it does
+ *    itself (an archive, a run now, a sign-in cancel), which are not loads.
+ *
  *  - `UIContentUnavailableConfiguration` factory is a ratchet of the same kind: a
  *    screen's whole-screen (or list-cell) loading, empty, no-results, and failed
  *    states go through `LoadState` and `.loadState(...)`, which own the words, the
@@ -108,6 +119,10 @@ const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmati
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.swift";
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
+
+/** A file that declares a page on the list kit: a subclass of the base, or of
+ * the resource-detail base both detail pages share. */
+const listPageSubclass = /\bclass\s+\w+\s*:\s*(?:\w+\.)*(?:ListScreenController|ServerResourceDetailScreenController)\s*</;
 
 /**
  * Screens that pin, theme, or lay out a list themselves and never will subclass
@@ -294,6 +309,35 @@ const constructs: Construct[] = [
     exemptFiles: [settingsBase, "clients/apple/Oppi/Features/Settings/SettingsDeclaredRows.swift"],
     pathMustMatch: featuresOnly,
   },
+  // A page that owns its load: the kit's base owns it. See "Settings pages" in the guide.
+  {
+    name: "page Task {",
+    pattern: /\bTask\s*\{/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+    fileMustMatch: listPageSubclass,
+  },
+  {
+    name: "page isLoadCancellation",
+    pattern: /\bisLoadCancellation\b/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+    fileMustMatch: listPageSubclass,
+  },
+  {
+    name: "page Task.isCancelled",
+    pattern: /\bTask\s*\.\s*isCancelled\b/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+    fileMustMatch: listPageSubclass,
+  },
+  {
+    name: "page viewIsAppearing",
+    pattern: /\boverride\s+func\s+viewIsAppearing\s*\(/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+    fileMustMatch: listPageSubclass,
+  },
 ];
 
 /**
@@ -447,5 +491,11 @@ call that writes a setting, and toggleRow( or .settingsToggle( in Features are s
 SettingsStore. Declare the setting in SettingsCatalog and read and write it through
 SettingsStore (settingToggleRow, settingChoiceRow on the settings base); see
 ${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.ts --update\`
-lowers the baseline after a page moves.`);
+lowers the baseline after a page moves.
+
+A page on ListScreenController that writes Task {, isLoadCancellation,
+Task.isCancelled, or an override func viewIsAppearing owns its own load. The kit
+owns one load task per page: say loadPolicy, loadSubject(), and load() (and
+subjectDidChange() when the page drops what the old subject showed), and ask for a
+load with setNeedsLoad(); see ${settingsGuide}. The count only goes down.`);
 process.exit(1);

@@ -36,7 +36,6 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     private var foregroundObserver: NSObjectProtocol?
 
     // Host-local state, reset when the visible server changes.
-    private var loadedServerId: String?
     private var statuses: [ProviderAuthProviderStatus] = [] {
         didSet { setNeedsUpdateProperties() }
     }
@@ -46,13 +45,14 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     private var quotas: ProviderQuotasInfo? {
         didSet { setNeedsUpdateProperties() }
     }
+    /// A failure of something the page did (a credential change, a sign-in). A
+    /// failed load is the base's `loadFailure`.
     private var errorMessage: String? {
         didSet { setNeedsUpdateProperties() }
     }
     private var actionInFlightId: String? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadGeneration = 0
 
     /// Retained after its sheet closes, so a live sign-in stays reachable.
     private var flowAttempt: ProviderAuthFlowAttempt? {
@@ -71,7 +71,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         super.init(
             title: HostSwitcherDestination.modelProviders.title,
             listIdentifier: "server.modelProviders.list",
-            headers: true, footers: true, pullsToRefresh: true
+            headers: true, footers: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -102,9 +102,9 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         }
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Usage drifts while the screen is away; the base's refresh reloads it.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Usage drifts while the screen is away; the base loads it on the way back.
         resumeFlowPollingIfLive()
         // A cancelled interactive pop appears again without disappearing.
         guard foregroundObserver == nil else { return }
@@ -114,9 +114,9 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.loadedServerId != nil else { return }
+                guard let self, self.server != nil else { return }
                 self.resumeFlowPollingIfLive()
-                self.setNeedsRefresh()
+                self.setNeedsLoad()
             }
         }
     }
@@ -130,13 +130,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
 
     override func updateProperties() {
         let server = server
-        if server == nil { loadedServerId = nil }
         installSwitcher(server)
-        // Host-local state belongs to one server: a switch starts that server's
-        // rows from nothing and loads them again.
-        if let server, loadedServerId != server.id {
-            switchHost(to: server.id)
-        }
         // A sign-in that settles changes what the server has; show it.
         let settled = flowAttempt?.isSettled ?? false
         if settled, !attemptWasSettled, let attempt = flowAttempt {
@@ -144,6 +138,22 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         }
         attemptWasSettled = settled
         super.updateProperties()
+    }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The visible server: it owns the providers and the usage.
+    override func loadSubject() -> AnyHashable? { AnyHashable(server?.id) }
+
+    /// Host-local state belongs to one server: a switch starts that server's
+    /// rows from nothing and loads them again. A live sign-in stays: it is bound
+    /// to its own server's client and keeps polling.
+    override func subjectDidChange() {
+        statuses = []
+        setupState = .unknown
+        quotas = nil
+        errorMessage = nil
+        if let apiKeySheet { Router.finish(apiKeySheet) }
     }
 
     // MARK: - Bar
@@ -179,82 +189,41 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
 
     // MARK: - Data
 
-    /// Host-local state resets on a host switch. A live sign-in stays: it is
-    /// bound to its own server's client and keeps polling.
-    private func switchHost(to serverId: String) {
-        resetHostState(to: serverId)
-        // The first load is the base's, when the page appears; a switch made on
-        // the page loads its server now.
-        if isShowing { setNeedsRefresh() }
-    }
-
-    private func resetHostState(to serverId: String) {
-        loadedServerId = serverId
-        statuses = []
-        setupState = .unknown
-        quotas = nil
+    /// The visible server's providers and usage: the base runs it on every
+    /// appearance, on pull to refresh, when the app becomes active, and when the
+    /// server changes; a credential change or a settled sign-in asks for it
+    /// through `setNeedsLoad()`.
+    override func load() async throws {
+        guard let serverId = server?.id else { return }
+        guard let client = await coordinator.apiClientReady(for: serverId) else {
+            setupState = .unavailable
+            throw LoadFailure("Unable to prepare server transport")
+        }
+        async let fetchedQuotas = try? await client.fetchProviderQuotas()
+        let loaded: [ProviderAuthProviderStatus]
+        do {
+            loaded = try await client.listProviderAuthStatus()
+        } catch {
+            // A load this page cancelled (it left, or a newer one replaced it)
+            // shows no failure: the providers it had stay.
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
+            statuses = []
+            setupState = .unavailable
+            throw LoadFailure("Failed to load provider status: \(error.localizedDescription)")
+        }
+        guard !Task.isCancelled else { return }
+        statuses = loaded
+        setupState = ProviderSetupState(providerStatuses: loaded)
         errorMessage = nil
-        if let apiKeySheet { Router.finish(apiKeySheet) }
-    }
-
-    /// The active server's providers and usage: on every appearance, on pull to
-    /// refresh, when the app becomes active, and after a credential change.
-    override func refresh() async {
-        // The appearance's load starts before the first `updateProperties`, so
-        // it takes the server that pass would have taken.
-        if let server, loadedServerId != server.id { resetHostState(to: server.id) }
-        await load()
+        // Statuses show as soon as they arrive; usage (provider round-trips on
+        // the server, often seconds) fills in behind them, and a refresh that
+        // cannot read it keeps the usage already on screen.
+        if let loadedQuotas = await fetchedQuotas, !Task.isCancelled { quotas = loadedQuotas }
     }
 
     private func reloadIfVisible(serverId: String) {
-        guard serverId == loadedServerId else { return }
-        setNeedsRefresh()
-    }
-
-    /// Statuses and usage in parallel. Statuses show as soon as they arrive;
-    /// usage (provider round-trips on the server, often seconds) fills in
-    /// behind them, and a reload keeps the previous usage until then. A load
-    /// for a host that is no longer visible, or that a newer load replaced,
-    /// is dropped. A load this page cancelled — it left, or a newer one
-    /// replaced it — is no failure: the rows it showed stay. Returns once both
-    /// settle, so pull to refresh spins until usage is current.
-    private func load() async {
-        loadGeneration += 1
-        let generation = loadGeneration
-        guard let serverId = loadedServerId else { return }
-        let isCurrent = { [weak self] in self?.loadGeneration == generation && self?.loadedServerId == serverId }
-        guard let client = await coordinator.apiClientReady(for: serverId) else {
-            guard isCurrent(), !Task.isCancelled else { return }
-            setupState = .unavailable
-            errorMessage = "Unable to prepare server transport"
-            return
-        }
-        async let fetchedQuotas = try? await client.fetchProviderQuotas()
-        let result: Result<[ProviderAuthProviderStatus], Error>
-        do {
-            result = .success(try await client.listProviderAuthStatus())
-        } catch {
-            result = .failure(error)
-        }
-        if isCurrent() {
-            switch result {
-            case .success(let loaded):
-                statuses = loaded
-                setupState = ProviderSetupState(providerStatuses: loaded)
-                errorMessage = nil
-            case .failure(let error):
-                // Cancelled under the page, or served as URLSession's own cancel:
-                // the providers it shows are still what this server has.
-                guard !Task.isCancelled, !error.isLoadCancellation else { return }
-                statuses = []
-                setupState = .unavailable
-                errorMessage = "Failed to load provider status: \(error.localizedDescription)"
-            }
-        }
-        let loadedQuotas = await fetchedQuotas
-        guard isCurrent(), !Task.isCancelled else { return }
-        // A failed refresh keeps the usage already on screen; its footer time says how old it is.
-        if let loadedQuotas { quotas = loadedQuotas }
+        guard serverId == server?.id else { return }
+        setNeedsLoad()
     }
 
     // MARK: - List
@@ -302,7 +271,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 .available, header: "Available", items: available.isEmpty ? [.allConnected] : available
             ))
         }
-        if errorMessage != nil {
+        if errorMessage != nil || loadFailure != nil {
             sections.append(ListSection(.error, items: [.error]))
         }
         return sections
@@ -325,7 +294,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             guard let attempt = flowAttempt else { return AnyHashable(0) }
             return AnyHashable([
                 AnyHashable(ObjectIdentifier(attempt)), AnyHashable(attempt.flow.status.rawValue),
-                AnyHashable(attempt.isGone), AnyHashable(attempt.isSettled), AnyHashable(loadedServerId),
+                AnyHashable(attempt.isGone), AnyHashable(attempt.isSettled), AnyHashable(server?.id),
             ])
         case .provider(let id):
             guard let provider = statuses.first(where: { $0.id == id }) else { return AnyHashable(0) }
@@ -338,7 +307,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 AnyHashable(actionInFlightId == id), AnyHashable(hasLiveSignIn), AnyHashable(actionInFlightId != nil),
             ])
         case .error:
-            return AnyHashable(errorMessage)
+            return AnyHashable([AnyHashable(loadFailure), AnyHashable(errorMessage)])
         case .loading, .onboarding, .allConnected:
             return AnyHashable(0)
         }
@@ -404,7 +373,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             cell.contentConfiguration = content
         case .error:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.error")
-            let message = errorMessage
+            let message = loadFailure ?? errorMessage
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
@@ -416,7 +385,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         let status = attempt.isGone
             ? "No longer on the server"
             : ProviderAuthFlowPresentation.statusText(attempt.flow.status)
-        let summary = attempt.serverId == loadedServerId ? status : "\(status) \u{00B7} \(attempt.serverName)"
+        let summary = attempt.serverId == server?.id ? status : "\(status) \u{00B7} \(attempt.serverName)"
         let title = "Sign in to \(attempt.providerName)"
         let trailing = attempt.isSettled ? "View" : "Return"
         ListScreen.buttonRow(
@@ -534,7 +503,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     // MARK: - Credential changes
 
     private func apiClient() -> APIClient? {
-        guard let serverId = loadedServerId else { return nil }
+        guard let serverId = server?.id else { return nil }
         return coordinator.apiClient(for: serverId)
     }
 
@@ -557,7 +526,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             do {
                 try await api.setProviderAPIKey(providerId: provider.id, key: key)
                 if let editor { Router.finish(editor) }
-                await self?.load()
+                self?.setNeedsLoad()
             } catch {
                 editor?.errorMessage = "Failed to save API key: \(error.localizedDescription)"
             }
@@ -578,7 +547,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             do {
                 try await api.removeProviderCredential(providerId: provider.id)
                 self?.errorMessage = nil
-                await self?.load()
+                self?.setNeedsLoad()
             } catch {
                 self?.errorMessage = "Failed to remove credential: \(error.localizedDescription)"
             }
@@ -625,7 +594,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         let sheet = ProviderSignInViewController(
             attempt: attempt,
             root: root,
-            visibleServerId: { [weak self] in self?.loadedServerId },
+            visibleServerId: { [weak self] in self?.server?.id },
             onDone: { [weak self] in self?.closeFlowSheet() },
             onCancel: { [weak self] in self?.cancelFlow(attempt) }
         )

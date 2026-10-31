@@ -58,7 +58,6 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     private let addItem = UIBarButtonItem()
     private var sidebarToggle: UIBarButtonItem?
     private let signInPresenter = McpSignInPresenter()
-    private var observedServerId: String?
     private var observedFlowStatus: ProviderAuthFlowSnapshot.Status?
     /// Probes waiting for their host's client.
     private var preparingCount = 0 {
@@ -70,7 +69,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         self.scopeId = scopeId
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: "MCP Servers", listIdentifier: "mcp.list", headers: true, footers: true, pullsToRefresh: true)
+        super.init(title: "MCP Servers", listIdentifier: "mcp.list", headers: true, footers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -140,22 +139,19 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         addItem.isEnabled = !(snapshot == nil || state.loading || signIn.hasActive)
         ListScreen.setBarItems(trailing: [addItem], leading: sidebarItems(), on: navigationItem)
 
-        // `.task(id: activeServerId)`: a switched server is probed again.
-        let activeId = coordinator.activeServerId
-        if activeId != observedServerId {
-            let first = observedServerId == nil
-            observedServerId = activeId
-            // The first probe is the base's, when the page appears.
-            if !first { setNeedsRefresh() }
-        }
         // A sign-in that ends changes what the host has: probe again.
         let status = attempt?.flow.status
         if status != observedFlowStatus {
             observedFlowStatus = status
-            if status?.isTerminal == true { setNeedsRefresh() }
+            if status?.isTerminal == true { setNeedsLoad() }
         }
         signInPresenter.sync(owner: signIn, root: root, from: self)
     }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The active server's MCP scope: another server is another host's servers.
+    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
 
     /// A probe swaps the host's sections; the rows should not slide.
     override var animatesUpdates: Bool { false }
@@ -171,11 +167,12 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
 
     // MARK: - Data
 
-    /// Probes the active server: on every appearance, on pull to refresh, when
-    /// another server becomes active, and when a sign-in ends. The old host's
-    /// rows go first, then it waits for the new host's client; a host that
-    /// stopped being active meanwhile is not probed.
-    override func refresh() async {
+    /// Probes the active server: the base runs it on every appearance, on pull to
+    /// refresh, and when another server becomes active; a finished sign-in asks
+    /// for it through `setNeedsLoad()`. The old host's rows go first, then it waits
+    /// for the new host's client; a host that stopped being active meanwhile is
+    /// not probed.
+    override func load() async throws {
         guard let server else { return }
         model.switchHost(to: server.id)
         preparingCount += 1
@@ -194,7 +191,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         let add = McpAddServerViewController(
             client: client, scope: snapshot.scope, serverName: server.name, root: root
         ) { [weak self] in
-            self?.setNeedsRefresh()
+            self?.setNeedsLoad()
         }
         Router.present(add, presentation: .sheet.inNavigation(), from: self)
     }
@@ -305,8 +302,10 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             return AnyHashable([AnyHashable(entry.transport), AnyHashable(entry.tools.count),
                                 AnyHashable(entry.exposure.rawValue), AnyHashable(entry.state),
                                 AnyHashable(state.snapshot?.scope.id)])
-        case .noServers, .note:
-            return AnyHashable(0)
+        // The empty-list row and the note hold nothing a reconfigure would
+        // disturb, so the kit's default draws them again.
+        default:
+            return super.inputs(of: item)
         }
     }
 
@@ -383,7 +382,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             }
         case .retry:
             ListScreen.buttonRow(cell, identifier: "mcp.retry", label: "Retry") { [weak self] in
-                self?.setNeedsRefresh()
+                self?.setNeedsLoad()
             }
             cell.contentConfiguration = Self.actionContent("Retry", color: UIColor(palette.blue))
         case .scopeError(let index):

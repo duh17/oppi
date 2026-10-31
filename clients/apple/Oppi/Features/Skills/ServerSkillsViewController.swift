@@ -47,14 +47,11 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     private var query = "" {
         didSet { setNeedsUpdateProperties() }
     }
-    /// The server the running or last load asked for, so a change of the
-    /// active server loads once.
-    private var requestedServerId: String?
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: String(localized: "Skills"), listIdentifier: "skills.list", headers: true, pullsToRefresh: true)
+        super.init(title: String(localized: "Skills"), listIdentifier: "skills.list", headers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -80,17 +77,21 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        // The load the appearance starts is this server's: marking it before the
-        // base schedules it keeps `updateProperties` from asking for the same
-        // server again and cancelling the load that just started.
-        requestedServerId = coordinator.activeServerId
-        super.viewIsAppearing(animated)
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         search.hostDidAppear(self)
+    }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The active server's catalog: another server is another catalog.
+    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
+
+    /// A switched server starts its own search: the old one's query would
+    /// filter the new server's catalog for a Skill it never had.
+    override func subjectDidChange() {
+        query = ""
+        search.setText("")
     }
 
     override func updateProperties() {
@@ -128,11 +129,6 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         )
         super.updateProperties()
         ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
-
-        // The active server changed under the screen: load its catalog.
-        if isShowing, let activeServerId, activeServerId != requestedServerId {
-            setNeedsRefresh()
-        }
     }
 
     /// The sidebar toggle at the split detail root.
@@ -146,11 +142,12 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
 
     // MARK: - Data
 
-    /// The active server's Skills catalog: on every appearance, on pull to
-    /// refresh, and when the active server changes.
-    override func refresh() async {
+    /// The active server's Skills catalog: the base runs it on every appearance,
+    /// on pull to refresh, and when the active server changes. The catalog's own
+    /// state (loading, syncing, failed) is the store's, so the state row stays
+    /// the store's too.
+    override func load() async throws {
         guard let serverId = coordinator.activeServerId else { return }
-        requestedServerId = serverId
         guard let connection = coordinator.connection(for: serverId),
               let api = connection.apiClient else { return }
         connection.serverResourceStore.switchServer(to: serverId)
@@ -211,7 +208,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
                 state: .failed(
                     title: String(localized: "Skills are unavailable. The selected server has no cached Skills catalog."),
                     message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
                 ),
                 identifier: "skills.retry"
             )
@@ -306,12 +303,10 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
             coordinator: coordinator,
             navigation: root.navigation,
             shownServerId: { [weak self] in self?.state?.server?.id },
-            onSwitched: { [weak self] server in
+            onSwitched: { [weak self] _ in
                 guard let self else { return }
                 query = ""
                 search.setText("")
-                requestedServerId = server.id
-                setNeedsRefresh()
             }
         )
     }

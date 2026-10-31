@@ -42,16 +42,12 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     private var agent: StoredAgentDefinition? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
+    /// A failure of something the page did (a failed archive), which shows as an
+    /// alert. A failed load is the base's `loadFailure`.
     private var error: String? {
         didSet { setNeedsUpdateProperties() }
     }
     private var isArchiving = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var isLoadingResources = false {
         didSet { setNeedsUpdateProperties() }
     }
     /// The Agent the native editor edits while it is up.
@@ -84,7 +80,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         super.init(
             title: "Agent", listIdentifier: "agents.detail.list",
             headers: true,
-            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+            dismissesKeyboardOnDrag: true
         )
         traitOverrides.appRootEnvironment = root
         editItem.primaryAction = UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { [weak self] _ in
@@ -133,14 +129,6 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         setNeedsUpdateProperties()
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        // The base cancels the load that was running; its resource flag is this
-        // page's to clear, since a cancelled load skips its own reset so it
-        // cannot clear a newer load's flag.
-        isLoadingResources = false
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         composer.insetContent(of: collectionView)
@@ -153,8 +141,10 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         updateComposer()
         updateModals()
         // OK clears only the error the person read, never a newer one.
-        errorAlerts.sync(title: "Agent", message: error) { [weak self] shown in
-            if self?.error == shown { self?.error = nil }
+        errorAlerts.sync(title: "Agent", message: error ?? loadFailure) { [weak self] shown in
+            guard let self else { return }
+            if error == shown { error = nil }
+            if loadFailure == shown { clearLoadFailure() }
         }
     }
 
@@ -232,6 +222,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     /// A load settles the page in place; its rows should not slide.
     override var animatesUpdates: Bool { false }
 
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
     /// Nothing loaded yet, or no such Agent: the page is its state.
     override func wholeScreenState() -> LoadState? {
         guard agent == nil else { return nil }
@@ -255,8 +247,10 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                 AnyHashable(connection.workspaceStore.workspaces.isEmpty),
                 AnyHashable(connection.currentServerId),
             ])
-        case .value, .block, .resourceList, .notice, .caption:
-            return AnyHashable(0)
+        // A value, block, resource list, notice, or caption row holds nothing
+        // that a reconfigure would disturb, so the kit's default draws it again.
+        default:
+            return super.inputs(of: item)
         }
     }
 
@@ -601,7 +595,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         let sync = store.syncState(for: .skills, serverId: serverId)
         return AgentResourceCatalogState.resolve(
             hasLoaded: store.hasLoadedSkills(forServer: serverId),
-            isSyncing: isLoadingResources || sync.isSyncing,
+            isSyncing: isLoading || sync.isSyncing,
             lastSyncFailed: sync.lastSyncFailed,
             hasRows: !store.skills(forServer: serverId).isEmpty
         )
@@ -614,7 +608,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         let sync = store.syncState(for: .extensions, serverId: serverId)
         return AgentResourceCatalogState.resolve(
             hasLoaded: store.hasLoadedExtensions(forServer: serverId),
-            isSyncing: isLoadingResources || sync.isSyncing,
+            isSyncing: isLoading || sync.isSyncing,
             lastSyncFailed: sync.lastSyncFailed,
             hasRows: !store.extensions(forServer: serverId).isEmpty
         )
@@ -622,42 +616,15 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     // MARK: - Actions
 
-    /// The Agent and its resource catalogs: on every appearance, on pull to
-    /// refresh, and after a Retry.
-    override func refresh() async {
-        // A cancelled load skips its resource flag reset so it cannot clear a
-        // newer load's flag; the canceller clears it instead.
-        isLoadingResources = false
-        await loadAgent()
+    /// The Agent and its resource catalogs: the base runs it on every appearance,
+    /// on pull to refresh, and after a Retry. A failed catalog load leaves the
+    /// store's own sync state to its rows.
+    override func load() async throws {
+        guard let apiClient = connection.apiClient, let serverId = connection.currentServerId else {
+            throw LoadFailure("Server is offline")
+        }
+        agent = try await apiClient.getAgent(agentId)
         guard !Task.isCancelled else { return }
-        await loadResources()
-    }
-
-    private func loadAgent() async {
-        guard let apiClient = connection.apiClient else {
-            error = "Server is offline"
-            return
-        }
-        isLoading = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
-        do {
-            let loaded = try await apiClient.getAgent(agentId)
-            guard !Task.isCancelled else { return }
-            agent = loaded
-            error = nil
-        } catch {
-            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
-            guard !Task.isCancelled, !error.isLoadCancellation else { return }
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func loadResources() async {
-        let connection = connection
-        guard let apiClient = connection.apiClient, let serverId = connection.currentServerId else { return }
-        isLoadingResources = true
-        defer { if !Task.isCancelled { isLoadingResources = false } }
         await connection.serverResourceStore.load(serverId: serverId, api: apiClient)
     }
 

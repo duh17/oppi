@@ -22,7 +22,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
     private var remoteThemes: [RemoteThemeSummary] = [] {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = true {
+    private var isLoadingThemes = true {
         didSet { setNeedsUpdateProperties() }
     }
     private var error: String? {
@@ -120,7 +120,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     override func sections() -> [ListSection<Section, Item>] {
         guard !remoteThemes.isEmpty else {
-            let state: Item = isLoading ? .loading : (error != nil ? .failed : .empty)
+            let state: Item = isLoadingThemes ? .loading : (error != nil ? .failed : .empty)
             return [ListSection(.state, items: [state])]
         }
         return [ListSection(
@@ -270,12 +270,12 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
     private func loadThemes() async {
         guard let api = root.coordinator.activeConnection.apiClient else {
             error = "Not connected"
-            isLoading = false
+            isLoadingThemes = false
             return
         }
-        isLoading = true
+        isLoadingThemes = true
         // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
+        defer { if !Task.isCancelled { isLoadingThemes = false } }
         do {
             let themes = try await api.listThemes()
             guard !Task.isCancelled else { return }

@@ -42,12 +42,11 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     private var agentNamesById: [String: String] = [:] {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
     private var isMutating = false {
         didSet { setNeedsUpdateProperties() }
     }
+    /// A failure of something the page did (a failed run or change), which shows
+    /// as an alert. A failed load is the base's `loadFailure`.
     private var error: String? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -74,7 +73,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         super.init(
             title: "Schedule", listIdentifier: "schedule.detail.list",
             headers: true,
-            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+            dismissesKeyboardOnDrag: true
         )
         traitOverrides.appRootEnvironment = root
         editItem.title = "Edit"
@@ -130,8 +129,10 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         updateComposer()
         updateModals()
         // OK clears only the error the person read, never a newer one.
-        errorAlerts.sync(title: "Schedule", message: error) { [weak self] shown in
-            if self?.error == shown { self?.error = nil }
+        errorAlerts.sync(title: "Schedule", message: error ?? loadFailure) { [weak self] shown in
+            guard let self else { return }
+            if error == shown { error = nil }
+            if loadFailure == shown { clearLoadFailure() }
         }
     }
 
@@ -191,6 +192,8 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     /// A load settles the page in place; its rows should not slide.
     override var animatesUpdates: Bool { false }
 
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
     /// The summary and the actions carry no heading.
     override func showsHeader(for section: Section) -> Bool {
         section == .instructions || section == .runWith || section == .history
@@ -235,8 +238,10 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             // change replaces it, and only a changed input redraws the row.
             guard let schedule else { return AnyHashable(0) }
             return AnyHashable(SchedulePresentation.prompt(in: schedule.action))
-        case .detail, .caption, .noRuns:
-            return AnyHashable(0)
+        // A detail, caption, or no-runs row holds nothing a reconfigure would
+        // disturb, so the kit's default draws it again.
+        default:
+            return super.inputs(of: item)
         }
     }
 
@@ -539,39 +544,26 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         case pause, resume, archive, restore
     }
 
-    /// The schedule, its runs, and the Agent names: on every appearance, on
-    /// pull to refresh, and after a Retry.
-    override func refresh() async {
-        await load()
-    }
-
-    private func load() async {
+    /// The schedule, its runs, and the Agent names: the base runs it on every
+    /// appearance, on pull to refresh, and after a Retry.
+    override func load() async throws {
         guard let apiClient = connection.apiClient else {
-            error = "Server is offline"
-            return
+            throw LoadFailure("Server is offline")
         }
-        isLoading = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
-        do {
-            async let fetchedSchedule = apiClient.getAgentSchedule(scheduleId)
-            async let fetchedRuns = apiClient.listAgentScheduleRuns(scheduleId: scheduleId, limit: 20)
-            async let fetchedAgents = apiClient.listAgents(includeArchived: true)
-            let loadedSchedule = try await fetchedSchedule
-            let loadedRuns = try await fetchedRuns
-            let agents = try? await fetchedAgents
-            guard !Task.isCancelled else { return }
-            schedule = loadedSchedule
-            runs = loadedRuns
-            if let agents {
-                agentNamesById = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-            }
-            error = nil
-        } catch {
-            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
-            guard !Task.isCancelled, !error.isLoadCancellation else { return }
-            self.error = error.localizedDescription
+        async let fetchedSchedule = apiClient.getAgentSchedule(scheduleId)
+        async let fetchedRuns = apiClient.listAgentScheduleRuns(scheduleId: scheduleId, limit: 20)
+        async let fetchedAgents = apiClient.listAgents(includeArchived: true)
+        let loadedSchedule = try await fetchedSchedule
+        let loadedRuns = try await fetchedRuns
+        let agents = try? await fetchedAgents
+        guard !Task.isCancelled else { return }
+        schedule = loadedSchedule
+        runs = loadedRuns
+        if let agents {
+            agentNamesById = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         }
+        // A page that just loaded says nothing of a change that failed before.
+        error = nil
     }
 
     private func setEnabled(_ isEnabled: Bool) {
