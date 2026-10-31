@@ -78,7 +78,7 @@ final class WorkspaceDetailsViewController: ListScreenController<
         // form has nothing to fetch for its rows, and nothing to pull to refresh —
         // so the check keeps the model's own task, and the folder's row says how it
         // went.
-        model.start()
+        model.checkFolder()
     }
 
     override func viewDidAppear(_ animated: Bool) {

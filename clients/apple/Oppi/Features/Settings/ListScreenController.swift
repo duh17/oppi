@@ -136,7 +136,10 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   page loads, when, and what it is for. One task: started on appearance (per
 ///   the policy), on pull to refresh, on a subject change, and on
 ///   `setNeedsLoad()`; cancelled when the page leaves; a cancelled load is never
-///   a failure. `loadTrigger` says whether the load running now was the page
+///   a failure. `loadTrigger` says which of those started it, so a page re-reads
+///   a store it shares only when somebody asked — capture it (`let force =
+///   loadTrigger == .ask`) before the first `await`: a pull that arrives while
+///   the load runs replaces the task, and reads the trigger for itself. `loadTrigger` says whether the load running now was the page
 ///   appearing or an ask for it (a pull, a Retry), for a page whose store caches
 ///   its own read. `isLoading` and `loadFailure` are what the rows read.
 /// - `animatesUpdates`: whether a snapshot change animates its rows.

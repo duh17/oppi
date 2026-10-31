@@ -72,24 +72,26 @@ final class WorkspaceDetailsModel {
     /// Takes the typed folder and checks it again.
     func setHostMount(_ text: String) {
         draft.hostMount = text
-        startFolderCheck()
-    }
-
-    /// Checks the folder the draft starts with, as the page appears.
-    func start() {
-        startFolderCheck()
+        checkFolder()
     }
 
     // MARK: - Folder check
 
-    private func startFolderCheck() {
+    /// A check the draft has started: a cancelled check leaves the spinner to the
+    /// one that replaced it.
+    @ObservationIgnored private var validationRun = 0
+
+    /// Checks the folder the draft holds, as the page appears and after each edit.
+    func checkFolder() {
         validationTask?.cancel()
-        validationTask = Task { [weak self] in await self?.validateHostMount() }
+        validationRun &+= 1
+        let run = validationRun
+        validationTask = Task { [weak self] in await self?.validateHostMount(run: run) }
     }
 
     /// Checks the typed folder. A newer edit cancels this one, so a late answer
     /// never describes a folder that is no longer typed.
-    func validateHostMount() async {
+    private func validateHostMount(run: Int) async {
         let current = trimmedHostMount
         if let pending = hostPathPendingCreation, pending != current {
             hostPathPendingCreation = nil
@@ -111,10 +113,13 @@ final class WorkspaceDetailsModel {
 
         isCheckingHostMount = true
         hostMountValidationMessage = nil
-        // A check that is cancelled (a newer keystroke, the page leaving) leaves no
-        // spinner behind: the field it described is not being checked.
+        // The spinner belongs to the newest check: a cancelled one leaves it to the
+        // check that replaced it, and clears it when nothing did (the page left, so
+        // nothing describes that field any more).
         defer {
-            if current == trimmedHostMount, !isCreatingHostDirectory { isCheckingHostMount = false }
+            if run == validationRun, current == trimmedHostMount, !isCreatingHostDirectory {
+                isCheckingHostMount = false
+            }
         }
         // Debounce typing; a newer keystroke cancels this task.
         do {

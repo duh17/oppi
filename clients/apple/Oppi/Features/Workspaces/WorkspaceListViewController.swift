@@ -3,6 +3,13 @@ import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WorkspaceList")
 
+/// The catalog could not be read: a sync that failed is not an empty server, and
+/// it is not the server being offline either — the row says which request failed
+/// under the page's own title.
+struct WorkspaceCatalogSyncError: LocalizedError {
+    var errorDescription: String? { String(localized: "The workspace list could not be read.") }
+}
+
 extension Confirmation {
     /// What Delete asks before it removes a workspace's record. The list and
     /// the workspace's settings both ask it.
@@ -87,16 +94,21 @@ final class WorkspaceListViewController: ListScreenController<
     /// synced it moments ago; the page appearing takes the connection's own
     /// two-minute window.
     override func load() async throws {
+        // Decided before the first await: a queued pull that starts while this runs
+        // must not change what this load was for.
+        let force = loadTrigger == .ask
         guard await root.coordinator.apiClientReady(for: server.id) != nil,
               let connection else {
             throw LoadFailure(String(localized: "Server is offline"))
         }
-        await connection.refreshWorkspaceCatalog(force: loadTrigger == .ask)
+        await connection.refreshWorkspaceCatalog(force: force)
         guard !Task.isCancelled else { return }
         // A sync that failed is the list's failure, not an empty server: saying
-        // "No Workspaces" over a catalog nobody could read is a lie.
+        // "No Workspaces" over a catalog nobody could read is a lie, and neither is
+        // it the same thing as the server being offline — the page says which
+        // request failed.
         if connection.workspaceStore.lastSyncFailed {
-            throw LoadFailure(String(localized: "Server is offline"))
+            throw WorkspaceCatalogSyncError()
         }
     }
 
