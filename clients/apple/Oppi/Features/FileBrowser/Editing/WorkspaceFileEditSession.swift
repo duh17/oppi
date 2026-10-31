@@ -236,6 +236,12 @@ final class WorkspaceFileEditSession {
 
     var currentText: String { textProvider?() ?? bufferText }
 
+    /// The save that follows creates the file: nothing is on disk yet, so a clean
+    /// buffer has not been saved anywhere. The editor shows "New" rather than
+    /// "Saved" while this holds. Read when the chrome applies, which a status
+    /// change already triggers, so it needs no observation of its own.
+    var createsOnFirstSave: Bool { baseCondition == .absent }
+
     var hasUnsavedChanges: Bool {
         editGeneration != savedGeneration
     }
@@ -346,8 +352,21 @@ final class WorkspaceFileEditSession {
                 // never a create.
                 if status == .deleted { setStatus(.conflict) }
             }
-        case .missing, .creatable:
-            // There is no disk version to review or to keep: the file is gone.
+        case .creatable:
+            // The file is still absent. A session that read it as absent has
+            // nothing to review: the create simply did not land, so it retries.
+            // Any other base lost the file: there is no disk version to keep.
+            reviewedDisk = nil
+            if baseCondition == .absent {
+                if inFlight == nil {
+                    setStatus(.pending)
+                    startSaveIfPossible()
+                }
+            } else if inFlight == nil {
+                setStatus(.deleted)
+            }
+        case .missing:
+            // No disk version at all: there is nothing to review or to keep.
             reviewedDisk = nil
             if inFlight == nil { setStatus(.deleted) }
         case .failed:
@@ -572,10 +591,16 @@ final class WorkspaceFileEditSession {
             setStatus(.deleted)
             checkpoint()
         case .creatable:
-            // The create landed after all: an empty file is not the buffer, and
-            // the base that must not exist now does.
-            setStatus(.conflict)
-            checkpoint()
+            // A create whose answer was lost, and the file is still not there: it
+            // did not land, so the save goes again rather than stranding the
+            // editor in a conflict it cannot resolve.
+            if baseCondition == .absent {
+                setStatus(.pending)
+                startSaveIfPossible()
+            } else {
+                setStatus(.deleted)
+                checkpoint()
+            }
         case .failed:
             verify(after: flight, delay: retryDelay)
         }

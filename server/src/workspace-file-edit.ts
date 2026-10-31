@@ -12,9 +12,19 @@
  * between cleanup's lstat and unlink, is an accepted residual race.
  *
  * Only a target that names where a *missing* file may appear creates one
- * (`createsIn`), and only on `If-None-Match: *`: an exclusive `O_CREAT|O_EXCL`
- * open, so a file another writer created first is a 412 and never an overwrite.
- * A workspace file and a Skill file never create.
+ * (`createsIn`), and only on `If-None-Match: *`: the bytes are written and
+ * fsynced to a temp beside the target and then `link`ed into place, so the
+ * final name never holds a partial document and a file another writer created
+ * first is a 412. A workspace file and a Skill file never create.
+ *
+ * Residual race, same-user only: `O_NOFOLLOW` and the containment checks cover
+ * the path this request resolves, not a parent directory swapped for a link
+ * after that. A writer with the owner's own rights who swaps `prompts/` between
+ * the check and the link can make this request's temp file land in the swap
+ * target (a transient empty file there) or leave an orphaned temp in the real
+ * `prompts/`; the bytes never go anywhere the target did not name at check time,
+ * and the same user could write both places directly. This is the same class as
+ * the rename race above, and it is accepted for the same reason.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -689,51 +699,70 @@ async function createEditedFile(
     }
   }
 
-  const createPath = join(parentReal, basename(creatable.createPath));
-  let handle: FileHandle;
-  try {
-    handle = await fs.open(
-      createPath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      NEW_FILE_MODE,
-    );
-  } catch (error: unknown) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // EEXIST: the file appeared between the read and this write. An exclusive
-    // open cannot clobber it, so the editor's first save is a stale conflict.
-    if (code === "EEXIST" || code === "ELOOP") {
-      return { kind: "error", status: 412, message: "Precondition failed" };
-    }
-    if (code === "ENOENT") return { kind: "error", status: 404, message: "File not found" };
-    return { kind: "error", status: 500, message: "Failed to write file" };
-  }
-
+  // The temp is written and fsynced beside the target, then linked into place:
+  // `link` is the exclusive create (EEXIST when the name is taken), and the
+  // final name never exists holding a partial document — a Pi session reading
+  // SYSTEM.md mid-write would otherwise see an empty or truncated prompt.
+  const createPath = creatable.createPath;
+  let temp: CapturedTemp | undefined;
   let created: { dev: number; ino: number } | undefined;
   try {
-    const opened = await handle.stat();
-    created = { dev: opened.dev, ino: opened.ino };
-    const proven = await proveHandleInRoot(handle, createPath, creatable.realRoot);
-    if (!proven || proven.realPath !== createPath) {
-      await unlinkCreatedFile(createPath, created);
-      return { kind: "error", status: 404, message: "File not found" };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const candidate = join(
+        parentReal,
+        `${TEMP_PREFIX}${randomBytes(16).toString("hex")}${TEMP_SUFFIX}`,
+      );
+      let handle: FileHandle;
+      try {
+        handle = await fs.open(candidate, TEMP_OPEN_FLAGS, NEW_FILE_MODE);
+      } catch (error: unknown) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") continue;
+        if (code === "ENOENT" || code === "ELOOP") {
+          return { kind: "error", status: 404, message: "File not found" };
+        }
+        return { kind: "error", status: 500, message: "Failed to write file" };
+      }
+      try {
+        const opened = await handle.stat();
+        temp = { path: candidate, dev: opened.dev, ino: opened.ino };
+        const proven = await proveHandleInRoot(handle, candidate, creatable.realRoot);
+        if (!proven) return { kind: "error", status: 404, message: "File not found" };
+        await handle.writeFile(bytes);
+        await handle.sync();
+        const written = await handle.stat();
+        if (
+          written.dev !== temp.dev ||
+          written.ino !== temp.ino ||
+          !written.isFile() ||
+          written.size !== bytes.length
+        ) {
+          return { kind: "error", status: 500, message: "Failed to write file" };
+        }
+      } finally {
+        await handle.close().catch(() => {});
+      }
+      break;
     }
-    await handle.writeFile(bytes);
-    await handle.sync();
-    const written = await handle.stat();
-    if (
-      written.dev !== created.dev ||
-      written.ino !== created.ino ||
-      !written.isFile() ||
-      written.size !== bytes.length
-    ) {
-      await unlinkCreatedFile(createPath, created);
+    if (!temp) return { kind: "error", status: 500, message: "Failed to write file" };
+    created = { dev: temp.dev, ino: temp.ino };
+    try {
+      await fs.link(temp.path, createPath);
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // EEXIST: the file appeared between the read and this write. A link
+      // cannot replace it, so the editor's first save is a stale conflict.
+      if (code === "EEXIST" || code === "ELOOP") {
+        return { kind: "error", status: 412, message: "Precondition failed" };
+      }
+      if (code === "ENOENT") return { kind: "error", status: 404, message: "File not found" };
       return { kind: "error", status: 500, message: "Failed to write file" };
     }
   } catch {
-    await unlinkCreatedFile(createPath, created);
+    if (created) await unlinkCreatedFile(createPath, created);
     return { kind: "error", status: 500, message: "Failed to write file" };
   } finally {
-    await handle.close().catch(() => {});
+    if (temp) await unlinkCapturedTemp(temp);
   }
 
   // The file that is now there has to be one this target may write: the same

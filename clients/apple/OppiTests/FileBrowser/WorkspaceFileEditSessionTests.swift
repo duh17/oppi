@@ -604,6 +604,88 @@ struct WorkspaceFileEditSessionTests {
         #expect(other.store.load(other.identity)?.bytes == Data("hello mine".utf8))
     }
 
+    /// A create whose answer was lost, and the file is still absent: the create
+    /// did not land, so the same save goes again instead of stranding the editor.
+    @Test func unknownOutcomeOfACreateRetriesTheCreate() async {
+        let harness = Harness()
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+        harness.type("# Pi\n", into: session)
+        session.flush()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        harness.scripted.reads = [.creatable]
+        harness.scripted.resolveNext(.unknown)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.count == 2, "the create is sent again")
+        #expect(harness.scripted.writeLog[1].condition == .absent)
+        #expect(harness.scripted.writeLog[1].bytes == Data("# Pi\n".utf8))
+        #expect(session.status != .conflict, "a lost create is not a conflict")
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+        #expect(session.baseCondition == .version(tag("b")))
+    }
+
+    /// The file a create would write is there first: 412 is the editor's
+    /// conflict, Review finds the disk version, and Use Disk Version takes it.
+    @Test func aStaleCreateReviewsAndTakesTheDiskVersion() async {
+        let harness = Harness()
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .seconds(60), retryDelay: .milliseconds(20)
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+        harness.type("mine\n", into: session)
+        session.flush()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        harness.scripted.reads = [.snapshot(WorkspaceFileDiskSnapshot(bytes: Data("theirs\n".utf8), etag: tag("b")))]
+        harness.scripted.resolveNext(.stale)
+        #expect(await eventually { session.status == .conflict })
+
+        let reviewed = await session.reviewDisk()
+        #expect(reviewed == .snapshot(WorkspaceFileDiskSnapshot(bytes: Data("theirs\n".utf8), etag: tag("b"))))
+        #expect(session.status == .conflict, "Review keeps the conflict until the person chooses")
+
+        let result = await session.useDiskVersion()
+        // The editor owns the live buffer, so the disk text comes back as the
+        // replacement the page applies; the session's own bytes are the disk's.
+        #expect(result == .replaced("theirs\n"))
+        #expect(session.status == .saved)
+        #expect(session.baseCondition == .version(tag("b")))
+        #expect(session.hasUnsavedChanges == false)
+    }
+
+    /// A draft kept for a file that was never created reopens on the creation it
+    /// extends, so its next save is still a create.
+    @Test func aKeptDraftWithTheCreationBaseReopensAsACreate() throws {
+        let harness = Harness()
+        try harness.store.save(WorkspaceFileDraft(
+            identity: harness.identity, baseEtag: "*", bytes: Data("kept words".utf8), updatedAt: Date()
+        ))
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .seconds(60), retryDelay: .milliseconds(20)
+        )
+        let reopened = try #require(session)
+        #expect(reopened.recoveredDraft)
+        #expect(reopened.currentText == "kept words")
+        #expect(reopened.baseCondition == .absent)
+        #expect(reopened.status == .pending, "the same creation base resumes autosave")
+    }
+
     // MARK: Drafts and recovery
 
     @Test func draftRecoveryResumesOrOpensInConflict() throws {
@@ -814,7 +896,6 @@ struct WorkspaceFileEditRecoveryTests {
         #expect(WorkspaceFileEditStatusPresentation.offersConflictActions(session.status), "Review is offered")
 
         harness.buffer = session.currentText
-        // swiftlint:disable:next unowned_variable_capture - harness outlives the editor callback
         session.attachEditor { harness.buffer }
         harness.type("!", into: session)
         session.flush()
@@ -948,6 +1029,9 @@ struct WorkspaceFileEditorSurfaceTests {
         }
         #expect(WorkspaceFileEditStatusPresentation.label(for: .pending) != "Saved")
         #expect(WorkspaceFileEditStatusPresentation.label(for: .verifying) != "Saved")
+        // A file that is not there yet is not "Saved": the editor says so.
+        #expect(WorkspaceFileEditStatusPresentation.label(for: .saved, createsFile: true) == "New")
+        #expect(WorkspaceFileEditStatusPresentation.label(for: .saved) == "Saved")
     }
 
     /// Astra lock: spoken words stay; the glyph is shape-only.

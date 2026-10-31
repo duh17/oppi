@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -185,6 +186,9 @@ describe("/files/current?origin=pi", () => {
     expect(lstatSync(prompts).isDirectory()).toBe(true);
     expect(lstatSync(prompts).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(prompts, "review.md")).equals(created)).toBe(true);
+    // The bytes went through a temp and a link, so the directory holds the file
+    // and nothing else: a reader never sees a half-written prompt.
+    expect(readdirSync(prompts)).toEqual(["review.md"]);
   });
 
   it("never creates through a linked parent directory", async () => {
@@ -268,38 +272,47 @@ describe("/files/current?origin=pi", () => {
     expect((await call(fixture, "GET", "prompts/notes.json")).statusCode).toBe(404);
   });
 
-  it("refuses an allowlisted path that a symlink leads to another agent file", async () => {
+  // `prompts/up -> ..`, so `prompts/up/APPEND_SYSTEM.md` is the agent directory's
+  // own APPEND_SYSTEM.md. The requested name passes the lexical allowlist, so
+  // only the canonical check can refuse it.
+  it("refuses an allowlisted name a symlink leads to another agent file", async () => {
     const fixture = seed();
-    const auth = join(fixture.agentDir, "auth.json");
-    const secret = '{"k":"secret"}\n';
-    writeFileSync(auth, secret);
+    const appendSystem = join(fixture.agentDir, "APPEND_SYSTEM.md");
+    const secret = "appended by a symlink\n";
+    writeFileSync(appendSystem, secret);
     mkdirSync(join(fixture.agentDir, "prompts"));
-    // `prompts/up -> ..`, so `prompts/up/auth.json` is the agent dir's own auth.json.
     symlinkSync("..", join(fixture.agentDir, "prompts", "up"));
 
-    const read = await call(fixture, "GET", "prompts/up/auth.json");
+    const read = await call(fixture, "GET", "prompts/up/APPEND_SYSTEM.md");
     expect(read.headers.ETag).toBeUndefined();
-    const write = await call(fixture, "PUT", "prompts/up/auth.json", Buffer.from("{}\n"), {
-      "if-match": tag(secret),
-    });
+    const write = await call(
+      fixture,
+      "PUT",
+      "prompts/up/APPEND_SYSTEM.md",
+      Buffer.from("owned\n"),
+      { "if-match": tag(secret) },
+    );
     expect(write.statusCode).toBe(404);
-    expect(readFileSync(auth, "utf8")).toBe(secret);
+    expect(readFileSync(appendSystem, "utf8")).toBe(secret);
   });
 
   it("refuses a prompts directory that is a symlink to the agent directory", async () => {
     const fixture = seed();
-    // `prompts -> .` makes every sibling agent file look allowlisted.
+    // `prompts -> .` makes every sibling agent file look allowlisted; the name
+    // `prompts/notes.md` passes the lexical allowlist, so only the canonical
+    // check refuses it.
     symlinkSync(".", join(fixture.agentDir, "prompts"));
+    const notes = join(fixture.agentDir, "notes.md");
+    const secret = "agent notes\n";
+    writeFileSync(notes, secret);
 
-    const read = await call(fixture, "GET", "prompts/settings.json");
+    const read = await call(fixture, "GET", "prompts/notes.md");
     expect(read.headers.ETag).toBeUndefined();
-    const write = await call(fixture, "PUT", "prompts/settings.json", Buffer.from("{}\n"), {
-      "if-match": tag('{"defaultTools":[]}\n'),
+    const write = await call(fixture, "PUT", "prompts/notes.md", Buffer.from("owned\n"), {
+      "if-match": tag(secret),
     });
     expect(write.statusCode).toBe(404);
-    expect(readFileSync(join(fixture.agentDir, "settings.json"), "utf8")).toBe(
-      '{"defaultTools":[]}\n',
-    );
+    expect(readFileSync(notes, "utf8")).toBe(secret);
   });
 
   it("edits Pi's prompt templates under prompts/", async () => {
