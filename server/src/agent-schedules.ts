@@ -10,6 +10,7 @@ import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanu
 import { isThinkingLevel } from "./thinking-levels.js";
 
 export const SCHEDULE_IDEMPOTENCY_CONFLICT_CODE = "SCHEDULE_IDEMPOTENCY_CONFLICT";
+export const SCHEDULE_VERSION_CONFLICT_CODE = "SCHEDULE_VERSION_CONFLICT";
 
 /** A create key that already created a Schedule from a different definition. */
 export class ScheduleIdempotencyConflictError extends Error {
@@ -18,6 +19,19 @@ export class ScheduleIdempotencyConflictError extends Error {
   constructor(readonly scheduleId: string) {
     super(`Idempotency key already created Schedule ${scheduleId} from a different definition`);
     this.name = "ScheduleIdempotencyConflictError";
+  }
+}
+
+/** An update conditioned on a version the Schedule no longer has. */
+export class ScheduleVersionConflictError extends Error {
+  readonly code = SCHEDULE_VERSION_CONFLICT_CODE;
+
+  constructor(
+    readonly expectedVersion: number,
+    readonly currentVersion: number,
+  ) {
+    super(`Schedule version conflict: expected ${expectedVersion}, current ${currentVersion}`);
+    this.name = "ScheduleVersionConflictError";
   }
 }
 
@@ -76,6 +90,8 @@ export interface AgentSchedule {
   status: AgentScheduleStatus;
   trigger: AgentScheduleTrigger;
   action: AgentScheduleAction;
+  /** Bumped by every update; a PATCH may condition on it. */
+  version: number;
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
@@ -114,6 +130,7 @@ export interface AgentScheduleSummary {
   status: AgentScheduleStatus;
   trigger: AgentScheduleTrigger;
   action: AgentScheduleActionSummary;
+  version: number;
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
@@ -189,6 +206,7 @@ interface ScheduleRow {
   status: AgentScheduleStatus;
   trigger_json: string;
   action_json: string;
+  version: number;
   created_at: number;
   updated_at: number;
   archived_at: number | null;
@@ -285,14 +303,15 @@ export class AgentScheduleStore {
       status: "active",
       trigger: validateTrigger(request.trigger),
       action: validateAction(request.action),
+      version: 0,
       createdAt: now,
       updatedAt: now,
     };
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO agent_schedules (id, name, status, trigger_json, action_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO agent_schedules (id, name, status, trigger_json, action_json, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           schedule.id,
@@ -300,6 +319,7 @@ export class AgentScheduleStore {
           schedule.status,
           JSON.stringify(schedule.trigger),
           JSON.stringify(schedule.action),
+          schedule.version,
           schedule.createdAt,
           schedule.updatedAt,
         );
@@ -308,9 +328,22 @@ export class AgentScheduleStore {
     return schedule;
   }
 
-  updateSchedule(scheduleId: string, input: unknown, now = Date.now()): AgentSchedule | undefined {
+  /**
+   * Writes an update and bumps the version. `expectedVersion` makes it a compare-and-swap:
+   * a version the Schedule no longer has throws `ScheduleVersionConflictError` and writes
+   * nothing, so two editors cannot silently overwrite each other.
+   */
+  updateSchedule(
+    scheduleId: string,
+    input: unknown,
+    now = Date.now(),
+    expectedVersion?: number,
+  ): AgentSchedule | undefined {
     const current = this.getSchedule(scheduleId);
     if (!current || current.status === "archived") return undefined;
+    if (expectedVersion !== undefined && current.version !== expectedVersion) {
+      throw new ScheduleVersionConflictError(expectedVersion, current.version);
+    }
     const updates = validateAgentScheduleUpdate(input);
 
     const next: AgentSchedule = {
@@ -320,13 +353,26 @@ export class AgentScheduleStore {
       ...(updates.action !== undefined ? { action: validateActionShape(updates.action) } : {}),
       updatedAt: now,
     };
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE agent_schedules
-         SET name = ?, trigger_json = ?, action_json = ?, updated_at = ?
-         WHERE id = ? AND status <> 'archived'`,
+         SET name = ?, trigger_json = ?, action_json = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND status <> 'archived' AND version = ?`,
       )
-      .run(next.name, JSON.stringify(next.trigger), JSON.stringify(next.action), now, scheduleId);
+      .run(
+        next.name,
+        JSON.stringify(next.trigger),
+        JSON.stringify(next.action),
+        now,
+        scheduleId,
+        current.version,
+      ) as { changes?: number };
+    if (result.changes !== 1) {
+      const latest = this.getSchedule(scheduleId);
+      if (!latest || latest.status === "archived") return undefined;
+      // Another writer bumped it between the read and the write.
+      throw new ScheduleVersionConflictError(expectedVersion ?? current.version, latest.version);
+    }
     return this.getSchedule(scheduleId);
   }
 
@@ -344,7 +390,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = 'archived', updated_at = ?, archived_at = ?
+         SET status = 'archived', version = version + 1, updated_at = ?, archived_at = ?
          WHERE id = ?`,
       )
       .run(now, now, scheduleId);
@@ -355,7 +401,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = 'active', updated_at = ?, archived_at = NULL
+         SET status = 'active', version = version + 1, updated_at = ?, archived_at = NULL
          WHERE id = ? AND status = 'archived'`,
       )
       .run(now, scheduleId);
@@ -621,7 +667,7 @@ export class AgentScheduleStore {
     this.db
       .prepare(
         `UPDATE agent_schedules
-         SET status = ?, updated_at = ?
+         SET status = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND status <> 'archived'`,
       )
       .run(status, now, scheduleId);
@@ -636,6 +682,7 @@ export class AgentScheduleStore {
         status TEXT NOT NULL,
         trigger_json TEXT NOT NULL,
         action_json TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         archived_at INTEGER
@@ -674,6 +721,13 @@ export class AgentScheduleStore {
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_schedule_idx
         ON agent_schedule_runs(schedule_id, created_at);
     `);
+    // A database created before versions: every Schedule starts at 0.
+    const columns = this.db.prepare("PRAGMA table_info(agent_schedules)").all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === "version")) {
+      this.db.exec("ALTER TABLE agent_schedules ADD COLUMN version INTEGER NOT NULL DEFAULT 0");
+    }
   }
 }
 
@@ -684,6 +738,7 @@ function scheduleFromRow(row: ScheduleRow): AgentSchedule {
     status: row.status,
     trigger: parseJson<AgentScheduleTrigger>(row.trigger_json),
     action: dropRemovedActionFields(parseJson<AgentScheduleAction>(row.action_json)),
+    version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
@@ -720,6 +775,7 @@ function scheduleSummary(schedule: AgentSchedule): AgentScheduleSummary {
     status: schedule.status,
     trigger: schedule.trigger,
     action: actionSummary(schedule.action),
+    version: schedule.version,
     createdAt: schedule.createdAt,
     updatedAt: schedule.updatedAt,
     ...(schedule.archivedAt === undefined ? {} : { archivedAt: schedule.archivedAt }),

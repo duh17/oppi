@@ -142,6 +142,43 @@ describe("agent schedule durable core", () => {
     expect(restored?.archivedAt).toBeUndefined();
   });
 
+  it("bumps a schedule version on every update and refuses a stale one", () => {
+    const schedule = createSchedule();
+    expect(schedule.version).toBe(0);
+
+    const paused = store.pauseSchedule(schedule.id, 2_000);
+    expect(paused?.version).toBe(1);
+    const resumed = store.resumeSchedule(schedule.id, 3_000);
+    expect(resumed?.version).toBe(2);
+    const updated = store.updateSchedule(
+      schedule.id,
+      {
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "New prompt",
+          model: "openai-codex/gpt-5.5",
+        },
+      },
+      4_000,
+      2,
+    );
+    expect(updated).toMatchObject({ version: 3 });
+    expect(updated?.action).toMatchObject({ prompt: "New prompt" });
+
+    // The version the editor read is gone: nothing is written.
+    expect(() =>
+      store.updateSchedule(
+        schedule.id,
+        { action: { type: "new_session", workspaceId: "ws-1", prompt: "Stale prompt" } },
+        5_000,
+        2,
+      ),
+    ).toThrow(/Schedule version conflict: expected 2, current 3/);
+    expect(store.getSchedule(schedule.id)?.action).toMatchObject({ prompt: "New prompt" });
+    expect(store.getSchedule(schedule.id)?.version).toBe(3);
+  });
+
   it("manual run creates one run with a request id idempotency key", () => {
     const schedule = createSchedule();
 

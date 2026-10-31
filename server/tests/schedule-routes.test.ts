@@ -588,6 +588,56 @@ describe("schedule routes", () => {
     ]);
   });
 
+  it("versions a schedule and refuses a stale prompt write", async () => {
+    const schedule = store.createSchedule({
+      name: "Prompt check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}`;
+    const patch = (query: string, body: Record<string, unknown>) =>
+      dispatch({
+        method: "PATCH",
+        path,
+        url: new URL(`https://localhost${path}${query}`),
+        req: requestBody(body),
+        res: {} as ServerResponse,
+      });
+
+    // A read reports the version the editor's tag starts from.
+    await dispatch({
+      method: "GET",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+    const version = (responses[0]?.data as { schedule: { version: number } }).schedule.version;
+    expect(version).toBe(0);
+
+    await patch(`?expectedVersion=${version}`, { action: { prompt: "New prompt" } });
+    await patch(`?expectedVersion=${version}`, { action: { prompt: "Stale prompt" } });
+    await patch("?expectedVersion=0&unexpected=1", { action: { prompt: "Other" } });
+
+    expect(errors).toEqual([
+      { status: 400, message: "Unknown Schedule update query parameter: unexpected" },
+    ]);
+    expect(responses[1]).toMatchObject({
+      status: 200,
+      data: { schedule: { version: version + 1, action: { promptChars: 10 } } },
+    });
+    expect(responses[2]).toMatchObject({
+      status: 409,
+      data: {
+        code: "SCHEDULE_VERSION_CONFLICT",
+        expectedVersion: version,
+        currentVersion: version + 1,
+      },
+    });
+    expect(store.getSchedule(schedule.id)?.action).toMatchObject({ prompt: "New prompt" });
+  });
+
   it("rejects unexpected schedule fields and empty updates", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",

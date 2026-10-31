@@ -3,7 +3,9 @@ import type { ServerResponse } from "node:http";
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import {
   SCHEDULE_IDEMPOTENCY_CONFLICT_CODE,
+  SCHEDULE_VERSION_CONFLICT_CODE,
   ScheduleIdempotencyConflictError,
+  ScheduleVersionConflictError,
   mergeScheduleActionPatch,
   validateAgentScheduleUpdate,
   validateCreateAgentScheduleRequest,
@@ -88,6 +90,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   async function handleScheduleMember(
     scheduleId: string,
     method: string,
+    url: URL,
     req: Parameters<RouteDispatcher>[0]["req"],
     res: ServerResponse,
   ): Promise<boolean> {
@@ -106,6 +109,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (method === "PATCH") {
       try {
         const schedules = getSchedules();
+        const expectedVersion = parseExpectedScheduleVersion(url);
         const schedule = resolveScheduleSummary(scheduleId, res);
         if (!schedule) return true;
         const current = schedules.getSchedule(schedule.id);
@@ -125,14 +129,27 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
             : {}),
         };
         const now = Date.now();
-        const updated = schedules.updateSchedule(schedule.id, normalizedBody, now);
+        const updated = schedules.updateSchedule(schedule.id, normalizedBody, now, expectedVersion);
         if (!updated) {
           helpers.error(res, 404, "Schedule not found");
           return true;
         }
         helpers.json(res, { schedule: schedules.getScheduleSummary(updated.id) });
       } catch (error) {
-        helpers.error(res, 400, safeErrorMessage(error));
+        if (error instanceof ScheduleVersionConflictError) {
+          helpers.json(
+            res,
+            {
+              error: error.message,
+              code: SCHEDULE_VERSION_CONFLICT_CODE,
+              expectedVersion: error.expectedVersion,
+              currentVersion: error.currentVersion,
+            },
+            409,
+          );
+        } else {
+          helpers.error(res, 400, safeErrorMessage(error));
+        }
       }
       return true;
     }
@@ -250,7 +267,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     const member = path.match(/^\/schedules\/([^/]+)$/);
     if (member?.[1]) {
-      return handleScheduleMember(decodeURIComponent(member[1]), method, req, res);
+      return handleScheduleMember(decodeURIComponent(member[1]), method, url, req, res);
     }
 
     const runs = path.match(/^\/schedules\/([^/]+)\/runs$/);
@@ -392,6 +409,33 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       schedules.listRunSummaries(scheduleId).find((candidate) => candidate.id === run.id) ?? run
     );
   }
+}
+
+/**
+ * `?expectedVersion=` makes a Schedule PATCH a compare-and-swap. A Schedule's
+ * version starts at 0, so 0 is a valid expectation. Any other query parameter
+ * is a mistake, not something to ignore.
+ */
+function parseExpectedScheduleVersion(url: URL): number | undefined {
+  for (const key of url.searchParams.keys()) {
+    if (key !== "expectedVersion") {
+      throw new Error(`Unknown Schedule update query parameter: ${key}`);
+    }
+  }
+  const values = url.searchParams.getAll("expectedVersion");
+  if (values.length === 0) return undefined;
+  if (values.length !== 1) {
+    throw new Error("expectedVersion must be specified exactly once");
+  }
+  const value = values[0] ?? "";
+  if (!/^\d+$/.test(value)) {
+    throw new Error("expectedVersion must be a non-negative integer");
+  }
+  const version = Number(value);
+  if (!Number.isSafeInteger(version)) {
+    throw new Error("expectedVersion must be a safe integer");
+  }
+  return version;
 }
 
 /** `idempotencyKey` is request metadata, not part of the Schedule definition. */

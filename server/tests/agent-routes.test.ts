@@ -513,6 +513,71 @@ describe("agent routes", () => {
     }
   });
 
+  it("writes an Agent's prompt alone under its version and refuses a stale one", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-instructions-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({
+        name: "Reviewer",
+        description: "Reviewed baseline",
+        instructions: { mode: "append", text: "Review the change." },
+      });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const patch = async (version: number, body: Record<string, unknown>) => {
+        const res = makeResponse();
+        await dispatch({
+          method: "PATCH",
+          path: `/agents/${agent.id}`,
+          url: new URL(`http://localhost/agents/${agent.id}?expectedVersion=${version}`),
+          req: makeRequest(body) as never,
+          res: res as never,
+        });
+        return res;
+      };
+
+      // The editor's write: the prompt and its mode, nothing else.
+      const saved = await patch(agent.version, {
+        instructions: { mode: "replace", text: "Review the diff." },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(JSON.parse(saved.body)).toMatchObject({
+        agent: {
+          version: agent.version + 1,
+          definition: {
+            name: "Reviewer",
+            description: "Reviewed baseline",
+            instructions: { mode: "replace", text: "Review the diff." },
+          },
+        },
+      });
+
+      const stale = await patch(agent.version, {
+        instructions: { mode: "append", text: "Overwritten." },
+      });
+      expect(stale.statusCode).toBe(409);
+      expect(JSON.parse(stale.body)).toMatchObject({
+        code: "AGENT_VERSION_CONFLICT",
+        expectedVersion: agent.version,
+        currentVersion: agent.version + 1,
+      });
+      expect(store.getAgent(agent.id)?.definition.instructions).toEqual({
+        mode: "replace",
+        text: "Review the diff.",
+      });
+
+      // An empty prompt clears the custom one instead of failing validation.
+      const cleared = await patch(agent.version + 1, { instructions: null });
+      expect(cleared.statusCode).toBe(200);
+      expect(store.getAgent(agent.id)?.definition.instructions).toBeUndefined();
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates one Agent per idempotency key and refuses a changed definition", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-idempotency-routes-"));
     const store = new AgentDefinitionStore(dataDir);
