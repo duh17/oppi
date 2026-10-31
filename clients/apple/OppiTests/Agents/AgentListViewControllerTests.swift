@@ -205,6 +205,29 @@ enum AgentsLoadStateTests {
     }
 
     @MainActor
+    @Suite("Agent detail load states")
+    struct AgentDetailLoadStateTests {
+        @Test("a load cancelled under the Agent page raises no alert and leaves the page its state")
+        func cancelledLoadIsNotAFailure() async throws {
+            AgentsURLProtocol.reset()
+            AgentsURLProtocol.mode = .cancelled
+            let root = makeTestAppRoot()
+            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+            let screen = AgentDetailViewController(root: root, agentId: "reviewer") { _ in }
+            let window = try AgentListViewControllerTests.show(screen)
+            defer { AgentListViewControllerTests.hide(window) }
+
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.requestCount > 0 })
+            // A cancel is control flow: the page says it has no Agent, and no
+            // alert reports a failure that did not happen.
+            #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+                let state = screen.contentUnavailableConfiguration as? UIContentUnavailableConfiguration
+                return state?.text == "Agent Not Found" && screen.presentedViewController == nil
+            }, "a cancelled load is not a failure to report")
+        }
+    }
+
+    @MainActor
     @Suite("A rejected server certificate is not a cancel")
     struct CertificateRejectionLoadTests {
         @Test("APIClient names a pin rejection; a real cancel stays a cancel")
