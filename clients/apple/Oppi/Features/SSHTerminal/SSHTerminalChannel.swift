@@ -528,7 +528,9 @@ final class SSHTerminalChannel {
         do {
             try engine.continueRestore(records)
         } catch {
-            close(reason: SSHTerminalSnapshotFormat.unreadable)
+            // The screen drew; a damaged history record still ends the pane,
+            // and says the history was the part that failed.
+            close(reason: SSHTerminalSnapshotFormat.unreadableHistory)
         }
     }
 

@@ -667,6 +667,28 @@ struct RexPaneEngineTests {
         #expect(Self.text(engine).first == "line 0", "the oldest line arrived")
     }
 
+    /// A history record that does not decode after the screen drew still ends
+    /// the pane, and the reason says the history was the part that failed.
+    @Test func aDamagedHistoryRecordEndsThePaneNamingItsHistory() async throws {
+        let (screen, records) = try snapshotParts(try ghosttySnapshot(of: numberedLines(4000)))
+        let page = try #require(records.firstIndex {
+            SSHTerminalSnapshotFormat.record(in: $0, at: 0)?.tag == SSHTerminalSnapshotFormat.Tag.page.rawValue
+        })
+        var damaged = records
+        damaged[page][damaged[page].startIndex + 20] ^= 0xFF // a payload byte: its CRC no longer matches
+        let channel = try SSHTerminalChannel(answersTerminalQueries: false)
+        channel.opened(RecordingConnection())
+        var restored = 0
+        channel.snapshotRestored = { _ in restored += 1 }
+        let queue = SSHTerminalEventQueue()
+        queue.pushSnapshot(screen)
+        for record in damaged { queue.pushSnapshotRecords(record) }
+        queue.end("stream over")
+        await channel.consume(queue)
+        #expect(restored == 1, "the screen drew")
+        #expect(channel.reason == SSHTerminalSnapshotFormat.unreadableHistory)
+    }
+
     /// A long pane keeps all of its history: 30,000 phone-width rows, more
     /// than the 18,000 or so the old 8 MiB cap held, all arrive and stay.
     @Test func aLongPanesWholeHistoryIsKept() throws {
@@ -1221,6 +1243,33 @@ struct RexSessionTerminalTests {
         rig.fake.refuse(dataConnectFor: b)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
         #expect(rig.model.state.shown == c && rig.channel.connected, "\(rig.channel.reason)")
+        await rig.stop()
+    }
+
+    /// A to B, overtaken by C before B's stream said HELLO, and C refused: the
+    /// terminal goes back to A, the pane that was on screen, not to B, which
+    /// never drew.
+    @Test func aRefusalAfterAnOvertakenSwitchGoesBackToThePaneOnScreen() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b, c) = (Self.block("a"), Self.block("b"), Self.block("c"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+        rig.fake.hold(dataConnectFor: [b, c])
+        rig.model.show(b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == b }
+        })
+        rig.model.show(c)
+        rig.fake.release(dataConnectFor: b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == c }
+        })
+        rig.fake.refuse(dataConnectFor: c)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.model.state.shown == a && rig.fake.requests("data.connect").filter { $0.string("block_id") == a }.count == 2
+        }, "back to a, reopened")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+        #expect(rig.channel.connected, "\(rig.channel.reason)")
+        #expect(rig.fake.requests("data.connect").filter { $0.string("block_id") == b }.count == 1, "b was never asked for again")
         await rig.stop()
     }
 

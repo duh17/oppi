@@ -517,6 +517,8 @@ final class SSHTerminalEngine {
 
     func close() {
         live = false
+        // Nothing reads the history still arriving: drop the decoder and its buffered records.
+        abandonRestore()
         replies.removeAll()
         pendingCopy = nil
         programStatus.processEnded()
@@ -1763,6 +1765,8 @@ enum SSHTerminalError: Error {
 enum SSHTerminalSnapshotFormat {
     /// Why a terminal whose snapshot does not decode closes.
     static let unreadable = "This pane's screen could not be read. Its Rex may be newer than this Oppi."
+    /// Why a terminal closes when its screen restored but a later history record does not decode.
+    static let unreadableHistory = "This pane's history could not be read. Its Rex may be newer than this Oppi."
     static let magic = Data("GHOSTSNP".utf8)
     static let version: UInt16 = 1
     static let envelopeBytes = 10

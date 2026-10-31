@@ -781,7 +781,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let (old, generation) = core.withLock { state -> (SSHExecStream?, Int) in
             state.generation += 1
             let old = state.stream
-            state.fallback = state.streamBlock
+            // The pane on screen before the first of switches that overtake
+            // each other: a pane overtaken before HELLO never drew.
+            if state.fallback == nil { state.fallback = state.streamBlock }
             state.stream = nil
             state.parser = parser
             state.streamBlock = block

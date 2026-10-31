@@ -11,6 +11,12 @@ set -euo pipefail
 # decoders from 781c58e96 on skip record tags they do not know, so a newer
 # Rex's optional records no longer fail the whole restore. Also carries OSC
 # 7501 program status at spec revision 0.4 (b7207b2ef).
+# When bumping, re-check SSHTerminalSnapshotFeed (SSHTerminalEngine.swift)
+# against src/terminal/snapshot/snapshot.zig: its record tags (`knownTags`)
+# and what one `ghostty_snapshot_decoder_next` reads (HISTORY manifests, a
+# page, and the header of the next known record, with that page's Kitty
+# placements when they follow), since a call that reads past what has
+# arrived fails the restore.
 COMMIT="f54340ad77814fe319d136e5e915d6a48de8dd23"
 # ReleaseFast with SIMD, as Ghostty ships it: both Release modes drop Zig's
 # runtime safety checks, so Fast only trades library size for speed, and the

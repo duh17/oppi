@@ -277,24 +277,25 @@ struct RexWebSocketCodec {
 
     /// One compressed message's payload, inflated: a raw DEFLATE stream that
     /// ends where the sender cut its sync flush (RFC 7692 7.2.2), so the
-    /// empty stored block that flush ended with goes back on first. More than
+    /// empty stored block that flush ended with is fed in after it. More than
     /// `maximumMessageBytes` inflated is refused, wherever the message claims to end.
     static func inflate(_ payload: Data) throws -> Data {
-        let input = payload + Data([0x00, 0x00, 0xFF, 0xFF])
         let stream = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
         defer { stream.deallocate() }
         guard compression_stream_init(stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
             throw Failure.protocolViolation("no inflater")
         }
         defer { compression_stream_destroy(stream) }
-        let chunk = 64 * 1024
+        // A small message inflates into a small window; a large one in 64 KiB steps.
+        let chunk = max(1, min(64 * 1024, 4 * payload.count))
         let window = UnsafeMutablePointer<UInt8>.allocate(capacity: chunk)
         defer { window.deallocate() }
         var output = Data()
-        try input.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            guard let source = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+        /// Inflates all of `input`; true once the stream ended (a final block).
+        func feed(_ input: UnsafeRawBufferPointer) throws -> Bool {
+            guard let source = input.bindMemory(to: UInt8.self).baseAddress else { return false }
             stream.pointee.src_ptr = source
-            stream.pointee.src_size = raw.count
+            stream.pointee.src_size = input.count
             while true {
                 stream.pointee.dst_ptr = window
                 stream.pointee.dst_size = chunk
@@ -307,10 +308,10 @@ struct RexWebSocketCodec {
                 }
                 switch status {
                 case COMPRESSION_STATUS_END:
-                    return
+                    return true
                 case COMPRESSION_STATUS_OK:
-                    // Everything in, and room left over: nothing more to come.
-                    if stream.pointee.src_size == 0, produced < chunk { return }
+                    // All of this input in, and room left over: nothing more from it.
+                    if stream.pointee.src_size == 0, produced < chunk { return false }
                     // No input read and no output: a stream cut short.
                     if produced == 0, stream.pointee.src_size == unread {
                         throw Failure.protocolViolation("a compressed message that ends early")
@@ -320,6 +321,10 @@ struct RexWebSocketCodec {
                 }
             }
         }
+        // The payload in place, then the flush's tail as a second input: no copy of the payload.
+        if try payload.withUnsafeBytes(feed) { return output }
+        let tail: [UInt8] = [0x00, 0x00, 0xFF, 0xFF]
+        _ = try tail.withUnsafeBytes(feed)
         return output
     }
 }
