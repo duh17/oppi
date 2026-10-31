@@ -681,8 +681,7 @@ struct WorkspaceDetailsAndListTests {
     /// away, so the sheet has no row to point at. On iPad (iOS 27.1) a sheet
     /// with no popover source still presents, but with an infinite source rect
     /// and nothing to point at; it must fall back to the screen.
-    @Test(.disabled("K-load2: on the ready-server harness the scroll does not hold, so the row never leaves the screen; the kit's apply leaves the offset alone ([kit] apply probe), so the harness's layout is the suspect — see the review report"))
-    func theDeleteSheetOfAnOffscreenRowStillHasAPopoverSource() async throws {
+    @Test func theDeleteSheetOfAnOffscreenRowStillHasAPopoverSource() async throws {
         defer { TestURLProtocol.handler = nil }
         // The page loads on appearance; a server that cannot be reached keeps the
         // workspaces it was made with.
@@ -690,7 +689,12 @@ struct WorkspaceDetailsAndListTests {
         let workspaces = (0..<40).map { makeTestWorkspace(id: "w\($0)", name: "Workspace \($0)") }
         let (list, _, window) = try mountReadyList(workspaces, size: CGSize(width: 1024, height: 700))
         defer { window.isHidden = true; window.rootViewController = nil }
-        try await waitUntil { window.layoutIfNeeded(); return self.find("server.workspace.w0", in: list.view) != nil }
+        // Scroll only once the page's load has settled: a pass that lands while the
+        // load is out reconfigures every row, and its layout puts the list back.
+        try await waitUntil {
+            window.layoutIfNeeded()
+            return !list.isLoading && self.find("server.workspace.w0", in: list.view) != nil
+        }
         let swipe = try #require(list.trailingSwipeActions(for: .workspace("w0")))
         list.collectionView.setContentOffset(
             CGPoint(x: 0, y: list.collectionView.contentSize.height - list.collectionView.bounds.height),
