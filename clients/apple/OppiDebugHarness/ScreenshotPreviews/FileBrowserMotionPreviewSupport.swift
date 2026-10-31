@@ -43,36 +43,19 @@ enum FileBrowserMotionPreviewSupport {
     }
 }
 
-/// Which screen a motion capture shows. Both sit in a router stack between two
-/// neighbor files.
-enum FileBrowserMotionPreviewMode {
-    /// The file viewer as a tree pane.
-    case fileBrowser
-    /// The review screen, whose quick-action chat the files feed.
-    case review
-}
-
-/// `SCREENSHOT_SCREEN=file-browser-motion` / `review-file-motion`: the real
-/// screen at the root of a router stack, over the fixture files, in the dark
-/// theme the captures pin (`.preferredColorScheme(.dark)`). The strip along the
-/// bottom edge reports the host's Reduce Motion setting, the UIKit form of the
-/// `\.accessibilityReduceMotion` the SwiftUI wrapper read, so a capture pair
-/// shows both the plain and the reduced transition.
+/// `SCREENSHOT_SCREEN=file-browser-motion` / `review-file-motion`: the file
+/// viewer as a tree pane (`review: false`) or the review screen, at the root of a
+/// router stack between two fixture neighbors, with the host's Reduce Motion
+/// setting in a strip along the bottom edge.
 final class FileBrowserMotionPreviewController: PreviewRootController {
-    // The services the screens push and play with, held as long as the preview
-    // the way the SwiftUI view's `@State` held them.
-    private let connection: ServerConnection
-    private let navigation: AppNavigation
-    /// Reports the host's Reduce Motion setting: the UIKit form of the
-    /// `@Environment(\.accessibilityReduceMotion)` the SwiftUI wrapper read.
+    /// Reports the host's Reduce Motion setting where the captures read it.
     private let readout = UILabel()
 
-    init(mode: FileBrowserMotionPreviewMode) {
-        ScreenshotVolatileDefaults.applyDarkTheme(true)
+    init(review: Bool) {
+        // The screens push and play with these: the review screen holds both, the
+        // viewer its services.
         let connection = ServerConnection()
         let navigation = AppNavigation()
-        self.connection = connection
-        self.navigation = navigation
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             navigation: navigation
@@ -84,8 +67,8 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
             root: root,
             themeStore: root.themeStore,
             content: PreviewHost.screenStack(root: root) {
-                switch mode {
-                case .fileBrowser:
+                switch review {
+                case false:
                     let middle = files[1]
                     return FileViewerViewController(
                         configuration: .init(
@@ -102,7 +85,7 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
                         ),
                         services: .init(apiClient: apiClient)
                     )
-                case .review:
+                case true:
                     return WorkspaceReviewFileDetailViewController(
                         configuration: .init(
                             workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
@@ -122,14 +105,10 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        // A readout, not a control: the screen under it keeps its taps. The
-        // captures match its label, the way the SwiftUI `Text` carried it.
+        // A readout, not a control: the screen under it keeps its taps, and its
+        // label is what the captures match.
         readout.backgroundColor = .themeBlue
         readout.font = .monospacedSystemFont(
             ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
@@ -145,6 +124,8 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
             readout.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             readout.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             readout.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            // 6 pt above and below the line, as the strip had.
+            readout.heightAnchor.constraint(equalToConstant: (readout.font?.lineHeight ?? 0) + 12),
         ])
         NotificationCenter.default.addObserver(
             self,
@@ -155,11 +136,11 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
         applyReduceMotion()
     }
 
-    /// Follows the setting live, as the environment read did.
     @objc private func applyReduceMotion() {
-        let text = UIAccessibility.isReduceMotionEnabled ? "reduce-motion-on" : "reduce-motion-off"
-        readout.text = text
-        readout.accessibilityLabel = text
+        let on = UIAccessibility.isReduceMotionEnabled
+        readout.text = on ? "reduce-motion-on" : "reduce-motion-off"
+        readout.accessibilityLabel = readout.text
+        readout.accessibilityValue = on ? "on" : "off"
     }
 }
 

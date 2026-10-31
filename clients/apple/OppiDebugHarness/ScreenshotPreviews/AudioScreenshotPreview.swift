@@ -2,14 +2,10 @@
 import UIKit
 
 /// `SCREENSHOT_SCREEN=audio-script-reader`: speaker-tagged WebVTT in the
-/// full-screen player, over the theme background the way a reader page shows it.
-/// It plays a generated silent clip, seeks into a dialogue line, and pauses so
-/// the current-line highlight is stable.
+/// full-screen player, playing a generated silent clip seeked into a dialogue
+/// line and paused, so the current-line highlight is stable.
 final class AudioScriptReaderPreviewController: PreviewRootController {
     private let audioPlayer: AudioPlayerService
-    /// The clip the SwiftUI preview's `.task` set up; the controller owns it so a
-    /// preview that goes away stops touching the player.
-    private var setup: Task<Void, Never>?
     private static let itemID = "audio-script-reader-preview"
 
     init(themeStore: ThemeStore) {
@@ -39,20 +35,15 @@ final class AudioScriptReaderPreviewController: PreviewRootController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        setup?.cancel()
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Nothing here suspends: write the clip, start it, seek to 0:31, pause.
         let audioPlayer = self.audioPlayer
-        setup = Task { @MainActor in
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-script-reader-preview.wav")
-            try? Self.silentWAV(seconds: 90).write(to: url)
-            audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.itemID)
-            audioPlayer.seek(to: 31)
-            audioPlayer.pause()
-        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-script-reader-preview.wav")
+        try? Self.silentWAV(seconds: 90).write(to: url)
+        audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.itemID)
+        audioPlayer.seek(to: 31)
+        audioPlayer.pause()
     }
 
     private static let sidecar = """

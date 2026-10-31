@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Every `SCREENSHOT_SCREEN` a UI or E2E test launches must resolve to a case of
- * the DEBUG preview switch (`ScreenshotPreviewView`) or the screens
- * `DebugHarnessLaunch` routes before it. A deleted or renamed preview otherwise fails only when
+ * a `switch ScreenshotPreviewConfig.screen` (`ScreenshotPreviewView`'s, or one
+ * `DebugHarnessLaunch` routes before it) or a screen that file compares it to.
+ * A deleted or renamed preview otherwise fails only when
  * that test runs on a simulator: the app shows "Unknown screen" and the test
  * times out. Plain source scan, no simulator.
  *
@@ -28,22 +29,30 @@ function swiftFiles(root: string): string[] {
   });
 }
 
-/** The labels of the `switch ScreenshotPreviewConfig.screen` cases. */
-function previewScreens(): Set<string> {
-  const source = readFileSync(previewSwitch, "utf8");
+/** The case labels of the file's `switch ScreenshotPreviewConfig.screen`. */
+function switchScreens(file: string): Set<string> {
+  const source = readFileSync(file, "utf8");
   const start = source.indexOf("switch ScreenshotPreviewConfig.screen");
   const end = source.indexOf("default:", start);
-  if (start < 0 || end < 0) {
-    console.error(`Screenshot screen guard: no screen switch found in ${relative(repoRoot, previewSwitch)}.`);
-    process.exit(1);
-  }
+  if (start < 0 || end < 0) return new Set();
   const screens = new Set<string>();
   for (const line of source.slice(start, end).split("\n")) {
-    const label = line.match(/^\s*case\s+(.*):\s*$/);
+    const label = line.match(/^\s*case\s+(.*?):/);
     if (!label) continue;
     for (const name of label[1].matchAll(/"([^"]+)"/g)) screens.add(name[1]);
   }
-  // DebugHarnessLaunch picks this one before ScreenshotPreviewView.
+  return screens;
+}
+
+/** Every screen a launch path resolves to: both switches, and the `==` routes. */
+function previewScreens(): Set<string> {
+  const screens = switchScreens(previewSwitch);
+  if (screens.size === 0) {
+    console.error(`Screenshot screen guard: no screen switch found in ${relative(repoRoot, previewSwitch)}.`);
+    process.exit(1);
+  }
+  // DebugHarnessLaunch picks its UIKit screens before ScreenshotPreviewView.
+  for (const name of switchScreens(harnessLaunch)) screens.add(name);
   for (const match of readFileSync(harnessLaunch, "utf8").matchAll(/ScreenshotPreviewConfig\.screen == "([^"]+)"/g)) {
     screens.add(match[1]);
   }

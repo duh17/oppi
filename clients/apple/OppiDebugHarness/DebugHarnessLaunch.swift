@@ -110,23 +110,14 @@ enum DebugHarnessLaunch {
             }
             // The files, terminal, and audio family: the motion captures, the
             // terminal's three fixture connections, and the script reader.
-            if ScreenshotPreviewConfig.screen == "file-browser-motion" {
-                return FileBrowserMotionPreviewController(mode: .fileBrowser)
-            }
-            if ScreenshotPreviewConfig.screen == "review-file-motion" {
-                return FileBrowserMotionPreviewController(mode: .review)
-            }
-            if ScreenshotPreviewConfig.screen == "ssh-terminal" {
-                return SSHTerminalPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "ssh-terminal-status-blocked" {
-                return SSHTerminalPreviewController(status: .blocked)
-            }
-            if ScreenshotPreviewConfig.screen == "ssh-terminal-rex-panes" {
-                return SSHTerminalPreviewController(status: .rexPanes)
-            }
-            if ScreenshotPreviewConfig.screen == "audio-script-reader" {
-                return AudioScriptReaderPreviewController(themeStore: root.themeStore)
+            switch ScreenshotPreviewConfig.screen {
+            case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
+            case "review-file-motion": return FileBrowserMotionPreviewController(review: true)
+            case "ssh-terminal": return SSHTerminalPreviewController()
+            case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
+            case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
+            case "audio-script-reader": return AudioScriptReaderPreviewController(themeStore: root.themeStore)
+            default: break
             }
         }
         return nil
