@@ -244,6 +244,31 @@ private final class RouterRoutesSaves {
 }
 
 private enum RouterRoutesFixtures {
+    /// Two saved Agents with the artwork a row and a menu draw: an emoji and a
+    /// symbol, so the Schedule editor's Agent row and its choices show both.
+    static let savedAgents = [
+        AgentDefinitionSummary(
+            id: "agent-digest",
+            name: "Digest Writer",
+            icon: .emoji("\u{1F98A}"),
+            status: .active,
+            version: 1,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1),
+            archivedAt: nil
+        ),
+        AgentDefinitionSummary(
+            id: "agent-audit",
+            name: "Release Auditor",
+            icon: .symbol("wand.and.stars"),
+            status: .active,
+            version: 2,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1),
+            archivedAt: nil
+        ),
+    ]
+
     static let agent = StoredAgentDefinition(
         id: "agent-router-routes",
         name: "Design Reviewer",
@@ -254,7 +279,8 @@ private enum RouterRoutesFixtures {
         definition: AgentDefinition(
             name: "Design Reviewer",
             icon: .defaultValue,
-            sessionDefaults: AgentSessionDefaults(tools: ["read"])
+            // A model, so the editor's Model row draws its provider's mark.
+            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", tools: ["read"])
         ),
         createdAt: Date(timeIntervalSince1970: 1),
         updatedAt: Date(timeIntervalSince1970: 1),
@@ -298,7 +324,7 @@ private enum RouterRoutesFixtures {
             workspaceId: "ws-router-routes",
             prompt: "Summarize yesterday's sessions.",
             agentId: nil,
-            model: nil,
+            model: "anthropic/claude-sonnet-5",
             thinkingLevel: nil,
             worktreeId: nil,
             name: nil
@@ -314,7 +340,7 @@ private enum RouterRoutesFixtures {
 private final class RouterRoutesURLProtocol: URLProtocol {
     private struct AgentBody: Encodable { let agent: StoredAgentDefinition }
     private struct ScheduleBody: Encodable { let schedule: AgentScheduleSummary }
-    private struct AgentsBody: Encodable { let agents: [String] }
+    private struct AgentsBody: Encodable { let agents: [AgentDefinitionSummary] }
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "router-routes.oppi"
@@ -339,7 +365,7 @@ private final class RouterRoutesURLProtocol: URLProtocol {
             Self.record("schedule timeZone=\(trigger?["timeZone"] as? String ?? "none")")
             response = try? JSONEncoder().encode(ScheduleBody(schedule: RouterRoutesFixtures.scheduleSummary))
         case ("GET", "/agents"):
-            response = try? JSONEncoder().encode(AgentsBody(agents: []))
+            response = try? JSONEncoder().encode(AgentsBody(agents: RouterRoutesFixtures.savedAgents))
         default:
             response = nil
         }

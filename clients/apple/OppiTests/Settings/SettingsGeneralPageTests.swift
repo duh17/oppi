@@ -59,7 +59,8 @@ struct SettingsGeneralPageTests {
     }
 
     private func action(titled title: String, of button: UIButton?) -> UIAction? {
-        button?.menu?.children.compactMap { $0 as? UIAction }.first { $0.title == title }
+        guard let button else { return nil }
+        return KitMenuRow.actions(of: button).first { $0.title == title }
     }
 
     private func footers(_ page: SettingsGeneralViewController) -> [String] {

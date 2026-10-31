@@ -21,6 +21,14 @@ final class WorkspaceShellPreviewController: PreviewRootController {
     }
 
     private static let server = pairedServer()
+    /// A second paired server, never connected: the switcher menu shows each
+    /// server's own badge beside the one it is on.
+    private static let otherServer = pairedServer(
+        name: "mac-mini",
+        host: "mac-mini.local",
+        fingerprint: "sha256:rail-inbox-preview-mini",
+        badge: .macMini
+    )
     private static let workspace = Workspace(
         id: "oppi",
         name: "oppi",
@@ -35,7 +43,7 @@ final class WorkspaceShellPreviewController: PreviewRootController {
 
     private static func makeCoordinator() -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-        coordinator.serverStore.replaceServersForPreview([server])
+        coordinator.serverStore.replaceServersForPreview([server, otherServer])
         guard coordinator.switchToServer(server),
               let connection = coordinator.connection(for: server.id) else { return coordinator }
         connection.workspaceStore.upsert(workspace, serverId: server.id)
@@ -49,18 +57,25 @@ final class WorkspaceShellPreviewController: PreviewRootController {
         return coordinator
     }
 
-    private static func pairedServer() -> PairedServer {
-        guard let server = PairedServer(from: ServerCredentials(
-            host: "mac-studio.local",
+    private static func pairedServer(
+        name: String = "mac-studio",
+        host: String = "mac-studio.local",
+        fingerprint: String = "sha256:rail-inbox-preview",
+        badge: ServerBadgeIcon? = nil
+    ) -> PairedServer {
+        let leaf = "\(fingerprint)-leaf"
+        guard var server = PairedServer(from: ServerCredentials(
+            host: host,
             port: 7749,
             token: "sk_preview",
-            name: "mac-studio",
+            name: name,
             scheme: .https,
-            serverFingerprint: "sha256:rail-inbox-preview",
-            tlsCertFingerprint: "sha256:rail-inbox-preview-leaf"
+            serverFingerprint: fingerprint,
+            tlsCertFingerprint: leaf
         )) else {
             preconditionFailure("rail inbox preview server")
         }
+        server.badgeIcon = badge
         return server
     }
 

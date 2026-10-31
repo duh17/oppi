@@ -89,11 +89,13 @@ extension ListScreenController {
             identifier: declaration.id,
             isEnabled: state.canBeginSaving,
             value: shown,
-            menu: UIMenu(children: choices.map { choice in
-                UIAction(title: choice.title, state: choice.value == current ? .on : .off) { [weak self] _ in
-                    self?.settings?.set(declaration, choice.value)
+            menu: {
+                choices.map { choice in
+                    SettingsMenuOption(title: choice.title, selected: choice.value == current) { [weak self] in
+                        self?.settings?.set(declaration, choice.value)
+                    }
                 }
-            })
+            }
         )
     }
 

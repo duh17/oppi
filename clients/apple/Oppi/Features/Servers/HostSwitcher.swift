@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // The server switcher's model and its destinations. `HostSwitcherModel` owns the
 // rows and actions; the UIKit menu (`SessionListServerSwitcher`) renders it for the
@@ -83,8 +84,6 @@ struct HostSwitcherModel {
 
     private var locks: ScopedLockService { .shared }
 
-    var servers: [PairedServer] { serverStore.servers }
-
     func badgeState(for server: PairedServer) -> ServerBadgeConnectionState {
         HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
     }
@@ -96,31 +95,6 @@ struct HostSwitcherModel {
     static let switcherIdentifier = "server.switcher"
 
     var accessibilityLabel: String { "Current server: \(current.name)" }
-
-    func menuTitle(for server: PairedServer) -> String {
-        let state = badgeState(for: server)
-        return state == .connected ? server.name : "\(server.name) — \(state.title)"
-    }
-
-    /// Menu rows cannot draw a trailing badge, so a gated server's row uses
-    /// the lock symbol as its image (the current server keeps its checkmark).
-    func menuImage(for server: PairedServer) -> String {
-        if server.id == current.id { return "checkmark.circle.fill" }
-        switch locks.badge(.server(server.id)) {
-        case .locked: return "lock.fill"
-        case .unlocked: return "lock.open.fill"
-        case .none: return server.resolvedBadgeIcon.symbolName
-        }
-    }
-
-    func menuAccessibilityValue(for server: PairedServer) -> String {
-        let state = badgeState(for: server).title
-        switch locks.badge(.server(server.id)) {
-        case .locked: return "\(state), Locked"
-        case .unlocked: return "\(state), Unlocked"
-        case .none: return state
-        }
-    }
 
     /// The Connection row: the current server's lane, and a retry when it is not connected.
     var connection: (title: String, systemImage: String, state: ServerBadgeConnectionState) {
@@ -152,28 +126,102 @@ struct HostSwitcherModel {
         navigation.openHostSwitcherDestination(item, serverId: current.id)
     }
 
+    /// Makes `server` the active one: `ServerSwitchMenu` has already asked for
+    /// its lock, so this only activates and prepares it.
     func switchHost(_ server: PairedServer) {
-        // Capture now: the unlock callback runs after this update.
+        // Capture now: the caller's callback runs after this update.
         let coordinator = coordinator
         let onSwitch = onSwitch
-        let perform: @MainActor () -> Void = {
-            // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
-            guard coordinator.restoreActiveServer(server.id) else { return }
-            onSwitch?(server)
-            Task {
-                // Preparation updates this host's transport, never the current selection.
-                await coordinator.prepareSelectedServerShell(for: server)
-            }
-        }
-        // A locked server asks first; cancel keeps the current host.
-        if locks.gate(.server(server.id), onUnlock: perform) {
-            perform()
+        // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
+        guard coordinator.restoreActiveServer(server.id) else { return }
+        onSwitch?(server)
+        Task {
+            // Preparation updates this host's transport, never the current selection.
+            await coordinator.prepareSelectedServerShell(for: server)
         }
     }
 
     /// Once per connection: a known value is never refetched.
     func loadServerMetricsEnabled() async {
         await coordinator.loadServerMetricsEnabledIfNeeded(for: current.id)
+    }
+}
+
+/// Every menu that lists paired servers: the session lists' switcher, a catalog
+/// list's server row, and the locked cover's switch button. One owner for how a
+/// server's row reads (its badge, a gated server's lock, the current server's
+/// checkmark) and for what choosing one does (ask for its lock, then the
+/// caller's activation). Rows are built each time the menu opens, so they list
+/// current states and artwork.
+@MainActor
+struct ServerSwitchMenu {
+    let coordinator: ConnectionCoordinator
+    /// The server the menu marks as current. The menu's own checkmark says so,
+    /// so that row keeps its badge.
+    var currentServerId: String?
+    /// A server the menu leaves out (a cover that is already that server).
+    var omitting: String?
+    /// The rows the caller adds after the servers: Connection, Usage, the
+    /// switcher's destinations.
+    var extras: () -> [UIMenuElement] = { [] }
+    /// What choosing a server means. Runs once the server's lock is open.
+    var activate: (PairedServer) -> Void
+
+    private var locks: ScopedLockService { .shared }
+
+    /// A menu whose rows are read when it opens.
+    static func menu(_ make: @escaping @MainActor () -> ServerSwitchMenu) -> UIMenu {
+        UIMenu(children: [UIDeferredMenuElement.uncached { completion in
+            completion(make().elements())
+        }])
+    }
+
+    func elements() -> [UIMenuElement] {
+        let servers: [UIMenuElement] = coordinator.serverStore.servers
+            .filter { $0.id != omitting }
+            .map(row)
+        return [UIMenu(options: .displayInline, children: servers)] + extras()
+    }
+
+    private func row(_ server: PairedServer) -> UIAction {
+        let state = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
+        let title = state == .connected ? server.name : "\(server.name) — \(state.title)"
+        let action = UIAction.choice(
+            title,
+            .server(server.id, server.resolvedBadgeIcon),
+            selected: server.id == currentServerId,
+            assets: nil
+        ) { [self] in choose(server) }
+        // A menu cannot draw a trailing badge, so a gated server's row wears its
+        // lock instead of its badge.
+        let gate = locks.badge(.server(server.id))
+        switch gate {
+        case .locked: action.image = lock(open: false)
+        case .unlocked: action.image = lock(open: true)
+        case .none: break
+        }
+        action.accessibilityValue = switch gate {
+        case .locked: "\(state.title), Locked"
+        case .unlocked: "\(state.title), Unlocked"
+        case .none: state.title
+        }
+        return action
+    }
+
+    private func choose(_ server: PairedServer) {
+        let activate = activate
+        // A locked server asks first; cancel keeps the current host.
+        if locks.gate(.server(server.id), onUnlock: { activate(server) }) {
+            activate(server)
+        }
+    }
+
+    /// The lock glyph, in the same blue a menu's artwork carries.
+    private func lock(open: Bool) -> UIImage? {
+        UIImage(
+            systemName: open ? "lock.open.fill" : "lock.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+        )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
     }
 }
 

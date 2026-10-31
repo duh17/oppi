@@ -230,7 +230,8 @@ private extension AgentNativeEditDraft {
 }
 
 /// The Agent editor's Allowed Workspaces page: the server's workspaces whose
-/// runtime fits the editor's required runtime, plus any already chosen.
+/// runtime fits the editor's required runtime, plus any already chosen. Each
+/// row wears its workspace's icon, with its sandbox mark.
 final class AgentWorkspaceSelectionViewController: ListScreenController<
     AgentWorkspaceSelectionViewController.Section, AgentWorkspaceSelectionViewController.Item
 > {
@@ -276,7 +277,12 @@ final class AgentWorkspaceSelectionViewController: ListScreenController<
         guard case .workspace(let id) = item, let workspace = draft.workspaces.first(where: { $0.id == id }) else {
             return AnyHashable(0)
         }
-        return AnyHashable([draft.selectedAllowedWorkspaceIds.contains(id), runtimeMatches(workspace)])
+        // The icon is part of what the row draws: a Genmoji that lands redraws it.
+        return AnyHashable([
+            AnyHashable(draft.selectedAllowedWorkspaceIds.contains(id)),
+            AnyHashable(runtimeMatches(workspace)),
+            AnyHashable(EntityIcon.loadGeneration),
+        ])
     }
 
     override func prepareRegistrations() {
@@ -298,6 +304,11 @@ final class AgentWorkspaceSelectionViewController: ListScreenController<
         let summary = matches ? runtime : "\(runtime) \u{00B7} Does not match required runtime"
         cell.configure(
             title: workspace.name,
+            image: EntityIcon.image(
+                .workspace(workspace.icon, sandbox: workspace.runtime == .sandbox),
+                size: 22,
+                assets: draft.connection.iconAssetCache
+            ),
             subtitle: summary,
             subtitleIsWarning: !matches,
             isChosen: isChosen,

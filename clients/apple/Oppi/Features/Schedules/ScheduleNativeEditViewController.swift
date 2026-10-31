@@ -171,8 +171,12 @@ final class ScheduleNativeEditViewController: ListScreenController<
         case .cron: return AnyHashable([trigger.customExpression])
         case .timeZone: return AnyHashable(trigger.timeZone)
         case .prompt: return AnyHashable(draft.prompt)
-        case .workspace: return AnyHashable([AnyHashable(draft.workspaceId), AnyHashable(draft.workspaces.map(\.id))])
-        case .agent: return AnyHashable([AnyHashable(draft.agentId), AnyHashable(draft.agents.map(\.id))])
+        case .workspace: return AnyHashable([
+            AnyHashable(draft.workspaceId), AnyHashable(draft.workspaces.map(\.id)), AnyHashable(EntityIcon.loadGeneration),
+        ])
+        case .agent: return AnyHashable([
+            AnyHashable(draft.agentId), AnyHashable(draft.agents.map(\.id)), AnyHashable(EntityIcon.loadGeneration),
+        ])
         case .model: return AnyHashable(draft.model)
         case .useDefaultModel: return AnyHashable(0)
         case .thinking: return AnyHashable(draft.thinkingLevel)
@@ -259,9 +263,13 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 identifier: "schedule.nativeEdit.timeZone"
             ) { [weak self] in self?.presentTimeZonePicker() }
         } else {
+            // The model's own provider mark; a model that follows the Agent or the
+            // server has none to show.
+            let mark = draft.model.managementNilIfBlank.map { EntityIcon.image(.model($0), size: 22) }
             cell.configure(
                 title: "Model",
                 systemImage: nil,
+                image: mark,
                 value: draft.modelDisplayName,
                 identifier: "schedule.nativeEdit.model"
             ) { [weak self] in self?.presentModelPicker() }
@@ -270,6 +278,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
 
     private func configureMenu(_ cell: SettingsMenuRowCell, item: Item) {
         let trigger = draft.triggerDraft
+        let assets = draft.connection.iconAssetCache
         switch item {
         case .cadence:
             cell.configure(
@@ -304,27 +313,61 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 }
             )
         case .workspace:
-            var options: [(title: String, selected: Bool, action: () -> Void)] = []
-            if !draft.workspaces.contains(where: { $0.id == draft.workspaceId }) {
-                options.append((title: "Current workspace", selected: true, action: {}))
-            }
-            options += draft.workspaces.map { workspace in
-                (title: workspace.name, selected: workspace.id == draft.workspaceId, action: { [weak self] in
-                    self?.draft.selectWorkspace(workspace.id)
-                })
-            }
-            cell.configure(title: "Workspace", identifier: "schedule.nativeEdit.workspace", options: options)
+            let workspaces = draft.workspaces
+            let listed = workspaces.first { $0.id == draft.workspaceId }
+            cell.configure(
+                title: "Workspace",
+                image: listed.map { Self.workspaceIcon($0, assets: assets) },
+                identifier: "schedule.nativeEdit.workspace",
+                value: listed?.name ?? "Current workspace",
+                menu: { [weak self] in
+                    guard let self else { return [] }
+                    var options: [SettingsMenuOption] = []
+                    if listed == nil {
+                        options.append(SettingsMenuOption(title: "Current workspace", selected: true) {})
+                    }
+                    options += workspaces.map { workspace in
+                        SettingsMenuOption(
+                            title: workspace.name,
+                            image: Self.workspaceIcon(workspace, assets: assets),
+                            selected: workspace.id == draft.workspaceId
+                        ) { [weak self] in self?.draft.selectWorkspace(workspace.id) }
+                    }
+                    return options
+                }
+            )
         case .agent:
-            var options: [(title: String, selected: Bool, action: () -> Void)] = [
-                (title: "No saved Agent", selected: draft.agentId.isEmpty, action: { [weak self] in self?.draft.agentId = "" }),
-            ]
-            if !draft.agentId.isEmpty, !draft.agents.contains(where: { $0.id == draft.agentId }) {
-                options.append((title: "Current saved Agent", selected: true, action: {}))
-            }
-            options += draft.agents.map { agent in
-                (title: agent.name, selected: agent.id == draft.agentId, action: { [weak self] in self?.draft.agentId = agent.id })
-            }
-            cell.configure(title: "Agent", identifier: "schedule.nativeEdit.agent", options: options)
+            let agents = draft.agents
+            // No saved Agent follows Pi: the row and its choice wear the Pi avatar.
+            let saved = agents.first { $0.id == draft.agentId }
+            let current: IconEntity = saved.map { .agent($0.icon) } ?? (draft.agentId.isEmpty ? .pi : .agent(nil))
+            cell.configure(
+                title: "Agent",
+                image: EntityIcon.image(current, size: 22, assets: assets),
+                identifier: "schedule.nativeEdit.agent",
+                value: saved?.name ?? (draft.agentId.isEmpty ? "No saved Agent" : "Current saved Agent"),
+                menu: { [weak self] in
+                    guard let self else { return [] }
+                    var options: [SettingsMenuOption] = [
+                        SettingsMenuOption(
+                            title: "No saved Agent",
+                            image: EntityIcon.image(.pi, size: 22),
+                            selected: draft.agentId.isEmpty
+                        ) { [weak self] in self?.draft.agentId = "" },
+                    ]
+                    if !draft.agentId.isEmpty, saved == nil {
+                        options.append(SettingsMenuOption(title: "Current saved Agent", selected: true) {})
+                    }
+                    options += agents.map { agent in
+                        SettingsMenuOption(
+                            title: agent.name,
+                            image: EntityIcon.image(.agent(agent.icon), size: 22, assets: assets),
+                            selected: agent.id == draft.agentId
+                        ) { [weak self] in self?.draft.agentId = agent.id }
+                    }
+                    return options
+                }
+            )
         case .thinking:
             let levels: [ThinkingLevel?] = [nil] + ThinkingLevel.allCases.map(Optional.some)
             cell.configure(
@@ -370,6 +413,11 @@ final class ScheduleNativeEditViewController: ListScreenController<
 
     private static func timeZoneDisplayName(_ identifier: String) -> String {
         identifier.replacingOccurrences(of: "_", with: " ")
+    }
+
+    /// A workspace's artwork with its sandbox mark, as every other row draws it.
+    private static func workspaceIcon(_ workspace: Workspace, assets: IconAssetCache?) -> UIImage {
+        EntityIcon.image(.workspace(workspace.icon, sandbox: workspace.runtime == .sandbox), size: 22, assets: assets)
     }
 
     private func scrollCaretVisible(in textView: UITextView) {

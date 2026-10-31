@@ -74,6 +74,67 @@ struct SettingsKitTests {
         #expect(retried == 1)
     }
 
+    @Test("A kit row draws the artwork it is given, and a reused row drops it")
+    func rowsDrawTheirArtwork() throws {
+        let artwork = EntityIcon.image(.workspace(.emoji("🛠️"), sandbox: false), size: 22)
+
+        let index = SettingsIndexRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 44))
+        index.configure(title: "Workspace", systemImage: nil, image: artwork, value: "oppi", identifier: "test.index") {}
+        index.layoutIfNeeded()
+        #expect(Self.draws(artwork, in: index), "the index row did not draw its artwork")
+        index.prepareForReuse()
+        #expect(!Self.draws(artwork, in: index), "a reused index row kept the artwork")
+
+        let selection = SettingsSelectionRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 44))
+        selection.configure(title: "oppi", image: artwork, isChosen: true, identifier: "test.selection") {}
+        selection.layoutIfNeeded()
+        #expect(Self.draws(artwork, in: selection), "the selection row did not draw its artwork")
+        selection.prepareForReuse()
+        #expect(!Self.draws(artwork, in: selection), "a reused selection row kept the artwork")
+
+        // A menu row's own artwork, and the artwork on each choice it lists.
+        let menu = SettingsMenuRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 44))
+        menu.configure(
+            title: "Workspace", image: artwork, identifier: "test.menu.artwork", value: "oppi",
+            menu: {
+                [
+                    SettingsMenuOption(title: "oppi", image: artwork, selected: true) {},
+                    SettingsMenuOption(title: "Other", image: EntityIcon.image(.workspace(nil, sandbox: false), size: 22)) {},
+                ]
+            }
+        )
+        menu.layoutIfNeeded()
+        #expect(Self.draws(artwork, in: menu), "the menu row did not draw its artwork")
+        let button = try #require(menu.accessibilityElements?.first as? UIButton)
+        let choices = KitMenuRow.actions(of: button)
+        #expect(choices.count == 2)
+        #expect(choices.first?.image?.pngData() == artwork.pngData(), "a menu choice did not carry its artwork")
+        #expect(choices.first?.state == .on)
+        #expect(choices.last?.state == .off)
+        menu.prepareForReuse()
+        #expect(!Self.draws(artwork, in: menu), "a reused menu row kept the artwork")
+    }
+
+    @Test("A menu row builds its rows when the menu opens, so a pass never replaces the menu")
+    func menuRowBuildsItsRowsOnOpen() throws {
+        let cell = SettingsMenuRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 44))
+        var shown = "One"
+        cell.configure(title: "Choice", identifier: "test.menu.live", value: shown) {
+            [SettingsMenuOption(title: shown, selected: true) {}]
+        }
+        let button = try #require(cell.accessibilityElements?.first as? UIButton)
+        let menu = try #require(button.menu)
+        #expect(menu.children.contains { $0 is UIDeferredMenuElement }, "the rows are resolved when the menu opens")
+        shown = "Two"
+        // A pass (a theme change, a Genmoji landing) keeps the menu the row
+        // presented and only changes what the next open shows.
+        cell.configure(title: "Choice", identifier: "test.menu.live", value: shown) {
+            [SettingsMenuOption(title: shown, selected: true) {}]
+        }
+        #expect(button.menu === menu, "a reconfigure replaced the menu and would dismiss it")
+        #expect(KitMenuRow.actions(of: button).map(\.title) == ["Two"])
+    }
+
     @Test("A disabled or busy action row cannot be pressed and says so")
     func actionRowStaysStillWhenDisabledOrBusy() throws {
         let cell = SettingsActionRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 60))
@@ -521,6 +582,14 @@ extension SettingsKitTests {
         if let label = view as? UILabel { found.append(label) }
         for subview in view.subviews { found += labels(in: subview) }
         return found
+    }
+
+    /// Whether `view` draws `image` right now: a visible image view holding it.
+    private static func draws(_ image: UIImage, in view: UIView) -> Bool {
+        if let imageView = view as? UIImageView, !imageView.isHidden, imageView.image?.pngData() == image.pngData() {
+            return true
+        }
+        return view.subviews.contains { draws(image, in: $0) }
     }
 }
 

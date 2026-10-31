@@ -310,7 +310,12 @@ final class AgentNativeEditViewController: ListScreenController<
     private func configureIndex(_ cell: SettingsIndexRowCell, item: Item) {
         switch item {
         case .model:
-            cell.configure(title: "Model", systemImage: nil, value: draft.modelDisplayName, identifier: "agent.nativeEdit.model") { [weak self] in
+            // The model's own provider mark; the server's default has none to show.
+            let mark = draft.model.managementNilIfBlank.map { EntityIcon.image(.model($0), size: 22) }
+            cell.configure(
+                title: "Model", systemImage: nil, image: mark, value: draft.modelDisplayName,
+                identifier: "agent.nativeEdit.model"
+            ) { [weak self] in
                 self?.presentModelPicker()
             }
         case .tools:

@@ -335,10 +335,10 @@ private final class Screen {
         return list.visibleCells.flatMap { $0.allSubviews(of: type) }
     }
 
-    /// Runs the menu item `title` of a button's menu.
+    /// Runs the menu item `title` of a button's menu: a kit row builds its rows
+    /// when the menu opens, so the row is asked for them.
     static func choose(_ title: String, in button: UIButton) throws {
-        let menu = try #require(button.menu, "the button has no menu")
-        try run(title, in: menu)
+        try KitMenuRow.choose(title, in: button)
     }
 
     static func perform(_ title: String, in item: UIBarButtonItem) throws {

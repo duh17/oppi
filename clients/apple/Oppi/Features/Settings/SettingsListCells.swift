@@ -1,12 +1,13 @@
 import UIKit
 
-/// A settings navigation row: an optional accent symbol, a Title Case title in
-/// the theme's title color, an optional current-value summary, and the system
+/// A settings navigation row: an optional accent symbol or an entity's artwork
+/// (`EntityIcon`: a workspace, an Agent, a model's provider), a Title Case title
+/// in the theme's title color, an optional current-value summary, and the system
 /// disclosure chevron. The whole row is one button, so a tap, a VoiceOver
 /// activation, and `app.buttons[id]` all run the row's push. Without a symbol
-/// the title starts at the row's margin. The value sits beside the title when
-/// both fit on one line, and under it when they do not (a long summary, or a
-/// large text size), so neither is squeezed.
+/// or artwork the title starts at the row's margin. The value sits beside the
+/// title when both fit on one line, and under it when they do not (a long
+/// summary, or a large text size), so neither is squeezed.
 final class SettingsIndexRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let iconView = UIImageView()
@@ -77,9 +78,13 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
 
     /// A disabled row cannot open: its title is dimmed, it has no chevron, and
     /// `value` is where it says why ("No server paired").
+    ///
+    /// `image` is an entity's artwork (`EntityIcon`), which takes the icon slot
+    /// in front of a `systemImage`.
     func configure(
         title: String,
         systemImage: String?,
+        image: UIImage? = nil,
         value: String?,
         valueNeedsAttention: Bool = false,
         identifier: String,
@@ -87,10 +92,11 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         action: @escaping () -> Void
     ) {
         let style = SettingsStyle.current
-        iconView.image = systemImage.flatMap { UIImage(systemName: $0) }
-        iconView.isHidden = systemImage == nil
-        stackAfterIcon?.isActive = systemImage != nil
-        stackAtMargin?.isActive = systemImage == nil
+        iconView.image = image ?? systemImage.flatMap { UIImage(systemName: $0) }
+        let hasIcon = image != nil || systemImage != nil
+        iconView.isHidden = !hasIcon
+        stackAfterIcon?.isActive = hasIcon
+        stackAtMargin?.isActive = !hasIcon
         iconView.tintColor = style.accent
         titleLabel.text = title
         titleLabel.textColor = isEnabled ? style.title : style.title.withAlphaComponent(0.4)
@@ -197,24 +203,54 @@ final class SettingsRowButton: UIButton {
     }
 }
 
-/// A choice row: the title in the theme's title color and the current choice
-/// (in the accent color, with the up/down mark a pop-up button shows), and the
-/// whole row one button whose menu lists the choices with a checkmark on the
-/// current one. Like `SettingsIndexRowCell`, the labels paint the row and the
-/// button is its one accessible element, so a tap, a VoiceOver activation, and
-/// `app.buttons[id]` all open the menu. The choice sits beside the title when
-/// both fit on one line, and under it when they do not (a long choice, or a
-/// large text size), where it wraps instead of running off the row.
+/// One choice in a menu row's menu: its title, optional artwork (`EntityIcon`,
+/// drawn always-original so the menu keeps its colors), and whether it is the
+/// choice the row shows.
+struct SettingsMenuOption {
+    var title: String
+    var image: UIImage?
+    var selected: Bool
+    var action: () -> Void
+
+    init(title: String, image: UIImage? = nil, selected: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.image = image
+        self.selected = selected
+        self.action = action
+    }
+}
+
+/// A choice row: an optional leading artwork (`EntityIcon`), the title in the
+/// theme's title color and the current choice (in the accent color, with the
+/// up/down mark a pop-up button shows), and the whole row one button whose menu
+/// lists the choices with a checkmark on the current one. Like
+/// `SettingsIndexRowCell`, the labels paint the row and the button is its one
+/// accessible element, so a tap, a VoiceOver activation, and `app.buttons[id]`
+/// all open the menu. The choice sits beside the title when both fit on one
+/// line, and under it when they do not (a long choice, or a large text size),
+/// where it wraps instead of running off the row.
+///
+/// The menu's rows are built when it opens (`UIDeferredMenuElement`), so
+/// artwork that arrives after the first pass is in the row's next menu, and a
+/// pass that reconfigures the row (a theme change, a Genmoji landing) leaves an
+/// open menu alone.
 final class SettingsMenuRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
+    private let iconView = UIImageView()
     private let stack = UIStackView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.up.chevron.down"))
     private var isSideBySide = true
+    /// The choices, asked for each time the menu opens.
+    private var menuOptions: (() -> [SettingsMenuOption])?
+    private var stackAfterIcon: NSLayoutConstraint?
+    private var stackAtMargin: NSLayoutConstraint?
 
     private static let spacing: CGFloat = 8
     private static let chevronSpacing: CGFloat = 4
+    private static let iconWidth: CGFloat = 24
+    private static let iconSpacing: CGFloat = 12
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -235,16 +271,31 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         value.setContentHuggingPriority(.required, for: .horizontal)
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(value)
-        for view in [stack, button] {
+        iconView.contentMode = .scaleAspectFit
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for view in [iconView, stack, button] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
         // The system highlight is the cell's own, as in `SettingsIndexRowCell`.
         button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
         button.showsMenuAsPrimaryAction = true
+        // Installed once: a pass that reconfigures the row only swaps the choices
+        // the element asks for, so the menu it already presented survives.
+        button.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            completion(self?.menuChoices() ?? [])
+        }])
         accessibilityElements = [button]
+        let afterIcon = stack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: Self.iconSpacing)
+        let atMargin = stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor)
+        stackAfterIcon = afterIcon
+        stackAtMargin = atMargin
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            atMargin,
+            iconView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: Self.iconWidth),
             stack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
@@ -310,48 +361,71 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
     /// A disabled row keeps its current choice visible and cannot open its menu.
     func configure(
         title: String,
+        image: UIImage? = nil,
         identifier: String,
         isEnabled: Bool = true,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) {
         configure(
             title: title,
+            image: image,
             identifier: identifier,
             isEnabled: isEnabled,
             value: options.first(where: \.selected)?.title,
-            menu: UIMenu(children: options.map { option in
-                UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
-            })
+            menu: {
+                options.map { option in
+                    SettingsMenuOption(title: option.title, selected: option.selected, action: option.action)
+                }
+            }
         )
     }
 
-    /// The same row with a menu the caller built (grouped choices) and the
-    /// text the row shows for the current one.
+    /// The same row with choices that carry artwork, and the text the row shows
+    /// for the current one. `menu` is asked for each time the menu opens.
     func configure(
         title: String,
+        image: UIImage? = nil,
         identifier: String,
         isEnabled: Bool = true,
         value current: String?,
-        menu: UIMenu
+        menu: @escaping () -> [SettingsMenuOption]
     ) {
         let style = SettingsStyle.current
+        iconView.image = image
+        iconView.isHidden = image == nil
+        stackAfterIcon?.isActive = image != nil
+        stackAtMargin?.isActive = image == nil
+        menuOptions = menu
         titleLabel.text = title
         titleLabel.textColor = style.title
         valueLabel.text = current
         valueLabel.textColor = style.accent
         chevron.tintColor = style.accent
-        for view in [titleLabel, valueLabel, chevron] { view.alpha = isEnabled ? 1 : 0.4 }
+        for view in [titleLabel, valueLabel, chevron, iconView] { view.alpha = isEnabled ? 1 : 0.4 }
         button.isEnabled = isEnabled
         button.accessibilityTraits = isEnabled ? .button : [.button, .notEnabled]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = current
-        button.menu = menu
+    }
+
+    /// The rows the menu will show, as the choices describe them now: a
+    /// deferred element asks for these when the menu opens, and a test asks the
+    /// row the same question instead of resolving the element.
+    func menuChoices() -> [UIAction] {
+        (menuOptions?() ?? []).map { option in
+            UIAction(
+                title: option.title,
+                image: option.image,
+                state: option.selected ? .on : .off
+            ) { _ in option.action() }
+        }
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        button.menu = nil
+        menuOptions = nil
+        iconView.image = nil
         button.accessibilityIdentifier = nil
         button.accessibilityLabel = nil
         button.accessibilityValue = nil

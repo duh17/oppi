@@ -168,11 +168,13 @@ final class SSHTerminalCustomKeyViewController: ListScreenController<
                 title: String(localized: "Named Key"),
                 identifier: "settings.sshTerminal.bar.key.named",
                 value: current.title,
-                menu: UIMenu(children: choices.map { choice in
-                    UIAction(title: choice.title, state: choice == current ? .on : .off) { [weak self] _ in
-                        self?.change { $0.key = choice.key }
+                menu: {
+                    choices.map { choice in
+                        SettingsMenuOption(title: choice.title, selected: choice == current) { [weak self] in
+                            self?.change { $0.key = choice.key }
+                        }
                     }
-                })
+                }
             )
         } else {
             cell.configure(

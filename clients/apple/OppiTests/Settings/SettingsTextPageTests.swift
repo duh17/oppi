@@ -112,7 +112,7 @@ struct SettingsTextPageTests {
         let fontButton = try #require(cell(.codeFont, in: h.page)?.accessibilityElements?.first as? UIButton)
         #expect(fontButton.accessibilityIdentifier == "settings.text.codeFont")
         let family = try #require(FontPreferences.CodeFontFamily.allCases.first { $0 != FontPreferences.codeFont })
-        let pick = try #require(fontButton.menu?.children.compactMap { $0 as? UIAction }.first { $0.title == family.displayName })
+        let pick = try #require(KitMenuRow.actions(of: fontButton).first { $0.title == family.displayName })
         pick.performWithSender(nil, target: nil)
         #expect(FontPreferences.codeFont == family)
     }

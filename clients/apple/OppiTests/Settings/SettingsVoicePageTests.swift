@@ -93,8 +93,7 @@ struct SettingsVoicePageTests {
 
         func choose(_ item: SettingsVoiceViewController.Item, _ title: String) throws {
             let row = try #require(button(item, in: h.page))
-            try #require(row.menu?.children.compactMap { $0 as? UIAction }.first { $0.title == title })
-                .performWithSender(nil, target: nil)
+            try KitMenuRow.choose(title, in: row)
         }
         try choose(.engine, "Server")
         #expect(AppPreferences.Voice.engineMode == .remote)

@@ -1193,36 +1193,35 @@ final class SessionListServerSwitcher {
 
     /// Servers, the Connection row, then the destinations. A menu draws its
     /// glyphs in its own color, so they carry the app blue themselves, as the
-    /// SwiftUI menu's did.
+    /// SwiftUI menu's did. `ServerSwitchMenu` owns the server rows.
     private func menuElements() -> [UIMenuElement] {
         let model = model
         let blue = SessionRowStyle.for(ThemeRuntimeState.currentThemeID()).colors.blue
         func glyph(_ name: String) -> UIImage? {
             UIImage(systemName: name)?.withTintColor(blue, renderingMode: .alwaysOriginal)
         }
-        let servers: [UIMenuElement] = model.servers.map { server in
-            let action = UIAction(title: model.menuTitle(for: server), image: glyph(model.menuImage(for: server))) { _ in
-                model.switchHost(server)
-            }
-            action.accessibilityValue = model.menuAccessibilityValue(for: server)
-            return action
-        }
-        let connection = model.connection
-        let connectionRow = UIAction(title: connection.title, image: glyph(connection.systemImage)) { _ in
-            model.retryConnection()
-        }
-        let destinations: [UIMenuElement] = model.destinations.map { item in
-            let action = UIAction(title: item.menuTitle, image: glyph(item.systemImage)) { _ in
-                model.open(item)
-            }
-            action.accessibilityIdentifier = item.accessibilityIdentifier
-            return action
-        }
-        return [
-            UIMenu(options: .displayInline, children: servers),
-            UIMenu(title: String(localized: "Connection"), options: .displayInline, children: [connectionRow]),
-            UIMenu(options: .displayInline, children: destinations),
-        ]
+        return ServerSwitchMenu(
+            coordinator: model.coordinator,
+            currentServerId: model.current.id,
+            extras: {
+                let connection = model.connection
+                let connectionRow = UIAction(title: connection.title, image: glyph(connection.systemImage)) { _ in
+                    model.retryConnection()
+                }
+                let destinations: [UIMenuElement] = model.destinations.map { item in
+                    let action = UIAction(title: item.menuTitle, image: glyph(item.systemImage)) { _ in
+                        model.open(item)
+                    }
+                    action.accessibilityIdentifier = item.accessibilityIdentifier
+                    return action
+                }
+                return [
+                    UIMenu(title: String(localized: "Connection"), options: .displayInline, children: [connectionRow]),
+                    UIMenu(options: .displayInline, children: destinations),
+                ]
+            },
+            activate: { model.switchHost($0) }
+        ).elements()
     }
 }
 

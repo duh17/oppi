@@ -430,9 +430,7 @@ private final class ScheduleScreen {
     }
 
     static func choose(_ title: String, in button: UIButton) throws {
-        let menu = try #require(button.menu, "the button has no menu")
-        let action = try #require(menu.children.compactMap { $0 as? UIAction }.first { $0.title == title }, "no menu item \(title)")
-        action.performWithSender(nil, target: nil)
+        try KitMenuRow.choose(title, in: button)
     }
 }
 

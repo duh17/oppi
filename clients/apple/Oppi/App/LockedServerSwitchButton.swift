@@ -2,7 +2,8 @@ import UIKit
 
 /// On a locked server's cover: switch to another paired server instead of
 /// unlocking this one. A locked target server asks first. Hidden while this
-/// is the only paired server.
+/// is the only paired server. `ServerSwitchMenu` owns the rows: each wears its
+/// badge, this server is left out, and a choice asks for that server's lock.
 @MainActor
 final class LockedServerSwitchButton: UIButton {
     private let root: AppRootEnvironment
@@ -12,6 +13,15 @@ final class LockedServerSwitchButton: UIButton {
         super.init(frame: .zero)
         accessibilityIdentifier = "scopedLock.switchServer"
         showsMenuAsPrimaryAction = true
+        // Read when it opens: a choice activates here, and the rows are current.
+        menu = ServerSwitchMenu.menu { [root] in
+            ServerSwitchMenu(
+                coordinator: root.coordinator,
+                currentServerId: nil,
+                omitting: root.coordinator.activeServerId,
+                activate: { [weak self] in self?.activate($0) }
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -30,23 +40,11 @@ final class LockedServerSwitchButton: UIButton {
         configuration.imagePadding = 6
         configuration.baseForegroundColor = UIColor(palette.blue)
         self.configuration = configuration
-
-        menu = UIMenu(children: others.map { server in
-            UIAction(
-                title: server.name,
-                image: UIImage(systemName: server.resolvedBadgeIcon.symbolName)
-            ) { [weak self] _ in self?.switchTo(server) }
-        })
     }
 
-    private func switchTo(_ server: PairedServer) {
+    private func activate(_ server: PairedServer) {
         let coordinator = root.coordinator
-        let perform: @MainActor () -> Void = {
-            guard coordinator.restoreActiveServer(server.id) else { return }
-            Task { await coordinator.prepareSelectedServerShell(for: server) }
-        }
-        if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
-            perform()
-        }
+        guard coordinator.restoreActiveServer(server.id) else { return }
+        Task { await coordinator.prepareSelectedServerShell(for: server) }
     }
 }
