@@ -719,6 +719,7 @@
  "WorkingIndicatorMetalSizeTests": 0,
  "WorkingIndicatorTimelineRowContentTests": 0.03,
  "WorkingIndicatorVisibilityTests": 0,
+ "WorkingSpinnerStyleChangeTests": 0,
  "WorkspaceCatalogAvailabilityTests": 0,
  "WorkspaceCatalogMergeTests": 0,
  "WorkspaceCodableTests": 0,

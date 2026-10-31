@@ -9,6 +9,7 @@ final class WorkingSpinnerUIView: UIView {
     private let life = GameOfLifeUIView(gridSize: 6)
     private let orb = OrbMetalView(style: .working, sizeClass: .workingCompact)
     private(set) var style = SpinnerStyle.current
+    nonisolated(unsafe) private var styleObserver: NSObjectProtocol?
 
     var isAnimating = false {
         didSet { if isAnimating != oldValue { applyVisibility() } }
@@ -27,12 +28,16 @@ final class WorkingSpinnerUIView: UIView {
                 view.heightAnchor.constraint(equalToConstant: side),
             ])
         }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(spinnerStyleDidChange),
-            name: AppPreferenceStore.Appearance.spinnerDidChangeNotification,
-            object: nil
-        )
+        // "queue: .main" so a style change posted from any thread runs this view's
+        // main-actor work on the main thread; a selector observer would run it on the
+        // posting thread and trap in `MainActor.assumeIsolated`.
+        styleObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.spinnerDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyStyleFromPreferences() }
+        }
         applyVisibility()
     }
 
@@ -40,14 +45,14 @@ final class WorkingSpinnerUIView: UIView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let styleObserver {
+            NotificationCenter.default.removeObserver(styleObserver)
+        }
     }
 
-    @objc private func spinnerStyleDidChange() {
-        MainActor.assumeIsolated {
-            style = SpinnerStyle.current
-            applyVisibility()
-        }
+    private func applyStyleFromPreferences() {
+        style = SpinnerStyle.current
+        applyVisibility()
     }
 
     /// Colors for `tint` (the model's color) over `palette`'s page.
