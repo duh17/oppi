@@ -465,6 +465,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         var labels: [String: String]
         var titles: [String: String] = [:]
         var titlesAsked: Set<String> = []
+        /// Each pane's OSC 7501 records, from one read and then its events.
+        var records: [String: [SSHTerminalPaneRecord]] = [:]
+        /// Panes whose records an event already set: an older read does not overwrite them.
+        var recordsTouched: Set<String> = []
     }
 
     let sessionID: String
@@ -859,12 +863,35 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 state.titles[block] = title
                 publish(state)
             }
+        case .status(_, let block, let record):
+            changeRecords(of: block) { records in
+                if let index = records.firstIndex(where: { $0.id == record.id }) {
+                    records[index] = record
+                } else {
+                    records.append(record)
+                }
+            }
+        case .statusRemoved(_, let block, let ids):
+            changeRecords(of: block) { $0.removeAll { ids.contains($0.id) } }
+        case .childExited(_, let block):
+            // The program is gone; so is whatever it reported.
+            changeRecords(of: block) { $0 = [] }
         case .blockClosed(_, let block):
             closed(block, reason: "The pane closed in Rex.")
         case .sessionDestroyed:
             end("The Rex session was closed.")
         default:
             break
+        }
+    }
+
+    private func changeRecords(of block: String, _ change: (inout [SSHTerminalPaneRecord]) -> Void) {
+        core.withLock { state in
+            var records = state.records[block] ?? []
+            change(&records)
+            state.records[block] = records
+            state.recordsTouched.insert(block)
+            publish(state)
         }
     }
 
@@ -914,22 +941,27 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
         publish(state)
         for pane in layout.panes where state.titlesAsked.insert(pane.blockID).inserted {
-            readTitle(of: pane.blockID)
+            readDetails(of: pane.blockID)
         }
         guard !layout.contains(state.requested), let before, before.contains(state.requested) else { return nil }
         return (state.requested, before, Set(layout.panes.map(\.blockID)))
     }
 
-    private func readTitle(of block: String) {
+    /// Reads a pane's title and the status its program reports, once. A read
+    /// that fails (an older Rex) leaves its field out.
+    private func readDetails(of block: String) {
         Task { [weak self] in
             guard let self else { return }
-            let answer = try? await control.call("com.superlogical.terminal.title", blockCall([:], block: block))
+            async let titleAnswer = try? control.call("com.superlogical.terminal.title", blockCall([:], block: block))
+            async let statusAnswer = try? control.call("com.superlogical.terminal.program_status", blockCall([:], block: block))
             struct Title: Decodable { let title: String? }
-            guard let title = answer.flatMap({ try? JSONDecoder().decode(Title.self, from: $0).title }) else { return }
-            // A title event that came first is newer.
+            struct Status: Decodable { let records: [SSHTerminalPaneRecord]? }
+            let title = await titleAnswer.flatMap { try? JSONDecoder().decode(Title.self, from: $0).title }
+            let records = await statusAnswer.flatMap { try? JSONDecoder().decode(Status.self, from: $0).records }
+            // An event that came first is newer.
             core.withLock { state in
-                guard state.titles[block] == nil else { return }
-                state.titles[block] = title
+                if let title, state.titles[block] == nil { state.titles[block] = title }
+                if let records, !state.recordsTouched.contains(block) { state.records[block] = records }
                 publish(state)
             }
         }
@@ -941,11 +973,22 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         ).displayName
     }
 
+    /// What the pane's icon starts from while its program reports status
+    /// (`RexSessionState.programName`); nil for a plain shell.
+    private static func program(of block: String, in state: State) -> String? {
+        guard let records = state.records[block], !records.isEmpty else { return nil }
+        let app = records.first { $0.id.isEmpty }?.app ?? records.first?.app
+        return RexSessionState.programName(title: state.titles[block], app: app, label: state.labels[block])
+    }
+
     private static func snapshot(_ state: State) -> RexSessionState {
         // Until a view has been read, the pane that was asked for is the only one known.
         let panes: [RexSessionState.Pane] = state.layout?.panes.map {
-            .init(blockID: $0.blockID, name: name(of: $0.blockID, in: state), windowID: $0.windowID, windowName: $0.windowName)
-        } ?? [.init(blockID: state.requested, name: name(of: state.requested, in: state))]
+            .init(
+                blockID: $0.blockID, name: name(of: $0.blockID, in: state), windowID: $0.windowID, windowName: $0.windowName,
+                program: program(of: $0.blockID, in: state)
+            )
+        } ?? [.init(blockID: state.requested, name: name(of: state.requested, in: state), program: program(of: state.requested, in: state))]
         return RexSessionState(
             panes: panes,
             shown: state.requested,

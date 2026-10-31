@@ -124,10 +124,13 @@ final class SSHTerminalPreviewController: PreviewRootController {
     private func playRexSession(on channel: SSHTerminalChannel) async {
         guard !channel.connected else { return }
         let esc = "\u{1b}["
+        // Three icons for the bar's switcher: programs that report status put
+        // their own mark first in the title (π, ✳), a plain shell has the
+        // terminal glyph.
         let panes = [
-            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "pi - oppi", screen: (1...80).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1mpi\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n"),
+            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "\u{03C0} - oppi", screen: (1...80).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1m\u{03C0}\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n", records: #"[{"state":"working","app":"pi"}]"#),
             RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n"),
-            RexFakeSession.Pane(block: "block:preview-shell", label: "shell", title: "~/dotfiles", screen: "$ git status\r\nOn branch main\r\nnothing to commit\r\n$ "),
+            RexFakeSession.Pane(block: "block:preview-claude", label: "shell", title: "\u{2733} Fixing the build", screen: "\(esc)1mclaude\(esc)0m in ~/dotfiles\r\n\(esc)32m>\(esc)0m fix the build\r\n\r\nReading the failing target.\r\n", records: #"[{"state":"idle","app":"claude"}]"#),
         ]
         let fake = RexFakeSession(sessionID: "session:preview", panes: panes)
         let control = RexControl()

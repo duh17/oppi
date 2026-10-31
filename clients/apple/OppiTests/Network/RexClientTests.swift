@@ -533,6 +533,47 @@ struct RexSessionLayoutTests {
         #expect(unreadable.panes.map(\.blockID) == ["x", "y"] && unreadable.minimap(around: "x").isEmpty)
     }
 
+    /// One rule for every pane, with no program known by name: a program that
+    /// reports gets a monogram of the first character of its name; a plain shell
+    /// or a name with nothing to start from gets the terminal glyph.
+    @Test func aPanesIconIsAMonogramOfItsProgramOrTheTerminalGlyph() {
+        typealias Icon = SSHTerminalPaneIcon
+        #expect(Icon(program: nil) == .terminal, "a plain shell")
+        #expect(Icon(program: "") == .terminal && Icon(program: "   ") == .terminal, "no name")
+        #expect(Icon(program: "claude") == .monogram("C"), "a lowercase Latin initial is uppercased")
+        #expect(Icon(program: "Codex") == .monogram("C") && Icon(program: "7zip") == .monogram("7"))
+        #expect(Icon(program: "\u{03C0} - oppi") == .monogram("\u{03C0}"), "π stays π: not an initial")
+        #expect(Icon(program: "\u{2733} Fixing the build") == .monogram("\u{2733}"), "a program's mark that is no letter")
+        #expect(Icon(program: "  pi") == .monogram("P"), "leading space is not the initial")
+        #expect(Icon(program: "e\u{0301}cho") == .monogram("\u{00C9}"), "a whole grapheme, not a scalar")
+        #expect(Icon(program: "\u{00F1}and\u{00FA}") == .monogram("\u{00D1}"))
+        #expect(Icon(program: "\u{1F469}\u{200D}\u{1F4BB} dev") == .monogram("\u{1F469}\u{200D}\u{1F4BB}"), "an emoji sequence is one grapheme")
+    }
+
+    /// Every icon is the terminal glyph's size, so the bar does not shift; a
+    /// monogram is a tinted template, and an emoji (already a picture) keeps its colors.
+    @Test @MainActor func everyPaneIconIsTheTerminalGlyphsSize() {
+        let terminal = SSHTerminalPaneIcon.terminal.image()
+        for icon in [SSHTerminalPaneIcon.monogram("P"), .monogram("\u{03C0}"), .monogram("\u{2733}"), .monogram("\u{1F469}\u{200D}\u{1F4BB}")] {
+            #expect(icon.image().size == terminal.size)
+        }
+        #expect(terminal.renderingMode == .alwaysTemplate && SSHTerminalPaneIcon.monogram("\u{2733}").image().renderingMode == .alwaysTemplate)
+        #expect(SSHTerminalPaneIcon.monogram("\u{1F680}").image().renderingMode == .alwaysOriginal)
+    }
+
+    /// A reporting pane's icon starts from its title (a program puts its own
+    /// mark first there), else its app, else Rex's label; blank ones do not count.
+    @Test func aReportingPanesNameIsItsTitleThenItsAppThenItsLabel() {
+        func name(_ title: String?, _ app: String?, _ label: String?) -> String? {
+            RexSessionState.programName(title: title, app: app, label: label)
+        }
+        #expect(name("\u{03C0} - x", "pi", "shell") == "\u{03C0} - x", "the title wins over the app")
+        #expect(name(nil, "pi", "shell") == "pi" && name("", "pi", "shell") == "pi" && name("  ", "pi", nil) == "pi")
+        #expect(SSHTerminalPaneIcon(program: name(nil, "pi", "shell")) == .monogram("P"))
+        #expect(name("", nil, "shell") == "shell" && name(nil, "", "shell") == "shell")
+        #expect(name(nil, nil, nil) == nil && name(" ", "", "\n") == nil)
+    }
+
     @Test func aClosedPanesNeighbourIsTheNextThenThePrevious() {
         let order = ["a", "b", "c"]
         #expect(RexSessionLayout.neighbour(of: "b", in: order, surviving: ["a", "c"]) == "c")
@@ -622,9 +663,13 @@ struct RexSessionTerminalTests {
 
     static func block(_ name: String) -> String { "block:\(name)" }
 
-    func open(_ names: [String], first: String? = nil) async throws -> Rig {
+    /// `reporting` gives a pane's OSC 7501 records (Rex's JSON) by pane name.
+    func open(_ names: [String], first: String? = nil, reporting: [String: String] = [:]) async throws -> Rig {
         let fake = RexFakeSession(sessionID: Self.session, panes: names.map {
-            .init(block: Self.block($0), label: "shell", title: "title \($0)", screen: "screen of \($0)\r\n$ ")
+            .init(
+                block: Self.block($0), label: "shell", title: "title \($0)", screen: "screen of \($0)\r\n$ ",
+                records: reporting[$0] ?? "[]"
+            )
         })
         let control = RexControl()
         let transport = fake.transport(control: control)
@@ -940,6 +985,31 @@ struct RexSessionTerminalTests {
 
         rig.fake.titleChanged(Self.block("b"), "vim")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.map(\.name) == ["title a", "vim", "shell"] })
+        await rig.stop()
+    }
+
+    /// A pane's program is known to the switcher while it reports status: from
+    /// the first read, then by events (a record added, removed, the program
+    /// exiting), named by its title, else its app, else Rex's label. A plain
+    /// shell has none.
+    @Test func aPanesProgramFollowsWhatItReports() async throws {
+        let rig = try await open(["a", "b", "c"], reporting: ["b": #"[{"state":"working","app":"claude"}]"#])
+        func programs() -> [String?] { rig.model.state.panes.map(\.program) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", nil] }, "the title, not the app")
+        let c = Self.block("c")
+
+        rig.fake.statusChanged(c, record: #"{"state":"idle"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", "title c"] })
+        rig.fake.titleChanged(c, "")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", "shell"] }, "no title, no app: Rex's label")
+        rig.fake.statusChanged(c, record: #"{"state":"idle","app":"pi"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", "pi"] }, "no title: its app")
+        rig.fake.titleChanged(c, "\u{03C0} - x")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", "\u{03C0} - x"] })
+        rig.fake.statusRemoved(c, ids: [""])
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, "title b", nil] }, "reporting stopped")
+        rig.fake.blockEvent(Self.block("b"), "child_exited", #"{"exit_code":0}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { programs() == [nil, nil, nil] }, "the program exited")
         await rig.stop()
     }
 

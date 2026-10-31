@@ -91,6 +91,16 @@ struct RexSessionState: Equatable, Sendable {
         /// The pane's window, once the session's view has been read.
         var windowID: String? = nil
         var windowName: String? = nil
+        /// What the pane's program puts first, while it reports OSC 7501 status
+        /// (`programName`); nil for a plain shell. The switcher's icon is drawn from it.
+        var program: String? = nil
+    }
+
+    /// The name a reporting pane's icon starts from: the terminal's title (a
+    /// program puts its own mark first in it: `π - …`), else the `app` its
+    /// status names, else Rex's label. Nil when none has anything in it.
+    static func programName(title: String?, app: String?, label: String?) -> String? {
+        [title, app, label].compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     var panes: [Pane]

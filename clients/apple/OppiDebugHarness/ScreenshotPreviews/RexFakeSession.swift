@@ -170,6 +170,8 @@ final class RexFakeSession: Sendable {
         let title: String
         /// What the pane's screen shows when its data connection opens.
         let screen: String
+        /// The OSC 7501 records `program_status` answers, as Rex's JSON; none for a plain shell.
+        var records = "[]"
     }
 
     private struct State {
@@ -276,6 +278,21 @@ final class RexFakeSession: Sendable {
         sessionEvent("block_closed", #"{"block_id":"\#(block)"}"#)
     }
 
+    /// A terminal block event of this session, as Rex's JSON payload.
+    func blockEvent(_ block: String, _ name: String, _ payload: String) {
+        host.withLock { $0 }?.blockEvent(sessionID, block, name, payload)
+    }
+
+    /// The program in `block` reports (or updates) one status record, as Rex's JSON.
+    func statusChanged(_ block: String, record: String) {
+        host.withLock { $0 }?.blockEvent(sessionID, block, "program_status_changed", #"{"record":\#(record)}"#)
+    }
+
+    func statusRemoved(_ block: String, ids: [String]) {
+        let list = ids.map { #""\#($0)""# }.joined(separator: ",")
+        host.withLock { $0 }?.blockEvent(sessionID, block, "program_status_removed", #"{"ids":[\#(list)]}"#)
+    }
+
     func titleChanged(_ block: String, _ title: String) {
         host.withLock { $0 }?.blockEvent(sessionID, block, "title_changed", #"{"title":"\#(title)"}"#)
     }
@@ -358,6 +375,8 @@ final class RexFakeSession: Sendable {
             return state.withLock({ $0.held.contains(block) }) ? .hold : .result(ticket)
         case "com.superlogical.terminal.title":
             return .result(#"{"title":"\#(panes.first { $0.block == block }?.title ?? "")"}"#)
+        case "com.superlogical.terminal.program_status":
+            return .result(#"{"records":\#(panes.first { $0.block == block }?.records ?? "[]")}"#)
         case "com.superlogical.terminal.resize", "com.superlogical.terminal.write":
             return .result("{}")
         default:

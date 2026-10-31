@@ -2083,6 +2083,54 @@ struct SSHTerminalTests {
         await rig.stop()
     }
 
+    /// The switcher draws the shown pane's own icon: a monogram for a pane
+    /// whose program reports, the terminal glyph for a plain shell. Moving to
+    /// another pane rolls to its icon; the accessibility label stays the pane's name.
+    @Test func theSwitcherDrawsTheShownPanesIconAndRollsToTheNext() async throws {
+        let button = SSHTerminalRexPanesButton()
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIViewController()
+        host.view.addSubview(button)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        let panes: [RexSessionState.Pane] = [
+            .init(blockID: "a", name: "shell"),
+            .init(blockID: "b", name: "\u{03C0} - oppi", program: "\u{03C0} - oppi"),
+            .init(blockID: "c", name: "\u{2733} Fixing the build", program: "\u{2733} Fixing the build"),
+        ]
+        func state(shown: String) -> RexSessionState { RexSessionState(panes: panes, shown: shown, minimap: []) }
+        func iconViews() -> Int { button.subviews.first { $0 is SSHTerminalRexPaneGlyphView }?.subviews.count ?? 0 }
+
+        button.apply(state: state(shown: "a"), tint: .white)
+        #expect(button.icon == .terminal && !button.isHidden)
+        #expect(button.accessibilityLabel == "shell" && button.accessibilityValue == "1 of 3")
+        #expect(iconViews() == 1, "the first draw does not roll")
+
+        button.apply(state: state(shown: "b"), tint: .white)
+        #expect(button.icon == .monogram("\u{03C0}"))
+        #expect(button.accessibilityLabel == "\u{03C0} - oppi" && button.accessibilityValue == "2 of 3")
+        #expect(iconViews() == 2, "the old icon leaves while the new one arrives")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { iconViews() == 1 })
+
+        button.apply(state: state(shown: "c"), tint: .white)
+        #expect(button.icon == .monogram("\u{2733}") && button.accessibilityLabel == "\u{2733} Fixing the build")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { iconViews() == 1 })
+
+        // A program that starts reporting in the pane on screen changes its icon in place.
+        var reporting = state(shown: "c")
+        reporting.panes[2].program = nil
+        button.apply(state: reporting, tint: .white)
+        #expect(button.icon == .terminal && iconViews() == 1)
+
+        // One pane: no switcher.
+        button.apply(state: RexSessionState(panes: [panes[0]], shown: "a", minimap: []), tint: .white)
+        #expect(button.isHidden)
+    }
+
     /// The switcher's menu lists the panes in strip order with the shown one
     /// checked, in one section per window when the session has several, and a
     /// choice is the pane's block id handed to the owner.

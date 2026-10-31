@@ -369,7 +369,7 @@ final class RouterModalSitesUITests: XCTestCase {
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(switcher.value as? String, "1 of 3", "The session opens on its first pane")
-        XCTAssertEqual(switcher.label, "pi - oppi")
+        XCTAssertEqual(switcher.label, "\u{03C0} - oppi")
         let firstCell = app.buttons["sshTerminal.rexMinimap.0"]
         let secondCell = app.buttons["sshTerminal.rexMinimap.1"]
         XCTAssertTrue(firstCell.waitForExistence(timeout: 5) && firstCell.isSelected && !secondCell.isSelected)
@@ -406,7 +406,7 @@ final class RouterModalSitesUITests: XCTestCase {
         attachScreenshot("rex-panes-menu")
         third.tap()
         XCTAssertTrue(waitFor(switcher.value as? String == "3 of 3"), "A menu choice must show that pane")
-        XCTAssertEqual(switcher.label, "~/dotfiles")
+        XCTAssertEqual(switcher.label, "\u{2733} Fixing the build")
         XCTAssertTrue(waitFor(app.buttons["sshTerminal.rexMinimap.2"].isSelected))
         assertRunning()
     }

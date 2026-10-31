@@ -105,22 +105,84 @@ enum SSHTerminalRexPaneMenu {
     }
 }
 
+/// The icon a pane has in the bar's switcher. One rule for every pane, with
+/// no knowledge of any program: a pane whose program reports status (OSC
+/// 7501) is a monogram tile of the first character of its name, which is the
+/// program's own mark when it puts one first in its title (`π - …`, `✳ …`);
+/// a plain shell, and a program with nothing to start a monogram from, is the
+/// terminal glyph.
+enum SSHTerminalPaneIcon: Equatable {
+    case terminal
+    case monogram(String)
+
+    static let terminalSymbol = "terminal.fill"
+
+    /// `program` is `RexSessionState.Pane.program`. The monogram is its first
+    /// character that is not white space, uppercased when it is a lowercase
+    /// Latin letter. Other scripts and symbols keep what they are: `π` is a
+    /// mark (the pi agent's), not an initial.
+    init(program: String?) {
+        guard let first = program?.trimmingCharacters(in: .whitespacesAndNewlines).first else {
+            self = .terminal
+            return
+        }
+        let latinLowercase = first.unicodeScalars.first.map {
+            $0.value < 0x250 && $0.properties.generalCategory == .lowercaseLetter
+        } ?? false
+        self = .monogram(latinLowercase ? first.uppercased() : String(first))
+    }
+
+    /// The icon as a template image the size of the terminal glyph, so a
+    /// monogram and the glyph weigh the same in the pill. The monogram is
+    /// cut out of a rounded tile, the way the glyph's prompt is.
+    @MainActor
+    func image() -> UIImage {
+        let glyph = UIImage(systemName: Self.terminalSymbol, withConfiguration: SSHTerminalPillButton.symbolConfiguration)
+            ?? UIImage()
+        guard case .monogram(let letter) = self else { return glyph.withRenderingMode(.alwaysTemplate) }
+        let size = glyph.size == .zero ? CGSize(width: 20, height: 16) : glyph.size
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let scalar = letter.unicodeScalars.first?.properties
+        func draw(_ text: NSAttributedString) {
+            let box = text.size()
+            text.draw(at: CGPoint(x: (size.width - box.width) / 2, y: (size.height - box.height) / 2))
+        }
+        // A character that is an emoji by default is already a picture: it is
+        // drawn as it is, in its own colors, with no tile to cut it from.
+        if scalar?.isEmojiPresentation == true {
+            let font = UIFont.systemFont(ofSize: size.height * 0.95)
+            return renderer.image { _ in draw(NSAttributedString(string: letter, attributes: [.font: font])) }
+                .withRenderingMode(.alwaysOriginal)
+        }
+        return renderer.image { context in
+            UIColor.black.setFill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: size.height * 0.28).fill()
+            let font = UIFont.systemFont(ofSize: size.height * 0.68, weight: .bold)
+            // A mark that can also be an emoji (`✳`) is asked for in its text form,
+            // so it is cut out as a mark, not as the emoji's silhouette.
+            let shown = scalar?.isEmoji == true ? letter + "\u{FE0E}" : letter
+            context.cgContext.setBlendMode(.destinationOut)
+            draw(NSAttributedString(string: shown, attributes: [.font: font, .foregroundColor: UIColor.black]))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+}
+
 /// The bar's pane switcher: one button in the trailing pill, beside Rex's
 /// sessions, for a session with more than one pane. It draws the shown pane's
-/// icon, which rolls to the next pane's when the pane changes (up for a pane
-/// further along the strip, down for one before it; a crossfade with Reduce
-/// Motion), and opens a menu of the session's panes.
+/// icon (`SSHTerminalPaneIcon`), which rolls to the next pane's when the pane
+/// changes (up for a pane further along the strip, down for one before it; a
+/// crossfade with Reduce Motion), and opens a menu of the session's panes.
 final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
-    /// Every pane's icon. Oppi has no icon per program, so each pane is a
-    /// terminal; the roll is what says the pane changed.
-    static let symbol = "terminal.fill"
     private let glyph = SSHTerminalRexPaneGlyphView()
     private var shownBlock: String?
     private var shownIndex: Int?
 
+    /// The icon on show, for a test.
+    var icon: SSHTerminalPaneIcon { glyph.icon }
+
     init() {
         super.init(image: nil, label: "Panes", identifier: "sshTerminal.bar.rexPanes")
-        largeContentImage = UIImage(systemName: Self.symbol)
+        largeContentImage = SSHTerminalPaneIcon.terminal.image()
         glyph.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glyph)
         NSLayoutConstraint.activate([
@@ -152,11 +214,17 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
         }
         let wasShown = !isHidden
         isHidden = false
+        let icon = SSHTerminalPaneIcon(program: state.panes[index].program)
         accessibilityLabel = state.shownName
         accessibilityValue = "\(index + 1) of \(state.panes.count)"
         largeContentTitle = state.shownName
+        largeContentImage = icon.image()
         if wasShown, let shownBlock, shownBlock != state.shown, window != nil {
-            glyph.roll(toward: index > (shownIndex ?? index) ? 1 : -1)
+            glyph.roll(toward: index > (shownIndex ?? index) ? 1 : -1, to: icon)
+        } else {
+            // The same pane, or the first draw: a program that starts or stops
+            // reporting changes the icon in place.
+            glyph.show(icon)
         }
         shownBlock = state.shown
         shownIndex = index
@@ -169,17 +237,17 @@ final class SSHTerminalRexPaneGlyphView: UIView {
     static let travel: CGFloat = 10
     static let duration: TimeInterval = 0.25
 
-    private func makeImageView() -> UIImageView {
-        let view = UIImageView(image: UIImage(
-            systemName: SSHTerminalRexPanesButton.symbol, withConfiguration: SSHTerminalPillButton.symbolConfiguration
-        ))
+    private(set) var icon = SSHTerminalPaneIcon.terminal
+
+    private func makeImageView(_ icon: SSHTerminalPaneIcon) -> UIImageView {
+        let view = UIImageView(image: icon.image())
         view.translatesAutoresizingMaskIntoConstraints = false
         view.contentMode = .center
         view.isAccessibilityElement = false
         return view
     }
 
-    private lazy var current = makeImageView()
+    private lazy var current = makeImageView(icon)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -204,13 +272,21 @@ final class SSHTerminalRexPaneGlyphView: UIView {
 
     override var intrinsicContentSize: CGSize { CGSize(width: 24, height: 24) }
 
+    /// Draws `icon` now, with no roll.
+    func show(_ next: SSHTerminalPaneIcon) {
+        guard next != icon else { return }
+        icon = next
+        current.image = next.image()
+    }
+
     /// The icon rolls up for `direction` +1 (the old one leaves upward, the new
     /// one comes from below) and down for -1. An earlier roll still running
     /// ends where it was going.
-    func roll(toward direction: Int) {
+    func roll(toward direction: Int, to next: SSHTerminalPaneIcon) {
         for stale in subviews where stale !== current { stale.removeFromSuperview() }
         let leaving = current
-        let arriving = makeImageView()
+        icon = next
+        let arriving = makeImageView(next)
         current = arriving
         pin(arriving)
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
