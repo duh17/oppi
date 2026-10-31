@@ -294,7 +294,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         actionBar.apply(
             itemID: configuration.itemID,
             speech: configuration.isStreaming ? nil : configuration.speech,
-            tint: UIColor(palette.comment)
+            tint: palette.ui.comment
         )
 
         // Unified markdown path for both streaming and done states.

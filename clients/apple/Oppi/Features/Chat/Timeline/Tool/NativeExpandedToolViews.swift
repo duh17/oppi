@@ -176,7 +176,7 @@ final class NativeExpandedReadMediaView: UIView {
         if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate), !(hasRenderedVideo && hasVideoReadBoilerplate) {
             let pathLabel = UILabel()
             pathLabel.font = AppFont.monoSmall
-            pathLabel.textColor = UIColor(palette.comment)
+            pathLabel.textColor = palette.ui.comment
             pathLabel.numberOfLines = 1
             pathLabel.lineBreakMode = .byTruncatingMiddle
             pathLabel.text = filePath.shortenedPath
@@ -197,7 +197,7 @@ final class NativeExpandedReadMediaView: UIView {
             if totalImageCount > 1 || !displayText.isEmpty {
                 let countLabel = UILabel()
                 countLabel.font = AppFont.monoSmallSemibold
-                countLabel.textColor = UIColor(palette.comment)
+                countLabel.textColor = palette.ui.comment
                 countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
                 contentStack.addArrangedSubview(countLabel)
             }
@@ -226,7 +226,7 @@ final class NativeExpandedReadMediaView: UIView {
             if totalImageCount > renderedCount {
                 let more = UILabel()
                 more.font = AppFont.monoSmall
-                more.textColor = UIColor(palette.comment)
+                more.textColor = palette.ui.comment
                 more.text = "+\(totalImageCount - renderedCount) more image attachment(s)"
                 contentStack.addArrangedSubview(more)
             }
@@ -236,7 +236,7 @@ final class NativeExpandedReadMediaView: UIView {
         if totalVideoCount > 0 {
             let countLabel = UILabel()
             countLabel.font = AppFont.monoSmallSemibold
-            countLabel.textColor = UIColor(palette.comment)
+            countLabel.textColor = palette.ui.comment
             countLabel.text = totalVideoCount == 1 ? "Video" : "Videos (\(totalVideoCount))"
             contentStack.addArrangedSubview(countLabel)
 
@@ -286,7 +286,7 @@ final class NativeExpandedReadMediaView: UIView {
             if totalVideoCount > renderedCount {
                 let more = UILabel()
                 more.font = AppFont.monoSmall
-                more.textColor = UIColor(palette.comment)
+                more.textColor = palette.ui.comment
                 more.text = "+\(totalVideoCount - renderedCount) more video attachment(s)"
                 contentStack.addArrangedSubview(more)
             }
@@ -295,7 +295,7 @@ final class NativeExpandedReadMediaView: UIView {
         if !parsed.audio.isEmpty {
             let countLabel = UILabel()
             countLabel.font = AppFont.monoSmallSemibold
-            countLabel.textColor = UIColor(palette.comment)
+            countLabel.textColor = palette.ui.comment
             countLabel.text = "Audio (\(parsed.audio.count))"
             contentStack.addArrangedSubview(countLabel)
 
@@ -315,7 +315,7 @@ final class NativeExpandedReadMediaView: UIView {
             if parsed.audio.count > 6 {
                 let more = UILabel()
                 more.font = AppFont.monoSmall
-                more.textColor = UIColor(palette.comment)
+                more.textColor = palette.ui.comment
                 more.text = "+\(parsed.audio.count - 6) more audio attachment(s)"
                 contentStack.addArrangedSubview(more)
             }
@@ -324,7 +324,7 @@ final class NativeExpandedReadMediaView: UIView {
         if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && videoAttachments.isEmpty && parsed.audio.isEmpty && !shouldRenderFetchedSVG && !shouldRenderFetchedVideo {
             let empty = UILabel()
             empty.font = AppFont.monoMedium
-            empty.textColor = UIColor(palette.comment)
+            empty.textColor = palette.ui.comment
             empty.numberOfLines = 0
             empty.text = "No readable media output"
             contentStack.addArrangedSubview(makeCardView(contentView: empty, palette: palette))
@@ -364,14 +364,14 @@ final class NativeExpandedReadMediaView: UIView {
 
     private func configureSVGModeControl(palette: ThemePalette) {
         svgModeControl.selectedSegmentIndex = svgDisplayMode == .preview ? 0 : 1
-        svgModeControl.selectedSegmentTintColor = UIColor(palette.bgHighlight)
-        svgModeControl.backgroundColor = UIColor(palette.bgDark)
+        svgModeControl.selectedSegmentTintColor = palette.ui.bgHighlight
+        svgModeControl.backgroundColor = palette.ui.bgDark
         svgModeControl.setTitleTextAttributes([
-            .foregroundColor: UIColor(palette.comment),
+            .foregroundColor: palette.ui.comment,
             .font: AppFont.monoSmallSemibold,
         ], for: .normal)
         svgModeControl.setTitleTextAttributes([
-            .foregroundColor: UIColor(palette.fg),
+            .foregroundColor: palette.ui.fg,
             .font: AppFont.monoSmallSemibold,
         ], for: .selected)
     }
@@ -379,7 +379,7 @@ final class NativeExpandedReadMediaView: UIView {
     private func makeSourceCard(source: String, palette: ThemePalette) -> UIView {
         let label = UILabel()
         label.font = AppFont.monoSmall
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         label.numberOfLines = 0
         label.lineBreakMode = .byCharWrapping
         label.text = source.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -402,10 +402,10 @@ final class NativeExpandedReadMediaView: UIView {
     private func makeCardView(contentView: UIView, palette: ThemePalette) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor(palette.bgDark)
+        container.backgroundColor = palette.ui.bgDark
         container.layer.cornerRadius = 8
         container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        container.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
 
         contentView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(contentView)
@@ -553,15 +553,15 @@ final class NativeExpandedAudioAttachmentView: UIView {
         setNeedsUpdateProperties()
 
         titleLabel.text = title
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         titleLabel.numberOfLines = compact ? 0 : 1
         titleLabel.lineBreakMode = compact ? .byWordWrapping : .byTruncatingMiddle
         subtitleLabel.isHidden = compact
-        subtitleLabel.textColor = UIColor(palette.comment)
-        iconView.tintColor = UIColor(palette.purple)
-        spinner.color = UIColor(palette.purple)
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        subtitleLabel.textColor = palette.ui.comment
+        iconView.tintColor = palette.ui.purple
+        spinner.color = palette.ui.purple
+        container.backgroundColor = palette.ui.bgDark
+        container.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
 
         guard mimeType?.lowercased() == "audio/wav" else {
             subtitleLabel.text = "Unsupported audio type: \(mimeType ?? "audio/unknown")"
@@ -634,7 +634,7 @@ final class NativeExpandedAudioAttachmentView: UIView {
             spinner.stopAnimating()
             playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
         }
-        playButton.tintColor = audioPlayer?.playingItemID == id ? UIColor(palette.purple) : UIColor(palette.comment)
+        playButton.tintColor = audioPlayer?.playingItemID == id ? palette.ui.purple : palette.ui.comment
     }
 
     @objc private func togglePlayback() {
@@ -705,13 +705,13 @@ final class NativeExpandedVideoAttachmentView: UIView {
         subtitleLabel.accessibilityIdentifier = "toolRow.videoAttachment.subtitle"
         playButton.accessibilityIdentifier = "toolRow.videoAttachment.play"
         titleLabel.text = title
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         subtitleLabel.text = lastError ?? subtitle
-        subtitleLabel.textColor = lastError == nil ? UIColor(palette.comment) : UIColor(palette.red)
-        iconView.tintColor = UIColor(palette.blue)
-        spinner.color = UIColor(palette.blue)
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        subtitleLabel.textColor = lastError == nil ? palette.ui.comment : palette.ui.red
+        iconView.tintColor = palette.ui.blue
+        spinner.color = palette.ui.blue
+        container.backgroundColor = palette.ui.bgDark
+        container.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
         playButton.isEnabled = mediaSourceProvider != nil
         updateButton(palette: palette, isLoading: fetchTask != nil)
     }
@@ -747,7 +747,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
             spinner.stopAnimating()
             playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
         }
-        playButton.tintColor = playButton.isEnabled ? UIColor(palette.blue) : UIColor(palette.comment)
+        playButton.tintColor = playButton.isEnabled ? palette.ui.blue : palette.ui.comment
     }
 
     @objc private func playVideo() {

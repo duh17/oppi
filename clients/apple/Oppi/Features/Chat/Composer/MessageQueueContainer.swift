@@ -155,20 +155,20 @@ final class MessageQueueView: UIView {
                 steeringCount: configuration.queue.steering.count,
                 followUpCount: configuration.queue.followUp.count
             )
-            toggleTitle.textColor = UIColor(palette.fg)
+            toggleTitle.textColor = palette.ui.fg
             toggleCount.text = count
-            toggleCount.textColor = UIColor(palette.fg)
+            toggleCount.textColor = palette.ui.fg
             toggleChevron.image = UIImage(
                 systemName: isExpanded ? "chevron.down" : "chevron.right",
                 withConfiguration: UIImage.SymbolConfiguration(font: UIFont.scaled(.body))
             )
-            toggleChevron.tintColor = UIColor(palette.fg)
+            toggleChevron.tintColor = palette.ui.fg
             toggle.accessibilityLabel = "Message Queue"
             toggle.accessibilityValue = count
         }
         let error = configuration.error ?? errorText
         errorLabel.text = error
-        errorLabel.textColor = UIColor(palette.red)
+        errorLabel.textColor = palette.ui.red
         errorLabel.isHidden = error == nil
 
         let expanded = presentation == .drawer || isExpanded
@@ -180,7 +180,7 @@ final class MessageQueueView: UIView {
             addSection("Follow-up", items: configuration.queue.followUp)
         }
         editButton.isEnabled = !isUpdating && configuration.hasVisibleEntry
-        editButton.tintColor = UIColor(palette.blue)
+        editButton.tintColor = palette.ui.blue
         if isUpdating { spinner.startAnimating() } else { spinner.stopAnimating() }
     }
 
@@ -188,7 +188,7 @@ final class MessageQueueView: UIView {
         guard !items.isEmpty else { return }
         let header = ExtensionChromeFont.label(.caption1, .semibold)
         header.text = title
-        header.textColor = UIColor(palette.comment)
+        header.textColor = palette.ui.comment
         sections.addArrangedSubview(header)
         for item in items {
             sections.addArrangedSubview(row(item))
@@ -198,7 +198,7 @@ final class MessageQueueView: UIView {
     private func row(_ item: MessageQueueItem) -> UIView {
         let message = ExtensionChromeFont.label(.caption1, lines: 0)
         message.text = item.message
-        message.textColor = UIColor(palette.fg)
+        message.textColor = palette.ui.fg
         let body = UIStackView(arrangedSubviews: [message])
         body.axis = .vertical
         body.spacing = 6
@@ -230,7 +230,7 @@ final class MessageQueueView: UIView {
 
         let remove = UIButton(type: .custom)
         remove.setImage(UIImage(systemName: "trash"), for: .normal)
-        remove.tintColor = UIColor(palette.comment)
+        remove.tintColor = palette.ui.comment
         remove.isEnabled = !isUpdating
         remove.accessibilityLabel = "Remove queued message"
         remove.accessibilityIdentifier = "chat.messageQueue.remove.\(item.id)"
@@ -285,7 +285,7 @@ final class MessageQueueView: UIView {
         tile.layer.cornerRadius = 8
         tile.layer.cornerCurve = .continuous
         tile.layer.borderWidth = 1
-        tile.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.3).cgColor
+        tile.layer.borderColor = palette.ui.comment.withAlphaComponent(0.3).cgColor
         if let image,
            let data = Data(base64Encoded: image.data, options: .ignoreUnknownCharacters),
            let decoded = UIImage(data: data) {
@@ -293,7 +293,7 @@ final class MessageQueueView: UIView {
         } else {
             tile.backgroundColor = UIColor(palette.bg.opacity(0.30))
             tile.contentMode = .center
-            tile.image = UIImage.scaledSymbol("photo", style: .caption1, weight: .semibold, color: UIColor(palette.comment))
+            tile.image = UIImage.scaledSymbol("photo", style: .caption1, weight: .semibold, color: palette.ui.comment)
         }
         tile.isAccessibilityElement = true
         tile.accessibilityIdentifier = "chat.messageQueue.attachment.\(id)"
@@ -312,14 +312,14 @@ final class MessageQueueView: UIView {
         label.font = UIFont.scaledMonospaced(.caption2, .regular)
         label.adjustsFontForContentSizeCategory = true
         label.text = name
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         let row = UIStackView(arrangedSubviews: [icon, label])
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 4
         row.isLayoutMarginsRelativeArrangement = true
         row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
-        row.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.1)
+        row.backgroundColor = palette.ui.comment.withAlphaComponent(0.1)
         row.layer.cornerRadius = 10
         row.isAccessibilityElement = true
         row.accessibilityIdentifier = "chat.messageQueue.attachment.\(id)"

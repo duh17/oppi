@@ -84,20 +84,20 @@ private final class ReviewCommentStashRowView: UIView {
 
     init(comment: ReviewComment, among comments: [ReviewComment], palette: ThemePalette) {
         super.init(frame: .zero)
-        let icon = UIImageView(image: UIImage.scaledSymbol("text.bubble.fill", style: .caption1, weight: .semibold, color: UIColor(palette.cyan)))
+        let icon = UIImageView(image: UIImage.scaledSymbol("text.bubble.fill", style: .caption1, weight: .semibold, color: palette.ui.cyan))
         icon.setContentHuggingPriority(.required, for: .horizontal)
         let location = UILabel()
         location.font = UIFont.scaledMonospaced(.caption1, .regular)
         location.adjustsFontForContentSizeCategory = true
-        location.textColor = UIColor(palette.comment)
+        location.textColor = palette.ui.comment
         location.numberOfLines = 2
         location.lineBreakMode = .byTruncatingMiddle
         location.text = ReviewCommentStashLocation.compactText(for: comment, among: comments)
         location.accessibilityLabel = ReviewCommentStashLocation.completeText(for: comment)
         location.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let edit = Self.iconButton("pencil", color: UIColor(palette.blue), label: "Edit review comment")
+        let edit = Self.iconButton("pencil", color: palette.ui.blue, label: "Edit review comment")
         edit.addAction(UIAction { [weak self] _ in self?.onEdit?() }, for: .touchUpInside)
-        let delete = Self.iconButton("trash", color: UIColor(palette.red), label: "Remove review comment")
+        let delete = Self.iconButton("trash", color: palette.ui.red, label: "Remove review comment")
         delete.addAction(UIAction { [weak self] _ in self?.onDelete?() }, for: .touchUpInside)
         let header = UIStackView(arrangedSubviews: [icon, location, edit, delete])
         header.axis = .horizontal
@@ -112,11 +112,11 @@ private final class ReviewCommentStashRowView: UIView {
             let selected = UILabel()
             selected.font = UIFont.scaledMonospaced(.caption1, .regular)
             selected.adjustsFontForContentSizeCategory = true
-            selected.textColor = UIColor(palette.fgDim)
+            selected.textColor = palette.ui.fgDim
             selected.numberOfLines = 3
             selected.text = selectedText
             let well = UIView()
-            well.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.55)
+            well.backgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.55)
             well.layer.cornerRadius = 10
             well.layer.cornerCurve = .continuous
             selected.translatesAutoresizingMaskIntoConstraints = false
@@ -133,7 +133,7 @@ private final class ReviewCommentStashRowView: UIView {
         var configuration = UIButton.Configuration.plain()
         var title = AttributedString(comment.body)
         title.font = UIFont.preferredFont(forTextStyle: .body)
-        title.foregroundColor = UIColor(palette.fg)
+        title.foregroundColor = palette.ui.fg
         configuration.attributedTitle = title
         configuration.contentInsets = .zero
         configuration.titleAlignment = .leading
@@ -299,7 +299,7 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         let themeID = themeID
         let palette = themeID.palette
         let comments = stash.stagedComments
-        let background = UIColor(palette.bg)
+        let background = palette.ui.bg
         view.backgroundColor = background
         scrollView.backgroundColor = background
         empty.configuration = UIContentUnavailableConfiguration.loadState(
@@ -315,10 +315,10 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
         list.apply(comments: comments, themeID: themeID)
-        errorLabel.textColor = UIColor(palette.red)
+        errorLabel.textColor = palette.ui.red
         // The theme's accent, as the app root's SwiftUI tint gave the sheet.
-        view.tintColor = UIColor(palette.blue)
-        for item in [cancelItem, closeItem] { item.tintColor = UIColor(palette.blue) }
+        view.tintColor = palette.ui.blue
+        for item in [cancelItem, closeItem] { item.tintColor = palette.ui.blue }
 
         let isEditing = editingComment != nil
         title = isEditing ? "Edit Comment" : ReviewCommentStripChrome.stashTitle(count: comments.count)
@@ -460,7 +460,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
             var content = UIListContentConfiguration.cell()
             content.text = ReviewCommentStashLocation.completeText(for: editing)
             content.textProperties.font = UIFont.scaledMonospaced(.caption1, .regular)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.contentConfiguration = content
         case .selectedText:
             let text = UITextView()
@@ -472,7 +472,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
             text.textContainer.lineFragmentPadding = 0
             text.font = UIFont.scaledMonospaced(.caption1, .regular)
             text.adjustsFontForContentSizeCategory = true
-            text.textColor = UIColor(palette.fgDim)
+            text.textColor = palette.ui.fgDim
             text.text = editing.stashSelectedText
             embed(text, in: cell)
         case .comment where indexPath.item == 0:

@@ -75,11 +75,11 @@ final class ExtensionNotifyChipView: ExtensionStripPillControl {
         let tint = ExtensionNotifyChip.tint(for: newest.notifyType, palette: palette)
         icon.image = UIImage.scaledSymbol(ExtensionNotifyChip.iconName(for: newest.notifyType), style: .caption1, weight: .bold, color: tint)
         nameLabel.text = newest.extensionDisplayName
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         countLabel.text = "\(state.count)"
-        countLabel.textColor = UIColor(palette.comment)
+        countLabel.textColor = palette.ui.comment
         countLabel.isHidden = state.count <= 1
-        chevron.image = UIImage.scaledSymbol(state.isExpanded ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: UIColor(palette.comment))
+        chevron.image = UIImage.scaledSymbol(state.isExpanded ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: palette.ui.comment)
         surface.apply(palette: palette, active: state.isExpanded ? tint : nil)
 
         let base = "Notification from \(newest.extensionDisplayName): \(newest.message)"
@@ -145,19 +145,19 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         let palette = themeID.palette
         surface.apply(palette: palette)
         titleLabel.text = "From extension · \(state.newest.extensionDisplayName)"
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         countLabel.text = "\(state.count) notifications"
-        countLabel.textColor = UIColor(palette.comment)
+        countLabel.textColor = palette.ui.comment
         countLabel.isHidden = state.count <= 1
 
         var collapse = UIButton.Configuration.plain()
-        collapse.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: UIColor(palette.comment))
-        collapse.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
+        collapse.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: palette.ui.comment)
+        collapse.background.backgroundColor = palette.ui.fg.withAlphaComponent(0.04)
         collapse.background.cornerRadius = 16
         collapse.contentInsets = .zero
         collapseButton.configuration = collapse
         var dismiss = UIButton.Configuration.plain()
-        dismiss.image = UIImage.scaledSymbol("xmark", style: .caption1, weight: .bold, color: UIColor(palette.fgDim))
+        dismiss.image = UIImage.scaledSymbol("xmark", style: .caption1, weight: .bold, color: palette.ui.fgDim)
         dismiss.contentInsets = .zero
         dismissButton.configuration = dismiss
 
@@ -180,7 +180,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         if showsName {
             let name = ExtensionChromeFont.label(.caption2)
             name.text = "From extension · \(entry.extensionDisplayName)"
-            name.textColor = UIColor(palette.fgDim)
+            name.textColor = palette.ui.fgDim
             stack.addArrangedSubview(name)
         }
         let attributed = ExtensionNotifyChip.attributedMessage(entry.message)
@@ -188,10 +188,10 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         let text = NSMutableAttributedString(attributed)
         text.addAttributes([
             .font: UIFont.scaled(.footnote),
-            .foregroundColor: UIColor(palette.fg),
+            .foregroundColor: palette.ui.fg,
         ], range: NSRange(location: 0, length: text.length))
         message.attributedText = text
-        message.linkTextAttributes = [.foregroundColor: UIColor(palette.blue)]
+        message.linkTextAttributes = [.foregroundColor: palette.ui.blue]
         message.openURL = { [weak self] url in
             guard ExtensionNotifyChip.isHTTPURL(url) else { return }
             _ = self?.onOpenURL?(url)

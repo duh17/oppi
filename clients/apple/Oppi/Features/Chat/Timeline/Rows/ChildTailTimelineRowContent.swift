@@ -64,7 +64,7 @@ final class ChildTailTimelineRowContentView: UIView, UIContentView {
     private func apply(_ configuration: ChildTailTimelineRowConfiguration) {
         currentConfiguration = configuration
         let palette = ThemeRuntimeState.currentPalette()
-        rail.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.45)
+        rail.backgroundColor = palette.ui.comment.withAlphaComponent(0.45)
         // Reserved lines keep their height while empty, so the row does not resize per frame.
         lines.apply(configuration.tail.lines, reserving: configuration.tail.reservedLines, palette: palette)
         accessibilityIdentifier = "chat.timeline.childTail.\(configuration.tail.reference.conversationId)"

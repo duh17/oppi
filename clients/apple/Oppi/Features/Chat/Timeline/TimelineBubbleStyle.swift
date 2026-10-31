@@ -144,17 +144,17 @@ enum ChatTimelineChromeStyle: Equatable {
         isHighlighted: Bool,
         palette: ThemePalette
     ) -> (fill: UIColor, foreground: UIColor, border: UIColor) {
-        let accent = UIColor(palette.blue)
-        let foreground = workLine.isLive ? accent : UIColor(palette.fgDim)
+        let accent = palette.ui.blue
+        let foreground = workLine.isLive ? accent : palette.ui.fgDim
         switch self {
         case .conversation:
             let fill: UIColor
             if isHighlighted {
-                fill = UIColor(palette.fgDim).withAlphaComponent(0.22)
+                fill = palette.ui.fgDim.withAlphaComponent(0.22)
             } else if workLine.isLive {
                 fill = accent.withAlphaComponent(0.14)
             } else {
-                fill = UIColor(palette.bgHighlight)
+                fill = palette.ui.bgHighlight
             }
             return (fill: fill, foreground: foreground, border: .clear)
         case .standard:
@@ -289,7 +289,7 @@ enum TimelineSpeakerChrome {
         if increasedContrast, let stronger = increasedContrastFill(for: themeID) {
             return stronger
         }
-        return UIColor(palette.userMessageBg)
+        return palette.ui.userMessageBg
     }
 
     /// Nil unless the theme opts in; built-ins draw no strip.
@@ -300,11 +300,11 @@ enum TimelineSpeakerChrome {
     /// Increase Contrast outlines the user card in the theme's accent, or in
     /// the card's own text color, which already clears 4.5:1 on the fill.
     static func increasedContrastBorder(from palette: ThemePalette) -> UIColor {
-        userAccent(from: palette) ?? UIColor(palette.userMessageText)
+        userAccent(from: palette) ?? palette.ui.userMessageText
     }
 
     static func assistantFill(from palette: ThemePalette) -> UIColor {
-        let color = UIColor(palette.assistantMessageBg)
+        let color = palette.ui.assistantMessageBg
         return resolvedAlpha(of: color) < 0.02 ? .clear : color
     }
 

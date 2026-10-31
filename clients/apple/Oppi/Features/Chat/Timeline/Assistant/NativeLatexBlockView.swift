@@ -372,8 +372,8 @@ final class NativeLatexBlockView: UIView {
 
         let heightOrRevealChanged = updateFormulaHeight(naturalSize: layout.size)
         formulaHeightConstraint?.isActive = true
-        formulaScrollView.backgroundColor = UIColor(palette.bgHighlight)
-        formulaCanvas.backgroundColor = UIColor(palette.bgHighlight)
+        formulaScrollView.backgroundColor = palette.ui.bgHighlight
+        formulaCanvas.backgroundColor = palette.ui.bgHighlight
         codeBlockView.isHidden = true
         formulaScrollView.isHidden = false
         isShowingFormula = true
@@ -399,8 +399,8 @@ final class NativeLatexBlockView: UIView {
         formulaCanvasHeightConstraint?.constant = canvasHeight
         formulaImageWidthConstraint?.constant = max(naturalSize.width, 1)
         formulaImageHeightConstraint?.constant = max(naturalSize.height, 1)
-        formulaScrollView.backgroundColor = UIColor(palette.bgHighlight)
-        formulaCanvas.backgroundColor = UIColor(palette.bgHighlight)
+        formulaScrollView.backgroundColor = palette.ui.bgHighlight
+        formulaCanvas.backgroundColor = palette.ui.bgHighlight
         formulaImageView.image = image
 
         codeBlockView.isHidden = true

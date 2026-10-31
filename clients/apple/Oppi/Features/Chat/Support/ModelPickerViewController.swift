@@ -138,7 +138,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         models = cached
         modelsCacheReady = ready
         themeID = theme
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         reload()
     }
 
@@ -154,7 +154,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func buildViews() {
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         list.backgroundColor = .clear
         list.delegate = self
         let cell = UICollectionView.CellRegistration<ModelPickerCell, String> { [weak self] cell, _, id in
@@ -232,7 +232,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         let state = unavailableState()
         list.isHidden = state != nil
         contentUnavailableConfiguration = state.map {
-            UIContentUnavailableConfiguration.loadState($0, palette: palette, background: UIColor(palette.bg))
+            UIContentUnavailableConfiguration.loadState($0, palette: palette, background: palette.ui.bg)
         }
     }
 
@@ -378,7 +378,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         errorAlerts.show(
             title: "Couldn't Set Default Model",
             message: message ?? "Please try again.",
-            tint: UIColor(palette.blue)
+            tint: palette.ui.blue
         )
     }
 

@@ -122,10 +122,10 @@ final class ReviewCommentStripPillView: ExtensionStripPillControl {
     }
 
     func apply(count: Int, isExpanded: Bool, palette: ThemePalette) {
-        icon.image = UIImage.scaledSymbol("text.bubble", style: .subheadline, weight: .semibold, color: UIColor(palette.cyan))
+        icon.image = UIImage.scaledSymbol("text.bubble", style: .subheadline, weight: .semibold, color: palette.ui.cyan)
         countLabel.text = ReviewCommentStripChrome.pillCountText(count: count)
-        countLabel.textColor = UIColor(palette.fg)
-        surface.apply(palette: palette, active: isExpanded ? UIColor(palette.cyan) : nil)
+        countLabel.textColor = palette.ui.fg
+        surface.apply(palette: palette, active: isExpanded ? palette.ui.cyan : nil)
         accessibilityLabel = ReviewCommentStripChrome.pillAccessibilityLabel(count: count)
         accessibilityValue = ReviewCommentStripChrome.pillAccessibilityValue(count: count)
         accessibilityHint = isExpanded
@@ -185,7 +185,7 @@ final class ReviewCommentStashDrawerView: ExtensionDrawerPanelView {
         let palette = themeID.palette
         surface.apply(palette: palette)
         titleLabel.text = ReviewCommentStripChrome.stashTitle(count: comments.count)
-        titleLabel.textColor = UIColor(palette.comment)
+        titleLabel.textColor = palette.ui.comment
         list.apply(comments: comments, themeID: themeID)
     }
 }

@@ -131,8 +131,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             themeID = current
             // System cards follow the trait; match it to the palette's scheme.
             overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark
-            view.backgroundColor = UIColor(palette.bg)
-            collectionView.backgroundColor = UIColor(palette.bg)
+            view.backgroundColor = palette.ui.bg
+            collectionView.backgroundColor = palette.ui.bg
         }
         rebuild(session: readSession(), workspace: readWorkspace())
     }
@@ -382,13 +382,13 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
                 )
             }
             if segments.isEmpty, let progress = usage.progress {
-                segments = [.init(color: UIColor(palette.blue), fraction: progress, isReserve: false)]
+                segments = [.init(color: palette.ui.blue, fraction: progress, isReserve: false)]
             }
         }
         let percentColor: UIColor = switch usage.progress ?? 0 {
-        case 0.9...: UIColor(palette.red)
-        case 0.7...: UIColor(palette.orange)
-        default: UIColor(palette.comment)
+        case 0.9...: palette.ui.red
+        case 0.7...: palette.ui.orange
+        default: palette.ui.comment
         }
         let usageText: String = if let tokens = usage.tokens, usage.windowTokens > 0 {
             "\(SessionFormatting.tokenCount(tokens)) of \(SessionFormatting.tokenCount(usage.windowTokens)) tokens"
@@ -402,9 +402,9 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             percentColor: percentColor,
             usageText: usageText,
             segments: segments,
-            foreground: UIColor(palette.fg),
-            secondary: UIColor(palette.comment),
-            track: UIColor(palette.comment).withAlphaComponent(0.2),
+            foreground: palette.ui.fg,
+            secondary: palette.ui.comment,
+            track: palette.ui.comment.withAlphaComponent(0.2),
             accessibilityLabel: usage.accessibilityLabel
         )
     }
@@ -420,11 +420,11 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         case .header(let section):
             var content = UIListContentConfiguration.header()
             content.text = headerTitle(section)
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.contentConfiguration = content
             var accessories: [UICellAccessory] = []
             if let summary = headerSummary(section) {
-                accessories.append(.label(text: summary, options: .init(tintColor: UIColor(palette.comment))))
+                accessories.append(.label(text: summary, options: .init(tintColor: palette.ui.comment)))
             }
             accessories.append(.outlineDisclosure(options: .init(style: .header)))
             cell.accessories = accessories
@@ -434,13 +434,13 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             legendRow(cell, symbol: "circle.fill", tint: color(for: kind), title: segment.label, tokens: segment.tokens, share: true)
             cell.accessibilityIdentifier = "chat.context.segment.\(kind.rawValue)"
         case .freeSpace:
-            legendRow(cell, symbol: "circle", tint: UIColor(palette.comment), title: "Free space", tokens: model.freeSpace, share: true)
+            legendRow(cell, symbol: "circle", tint: palette.ui.comment, title: "Free space", tokens: model.freeSpace, share: true)
             cell.accessibilityIdentifier = "chat.context.segment.free"
         case .onDemand:
             legendRow(
                 cell,
                 symbol: "circle.dashed",
-                tint: UIColor(palette.comment),
+                tint: palette.ui.comment,
                 title: "Loaded on demand (\(model.onDemandCount))",
                 tokens: model.onDemandTokens,
                 share: false
@@ -451,15 +451,15 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             content.text = statusText(section)
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = statsError != nil && stats == nil && section != .usage
-                ? UIColor(palette.orange)
-                : UIColor(palette.comment)
+                ? palette.ui.orange
+                : palette.ui.comment
             cell.contentConfiguration = content
         case .agentsFile(let path):
             guard let file = model.agentsFiles.first(where: { $0.path == path }) else { return }
             var content = UIListContentConfiguration.cell()
             content.text = Self.displayPath(file.path)
             content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.textProperties.numberOfLines = 2
             cell.contentConfiguration = content
             cell.accessories = [tokenLabel(file.tokens)] + (opensOnHost(file.path) ? [.disclosureIndicator()] : [])
@@ -469,8 +469,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             var content = UIListContentConfiguration.subtitleCell()
             content.text = skill.name
             content.secondaryText = skill.description ?? "No description available"
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.fg
+            content.secondaryTextProperties.color = palette.ui.comment
             content.secondaryTextProperties.numberOfLines = 2
             cell.contentConfiguration = content
             cell.accessories = [tokenLabel(Self.skillPromptTokens(skill), approximate: true)]
@@ -481,8 +481,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             var content = UIListContentConfiguration.subtitleCell()
             content.text = Self.groupTitle(group)
             content.secondaryText = Self.groupDetail(group)
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.fg
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessories = [
                 tokenLabel(group.inContextTokens + group.onDemandTokens),
@@ -497,9 +497,9 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
                 ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize,
                 weight: .regular
             )
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = tool.inContext ? nil : "On demand"
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessories = [tokenLabel(tool.tokens)]
         case .extensionResource(let id):
@@ -510,8 +510,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             content.secondaryText = tools.isEmpty
                 ? (resource.path.isEmpty ? nil : Self.displayPath(resource.path))
                 : Self.toolCountDetail(tools)
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.fg
+            content.secondaryTextProperties.color = palette.ui.comment
             content.secondaryTextProperties.numberOfLines = 2
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
@@ -525,10 +525,10 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             content.text = usage.model
             let tokens = "\(SessionFormatting.tokenCount(usage.tokens)) tokens"
             content.secondaryText = usage.provider.map { $0.isEmpty ? tokens : "\($0) · \(tokens)" } ?? tokens
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.fg
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
-            cell.accessories = [.label(text: SessionFormatting.costString(usage.cost), options: .init(tintColor: UIColor(palette.fg)))]
+            cell.accessories = [.label(text: SessionFormatting.costString(usage.cost), options: .init(tintColor: palette.ui.fg))]
         }
     }
 
@@ -545,12 +545,12 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         content.imageProperties.tintColor = tint
         content.imageProperties.reservedLayoutSize = CGSize(width: 14, height: 14)
         content.text = title
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         let tokenText = SessionFormatting.tokenCount(tokens)
         content.secondaryText = share && model.usage.windowTokens > 0
             ? "\(tokenText)  \(Self.percent(tokens, of: model.usage.windowTokens))"
             : tokenText
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.secondaryTextProperties.color = palette.ui.comment
         content.secondaryTextProperties.font = .monospacedDigitSystemFont(
             ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize,
             weight: .regular
@@ -561,8 +561,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private func usageRow(_ cell: UICollectionViewListCell, metric: UsageMetric, stats: SessionStatsSnapshot) {
         let tokens = stats.tokens
         var content = UIListContentConfiguration.valueCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         switch metric {
         case .promptInput:
             content.text = "Prompt input"
@@ -581,16 +581,16 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         case .cost:
             content.text = "Total cost"
             content.secondaryText = SessionFormatting.costString(stats.cost)
-            content.secondaryTextProperties.color = UIColor(palette.fg)
+            content.secondaryTextProperties.color = palette.ui.fg
         case .cacheWaste:
             guard let waste = stats.cacheWaste else { return }
             var subtitle = UIListContentConfiguration.subtitleCell()
             subtitle.image = UIImage(systemName: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-            subtitle.imageProperties.tintColor = UIColor(palette.orange)
+            subtitle.imageProperties.tintColor = palette.ui.orange
             subtitle.text = "Cache re-billed"
             subtitle.secondaryText = Self.cacheWasteDetail(waste)
-            subtitle.textProperties.color = UIColor(palette.fg)
-            subtitle.secondaryTextProperties.color = UIColor(palette.comment)
+            subtitle.textProperties.color = palette.ui.fg
+            subtitle.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = subtitle
             return
         }
@@ -599,7 +599,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
 
     private func tokenLabel(_ tokens: Int, approximate: Bool = false) -> UICellAccessory {
         let text = (approximate ? "~" : "") + SessionFormatting.tokenCount(tokens)
-        return .label(text: text, options: .init(tintColor: UIColor(palette.comment), font: .monospacedDigitSystemFont(
+        return .label(text: text, options: .init(tintColor: palette.ui.comment, font: .monospacedDigitSystemFont(
             ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize,
             weight: .regular
         )))
@@ -608,13 +608,13 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private func color(for kind: SessionContextCompositionKind) -> UIColor {
         let palette = palette
         return switch kind {
-        case .systemPrompt: UIColor(palette.purple)
-        case .agentsFiles: UIColor(palette.cyan)
-        case .skills: UIColor(palette.yellow)
-        case .messages: UIColor(palette.blue)
-        case .tools: UIColor(palette.orange)
-        case .mcpTools: UIColor(palette.green)
-        case .compactionReserve: UIColor(palette.comment)
+        case .systemPrompt: palette.ui.purple
+        case .agentsFiles: palette.ui.cyan
+        case .skills: palette.ui.yellow
+        case .messages: palette.ui.blue
+        case .tools: palette.ui.orange
+        case .mcpTools: palette.ui.green
+        case .compactionReserve: palette.ui.comment
         }
     }
 

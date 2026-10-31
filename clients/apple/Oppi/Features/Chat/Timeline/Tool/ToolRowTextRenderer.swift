@@ -100,9 +100,9 @@ enum ToolRowTextRenderer {
         paragraph.lineSpacing = 1
 
         let palette = themeID.palette
-        let lineNumberColor = UIColor(palette.comment).withAlphaComponent(0.55)
-        let separatorColor = UIColor(palette.comment).withAlphaComponent(0.35)
-        let foregroundColor = UIColor(palette.fg)
+        let lineNumberColor = palette.ui.comment.withAlphaComponent(0.55)
+        let separatorColor = palette.ui.comment.withAlphaComponent(0.35)
+        let foregroundColor = palette.ui.fg
         let codeFont = AppFont.monoMedium
         let lineNumberFont = AppFont.monoSmall
 

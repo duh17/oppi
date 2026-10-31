@@ -102,35 +102,35 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
             entry.summary,
             matchPositions: entry.matchPositions,
             color: Self.textColor(for: entry, palette: palette),
-            highlight: UIColor(palette.yellow)
+            highlight: palette.ui.yellow
         )
 
         compactionBadge.isHidden = !entry.isCompaction
         compactionBadge.font = SessionOutlineStyle.font(.caption2, bold: true)
-        compactionBadge.textColor = UIColor(palette.orange)
+        compactionBadge.textColor = palette.ui.orange
         compactionBadge.backgroundColor = UIColor(palette.orange.opacity(0.18))
 
         let stats = entry.diffStats
         addedLabel.isHidden = (stats?.added ?? 0) <= 0
         addedLabel.text = stats.map { "+\($0.added)" }
         addedLabel.font = SessionOutlineStyle.font(.caption2, bold: true, monospaced: true)
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        addedLabel.textColor = palette.ui.diffAdded
         removedLabel.isHidden = (stats?.removed ?? 0) <= 0
         removedLabel.text = stats.map { "-\($0.removed)" }
         removedLabel.font = SessionOutlineStyle.font(.caption2, bold: true, monospaced: true)
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        removedLabel.textColor = palette.ui.diffRemoved
 
         let time = entry.timestamp?.formatted(date: .omitted, time: .shortened)
         timeLabel.isHidden = time == nil
         timeLabel.text = time
         timeLabel.font = SessionOutlineStyle.font(.caption2)
-        timeLabel.textColor = UIColor(palette.comment)
+        timeLabel.textColor = palette.ui.comment
 
         row.accessibilityIdentifier = "chat.outline.row.\(entry.id)"
         row.accessibilityLabel = Self.accessibilityLabel(for: entry, time: time)
         row.onActivate = onActivate
 
-        let pressed = UIColor(palette.bgHighlight)
+        let pressed = palette.ui.bgHighlight
         configurationUpdateHandler = { cell, state in
             var background = UIBackgroundConfiguration.listCell()
             background.backgroundColor = state.isHighlighted || state.isSelected ? pressed : .clear
@@ -187,27 +187,27 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
 
     private static func iconColor(for entry: OutlineEntry, palette: ThemePalette) -> UIColor {
         if entry.isCompaction {
-            return UIColor(palette.orange)
+            return palette.ui.orange
         }
         switch entry.kind {
-        case .user: return UIColor(palette.blue)
-        case .assistant, .thinking: return UIColor(palette.purple)
+        case .user: return palette.ui.blue
+        case .assistant, .thinking: return palette.ui.purple
         case .tool: return UIColor(entry.isError ? palette.red : palette.cyan)
-        case .system: return UIColor(palette.comment)
-        case .compaction: return UIColor(palette.orange)
-        case .custom: return UIColor(palette.blue)
-        case .error: return UIColor(palette.red)
+        case .system: return palette.ui.comment
+        case .compaction: return palette.ui.orange
+        case .custom: return palette.ui.blue
+        case .error: return palette.ui.red
         }
     }
 
     private static func textColor(for entry: OutlineEntry, palette: ThemePalette) -> UIColor {
         if entry.isCompaction {
-            return UIColor(palette.fg)
+            return palette.ui.fg
         }
         switch entry.kind {
-        case .user, .compaction: return UIColor(palette.fg)
-        case .assistant, .tool: return UIColor(palette.fgDim)
-        default: return UIColor(palette.comment)
+        case .user, .compaction: return palette.ui.fg
+        case .assistant, .tool: return palette.ui.fgDim
+        default: return palette.ui.comment
         }
     }
 }
@@ -300,7 +300,7 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
         toggleButton.isHidden = !state.isCollapsible
         toggleButton.isEnabled = !state.isDisabled
         toggleButton.setImage(UIImage(systemName: state.isCollapsed ? "plus.square" : "minus.square"), for: .normal)
-        toggleButton.tintColor = UIColor(palette.comment)
+        toggleButton.tintColor = palette.ui.comment
         toggleButton.accessibilityLabel = state.isCollapsed ? "Expand branch" : "Collapse branch"
         // A reused cell must not keep a hidden toggle in VoiceOver or its
         // previous node's identifier.
@@ -311,7 +311,7 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
         let text = Self.rowText(node, palette: palette)
         textLabel.attributedText = text
         if state.isLoading {
-            spinner.color = UIColor(palette.blue)
+            spinner.color = palette.ui.blue
             spinner.startAnimating()
         } else {
             spinner.stopAnimating()
@@ -323,7 +323,7 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
         row.accessibilityTraits = state.isDisabled ? [.button, .notEnabled] : .button
         row.onActivate = onActivate
 
-        let pressed = UIColor(palette.bgHighlight)
+        let pressed = palette.ui.bgHighlight
         configurationUpdateHandler = { cell, cellState in
             var background = UIBackgroundConfiguration.listCell()
             background.backgroundColor = cellState.isHighlighted || cellState.isSelected ? pressed : .clear
@@ -341,10 +341,10 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
             text.append(NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color]))
         }
         if node.isLeafPath {
-            append("•", font: SessionOutlineStyle.font(.caption1, bold: true), color: UIColor(palette.orange))
+            append("•", font: SessionOutlineStyle.font(.caption1, bold: true), color: palette.ui.orange)
         }
         if let label = SessionOutlineTree.displayLabel(for: node) {
-            append("[\(label)]", font: SessionOutlineStyle.font(.caption2, monospaced: true), color: UIColor(palette.orange))
+            append("[\(label)]", font: SessionOutlineStyle.font(.caption2, monospaced: true), color: palette.ui.orange)
         }
         let prefix = SessionOutlineTree.rolePrefix(for: node)
         if !prefix.isEmpty {
@@ -352,7 +352,7 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
         }
         let primary = SessionOutlineTree.primaryText(for: node)
         if !primary.isEmpty {
-            append(primary, font: SessionOutlineStyle.font(.caption1), color: UIColor(palette.fg))
+            append(primary, font: SessionOutlineStyle.font(.caption1), color: palette.ui.fg)
         }
         return text
     }
@@ -360,15 +360,15 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
     private static func roleColor(for node: SessionTreeNodeSnapshot, palette: ThemePalette) -> UIColor {
         if node.type == "message" {
             switch node.role {
-            case "user": return UIColor(palette.blue)
-            case "assistant": return UIColor(palette.purple)
-            default: return UIColor(palette.comment)
+            case "user": return palette.ui.blue
+            case "assistant": return palette.ui.purple
+            default: return palette.ui.comment
             }
         }
         switch node.type {
-        case "branch_summary": return UIColor(palette.blue)
-        case "compaction": return UIColor(palette.orange)
-        default: return UIColor(palette.comment)
+        case "branch_summary": return palette.ui.blue
+        case "compaction": return palette.ui.orange
+        default: return palette.ui.comment
         }
     }
 }
@@ -511,7 +511,7 @@ final class SessionOutlineFilterBar: UIView {
             spinner.stopAnimating()
         }
         countLabel.text = "\(count) items"
-        countLabel.textColor = UIColor(palette.comment)
+        countLabel.textColor = palette.ui.comment
     }
 }
 
@@ -558,8 +558,8 @@ final class SessionOutlineBannerView: UIView {
         let text = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         isHidden = text.isEmpty
         label.text = message
-        label.textColor = UIColor(palette.fg)
-        icon.tintColor = UIColor(palette.orange)
+        label.textColor = palette.ui.fg
+        icon.tintColor = palette.ui.orange
         card.backgroundColor = UIColor(palette.orange.opacity(0.12))
         card.layer.borderColor = UIColor(palette.orange.opacity(0.35)).cgColor
     }

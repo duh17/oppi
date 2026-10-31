@@ -94,22 +94,22 @@ enum ExtensionNativeBlockStyle {
 
     static func activityColor(_ tone: ExtensionNativeBlockPresentation.ActivityTone, palette: ThemePalette) -> UIColor {
         switch tone {
-        case .running: UIColor(palette.blue)
-        case .success: UIColor(palette.green)
-        case .warning: UIColor(palette.orange)
-        case .error: UIColor(palette.red)
-        case .queued: UIColor(palette.purple)
-        case .inactive, .neutral: UIColor(palette.comment)
+        case .running: palette.ui.blue
+        case .success: palette.ui.green
+        case .warning: palette.ui.orange
+        case .error: palette.ui.red
+        case .queued: palette.ui.purple
+        case .inactive, .neutral: palette.ui.comment
         }
     }
 
     /// The rounded, faintly filled inset that frames code-like and grouped content.
     static func applyInset(to view: UIView, palette: ThemePalette, cornerRadius: CGFloat = 12) {
-        view.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
+        view.backgroundColor = palette.ui.fg.withAlphaComponent(0.04)
         view.layer.cornerRadius = cornerRadius
         view.layer.cornerCurve = .continuous
         view.layer.borderWidth = 0.5
-        view.layer.borderColor = UIColor(palette.fg).withAlphaComponent(0.08).cgColor
+        view.layer.borderColor = palette.ui.fg.withAlphaComponent(0.08).cgColor
     }
 
     static func label(_ style: UIFont.TextStyle, weight: UIFont.Weight = .regular) -> UILabel {
@@ -162,7 +162,7 @@ private extension ExtensionUITextSpan {
                 monospaced: monospaced || role == "code" || traits.contains("monospaced"),
                 traits: symbolicTraits
             ),
-            .foregroundColor: UIColor(palette.fg),
+            .foregroundColor: palette.ui.fg,
         ]
         if traits.contains("underline") {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -175,7 +175,7 @@ private extension ExtensionUITextSpan {
         if let color = Self.roleColor(role, palette: palette) {
             attributes[.foregroundColor] = color
         } else if url != nil {
-            attributes[.foregroundColor] = UIColor(palette.cyan)
+            attributes[.foregroundColor] = palette.ui.cyan
         }
         if let url {
             attributes[.link] = url
@@ -186,14 +186,14 @@ private extension ExtensionUITextSpan {
 
     static func roleColor(_ role: String?, palette: ThemePalette) -> UIColor? {
         switch role {
-        case "primary": UIColor(palette.fg)
-        case "secondary": UIColor(palette.comment)
-        case "muted": UIColor(palette.fgDim)
-        case "accent": UIColor(palette.cyan)
-        case "success": UIColor(palette.green)
-        case "warning": UIColor(palette.orange)
-        case "danger": UIColor(palette.red)
-        case "code": UIColor(palette.yellow)
+        case "primary": palette.ui.fg
+        case "secondary": palette.ui.comment
+        case "muted": palette.ui.fgDim
+        case "accent": palette.ui.cyan
+        case "success": palette.ui.green
+        case "warning": palette.ui.orange
+        case "danger": palette.ui.red
+        case "code": palette.ui.yellow
         default: nil
         }
     }
@@ -572,12 +572,12 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
                 ]))
                 text.append(NSAttributedString(string: title, attributes: [
                     .font: ExtensionNativeBlockStyle.font(.caption1, weight: .semibold),
-                    .foregroundColor: UIColor(palette.fg),
+                    .foregroundColor: palette.ui.fg,
                 ]))
             case .text(let isActivity):
                 text.append(ANSIParser.attributedString(
                     from: line,
-                    baseForeground: isActivity ? UIColor(palette.comment) : UIColor(palette.fg)
+                    baseForeground: isActivity ? palette.ui.comment : palette.ui.fg
                 ))
             }
         }
@@ -595,7 +595,7 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
         #endif
         while resolved.hasSuffix("\n") { resolved.removeLast() }
         return NSMutableAttributedString(
-            attributedString: ANSIParser.attributedString(from: resolved, baseForeground: UIColor(palette.fg))
+            attributedString: ANSIParser.attributedString(from: resolved, baseForeground: palette.ui.fg)
         )
     }
 
@@ -662,10 +662,10 @@ final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRenderi
         let palette = context.palette
         ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
         titleLabel.text = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         titleLabel.isHidden = titleLabel.text?.isEmpty ?? true
         subtitleLabel.text = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.textColor = palette.ui.comment
         subtitleLabel.isHidden = subtitleLabel.text?.isEmpty ?? true
         titleLabel.superview?.isHidden = titleLabel.isHidden && subtitleLabel.isHidden
         children.apply(blocks: blocks, context: context)
@@ -691,8 +691,8 @@ final class ExtensionNativeProgressBar: UIView {
 
     func apply(fraction: Double, palette: ThemePalette) {
         self.fraction = CGFloat(fraction)
-        backgroundColor = UIColor(palette.fg).withAlphaComponent(0.12)
-        fill.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.82)
+        backgroundColor = palette.ui.fg.withAlphaComponent(0.12)
+        fill.backgroundColor = palette.ui.fg.withAlphaComponent(0.82)
         setNeedsLayout()
     }
 
@@ -747,9 +747,9 @@ final class ExtensionNativeProgressBlockView: UIView, ExtensionNativeBlockRender
         let isIndeterminate = indeterminate == true || fraction == nil
 
         label.text = labelText
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         label.isHidden = labelText == nil
-        spinner.color = UIColor(palette.blue)
+        spinner.color = palette.ui.blue
         spinner.isHidden = !isIndeterminate
         if isIndeterminate { spinner.startAnimating() } else { spinner.stopAnimating() }
         row.isHidden = !isIndeterminate && labelText == nil
@@ -942,9 +942,9 @@ final class ExtensionNativeActivityRowView: UIView {
         marker.tintColor = accent
 
         titleLabel.text = row.title
-        titleLabel.textColor = UIColor(palette.fg)
-        Self.setOptional(row.subtitle, on: subtitleLabel, color: UIColor(palette.comment))
-        Self.setOptional(row.detail, on: detailLabel, color: UIColor(palette.comment))
+        titleLabel.textColor = palette.ui.fg
+        Self.setOptional(row.subtitle, on: subtitleLabel, color: palette.ui.comment)
+        Self.setOptional(row.detail, on: detailLabel, color: palette.ui.comment)
         let liveTail = rowLink
             .flatMap { SessionOpen(url: $0, origin: .inAppHyperlink)?.sessionId }
             .flatMap { context.sessionLiveTails[$0] }
@@ -968,13 +968,13 @@ final class ExtensionNativeActivityRowView: UIView {
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption2, scale: .default)
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         )
-        chevron.tintColor = UIColor(palette.comment)
+        chevron.tintColor = palette.ui.comment
         minimumHeight.constant = isInteractive ? 44 : 34
 
         let emphasized = tone == .running || tone == .warning || tone == .error
-        control.backgroundColor = UIColor(palette.fg).withAlphaComponent(emphasized ? 0.05 : 0)
+        control.backgroundColor = palette.ui.fg.withAlphaComponent(emphasized ? 0.05 : 0)
         control.layer.borderWidth = emphasized ? 1 : 0
-        control.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.16).cgColor
+        control.layer.borderColor = palette.ui.comment.withAlphaComponent(0.16).cgColor
         control.isUserInteractionEnabled = isInteractive
 
         control.isAccessibilityElement = true
@@ -1000,7 +1000,7 @@ final class ExtensionNativeActivityRowView: UIView {
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         ), for: .normal)
-        linkButton.tintColor = UIColor(palette.comment)
+        linkButton.tintColor = palette.ui.comment
         linkButton.accessibilityIdentifier = "extension.native.activity.row.\(row.id).link"
         linkButton.accessibilityLabel = "Open \(row.title)"
         linkButton.accessibilityHint = separateLink.flatMap { url in

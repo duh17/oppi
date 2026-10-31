@@ -298,8 +298,8 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     private func paint(_ plan: NotebookCellPlan, theme: ThemeID, sourceChanged: Bool) {
         let palette = theme.palette
-        card.backgroundColor = UIColor(palette.bgDark)
-        card.layer.borderColor = UIColor(palette.mdCodeBlockBorder).cgColor
+        card.backgroundColor = palette.ui.bgDark
+        card.layer.borderColor = palette.ui.mdCodeBlockBorder.cgColor
         accent.backgroundColor = UIColor(plan.failed ? palette.red : palette.blue)
         rail.backgroundColor = UIColor((plan.failed ? palette.red : palette.comment).opacity(0.3))
         let kind = plan.inputIsCode ? "Code cell" : "Tool call"
@@ -322,7 +322,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         var deferredHighlights: [NotebookDeferredHighlight] = []
         for source in plan.sources {
             if let label = source.label {
-                cardStack.addArrangedSubview(sectionCaption(label, color: UIColor(palette.comment)))
+                cardStack.addArrangedSubview(sectionCaption(label, color: palette.ui.comment))
             }
             // Leading lines stay so review-comment line numbers match the source.
             var code = Substring(source.code)
@@ -345,7 +345,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         if !plan.metadata.isEmpty {
             let meta = UILabel()
             meta.font = scaled(AppFont.monoSmall)
-            meta.textColor = UIColor(palette.fgDim)
+            meta.textColor = palette.ui.fgDim
             meta.numberOfLines = isReader ? 0 : 2
             meta.text = plan.metadata.joined(separator: "\n")
             cardStack.setCustomSpacing(10, after: cardStack.arrangedSubviews.last ?? meta)
@@ -367,7 +367,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     ) -> NotebookDeferredHighlight? {
         let font = codeFont
         view.font = font
-        view.textColor = UIColor(palette.fg)
+        view.textColor = palette.ui.fg
         view.tag = 0
         guard shouldHighlight(code) else {
             view.attributedText = nil
@@ -531,26 +531,26 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         if let output = outputSection(plan, palette: palette, theme: theme) {
             attachmentStack.addArrangedSubview(output)
         } else if plan.running && plan.calls.isEmpty {
-            attachmentStack.addArrangedSubview(caption("Running…", color: UIColor(palette.fgDim)))
+            attachmentStack.addArrangedSubview(caption("Running…", color: palette.ui.fgDim))
         }
         if let note = plan.availabilityNote {
-            attachmentStack.addArrangedSubview(caption(note, color: UIColor(palette.comment)))
+            attachmentStack.addArrangedSubview(caption(note, color: palette.ui.comment))
         }
     }
 
     private func callsSection(_ plan: NotebookCellPlan, palette: ThemePalette) -> UIView {
         let section = sectionStack()
-        section.addArrangedSubview(sectionCaption("CALLS", color: UIColor(palette.comment)))
+        section.addArrangedSubview(sectionCaption("CALLS", color: palette.ui.comment))
         let shown = isReader ? plan.calls[...] : plan.calls.prefix(InlineLimit.calls)
         for call in shown {
             section.addArrangedSubview(callRow(call, palette: palette))
         }
         let hidden = plan.calls.count - shown.count + plan.omittedCalls
         if hidden > 0 {
-            section.addArrangedSubview(caption("+\(hidden) more \(hidden == 1 ? "call" : "calls")", color: UIColor(palette.fgDim)))
+            section.addArrangedSubview(caption("+\(hidden) more \(hidden == 1 ? "call" : "calls")", color: palette.ui.fgDim))
         }
         if plan.callsIncomplete {
-            section.addArrangedSubview(caption(NestedToolCalls.incompleteNote, color: UIColor(palette.fgDim)))
+            section.addArrangedSubview(caption(NestedToolCalls.incompleteNote, color: palette.ui.fgDim))
         }
         return section
     }
@@ -569,7 +569,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             let view = textView()
             view.accessibilityIdentifier = "tool.notebook.output"
             view.font = codeFont
-            view.textColor = UIColor(palette.toolOutput)
+            view.textColor = palette.ui.toolOutput
             view.text = shown.text
             body = lineLayout(view)
         case .rich(let markdown):
@@ -597,7 +597,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let section = sectionStack()
         section.addArrangedSubview(sectionCaption(
             plan.failed ? "OUTPUT · ERROR" : "OUTPUT",
-            color: plan.failed ? UIColor(palette.red) : UIColor(palette.comment)
+            color: plan.failed ? palette.ui.red : palette.ui.comment
         ))
         section.addArrangedSubview(body)
         if hiddenLines > 0 {
@@ -631,12 +631,12 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         // reader and truncate together inline.
         let text = NSMutableAttributedString(string: call.name, attributes: [
             .font: scaled(AppFont.monoMediumSemibold),
-            .foregroundColor: UIColor(palette.fg),
+            .foregroundColor: palette.ui.fg,
         ])
         if let arguments = call.arguments {
             text.append(NSAttributedString(string: "  " + arguments, attributes: [
                 .font: codeFont,
-                .foregroundColor: UIColor(palette.fgDim),
+                .foregroundColor: palette.ui.fgDim,
             ]))
         }
         let label = UILabel()
@@ -652,7 +652,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         if let error = call.error {
             let errorLabel = UILabel()
             errorLabel.font = scaled(AppFont.monoSmall)
-            errorLabel.textColor = UIColor(palette.red)
+            errorLabel.textColor = palette.ui.red
             errorLabel.numberOfLines = isReader ? 0 : 2
             errorLabel.text = error
             column.addArrangedSubview(errorLabel)
@@ -662,7 +662,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         if let duration = call.duration {
             let time = UILabel()
             time.font = scaled(AppFont.monoSmall)
-            time.textColor = UIColor(palette.comment)
+            time.textColor = palette.ui.comment
             time.text = duration
             time.setContentHuggingPriority(.required, for: .horizontal)
             time.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -734,7 +734,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     }
 
     private func moreLabel(lines: Int, palette: ThemePalette) -> UILabel {
-        caption("+\(lines) more \(lines == 1 ? "line" : "lines")", color: UIColor(palette.comment))
+        caption("+\(lines) more \(lines == 1 ? "line" : "lines")", color: palette.ui.comment)
     }
 
     private func caption(_ text: String, color: UIColor) -> UILabel {
@@ -757,10 +757,10 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     private func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
         switch status {
-        case "ok": return UIColor(palette.green)
-        case "error": return UIColor(palette.red)
-        case "running": return UIColor(palette.blue)
-        default: return UIColor(palette.fgDim)
+        case "ok": return palette.ui.green
+        case "error": return palette.ui.red
+        case "running": return palette.ui.blue
+        default: return palette.ui.fgDim
         }
     }
 
@@ -832,7 +832,7 @@ final class NotebookReaderBody: UIScrollView, FullScreenReaderConfigurable {
         super.init(frame: .zero)
         alwaysBounceVertical = true
         showsVerticalScrollIndicator = true
-        backgroundColor = UIColor(palette.bg)
+        backgroundColor = palette.ui.bg
         accessibilityIdentifier = "fullscreen-notebook.scroll"
         cell.applyReaderPreferences(readerPreferences)
         cell.apply(plan)

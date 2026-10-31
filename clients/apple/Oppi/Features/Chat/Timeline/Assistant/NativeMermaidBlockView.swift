@@ -595,7 +595,7 @@ final class NativeMermaidBlockView: UIView {
     }
 
     private func applyDiagramChrome(_ palette: ThemePalette) {
-        diagramClipView.backgroundColor = UIColor(palette.bgHighlight)
+        diagramClipView.backgroundColor = palette.ui.bgHighlight
     }
 
     private func showDiagram(

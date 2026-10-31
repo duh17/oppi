@@ -528,16 +528,16 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
             marker.isHidden = true
         }
         titleLabel.text = entry.title
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         let subtitle = entry.subtitle?.trimmedNonEmpty
         subtitleLabel.text = subtitle
-        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.textColor = palette.ui.comment
         subtitleLabel.isHidden = subtitle == nil
         let media = entry.mediaSubtitle?.trimmedNonEmpty
         mediaLabel.text = media
-        mediaLabel.textColor = UIColor(palette.fg)
+        mediaLabel.textColor = palette.ui.fg
         mediaLabel.isHidden = media == nil
-        chevron.image = UIImage.scaledSymbol(isActive ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: UIColor(palette.comment))
+        chevron.image = UIImage.scaledSymbol(isActive ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: palette.ui.comment)
         surface.apply(palette: palette, active: isActive ? tone : nil)
 
         accessibilityIdentifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)"
@@ -697,25 +697,25 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         let palette = themeID.palette
         surface.apply(palette: palette)
         titleLabel.text = entry.title
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         let subtitle = entry.subtitle?.trimmedNonEmpty
         subtitleLabel.text = subtitle
-        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.textColor = palette.ui.comment
         subtitleLabel.isHidden = subtitle == nil
         let media = entry.mediaSubtitle?.trimmedNonEmpty
         mediaLabel.text = media
-        mediaLabel.textColor = UIColor(palette.fg)
+        mediaLabel.textColor = palette.ui.fg
         mediaLabel.isHidden = media == nil
         var buttonConfiguration = UIButton.Configuration.plain()
-        buttonConfiguration.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: UIColor(palette.comment))
-        buttonConfiguration.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
+        buttonConfiguration.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: palette.ui.comment)
+        buttonConfiguration.background.backgroundColor = palette.ui.fg.withAlphaComponent(0.04)
         buttonConfiguration.background.cornerRadius = 16
         buttonConfiguration.contentInsets = .zero
         collapseButton.configuration = buttonConfiguration
-        inset?.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.035)
-        inset?.layer.borderColor = UIColor(palette.fg).withAlphaComponent(0.08).cgColor
-        bodyLabel?.textColor = UIColor(palette.fg)
-        statusKeyLabel?.textColor = UIColor(palette.comment)
+        inset?.backgroundColor = palette.ui.fg.withAlphaComponent(0.035)
+        inset?.layer.borderColor = palette.ui.fg.withAlphaComponent(0.08).cgColor
+        bodyLabel?.textColor = palette.ui.fg
+        statusKeyLabel?.textColor = palette.ui.comment
         let placementID = placement.accessibilityIdentifierComponent
         let context = ExtensionNativeBlockContext(
             themeID: themeID,

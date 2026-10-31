@@ -868,8 +868,8 @@ final class NativeMarkdownImageView: UIView {
         clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let placeholderText = normalizedAltText(alt) ?? "[image]"
-        backgroundColor = UIColor(palette.bgHighlight)
-        altLabel.textColor = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgHighlight
+        altLabel.textColor = palette.ui.comment
         altLabel.text = placeholderText
 
         setDisplayHeight(placeholderText == "[image]" ? 30 : 40)
@@ -888,8 +888,8 @@ final class NativeMarkdownImageView: UIView {
         clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let normalizedAlt = normalizedAltText(alt)
-        backgroundColor = UIColor(palette.bgHighlight)
-        remotePromptLabel.textColor = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgHighlight
+        remotePromptLabel.textColor = palette.ui.comment
         remotePromptLabel.text = normalizedAlt.map { "Remote image: \($0)" } ?? "Remote image"
         setDisplayHeight(Self.loadingPlaceholderHeight)
         isHidden = false
@@ -907,9 +907,9 @@ final class NativeMarkdownImageView: UIView {
         clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let normalizedAlt = normalizedAltText(alt)
-        backgroundColor = UIColor(palette.bgHighlight)
-        spinner.color = UIColor(palette.comment)
-        altLabel.textColor = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgHighlight
+        spinner.color = palette.ui.comment
+        altLabel.textColor = palette.ui.comment
         altLabel.text = normalizedAlt
 
         // Ensure loading placeholder height is active.
@@ -1152,8 +1152,8 @@ final class NativeMarkdownImageView: UIView {
     private func showSVGLoadingWebState() {
         clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
-        backgroundColor = UIColor(palette.bgHighlight)
-        spinner.color = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgHighlight
+        spinner.color = palette.ui.comment
         spinner.startAnimating()
         altLabel.isHidden = true
         errorLabel.isHidden = true
@@ -1208,11 +1208,11 @@ final class NativeMarkdownImageView: UIView {
         svgTapOverlay?.isHidden = true
 
         let palette = ThemeRuntimeState.currentPalette()
-        errorLabel.textColor = UIColor(palette.comment)
+        errorLabel.textColor = palette.ui.comment
         errorLabel.text = text
         errorLabel.isHidden = false
         setDisplayHeight(Self.loadingPlaceholderHeight)
-        backgroundColor = UIColor(palette.bgHighlight)
+        backgroundColor = palette.ui.bgHighlight
         isHidden = false
         publishPreparedGeometry()
     }

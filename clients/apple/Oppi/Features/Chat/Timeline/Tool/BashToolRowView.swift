@@ -164,14 +164,14 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     /// Refresh persistent UIKit chrome before rendering or revealing the row.
     /// The view can be reused across a live system appearance change.
     func applyTheme(_ palette: ThemePalette) {
-        commandContainer.backgroundColor = UIColor(palette.bgHighlight)
+        commandContainer.backgroundColor = palette.ui.bgHighlight
         commandContainer.layer.borderColor = UIColor(palette.blue.opacity(0.35)).cgColor
         // Do not assign UITextView.textColor here. That property paints the
         // entire attributed string, wiping shell/ANSI colors. Command and
         // output signatures already include the active theme, so `apply`
         // re-highlights when the palette actually changes.
 
-        outputContainer.backgroundColor = UIColor(palette.bgDark)
+        outputContainer.backgroundColor = palette.ui.bgDark
         outputContainer.layer.borderColor = UIColor(palette.comment.opacity(0.2)).cgColor
     }
 

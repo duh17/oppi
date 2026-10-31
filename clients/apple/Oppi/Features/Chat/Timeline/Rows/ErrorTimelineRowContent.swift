@@ -104,10 +104,10 @@ final class ErrorTimelineRowContentView: UIView, UIContentView, TimelineRowInter
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
-        let red = UIColor(palette.red)
+        let red = palette.ui.red
 
         iconImageView.tintColor = red
-        messageLabel.textColor = UIColor(palette.fg)
+        messageLabel.textColor = palette.ui.fg
         messageLabel.text = configuration.message
 
         containerView.backgroundColor = red.withAlphaComponent(TimelineBubbleStyle.errorBgAlpha)

@@ -137,41 +137,41 @@ enum CommitGraphView {
             switch ref.kind {
             case .head:
                 head.append(Chip(
-                    text: "HEAD", symbol: nil, color: UIColor(palette.orange),
+                    text: "HEAD", symbol: nil, color: palette.ui.orange,
                     accessibility: String(localized: "detached HEAD")
                 ))
             case .branch where ref.isHead == true:
                 head.append(Chip(
-                    text: ref.name, symbol: "arrow.branch", color: UIColor(palette.cyan),
+                    text: ref.name, symbol: "arrow.branch", color: palette.ui.cyan,
                     accessibility: String(localized: "current branch \(ref.name)")
                 ))
             case .branch:
                 if let worktree = marks.byBranch[ref.name] {
                     branches.append(Chip(
-                        text: ref.name, symbol: "folder", color: UIColor(palette.green),
+                        text: ref.name, symbol: "folder", color: palette.ui.green,
                         accessibility: String(localized: "branch \(ref.name), checked out in \(worktree.displayName)")
                     ))
                 } else {
                     branches.append(Chip(
-                        text: ref.name, symbol: nil, color: UIColor(palette.purple),
+                        text: ref.name, symbol: nil, color: palette.ui.purple,
                         accessibility: String(localized: "branch \(ref.name)")
                     ))
                 }
             case .tag:
                 tags.append(Chip(
-                    text: ref.name, symbol: "tag", color: UIColor(palette.yellow),
+                    text: ref.name, symbol: "tag", color: palette.ui.yellow,
                     accessibility: String(localized: "tag \(ref.name)")
                 ))
             case .remote:
                 remotes.append(Chip(
-                    text: ref.name, symbol: "cloud", color: UIColor(palette.comment),
+                    text: ref.name, symbol: "cloud", color: palette.ui.comment,
                     accessibility: String(localized: "remote \(ref.name)")
                 ))
             }
         }
         let detached = marks.detachedAt(commit).map { worktree in
             Chip(
-                text: worktree.name, symbol: "folder", color: UIColor(palette.green),
+                text: worktree.name, symbol: "folder", color: palette.ui.green,
                 accessibility: String(localized: "worktree \(worktree.name)")
             )
         }
@@ -246,24 +246,24 @@ enum CommitGraphView {
                 row: row,
                 laneCount: context.laneCount,
                 colors: context.laneColors,
-                background: UIColor(palette.bg)
+                background: palette.ui.bg
             )
             lanesWidth?.constant = LanesView.width(laneCount: context.laneCount)
             sha.text = row.commit.shortSha
             sha.font = style.sha
-            sha.textColor = UIColor(palette.comment)
+            sha.textColor = palette.ui.comment
             message.text = row.commit.message
             message.font = style.message
             message.textColor = UIColor(row.commit.isHead ? palette.fg : palette.fgDim)
             chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: style.chevron)
-            chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
+            chevron.tintColor = palette.ui.comment.withAlphaComponent(0.5)
 
             chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
             chipRow.isHidden = chips.isEmpty
             guard !chips.isEmpty else { return }
             var views = chips.prefix(Self.maxChips).map { Self.chipView($0, font: style.chip) }
             if chips.count > Self.maxChips {
-                views.append(Self.label("+\(chips.count - Self.maxChips)", font: style.chip, color: UIColor(palette.comment)))
+                views.append(Self.label("+\(chips.count - Self.maxChips)", font: style.chip, color: palette.ui.comment))
             }
             for view in views.dropLast() {
                 view.setContentHuggingPriority(.required, for: .horizontal)

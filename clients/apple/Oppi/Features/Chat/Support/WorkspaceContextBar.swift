@@ -609,7 +609,7 @@ final class WorkspaceContextBarView: UIView {
             gitStatus: gitStatus, filtersToSession: filtersToSession, sessionScope: sessionScope
         )
 
-        let cyan = UIColor(palette.cyan)
+        let cyan = palette.ui.cyan
         branchGroup.isHidden = gitStatus?.branch == nil
         branchLabel.text = gitStatus?.branch
         branchLabel.font = font(.caption1, .footnote, .medium, mono: true)
@@ -634,11 +634,11 @@ final class WorkspaceContextBarView: UIView {
         addedLabel.isHidden = added <= 0
         addedLabel.text = "+\(SessionFormatting.compactCount(added))"
         addedLabel.font = countFont
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        addedLabel.textColor = palette.ui.diffAdded
         removedLabel.isHidden = removed <= 0
         removedLabel.text = "-\(SessionFormatting.compactCount(removed))"
         removedLabel.font = countFont
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        removedLabel.textColor = palette.ui.diffRemoved
 
         let ahead = gitStatus?.ahead ?? 0
         let behind = gitStatus?.behind ?? 0
@@ -648,11 +648,11 @@ final class WorkspaceContextBarView: UIView {
         aheadLabel.isHidden = ahead <= 0
         aheadLabel.text = "\u{2191}\(SessionFormatting.compactCount(ahead))"
         aheadLabel.font = upstreamFont
-        aheadLabel.textColor = UIColor(palette.toolDiffAdded)
+        aheadLabel.textColor = palette.ui.diffAdded
         behindLabel.isHidden = behind <= 0
         behindLabel.text = "\u{2193}\(SessionFormatting.compactCount(behind))"
         behindLabel.font = upstreamFont
-        behindLabel.textColor = UIColor(palette.orange)
+        behindLabel.textColor = palette.ui.orange
 
         summaryRow.accessibilityLabel = [
             branchGroup.isHidden ? nil : branchLabel.text,
@@ -674,10 +674,10 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private static func dirtyColor(fileCount: Int, palette: ThemePalette) -> UIColor {
-        if fileCount == 0 { return UIColor(palette.toolDiffAdded) }
-        if fileCount <= 5 { return UIColor(palette.fg) }
-        if fileCount <= 15 { return UIColor(palette.orange) }
-        return UIColor(palette.toolDiffRemoved)
+        if fileCount == 0 { return palette.ui.diffAdded }
+        if fileCount <= 5 { return palette.ui.fg }
+        if fileCount <= 15 { return palette.ui.orange }
+        return palette.ui.diffRemoved
     }
 
     // MARK: Panel
@@ -729,7 +729,7 @@ final class WorkspaceContextBarView: UIView {
         selectAllButton = nil
         selectedCountLabel = nil
 
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         panelStack.insertArrangedSubview(divider(comment.withAlphaComponent(0.2)), at: 0)
 
         if offersFileScope {
@@ -755,7 +755,7 @@ final class WorkspaceContextBarView: UIView {
             let none = Self.label(
                 String(localized: "No changes from this session"),
                 font: font(.caption2, .caption1),
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             )
             add(Self.padded(none, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)))
         }
@@ -764,7 +764,7 @@ final class WorkspaceContextBarView: UIView {
             let note = Self.label(
                 String(localized: "Approximate: files this session's edit and write calls touched. Changes made by shell commands are not listed."),
                 font: font(.caption2, .caption1),
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             )
             note.numberOfLines = 0
             note.accessibilityIdentifier = "workspace-context-bar.sessionNote"
@@ -974,7 +974,7 @@ final class WorkspaceContextBarView: UIView {
                 Self.label(
                     "\(footerKey.stashCount) stash",
                     font: font(.caption2, .caption1, mono: true),
-                    color: UIColor(palette.purple)
+                    color: palette.ui.purple
                 ),
                 NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)
             ))
@@ -1018,7 +1018,7 @@ final class WorkspaceContextBarView: UIView {
         let message = Self.label(
             String(localized: "Couldn\u{2019}t load commits"),
             font: font(.caption2, .caption1),
-            color: UIColor(palette.comment)
+            color: palette.ui.comment
         )
         let retry = linkButton(String(localized: "Retry"), palette: palette) { [weak self] in
             guard let self else { return }
@@ -1043,7 +1043,7 @@ final class WorkspaceContextBarView: UIView {
             title,
             attributes: AttributeContainer([
                 .font: font(.caption2, .caption1, .semibold),
-                .foregroundColor: UIColor(palette.purple),
+                .foregroundColor: palette.ui.purple,
             ])
         )
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
@@ -1083,7 +1083,7 @@ final class WorkspaceContextBarView: UIView {
             guard let self else { return }
             selectedPaths = allFilesSelected ? [] : Set(selectablePaths)
         }, for: .primaryActionTriggered)
-        let count = Self.label("", font: font(.caption2, .caption1, mono: true), color: UIColor(palette.fg))
+        let count = Self.label("", font: font(.caption2, .caption1, mono: true), color: palette.ui.fg)
         selectAllButton = toggleAll
         selectedCountLabel = count
         return Self.row(
@@ -1102,7 +1102,7 @@ final class WorkspaceContextBarView: UIView {
                 allFilesSelected ? String(localized: "Deselect All") : String(localized: "Select All"),
                 attributes: AttributeContainer([
                     .font: font(.caption2, .caption1, .semibold),
-                    .foregroundColor: UIColor(palette.purple),
+                    .foregroundColor: palette.ui.purple,
                 ])
             )
             configuration.contentInsets = .zero
@@ -1138,7 +1138,7 @@ final class WorkspaceContextBarView: UIView {
             let more = Self.label(
                 "... and \(gitStatus.totalFiles - gitStatus.files.count) more",
                 font: font(.caption2, .caption1),
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             )
             list.addArrangedSubview(Self.padded(more, NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)))
         }
@@ -1169,7 +1169,7 @@ final class WorkspaceContextBarView: UIView {
             afterCounts.append(Self.label(
                 String(localized: "no diff"),
                 font: font(.caption2, .caption1),
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             ))
         }
         var content = ChangedFileRow.content(
@@ -1209,12 +1209,12 @@ final class WorkspaceContextBarView: UIView {
     private func headCommitRow(_ gitStatus: GitStatus, palette: ThemePalette) -> UIView {
         var items: [UIView] = []
         if let sha = gitStatus.headSha {
-            let label = Self.label(sha, font: font(.caption2, .caption1, mono: true), color: UIColor(palette.comment))
+            let label = Self.label(sha, font: font(.caption2, .caption1, mono: true), color: palette.ui.comment)
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             items.append(label)
         }
         if let message = gitStatus.lastCommitMessage {
-            let label = Self.label(message, font: font(.caption2, .caption1), color: UIColor(palette.fgDim))
+            let label = Self.label(message, font: font(.caption2, .caption1), color: palette.ui.fgDim)
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             items.append(label)
         }
@@ -1223,7 +1223,7 @@ final class WorkspaceContextBarView: UIView {
             items.append(Self.label(
                 "\(gitStatus.stashCount) stash",
                 font: font(.caption2, .caption1, mono: true),
-                color: UIColor(palette.purple)
+                color: palette.ui.purple
             ))
         } else {
             items.append(Self.spacer())
@@ -1255,14 +1255,14 @@ final class WorkspaceContextBarView: UIView {
         selectionBarKey = key
         let palette = themeID.palette
         selectionBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        selectionBar.addArrangedSubview(divider(UIColor(palette.comment).withAlphaComponent(0.2)))
+        selectionBar.addArrangedSubview(divider(palette.ui.comment.withAlphaComponent(0.2)))
 
         let insets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
         if let launchActionInFlightTitle {
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
             spinner.startAnimating()
-            let title = Self.label(launchActionInFlightTitle, font: font(.caption2, .caption1), color: UIColor(palette.comment))
+            let title = Self.label(launchActionInFlightTitle, font: font(.caption2, .caption1), color: palette.ui.comment)
             selectionBar.addArrangedSubview(Self.row([spinner, title, Self.spacer()], spacing: 8, insets: insets))
             return
         }
@@ -1285,7 +1285,7 @@ final class WorkspaceContextBarView: UIView {
             actions.addArrangedSubview(Self.label(
                 isLoadingQuickActions ? String(localized: "Loading templates…") : String(localized: "No prompt templates"),
                 font: font(.caption2, .caption1),
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             ))
         } else {
             for option in options {
@@ -1308,13 +1308,13 @@ final class WorkspaceContextBarView: UIView {
     private func newSessionButton(palette: ThemePalette) -> UIView {
         let icon = UIImageView(image: UIImage(systemName: "square.and.pencil"))
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1))
-        icon.tintColor = UIColor(palette.purple)
+        icon.tintColor = palette.ui.purple
         icon.contentMode = .center
         icon.widthAnchor.constraint(equalToConstant: 13).isActive = true
         let title = Self.label(
             String(localized: "New Session"),
             font: font(.caption2, .caption1, .medium, mono: true),
-            color: UIColor(palette.fg)
+            color: palette.ui.fg
         )
         let button = capsuleButton([icon, title], palette: palette) { [weak self] in
             Task { await self?.launchEmptySession() }
@@ -1337,12 +1337,12 @@ final class WorkspaceContextBarView: UIView {
         let name = Self.label(
             "/\(option.commandName)",
             font: font(.caption2, .caption1, .medium, mono: true),
-            color: UIColor(palette.blue)
+            color: palette.ui.blue
         )
         let source = Self.label(
             Self.quickActionSourceLabel(option.sourceScope),
             font: font(.caption2, .caption1, mono: true),
-            color: UIColor(palette.comment)
+            color: palette.ui.comment
         )
         let button = capsuleButton([icon, name, source], palette: palette) { [weak self] in
             switch route {
@@ -1394,8 +1394,8 @@ final class WorkspaceContextBarView: UIView {
 
     private static func quickActionSourceColor(_ sourceScope: String?, palette: ThemePalette) -> UIColor {
         switch sourceScope {
-        case "project": return UIColor(palette.orange)
-        default: return UIColor(palette.green)
+        case "project": return palette.ui.orange
+        default: return palette.ui.green
         }
     }
 

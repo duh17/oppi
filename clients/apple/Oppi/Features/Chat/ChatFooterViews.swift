@@ -216,8 +216,8 @@ final class ChatFooterAboveView: UIView {
         if notices != shownNotices {
             shownNotices = notices
             for view in noticeStack.arrangedSubviews { view.removeFromSuperview() }
-            let messages: [(String, UIColor)] = (reconnectFailure.map { [($0, UIColor(palette.red))] } ?? [])
-                + warnings.map { ($0, UIColor(palette.yellow)) }
+            let messages: [(String, UIColor)] = (reconnectFailure.map { [($0, palette.ui.red)] } ?? [])
+                + warnings.map { ($0, palette.ui.yellow) }
             for (text, color) in messages {
                 noticeStack.addArrangedSubview(ChatFooterNoticeView(text: text, color: color, palette: palette))
             }
@@ -252,7 +252,7 @@ private final class ChatFooterNoticeView: UIView {
         icon.setContentHuggingPriority(.required, for: .horizontal)
         let label = ExtensionChromeFont.label(.caption1, lines: 0)
         label.text = text
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         for view in [glass, icon, label] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview(view)
@@ -359,8 +359,8 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
         surface.apply(palette: palette)
         let title = audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
         titleLabel.text = title
-        titleLabel.textColor = UIColor(palette.comment)
-        loadingLabel.textColor = UIColor(palette.comment)
+        titleLabel.textColor = palette.ui.comment
+        loadingLabel.textColor = palette.ui.comment
         let presentation = InAppNowPlayingChrome.subtitlePresentation(
             in: audioPlayer.nowPlayingTimedText,
             at: audioPlayer.currentTime,
@@ -373,16 +373,16 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
         case .cue(let text):
             lyricLabel.text = text
             lyricLabel.font = UIFont.scaled(.body, .medium)
-            lyricLabel.textColor = UIColor(palette.fg)
+            lyricLabel.textColor = palette.ui.fg
         case .gap:
             lyricLabel.text = "…"
             lyricLabel.font = UIFont.scaled(.body, .medium)
-            lyricLabel.textColor = UIColor(palette.comment)
+            lyricLabel.textColor = palette.ui.comment
             lyricLabel.accessibilityLabel = "No lyric at the current position"
         case .unavailable:
             lyricLabel.text = "No lyrics"
             lyricLabel.font = UIFont.scaled(.callout)
-            lyricLabel.textColor = UIColor(palette.comment)
+            lyricLabel.textColor = palette.ui.comment
         case .loading:
             break
         }
@@ -506,7 +506,7 @@ final class ChatStoppedFooterView: UIView {
         }
         setHiddenIfChanged(false)
         let palette = chat.chromeThemeID.palette
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         rule.backgroundColor = comment.withAlphaComponent(0.3)
         icon.image = UIImage.scaledSymbol("checkmark.circle", style: .subheadline, weight: .regular, color: comment)
         endedLabel.textColor = comment
@@ -522,7 +522,7 @@ final class ChatStoppedFooterView: UIView {
         let isResuming = chat.actionHandler.isResuming
         let onGreen = UIColor(ThemeColorContrast.foreground(for: palette.green))
         var configuration = UIButton.Configuration.filled()
-        configuration.baseBackgroundColor = UIColor(palette.green)
+        configuration.baseBackgroundColor = palette.ui.green
         configuration.baseForegroundColor = onGreen
         configuration.background.cornerRadius = 10
         configuration.cornerStyle = .fixed
@@ -671,24 +671,24 @@ final class ChatTitleView: UIView {
         let palette = themeID.palette
         maxWidth?.constant = chat.model.titleMaxWidth
         nameLabel.text = chat.sessionDisplayName
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         if let cost = session?.cost, cost > 0 {
             costLabel.text = SessionFormatting.costString(cost)
             costLabel.isHidden = false
         } else {
             costLabel.isHidden = true
         }
-        costLabel.textColor = UIColor(palette.comment)
+        costLabel.textColor = palette.ui.comment
         let mirrorPresentation = TerminalMirrorIndicatorPresentation(session: session)
         mirror.isHidden = mirrorPresentation == nil
         if let mirrorPresentation { mirror.apply(mirrorPresentation) }
         let hidesDurable = session?.showsDurableMark != true
         if durableLabel.isHidden != hidesDurable { durableLabel.isHidden = hidesDurable }
-        durableLabel.textColor = UIColor(palette.comment)
+        durableLabel.textColor = palette.ui.comment
         let subtitle = chat.conversationTitleSubtitle
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle == nil
-        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.textColor = palette.ui.comment
 
         let assetCache = chat.connection.iconAssetCache
         let avatar = AvatarKey(

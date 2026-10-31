@@ -563,11 +563,11 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         let palette = ThemeRuntimeState.currentPalette()
         result.append(NSAttributedString(
             string: "+\(stats.added)",
-            attributes: [.font: font, .foregroundColor: UIColor(palette.green)]
+            attributes: [.font: font, .foregroundColor: palette.ui.green]
         ))
         result.append(NSAttributedString(
             string: " −\(stats.removed)",
-            attributes: [.font: font, .foregroundColor: UIColor(palette.red)]
+            attributes: [.font: font, .foregroundColor: palette.ui.red]
         ))
     }
 

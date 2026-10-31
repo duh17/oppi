@@ -94,7 +94,7 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
             guard let self else { return }
             var content = UIListContentConfiguration.header()
             content.text = headerTitle(Section(rawValue: indexPath.section))
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             view.contentConfiguration = content
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
@@ -127,8 +127,8 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
         themeID = current
         // System cards follow the trait; match it to the palette's scheme.
         overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(palette.bg)
-        collectionView.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
+        collectionView.backgroundColor = palette.ui.bg
         guard dataSource != nil else { return }
         var snapshot = dataSource.snapshot()
         snapshot.reconfigureItems(snapshot.itemIdentifiers)
@@ -163,14 +163,14 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
                 ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize,
                 weight: .regular
             )
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
         case .viewSource:
             var content = UIListContentConfiguration.cell()
             content.image = UIImage(systemName: "doc.text")
             content.text = "View Source"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
             cell.accessibilityIdentifier = "chat.context.extension.viewSource"
@@ -179,8 +179,8 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
             content.image = UIImage(systemName: "text.bubble")
             content.text = "Edit with Session"
             content.secondaryText = "Starts a new session that changes this extension."
-            content.textProperties.color = UIColor(palette.blue)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.blue
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "chat.context.extension.edit"
         case .tool(let name):
@@ -191,19 +191,19 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
                 ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize,
                 weight: .regular
             )
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = tool.inContext ? "In context" : "On demand"
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessories = [.label(
                 text: SessionFormatting.tokenCount(tool.tokens),
-                options: .init(tintColor: UIColor(palette.comment))
+                options: .init(tintColor: palette.ui.comment)
             )]
         case .noTools:
             var content = UIListContentConfiguration.cell()
             content.text = "Adds no tools to this session."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.contentConfiguration = content
         }
     }

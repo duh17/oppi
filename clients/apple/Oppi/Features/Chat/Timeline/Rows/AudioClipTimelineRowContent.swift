@@ -130,16 +130,16 @@ final class AudioClipTimelineRowContentView: UIView, UIContentView {
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
-        containerView.backgroundColor = UIColor(palette.bgDark)
+        containerView.backgroundColor = palette.ui.bgDark
 
-        iconImageView.tintColor = UIColor(palette.purple)
-        titleLabel.textColor = UIColor(palette.fg)
-        fileNameLabel.textColor = UIColor(palette.comment)
+        iconImageView.tintColor = palette.ui.purple
+        titleLabel.textColor = palette.ui.fg
+        fileNameLabel.textColor = palette.ui.comment
 
         titleLabel.text = configuration.title.isEmpty ? "Voice message" : configuration.title
         fileNameLabel.text = "Tap to play"
 
-        loadingIndicator.color = UIColor(palette.purple)
+        loadingIndicator.color = palette.ui.purple
         updatePlayButton(state: buttonState(for: configuration), palette: palette)
     }
 
@@ -163,17 +163,17 @@ final class AudioClipTimelineRowContentView: UIView, UIContentView {
         case .idle:
             loadingIndicator.stopAnimating()
             playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
-            playButton.tintColor = UIColor(palette.comment)
+            playButton.tintColor = palette.ui.comment
 
         case .loading:
             playButton.setImage(nil, for: .normal)
-            playButton.tintColor = UIColor(palette.purple)
+            playButton.tintColor = palette.ui.purple
             loadingIndicator.startAnimating()
 
         case .playing:
             loadingIndicator.stopAnimating()
             playButton.setImage(UIImage(systemName: "stop.fill"), for: .normal)
-            playButton.tintColor = UIColor(palette.purple)
+            playButton.tintColor = palette.ui.purple
         }
     }
 

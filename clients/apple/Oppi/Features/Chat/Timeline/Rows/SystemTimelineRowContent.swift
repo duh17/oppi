@@ -84,12 +84,12 @@ final class SystemTimelineRowContentView: UIView, UIContentView {
         switch configuration.style {
         case .informational:
             iconImageView.image = UIImage(systemName: "info.circle")
-            iconImageView.tintColor = UIColor(palette.comment)
-            messageLabel.textColor = UIColor(palette.comment)
+            iconImageView.tintColor = palette.ui.comment
+            messageLabel.textColor = palette.ui.comment
         case .warning:
             iconImageView.image = UIImage(systemName: "exclamationmark.triangle.fill")
-            iconImageView.tintColor = UIColor(palette.orange)
-            messageLabel.textColor = UIColor(palette.orange)
+            iconImageView.tintColor = palette.ui.orange
+            messageLabel.textColor = palette.ui.orange
         }
         messageLabel.text = configuration.message
     }

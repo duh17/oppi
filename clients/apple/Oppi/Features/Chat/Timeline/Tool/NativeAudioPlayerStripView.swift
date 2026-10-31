@@ -62,16 +62,16 @@ final class NativeAudioPlayerStripView: UIView {
         timeLabel.accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.time"
 
         let palette = ThemeRuntimeState.currentPalette()
-        backgroundColor = UIColor(palette.bgDark)
-        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-        playButton.tintColor = UIColor(palette.fg)
-        loadingIndicator.color = UIColor(palette.comment)
-        expandButton.tintColor = UIColor(palette.fg)
-        titleLabel.textColor = UIColor(palette.fg)
-        timeLabel.textColor = UIColor(palette.comment)
-        progressView.progressTintColor = UIColor(palette.fg)
-        progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.25)
-        unavailableLabel.textColor = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgDark
+        layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
+        playButton.tintColor = palette.ui.fg
+        loadingIndicator.color = palette.ui.comment
+        expandButton.tintColor = palette.ui.fg
+        titleLabel.textColor = palette.ui.fg
+        timeLabel.textColor = palette.ui.comment
+        progressView.progressTintColor = palette.ui.fg
+        progressView.trackTintColor = palette.ui.comment.withAlphaComponent(0.25)
+        unavailableLabel.textColor = palette.ui.comment
 
         titleLabel.text = title
         titleLabel.isHidden = !showsTitle || (title?.isEmpty ?? true) || isUnavailable

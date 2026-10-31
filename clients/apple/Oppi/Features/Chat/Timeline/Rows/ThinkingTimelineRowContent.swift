@@ -337,7 +337,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
         let themeID = ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
+        brainIcon.tintColor = palette.ui.purple.withAlphaComponent(0.7)
         let renderWindow = Self.renderWindow(for: currentSourceText, isDone: configuration.isDone)
         let text = renderWindow.text.trimmingCharacters(in: .whitespacesAndNewlines)
         sourceIsOmitted = renderWindow.omittedSource
@@ -370,12 +370,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
             bubbleView.isHidden = false
             brainIcon.isHidden = false
-            bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
+            bubbleView.backgroundColor = palette.ui.comment.withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
             if needsTextUpdate {
                 measuredTextHeight = nil
                 textLabel.attributedText = makeThinkingAttributedText(
                     text,
-                    color: UIColor(palette.fg).withAlphaComponent(0.94)
+                    color: palette.ui.fg.withAlphaComponent(0.94)
                 )
                 renderSignature = signature
             }
@@ -401,14 +401,14 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 removeFadeMask()
             } else {
                 bubbleView.isHidden = false
-                bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.streamingBgAlpha)
+                bubbleView.backgroundColor = palette.ui.comment.withAlphaComponent(TimelineBubbleStyle.streamingBgAlpha)
                 if needsTextUpdate {
                     // Streaming: plain text — skip expensive markdown parsing.
                     // Full markdown rendering applies once on isDone transition.
                     measuredTextHeight = nil
                     textLabel.attributedText = nil
                     textLabel.text = text
-                    textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
+                    textLabel.textColor = palette.ui.comment.withAlphaComponent(0.88)
                     textLabel.font = .preferredFont(forTextStyle: .callout)
                     renderSignature = signature
                     needsStreamingTailFollow = true

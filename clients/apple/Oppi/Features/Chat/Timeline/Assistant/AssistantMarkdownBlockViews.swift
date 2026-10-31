@@ -303,13 +303,13 @@ final class NativeCodeBlockView: UIView {
         setCompact(compact)
         currentPalette = palette
         currentThemeID = themeID
-        backgroundColor = UIColor(palette.bgDark)
-        headerBackground.backgroundColor = UIColor(palette.bgHighlight)
-        layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
+        backgroundColor = palette.ui.bgDark
+        headerBackground.backgroundColor = palette.ui.bgHighlight
+        layer.borderColor = palette.ui.mdCodeBlockBorder.withAlphaComponent(0.5).cgColor
 
         languageLabel.text = language ?? "code"
-        languageLabel.textColor = UIColor(palette.comment)
-        copyButton.tintColor = UIColor(palette.fgDim)
+        languageLabel.textColor = palette.ui.comment
+        copyButton.tintColor = palette.ui.fgDim
         updateWrapButton()
 
         let prettyJSONBeforeApply = displayedPrettyJSON
@@ -348,11 +348,11 @@ final class NativeCodeBlockView: UIView {
             installedHighlightIdentity = nil
             if !presentPrettyJSONIfEligible(recolor: false) {
                 codeLabel.font = font
-                codeLabel.textColor = UIColor(palette.fg)
+                codeLabel.textColor = palette.ui.fg
                 if isDiff(language) {
                     let plain = NSMutableAttributedString(string: code, attributes: [
                         .font: font,
-                        .foregroundColor: UIColor(palette.fg),
+                        .foregroundColor: palette.ui.fg,
                     ])
                     Self.paintDiffLines(in: plain, palette: palette)
                     codeLabel.attributedText = plain
@@ -380,8 +380,8 @@ final class NativeCodeBlockView: UIView {
     /// (the ones the edit-tool diff uses), over whatever the highlighter painted.
     /// File headers (`+++` / `---`) keep the highlighter's colors.
     private static func paintDiffLines(in text: NSMutableAttributedString, palette: ThemePalette) {
-        let added = UIColor(palette.toolDiffAdded)
-        let removed = UIColor(palette.toolDiffRemoved)
+        let added = palette.ui.diffAdded
+        let removed = palette.ui.diffRemoved
         let source = text.string as NSString
         source.enumerateSubstrings(
             in: NSRange(location: 0, length: source.length),
@@ -538,7 +538,7 @@ final class NativeCodeBlockView: UIView {
         let font = AppFont.monoMedium
         let palette = currentPalette ?? ThemeRuntimeState.currentPalette()
         codeLabel.font = font
-        codeLabel.textColor = UIColor(palette.fg)
+        codeLabel.textColor = palette.ui.fg
         codeLabel.attributedText = nil
         codeLabel.text = pretty
 
@@ -576,7 +576,7 @@ final class NativeCodeBlockView: UIView {
             codeLabel.attributedText = highlighted
         } else if let palette = currentPalette {
             codeLabel.font = font
-            codeLabel.textColor = UIColor(palette.fg)
+            codeLabel.textColor = palette.ui.fg
             codeLabel.attributedText = nil
             codeLabel.text = currentCode
         } else {
@@ -653,9 +653,9 @@ final class NativeCodeBlockView: UIView {
         config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
             pointSize: 12, weight: .regular
         )
-        config.baseForegroundColor = isLineWrappingEnabled ? UIColor(palette.blue) : UIColor(palette.fgDim)
+        config.baseForegroundColor = isLineWrappingEnabled ? palette.ui.blue : palette.ui.fgDim
         config.background.backgroundColor = isLineWrappingEnabled
-            ? UIColor(palette.blue).withAlphaComponent(0.14)
+            ? palette.ui.blue.withAlphaComponent(0.14)
             : .clear
         config.background.cornerRadius = 8
         wrapButton.configuration = config
@@ -1127,8 +1127,8 @@ final class NativeTableBlockView: UIView {
         // Detect links in any cell for selectability.
         hasLinks = Self.containsLink(headers) || rows.contains { Self.containsLink($0) }
 
-        cardView.backgroundColor = UIColor(palette.bgDark)
-        cardView.layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
+        cardView.backgroundColor = palette.ui.bgDark
+        cardView.layer.borderColor = palette.ui.mdCodeBlockBorder.withAlphaComponent(0.5).cgColor
 
         let metrics = Self.naturalColumnMetrics(
             headerWidths: measuredHeaderWidths,
@@ -1204,7 +1204,7 @@ final class NativeTableBlockView: UIView {
         tableLabel.attributedText = attrText
         // Underlines live on the link runs so file links can omit them.
         tableLabel.linkTextAttributes = [
-            .foregroundColor: UIColor(palette.blue),
+            .foregroundColor: palette.ui.blue,
         ]
 
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -1268,7 +1268,7 @@ final class NativeTableBlockView: UIView {
 
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.25)
+        separator.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
         wrapSeparatorHeight = 1 / max(traitCollection.displayScale, 1)
         separator.heightAnchor.constraint(equalToConstant: wrapSeparatorHeight).isActive = true
         wrapStack.addArrangedSubview(separator)
@@ -1383,9 +1383,9 @@ final class NativeTableBlockView: UIView {
         row.translatesAutoresizingMaskIntoConstraints = false
 
         if isHeader {
-            row.backgroundColor = UIColor(palette.bgHighlight)
+            row.backgroundColor = palette.ui.bgHighlight
         } else if zebra {
-            row.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.45)
+            row.backgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.45)
         } else {
             row.backgroundColor = .clear
         }
@@ -1425,11 +1425,11 @@ final class NativeTableBlockView: UIView {
         textView.delegate = self
         // Underlines live on the link runs so file links can omit them.
         textView.linkTextAttributes = [
-            .foregroundColor: UIColor(palette.blue),
+            .foregroundColor: palette.ui.blue,
         ]
 
         let font = isHeader ? AppFont.monoMediumBold : AppFont.monoMedium
-        let color = isHeader ? UIColor(palette.cyan) : UIColor(palette.fg)
+        let color = isHeader ? palette.ui.cyan : palette.ui.fg
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.lineSpacing = 2
@@ -1440,7 +1440,7 @@ final class NativeTableBlockView: UIView {
             to: result,
             font: font,
             defaultColor: color,
-            linkColor: UIColor(palette.blue),
+            linkColor: palette.ui.blue,
             paragraph: paragraph
         )
         if result.length == 0 {
@@ -1606,12 +1606,12 @@ final class NativeTableBlockView: UIView {
         paragraph.lineSpacing = 5
         paragraph.tabStops = tabStops
 
-        let headerColor = UIColor(palette.cyan)
-        let cellColor = UIColor(palette.fg)
-        let linkColor = UIColor(palette.blue)
-        let dimColor = UIColor(palette.comment).withAlphaComponent(0.4)
-        let headerBgColor = UIColor(palette.bgHighlight)
-        let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.45)
+        let headerColor = palette.ui.cyan
+        let cellColor = palette.ui.fg
+        let linkColor = palette.ui.blue
+        let dimColor = palette.ui.comment.withAlphaComponent(0.4)
+        let headerBgColor = palette.ui.bgHighlight
+        let altRowBgColor = palette.ui.bgHighlight.withAlphaComponent(0.45)
 
         // --- Header row ---
         let headerStart = result.length
@@ -1981,7 +1981,7 @@ extension NativeTableBlockView: UITextViewDelegate {
 private func showCopiedOverlay(on view: UIView) {
     let palette = ThemeRuntimeState.currentPalette()
     let overlay = UIView()
-    overlay.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.08)
+    overlay.backgroundColor = palette.ui.fg.withAlphaComponent(0.08)
     overlay.frame = view.bounds
     overlay.layer.cornerRadius = view.layer.cornerRadius
     overlay.isUserInteractionEnabled = false
@@ -2020,7 +2020,7 @@ private final class CopiedPillView: UIView {
         let palette = ThemeRuntimeState.currentPalette()
 
         let icon = UIImageView(image: UIImage(systemName: "checkmark"))
-        icon.tintColor = UIColor(palette.fg)
+        icon.tintColor = palette.ui.fg
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
 
@@ -2028,7 +2028,7 @@ private final class CopiedPillView: UIView {
         label.text = "Copied"
         // Capped: a short, transient pill over a block that may be one line tall.
         label.font = AppFont.scaledSystem(13, .semibold, relativeTo: .footnote, maximumPointSize: 22)
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(arrangedSubviews: [icon, label])

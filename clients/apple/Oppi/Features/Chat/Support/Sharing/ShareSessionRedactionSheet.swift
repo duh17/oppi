@@ -181,9 +181,9 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         palette = themeID.palette
-        let blue = UIColor(palette.blue)
-        view.backgroundColor = UIColor(palette.bg)
-        list.backgroundColor = UIColor(palette.bg)
+        let blue = palette.ui.blue
+        view.backgroundColor = palette.ui.bg
+        list.backgroundColor = palette.ui.bg
         // The theme's accent, as the app root's SwiftUI tint gave the sheet.
         view.tintColor = blue
         navigationItem.leftBarButtonItem?.tintColor = blue
@@ -263,9 +263,9 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
                 var content = UIListContentConfiguration.valueCell()
                 content.text = "Secrets"
                 content.image = UIImage(systemName: "lock.fill")
-                content.imageProperties.tintColor = UIColor(palette.blue)
+                content.imageProperties.tintColor = palette.ui.blue
                 content.secondaryText = "Always On"
-                content.secondaryTextProperties.color = UIColor(palette.green)
+                content.secondaryTextProperties.color = palette.ui.green
                 cell.contentConfiguration = content
             } else {
                 var content = UIListContentConfiguration.cell()
@@ -283,14 +283,14 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         switch previewRows[indexPath.item] {
         case .analyzing:
             content.text = "Scanning session export…"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .leading()))]
         case .error(let message):
             content.text = message
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
         case .summary(let count):
             content.text = "Detected \(count) replacements"
             content.textProperties.font = UIFont.scaled(.subheadline, .semibold)
@@ -298,7 +298,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         case .noFindings:
             content.text = "No configured PII findings detected in this preview."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .finding(let finding):
             content = UIListContentConfiguration.subtitleCell()
             content.text = "\(finding.kind) ×\(finding.count)"
@@ -307,21 +307,21 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
             if let sample = finding.samples.first, !sample.isEmpty {
                 content.secondaryText = sample
                 content.secondaryTextProperties.font = mono(.caption1)
-                content.secondaryTextProperties.color = UIColor(palette.comment)
+                content.secondaryTextProperties.color = palette.ui.comment
             }
         case .more(let count):
             content.text = "+\(count) more categories"
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .blocked:
             content.text = "Sharing is currently blocked because residual secrets were detected."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.orange)
+            content.textProperties.color = palette.ui.orange
         case .refresh:
             // A button row, as a SwiftUI list draws one: the theme accent,
             // dimmed while a scan or a share runs.
             content.text = "Refresh Preview"
-            content.textProperties.color = refreshEnabled ? UIColor(palette.blue) : .tertiaryLabel
+            content.textProperties.color = refreshEnabled ? palette.ui.blue : .tertiaryLabel
             cell.accessibilityTraits = refreshEnabled ? .button : [.button, .notEnabled]
         }
         cell.contentConfiguration = content

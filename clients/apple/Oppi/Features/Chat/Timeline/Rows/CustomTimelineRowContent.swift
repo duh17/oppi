@@ -190,18 +190,18 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
         let palette = ThemeRuntimeState.currentPalette()
         let accent = accentColor(for: configuration.presentation.accent, palette: palette)
 
-        containerView.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.55)
-        containerView.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.22).cgColor
+        containerView.backgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.55)
+        containerView.layer.borderColor = palette.ui.comment.withAlphaComponent(0.22).cgColor
 
         iconImageView.image = UIImage(systemName: iconName(for: configuration.presentation.accent))
         iconImageView.tintColor = accent
 
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         titleLabel.text = configuration.presentation.title
 
         let subtitle = configuration.presentation.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         subtitleLabel.isHidden = subtitle?.isEmpty ?? true
-        subtitleLabel.textColor = UIColor(palette.fgDim)
+        subtitleLabel.textColor = palette.ui.fgDim
         subtitleLabel.text = subtitle
 
         let status = configuration.presentation.status?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -213,7 +213,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
         let body = configuration.presentation.body?.trimmingCharacters(in: .whitespacesAndNewlines)
         let showTerminal = configuration.canExpand && configuration.isExpanded
         bodyLabel.isHidden = body?.isEmpty ?? true || showTerminal
-        bodyLabel.textColor = UIColor(palette.fg).withAlphaComponent(0.9)
+        bodyLabel.textColor = palette.ui.fg.withAlphaComponent(0.9)
         bodyLabel.text = body
         bashBodyView.isHidden = !showTerminal
         terminalHitControl.isHidden = !showTerminal
@@ -223,7 +223,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
             let result = bashBodyView.apply(
                 input: BashRenderInput(command: nil, output: body, unwrapped: false,
                                        isError: false, isStreaming: false),
-                outputColor: UIColor(palette.fg),
+                outputColor: palette.ui.fg,
                 wasOutputVisible: false
             )
             bashBodyView.outputContainer.isHidden = !result.showOutput
@@ -248,7 +248,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
                 geometry: geometry
             )
         } else {
-            bashBodyView.resetOutputState(outputColor: UIColor(palette.fg))
+            bashBodyView.resetOutputState(outputColor: palette.ui.fg)
         }
         if showTerminal {
             bashBodyView.bringSubviewToFront(terminalHitControl)
@@ -256,7 +256,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
 
         let fields = formattedFields(configuration.presentation.fields ?? [])
         fieldsLabel.isHidden = fields == nil
-        fieldsLabel.textColor = UIColor(palette.fgDim)
+        fieldsLabel.textColor = palette.ui.fgDim
         fieldsLabel.attributedText = fields
     }
 
@@ -309,14 +309,14 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
             result.append(NSAttributedString(
                 string: "\(field.label): ",
                 attributes: [
-                    .foregroundColor: UIColor(palette.comment),
+                    .foregroundColor: palette.ui.comment,
                     .font: UIFont.preferredFont(forTextStyle: .caption1),
                 ]
             ))
             result.append(NSAttributedString(
                 string: field.value,
                 attributes: [
-                    .foregroundColor: UIColor(palette.fgDim),
+                    .foregroundColor: palette.ui.fgDim,
                     .font: UIFont.preferredFont(forTextStyle: .caption1),
                 ]
             ))
@@ -340,13 +340,13 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
     private func accentColor(for accent: String?, palette: ThemePalette) -> UIColor {
         switch accent {
         case "success":
-            return UIColor(palette.green)
+            return palette.ui.green
         case "warning":
-            return UIColor(palette.orange)
+            return palette.ui.orange
         case "error":
-            return UIColor(palette.red)
+            return palette.ui.red
         default:
-            return UIColor(palette.blue)
+            return palette.ui.blue
         }
     }
 }

@@ -125,7 +125,7 @@ enum UserTimelinePathPillChrome {
     ) -> UIColor {
         switch kind {
         case .uploadedFile, .reviewFile, .repoFile, .gitCommit:
-            return UIColor(palette.userMessageText)
+            return palette.ui.userMessageText
         }
     }
 }
@@ -604,18 +604,18 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         agentSenderButton.setTitle(senderName, for: .normal)
         // The name is the one tappable thing in the header: it reads in the
         // caption's accent while it opens a session, and as plain text otherwise.
-        let nameColor = card.onOpenSender == nil ? UIColor(palette.fg) : UIColor(palette.purple)
+        let nameColor = card.onOpenSender == nil ? palette.ui.fg : palette.ui.purple
         agentSenderButton.setTitleColor(nameColor, for: .normal)
         agentSenderButton.setTitleColor(nameColor.withAlphaComponent(0.6), for: .highlighted)
-        agentSenderButton.setTitleColor(UIColor(palette.fg), for: .disabled)
+        agentSenderButton.setTitleColor(palette.ui.fg, for: .disabled)
         agentSenderButton.isEnabled = card.onOpenSender != nil
         agentSenderButton.accessibilityIdentifier = scope.map { "\($0).open-sender" }
 
         agentIntentLabel.text = card.origin.intentTitle
-        agentIntentLabel.textColor = UIColor(palette.fgDim)
+        agentIntentLabel.textColor = palette.ui.fgDim
 
         agentChevronView.isHidden = !card.canExpand
-        agentChevronView.tintColor = UIColor(palette.comment)
+        agentChevronView.tintColor = palette.ui.comment
         agentChevronView.image = card.canExpand
             ? UIImage.scaledSymbol(
                 card.isExpanded ? "chevron.up" : "chevron.down",
@@ -717,7 +717,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             bubbleContainer.layer.borderWidth = currentConfiguration.increasedContrast
                 ? TimelineSpeakerChrome.increasedContrastBorderWidth
                 : 1
-            bubbleContainer.layer.borderColor = UIColor(palette.comment)
+            bubbleContainer.layer.borderColor = palette.ui.comment
                 .withAlphaComponent(currentConfiguration.increasedContrast ? 1 : 0.5).cgColor
             accentBar.isHidden = true
             // The header names the sender, so the caption and the prompt glyph go.
@@ -740,7 +740,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         accentBar.backgroundColor = accent
         accentBar.isHidden = accent == nil
         youCaption.text = String(localized: "You")
-        youCaption.textColor = UIColor(palette.userMessageText)
+        youCaption.textColor = palette.ui.userMessageText
         youCaption.isHidden = !currentConfiguration.differentiateWithoutColor
         youCaption.isAccessibilityElement = false
         youCaption.accessibilityLabel = nil
@@ -1086,9 +1086,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                     prefix: nil,
                     text: badge.label,
                     symbolName: badge.symbolName,
-                    tint: UIColor(palette.userMessageText).withAlphaComponent(0.72),
-                    background: UIColor(palette.bg).withAlphaComponent(0.35),
-                    textColor: UIColor(palette.userMessageText).withAlphaComponent(0.9),
+                    tint: palette.ui.userMessageText.withAlphaComponent(0.72),
+                    background: palette.ui.bg.withAlphaComponent(0.35),
+                    textColor: palette.ui.userMessageText.withAlphaComponent(0.9),
                     font: AppFont.systemSmall,
                     monospaced: false
                 )
@@ -1234,7 +1234,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         imageStrip.isHidden = !hasAnyInlineMedia
         guard hasAnyInlineMedia else { return }
 
-        let borderColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.thumbnailBorderAlpha).cgColor
+        let borderColor = palette.ui.comment.withAlphaComponent(TimelineBubbleStyle.thumbnailBorderAlpha).cgColor
 
         for (index, attachment) in images.enumerated() {
             let container = makeThumbnailContainer(
@@ -1344,7 +1344,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                     container.subviews.forEach { $0.removeFromSuperview() }
                     let fallback = UIImageView(image: UIImage(systemName: "photo"))
                     fallback.translatesAutoresizingMaskIntoConstraints = false
-                    fallback.tintColor = UIColor(palette.comment)
+                    fallback.tintColor = palette.ui.comment
                     fallback.contentMode = .scaleAspectFit
                     container.addSubview(fallback)
                     self?.pinThumbnailContent(fallback, in: container, inset: 18)
@@ -1414,7 +1414,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         container.subviews.forEach { $0.removeFromSuperview() }
         let fallback = UIImageView(image: UIImage(systemName: symbolName))
         fallback.translatesAutoresizingMaskIntoConstraints = false
-        fallback.tintColor = UIColor(palette.comment)
+        fallback.tintColor = palette.ui.comment
         fallback.contentMode = .scaleAspectFit
         container.addSubview(fallback)
         pinThumbnailContent(fallback, in: container, inset: 18)

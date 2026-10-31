@@ -1336,13 +1336,13 @@ final class AssistantMarkdownSegmentApplier {
         textView.textContainer.lineFragmentPadding = 0
         textView.adjustsFontForContentSizeCategory = true
         textView.dataDetectorTypes = [.link]
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.font = AppFont.messageBody
-        textView.tintColor = UIColor(palette.blue)
+        textView.tintColor = palette.ui.blue
         // Underlines live on the link runs (see `MarkdownText`) so file links
         // can omit them; an underline here would cover every link.
         textView.linkTextAttributes = [
-            .foregroundColor: UIColor(palette.blue),
+            .foregroundColor: palette.ui.blue,
         ]
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.translatesAutoresizingMaskIntoConstraints = false
@@ -1423,7 +1423,7 @@ final class AssistantMarkdownSegmentApplier {
 
     private func makeThematicBreak(palette: ThemePalette) -> UIView {
         let hr = UIView()
-        hr.backgroundColor = UIColor(palette.mdHr).withAlphaComponent(0.6)
+        hr.backgroundColor = palette.ui.mdHr.withAlphaComponent(0.6)
         hr.translatesAutoresizingMaskIntoConstraints = false
         hr.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return hr

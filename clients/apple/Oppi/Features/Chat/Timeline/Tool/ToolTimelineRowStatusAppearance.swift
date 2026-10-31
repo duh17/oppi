@@ -11,8 +11,8 @@ struct ToolTimelineRowStatusAppearance {
         if !isDone {
             return .init(
                 symbolName: "play.circle.fill",
-                statusColor: UIColor(palette.blue),
-                borderBackgroundColor: UIColor(palette.toolPendingBg),
+                statusColor: palette.ui.blue,
+                borderBackgroundColor: palette.ui.toolPendingBg,
                 borderColor: UIColor(palette.blue.opacity(0.25)).cgColor
             )
         }
@@ -20,7 +20,7 @@ struct ToolTimelineRowStatusAppearance {
         if isInterrupted {
             return .init(
                 symbolName: "exclamationmark.circle.fill",
-                statusColor: UIColor(palette.orange),
+                statusColor: palette.ui.orange,
                 borderBackgroundColor: UIColor(palette.orange.opacity(0.08)),
                 borderColor: UIColor(palette.orange.opacity(0.25)).cgColor
             )
@@ -29,16 +29,16 @@ struct ToolTimelineRowStatusAppearance {
         if isError {
             return .init(
                 symbolName: "xmark.circle.fill",
-                statusColor: UIColor(palette.red),
-                borderBackgroundColor: UIColor(palette.toolErrorBg),
+                statusColor: palette.ui.red,
+                borderBackgroundColor: palette.ui.toolErrorBg,
                 borderColor: UIColor(palette.red.opacity(0.25)).cgColor
             )
         }
 
         return .init(
             symbolName: "checkmark.circle.fill",
-            statusColor: UIColor(palette.green),
-            borderBackgroundColor: UIColor(palette.toolSuccessBg),
+            statusColor: palette.ui.green,
+            borderBackgroundColor: palette.ui.toolSuccessBg,
             borderColor: UIColor(palette.comment.opacity(0.2)).cgColor
         )
     }

@@ -161,11 +161,11 @@ final class ChatFilePanelViewController: UIViewController {
     }
 
     private func applyTheme(_ palette: ThemePalette) {
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         noWorkspace.configuration = UIContentUnavailableConfiguration.loadState(
             Self.noWorkspaceState,
             palette: palette,
-            background: UIColor(palette.bg)
+            background: palette.ui.bg
         )
         barKey = nil
     }

@@ -89,8 +89,8 @@ final class GitPanelViewController: UIViewController {
         if current != themeID {
             themeID = current
             overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark
-            view.backgroundColor = UIColor(current.palette.bg)
-            statusLabel.textColor = UIColor(current.palette.comment)
+            view.backgroundColor = current.palette.ui.bg
+            statusLabel.textColor = current.palette.ui.comment
         }
         guard let context = readContext() else { return }
         bar.context = context

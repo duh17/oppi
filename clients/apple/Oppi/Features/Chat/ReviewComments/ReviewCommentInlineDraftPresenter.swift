@@ -305,12 +305,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func setup() {
         accessibilityIdentifier = "review-comment.inline-composer"
         let palette = ThemeRuntimeState.currentPalette()
-        backgroundColor = UIColor(palette.bgDark).withAlphaComponent(0.98)
+        backgroundColor = palette.ui.bgDark.withAlphaComponent(0.98)
         layer.cornerRadius = 18
         layer.cornerCurve = .continuous
         layer.borderWidth = 1
-        layer.borderColor = UIColor(palette.cyan).withAlphaComponent(0.28).cgColor
-        layer.shadowColor = UIColor(palette.bgDark).cgColor
+        layer.borderColor = palette.ui.cyan.withAlphaComponent(0.28).cgColor
+        layer.shadowColor = palette.ui.bgDark.cgColor
         layer.shadowOpacity = 0.32
         layer.shadowRadius = 20
         layer.shadowOffset = CGSize(width: 0, height: 10)
@@ -341,8 +341,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "xmark")
         config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .bold)
-        config.baseForegroundColor = UIColor(palette.fg)
-        config.baseBackgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.78)
+        config.baseForegroundColor = palette.ui.fg
+        config.baseBackgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.78)
         config.cornerStyle = .capsule
         config.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         closeButton.configuration = config
@@ -387,8 +387,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             config.image = UIImage(systemName: template.systemImage)
             config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
             config.imagePadding = 5
-            config.baseForegroundColor = UIColor(palette.fg)
-            config.baseBackgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.72)
+            config.baseForegroundColor = palette.ui.fg
+            config.baseBackgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.72)
             config.cornerStyle = .capsule
             config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
             let button = UIButton(configuration: config)
@@ -407,11 +407,11 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         inputRow.spacing = 8
         inputRow.isLayoutMarginsRelativeArrangement = true
         inputRow.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
-        inputRow.backgroundColor = UIColor(palette.bg).withAlphaComponent(0.82)
+        inputRow.backgroundColor = palette.ui.bg.withAlphaComponent(0.82)
         inputRow.layer.cornerRadius = 24
         inputRow.layer.cornerCurve = .continuous
         inputRow.layer.borderWidth = 1
-        inputRow.layer.borderColor = UIColor(palette.cyan).withAlphaComponent(0.18).cgColor
+        inputRow.layer.borderColor = palette.ui.cyan.withAlphaComponent(0.18).cgColor
 
         if router.voiceInputManager != nil {
             configureMicButton(palette: palette)
@@ -421,8 +421,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         inputTextView.placeholder = "Comment…"
         inputTextView.font = UIFont.preferredFont(forTextStyle: .body)
         inputTextView.adjustsFontForContentSizeCategory = true
-        inputTextView.textColor = UIColor(palette.fg)
-        inputTextView.tintColor = UIColor(palette.cyan)
+        inputTextView.textColor = palette.ui.fg
+        inputTextView.tintColor = palette.ui.cyan
         inputTextView.backgroundColor = .clear
         inputTextView.isScrollEnabled = false
         inputTextView.layer.cornerRadius = 0
@@ -470,7 +470,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .reviewCommentInline)
         micButton.apply(
             presentation: presentation,
-            accentColor: UIColor(palette.cyan),
+            accentColor: palette.ui.cyan,
             diameter: controlDiameter
         )
         micButton.isEnabled = !isSaving && presentation.isEnabled
@@ -575,8 +575,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         var saveConfig = UIButton.Configuration.filled()
         saveConfig.image = UIImage(systemName: "arrow.up")
         saveConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 16, weight: .bold)
-        saveConfig.baseForegroundColor = UIColor(palette.bgDark)
-        saveConfig.baseBackgroundColor = UIColor(palette.cyan)
+        saveConfig.baseForegroundColor = palette.ui.bgDark
+        saveConfig.baseBackgroundColor = palette.ui.cyan
         saveConfig.cornerStyle = .capsule
         saveConfig.contentInsets = NSDirectionalEdgeInsets(top: 9, leading: 9, bottom: 9, trailing: 9)
         saveButton.configuration = saveConfig

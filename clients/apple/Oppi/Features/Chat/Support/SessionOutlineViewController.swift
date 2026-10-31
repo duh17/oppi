@@ -314,7 +314,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
 
     private func applyTheme() {
         let palette = palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         for divider in dividers {
             divider.backgroundColor = UIColor(palette.comment.opacity(0.3))
         }
@@ -565,7 +565,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
             treeUnavailable.configuration = UIContentUnavailableConfiguration.loadState(
                 unavailable,
                 palette: palette,
-                background: UIColor(palette.bgDark)
+                background: palette.ui.bgDark
             )
         }
         treeBanner.show(unavailable == nil ? treeNavigateErrorMessage : nil, palette: palette)
@@ -836,10 +836,10 @@ final class TreeSummaryInstructionsViewController: UIViewController, UITextViewD
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
         let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
-        view.backgroundColor = UIColor(palette.bg)
-        captionLabel.textColor = UIColor(palette.comment)
-        textView.textColor = UIColor(palette.fg)
-        textView.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bg
+        captionLabel.textColor = palette.ui.comment
+        textView.textColor = palette.ui.fg
+        textView.backgroundColor = palette.ui.bgDark
         textView.layer.borderColor = UIColor(palette.comment.opacity(0.18)).cgColor
     }
 

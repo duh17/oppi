@@ -186,7 +186,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         customIndicatorLabel.isHidden = !showsCustomIndicator
         indicatorContainer.isHidden = hidesIndicator
         customIndicatorLabel.textColor = providerColor
-        workingLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.6)
+        workingLabel.textColor = palette.ui.comment.withAlphaComponent(0.6)
 
         configureCustomIndicator(
             frames: showsCustomIndicator ? customFrames : nil,

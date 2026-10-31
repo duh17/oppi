@@ -97,15 +97,15 @@ enum ToolTimelineRowViewStyler {
         elapsedLabel: UILabel
     ) {
         let palette = ThemeRuntimeState.currentPalette()
-        toolImageView.tintColor = UIColor(palette.cyan)
-        titleLabel.textColor = UIColor(palette.toolTitle)
-        languageBadgeIconView.tintColor = UIColor(palette.blue)
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
-        trailingLabel.textColor = UIColor(palette.comment)
-        elapsedLabel.textColor = UIColor(palette.comment)
+        toolImageView.tintColor = palette.ui.cyan
+        titleLabel.textColor = palette.ui.toolTitle
+        languageBadgeIconView.tintColor = palette.ui.blue
+        addedLabel.textColor = palette.ui.diffAdded
+        removedLabel.textColor = palette.ui.diffRemoved
+        trailingLabel.textColor = palette.ui.comment
+        elapsedLabel.textColor = palette.ui.comment
         // Status is assigned after rendering from the current configuration.
-        statusImageView.tintColor = UIColor(palette.comment)
+        statusImageView.tintColor = palette.ui.comment
     }
 
     static func applyTheme(
@@ -131,7 +131,7 @@ enum ToolTimelineRowViewStyler {
             elapsedLabel: elapsedLabel
         )
         let palette = ThemeRuntimeState.currentPalette()
-        previewLabel.textColor = UIColor(palette.toolOutput)
+        previewLabel.textColor = palette.ui.toolOutput
         expandedContainer.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         )

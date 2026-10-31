@@ -91,25 +91,25 @@ final class ModelPickerCell: UICollectionViewListCell {
         nameLabel.textColor = UIColor(isCurrent ? palette.blue : palette.fg)
         currentBadge.isHidden = !isCurrent
         currentBadge.font = .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .medium)
-        currentBadge.textColor = UIColor(palette.blue)
+        currentBadge.textColor = palette.ui.blue
         currentBadge.backgroundColor = UIColor(palette.blue.opacity(0.14))
         idLabel.text = id
         idLabel.font = SessionOutlineStyle.font(.caption1, monospaced: true)
-        idLabel.textColor = UIColor(palette.comment)
+        idLabel.textColor = palette.ui.comment
         contextLabel.isHidden = model.contextWindow <= 0
         contextLabel.text = SessionFormatting.tokenCount(model.contextWindow)
         contextLabel.font = .monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
-        contextLabel.textColor = UIColor(palette.fgDim)
+        contextLabel.textColor = palette.ui.fgDim
         checkmark.isHidden = !isCurrent
         checkmark.image = UIImage(
             systemName: "checkmark",
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .subheadline, scale: .default)
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         )
-        checkmark.tintColor = UIColor(palette.blue)
+        checkmark.tintColor = palette.ui.blue
 
         var background = UIBackgroundConfiguration.listCell()
-        background.backgroundColor = isCurrent ? UIColor(palette.blue.opacity(0.12)) : UIColor(palette.bg)
+        background.backgroundColor = isCurrent ? UIColor(palette.blue.opacity(0.12)) : palette.ui.bg
         backgroundConfiguration = background
 
         row.onActivate = onSelect
@@ -255,14 +255,14 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         controls.isHidden = isSearching
         countLabel.text = "\(modelCount)"
         countLabel.font = .monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular)
-        countLabel.textColor = UIColor(palette.comment)
+        countLabel.textColor = palette.ui.comment
         chevron.isHidden = !hasVisibleModels
         chevron.image = UIImage(
             systemName: isCollapsed ? "chevron.right" : "chevron.down",
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         )
-        chevron.tintColor = UIColor(palette.comment)
+        chevron.tintColor = palette.ui.comment
 
         let toggles = !isSearching && hasVisibleModels && isEnabled
         self.onToggle = toggles ? onToggle : nil
@@ -276,14 +276,14 @@ final class ModelPickerHeaderView: UICollectionReusableView {
     private func configureText(_ text: String, palette: ThemePalette) {
         nameLabel.text = text
         nameLabel.font = SessionOutlineStyle.font(.caption1, bold: true)
-        nameLabel.textColor = UIColor(palette.fgDim)
+        nameLabel.textColor = palette.ui.fgDim
     }
 
     private static func tone(_ tone: ProviderQuota.BadgeTone, palette: ThemePalette) -> UIColor {
         switch tone {
-        case .green: UIColor(palette.green)
-        case .orange: UIColor(palette.orange)
-        case .red: UIColor(palette.red)
+        case .green: palette.ui.green
+        case .orange: palette.ui.orange
+        case .red: palette.ui.red
         }
     }
 

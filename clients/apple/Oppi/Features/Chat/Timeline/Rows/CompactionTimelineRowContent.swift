@@ -203,7 +203,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
            tokensBefore > 0 {
             tokensLabel.isHidden = false
             tokensLabel.text = "\(SessionFormatting.tokenCountDecimal(tokensBefore)) tokens"
-            tokensLabel.textColor = UIColor(palette.comment)
+            tokensLabel.textColor = palette.ui.comment
         } else {
             tokensLabel.isHidden = true
             tokensLabel.text = nil
@@ -247,7 +247,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                 )
             } else {
                 detailLabel.text = trimmedDetail
-                detailLabel.textColor = UIColor(palette.fgDim)
+                detailLabel.textColor = palette.ui.fgDim
                 detailLabel.numberOfLines = canExpand ? 1 : 0
             }
         } else {
@@ -266,7 +266,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
         expandButton.isEnabled = canExpand
 
         if canExpand {
-            expandButton.tintColor = UIColor(palette.comment)
+            expandButton.tintColor = palette.ui.comment
             expandButton.setImage(
                 UIImage(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down"),
                 for: .normal
@@ -295,7 +295,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "arrow.triangle.2.circlepath",
                 title: "Compacting context...",
-                color: UIColor(palette.blue),
+                color: palette.ui.blue,
                 backgroundAlpha: 0.12
             )
 
@@ -303,7 +303,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "arrow.triangle.2.circlepath",
                 title: "Context compacted",
-                color: UIColor(palette.comment),
+                color: palette.ui.comment,
                 backgroundAlpha: 0.18
             )
 
@@ -311,7 +311,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "arrow.clockwise.circle",
                 title: "Compacted — retrying",
-                color: UIColor(palette.orange),
+                color: palette.ui.orange,
                 backgroundAlpha: 0.14
             )
 
@@ -319,7 +319,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "xmark.circle",
                 title: "Compaction cancelled",
-                color: UIColor(palette.red),
+                color: palette.ui.red,
                 backgroundAlpha: 0.16
             )
 
@@ -327,7 +327,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "exclamationmark.triangle",
                 title: "Compaction failed",
-                color: UIColor(palette.red),
+                color: palette.ui.red,
                 backgroundAlpha: 0.16
             )
 
@@ -335,7 +335,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             return Style(
                 icon: "arrow.triangle.branch",
                 title: "Branch summary",
-                color: UIColor(palette.green),
+                color: palette.ui.green,
                 backgroundAlpha: 0.14
             )
         }

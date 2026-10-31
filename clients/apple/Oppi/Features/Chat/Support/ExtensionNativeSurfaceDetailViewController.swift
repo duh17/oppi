@@ -117,14 +117,14 @@ final class ExtensionNativeSurfaceDetailViewController: UIViewController {
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bg)
-        titleLabel.textColor = UIColor(palette.fg)
-        subtitleLabel.textColor = UIColor(palette.comment)
+        view.backgroundColor = palette.ui.bg
+        titleLabel.textColor = palette.ui.fg
+        subtitleLabel.textColor = palette.ui.comment
         divider.backgroundColor = .separator
 
         var back = backButton.configuration ?? .plain()
         back.image = UIImage.scaledSymbol("chevron.backward", style: .body, weight: .semibold)
-        back.baseForegroundColor = UIColor(palette.blue)
+        back.baseForegroundColor = palette.ui.blue
         // The chevron alone would be a 20 pt target.
         back.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 8, bottom: 12, trailing: 8)
         backButton.configuration = back

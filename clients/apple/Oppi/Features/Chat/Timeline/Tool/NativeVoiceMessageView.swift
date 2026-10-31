@@ -196,8 +196,8 @@ final class NativeAudioMessageView: UIView {
 
         container.backgroundColor = .clear
         container.layer.borderColor = UIColor.clear.cgColor
-        messageLabel.textColor = UIColor(palette.fg)
-        spinner.color = UIColor(palette.purple)
+        messageLabel.textColor = palette.ui.fg
+        spinner.color = palette.ui.purple
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
@@ -208,7 +208,7 @@ final class NativeAudioMessageView: UIView {
                 string: trimmedMessage,
                 attributes: [
                     .paragraphStyle: paragraphStyle,
-                    .foregroundColor: UIColor(palette.fg),
+                    .foregroundColor: palette.ui.fg,
                     .font: AppFont.messageBody,
                 ]
             )

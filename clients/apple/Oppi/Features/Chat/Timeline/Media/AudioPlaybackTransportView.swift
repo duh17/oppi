@@ -15,15 +15,15 @@ struct AudioPlayerChromeStyle {
     let speakerAccents: [UIColor]
 
     init(_ palette: ThemePalette = ThemeRuntimeState.currentPalette()) {
-        background = UIColor(palette.bg)
-        highlight = UIColor(palette.bgHighlight)
-        foreground = UIColor(palette.fg)
-        dimmed = UIColor(palette.fgDim)
-        comment = UIColor(palette.comment)
-        cyan = UIColor(palette.cyan)
-        purple = UIColor(palette.purple)
-        yellow = UIColor(palette.yellow)
-        orange = UIColor(palette.orange)
+        background = palette.ui.bg
+        highlight = palette.ui.bgHighlight
+        foreground = palette.ui.fg
+        dimmed = palette.ui.fgDim
+        comment = palette.ui.comment
+        cyan = palette.ui.cyan
+        purple = palette.ui.purple
+        yellow = palette.ui.yellow
+        orange = palette.ui.orange
         speakerAccents = [palette.orange, palette.blue, palette.green, palette.purple, palette.red, palette.cyan, palette.yellow]
             .map { UIColor($0) }
     }
