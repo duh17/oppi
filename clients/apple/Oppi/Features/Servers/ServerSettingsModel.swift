@@ -33,6 +33,11 @@ final class ServerSettingsModel {
     private(set) var isLoadingPairedDevices = false
     private(set) var pairedDevicesError: String?
     private(set) var isRevokingDevice = false
+    /// How many Revokes the server has refused. A devices read that began before
+    /// a refusal is not an answer to it: when it lands afterwards it keeps the
+    /// list it brought and leaves the refusal — "Not allowed." is about the
+    /// Revoke, not about the list.
+    @ObservationIgnored private var revokeGeneration = 0
 
     private(set) var updateInFlight = false
     private(set) var updateDidNotReturn = false
@@ -148,13 +153,14 @@ final class ServerSettingsModel {
     }
 
     private func loadPairedDevices(_ client: Client) async {
+        let generation = revokeGeneration
         isLoadingPairedDevices = true
         defer { isLoadingPairedDevices = false }
 
         do {
             let devices = try await client.api.listAuthDevices()
             pairedDevices = devices
-            pairedDevicesError = nil
+            if generation == revokeGeneration { pairedDevicesError = nil }
         } catch {
             guard !error.isLoadCancellation else { return }
             pairedDevicesError = error.localizedDescription
@@ -181,6 +187,7 @@ final class ServerSettingsModel {
             guard !error.isLoadCancellation else { return }
             // Another device may have revoked it first; refresh so no stale row stays.
             await loadPairedDevices(client)
+            revokeGeneration &+= 1
             pairedDevicesError = error.localizedDescription
         }
     }
