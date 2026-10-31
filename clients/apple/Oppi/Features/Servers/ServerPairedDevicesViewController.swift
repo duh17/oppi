@@ -15,6 +15,9 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
 
     enum Item: Hashable, Sendable {
         case device(String)
+        /// A Revoke the server refused: its own row, because it is about that Revoke
+        /// and not about the list, and its Retry would re-read a list that loaded fine.
+        case revokeFailure
     }
 
     let server: PairedServer
@@ -70,11 +73,14 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
 
     override func sections() -> [ListSection<Section, Item>] {
         // The load's one row says a read that failed, whether or not the devices it
-        // already had are still here; no second row repeats it.
-        [ListSection(
+        // already had are still here, and a Revoke's own refusal is a row of its own
+        // under the devices it kept; neither repeats the other.
+        var items = rows.map { Item.device($0.id) }
+        if model.revokeError != nil { items.append(.revokeFailure) }
+        return [ListSection(
             .devices,
             footer: String(localized: "Every paired device can see this list. Revoking disconnects that device immediately."),
-            items: rows.map { Item.device($0.id) },
+            items: items,
             state: stateRow(
                 hasContent: !rows.isEmpty,
                 isLoading: isLoading || model.isLoadingPairedDevices,
@@ -88,11 +94,27 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
     }
 
     override func inputs(of item: Item) -> AnyHashable {
-        guard case .device(let id) = item, let row = row(id) else { return AnyHashable(0) }
+        guard case .device(let id) = item, let row = row(id) else {
+            return AnyHashable(model.revokeError ?? "")
+        }
         return AnyHashable([row.title, row.caption, String(row.isThisDevice), String(row.canRevoke), String(model.isRevokingDevice)])
     }
 
     // MARK: - Cells
+
+    /// A Revoke the server refused: the kit row's words, with no Retry — the list
+    /// loaded fine, and the person asks again by swiping again.
+    private lazy var revokeRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            .failure(
+                title: String(localized: "Couldn't Revoke That Device"),
+                reason: model.revokeError,
+                retry: nil
+            ),
+            identifier: "server.pairedDevices.revokeFailure"
+        )
+    }
 
     private lazy var deviceRow = UICollectionView.CellRegistration<ServerPairedDeviceCell, Item> { [weak self] cell, _, item in
         guard let self, case .device(let id) = item, let row = row(id) else { return }
@@ -102,11 +124,16 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
     }
 
     override func prepareRegistrations() {
-        _ = deviceRow
+        _ = (deviceRow, revokeRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: deviceRow, for: indexPath, item: item)
+        switch item {
+        case .device:
+            collectionView.dequeueConfiguredReusableCell(using: deviceRow, for: indexPath, item: item)
+        case .revokeFailure:
+            collectionView.dequeueConfiguredReusableCell(using: revokeRow, for: indexPath, item: item)
+        }
     }
 
     // MARK: - Revoke

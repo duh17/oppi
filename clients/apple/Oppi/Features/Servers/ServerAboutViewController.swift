@@ -14,7 +14,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
     enum Item: Hashable, Sendable {
         case connection, uptime, piSDK, piTUI, oppiServer
         case voice(String)
-        case updateDidNotReturn, updateProgress, updateRestartNeeded, updateError
+        case updateStartError, updateDidNotReturn, updateProgress, updateRestartNeeded, updateError
         case minimumVersion, updateAvailable, updateButton, manualCommand, manualCopy
     }
 
@@ -100,6 +100,9 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
 
     override func sections() -> [ListSection<Section, Item>] {
         var statusItems: [Item] = [.connection]
+        // An update the server refused to start: its own row over the facts, not the
+        // load's row, because the page loaded fine.
+        if model.updateStartError != nil { statusItems.insert(.updateStartError, at: 0) }
         if let info = model.info {
             statusItems.append(contentsOf: [.uptime, .piSDK])
             if let cli = info.piCliVersion, !cli.isEmpty { statusItems.append(.piTUI) }
@@ -170,6 +173,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         case .piTUI: return AnyHashable(info?.piCliVersion ?? "")
         case .oppiServer: return AnyHashable(info?.version ?? "")
         case .voice(let feature): return AnyHashable(String(describing: backend(feature)))
+        case .updateStartError: return AnyHashable(model.updateStartError ?? "")
         case .updateDidNotReturn: return AnyHashable(0)
         case .manualCopy: return AnyHashable(copiedManualCommand)
         case .updateProgress:
@@ -215,7 +219,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         switch item {
         case .voice:
             collectionView.dequeueConfiguredReusableCell(using: voiceRow, for: indexPath, item: item)
-        case .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError:
+        case .updateStartError, .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError:
             collectionView.dequeueConfiguredReusableCell(using: noticeRow, for: indexPath, item: item)
         case .updateButton, .manualCopy:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
@@ -278,6 +282,15 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
     private func configureState(_ cell: SettingsStateRowCell, item: Item) {
         let update = model.info?.update
         switch item {
+        case .updateStartError:
+            cell.configure(
+                .failure(
+                    title: String(localized: "Couldn't Start the Update"),
+                    reason: model.updateStartError,
+                    retry: nil
+                ),
+                identifier: "server.update.startError"
+            )
         case .updateDidNotReturn:
             cell.configure(
                 .failure(String(localized: "Server did not come back. Nothing was rolled back. Check the machine it runs on."), retry: nil),
@@ -348,7 +361,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         case .voice(let feature): backend(feature).flatMap { $0.detail ?? $0.target }
         case .manualCommand: manualCommandText
         case .minimumVersion, .updateAvailable, .updateButton, .manualCopy,
-             .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError: nil
+             .updateStartError, .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError: nil
         }
     }
 }

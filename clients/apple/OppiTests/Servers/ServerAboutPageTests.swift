@@ -128,6 +128,42 @@ struct ServerAboutPageTests {
         #expect(Self.texts(in: page.view).contains("Update available: 1.5.0"))
     }
 
+    @Test("An update the server refuses to start says so in its own row, not the load's")
+    func refusedUpdateShowsItsOwnRow() async throws {
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            if request.httpMethod == "POST", request.url?.path.hasSuffix("/server/update") == true {
+                return try mockJSONResponse(status: 500, json: #"{"error":"npm is busy"}"#, for: request)
+            }
+            return nil
+        })
+        defer { routes.end() }
+        let serverId = "about-update-server"
+        let root = try makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "about-update.test")
+        )
+        let server = try #require(root.coordinator.serverStore.server(for: serverId))
+        let model = ServerSettingsModel.screenshotFixture(
+            coordinator: root.coordinator, serverId: serverId, currentDeviceId: "dev", updateAvailable: true
+        )
+        let page = About(model: model, server: server, root: root)
+        let window = try present(page)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        #expect(!page.items(in: .status).contains(.updateStartError))
+
+        await model.startServerUpdate()
+
+        // The page loaded fine: the refusal is the update's, and it has its own row.
+        #expect(model.updateStartError == "npm is busy")
+        #expect(model.loadError == nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.items(in: .status).first == .updateStartError
+        }, "the refused update is the first thing the status section says")
+        #expect(Self.texts(in: page.view).contains("Couldn't Start the Update"))
+        #expect(!page.items(in: .update).contains(.updateProgress), "nothing says an update is running")
+    }
+
     private static func texts(in view: UIView) -> [String] {
         var found: [String] = []
         func walk(_ view: UIView) {

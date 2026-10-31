@@ -314,9 +314,9 @@ struct ServerSettingsRouteTests {
 
         // A left with the switch, so the kit cancelled its load: a cancel is not the
         // model's failure, and A's facts stay as they were.
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelA.isLoading })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !pageA.isLoading })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
-            modelA.error == nil && modelA.loadError == nil
+            modelA.updateStartError == nil && modelA.loadError == nil
         }, "a cancelled load is not a failure")
 
         // B asked for its own facts; answering A changes nothing in B.
@@ -325,9 +325,9 @@ struct ServerSettingsRouteTests {
         }, "the new page's load asked B")
         HeldRequestProtocol.answer(host: "server-a.held.test")
         HeldRequestProtocol.answer(host: "server-b.held.test")
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelB.isLoading })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !pageB.isLoading })
         #expect(h.route.page === pageB)
-        #expect(modelB.error != nil || modelB.loadError != nil, "B settled on its own answer")
+        #expect(modelB.updateStartError != nil || modelB.loadError != nil, "B settled on its own answer")
     }
 
     @Test("A load the page cancels on its way out leaves the model's facts alone")
@@ -351,8 +351,10 @@ struct ServerSettingsRouteTests {
 
         // Leaving cancels its load: no error is written, and what the model had stays.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !about.isShowing })
+        // The page's own load is still out (every request is held), so what this
+        // asks is what the cancel wrote, not whether a page has stopped waiting.
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
-            !model.isLoading && model.loadError == nil && model.error == nil
+            model.loadError == nil && model.updateStartError == nil
                 && model.providerSetupState == .unknown
         }, "a cancelled load wrote nothing")
     }

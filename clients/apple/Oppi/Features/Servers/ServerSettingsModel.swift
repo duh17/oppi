@@ -18,13 +18,12 @@ final class ServerSettingsModel {
     let serverId: String
 
     private(set) var info: ServerInfo?
-    private(set) var isLoading = true
     /// Why the last load failed. Only a load writes it, so About This Server's
     /// Retry retries the load and an update's own failure keeps its own row.
     private(set) var loadError: String?
-    /// Anything else this server's actions failed at: an update that could not
-    /// start, and nothing the page's load row shows.
-    private(set) var error: String?
+    /// An update the server refused to start. About This Server says it in its own
+    /// row: the page's load row is not about this.
+    private(set) var updateStartError: String?
 
     private(set) var providerSetupState: ProviderSetupState = .unknown
     private(set) var connectedProviderCount = 0
@@ -33,11 +32,11 @@ final class ServerSettingsModel {
     private(set) var isLoadingPairedDevices = false
     private(set) var pairedDevicesError: String?
     private(set) var isRevokingDevice = false
-    /// How many Revokes the server has refused. A devices read that began before
-    /// a refusal is not an answer to it: when it lands afterwards it keeps the
-    /// list it brought and leaves the refusal — "Not allowed." is about the
-    /// Revoke, not about the list.
-    @ObservationIgnored private var revokeGeneration = 0
+    /// A Revoke the server refused. Its own row, because it is about that Revoke
+    /// and not about the list: a devices read that succeeds afterwards clears
+    /// `pairedDevicesError` and leaves this alone. The next Revoke, or a Retry of
+    /// the list, clears it.
+    private(set) var revokeError: String?
 
     private(set) var updateInFlight = false
     private(set) var updateDidNotReturn = false
@@ -92,7 +91,6 @@ final class ServerSettingsModel {
         #if DEBUG
         if isFixture { return }
         #endif
-        defer { isLoading = false }
         guard let client = await prepareClient() else {
             // A load this page cancelled on its way out is nobody's failure.
             guard !Task.isCancelled else { return }
@@ -105,7 +103,7 @@ final class ServerSettingsModel {
             let previousVersion = info?.version
             let next = try await client.api.serverInfo()
             info = next
-            error = nil
+            updateStartError = nil
             loadError = nil
             // The host answered, so a stale "did not come back" no longer applies;
             // its real update status is shown instead.
@@ -121,7 +119,7 @@ final class ServerSettingsModel {
                 startUpdatePolling(client: client, previousVersion: next.version)
             }
         } catch {
-            guard !error.isLoadCancellation else { return }
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             loadError = error.localizedDescription
         }
 
@@ -136,7 +134,7 @@ final class ServerSettingsModel {
             providerSetupState = ProviderSetupState(providerStatuses: statuses)
             connectedProviderCount = statuses.filter(\.authenticated).count
         } catch {
-            guard !error.isLoadCancellation else { return }
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             providerSetupState = .unavailable
             connectedProviderCount = 0
         }
@@ -144,6 +142,8 @@ final class ServerSettingsModel {
 
     /// Retry for the Paired Devices page.
     func reloadPairedDevices() async {
+        // A Retry of the list is not about the Revoke it refused: that row goes.
+        revokeError = nil
         guard let client = await prepareClient() else {
             guard !Task.isCancelled else { return }
             pairedDevicesError = Self.offlineReason
@@ -153,22 +153,23 @@ final class ServerSettingsModel {
     }
 
     private func loadPairedDevices(_ client: Client) async {
-        let generation = revokeGeneration
         isLoadingPairedDevices = true
         defer { isLoadingPairedDevices = false }
 
         do {
             let devices = try await client.api.listAuthDevices()
             pairedDevices = devices
-            if generation == revokeGeneration { pairedDevicesError = nil }
+            pairedDevicesError = nil
         } catch {
-            guard !error.isLoadCancellation else { return }
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             pairedDevicesError = error.localizedDescription
         }
     }
 
     func revokeDevice(_ row: PairedDeviceRoster.Row) async {
         guard row.canRevoke else { return }
+        // A new ask: the last refusal was about another Revoke.
+        revokeError = nil
         // Resolve the client once: a host switch while this runs must not
         // send the DELETE to a different server.
         guard let client = await prepareClient() else {
@@ -184,11 +185,10 @@ final class ServerSettingsModel {
             pairedDevicesError = nil
             await loadPairedDevices(client)
         } catch {
-            guard !error.isLoadCancellation else { return }
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             // Another device may have revoked it first; refresh so no stale row stays.
             await loadPairedDevices(client)
-            revokeGeneration &+= 1
-            pairedDevicesError = error.localizedDescription
+            revokeError = error.localizedDescription
         }
     }
 
@@ -199,7 +199,7 @@ final class ServerSettingsModel {
               !updateInFlight else { return }
         guard let client = await prepareClient() else {
             guard !Task.isCancelled else { return }
-            error = Self.offlineReason
+            updateStartError = Self.offlineReason
             return
         }
         let previousVersion = info?.version
@@ -213,8 +213,8 @@ final class ServerSettingsModel {
             }
             startUpdatePolling(client: client, previousVersion: previousVersion)
         } catch {
-            guard !(error is CancellationError) else { return }
-            self.error = error.localizedDescription
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
+            updateStartError = error.localizedDescription
             updateInFlight = false
         }
     }
@@ -250,7 +250,7 @@ final class ServerSettingsModel {
                         next.update = info?.update
                     }
                     info = next
-                    error = nil
+                    updateStartError = nil
                     if reported?.isInstalling == true {
                         notSettlingSince = nil
                     } else if notSettlingSince == nil {
@@ -359,7 +359,6 @@ extension ServerSettingsModel {
                 .init(feature: "liveVoice", label: "Live Voice", state: "needs_credentials", detail: "Sign in to xAI to start calls."),
             ]
         )
-        model.isLoading = false
         model.providerSetupState = .configured
         model.connectedProviderCount = 2
         let now = Int64(Date().timeIntervalSince1970 * 1_000)

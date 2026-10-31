@@ -86,7 +86,7 @@ struct ServerPairedDevicesPageTests {
             throw TestFailure("the offline list is not the failed row")
         }
         #expect(title == "Couldn't Load Devices")
-        #expect(reason == "Server is offline")
+        #expect(reason == "Devices could not be read.", "the row says the server's reason, not a stub's")
         #expect(retry != nil)
         #expect(state.identifier == "server.pairedDevices.state")
     }
@@ -176,20 +176,43 @@ struct ServerPairedDevicesPageTests {
 
         let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         #expect(rows.map(\.id).contains("dev-1"))
-        #expect(h.model.pairedDevicesError == "Not allowed.")
-        // A load still in flight would show its loading row instead, so the page has
-        // to have settled before its row says why.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             !h.page.isLoading && !h.model.isLoadingPairedDevices
         })
-        // The refusal is the list's own failed row, over the devices it kept.
-        let state = try #require(h.page.sections().first?.state)
-        guard case .failed(let title, let reason, let retry) = state.state else {
-            throw TestFailure("the refusal is not the failed row")
-        }
-        #expect(title == "Couldn't Load Devices")
-        #expect(reason == "Not allowed.")
-        #expect(retry != nil, "the row offers a Retry")
+
+        // The refusal is the page's own row, under the devices it kept: the list
+        // itself loaded fine, so its failed row would be about the wrong thing.
+        #expect(h.model.revokeError == "Not allowed.")
+        #expect(h.page.sections().first?.state == nil, "the list has no failure of its own")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            h.page.shownItems.contains(.revokeFailure)
+        }, "one row for the refusal")
+        #expect(h.page.collectionView.numberOfItems(inSection: 0) == rows.count + 1)
+    }
+
+    @Test("A devices read that lands after a refused Revoke keeps its reason")
+    func aReadAfterARefusalKeepsTheRevokeReason() async throws {
+        let h = try await makeHarness(failRevokes: true)
+        defer { hide(h) }
+
+        await h.page.revoke(try row("dev-1", in: h))
+        #expect(h.model.revokeError == "Not allowed.")
+
+        // The page loads again — the kit's load, not a Retry of the devices list: the
+        // read that answers afterwards is the list, and the list did not fail.
+        await h.model.load()
+        #expect(h.model.pairedDevicesError == nil, "the read succeeded")
+        #expect(h.model.revokeError == "Not allowed.", "a read is not an answer to the Revoke")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            h.page.shownItems.contains(.revokeFailure)
+        }, "the refusal's row is still there")
+
+        // Asking the list again is about the list: the refusal goes.
+        await h.model.reloadPairedDevices()
+        #expect(h.model.revokeError == nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            !h.page.shownItems.contains(.revokeFailure)
+        })
     }
 
     private static func buttonIdentifiers(in view: UIView) -> Set<String> {
@@ -223,7 +246,7 @@ private final class DeviceRosterAnswers: @unchecked Sendable {
         let url = request.url ?? URL(fileURLWithPath: "/")
         guard request.httpMethod == "DELETE" else {
             guard !failsReads else {
-                return try mockJSONResponse(status: 500, json: #"{"error":"Server is offline"}"#, for: request)
+                return try mockJSONResponse(status: 500, json: #"{"error":"Devices could not be read."}"#, for: request)
             }
             let gone = lock.withLock { deleted }
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
