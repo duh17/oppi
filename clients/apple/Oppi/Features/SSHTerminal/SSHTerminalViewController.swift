@@ -180,7 +180,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         self.hostLabel = hostLabel
         self.session = session
         self.composerConnection = composerConnection
-        rex = Self.makeRexMonitor(for: session?.connectedProfile)
+        rex = Self.makeRexMonitor(for: session?.connectedProfile, hosts: session?.rexHosts)
         let profileID = session?.connectedProfile?.id
         let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
         colorChoice = choice
@@ -664,7 +664,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             colorLoader = SSHTerminalColorLoader(profileID: hostID, choice: colorChoice, dark: appIsDark)
         }
         herdr = HerdrMonitor()
-        rex = Self.makeRexMonitor(for: session?.connectedProfile)
+        rex = Self.makeRexMonitor(for: session?.connectedProfile, hosts: session?.rexHosts)
         keymap = SSHTerminalKeymapLoader()
         inputMode = .terminal
         attention = SSHTerminalAttention()
@@ -2140,10 +2140,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// A terminal's Rex monitor tells the Terminal tab what it found on the
     /// host (`SSHTerminalRexHostStore`): a host Rex was read on gets a live Rex
     /// section there, and one with no `rex` loses it.
-    private static func makeRexMonitor(for profile: SSHTerminalProfile?) -> RexMonitor {
+    static func makeRexMonitor(for profile: SSHTerminalProfile?, hosts: SSHTerminalRexHostStore?) -> RexMonitor {
         let monitor = RexMonitor()
-        if let profile {
-            monitor.onFinding = { SSHTerminalProfileStore().rexHosts.record($0, on: profile) }
+        if let profile, let hosts {
+            monitor.onFinding = { hosts.record($0, on: profile) }
         }
         return monitor
     }
@@ -2168,7 +2168,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if channel.connected {
             openMultiplexerFolderIfNeeded()
             for action in SSHTerminalBarAction.overviews where overviewTasks[action] == nil {
-                guard !barContext.hidden.contains(action), let source = overview(action) else { continue }
+                guard barContext.polls(action), let source = overview(action) else { continue }
                 let channel = channel
                 overviewTasks[action] = Task { await source.run(on: channel) }
             }

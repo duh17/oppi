@@ -226,6 +226,16 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         case .herdr: [.rex]
         }
     }
+
+    /// Whether the terminal reads this multiplexer's overview in the
+    /// background. Hiding a button is presentation only, and Rex's read is also
+    /// how Oppi learns Rex is on the host (`SSHTerminalRexHostStore`, which the
+    /// Terminal tab follows), so a Herdr terminal still reads Rex though it
+    /// shows no Rex button. Herdr's read feeds nothing else, so a Rex pane
+    /// does not poll the host's Herdr.
+    func polls(_ action: SSHTerminalBarAction) -> Bool {
+        !hidden.contains(action) || action == .rex
+    }
 }
 
 /// What the bottom bar draws, split by pill, and what the … menu offers.

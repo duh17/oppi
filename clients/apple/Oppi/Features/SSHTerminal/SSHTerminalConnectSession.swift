@@ -82,6 +82,9 @@ final class SSHTerminalConnectSession {
         self.profileStore = profileStore
     }
 
+    /// Which hosts Rex was seen on, in the store this session's hosts live in.
+    var rexHosts: SSHTerminalRexHostStore { profileStore().rexHosts }
+
     func connect(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,

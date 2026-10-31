@@ -1233,3 +1233,95 @@ struct SSHTerminalRexSectionTests {
         #expect(asked == 2, "returning to the screen asks again")
     }
 }
+
+/// A terminal's connection whose Rex bridge is a fake host: every stream the
+/// terminal opens for `RexBridge.command` is the next one `serve` makes.
+private final class RexBridgeConnection: SSHTerminalConnection {
+    private let serve: @Sendable (@escaping SSHPTYByteSink) -> SSHExecStream
+
+    init(serve: @escaping @Sendable (@escaping SSHPTYByteSink) -> SSHExecStream) { self.serve = serve }
+
+    func close() {}
+    func send(_ bytes: Data) async throws {}
+    func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        return serve(sink)
+    }
+    func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
+    func checkAlive() async throws {}
+    func cancel() async {}
+}
+
+/// The terminal's Rex monitor tells the Terminal tab what it found on the
+/// host, and it must keep doing that where the bar hides Rex (a terminal whose
+/// Run on Connect command is `herdr`): hiding is presentation only.
+@Suite("Rex findings from a Herdr terminal", .serialized, .timeLimit(.minutes(1)))
+@MainActor
+struct SSHTerminalRexFindingBarContextTests {
+    private let hosts = IsolatedHosts()
+    private let mini = SSHTerminalProfile(host: "mac-mini", username: "chen", authentication: .deviceKey, startupCommand: "herdr")
+
+    @Test func aTerminalReadsTheMultiplexersItsBarHidesOnlyWhenTheReadIsUsed() {
+        let herdr = SSHTerminalBarContext(isRexPane: false, command: "herdr")
+        let rexPane = SSHTerminalBarContext(isRexPane: true, command: nil)
+        #expect(herdr == .herdr && rexPane == .rex)
+        #expect(herdr.hidden == [.rex], "the Herdr terminal's bar shows no Rex")
+        #expect(herdr.polls(.rex) && herdr.polls(.herdr), "but it still reads Rex, whose findings the tab uses")
+        #expect(rexPane.polls(.rex) && !rexPane.polls(.herdr), "a Rex pane does not poll the host's Herdr")
+        let plain = SSHTerminalBarContext.plain
+        #expect(plain.polls(.rex) && plain.polls(.herdr))
+    }
+
+    private func mountHerdrTerminal(
+        serve: @escaping @Sendable (@escaping SSHPTYByteSink) -> SSHExecStream
+    ) throws -> (window: UIWindow, channel: SSHTerminalChannel) {
+        try hosts.save([mini])
+        let session = SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store)
+        session.connectedProfile = mini
+        let channel = try SSHTerminalChannel()
+        channel.opened(RexBridgeConnection(serve: serve), command: "herdr")
+        // The screen leaves when its session stops showing a terminal.
+        session.channel = channel
+        session.showsTerminal = true
+        let controller = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {}, session: session)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        window.rootViewController?.view.layoutIfNeeded()
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        return (window, channel)
+    }
+
+    private func tearDown(_ mounted: (window: UIWindow, channel: SSHTerminalChannel)) {
+        mounted.window.isHidden = true
+        mounted.window.rootViewController = nil
+        mounted.channel.close(reason: "done")
+    }
+
+    /// Rex read on the host of a `herdr` terminal is remembered, so the
+    /// Terminal tab follows that host.
+    @Test func aHerdrTerminalThatReadsRexRemembersTheHost() async throws {
+        let world = RexFakeWorld.preview()
+        let mounted = try mountHerdrTerminal { world.host().open(sink: $0) }
+        defer { tearDown(mounted) }
+        #expect(!hosts.store().rexHosts.hasSeenRex(on: mini))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.hosts.store().rexHosts.hasSeenRex(on: self.mini) })
+        #expect(!world.requests("session.attach_all").isEmpty, "the terminal read Rex though its bar shows no Rex")
+    }
+
+    /// No `rex` on the host of a `herdr` terminal: the memory is dropped.
+    @Test func aHerdrTerminalOnAHostWithoutRexForgetsTheHost() async throws {
+        hosts.store().rexHosts.markSeen(mini)
+        let mounted = try mountHerdrTerminal { sink in
+            let host = RexFakeHost { _ in .hold }
+            let stream = host.open(sink: sink)
+            Task { host.end(status: 5) }
+            return stream
+        }
+        defer { tearDown(mounted) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !self.hosts.store().rexHosts.hasSeenRex(on: self.mini) })
+    }
+}
