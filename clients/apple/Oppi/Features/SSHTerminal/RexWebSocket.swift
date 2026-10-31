@@ -1,11 +1,16 @@
+import Compression
 import CryptoKit
 import Foundation
 
 /// The client half of a WebSocket (RFC 6455) over a byte pipe iOS cannot open
 /// as a socket: an SSH exec stream to Rex's Unix socket on the host. Only what
 /// Rex needs: one upgrade, text and binary messages, ping and pong, and close.
-/// It offers no extension, so the server sends plain frames; Rex works with or
-/// without compression.
+///
+/// It offers compression (permessage-deflate, RFC 7692) with no context kept
+/// between messages, which Rex accepts: each compressed message from Rex
+/// inflates on its own. A pane's snapshot shrinks to about a fifth on the wire.
+/// This client's own messages (requests, keys) go uncompressed, as the
+/// extension allows.
 struct RexWebSocketCodec {
     enum Message: Equatable, Sendable {
         case text(String)
@@ -39,11 +44,17 @@ struct RexWebSocketCodec {
     /// RFC 6455 section 1.3.
     private static let acceptGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+    /// RFC 7692. Without context takeover each message is a deflate stream of
+    /// its own, so no inflater state outlives a message.
+    static let compressionOffer = "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+
     let key: String
     let subprotocol: String
     private(set) var upgraded = false
+    /// The server accepted `compressionOffer`: a data message may arrive compressed.
+    private(set) var compressed = false
     private var buffer = Data()
-    private var fragments: (opcode: Opcode, payload: Data)?
+    private var fragments: (opcode: Opcode, compressed: Bool, payload: Data)?
 
     init(subprotocol: String, key: String = Self.makeKey()) {
         self.subprotocol = subprotocol
@@ -70,6 +81,7 @@ struct RexWebSocketCodec {
             "Sec-WebSocket-Key: \(key)",
             "Sec-WebSocket-Version: 13",
             "Sec-WebSocket-Protocol: \(subprotocol)",
+            "Sec-WebSocket-Extensions: \(Self.compressionOffer)",
         ]
         return Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8)
     }
@@ -147,13 +159,43 @@ struct RexWebSocketCodec {
         guard headers["sec-websocket-protocol"] == subprotocol else {
             throw Failure.protocolViolation("the server chose subprotocol \(headers["sec-websocket-protocol"] ?? "none"), not \(subprotocol)")
         }
+        if let extensions = headers["sec-websocket-extensions"] {
+            try acceptCompression(extensions)
+        }
         buffer.removeSubrange(buffer.startIndex..<end.upperBound)
         upgraded = true
         return true
     }
 
+    /// The server's answer to `compressionOffer`: the one extension, with
+    /// `server_no_context_takeover`, since this client inflates each message
+    /// on its own. A window size is fine: an inflater reads any window.
+    private mutating func acceptCompression(_ answer: String) throws {
+        let offers = answer.split(separator: ",")
+        guard offers.count == 1 else { throw Failure.protocolViolation("more than one extension: \(answer)") }
+        let parameters = offers[0].split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        guard parameters.first == "permessage-deflate" else {
+            throw Failure.protocolViolation("an extension this client did not offer: \(answer)")
+        }
+        var noContextTakeover = false
+        for parameter in parameters.dropFirst() {
+            let name = parameter.split(separator: "=", maxSplits: 1).first.map(String.init) ?? parameter
+            switch name {
+            case "server_no_context_takeover": noContextTakeover = true
+            case "client_no_context_takeover", "server_max_window_bits", "client_max_window_bits": break
+            default: throw Failure.protocolViolation("a compression parameter this client does not know: \(parameter)")
+            }
+        }
+        guard noContextTakeover else {
+            throw Failure.protocolViolation("compression that keeps its context between messages")
+        }
+        compressed = true
+    }
+
     private struct Frame {
         let fin: Bool
+        /// RSV1: the message this frame starts is compressed.
+        let compressed: Bool
         let opcode: Opcode
         let payload: Data
     }
@@ -164,9 +206,14 @@ struct RexWebSocketCodec {
         let start = buffer.startIndex
         guard buffer.count >= 2 else { return nil }
         let first = buffer[start], second = buffer[start + 1]
-        guard first & 0x70 == 0 else { throw Failure.protocolViolation("a frame with reserved bits set") }
         guard let opcode = Opcode(rawValue: first & 0x0F) else {
             throw Failure.protocolViolation("unknown frame opcode \(first & 0x0F)")
+        }
+        // RSV1 marks a compressed message, on its first frame only and only
+        // once negotiated; RSV2 and RSV3 have no meaning here.
+        let compressedFrame = first & 0x40 != 0
+        guard first & 0x30 == 0, !compressedFrame || (compressed && (opcode == .text || opcode == .binary)) else {
+            throw Failure.protocolViolation("a frame with reserved bits set")
         }
         guard second & 0x80 == 0 else { throw Failure.protocolViolation("a masked frame from the server") }
         var offset = 2
@@ -191,17 +238,19 @@ struct RexWebSocketCodec {
         guard buffer.count >= total else { return nil }
         let payload = Data(buffer[(start + offset)..<(start + total)])
         buffer.removeSubrange(start..<(start + total))
-        return Frame(fin: fin, opcode: opcode, payload: payload)
+        return Frame(fin: fin, compressed: compressedFrame, opcode: opcode, payload: payload)
     }
 
     /// A data frame, joined with the fragments before it. Nil until the
     /// message's last fragment.
     private mutating func assemble(_ frame: Frame) throws -> Message? {
         var opcode = frame.opcode
+        var compressedMessage = frame.compressed
         var payload = frame.payload
         if opcode == .continuation {
             guard let started = fragments else { throw Failure.protocolViolation("a continuation with no message") }
             opcode = started.opcode
+            compressedMessage = started.compressed
             payload = started.payload + payload
         } else if fragments != nil {
             throw Failure.protocolViolation("a new message inside a fragmented one")
@@ -210,10 +259,13 @@ struct RexWebSocketCodec {
             throw Failure.protocolViolation("a message of \(payload.count) bytes")
         }
         guard frame.fin else {
-            fragments = (opcode, payload)
+            fragments = (opcode, compressedMessage, payload)
             return nil
         }
         fragments = nil
+        if compressedMessage {
+            payload = try Self.inflate(payload)
+        }
         if opcode == .text {
             guard let text = String(data: payload, encoding: .utf8) else {
                 throw Failure.protocolViolation("a text message that is not UTF-8")
@@ -221,5 +273,53 @@ struct RexWebSocketCodec {
             return .text(text)
         }
         return .binary(payload)
+    }
+
+    /// One compressed message's payload, inflated: a raw DEFLATE stream that
+    /// ends where the sender cut its sync flush (RFC 7692 7.2.2), so the
+    /// empty stored block that flush ended with goes back on first. More than
+    /// `maximumMessageBytes` inflated is refused, wherever the message claims to end.
+    static func inflate(_ payload: Data) throws -> Data {
+        let input = payload + Data([0x00, 0x00, 0xFF, 0xFF])
+        let stream = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
+        defer { stream.deallocate() }
+        guard compression_stream_init(stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
+            throw Failure.protocolViolation("no inflater")
+        }
+        defer { compression_stream_destroy(stream) }
+        let chunk = 64 * 1024
+        let window = UnsafeMutablePointer<UInt8>.allocate(capacity: chunk)
+        defer { window.deallocate() }
+        var output = Data()
+        try input.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let source = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            stream.pointee.src_ptr = source
+            stream.pointee.src_size = raw.count
+            while true {
+                stream.pointee.dst_ptr = window
+                stream.pointee.dst_size = chunk
+                let unread = stream.pointee.src_size
+                let status = compression_stream_process(stream, 0)
+                let produced = chunk - stream.pointee.dst_size
+                output.append(window, count: produced)
+                guard output.count <= maximumMessageBytes else {
+                    throw Failure.protocolViolation("a compressed message of more than \(maximumMessageBytes) bytes")
+                }
+                switch status {
+                case COMPRESSION_STATUS_END:
+                    return
+                case COMPRESSION_STATUS_OK:
+                    // Everything in, and room left over: nothing more to come.
+                    if stream.pointee.src_size == 0, produced < chunk { return }
+                    // No input read and no output: a stream cut short.
+                    if produced == 0, stream.pointee.src_size == unread {
+                        throw Failure.protocolViolation("a compressed message that ends early")
+                    }
+                default:
+                    throw Failure.protocolViolation("a compressed message that does not inflate")
+                }
+            }
+        }
+        return output
     }
 }

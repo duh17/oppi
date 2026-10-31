@@ -234,6 +234,134 @@ struct RexClientProtocolTests {
     }
 }
 
+/// What a real Rex sent on a data connection that negotiated compression,
+/// captured from a throwaway session started with no login shell
+/// (`rex new --shell none -- sh -c 'clear; printf "\e[1mrex compressed
+/// fixture\e[0m\n"; seq 1 40; exec sleep 600'`), so its screen holds only that
+/// text: no login banner, folder, or title. Its upgrade answer (to key
+/// `dGhlIHNhbXBsZSBub25jZQ==`), then the raw frames after it: WELCOME (too
+/// small to compress), and one compressed binary message holding the snapshot
+/// and Rex's `resize` message, whose `owner` is that throwaway session's
+/// creating client.
+private let compressedRexUpgrade = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-Websocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-Websocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\nSec-Websocket-Protocol: rex.data.terminal.v1\r\nUpgrade: websocket\r\nDate: Sat, 31 Oct 2026 04:23:36 GMT\r\n\r\n"
+private let compressedRexFrames = Data(base64Encoded: [
+    "giCBw97L232PR69/SVNt+1weDAAAAGDqAAB+DALyMEiHUMJ+A7V8k89r3eUSh5/37bn3hru4cLOwQiu230UFSeD745yTc06hq0LF",
+    "RVqIiy6kQ5OemMChDWloa0WIq4HgQiGgbgqKSHeDQRE1lqI0FOkigjKSlYuAUKH6H4wQ09YidJ7FvMPnmc0Lc+ql0zOvzEyfSSQ+",
+    "OADvzlbjZ3iWx3UQOA2QKIGUUgIYo1VwAfhHfwotgNgvUtrnueeP3puf//ybhT+2Vt766NbG+tdrt764c3drfn7+p+mZL79/+dc7",
+    "p65/svPdez8v3f70/v37AAgoGDgEAiKIIoY4EiiooIoa6mhgYIIpZphjgYMLrrjhjgcBIYQSRjgRAoIIKpjgQoggIiIqYiIuEqKI",
+    "iqiKmqiLhhhiIqZiJuZiIY64iKu4ibt4SCAhEiphEi4RCoooqpjiSqigIiqqYiquEqqoiqqqmqqrhhpqoqZqpuZqoY66qKu6qbt6",
+    "aKAhGqphGq4RBoYYapjhRphgIiZqYiZuEqaYiqmamqmbhhlmYqZmZuZmYY65mKu5mbt5WGAhFmphFm4RDo446pjjTrjgIi7qYi7u",
+    "Eq64iqu6mqu7hhtu4qZu5uZu4Y67uKu7ubt7eOAhHuphHu4RAYEEGljgQYQQIiEaYiEeEqGESqiGWqiHRhhhEqZhFuZhEU64hGu4",
+    "hXt4RBAhERphER4RY2Nj4+Pjhw8fPnbsWFmWg8Hg5MmT09PTZ8+enZ2dHY1GV65cWV1dXVtbW19fv3Hjxs2bNzc2NjY3N7e2tra3",
+    "t3d2dnZ3dx88ePD0o3lMpgs03946B4nxR8FB0sPnk4w9OR7gVIKv/pePnuHFvZ1VbsORv8y9s35EAo48w91Eaz3R+iXRWoXW24nW",
+    "ZqL1WaJ1O9F6mN9LtO7tu+/su+8nWh/v724nWj/+zSdRkahJNCTaJDokuiSmSPRI9MlUJZmqIlPVZKqGTNUmU3XIVF0y1RSZqkem",
+    "6pOpSzJ1RaauydQNmbpNpu6Qqbtk6ikydY9M3SfTlGSaikxTk2kaMk2bTNMh03TJNFNkmh6Zpk+mXe5/03/22gurcz/8C4DdI7//",
+    "t8W/gQ//v3ZuL9yb4MRvMycOyfLwWnW80yvrbq9bVv1+u1vW7bJbH3+jWHl9aVgMiuXh5cXrw2KimLs0ulwMeuVEsXzp6uViULcn",
+    "irnhaCRXFy+sLMjStWLQmyjmhqORLAwXX1tYkaVrxaDqThSXrl4cLheDYm60OLy4Miir81W/bOrJpn2+mpzq1fXk+U6/nKw6852m",
+    "KeeaqlcWbx569U8A",
+].joined())!
+
+@Suite("Rex WebSocket compression")
+struct RexWebSocketCompressionTests {
+    /// The client offers compression with no context between messages, Rex
+    /// accepts it, and a message it compressed inflates to the pane's
+    /// snapshot: the screen restores, and Rex's `resize` message leaves it.
+    @Test @MainActor func aRealCompressedRexStreamInflatesToThePanesScreen() throws {
+        let ticket = Data(repeating: 9, count: 16)
+        var stream = RexDataStream(ticket: ticket, key: "dGhlIHNhbXBsZSBub25jZQ==")
+        let request = String(decoding: stream.upgradeRequest, as: UTF8.self)
+        #expect(request.contains("Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\n"))
+
+        #expect(stream.receive(Data(compressedRexUpgrade.utf8)).count == 1, "HELLO")
+        var outputs: [RexDataStream.Output] = []
+        // A few bytes at a time, as an SSH channel may deliver them.
+        var index = compressedRexFrames.startIndex
+        while index < compressedRexFrames.endIndex {
+            let end = min(index + 100, compressedRexFrames.endIndex)
+            outputs += stream.receive(compressedRexFrames[index..<end])
+            index = end
+        }
+        guard case .snapshot(let screen)? = outputs.first, outputs.count == 2, case .snapshotRecords(let records) = outputs[1] else {
+            Issue.record("expected the screen and its records, got \(outputs)")
+            return
+        }
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 80, rows: 24)) { _ in }
+        try engine.beginRestore(screen)
+        #expect(try engine.continueRestore(records))
+        let text = { engine.frame().rows.map { $0.map(\.text).joined() } }
+        #expect(text().contains { $0.hasPrefix("40") }, "the screen: the last number printed")
+        engine.scrollToRow(0)
+        #expect(text().contains { $0.contains("rex compressed fixture") }, "the history: the line printed first")
+    }
+
+    /// A compressed message may span frames: only its first frame says so,
+    /// and it inflates once whole.
+    @Test func aCompressedMessageMaySpanFrames() throws {
+        let compressed = try Self.compressedPayload()
+        let whole = try RexWebSocketCodec.inflate(compressed)
+        var codec = RexWebSocketCodec(subprotocol: "rex.data.terminal.v1", key: "dGhlIHNhbXBsZSBub25jZQ==")
+        _ = try codec.receive(Data(compressedRexUpgrade.utf8))
+        #expect(codec.compressed)
+        let third = compressed.count / 3
+        let frames = Self.frame(0x40 | 0x02, compressed.prefix(third), fin: false)
+            + Self.frame(0x00, compressed.dropFirst(third).prefix(third), fin: false)
+            + Self.frame(0x00, compressed.dropFirst(2 * third), fin: true)
+        #expect(try codec.receive(frames).messages == [.binary(whole)])
+    }
+
+    /// Compression is only what was agreed: a compressed frame on a
+    /// connection that did not negotiate it, on a continuation, or on a control
+    /// frame breaks the protocol, and so does an answer that keeps context
+    /// between messages or names a parameter this client does not know. A
+    /// message that inflates past the cap is refused.
+    @Test func compressionIsOnlyWhatWasNegotiated() throws {
+        let compressed = try Self.compressedPayload()
+        var plain = RexWebSocketCodec(subprotocol: "rex.data.terminal.v1")
+        _ = try plain.receive(upgradeAnswer(key: plain.key, subprotocol: "rex.data.terminal.v1"))
+        #expect(!plain.compressed)
+        #expect(throws: RexWebSocketCodec.Failure.self) { try plain.receive(Self.frame(0x40 | 0x02, compressed, fin: true)) }
+
+        for bad in [Self.frame(0x02, compressed.prefix(4), fin: false) + Self.frame(0x40, compressed.dropFirst(4), fin: true),
+                    Self.frame(0x40 | 0x09, Data(), fin: true)] {
+            var codec = RexWebSocketCodec(subprotocol: "rex.data.terminal.v1", key: "dGhlIHNhbXBsZSBub25jZQ==")
+            _ = try codec.receive(Data(compressedRexUpgrade.utf8))
+            #expect(throws: RexWebSocketCodec.Failure.self) { try codec.receive(bad) }
+        }
+
+        for answer in ["permessage-deflate", "permessage-deflate; server_no_context_takeover; future_thing", "x-webkit-deflate-frame"] {
+            var codec = RexWebSocketCodec(subprotocol: "rex.data.terminal.v1", key: "dGhlIHNhbXBsZSBub25jZQ==")
+            let head = compressedRexUpgrade.replacingOccurrences(
+                of: "permessage-deflate; client_no_context_takeover; server_no_context_takeover", with: answer
+            )
+            #expect(throws: RexWebSocketCodec.Failure.self, "\(answer)") { try codec.receive(Data(head.utf8)) }
+        }
+
+        let bomb = try #require((Data(count: RexWebSocketCodec.maximumMessageBytes + 1) as NSData).compressed(using: .zlib) as Data?)
+        #expect(throws: RexWebSocketCodec.Failure.self) { try RexWebSocketCodec.inflate(bomb) }
+    }
+
+    /// The compressed message in the captured frames: the second frame's payload.
+    private static func compressedPayload() throws -> Data {
+        let bytes = [UInt8](compressedRexFrames)
+        let welcome = 2 + Int(bytes[1] & 0x7F)
+        try #require(bytes[welcome] == 0xC2 && bytes[welcome + 1] == 126, "a final, compressed binary frame")
+        let length = Int(bytes[welcome + 2]) << 8 | Int(bytes[welcome + 3])
+        return Data(bytes[(welcome + 4)..<(welcome + 4 + length)])
+    }
+
+    /// An unmasked server frame with `first`'s opcode and reserved bits.
+    private static func frame(_ first: UInt8, _ payload: Data, fin: Bool) -> Data {
+        var frame = Data([(fin ? 0x80 : 0) | first])
+        if payload.count < 126 {
+            frame.append(UInt8(payload.count))
+        } else {
+            frame.append(126)
+            frame.append(contentsOf: [UInt8(payload.count >> 8), UInt8(payload.count & 0xFF)])
+        }
+        return frame + payload
+    }
+}
+
 /// A byte pipe that records what the control client writes.
 private final class WrittenFrames: Sendable {
     let frames = Mutex<[Data]>([])
