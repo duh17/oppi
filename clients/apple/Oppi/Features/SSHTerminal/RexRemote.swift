@@ -641,11 +641,11 @@ final class RexMonitor: SSHTerminalOverviewSource {
         case absent(RexAbsence)
     }
 
-    /// How long a burst of changes waits before it reaches `snapshot`, so a
-    /// busy pane is one UI update, not one per event.
     /// The saved host this follows, whose Rex may be reached over Tailscale
     /// (`RexRoutePlan`); nil reads it over the SSH bridge only.
     @ObservationIgnored private let directHost: RexDirectHost?
+    /// How long a burst of changes waits before it reaches `snapshot`, so a
+    /// busy pane is one UI update, not one per event.
     @ObservationIgnored private let publishDelay: Duration
     @ObservationIgnored private let retryDelay: @MainActor (Retry, Int) -> Duration
     @ObservationIgnored private var mirror = RexMirror()
