@@ -412,6 +412,43 @@ final class RouterModalSitesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// Swiping left past the last pane opens a new one, shown on arrival; the
+    /// switcher counts it and rolls to it. The switcher menu's New Pane item
+    /// opens another, and a swipe right at the first pane opens nothing.
+    func testRexTerminalSwipePastTheLastPaneOpensANewPane() {
+        launch(screen: "ssh-terminal-rex-panes")
+        let switcher = app.buttons["sshTerminal.bar.rexPanes"]
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
+        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3")
+        let grid = app.descendants(matching: .any)["sshTerminal.grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+
+        // The first pane's edge gives way and opens nothing.
+        grid.swipeRight()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "A swipe right at the first pane must not change anything")
+
+        // Walk to the last pane, then swipe past it.
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor(switcher.value as? String == "tail -f server.log, 2 of 3"))
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"))
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor(switcher.value as? String == "new shell, 4 of 4"), "A swipe past the last pane must open and show a new pane")
+        attachScreenshot("rex-panes-new")
+        XCTAssertFalse(app.buttons["sshTerminal.openNotice"].exists, "A pane that opened has no error to show")
+
+        // The menu's last item opens another one after the shown pane.
+        switcher.tap()
+        let newPane = app.buttons["sshTerminal.rexPanes.new"]
+        XCTAssertTrue(newPane.waitForExistence(timeout: 5), "The switcher's menu has no New Pane item")
+        XCTAssertEqual(newPane.label, "New Pane")
+        attachScreenshot("rex-panes-new-menu")
+        newPane.tap()
+        XCTAssertTrue(waitFor(switcher.value as? String == "new shell, 5 of 5"), "The menu's New Pane must open and show a pane")
+        assertRunning()
+    }
+
     func testProgramStatusPopoverOpensAndClosesOnOutsideTap() {
         launch(screen: "ssh-terminal-status-blocked")
         let glyph = app.buttons["sshTerminal.programStatus"]

@@ -180,14 +180,19 @@ final class RexFakeSession: Sendable {
         let screen: String
         /// The OSC 7501 records `program_status` answers, as Rex's JSON; none for a plain shell.
         var records = "[]"
+        /// The folder `pwd` answers (a path or an OSC 7 `file://` URL); none until the shell reports.
+        var pwd: String?
     }
 
     private struct State {
+        var panes: [Pane]
         var view: String
         var revision = 1
         /// Each ticket `data.connect` issued, by its pane.
         var tickets: [Data: String] = [:]
         var issued = 0
+        /// Panes `session.new_split` made, for their block ids.
+        var created = 0
         var served: [RexFakeDataHost] = []
         var held: Set<String> = []
         var refusing: Set<String> = []
@@ -196,17 +201,20 @@ final class RexFakeSession: Sendable {
     }
 
     let sessionID: String
-    let panes: [Pane]
-    private let state = Mutex(State(view: ""))
+    private let state: Mutex<State>
     private let host = Mutex<RexFakeHost?>(nil)
 
     /// `panes` sit in one window, left to right, in the tiled layer.
     init(sessionID: String, panes: [Pane]) {
         self.sessionID = sessionID
-        self.panes = panes
+        state = Mutex(State(panes: panes, view: ""))
         let view = viewJSON(revision: 1)
         state.withLock { $0.view = view }
     }
+
+    /// The panes in the window, left to right: the ones the session started
+    /// with and the ones `session.new_split` added.
+    var panes: [Pane] { state.withLock { $0.panes } }
 
     /// The session's view as Rex answers `session.view`: one window, a tiled
     /// layer, `layout.rect [0,0,1,1]`, and a split per extra pane (horizontal,
@@ -368,6 +376,36 @@ final class RexFakeSession: Sendable {
         return #"{"ticket":"\#(text)","expires_in_ms":60000}"#
     }
 
+    /// `session.new_split` with one shell block after the anchor: the pane is
+    /// added to the window's row and the view's revision moves, and the view
+    /// event follows the answer, as Rex's does. The pane's folder, when the
+    /// request names one, is kept as its `pwd`.
+    private func newSplit(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any],
+              let anchor = object["anchor_id"] as? String,
+              let layout = object["layout"] as? [String: Any], let shell = layout["block"] as? [String: Any],
+              shell["flavor"] as? String == "com.superlogical.terminal.shell" else {
+            return .refuse(code: "bad_request", message: "unexpected new_split")
+        }
+        let cwd = (shell["options"] as? [String: Any])?["cwd"] as? String
+        let made: (block: String, revision: Int)? = state.withLock { state in
+            guard let index = state.panes.firstIndex(where: { $0.block == anchor }) else { return nil }
+            state.created += 1
+            let block = "block:created-\(state.created)"
+            state.panes.insert(
+                Pane(block: block, label: "shell", title: "new shell", screen: "screen of new pane\r\n$ ", pwd: cwd),
+                at: index + 1
+            )
+            state.revision += 1
+            return (block, state.revision)
+        }
+        guard let made else { return .refuse(code: "not_found", message: "no such block") }
+        let view = viewJSON(revision: made.revision)
+        state.withLock { $0.view = view }
+        Task { [weak self] in self?.viewChanged(revision: made.revision) }
+        return .result(#"{"anchor_id":"\#(anchor)","block_ids":["\#(made.block)"],"split_ids":["split:created"],"revision":\#(made.revision)}"#)
+    }
+
     private func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
         let block = request.string("block_id") ?? ""
         let refused = state.withLock { state in
@@ -390,6 +428,11 @@ final class RexFakeSession: Sendable {
             return .result(#"{"title":"\#(panes.first { $0.block == block }?.title ?? "")"}"#)
         case "com.superlogical.terminal.program_status":
             return .result(#"{"records":\#(panes.first { $0.block == block }?.records ?? "[]")}"#)
+        case "com.superlogical.terminal.pwd":
+            guard let pwd = panes.first(where: { $0.block == block })?.pwd else { return .result("{}") }
+            return .result(#"{"pwd":"\#(pwd)"}"#)
+        case "session.new_split":
+            return newSplit(request)
         case "com.superlogical.terminal.resize", "com.superlogical.terminal.write":
             return .result("{}")
         default:

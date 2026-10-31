@@ -2085,7 +2085,7 @@ struct SSHTerminalTests {
 
         // VoiceOver's actions are the swipe's owner: the grid says so, and they move one pane.
         let actions = try #require(grid.accessibilityCustomActions)
-        #expect(actions.map(\.name) == ["Next Pane", "Previous Pane"])
+        #expect(actions.map(\.name) == ["Next Pane", "Previous Pane", "New Pane"])
         #expect(grid.stepPane(-1) == true && grid.stepPane(1) == true)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
         #expect(grid.stepPane(1) == false, "the last pane has none after it")
@@ -2130,7 +2130,7 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { onScreen() && minimap.alpha == 1 })
         #expect(minimap.isUserInteractionEnabled && !minimap.accessibilityElementsHidden)
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) { onScreen() }, "it stays while dragging")
-        grid.paneTransition.drag(translationX: -150, neighbour: "title b")
+        grid.paneTransition.drag(translationX: -150, neighbour: "title b", offersNewPane: true)
         #expect(onScreen())
 
         // Letting go past the threshold commits: still there, the highlight moves, then it fades away.
@@ -2146,7 +2146,7 @@ struct SSHTerminalTests {
         // A short swipe springs back: shown while down, gone after, the pane unchanged.
         #expect(grid.paneTransition.beginDrag())
         #expect(onScreen())
-        grid.paneTransition.drag(translationX: 20, neighbour: "title a")
+        grid.paneTransition.drag(translationX: 20, neighbour: "title a", offersNewPane: true)
         grid.paneTransition.endDrag(committing: nil, velocityX: 0)
         #expect(onScreen(), "still there while the screen springs back")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { inert() })
@@ -2259,7 +2259,7 @@ struct SSHTerminalTests {
         // The finger is down and the session already took the switch: the new window's map is there.
         #expect(grid.paneTransition.beginDrag())
         #expect(inert(), "no map for a window of one pane")
-        grid.paneTransition.drag(translationX: -150, neighbour: "title b")
+        grid.paneTransition.drag(translationX: -150, neighbour: "title b", offersNewPane: true)
         #expect(grid.paneStepping?.step(1) == true)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.showsMinimap && shown() }, "the map arrives with the new window")
         grid.paneTransition.endDrag(committing: 1, velocityX: -800)
@@ -2318,8 +2318,9 @@ struct SSHTerminalTests {
 
     /// The switcher's menu lists the panes in strip order with the shown one
     /// checked, in one section per window when the session has several, and a
-    /// choice is the pane's block id handed to the owner.
-    @Test func theSwitcherMenuListsPanesInStripOrderAndSectionsWindows() {
+    /// choice is the pane's block id handed to the owner. New Pane ends it, in a
+    /// group of its own, and asks the owner for a pane.
+    @Test func theSwitcherMenuListsPanesInStripOrderAndSectionsWindows() throws {
         func state(windows: Bool) -> RexSessionState {
             RexSessionState(
                 panes: [
@@ -2331,25 +2332,34 @@ struct SSHTerminalTests {
             )
         }
         var chosen: [String] = []
-        let flat = SSHTerminalRexPaneMenu.elements(state: state(windows: false)) { chosen.append($0) }
+        var created = 0
+        let flat = SSHTerminalRexPaneMenu.elements(state: state(windows: false), select: { chosen.append($0) }, newPane: { created += 1 })
         let actions = flat.compactMap { $0 as? UIAction }
         #expect(actions.map(\.title) == ["pi", "logs", "shell"])
         #expect(actions.map(\.state) == [.off, .on, .off], "the shown pane is checked")
         #expect(actions.map(\.accessibilityIdentifier) == (0...2).map { "sshTerminal.rexPanes.\($0)" })
         actions[2].performWithSender(nil, target: nil)
         #expect(chosen == ["c"])
+        let newPane = try #require((flat.last as? UIMenu)?.children.first as? UIAction)
+        #expect(flat.last is UIMenu && (flat.last as? UIMenu)?.options.contains(.displayInline) == true, "its own group, last")
+        #expect(newPane.title == "New Pane" && newPane.accessibilityIdentifier == "sshTerminal.rexPanes.new")
+        newPane.performWithSender(nil, target: nil)
+        #expect(created == 1 && chosen == ["c"], "New Pane is not a pane choice")
 
-        let sectioned = SSHTerminalRexPaneMenu.elements(state: state(windows: true)) { chosen.append($0) }
+        let sectioned = SSHTerminalRexPaneMenu.elements(state: state(windows: true), select: { chosen.append($0) }, newPane: { created += 1 })
         let menus = sectioned.compactMap { $0 as? UIMenu }
-        #expect(menus.map(\.title) == ["Main", "Scratch"])
-        #expect(menus.map { $0.children.compactMap { ($0 as? UIAction)?.title } } == [["pi", "logs"], ["shell"]])
+        #expect(menus.map(\.title) == ["Main", "Scratch", ""])
+        #expect(menus.map { $0.children.compactMap { ($0 as? UIAction)?.title } } == [["pi", "logs"], ["shell"], ["New Pane"]])
         #expect(menus.allSatisfy { $0.options.contains(.displayInline) })
         (menus[1].children[0] as? UIAction)?.performWithSender(nil, target: nil)
         #expect(chosen == ["c", "c"])
+        (menus[2].children[0] as? UIAction)?.performWithSender(nil, target: nil)
+        #expect(created == 2)
     }
 
-    /// One pane has no switcher, no minimap, and nothing to swipe to.
-    @Test func aRexTerminalOfOnePaneHasNoSwitcherNoMinimapAndNoSwipe() async throws {
+    /// One pane has no switcher, no minimap, and no pane to step to; it can
+    /// still grow: a swipe past it and VoiceOver's New Pane open another.
+    @Test func aRexTerminalOfOnePaneHasNoSwitcherNoMinimapAndNothingToStepTo() async throws {
         let rig = try await RexSessionTerminalTests().open(["a"])
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
@@ -2367,9 +2377,223 @@ struct SSHTerminalTests {
             } != nil
         }
         #expect(!visible("sshTerminal.bar.rexPanes") && !visible("sshTerminal.rexMinimap."))
-        #expect(mounted.controller.gridView?.paneStepping == nil)
-        #expect(mounted.controller.gridView?.stepPane(1) == false)
-        #expect(mounted.controller.gridView?.accessibilityCustomActions?.isEmpty ?? true)
+        #expect(mounted.controller.gridView?.paneStepping != nil, "a session of one pane can still open a new one")
+        #expect(mounted.controller.gridView?.stepPane(1) == false && mounted.controller.gridView?.stepPane(-1) == false)
+        #expect(mounted.controller.gridView?.accessibilityCustomActions?.map(\.name) == ["Next Pane", "Previous Pane", "New Pane"])
+        await rig.stop()
+    }
+
+    /// A pan recognizer that reports what a test says, so the grid's own swipe
+    /// handler (and its release decision) runs as it does under a finger.
+    private final class ScriptedPan: UIPanGestureRecognizer {
+        var scriptedState = UIGestureRecognizer.State.possible
+        var scriptedTravel = CGPoint.zero
+        var scriptedVelocity = CGPoint.zero
+        override var state: UIGestureRecognizer.State {
+            get { scriptedState }
+            set { scriptedState = newValue }
+        }
+
+        override func translation(in view: UIView?) -> CGPoint { scriptedTravel }
+        override func velocity(in view: UIView?) -> CGPoint { scriptedVelocity }
+        override func setTranslation(_ translation: CGPoint, in view: UIView?) { scriptedTravel = translation }
+    }
+
+    @MainActor private func swipe(
+        _ grid: SSHTerminalGridView, _ state: UIGestureRecognizer.State, travel: CGFloat, velocity: CGFloat = 0, with pan: ScriptedPan
+    ) {
+        pan.scriptedState = state
+        pan.scriptedTravel = CGPoint(x: travel, y: 0)
+        pan.scriptedVelocity = CGPoint(x: velocity, y: 0)
+        _ = grid.perform(NSSelectorFromString("paneSwiped:"), with: pan)
+    }
+
+    /// What a `session.new_split` request asked of Rex.
+    private struct NewSplitRequest {
+        let anchor: String?
+        let direction: String?
+        let side: String?
+        let focus: Bool?
+        let flavor: String?
+        let folder: String?
+        let blocks: Int
+
+        init(_ request: RexFakeHost.Request) throws {
+            let body = try #require(JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any])
+            let layout = body["layout"] as? [String: Any]
+            let block = layout?["block"] as? [String: Any]
+            anchor = body["anchor_id"] as? String
+            direction = body["direction"] as? String
+            side = body["side"] as? String
+            focus = body["focus"] as? Bool
+            flavor = block?["flavor"] as? String
+            folder = (block?["options"] as? [String: Any])?["cwd"] as? String
+            blocks = layout?.keys.filter { $0 == "block" }.count ?? 0
+        }
+    }
+
+    /// Swiping left past the last pane opens a new one: the release decides by
+    /// the same distance rule as a switch (short springs back and asks Rex
+    /// nothing; the first pane's edge keeps its rubber band), and a release past
+    /// it asks Rex for one shell, after the shown pane, horizontal, in that
+    /// pane's folder, without moving the host's focus. The terminal then shows
+    /// the pane Rex made, through the normal switch: its snapshot reveals, the
+    /// switcher counts it, and typing goes to it.
+    @Test func swipingPastTheLastRexPaneOpensANewPaneAfterTheShownOne() async throws {
+        let rig = try await RexSessionTerminalTests().open(
+            ["a", "b"], folders: ["b": "file://mac-studio.local/Users/chen/my%20proj"]
+        )
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        func switcher() -> UIButton? {
+            mounted.host.view.layoutIfNeeded()
+            return mounted.find { $0.accessibilityIdentifier == "sshTerminal.bar.rexPanes" } as? UIButton
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "title a, 1 of 2" })
+        let grid = try #require(mounted.controller.gridView)
+        let pan = ScriptedPan()
+
+        // The first pane's edge: still a rubber band, no card, nothing asked.
+        swipe(grid, .began, travel: 0, with: pan)
+        swipe(grid, .changed, travel: 120, with: pan)
+        #expect(grid.paneTransition.phase == .dragging && !grid.paneTransition.isShowingNewPaneCard)
+        swipe(grid, .ended, travel: 120, velocity: 400, with: pan)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        #expect(rig.fake.requests("session.new_split").isEmpty)
+
+        #expect(grid.stepPane(1))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") && grid.paneTransition.phase == .idle })
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "title b, 2 of 2" })
+
+        // Short and slow: the card dims, the screen springs back, Rex is asked nothing.
+        swipe(grid, .began, travel: 0, with: pan)
+        swipe(grid, .changed, travel: -30, with: pan)
+        #expect(grid.paneTransition.isShowingNewPaneCard && !grid.paneTransition.isNewPaneArmed)
+        swipe(grid, .ended, travel: -30, velocity: -100, with: pan)
+        #expect(!grid.paneTransition.isAwaitingCreation)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle && !grid.paneTransition.isPlaceholderShown })
+        #expect(rig.fake.requests("session.new_split").isEmpty && rig.model.state.panes.count == 2)
+
+        // Far enough: the card is lit, and letting go opens the pane.
+        swipe(grid, .began, travel: 0, with: pan)
+        swipe(grid, .changed, travel: -80, with: pan)
+        #expect(grid.paneTransition.isNewPaneArmed)
+        swipe(grid, .ended, travel: -80, velocity: -300, with: pan)
+        #expect(grid.paneTransition.isAwaitingCreation, "the cover stays while Rex answers")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of new pane") }, "the new pane's snapshot is on the grid")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle && !grid.paneTransition.isPlaceholderShown })
+
+        let splits = rig.fake.requests("session.new_split")
+        #expect(splits.count == 1)
+        let split = try NewSplitRequest(try #require(splits.first))
+        #expect(split.anchor == "block:b" && split.direction == "horizontal" && split.side == "after" && split.focus == false)
+        #expect(split.flavor == "com.superlogical.terminal.shell" && split.blocks == 1)
+        #expect(split.folder == "/Users/chen/my proj", "the shown pane's folder, from its OSC 7 report")
+        #expect(rig.fake.requests("com.superlogical.terminal.pwd").first?.string("block_id") == "block:b")
+
+        // The new pane went through the switch path, and the host's focus never moved.
+        let created = "block:created-1"
+        #expect(rig.model.state.shown == created && rig.model.state.panes.map(\.blockID) == ["block:a", "block:b", created])
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "new shell, 3 of 3" })
+        let methods = rig.fake.requests.filter { $0.string("block_id") == created || $0.method == "session.own_block" }
+        let own = try #require(methods.firstIndex { $0.method == "session.own_block" && $0.payload.contains(created) })
+        let connect = try #require(methods.firstIndex { $0.method == "data.connect" && $0.string("block_id") == created })
+        #expect(own < connect)
+        #expect(!rig.fake.requests.contains { $0.method.contains("focus") })
+        rig.channel.send(Data("ls\r".utf8))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("com.superlogical.terminal.write").last?.string("block_id") == created
+        })
+        await rig.stop()
+    }
+
+    /// A pane Rex refuses springs back to the pane the terminal was on, with a
+    /// notice that says so: no crash, nothing stuck over the grid, and the next
+    /// try works. Only one pane is opened at a time.
+    @Test func aNewPaneRexRefusesSpringsBackWithAnError() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b"], first: "b")
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        let grid = try #require(mounted.controller.gridView)
+        func notice() -> UIView? {
+            mounted.find { $0.accessibilityIdentifier == "sshTerminal.openNotice" && !$0.isHidden }
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            mounted.host.view.layoutIfNeeded()
+            return rig.model.state.panes.count == 2 && grid.paneStepping != nil
+        })
+
+        rig.fake.refuse(["session.new_split"])
+        #expect(grid.createPane())
+        #expect(!grid.createPane(), "one pane at a time")
+        #expect(grid.paneTransition.isAwaitingCreation)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { notice() != nil })
+        #expect(notice()?.accessibilityLabel?.hasPrefix("Could not open a new pane.") == true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle && !grid.paneTransition.isPlaceholderShown })
+        #expect(rig.model.state.shown == "block:b" && rig.model.state.panes.count == 2, "back on the pane it was on")
+        #expect(rig.shows("screen of b"))
+        rig.channel.send(Data("ls\r".utf8))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("com.superlogical.terminal.write").last?.string("block_id") == "block:b"
+        })
+        #expect(!rig.fake.requests.contains { $0.method == "data.connect" && $0.string("block_id")?.hasPrefix("block:created") == true })
+
+        // The next try is not blocked by the failure.
+        rig.fake.refuse([])
+        #expect(grid.createPane())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of new pane") })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        #expect(rig.model.state.shown == "block:created-1")
+        await rig.stop()
+    }
+
+    /// VoiceOver's New Pane action and the switcher menu's New Pane item open a
+    /// pane the way the swipe does, and a session of one pane can grow: it has
+    /// no switcher until the second pane is there.
+    @Test func theNewPaneActionAndMenuItemOpenAPaneToo() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        func switcher() -> SSHTerminalRexPanesButton? {
+            mounted.host.view.layoutIfNeeded()
+            return mounted.find { $0.accessibilityIdentifier == "sshTerminal.bar.rexPanes" } as? SSHTerminalRexPanesButton
+        }
+        let grid = try #require(mounted.controller.gridView)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneStepping != nil })
+        let action = try #require(grid.accessibilityCustomActions?.first { $0.name == "New Pane" })
+        let pan = ScriptedPan()
+
+        // The only pane's first edge is a rubber band; its far edge offers a pane.
+        swipe(grid, .began, travel: 0, with: pan)
+        swipe(grid, .changed, travel: 100, with: pan)
+        #expect(!grid.paneTransition.isShowingNewPaneCard)
+        swipe(grid, .ended, travel: 100, velocity: 0, with: pan)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        #expect(rig.fake.requests("session.new_split").isEmpty)
+
+        #expect(action.actionHandler?(action) == true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of new pane") })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        let first = try NewSplitRequest(try #require(rig.fake.requests("session.new_split").first))
+        #expect(first.anchor == "block:a" && first.folder == nil, "no folder reported: Rex's default")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "new shell, 2 of 2" })
+
+        // The menu's item is the last element and does the same from the new pane.
+        let button = try #require(switcher())
+        let item = try #require((button.menuElements().last as? UIMenu)?.children.first as? UIAction)
+        #expect(item.title == "New Pane" && item.accessibilityIdentifier == "sshTerminal.rexPanes.new")
+        item.performWithSender(nil, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "new shell, 3 of 3" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        let second = try NewSplitRequest(try #require(rig.fake.requests("session.new_split").last))
+        #expect(second.anchor == "block:created-1", "after the pane that was shown")
+        #expect(rig.model.state.panes.map(\.blockID) == ["block:a", "block:created-1", "block:created-2"])
         await rig.stop()
     }
 

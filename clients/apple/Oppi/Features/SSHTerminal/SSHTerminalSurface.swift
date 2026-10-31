@@ -164,9 +164,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var longPress: UILongPressGestureRecognizer?
     private var tapRecognizer: UITapGestureRecognizer?
     private var paneSwipe: UIPanGestureRecognizer?
-    /// Set while the terminal shows a Rex session with more than one pane. A
-    /// sideways swipe and VoiceOver's Next Pane and Previous Pane both move
-    /// through it, and the screen slides to show the move.
+    /// Set while the terminal shows a Rex session. A sideways swipe and
+    /// VoiceOver's Next, Previous, and New Pane all move through it, and the
+    /// screen slides to show the move.
     var paneStepping: SSHTerminalPaneStepping? { didSet { updatePaneStepping() } }
     /// The slide between panes: what covers the grid while it changes.
     private(set) lazy var paneTransition = SSHTerminalPaneTransition(grid: self)
@@ -1211,18 +1211,23 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             let travel = pan.translation(in: self).x
             paneTransition.drag(
                 translationX: travel,
-                neighbour: paneStepping?.neighbour(SSHTerminalPaneSwipe.direction(of: travel))
+                neighbour: paneStepping?.neighbour(SSHTerminalPaneSwipe.direction(of: travel)),
+                offersNewPane: paneStepping != nil
             )
         case .ended:
             guard paneTransition.phase == .dragging else { return }
             let velocity = pan.velocity(in: self)
             let release = SSHTerminalPaneSwipe.release(
                 translation: pan.translation(in: self), velocity: velocity,
-                canStep: { [weak self] in self?.paneStepping?.neighbour($0) != nil }
+                canStep: { [weak self] in self?.paneStepping?.neighbour($0) != nil },
+                canCreate: paneStepping != nil
             )
-            if case .commit(let step) = release, paneStepping?.step(step) == true {
+            switch release {
+            case .commit(let step) where paneStepping?.step(step) == true:
                 paneTransition.endDrag(committing: step, velocityX: velocity.x)
-            } else {
+            case .newPane where paneStepping?.newPane() == true:
+                paneTransition.endDragCreatingPane(velocityX: velocity.x)
+            case .commit, .newPane, .springBack:
                 paneTransition.endDrag(committing: nil, velocityX: velocity.x)
             }
         case .cancelled, .failed:
@@ -1237,8 +1242,21 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// False past either end.
     @discardableResult
     func stepPane(_ delta: Int) -> Bool {
-        guard let stepping = paneStepping, let name = stepping.neighbour(delta), stepping.step(delta) else { return false }
+        guard !paneTransition.isAwaitingCreation, let stepping = paneStepping, let name = stepping.neighbour(delta),
+              stepping.step(delta) else { return false }
         paneTransition.slide(toward: delta, neighbour: name)
+        return true
+    }
+
+    /// Opens a new pane after the shown one with VoiceOver's action or the
+    /// switcher's menu item: no finger, so the old screen slides off by itself
+    /// and the New Pane card waits. The same owner as a swipe past the last
+    /// pane (`SSHTerminalPaneStepping.newPane`). False while a switch runs or
+    /// another pane is being opened.
+    @discardableResult
+    func createPane() -> Bool {
+        guard paneTransition.phase == .idle, let stepping = paneStepping, stepping.newPane() else { return false }
+        paneTransition.slideToNewPane()
         return true
     }
 
@@ -1249,6 +1267,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         accessibilityCustomActions = paneStepping == nil ? nil : [
             UIAccessibilityCustomAction(name: "Next Pane") { [weak self] _ in self?.stepPane(1) ?? false },
             UIAccessibilityCustomAction(name: "Previous Pane") { [weak self] _ in self?.stepPane(-1) ?? false },
+            UIAccessibilityCustomAction(name: "New Pane") { [weak self] _ in self?.createPane() ?? false },
         ]
     }
 

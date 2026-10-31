@@ -1,7 +1,7 @@
 import UIKit
 
 /// The sideways swipe that moves a Rex terminal to the previous or next pane
-/// of its session. A pan, not `UISwipeGestureRecognizer`, so a diagonal scroll
+/// of its session, and past the last pane opens a new one. A pan, not `UISwipeGestureRecognizer`, so a diagonal scroll
 /// of the history cannot change pane: it must start mostly sideways and end
 /// far enough, or fast enough, along the same axis. The screen follows the
 /// finger while it moves (`SSHTerminalPaneTransition`) and this type decides
@@ -19,6 +19,8 @@ enum SSHTerminalPaneSwipe {
     enum Release: Equatable {
         /// Show the pane `step` places along (+1 next, -1 previous).
         case commit(step: Int)
+        /// Past the last pane: open a new one after it.
+        case newPane
         /// Put the screen back: too short and slow, against the edge, or
         /// thrown back the way it came.
         case springBack
@@ -43,19 +45,29 @@ enum SSHTerminalPaneSwipe {
     /// The step a drag of `translation` points sideways is heading for.
     static func direction(of translation: CGFloat) -> Int { translation < 0 ? 1 : -1 }
 
-    /// What letting go does. `canStep` says whether a pane lies that way: a
-    /// swipe against the first or last pane springs back, as does a fast
-    /// throw the opposite way from the drag.
-    static func release(translation: CGPoint, velocity: CGPoint, canStep: (Int) -> Bool) -> Release {
-        guard let step = step(translation: translation, velocity: velocity), canStep(step) else { return .springBack }
-        let thrownBack = abs(velocity.x) >= flickVelocity && direction(of: velocity.x) != step
-        return thrownBack ? .springBack : .commit(step: step)
+    /// What letting go does. `canStep` says whether a pane lies that way, and
+    /// `canCreate` whether a swipe past the last pane may open a new one. A
+    /// swipe against the first pane springs back, as does a fast throw the
+    /// opposite way from the drag. The distance and flick rules are the same
+    /// for a new pane as for a switch.
+    static func release(
+        translation: CGPoint, velocity: CGPoint, canStep: (Int) -> Bool, canCreate: Bool
+    ) -> Release {
+        guard let step = step(translation: translation, velocity: velocity) else { return .springBack }
+        guard !(abs(velocity.x) >= flickVelocity && direction(of: velocity.x) != step) else { return .springBack }
+        if canStep(step) { return .commit(step: step) }
+        return step > 0 && canCreate ? .newPane : .springBack
     }
+
+    /// Whether letting go of a drag of `translation` points would act: far
+    /// enough that a release commits whatever its velocity. The new-pane card
+    /// lights up, and ticks, when a drag crosses it.
+    static func crossesThreshold(_ translation: CGFloat) -> Bool { abs(translation) >= minimumTravel }
 
     /// How far the screen sits from rest for a finger `translation` points
     /// from where the swipe began. It follows the finger one to one while a
-    /// pane lies that way, and gives way like a scroll view's edge when none
-    /// does.
+    /// pane (or the new-pane card) lies that way, and gives way like a scroll
+    /// view's edge when nothing does.
     static func offset(translation: CGFloat, width: CGFloat, canStep: Bool) -> CGFloat {
         guard canStep else { return rubberBand(translation, width: width) }
         return min(max(translation, -width), width)
@@ -71,8 +83,9 @@ enum SSHTerminalPaneSwipe {
 }
 
 /// What the grid asks of a Rex terminal's session for the swipe and
-/// VoiceOver's Next and Previous Pane: set while the session has more than one
-/// pane. Both read and move along the strip's order from the pane last asked for.
+/// VoiceOver's Next, Previous, and New Pane: set for every Rex session, so a
+/// session of one pane can grow. Stepping reads and moves along the strip's
+/// order from the pane last asked for.
 @MainActor
 struct SSHTerminalPaneStepping {
     /// The name of the pane `delta` places along, nil past either end.
@@ -81,14 +94,31 @@ struct SSHTerminalPaneStepping {
     var step: (Int) -> Bool
     /// The pane last asked for: the one whose snapshot ends a switch.
     var shown: () -> String?
+    /// Opens a new pane after the shown one and shows it, without moving the
+    /// host's focus. The one owner of the swipe past the last pane, the
+    /// grid's New Pane action, and the switcher's New Pane item. False when
+    /// one is already being opened.
+    var newPane: () -> Bool
 }
 
 /// The bar's pane switcher menu: the session's panes in strip order, the
 /// shown one checked, one section per window when the session has more than
-/// one. Choosing one shows it through the owner that a swipe uses.
+/// one. Choosing one shows it through the owner that a swipe uses. **New
+/// Pane** ends the menu, in a group of its own, and opens a pane through the
+/// owner that a swipe past the last pane uses.
 @MainActor
 enum SSHTerminalRexPaneMenu {
-    static func elements(state: RexSessionState, select: @escaping (String) -> Void) -> [UIMenuElement] {
+    static let newPaneIdentifier = "sshTerminal.rexPanes.new"
+
+    static func elements(
+        state: RexSessionState, select: @escaping (String) -> Void, newPane: @escaping () -> Void
+    ) -> [UIMenuElement] {
+        let create = UIAction(title: "New Pane", image: UIImage(systemName: "plus")) { _ in newPane() }
+        create.accessibilityIdentifier = newPaneIdentifier
+        return panes(state: state, select: select) + [UIMenu(options: .displayInline, children: [create])]
+    }
+
+    private static func panes(state: RexSessionState, select: @escaping (String) -> Void) -> [UIMenuElement] {
         let actions = state.panes.enumerated().map { index, pane in
             let action = UIAction(title: pane.name, state: pane.blockID == state.shown ? .on : .off) { _ in select(pane.blockID) }
             action.accessibilityIdentifier = "sshTerminal.rexPanes.\(index)"
@@ -255,6 +285,8 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
 
     /// The icon on show, for a test.
     var icon: SSHTerminalPaneIcon { glyph.icon }
+    /// What opening the menu shows now, for a test (a deferred element cannot be resolved outside the menu).
+    private(set) var menuElements: () -> [UIMenuElement] = { [] }
 
     init() {
         super.init(image: nil, label: "Pane", identifier: "sshTerminal.bar.rexPanes")
@@ -272,9 +304,12 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
     required init?(coder: NSCoder) { nil }
 
     /// The menu lists the session as it is when the button opens.
-    func installMenu(state: @escaping () -> RexSessionState?, select: @escaping (String) -> Void) {
-        menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
-            completion(state().map { SSHTerminalRexPaneMenu.elements(state: $0, select: select) } ?? [])
+    func installMenu(
+        state: @escaping () -> RexSessionState?, select: @escaping (String) -> Void, newPane: @escaping () -> Void
+    ) {
+        menuElements = { state().map { SSHTerminalRexPaneMenu.elements(state: $0, select: select, newPane: newPane) } ?? [] }
+        menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            completion(self?.menuElements() ?? [])
         }])
     }
 

@@ -956,7 +956,7 @@ struct RexSessionLayoutTests {
     @Test func letGoOfADragCommitsOnlyForAClearSwipeTowardAPane() {
         func release(_ x: CGFloat, _ y: CGFloat = 0, velocity: CGFloat = 0, canStep: Bool = true) -> SSHTerminalPaneSwipe.Release {
             SSHTerminalPaneSwipe.release(
-                translation: CGPoint(x: x, y: y), velocity: CGPoint(x: velocity, y: 0), canStep: { _ in canStep }
+                translation: CGPoint(x: x, y: y), velocity: CGPoint(x: velocity, y: 0), canStep: { _ in canStep }, canCreate: false
             )
         }
         #expect(release(-80, 10) == .commit(step: 1))
@@ -967,6 +967,42 @@ struct RexSessionLayoutTests {
         #expect(release(-80, canStep: false) == .springBack, "no pane that way")
         #expect(release(-80, velocity: 900) == .springBack, "far, then thrown back")
         #expect(release(-55) == .springBack && release(-56) == .commit(step: 1), "the distance threshold")
+    }
+
+    /// A new pane starts where the shown one is: Rex's `pwd` is a path or the
+    /// `file://` URL OSC 7 carries, whose host and escapes are not the folder.
+    @Test func aNewPanesFolderComesFromThePwdRexReports() {
+        #expect(RexSessionConnection.folder(fromPwd: "/Users/chen/oppi") == "/Users/chen/oppi")
+        #expect(RexSessionConnection.folder(fromPwd: "file://mac-studio.local/Users/chen/my%20proj") == "/Users/chen/my proj")
+        #expect(RexSessionConnection.folder(fromPwd: "file:///tmp") == "/tmp")
+        #expect(RexSessionConnection.folder(fromPwd: "") == nil && RexSessionConnection.folder(fromPwd: "~/oppi") == nil)
+        #expect(RexSessionConnection.folder(fromPwd: "file://host") == nil)
+    }
+
+    /// Past the last pane (the finger moving left, with no pane after) the same
+    /// distance and flick rules open a new pane instead of springing back; the
+    /// first pane (the finger moving right) keeps springing back, and a session
+    /// that cannot open one springs back at both ends.
+    @Test func letGoPastTheLastPaneOpensANewPaneByTheSameRules() {
+        func release(
+            _ x: CGFloat, _ y: CGFloat = 0, velocity: CGFloat = 0, next: Bool = false, previous: Bool = false, canCreate: Bool = true
+        ) -> SSHTerminalPaneSwipe.Release {
+            SSHTerminalPaneSwipe.release(
+                translation: CGPoint(x: x, y: y), velocity: CGPoint(x: velocity, y: 0),
+                canStep: { $0 > 0 ? next : previous }, canCreate: canCreate
+            )
+        }
+        #expect(release(-80, 10) == .newPane)
+        #expect(release(-30, velocity: -900) == .newPane, "a short flick opens one")
+        #expect(release(-30, velocity: -100) == .springBack, "short and slow springs back")
+        #expect(release(-55) == .springBack && release(-56) == .newPane, "the distance threshold is a switch's")
+        #expect(release(-80, 70) == .springBack, "a diagonal drag is not a swipe")
+        #expect(release(-80, velocity: 900) == .springBack, "far, then thrown back")
+        #expect(release(80) == .springBack, "the first pane keeps its rubber band")
+        #expect(release(80, previous: true) == .commit(step: -1))
+        #expect(release(-80, next: true) == .commit(step: 1), "a pane after wins over a new one")
+        #expect(release(-80, canCreate: false) == .springBack)
+        #expect(SSHTerminalPaneSwipe.crossesThreshold(-55) == false && SSHTerminalPaneSwipe.crossesThreshold(-56))
     }
 
     /// The screen follows the finger one to one while a pane lies that way, and
@@ -1016,14 +1052,18 @@ struct RexSessionTerminalTests {
 
     static func block(_ name: String) -> String { "block:\(name)" }
 
-    /// `reporting` gives a pane's OSC 7501 records (Rex's JSON) by pane name.
+    /// `reporting` gives a pane's OSC 7501 records (Rex's JSON) by pane name,
+    /// `folders` the folder a pane's shell reported (`pwd`).
     /// `holding` panes' `data.connect` waits for `release`; the first pane's
     /// screen is then not waited for.
-    func open(_ names: [String], first: String? = nil, reporting: [String: String] = [:], holding: Set<String> = []) async throws -> Rig {
+    func open(
+        _ names: [String], first: String? = nil, reporting: [String: String] = [:], folders: [String: String] = [:],
+        holding: Set<String> = []
+    ) async throws -> Rig {
         let fake = RexFakeSession(sessionID: Self.session, panes: names.map {
             .init(
                 block: Self.block($0), label: "shell", title: "title \($0)", screen: "screen of \($0)\r\n$ ",
-                records: reporting[$0] ?? "[]"
+                records: reporting[$0] ?? "[]", pwd: folders[$0]
             )
         })
         let control = RexControl()

@@ -11,11 +11,21 @@ import UIKit
 /// would slide in as if it were the new one. A pane that never answers cannot
 /// leave the screen blank: after `revealTimeout` the placeholder goes whatever
 /// the grid shows.
+///
+/// Past the last pane the incoming side is the New Pane card. A release there
+/// slides it in like any switch, but there is no pane to wait for yet: the
+/// card stays ("New Pane…") until the owner says the pane was opened
+/// (`paneCreated`, which names the card and waits for the pane's snapshot like
+/// a switch) or could not be (`creationFailed`, which slides the card away to
+/// the grid's old pane). `creationTimeout` bounds the wait.
 @MainActor
 final class SSHTerminalPaneTransition {
     static let settleDuration: TimeInterval = 0.3
     static let revealDuration: TimeInterval = 0.15
     static let defaultRevealTimeout: Duration = .seconds(2)
+    /// Rex answers a request within 15 s (`RexControl.requestTimeout`), and
+    /// opening a pane makes up to three in a row.
+    static let defaultCreationTimeout: Duration = .seconds(30)
 
     enum Phase: Equatable {
         case idle
@@ -31,9 +41,17 @@ final class SSHTerminalPaneTransition {
     private(set) var phase = Phase.idle
     /// How long a committed switch may wait for the new pane's screen.
     var revealTimeout = SSHTerminalPaneTransition.defaultRevealTimeout
+    /// How long a new pane may take to open before the cover goes anyway.
+    var creationTimeout = SSHTerminalPaneTransition.defaultCreationTimeout
     /// The incoming pane's name on the placeholder, while one is shown.
     var placeholderTitle: String? { placeholder?.title }
     var isPlaceholderShown: Bool { placeholder != nil }
+    /// The placeholder is the New Pane card, and a release now would open one.
+    var isNewPaneArmed: Bool { placeholder?.showsNewPaneCard == true && placeholder?.isArmed == true }
+    /// The placeholder is the New Pane card.
+    var isShowingNewPaneCard: Bool { placeholder?.showsNewPaneCard == true }
+    /// A pane is being opened: the card waits for the owner's answer.
+    private(set) var isAwaitingCreation = false
     /// `true` when a switch begins (a finger down on the swipe, or a switch
     /// with no finger) and `false` when it has settled: the slide ended, the
     /// spring back ended, or the transition was dropped. The layout minimap
@@ -53,6 +71,10 @@ final class SSHTerminalPaneTransition {
     private var framePainted = false
     private var timedOut = false
     private var timeout: Task<Void, Never>?
+    /// The finger is past the new-pane threshold: the tick was made.
+    private var tickedForNewPane = false
+    /// Opening the pane failed while the slide was still running.
+    private var creationFailedMidSlide = false
 
     init(grid: SSHTerminalGridView) {
         self.grid = grid
@@ -71,15 +93,30 @@ final class SSHTerminalPaneTransition {
     }
 
     /// The finger is `translationX` points from where the swipe began.
-    /// `neighbour` names the pane that way, nil past the first or last pane,
-    /// where the screen gives way like a scroll view's edge.
-    func drag(translationX: CGFloat, neighbour: String?) {
+    /// `neighbour` names the pane that way. Past the first pane the screen
+    /// gives way like a scroll view's edge; past the last one, with
+    /// `offersNewPane`, the incoming side is the New Pane card, dimmed until the
+    /// finger is far enough that letting go opens a pane, and a selection tick
+    /// marks the moment it is.
+    func drag(translationX: CGFloat, neighbour: String?, offersNewPane: Bool) {
         guard phase == .dragging, let grid, let cover, let placeholder else { return }
         let width = grid.bounds.width
-        let offset = SSHTerminalPaneSwipe.offset(translation: translationX, width: width, canStep: neighbour != nil)
+        let newPane = neighbour == nil && offersNewPane && translationX < 0
+        let offset = SSHTerminalPaneSwipe.offset(translation: translationX, width: width, canStep: neighbour != nil || newPane)
         cover.transform = CGAffineTransform(translationX: offset, y: 0)
-        placeholder.title = neighbour
         placeholder.transform = CGAffineTransform(translationX: offset + (translationX < 0 ? width : -width), y: 0)
+        guard newPane else {
+            tickedForNewPane = false
+            placeholder.title = neighbour
+            return
+        }
+        let armed = SSHTerminalPaneSwipe.crossesThreshold(translationX)
+        placeholder.showNewPane(armed: armed)
+        if armed, !tickedForNewPane {
+            // Oppi's own switch for haptics: off in Settings, no tick.
+            AppHaptics.selectionChanged()
+        }
+        tickedForNewPane = armed
     }
 
     /// The finger lifted. `step` is the switch that was just asked of the
@@ -94,6 +131,18 @@ final class SSHTerminalPaneTransition {
         } else {
             springBack(velocityX: velocityX)
         }
+    }
+
+    /// The finger lifted past the last pane and the owner took the request to
+    /// open one: the card slides in and waits for `paneCreated` or
+    /// `creationFailed`. A flick that never crossed the threshold ticks now,
+    /// so the tick is made once either way.
+    func endDragCreatingPane(velocityX: CGFloat) {
+        guard phase == .dragging, let placeholder else { return }
+        if !tickedForNewPane { AppHaptics.selectionChanged() }
+        placeholder.showCreating()
+        isAwaitingCreation = true
+        commit(step: 1, velocityX: velocityX)
     }
 
     // MARK: - Without a finger
@@ -140,6 +189,50 @@ final class SSHTerminalPaneTransition {
         commit(step: step, velocityX: 0)
     }
 
+    /// Opening a pane with no drag behind it (VoiceOver's New Pane, the
+    /// switcher's menu item): the old screen slides off and the card waits, as
+    /// after a drag. Call it after the owner took the request, and only from
+    /// rest.
+    func slideToNewPane() {
+        guard phase == .idle else { return }
+        onSwitching?(true)
+        guard present(), let grid, let placeholder else {
+            // Nothing to slide; the pane is still opened and `paneCreated` slides to it.
+            onSwitching?(false)
+            return
+        }
+        placeholder.showCreating()
+        placeholder.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
+        isAwaitingCreation = true
+        commit(step: 1, velocityX: 0)
+    }
+
+    /// The pane was opened and asked for (it is the one the session shows
+    /// now), and `name` is what it is called. The card takes the name and
+    /// waits for the pane's snapshot like any switch. When the card already
+    /// left (the creation timeout), the pane is a switch of its own.
+    func paneCreated(named name: String) {
+        guard isAwaitingCreation else {
+            slide(toward: 1, neighbour: name)
+            return
+        }
+        isAwaitingCreation = false
+        placeholder?.title = name
+        armReveal()
+    }
+
+    /// No pane was opened: the card slides away and the grid's own pane, which
+    /// never stopped taking its output, is back under it.
+    func creationFailed() {
+        guard isAwaitingCreation else { return }
+        isAwaitingCreation = false
+        switch phase {
+        case .covering: retreat()
+        case .settling: creationFailedMidSlide = true
+        case .idle, .dragging: break
+        }
+    }
+
     // MARK: - What the grid reports
 
     /// Rex's snapshot of the pane `block` replaced the grid's terminal. Only
@@ -147,7 +240,7 @@ final class SSHTerminalPaneTransition {
     /// overtaken (A to B, then C asked for) can still land B's snapshot, and
     /// that is not the screen the cover stands in for.
     func snapshotRestored(of block: String?, expecting shown: String?) {
-        guard phase == .settling || phase == .covering else { return }
+        guard phase == .settling || phase == .covering, !isAwaitingCreation else { return }
         if let block, let shown, block != shown { return }
         snapshotApplied = true
     }
@@ -176,6 +269,9 @@ final class SSHTerminalPaneTransition {
         cover = nil
         placeholder = nil
         returning = false
+        isAwaitingCreation = false
+        creationFailedMidSlide = false
+        tickedForNewPane = false
         phase = .idle
         onSwitching?(false)
     }
@@ -186,6 +282,8 @@ final class SSHTerminalPaneTransition {
         guard let grid, let container = grid.superview, grid.bounds.width > 0 else { return false }
         generation += 1
         returning = false
+        creationFailedMidSlide = false
+        tickedForNewPane = false
         let placeholder = SSHTerminalPanePlaceholderView()
         placeholder.frame = grid.frame
         placeholder.apply(background: grid.backgroundColor ?? .black, foreground: grid.foreground)
@@ -223,6 +321,10 @@ final class SSHTerminalPaneTransition {
             self.slideFinished = true
             self.phase = .covering
             self.onSwitching?(false)
+            if self.creationFailedMidSlide {
+                self.retreat()
+                return
+            }
             self.revealIfReady()
         }
         if UIAccessibility.isReduceMotionEnabled {
@@ -279,8 +381,9 @@ final class SSHTerminalPaneTransition {
         timedOut = false
         timeout?.cancel()
         let token = generation
-        timeout = Task { [weak self, revealTimeout] in
-            try? await Task.sleep(for: revealTimeout)
+        let wait = isAwaitingCreation ? creationTimeout : revealTimeout
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: wait)
             guard !Task.isCancelled, let self, self.generation == token else { return }
             self.timedOut = true
             self.revealIfReady()
@@ -293,39 +396,87 @@ final class SSHTerminalPaneTransition {
         timeout?.cancel()
         timeout = nil
         self.placeholder = nil
+        // A timeout during a creation ends the wait: the pane, if it opens, is a switch of its own.
+        isAwaitingCreation = false
         phase = .idle
         generation += 1
         UIView.animate(withDuration: Self.revealDuration, delay: 0, options: .curveEaseOut) {
             placeholder.alpha = 0
         } completion: { _ in placeholder.removeFromSuperview() }
     }
+
+    /// The pane did not open: the card leaves the way it came, to the right,
+    /// off the grid's old pane (a fade with Reduce Motion).
+    private func retreat() {
+        guard let grid, let placeholder else { return cancel() }
+        timeout?.cancel()
+        timeout = nil
+        self.placeholder = nil
+        creationFailedMidSlide = false
+        phase = .idle
+        generation += 1
+        if UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: Self.settleDuration * 0.6, delay: 0, options: .curveEaseOut) {
+                placeholder.alpha = 0
+            } completion: { _ in placeholder.removeFromSuperview() }
+            return
+        }
+        UIView.animate(springDuration: Self.settleDuration, bounce: 0, delay: 0, options: [.beginFromCurrentState]) {
+            placeholder.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
+        } completion: { _ in placeholder.removeFromSuperview() }
+    }
 }
 
 /// What stands in for the incoming pane: the terminal's own background, and
-/// the pane's name dimmed in the middle.
+/// the pane's name dimmed in the middle. Past the last pane it is the New Pane
+/// card instead: a plus and "New Pane", dimmed until the drag has gone far
+/// enough to open one, then lit.
 final class SSHTerminalPanePlaceholderView: UIView {
-    private let label = UILabel()
+    static let dimmedAlpha: CGFloat = 0.45
 
+    private let glyph = UIImageView()
+    private let label = UILabel()
+    private let stack = UIStackView()
+    private(set) var isArmed = false
+
+    /// The text on the card: a pane's name, "New Pane", or "New Pane…".
     var title: String? {
         get { label.text }
-        set { label.text = newValue }
+        set {
+            label.text = newValue
+            glyph.isHidden = true
+            isArmed = false
+            stack.alpha = Self.dimmedAlpha
+        }
     }
+
+    /// Whether the card shows the plus: the placeholder is the New Pane card.
+    var showsNewPaneCard: Bool { !glyph.isHidden }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
-        label.translatesAutoresizingMaskIntoConstraints = false
+        glyph.image = UIImage(systemName: "plus.circle", withConfiguration: UIImage.SymbolConfiguration(textStyle: .largeTitle))
+        glyph.contentMode = .scaleAspectFit
+        glyph.isHidden = true
         label.font = .preferredFont(forTextStyle: .callout)
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
         label.numberOfLines = 2
-        addSubview(label)
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 8
+        stack.alpha = Self.dimmedAlpha
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(glyph)
+        stack.addArrangedSubview(label)
+        addSubview(stack)
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
         ])
     }
 
@@ -334,6 +485,33 @@ final class SSHTerminalPanePlaceholderView: UIView {
 
     func apply(background: UIColor, foreground: UIColor) {
         backgroundColor = background
-        label.textColor = foreground.withAlphaComponent(0.45)
+        label.textColor = foreground
+        glyph.tintColor = foreground
+    }
+
+    /// The New Pane card of a drag. `armed` says a release now opens a pane.
+    func showNewPane(armed: Bool) {
+        label.text = "New Pane"
+        glyph.isHidden = false
+        guard armed != isArmed || stack.alpha == 0 else { return }
+        isArmed = armed
+        let change = {
+            self.stack.alpha = armed ? 1 : Self.dimmedAlpha
+            self.glyph.transform = armed || UIAccessibility.isReduceMotionEnabled ? .identity : CGAffineTransform(scaleX: 0.88, y: 0.88)
+        }
+        if window != nil {
+            UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: change)
+        } else {
+            change()
+        }
+    }
+
+    /// The pane is being opened: the card stays, lit, while the host answers.
+    func showCreating() {
+        label.text = "New Pane\u{2026}"
+        glyph.isHidden = false
+        glyph.transform = .identity
+        isArmed = true
+        stack.alpha = 1
     }
 }

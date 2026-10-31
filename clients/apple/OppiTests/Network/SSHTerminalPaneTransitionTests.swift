@@ -39,7 +39,7 @@ struct SSHTerminalPaneTransitionTests {
         /// A drag far enough to commit, lifted: the old screen slides off.
         func commit(step: Int = 1) {
             #expect(transition.beginDrag())
-            transition.drag(translationX: CGFloat(-step) * 150, neighbour: "next")
+            transition.drag(translationX: CGFloat(-step) * 150, neighbour: "next", offersNewPane: false)
             transition.endDrag(committing: step, velocityX: CGFloat(-step) * 800)
         }
     }
@@ -58,15 +58,126 @@ struct SSHTerminalPaneTransitionTests {
         #expect(!rig.transition.beginDrag(), "one transition at a time")
         let (placeholder, cover) = (rig.layers[0], rig.layers[1])
 
-        rig.transition.drag(translationX: -120, neighbour: "logs")
+        rig.transition.drag(translationX: -120, neighbour: "logs", offersNewPane: false)
         #expect(cover.transform.tx == -120)
         #expect(placeholder.transform.tx == -120 + rig.grid.bounds.width, "the incoming pane waits on the right")
         #expect(rig.transition.placeholderTitle == "logs")
 
-        rig.transition.drag(translationX: 90, neighbour: nil)
+        rig.transition.drag(translationX: 90, neighbour: nil, offersNewPane: false)
         #expect(cover.transform.tx > 0 && cover.transform.tx < 90, "an edge resists")
         #expect(placeholder.transform.tx == cover.transform.tx - rig.grid.bounds.width)
         #expect(rig.transition.placeholderTitle == nil)
+    }
+
+    /// Past the last pane the incoming side is the New Pane card, not a rubber
+    /// band: the screen follows the finger one to one, and the card is dimmed
+    /// until the drag is far enough that letting go opens a pane. The first
+    /// pane's edge, and a drag that way, keep the rubber band.
+    @Test func pastTheLastPaneTheIncomingSideIsTheNewPaneCard() throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        #expect(rig.transition.beginDrag())
+        let (placeholder, cover) = (rig.layers[0], rig.layers[1])
+
+        rig.transition.drag(translationX: -30, neighbour: nil, offersNewPane: true)
+        #expect(cover.transform.tx == -30, "no resistance: the card comes with the finger")
+        #expect(placeholder.transform.tx == -30 + rig.grid.bounds.width)
+        #expect(rig.transition.isShowingNewPaneCard && rig.transition.placeholderTitle == "New Pane")
+        #expect(!rig.transition.isNewPaneArmed, "dimmed below the threshold")
+
+        rig.transition.drag(translationX: -80, neighbour: nil, offersNewPane: true)
+        #expect(rig.transition.isNewPaneArmed, "lit past it")
+        rig.transition.drag(translationX: -40, neighbour: nil, offersNewPane: true)
+        #expect(!rig.transition.isNewPaneArmed, "and dimmed again when the finger comes back")
+
+        rig.transition.drag(translationX: 90, neighbour: nil, offersNewPane: true)
+        #expect(cover.transform.tx > 0 && cover.transform.tx < 90, "the first pane's edge resists")
+        #expect(!rig.transition.isShowingNewPaneCard && rig.transition.placeholderTitle == nil)
+
+        rig.transition.drag(translationX: -80, neighbour: nil, offersNewPane: false)
+        #expect(cover.transform.tx > -80 && !rig.transition.isShowingNewPaneCard, "a session that cannot open a pane resists")
+    }
+
+    /// A release on the card slides it in and keeps it up while the host opens
+    /// the pane, however long that takes (the pane's snapshot has not been
+    /// asked for yet, so the grid's old screen must not show). Once the pane
+    /// is open the card takes its name and lifts like any switch's.
+    @Test func theNewPaneCardStaysUntilThePaneIsOpenThenWaitsForItsSnapshot() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        rig.transition.revealTimeout = .milliseconds(100)
+        #expect(rig.transition.beginDrag())
+        rig.transition.drag(translationX: -150, neighbour: nil, offersNewPane: true)
+        rig.transition.endDragCreatingPane(velocityX: -800)
+        #expect(rig.transition.phase == .settling && rig.transition.isAwaitingCreation)
+        #expect(await settle(rig, to: .covering))
+        #expect(rig.layers.count == 1 && rig.transition.placeholderTitle == "New Pane\u{2026}")
+
+        // The old pane's screen is on the grid: neither a frame nor a snapshot of it lifts the card.
+        rig.transition.snapshotRestored(of: "a", expecting: "a")
+        rig.transition.frameDrawn()
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) { rig.transition.phase == .covering })
+
+        rig.transition.paneCreated(named: "shell")
+        #expect(!rig.transition.isAwaitingCreation && rig.transition.placeholderTitle == "shell" && !rig.transition.isShowingNewPaneCard)
+        rig.transition.frameDrawn()
+        #expect(rig.transition.phase == .covering, "the new pane's snapshot is still to come")
+        rig.transition.snapshotRestored(of: "new", expecting: "new")
+        rig.transition.frameDrawn()
+        #expect(rig.transition.phase == .idle)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.layers.isEmpty })
+    }
+
+    /// A pane that could not be opened sends the card away to the grid's old
+    /// pane, whether the answer comes after the slide or during it, and leaves
+    /// nothing over the grid.
+    @Test func aFailedNewPaneSlidesTheCardAwayToTheOldPane() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        for lateAnswer in [true, false] {
+            #expect(rig.transition.beginDrag())
+            rig.transition.drag(translationX: -150, neighbour: nil, offersNewPane: true)
+            rig.transition.endDragCreatingPane(velocityX: -800)
+            if lateAnswer { #expect(await settle(rig, to: .covering)) }
+            rig.transition.creationFailed()
+            #expect(!rig.transition.isAwaitingCreation)
+            #expect(await settle(rig, to: .idle))
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.layers.isEmpty }, "nothing stays over the grid")
+            #expect(!rig.transition.isPlaceholderShown)
+        }
+    }
+
+    /// A host that never answers cannot leave the card up for ever: after the
+    /// creation timeout it goes, and a pane that opens later is a switch of its own.
+    @Test func aNewPaneThatNeverOpensIsRevealedAfterTheCreationTimeout() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        rig.transition.creationTimeout = .milliseconds(1200)
+        rig.transition.slideToNewPane()
+        #expect(rig.transition.phase == .settling && rig.transition.isAwaitingCreation)
+        #expect(await settle(rig, to: .covering))
+        #expect(await settle(rig, to: .idle), "the timeout reveals whatever the grid shows")
+        #expect(!rig.transition.isAwaitingCreation)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.layers.isEmpty })
+
+        rig.transition.paneCreated(named: "late")
+        #expect(rig.transition.phase == .settling && rig.transition.placeholderTitle == "late", "the late pane slides in like a switch")
+    }
+
+    /// Opening a pane with no finger (VoiceOver, the menu) slides the old
+    /// screen off the same way and says when the switch began and settled.
+    @Test func openingAPaneWithNoFingerSlidesTheCardIn() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        var events: [Bool] = []
+        rig.transition.onSwitching = { events.append($0) }
+        rig.transition.slideToNewPane()
+        #expect(events == [true] && rig.layers.count == 2)
+        #expect(await settle(rig, to: .covering))
+        #expect(events == [true, false] && rig.transition.placeholderTitle == "New Pane\u{2026}")
+        // Not from rest: nothing slides again.
+        rig.transition.slideToNewPane()
+        #expect(rig.layers.count == 1)
     }
 
     /// Letting go short puts the screen back without asking for a pane, and
@@ -75,7 +186,7 @@ struct SSHTerminalPaneTransitionTests {
         let rig = try Rig()
         defer { rig.dismiss() }
         #expect(rig.transition.beginDrag())
-        rig.transition.drag(translationX: -30, neighbour: "logs")
+        rig.transition.drag(translationX: -30, neighbour: "logs", offersNewPane: false)
         rig.transition.endDrag(committing: nil, velocityX: 0)
         #expect(await settle(rig, to: .idle))
         #expect(rig.layers.isEmpty && !rig.transition.isPlaceholderShown)
@@ -182,7 +293,7 @@ struct SSHTerminalPaneTransitionTests {
         let rig = try Rig()
         defer { rig.dismiss() }
         #expect(rig.transition.beginDrag())
-        rig.transition.drag(translationX: -30, neighbour: "b")
+        rig.transition.drag(translationX: -30, neighbour: "b", offersNewPane: false)
         rig.transition.endDrag(committing: nil, velocityX: 0)
         #expect(rig.transition.phase == .settling)
 
@@ -239,7 +350,7 @@ struct SSHTerminalPaneTransitionTests {
 
         events = []
         #expect(rig.transition.beginDrag())
-        rig.transition.drag(translationX: -30, neighbour: "logs")
+        rig.transition.drag(translationX: -30, neighbour: "logs", offersNewPane: false)
         rig.transition.endDrag(committing: nil, velocityX: 0)
         #expect(events == [true])
         #expect(await settle(rig, to: .idle))

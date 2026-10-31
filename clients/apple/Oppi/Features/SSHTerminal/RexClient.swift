@@ -578,6 +578,50 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         return show(next)
     }
 
+    /// Opens a shell in a new split after the pane last asked for and returns
+    /// its block id, once the session's view lists it (so `show` takes it). It
+    /// starts in the anchor's folder when Rex has one (`pwd`, which a shell
+    /// reports with OSC 7), else Rex's default. Display only: `focus` is false,
+    /// so the host's own focus stays where it is. Rex creates all of it or none
+    /// of it; a refusal (the anchor closed, the session full) throws.
+    func newPane() async throws -> String {
+        let anchor = core.withLock { $0.requested }
+        var shell: [String: Any] = ["flavor": Self.shellFlavor]
+        let pwd = try? await control.call("com.superlogical.terminal.pwd", blockCall([:], block: anchor))
+        if let folder = pwd.flatMap({ try? JSONDecoder().decode(Pwd.self, from: $0).pwd }).flatMap(Self.folder(fromPwd:)) {
+            shell["options"] = ["cwd": folder]
+        }
+        let answer = try await control.call("session.new_split", [
+            "session_id": sessionID, "anchor_id": anchor, "direction": "horizontal", "side": "after",
+            "focus": false, "layout": ["block": shell],
+        ])
+        struct Created: Decodable { let block_ids: [String?]? }
+        guard let block = (try? JSONDecoder().decode(Created.self, from: answer))?.block_ids?.compactMap({ $0 }).first else {
+            throw RexClientError.unreadable("the new pane's block")
+        }
+        // The view event that lists it may not have arrived yet: read it now.
+        let view = try await control.call("session.view", ["session_id": sessionID])
+        let decoded = try JSONDecoder().decode(RexView.self, from: view)
+        let gone = core.withLock { apply(view: decoded, to: &$0) }
+        if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
+        guard core.withLock({ $0.layout?.contains(block) == true }) else {
+            throw RexClientError.refused(code: "not_found", message: "Rex did not list the new pane.")
+        }
+        return block
+    }
+
+    private struct Pwd: Decodable { let pwd: String? }
+
+    static let shellFlavor = "com.superlogical.terminal.shell"
+
+    /// The folder a `pwd` answer names: a path, or the `file://` URL a program
+    /// reports with OSC 7. Nil for anything else (Rex gave none).
+    static func folder(fromPwd pwd: String) -> String? {
+        if pwd.hasPrefix("/") { return pwd }
+        guard pwd.hasPrefix("file://"), let path = URL(string: pwd)?.path, path.hasPrefix("/") else { return nil }
+        return path
+    }
+
     // MARK: - SSHTerminalConnection
 
     func send(_ bytes: Data) async throws {

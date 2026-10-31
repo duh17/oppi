@@ -111,7 +111,8 @@ struct RexSessionState: Equatable, Sendable {
 
     var shownName: String { panes.first { $0.blockID == shown }?.name ?? "Terminal" }
 
-    /// The bar's pane switcher and the swipe are for a session with more than one pane.
+    /// The bar's pane switcher is for a session with more than one pane. (The
+    /// swipe is for every session: past the last pane it opens a new one.)
     var showsSwitcher: Bool { panes.count > 1 }
     var showsMinimap: Bool { minimap.count > 1 }
     /// Where the shown pane is in strip order.
@@ -120,7 +121,7 @@ struct RexSessionState: Equatable, Sendable {
     var namesWindows: Bool { Set(panes.compactMap(\.windowID)).count > 1 }
 
     /// The pane `delta` places from the shown one in strip order, or nil past
-    /// either end: a swipe past the last pane does nothing.
+    /// either end: past the last pane a swipe opens a new one (`RexSessionModel.newPane`).
     func neighbour(offsetBy delta: Int) -> Pane? {
         guard let index = shownIndex else { return nil }
         let target = index + delta
@@ -176,4 +177,16 @@ final class RexSessionModel {
     /// two quick swipes go two panes); false past either end.
     @discardableResult
     func step(_ delta: Int) -> Bool { connection.step(delta) }
+
+    /// Opens a new pane after the one last asked for and shows it, through
+    /// the same `show` as any switch. Returns the new pane's name. The session
+    /// knows the pane (its view was read) before it is shown; it throws when
+    /// Rex refuses or does not answer, and then the shown pane is unchanged.
+    func newPane() async throws -> String {
+        let block = try await connection.newPane()
+        guard show(block) else {
+            throw RexClientError.refused(code: "not_found", message: "Rex did not list the new pane.")
+        }
+        return latest.panes.first { $0.blockID == block }?.name ?? "Terminal"
+    }
 }

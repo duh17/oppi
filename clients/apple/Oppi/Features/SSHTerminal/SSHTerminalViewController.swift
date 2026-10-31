@@ -32,8 +32,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// A Rex session's window minimap at the grid's top right. Its pane
     /// switcher is a button in the bar's trailing pill (`morePill.rexPanes`).
     private let rexMinimap = SSHTerminalRexMinimapView()
-    /// The session has more than one pane: the switcher shows and the grid swipes.
-    private var rexPanesShown = false
+    /// The terminal shows a Rex session: the grid swipes (past the last pane
+    /// that opens a new one) and takes VoiceOver's pane actions. The switcher
+    /// shows only for more than one pane.
+    private var rexSwipes = false
+    /// The pane being opened (`createPane`), while one is. One at a time.
+    private var newPaneTask: Task<Void, Never>?
     private let topStack = UIStackView()
     private let backPill = SSHTerminalBackPill()
     private let connectionBanner = SSHTerminalConnectionBannerView()
@@ -547,7 +551,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         rexMinimap.select = { [weak self] block in self?.showPane(block) }
         morePill.rexPanes.installMenu(
             state: { [weak self] in self?.channel.rex?.state },
-            select: { [weak self] block in self?.showPane(block) }
+            select: { [weak self] block in self?.showPane(block) },
+            newPane: { [weak self] in self?.gridView?.createPane() }
         )
         gridClip.translatesAutoresizingMaskIntoConstraints = false
         gridClip.clipsToBounds = true
@@ -690,7 +695,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         statusGlyph.reset()
         // Another terminal's switcher and swipe are not this one's; the next
         // pass shows this one's.
-        rexPanesShown = false
+        rexSwipes = false
+        newPaneTask?.cancel()
+        newPaneTask = nil
         rexMinimap.reset()
         stashComposerDraft()
         destroyComposer()
@@ -937,7 +944,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// only while a switch runs.
     private func updateRexPanes(themeID: ThemeID) {
         let rex = channel.rex?.state
-        let hasPanes = rex?.showsSwitcher == true
+        let swipes = channel.rex != nil
         if let rex {
             let background = lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg)
             rexMinimap.apply(
@@ -947,20 +954,46 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             )
         }
         rexMinimap.isAvailable = rex?.showsMinimap == true
-        if hasPanes != rexPanesShown {
-            rexPanesShown = hasPanes
+        if swipes != rexSwipes {
+            rexSwipes = swipes
             gridView?.paneStepping = paneStepping
         }
     }
 
-    /// The grid's swipe and VoiceOver actions, while the session has panes to move between.
+    /// The grid's swipe and VoiceOver actions, for a Rex session.
     private var paneStepping: SSHTerminalPaneStepping? {
-        guard rexPanesShown else { return nil }
+        guard rexSwipes else { return nil }
         return SSHTerminalPaneStepping(
             neighbour: { [weak self] delta in self?.channel.rex?.latest.neighbour(offsetBy: delta)?.name },
             step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false },
-            shown: { [weak self] in self?.channel.rex?.latest.shown }
+            shown: { [weak self] in self?.channel.rex?.latest.shown },
+            newPane: { [weak self] in self?.openNewPane() ?? false }
         )
+    }
+
+    /// Starts opening a new pane after the shown one, unless one is already
+    /// opening. The grid's cover (`SSHTerminalPaneTransition`) waits for the
+    /// answer: the new pane is shown through the session like any switch, or
+    /// the cover slides away to the pane the terminal was on and a notice says
+    /// why. Nothing is ever left stuck: a request that never answers ends at
+    /// Rex's request timeout, and the cover's own creation timeout covers the rest.
+    private func openNewPane() -> Bool {
+        guard let rex = channel.rex, newPaneTask == nil else { return false }
+        newPaneTask = Task { [weak self] in
+            let created: Result<String, any Error>
+            do { created = .success(try await rex.newPane()) } catch { created = .failure(error) }
+            // A terminal swapped out meanwhile cancelled this; its cover is gone.
+            guard let self, !Task.isCancelled else { return }
+            newPaneTask = nil
+            switch created {
+            case .success(let name):
+                gridView?.paneTransition.paneCreated(named: name)
+            case .failure(let error):
+                gridView?.paneTransition.creationFailed()
+                showOpenNotice("Could not open a new pane. \(error.localizedDescription)")
+            }
+        }
+        return true
     }
 
     /// Shows `blockID` for the switcher's menu and the minimap's cells: the
@@ -968,7 +1001,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// travel. The pane icon and the minimap's highlight follow the session's
     /// state, as they do for a swipe.
     private func showPane(_ blockID: String) {
-        guard let rex = channel.rex else { return }
+        guard let rex = channel.rex, gridView?.paneTransition.isAwaitingCreation != true else { return }
         let before = rex.latest
         guard let from = before.shownIndex, let to = before.panes.firstIndex(where: { $0.blockID == blockID }),
               rex.show(blockID) else { return }
