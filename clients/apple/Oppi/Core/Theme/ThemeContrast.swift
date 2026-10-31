@@ -57,8 +57,8 @@ enum ThemeContrast {
     /// themes, darker in light ones. Elevated surfaces go lighter in both.
     ///
     /// Reads the seed and builds the adjusted palette: a palette's colors have no
-    /// setter, so a palette that has been handed out cannot change underneath
-    /// anything caching it (see `PaletteIdentity`).
+    /// setter, so a palette that has been handed out cannot change underneath the
+    /// colors `palette.ui` built for it.
     static func resolve(isDark: Bool, seed: ThemePalette) -> Resolved {
         let ink: Direction = isDark ? .lighter : .darker
         let bg = SRGB(seed.bg)
