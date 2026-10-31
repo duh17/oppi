@@ -6,7 +6,7 @@ import UIKit
 enum SSHTerminalScreenshotStatus: String {
     case none, blocked
     /// A Rex session terminal: three panes in one window, over a fake host,
-    /// so the pane strip, the minimap, and the swipe draw.
+    /// so the pane switcher, the minimap, and the swipe draw.
     case rexPanes
 }
 
@@ -120,7 +120,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
     /// The terminal's connection is a `RexSessionConnection` to a fake Rex
     /// session of three panes (`RexFakeSession`), opened on the first. Its
     /// real control and data protocols run against the fake host, so a tap on
-    /// the strip or a minimap cell switches panes for real.
+    /// the switcher menu or a minimap cell switches panes for real.
     private func playRexSession(on channel: SSHTerminalChannel) async {
         guard !channel.connected else { return }
         let esc = "\u{1b}["

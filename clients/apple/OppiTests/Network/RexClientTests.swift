@@ -525,6 +525,7 @@ struct RexSessionLayoutTests {
         let json = #"{"revision":1,"session_id":"s","windows":[{"window_id":"w1","layers":[{"kind":"tiled","layout":\#(tree),"blocks":[\#([block("d"), block("b"), block("walkthrough", creator: "com.superlogical.onboarding"), block("c")].joined(separator: ","))]}]},{"window_id":"w2","layers":[{"kind":"tiled","layout":\#(leaf("e", "[0,0,1,1]")),"blocks":[\#(block("e"))]}]}]}"#
         let parsed = try layout(json)
         #expect(parsed.panes.map(\.blockID) == ["b", "c", "d", "e"])
+        #expect(parsed.panes.map(\.windowName) == ["Window 1", "Window 1", "Window 1", "Window 2"])
         #expect(parsed.minimap(around: "c").map(\.blockID) == ["b", "c", "d"])
         #expect(parsed.minimap(around: "e").map(\.blockID) == ["e"])
         // A layout this build cannot read still lists its blocks.
@@ -551,13 +552,44 @@ struct RexSessionLayoutTests {
         var first = state
         first.shown = "a"
         #expect(first.pane(offsetBy: -1) == nil)
-        // A sideways drag far enough, or fast enough; never a diagonal one.
-        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -80, y: 10), velocity: .zero) == 1)
-        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: 80, y: -10), velocity: .zero) == -1)
-        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -30, y: 0), velocity: CGPoint(x: -900, y: 0)) == 1)
-        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -30, y: 0), velocity: CGPoint(x: -100, y: 0)) == nil)
-        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -80, y: 70), velocity: .zero) == nil)
+        #expect(state.neighbour(offsetBy: 1)?.name == "c" && last.neighbour(offsetBy: 1) == nil)
         #expect(SSHTerminalPaneSwipe.begins(velocity: CGPoint(x: 300, y: 40)) && !SSHTerminalPaneSwipe.begins(velocity: CGPoint(x: 300, y: 250)))
+    }
+
+    /// Letting go of a drag: far enough or fast enough along the axis, toward a
+    /// pane that exists, and not thrown back the way it came, commits; anything
+    /// else puts the screen back and asks for nothing.
+    @Test func letGoOfADragCommitsOnlyForAClearSwipeTowardAPane() {
+        func release(_ x: CGFloat, _ y: CGFloat = 0, velocity: CGFloat = 0, canStep: Bool = true) -> SSHTerminalPaneSwipe.Release {
+            SSHTerminalPaneSwipe.release(
+                translation: CGPoint(x: x, y: y), velocity: CGPoint(x: velocity, y: 0), canStep: { _ in canStep }
+            )
+        }
+        #expect(release(-80, 10) == .commit(step: 1))
+        #expect(release(80, -10) == .commit(step: -1))
+        #expect(release(-30, velocity: -900) == .commit(step: 1), "a short flick commits")
+        #expect(release(-30, velocity: -100) == .springBack, "short and slow springs back")
+        #expect(release(-80, 70) == .springBack, "a diagonal drag is not a swipe")
+        #expect(release(-80, canStep: false) == .springBack, "no pane that way")
+        #expect(release(-80, velocity: 900) == .springBack, "far, then thrown back")
+        #expect(release(-55) == .springBack && release(-56) == .commit(step: 1), "the distance threshold")
+    }
+
+    /// The screen follows the finger one to one while a pane lies that way, and
+    /// gives way like a scroll view's edge when none does: never to the far
+    /// side, never past the width, and always less than the finger.
+    @Test func theDraggedScreenFollowsTheFingerAndResistsAtAnEdge() {
+        let width: CGFloat = 400
+        func offset(_ x: CGFloat, canStep: Bool) -> CGFloat {
+            SSHTerminalPaneSwipe.offset(translation: x, width: width, canStep: canStep)
+        }
+        #expect(offset(-137, canStep: true) == -137 && offset(60, canStep: true) == 60)
+        #expect(offset(-900, canStep: true) == -width, "never past the pane's width")
+        #expect(offset(0, canStep: false) == 0)
+        let banded = [20, 80, 200, 600].map { offset(-CGFloat($0), canStep: false) }
+        #expect(zip(banded, banded.dropFirst()).allSatisfy { $0 > $1 } && banded.allSatisfy { $0 < 0 && $0 > -width })
+        #expect(zip(banded, [20, 80, 200, 600]).allSatisfy { abs($0) < CGFloat($1) })
+        #expect(offset(150, canStep: false) == -offset(-150, canStep: false))
     }
 }
 
@@ -886,13 +918,13 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
-    /// The strip follows the session: a `session_view_changed` reads the view
+    /// The pane list follows the session: a `session_view_changed` reads the view
     /// again (one read for one change, a revision already applied is not read
     /// again), and a title event renames a pane in place.
-    @Test func theStripFollowsViewChangesAndTitles() async throws {
+    @Test func thePaneListFollowsViewChangesAndTitles() async throws {
         let rig = try await open(["a", "b"])
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
-        #expect(rig.model.state.showsStrip && rig.model.state.showsMinimap)
+        #expect(rig.model.state.showsSwitcher && rig.model.state.showsMinimap)
 
         let bigger = RexFakeSession(sessionID: Self.session, panes: ["a", "b", "c"].map {
             .init(block: Self.block($0), label: "shell", title: "t", screen: "")
@@ -911,9 +943,9 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
-    @Test func aSessionOfOnePaneHasNoStripAndAWindowOfOneHasNoMinimap() async throws {
+    @Test func aSessionOfOnePaneHasNoSwitcherAndAWindowOfOneHasNoMinimap() async throws {
         let rig = try await open(["a"])
-        #expect(!rig.model.state.showsStrip && !rig.model.state.showsMinimap)
+        #expect(!rig.model.state.showsSwitcher && !rig.model.state.showsMinimap)
         #expect(rig.model.step(1) == false && rig.model.step(-1) == false)
         await rig.stop()
     }

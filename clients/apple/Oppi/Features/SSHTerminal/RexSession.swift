@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import Observation
 
-/// A Rex session's terminal panes as the pane strip and the minimap show them,
+/// A Rex session's terminal panes as the pane switcher and the minimap show them,
 /// derived from `session.view`: the strip's order (windows in view order,
 /// then each window's panes in layout order) and, per window, where each pane
 /// sits in the tiled layer.
@@ -13,6 +13,8 @@ struct RexSessionLayout: Equatable, Sendable {
     struct Pane: Equatable, Sendable {
         let blockID: String
         let windowID: String
+        /// Rex's label for the window, else `Window N` in view order.
+        let windowName: String
         /// Rex's label for the block.
         let label: String?
     }
@@ -30,7 +32,7 @@ struct RexSessionLayout: Equatable, Sendable {
     init(view: RexView) {
         var panes: [Pane] = []
         var cells: [String: [Cell]] = [:]
-        for window in view.windows ?? [] {
+        for (windowIndex, window) in (view.windows ?? []).enumerated() {
             let layers = window.layers ?? []
             var labels: [String: String] = [:]
             var listed: [String] = []
@@ -48,7 +50,8 @@ struct RexSessionLayout: Equatable, Sendable {
             }
             for layer in layers { layer.layout?.leaves.forEach { place($0.id) } }
             listed.forEach(place)
-            panes += ordered.map { Pane(blockID: $0, windowID: window.windowID, label: labels[$0]) }
+            let windowName = window.label ?? "Window \(windowIndex + 1)"
+            panes += ordered.map { Pane(blockID: $0, windowID: window.windowID, windowName: windowName, label: labels[$0]) }
             let tiled = layers.first { $0.kind == "tiled" } ?? layers.first
             cells[window.windowID] = (tiled?.layout?.leaves ?? []).compactMap { leaf in
                 guard listed.contains(leaf.id), leaf.rect.count == 4 else { return nil }
@@ -78,13 +81,16 @@ struct RexSessionLayout: Equatable, Sendable {
     }
 }
 
-/// What a Rex session terminal shows of its session: the strip, the minimap,
-/// and which pane is on screen.
+/// What a Rex session terminal shows of its session: the pane switcher, the
+/// minimap, and which pane is on screen.
 struct RexSessionState: Equatable, Sendable {
     struct Pane: Equatable, Sendable {
         let blockID: String
-        /// What the strip and the switcher call the pane.
+        /// What the pane switcher and the terminal switcher call the pane.
         let name: String
+        /// The pane's window, once the session's view has been read.
+        var windowID: String? = nil
+        var windowName: String? = nil
     }
 
     var panes: [Pane]
@@ -95,23 +101,29 @@ struct RexSessionState: Equatable, Sendable {
 
     var shownName: String { panes.first { $0.blockID == shown }?.name ?? "Terminal" }
 
-    /// The strip is for a session with more than one pane.
-    var showsStrip: Bool { panes.count > 1 }
+    /// The bar's pane switcher and the swipe are for a session with more than one pane.
+    var showsSwitcher: Bool { panes.count > 1 }
     var showsMinimap: Bool { minimap.count > 1 }
+    /// Where the shown pane is in strip order.
+    var shownIndex: Int? { panes.firstIndex { $0.blockID == shown } }
+    /// The session has more than one window, so the switcher's menu sections them.
+    var namesWindows: Bool { Set(panes.compactMap(\.windowID)).count > 1 }
 
     /// The pane `delta` places from the shown one in strip order, or nil past
     /// either end: a swipe past the last pane does nothing.
-    func pane(offsetBy delta: Int) -> String? {
-        guard let index = panes.firstIndex(where: { $0.blockID == shown }) else { return nil }
+    func neighbour(offsetBy delta: Int) -> Pane? {
+        guard let index = shownIndex else { return nil }
         let target = index + delta
-        return panes.indices.contains(target) ? panes[target].blockID : nil
+        return panes.indices.contains(target) ? panes[target] : nil
     }
+
+    func pane(offsetBy delta: Int) -> String? { neighbour(offsetBy: delta)?.blockID }
 }
 
-/// The main-actor face of a Rex session terminal: what the pane strip, the
-/// minimap, and the swipe read and ask for. The connection (`RexSessionConnection`)
-/// owns the work, so a gesture, a tap, a minimap cell, and VoiceOver's custom
-/// action all reach `show` the same way.
+/// The main-actor face of a Rex session terminal: what the bar's pane
+/// switcher, the minimap, and the swipe read and ask for. The connection
+/// (`RexSessionConnection`) owns the work, so a gesture, a menu choice, a
+/// minimap cell, and VoiceOver's custom action all reach `show` the same way.
 @MainActor @Observable
 final class RexSessionModel {
     let sessionID: String
@@ -134,14 +146,21 @@ final class RexSessionModel {
 
     isolated deinit { reader?.cancel() }
 
+    /// The session as of this moment. `state` follows it a main-actor turn
+    /// later, so two swipes in a row read this to go two panes.
+    var latest: RexSessionState { connection.state }
+
     /// The pane on screen, named: what a new connection reopens.
     var shownTarget: RexPaneTarget {
         RexPaneTarget(sessionID: sessionID, blockID: state.shown, label: state.shownName)
     }
 
     /// Shows `blockID`. Taking it for size and opening its stream is the
-    /// connection's work, in order with every other request.
-    func show(_ blockID: String) { connection.show(blockID) }
+    /// connection's work, in order with every other request. False when the
+    /// request was not taken: the pane is the one already asked for, or the
+    /// session does not have it.
+    @discardableResult
+    func show(_ blockID: String) -> Bool { connection.show(blockID) }
 
     /// Moves `delta` panes along the strip from the pane last asked for (so
     /// two quick swipes go two panes); false past either end.

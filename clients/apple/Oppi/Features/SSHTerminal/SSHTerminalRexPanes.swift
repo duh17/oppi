@@ -3,7 +3,9 @@ import UIKit
 /// The sideways swipe that moves a Rex terminal to the previous or next pane
 /// of its session. A pan, not `UISwipeGestureRecognizer`, so a diagonal scroll
 /// of the history cannot change pane: it must start mostly sideways and end
-/// far enough, or fast enough, along the same axis.
+/// far enough, or fast enough, along the same axis. The screen follows the
+/// finger while it moves (`SSHTerminalPaneTransition`) and this type decides
+/// what letting go does.
 enum SSHTerminalPaneSwipe {
     /// The back swipe owns the screen's left edge.
     static let edgeInset: CGFloat = 24
@@ -12,6 +14,15 @@ enum SSHTerminalPaneSwipe {
     static let flickVelocity: CGFloat = 600
     /// How much farther a swipe goes along an axis than across it.
     static let dominance: CGFloat = 2
+
+    /// What letting go of a drag does.
+    enum Release: Equatable {
+        /// Show the pane `step` places along (+1 next, -1 previous).
+        case commit(step: Int)
+        /// Put the screen back: too short and slow, against the edge, or
+        /// thrown back the way it came.
+        case springBack
+    }
 
     /// Whether a pan that starts with `velocity` is a sideways swipe.
     static func begins(velocity: CGPoint) -> Bool {
@@ -26,93 +37,218 @@ enum SSHTerminalPaneSwipe {
         let far = abs(translation.x) >= minimumTravel
         let flicked = abs(translation.x) >= flickTravel && abs(velocity.x) >= flickVelocity
         guard far || flicked else { return nil }
-        return translation.x < 0 ? 1 : -1
+        return direction(of: translation.x)
+    }
+
+    /// The step a drag of `translation` points sideways is heading for.
+    static func direction(of translation: CGFloat) -> Int { translation < 0 ? 1 : -1 }
+
+    /// What letting go does. `canStep` says whether a pane lies that way: a
+    /// swipe against the first or last pane springs back, as does a fast
+    /// throw the opposite way from the drag.
+    static func release(translation: CGPoint, velocity: CGPoint, canStep: (Int) -> Bool) -> Release {
+        guard let step = step(translation: translation, velocity: velocity), canStep(step) else { return .springBack }
+        let thrownBack = abs(velocity.x) >= flickVelocity && direction(of: velocity.x) != step
+        return thrownBack ? .springBack : .commit(step: step)
+    }
+
+    /// How far the screen sits from rest for a finger `translation` points
+    /// from where the swipe began. It follows the finger one to one while a
+    /// pane lies that way, and gives way like a scroll view's edge when none
+    /// does.
+    static func offset(translation: CGFloat, width: CGFloat, canStep: Bool) -> CGFloat {
+        guard canStep else { return rubberBand(translation, width: width) }
+        return min(max(translation, -width), width)
+    }
+
+    /// UIScrollView's edge resistance: close to the finger at first, never
+    /// past `width`.
+    static func rubberBand(_ distance: CGFloat, width: CGFloat) -> CGFloat {
+        guard width > 0 else { return 0 }
+        let banded = width * (1 - 1 / (abs(distance) * 0.55 / width + 1))
+        return distance < 0 ? -banded : banded
     }
 }
 
-/// The pane strip: one terminal glyph per pane of the Rex session, in strip
-/// order, the shown one filled and tinted. A pill of its own above the bottom
-/// bar's row, since that row is full. Scrolls sideways when the panes outgrow
-/// the screen. Each glyph is a button that shows its pane.
-final class SSHTerminalRexStripPill: SSHTerminalGlassPill {
-    private let scroll = UIScrollView()
-    private let items = UIStackView()
-    private var buttons: [SSHTerminalPillButton] = []
-    private var revealed: String?
-    private(set) var panes: [RexSessionState.Pane] = []
-    /// Asks to show a pane: the same request a swipe or a minimap cell makes.
-    var select: (String) -> Void = { _ in }
+/// What the grid asks of a Rex terminal's session for the swipe and
+/// VoiceOver's Next and Previous Pane: set while the session has more than one
+/// pane. Both read and move along the strip's order from the pane last asked for.
+@MainActor
+struct SSHTerminalPaneStepping {
+    /// The name of the pane `delta` places along, nil past either end.
+    var neighbour: (Int) -> String?
+    /// Shows the pane `delta` places along; false past either end.
+    var step: (Int) -> Bool
+}
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.alwaysBounceHorizontal = false
-        scroll.contentInsetAdjustmentBehavior = .never
-        items.axis = .horizontal
-        items.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(items)
-        stack.addArrangedSubview(scroll)
-        // As wide as its glyphs, unless the screen has less room (the owner
-        // caps the pill's width); then it scrolls.
-        let natural = scroll.widthAnchor.constraint(equalTo: items.widthAnchor)
-        natural.priority = .defaultHigh
+/// The bar's pane switcher menu: the session's panes in strip order, the
+/// shown one checked, one section per window when the session has more than
+/// one. Choosing one shows it through the owner that a swipe uses.
+@MainActor
+enum SSHTerminalRexPaneMenu {
+    static func elements(state: RexSessionState, select: @escaping (String) -> Void) -> [UIMenuElement] {
+        let actions = state.panes.enumerated().map { index, pane in
+            let action = UIAction(title: pane.name, state: pane.blockID == state.shown ? .on : .off) { _ in select(pane.blockID) }
+            action.accessibilityIdentifier = "sshTerminal.rexPanes.\(index)"
+            return (pane.windowID, pane.windowName, action)
+        }
+        guard state.namesWindows else { return actions.map { $0.2 } }
+        var sections: [(id: String?, name: String?, actions: [UIAction])] = []
+        for (id, name, action) in actions {
+            if let last = sections.last, last.id == id {
+                sections[sections.count - 1].actions.append(action)
+            } else {
+                sections.append((id, name, [action]))
+            }
+        }
+        return sections.map { UIMenu(title: $0.name ?? "", options: .displayInline, children: $0.actions) }
+    }
+}
+
+/// The bar's pane switcher: one button in the trailing pill, beside Rex's
+/// sessions, for a session with more than one pane. It draws the shown pane's
+/// icon, which rolls to the next pane's when the pane changes (up for a pane
+/// further along the strip, down for one before it; a crossfade with Reduce
+/// Motion), and opens a menu of the session's panes.
+final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
+    /// Every pane's icon. Oppi has no icon per program, so each pane is a
+    /// terminal; the roll is what says the pane changed.
+    static let symbol = "terminal.fill"
+    private let glyph = SSHTerminalRexPaneGlyphView()
+    private var shownBlock: String?
+    private var shownIndex: Int?
+
+    init() {
+        super.init(image: nil, label: "Panes", identifier: "sshTerminal.bar.rexPanes")
+        largeContentImage = UIImage(systemName: Self.symbol)
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glyph)
         NSLayoutConstraint.activate([
-            items.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            items.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            items.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            items.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            items.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
-            natural,
+            glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        showsMenuAsPrimaryAction = true
+        preferredMenuElementOrder = .fixed
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(state: RexSessionState, tint: UIColor, selectedTint: UIColor) {
-        if state.panes != panes {
-            panes = state.panes
-            buttons.forEach { $0.removeFromSuperview() }
-            buttons = state.panes.enumerated().map { index, pane in
-                let button = SSHTerminalPillButton(
-                    systemName: "terminal", label: pane.name,
-                    identifier: "sshTerminal.rexPanes.\(index)"
-                )
-                button.addAction(UIAction { [weak self] _ in self?.select(pane.blockID) }, for: .touchUpInside)
-                items.addArrangedSubview(button)
-                return button
-            }
-            revealed = nil
+    /// The menu lists the session as it is when the button opens.
+    func installMenu(state: @escaping () -> RexSessionState?, select: @escaping (String) -> Void) {
+        menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
+            completion(state().map { SSHTerminalRexPaneMenu.elements(state: $0, select: select) } ?? [])
+        }])
+    }
+
+    /// Draws the shown pane. Hidden for a session of one pane.
+    func apply(state: RexSessionState?, tint: UIColor) {
+        glyph.tintColor = tint
+        guard let state, state.showsSwitcher, let index = state.shownIndex else {
+            isHidden = true
+            shownBlock = nil
+            shownIndex = nil
+            return
         }
-        for (button, pane) in zip(buttons, state.panes) {
-            let isShown = pane.blockID == state.shown
-            button.apply(tint: isShown ? selectedTint : tint)
-            button.setSymbol(isShown ? "terminal.fill" : "terminal")
-            button.accessibilityTraits = isShown ? [.button, .selected] : .button
+        let wasShown = !isHidden
+        isHidden = false
+        accessibilityLabel = state.shownName
+        accessibilityValue = "\(index + 1) of \(state.panes.count)"
+        largeContentTitle = state.shownName
+        if wasShown, let shownBlock, shownBlock != state.shown, window != nil {
+            glyph.roll(toward: index > (shownIndex ?? index) ? 1 : -1)
         }
-        // A strip that scrolls keeps the shown glyph in view.
-        if revealed != state.shown, let index = state.panes.firstIndex(where: { $0.blockID == state.shown }) {
-            revealed = state.shown
-            scroll.layoutIfNeeded()
-            scroll.scrollRectToVisible(buttons[index].frame, animated: false)
+        shownBlock = state.shown
+        shownIndex = index
+    }
+}
+
+/// The switcher's icon, and the roll between one pane's icon and the next.
+final class SSHTerminalRexPaneGlyphView: UIView {
+    /// How far an icon travels while it leaves or arrives.
+    static let travel: CGFloat = 10
+    static let duration: TimeInterval = 0.25
+
+    private func makeImageView() -> UIImageView {
+        let view = UIImageView(image: UIImage(
+            systemName: SSHTerminalRexPanesButton.symbol, withConfiguration: SSHTerminalPillButton.symbolConfiguration
+        ))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.contentMode = .center
+        view.isAccessibilityElement = false
+        return view
+    }
+
+    private lazy var current = makeImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        pin(current)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func pin(_ view: UIImageView) {
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.centerXAnchor.constraint(equalTo: centerXAnchor),
+            view.centerYAnchor.constraint(equalTo: centerYAnchor),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: 24, height: 24) }
+
+    /// The icon rolls up for `direction` +1 (the old one leaves upward, the new
+    /// one comes from below) and down for -1. An earlier roll still running
+    /// ends where it was going.
+    func roll(toward direction: Int) {
+        for stale in subviews where stale !== current { stale.removeFromSuperview() }
+        let leaving = current
+        let arriving = makeImageView()
+        current = arriving
+        pin(arriving)
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        let shift = reduceMotion ? 0 : CGFloat(direction) * Self.travel
+        arriving.alpha = 0
+        arriving.transform = CGAffineTransform(translationX: 0, y: shift)
+        UIView.animate(withDuration: reduceMotion ? 0.2 : Self.duration, delay: 0, options: .curveEaseOut) {
+            leaving.alpha = 0
+            leaving.transform = CGAffineTransform(translationX: 0, y: -shift)
+            arriving.alpha = 1
+            arriving.transform = .identity
+        } completion: { _ in
+            leaving.removeFromSuperview()
         }
     }
 }
 
 /// The layout minimap, at the grid's top right: the shown pane's window as
 /// one rounded cell per pane at its place in the layout, the shown one in the
-/// accent color, the others gray. A cell is a button that shows its pane.
-/// Drawn for a window with more than one pane.
+/// accent color, the others gray. A cell is a button that shows its pane. The
+/// accent highlight is one view that moves to the new pane's cell when the
+/// pane changes. Drawn for a window with more than one pane.
 final class SSHTerminalRexMinimapView: UIView {
     static let size = CGSize(width: 76, height: 48)
+    static let moveDuration: TimeInterval = 0.25
     private static let padding: CGFloat = 4
     private static let gap: CGFloat = 1.5
 
     private let backdrop = UIView()
+    /// The shown cell's accent, above the gray cells.
+    private let highlight = UIView()
     private var cells: [(cell: RexSessionLayout.Cell, button: UIButton)] = []
-    /// Asks to show a pane: the same request a swipe or a strip glyph makes.
+    private var shown: String?
+    /// Asks to show a pane: the same request a swipe or a menu choice makes.
     var select: (String) -> Void = { _ in }
+
+    /// Where the highlight is, for a test to read while it moves.
+    var highlightFrame: CGRect { highlight.frame }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -121,7 +257,11 @@ final class SSHTerminalRexMinimapView: UIView {
         backdrop.layer.cornerRadius = 8
         backdrop.layer.cornerCurve = .continuous
         backdrop.isUserInteractionEnabled = false
+        highlight.layer.cornerRadius = 3
+        highlight.layer.cornerCurve = .continuous
+        highlight.isUserInteractionEnabled = false
         addSubview(backdrop)
+        addSubview(highlight)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.size.width),
             heightAnchor.constraint(equalToConstant: Self.size.height),
@@ -138,7 +278,8 @@ final class SSHTerminalRexMinimapView: UIView {
     required init?(coder: NSCoder) { nil }
 
     func apply(state: RexSessionState, shownTint: UIColor, otherTint: UIColor, backdropColor: UIColor) {
-        if state.minimap != cells.map(\.cell) {
+        let sameCells = state.minimap == cells.map(\.cell)
+        if !sameCells {
             cells.forEach { $0.button.removeFromSuperview() }
             cells = state.minimap.enumerated().map { index, cell in
                 let button = UIButton(type: .custom)
@@ -146,18 +287,26 @@ final class SSHTerminalRexMinimapView: UIView {
                 button.layer.cornerCurve = .continuous
                 button.accessibilityIdentifier = "sshTerminal.rexMinimap.\(index)"
                 button.addAction(UIAction { [weak self] _ in self?.select(cell.blockID) }, for: .touchUpInside)
-                addSubview(button)
+                insertSubview(button, belowSubview: highlight)
                 return (cell, button)
             }
             setNeedsLayout()
         }
         backdrop.backgroundColor = backdropColor
+        highlight.backgroundColor = shownTint
         for (cell, button) in cells {
             let isShown = cell.blockID == state.shown
-            button.backgroundColor = isShown ? shownTint : otherTint
+            button.backgroundColor = otherTint
             button.accessibilityLabel = state.panes.first { $0.blockID == cell.blockID }?.name ?? "Terminal"
             button.accessibilityTraits = isShown ? [.button, .selected] : .button
         }
+        let moved = shown != state.shown
+        shown = state.shown
+        guard moved else { return }
+        // The same window with another pane shown: the highlight moves. A new
+        // window's cells (or the first draw) just appear.
+        let animated = sameCells && window != nil && !UIAccessibility.isReduceMotionEnabled
+        placeHighlight(animated: animated)
     }
 
     override func layoutSubviews() {
@@ -170,6 +319,22 @@ final class SSHTerminalRexMinimapView: UIView {
                 width: cell.rect.width * area.width,
                 height: cell.rect.height * area.height
             ).insetBy(dx: Self.gap, dy: Self.gap)
+        }
+        if highlight.layer.animationKeys()?.isEmpty ?? true { placeHighlight(animated: false) }
+    }
+
+    private func placeHighlight(animated: Bool) {
+        guard let target = cells.first(where: { $0.cell.blockID == shown })?.button.frame else {
+            highlight.isHidden = true
+            return
+        }
+        highlight.isHidden = false
+        guard animated else {
+            highlight.frame = target
+            return
+        }
+        UIView.animate(withDuration: Self.moveDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.highlight.frame = target
         }
     }
 }

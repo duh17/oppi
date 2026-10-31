@@ -228,6 +228,9 @@ final class SSHTerminalChannel {
     /// panes, minimap, and the switch between them. Set before `opened`; stays
     /// after the terminal ends, so a reconnect knows the pane shown last.
     @ObservationIgnored var rex: RexSessionModel?
+    /// Runs after a pane's snapshot replaced the engine's terminal, so the
+    /// grid knows the screen it holds is the pane's own (`SSHTerminalPaneTransition`).
+    @ObservationIgnored var snapshotRestored: (() -> Void)?
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a
@@ -494,6 +497,7 @@ final class SSHTerminalChannel {
         refreshWorkingDirectory()
         // Output that arrived with the snapshot, before Rex's first message.
         interpret(after)
+        snapshotRestored?()
     }
 
     private func interpret(_ bytes: Data) {

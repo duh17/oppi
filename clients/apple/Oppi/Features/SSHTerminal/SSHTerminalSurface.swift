@@ -164,10 +164,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var longPress: UILongPressGestureRecognizer?
     private var tapRecognizer: UITapGestureRecognizer?
     private var paneSwipe: UIPanGestureRecognizer?
-    /// Set while the terminal shows a Rex session with more than one pane:
-    /// moves `delta` panes (-1 previous, +1 next); false past either end. A
-    /// sideways swipe and VoiceOver's Next Pane and Previous Pane both call it.
-    var stepPane: ((Int) -> Bool)? { didSet { updatePaneStepping() } }
+    /// Set while the terminal shows a Rex session with more than one pane. A
+    /// sideways swipe and VoiceOver's Next Pane and Previous Pane both move
+    /// through it, and the screen slides to show the move.
+    var paneStepping: SSHTerminalPaneStepping? { didSet { updatePaneStepping() } }
+    /// The slide between panes: what covers the grid while it changes.
+    private(set) lazy var paneTransition = SSHTerminalPaneTransition(grid: self)
     private var tapIgnore = SSHTerminalTapIgnore()
     private var tapSequence = SSHTerminalTapSequence()
     private var pendingHide: Task<Void, Never>?
@@ -216,7 +218,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The foreground program's actions, inserted after Paste.
     private var keyActions: [SSHTerminalKeyAction] = []
     private var passwordFillHost: String?
-    private var foreground = UIColor.label
+    private(set) var foreground = UIColor.label
     /// The cursor's color: the theme's, or the foreground.
     private var cursorColor: UIColor?
 
@@ -251,6 +253,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             self.needsPaint = true
             self.requestDisplayLink()
         }
+        channel.snapshotRestored = { [weak self] in self?.paneTransition.snapshotRestored() }
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
                                                name: AppFont.didRebuildNotification, object: nil)
     }
@@ -404,8 +407,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         #endif
     }
 
+    override func willMove(toSuperview newSuperview: UIView?) {
+        super.willMove(toSuperview: newSuperview)
+        // The slide's views live beside the grid, in its parent.
+        if newSuperview == nil { paneTransition.cancel() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        paneTransition.gridLaidOut()
         guard bounds.width > 0, bounds.height > 0 else { return }
         metalHost.frame = bounds
         selectionOverlay.frame = bounds
@@ -1174,7 +1184,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer, pan === paneSwipe else {
             return super.gestureRecognizerShouldBegin(gestureRecognizer)
         }
-        return SSHTerminalPaneSwipe.begins(velocity: pan.velocity(in: self))
+        return paneTransition.phase == .idle && SSHTerminalPaneSwipe.begins(velocity: pan.velocity(in: self))
     }
 
     /// The screen's left edge is the back swipe's.
@@ -1183,19 +1193,57 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return touch.location(in: self).x >= SSHTerminalPaneSwipe.edgeInset
     }
 
+    /// The screen follows the finger, and letting go either shows the pane
+    /// that way (a tick, and the slide finishes) or puts the screen back.
     @objc private func paneSwiped(_ pan: UIPanGestureRecognizer) {
-        guard pan.state == .ended,
-              let step = SSHTerminalPaneSwipe.step(translation: pan.translation(in: self), velocity: pan.velocity(in: self))
-        else { return }
-        _ = stepPane?(step)
+        switch pan.state {
+        case .began:
+            // The finger's slop before the pan began is not travel.
+            pan.setTranslation(.zero, in: self)
+            paneTransition.beginDrag()
+        case .changed:
+            guard paneTransition.phase == .dragging else { return }
+            let travel = pan.translation(in: self).x
+            paneTransition.drag(
+                translationX: travel,
+                neighbour: paneStepping?.neighbour(SSHTerminalPaneSwipe.direction(of: travel))
+            )
+        case .ended:
+            guard paneTransition.phase == .dragging else { return }
+            let velocity = pan.velocity(in: self)
+            let release = SSHTerminalPaneSwipe.release(
+                translation: pan.translation(in: self), velocity: velocity,
+                canStep: { [weak self] in self?.paneStepping?.neighbour($0) != nil }
+            )
+            if case .commit(let step) = release, paneStepping?.step(step) == true {
+                paneTransition.endDrag(committing: step, velocityX: velocity.x)
+            } else {
+                paneTransition.endDrag(committing: nil, velocityX: velocity.x)
+            }
+        case .cancelled, .failed:
+            paneTransition.endDrag(committing: nil, velocityX: 0)
+        default:
+            break
+        }
+    }
+
+    /// Moves `delta` panes along (+1 next, -1 previous) with VoiceOver's
+    /// actions or a key: no finger, so the old screen slides off by itself.
+    /// False past either end.
+    @discardableResult
+    func stepPane(_ delta: Int) -> Bool {
+        guard let stepping = paneStepping, let name = stepping.neighbour(delta), stepping.step(delta) else { return false }
+        paneTransition.slide(toward: delta, neighbour: name)
+        return true
     }
 
     private func updatePaneStepping() {
-        paneSwipe?.isEnabled = stepPane != nil
+        paneSwipe?.isEnabled = paneStepping != nil
+        if paneStepping == nil, paneTransition.phase == .dragging { paneTransition.cancel() }
         // VoiceOver has no swipe to make: the same step is an action.
-        accessibilityCustomActions = stepPane == nil ? nil : [
-            UIAccessibilityCustomAction(name: "Next Pane") { [weak self] _ in self?.stepPane?(1) ?? false },
-            UIAccessibilityCustomAction(name: "Previous Pane") { [weak self] _ in self?.stepPane?(-1) ?? false },
+        accessibilityCustomActions = paneStepping == nil ? nil : [
+            UIAccessibilityCustomAction(name: "Next Pane") { [weak self] _ in self?.stepPane(1) ?? false },
+            UIAccessibilityCustomAction(name: "Previous Pane") { [weak self] _ in self?.stepPane(-1) ?? false },
         ]
     }
 
@@ -1725,6 +1773,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             }
         }
         updateSecureEntry()
+        paneTransition.frameDrawn()
         didDrawFrame()
     }
 

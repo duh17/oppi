@@ -2006,12 +2006,13 @@ struct SSHTerminalTests {
         await rig.stop()
     }
 
-    /// A Rex terminal draws its session on the screen: a strip of one glyph
-    /// per pane (the shown one selected), the minimap of the shown pane's
+    /// A Rex terminal draws its session on the screen: the bar's pane switcher
+    /// (the shown pane's name and "N of M"), the minimap of the shown pane's
     /// window at the grid's top right, and a swipe on the grid with VoiceOver's
-    /// Next and Previous Pane as its twins. Strip glyph, minimap cell, and
-    /// action all show a pane the same way.
-    @Test func aRexTerminalDrawsItsStripAndMinimapAndTwinsTheSwipeForVoiceOver() async throws {
+    /// Next and Previous Pane as its twins. A minimap cell and a VoiceOver
+    /// action show a pane the same way; each slides the grid, and the grid shows
+    /// the new pane's own screen once its snapshot is on it.
+    @Test func aRexTerminalDrawsItsSwitcherAndMinimapAndTwinsTheSwipeForVoiceOver() async throws {
         let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
@@ -2031,45 +2032,91 @@ struct SSHTerminalTests {
         func selected(_ id: String) -> Bool { control(id)?.accessibilityTraits.contains(.selected) == true }
         _ = await waitForMainActorCondition(timeout: .seconds(5)) {
             mounted.host.view.layoutIfNeeded()
-            return shown("sshTerminal.rexPanes.2")
+            return shown("sshTerminal.bar.rexPanes")
         }
 
-        #expect((0...2).allSatisfy { shown("sshTerminal.rexPanes.\($0)") && shown("sshTerminal.rexMinimap.\($0)") })
-        #expect(control("sshTerminal.rexPanes.1")?.accessibilityLabel == "title b")
-        #expect(selected("sshTerminal.rexPanes.0") && !selected("sshTerminal.rexPanes.1"))
+        let switcher = try #require(control("sshTerminal.bar.rexPanes") as? UIButton)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            mounted.host.view.layoutIfNeeded()
+            return switcher.accessibilityLabel == "title a"
+        })
+        #expect((0...2).allSatisfy { shown("sshTerminal.rexMinimap.\($0)") })
+        #expect(switcher.accessibilityValue == "1 of 3")
+        #expect(switcher.showsMenuAsPrimaryAction && switcher.menu != nil)
         #expect(selected("sshTerminal.rexMinimap.0") && control("sshTerminal.rexMinimap.2")?.accessibilityLabel == "title c")
-        // The minimap sits at the grid's top right, and the strip above the bar.
-        let minimap = try #require(control("sshTerminal.rexMinimap.0")?.superview)
+        // The minimap sits at the grid's top right, the switcher in the trailing pill beside ….
+        let minimap = try #require(control("sshTerminal.rexMinimap.0")?.superview as? SSHTerminalRexMinimapView)
         let grid = try #require(mounted.controller.gridView)
         let corner = minimap.convert(CGPoint(x: minimap.bounds.maxX, y: minimap.bounds.minY), to: grid)
         #expect(corner.x > grid.bounds.width - 24 && corner.y < 24)
-        let strip = try #require(control("sshTerminal.rexPanes.0"))
         let more = try #require(control("sshTerminal.more"))
-        #expect(strip.convert(CGPoint.zero, to: mounted.controller.view).y < more.convert(CGPoint.zero, to: mounted.controller.view).y)
+        #expect(switcher.superview === more.superview)
+        #expect(switcher.convert(CGPoint.zero, to: mounted.controller.view).x < more.convert(CGPoint.zero, to: mounted.controller.view).x)
+        #expect(grid.paneTransition.phase == .idle)
 
-        // A strip glyph shows its pane.
-        let glyph = try #require(control("sshTerminal.rexPanes.2") as? UIControl)
-        glyph.sendActions(for: .touchUpInside)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { selected("sshTerminal.rexPanes.2") && selected("sshTerminal.rexMinimap.2") })
-
-        // A minimap cell does the same.
-        let cell = try #require(control("sshTerminal.rexMinimap.0") as? UIControl)
+        // A minimap cell shows its pane: the switcher and the highlight follow,
+        // and the grid is covered until that pane's own screen is on it.
+        let cell = try #require(control("sshTerminal.rexMinimap.2") as? UIControl)
         cell.sendActions(for: .touchUpInside)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+        #expect(grid.paneTransition.phase != .idle && grid.paneTransition.isPlaceholderShown)
+        #expect(grid.paneTransition.placeholderTitle == "title c")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            switcher.accessibilityLabel == "title c" && switcher.accessibilityValue == "3 of 3" && selected("sshTerminal.rexMinimap.2")
+        })
+        let target = try #require(control("sshTerminal.rexMinimap.2")).frame
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.highlightFrame == target }, "the highlight moves to the new cell")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle }, "the cover lifts")
+        #expect(!grid.paneTransition.isPlaceholderShown)
 
         // VoiceOver's actions are the swipe's owner: the grid says so, and they move one pane.
         let actions = try #require(grid.accessibilityCustomActions)
         #expect(actions.map(\.name) == ["Next Pane", "Previous Pane"])
-        #expect(grid.stepPane?(1) == true)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
-        #expect(grid.stepPane?(-1) == true && grid.stepPane?(-1) == false, "the first pane has none before it")
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+        #expect(grid.stepPane(-1) == true && grid.stepPane(1) == true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        #expect(grid.stepPane(1) == false, "the last pane has none after it")
+        #expect(grid.paneTransition.phase == .idle, "nothing slid for a step that did not happen")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(grid.stepPane(-1) == true && grid.stepPane(-1) == true && grid.stepPane(-1) == false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") && grid.paneTransition.phase == .idle })
+        #expect(switcher.accessibilityLabel == "title a" && switcher.accessibilityValue == "1 of 3")
         await rig.stop()
     }
 
-    /// One pane has no strip, no minimap, and nothing to swipe to.
-    @Test func aRexTerminalOfOnePaneHasNoStripNoMinimapAndNoSwipe() async throws {
+    /// The switcher's menu lists the panes in strip order with the shown one
+    /// checked, in one section per window when the session has several, and a
+    /// choice is the pane's block id handed to the owner.
+    @Test func theSwitcherMenuListsPanesInStripOrderAndSectionsWindows() {
+        func state(windows: Bool) -> RexSessionState {
+            RexSessionState(
+                panes: [
+                    .init(blockID: "a", name: "pi", windowID: "w1", windowName: "Main"),
+                    .init(blockID: "b", name: "logs", windowID: "w1", windowName: "Main"),
+                    .init(blockID: "c", name: "shell", windowID: windows ? "w2" : "w1", windowName: windows ? "Scratch" : "Main"),
+                ],
+                shown: "b", minimap: []
+            )
+        }
+        var chosen: [String] = []
+        let flat = SSHTerminalRexPaneMenu.elements(state: state(windows: false)) { chosen.append($0) }
+        let actions = flat.compactMap { $0 as? UIAction }
+        #expect(actions.map(\.title) == ["pi", "logs", "shell"])
+        #expect(actions.map(\.state) == [.off, .on, .off], "the shown pane is checked")
+        #expect(actions.map(\.accessibilityIdentifier) == (0...2).map { "sshTerminal.rexPanes.\($0)" })
+        actions[2].performWithSender(nil, target: nil)
+        #expect(chosen == ["c"])
+
+        let sectioned = SSHTerminalRexPaneMenu.elements(state: state(windows: true)) { chosen.append($0) }
+        let menus = sectioned.compactMap { $0 as? UIMenu }
+        #expect(menus.map(\.title) == ["Main", "Scratch"])
+        #expect(menus.map { $0.children.compactMap { ($0 as? UIAction)?.title } } == [["pi", "logs"], ["shell"]])
+        #expect(menus.allSatisfy { $0.options.contains(.displayInline) })
+        (menus[1].children[0] as? UIAction)?.performWithSender(nil, target: nil)
+        #expect(chosen == ["c", "c"])
+    }
+
+    /// One pane has no switcher, no minimap, and nothing to swipe to.
+    @Test func aRexTerminalOfOnePaneHasNoSwitcherNoMinimapAndNoSwipe() async throws {
         let rig = try await RexSessionTerminalTests().open(["a"])
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
@@ -2086,8 +2133,9 @@ struct SSHTerminalTests {
                     && sequence(first: $0, next: \.superview).allSatisfy { !$0.isHidden }
             } != nil
         }
-        #expect(!visible("sshTerminal.rexPanes.") && !visible("sshTerminal.rexMinimap."))
-        #expect(mounted.controller.gridView?.stepPane == nil)
+        #expect(!visible("sshTerminal.bar.rexPanes") && !visible("sshTerminal.rexMinimap."))
+        #expect(mounted.controller.gridView?.paneStepping == nil)
+        #expect(mounted.controller.gridView?.stepPane(1) == false)
         #expect(mounted.controller.gridView?.accessibilityCustomActions?.isEmpty ?? true)
         await rig.stop()
     }

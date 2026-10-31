@@ -18,12 +18,9 @@ enum SSHTerminalFloatingControls {
     /// connection brings it back it floats over the grid's bottom rows instead
     /// of taking them. A connection change therefore never resizes the shell;
     /// only a keyboard change does, and it already sends one.
-    ///
-    /// A Rex session's pane strip is a row of its own above the bar, and takes
-    /// its rows under the same rule.
     @MainActor
-    static func bottomBarReserve(keyboardUp: Bool, stripShown: Bool = false) -> CGFloat {
-        keyboardUp ? 0 : SSHTerminalBottomBar.reserve + (stripShown ? SSHTerminalBottomBar.stripHeight : 0)
+    static func bottomBarReserve(keyboardUp: Bool) -> CGFloat {
+        keyboardUp ? 0 : SSHTerminalBottomBar.reserve
     }
 
     /// Dot on the Back pill: a pane waiting in Herdr or Rex, or a blocked
@@ -49,8 +46,6 @@ enum SSHTerminalBottomBar {
     static let gridGap: CGFloat = 8
     /// The container's height while the bar shows: a 44 pt touch target.
     static let shownHeight = pillHeight + topInset + bottomInset
-    /// The pane strip's row above the bar: a pill in the same 44 pt row.
-    static let stripHeight = shownHeight
     /// Rows the grid leaves free while the bar shows.
     static let reserve = shownHeight + gridGap
     /// Back and the trailing pill sit this far inside the safe area.

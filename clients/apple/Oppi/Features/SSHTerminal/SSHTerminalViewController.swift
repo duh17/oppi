@@ -29,14 +29,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// keeps the bar) it floats just above the keyboard.
     private let bottomBar = SSHTerminalPassthroughView()
     private var bottomBarHeight: NSLayoutConstraint?
-    /// A Rex session's pane strip, in a row of its own above the bottom bar
-    /// (`rexStripHeight` is 0 until the session has more than one pane), and
-    /// its window's minimap at the grid's top right.
-    private let rexStripRow = SSHTerminalPassthroughView()
-    private let rexStrip = SSHTerminalRexStripPill()
-    private var rexStripHeight: NSLayoutConstraint?
+    /// A Rex session's window minimap at the grid's top right. Its pane
+    /// switcher is a button in the bar's trailing pill (`morePill.rexPanes`).
     private let rexMinimap = SSHTerminalRexMinimapView()
-    private var rexStripShown = false
+    /// The session has more than one pane: the switcher shows and the grid swipes.
+    private var rexPanesShown = false
     private let topStack = UIStackView()
     private let backPill = SSHTerminalBackPill()
     private let connectionBanner = SSHTerminalConnectionBannerView()
@@ -80,7 +77,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// `SSHTerminalFloatingControls`: never with a keyboard up, so reconnecting
     /// never resizes the remote shell.
     private var bottomBarReserve: CGFloat {
-        SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: keyboardUp, stripShown: rexStripShown)
+        SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: keyboardUp)
     }
     /// How much of the grid's bottom the chat bar covers right now.
     private var composerCoveredHeight: CGFloat = 0
@@ -545,25 +542,17 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         ])
 
         rexMinimap.isHidden = true
-        rexMinimap.select = { [weak self] block in self?.channel.rex?.show(block) }
-        rexStrip.select = { [weak self] block in self?.channel.rex?.show(block) }
-        rexStripRow.translatesAutoresizingMaskIntoConstraints = false
-        rexStripRow.addSubview(rexStrip)
-        rexStripRow.isHidden = true
-        let stripHeight = rexStripRow.heightAnchor.constraint(equalToConstant: 0)
-        rexStripHeight = stripHeight
-        // The strip is as wide as its panes, and scrolls inside what the
-        // screen leaves of the row.
-        NSLayoutConstraint.activate([
-            stripHeight,
-            rexStrip.centerXAnchor.constraint(equalTo: rexStripRow.centerXAnchor),
-            rexStrip.topAnchor.constraint(equalTo: rexStripRow.topAnchor, constant: SSHTerminalBottomBar.topInset),
-        ])
+        // The minimap's cells, the switcher's menu, and the swipe all show a
+        // pane through `showPane`.
+        rexMinimap.select = { [weak self] block in self?.showPane(block) }
+        morePill.rexPanes.installMenu(
+            state: { [weak self] in self?.channel.rex?.state },
+            select: { [weak self] block in self?.showPane(block) }
+        )
         gridClip.translatesAutoresizingMaskIntoConstraints = false
         gridClip.clipsToBounds = true
         view.addSubview(gridClip)
         view.addSubview(overlay)
-        view.addSubview(rexStripRow)
         view.addSubview(bottomBar)
         let controlsInset = SSHTerminalBottomBar.sideInset
         let barHeight = bottomBar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight)
@@ -577,13 +566,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             morePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             // Clear of a landscape notch, like the bar's pills.
             rexMinimap.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
-            rexStrip.widthAnchor.constraint(
-                lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor,
-                constant: -2 * SSHTerminalBottomBar.sideInset
-            ),
-            rexStripRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            rexStripRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            rexStripRow.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             // The guide rests on the bottom safe area and rides the keyboard.
@@ -651,7 +633,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         grid.openTargetForHeldCell = { [weak self] held in self?.heldOpenTarget(held) }
         grid.open = { [weak self] target in self?.open(target) }
-        grid.stepPane = stepPaneAction
+        grid.paneStepping = paneStepping
         return grid
     }
 
@@ -705,11 +687,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         lastCopies = next.copies
         // The glyph's hold, ring, and last root belong to the terminal left.
         statusGlyph.reset()
-        // Another terminal's strip and swipe are not this one's; the next
+        // Another terminal's switcher and swipe are not this one's; the next
         // pass shows this one's.
-        rexStripShown = false
-        rexStripHeight?.constant = 0
-        rexStripRow.isHidden = true
+        rexPanesShown = false
         rexMinimap.isHidden = true
         stashComposerDraft()
         destroyComposer()
@@ -916,6 +896,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             waiting: overviewsWaiting,
             showsStatus: showsStatus,
             openTerminals: openTerminals,
+            rex: channel.rex?.state,
             foreground: foreground
         )
         installSwitcherMenu()
@@ -927,7 +908,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             middleCapacity: SSHTerminalBottomBar.middleCapacity(
                 width: view.bounds.width,
                 safeInsets: view.safeAreaInsets,
-                trailingItems: (showsStatus ? 1 : 0) + trailing.count + 1
+                trailingItems: (showsStatus ? 1 : 0) + trailing.count + (channel.rex?.state.showsSwitcher == true ? 1 : 0) + 1
             )
         )
         middlePill.show(barPlacement.middle)
@@ -938,7 +919,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             keysEnabled: canSendKeys
         )
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
-        updateRexPanes(themeID: themeID, foreground: foreground)
+        updateRexPanes(themeID: themeID)
         installMenu(
             title: SSHTerminalMenuHeader.name(
                 shellTitle: channel.title, hostLabel: hostLabel,
@@ -949,17 +930,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
     }
 
-    /// A Rex terminal's pane strip, minimap, and swipe. The strip takes a row
-    /// above the bar, and the swipe works, only for a session with more than
-    /// one pane; the minimap only for a window with more than one.
-    private func updateRexPanes(themeID: ThemeID, foreground: UIColor?) {
+    /// A Rex terminal's minimap and swipe. The swipe works (and the bar shows
+    /// its pane switcher) only for a session with more than one pane; the
+    /// minimap only for a window with more than one.
+    private func updateRexPanes(themeID: ThemeID) {
         let rex = channel.rex?.state
-        let stripped = rex?.showsStrip == true
+        let hasPanes = rex?.showsSwitcher == true
         if let rex {
             let background = lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg)
-            rexStrip.apply(
-                state: rex, tint: foreground ?? UIColor(themeID.palette.fg), selectedTint: UIColor(themeID.palette.blue)
-            )
             rexMinimap.apply(
                 state: rex, shownTint: UIColor(themeID.palette.blue),
                 otherTint: UIColor(themeID.palette.fgDim).withAlphaComponent(0.5),
@@ -967,18 +945,31 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             )
         }
         rexMinimap.isHidden = rex?.showsMinimap != true
-        if stripped != rexStripShown {
-            rexStripShown = stripped
-            rexStripHeight?.constant = stripped ? SSHTerminalBottomBar.stripHeight : 0
-            rexStripRow.isHidden = !stripped
-            gridView?.stepPane = stepPaneAction
-            updateBottomRows()
+        if hasPanes != rexPanesShown {
+            rexPanesShown = hasPanes
+            gridView?.paneStepping = paneStepping
         }
     }
 
-    /// The grid's swipe and VoiceOver actions, while the strip shows.
-    private var stepPaneAction: ((Int) -> Bool)? {
-        rexStripShown ? { [weak self] delta in self?.channel.rex?.step(delta) ?? false } : nil
+    /// The grid's swipe and VoiceOver actions, while the session has panes to move between.
+    private var paneStepping: SSHTerminalPaneStepping? {
+        guard rexPanesShown else { return nil }
+        return SSHTerminalPaneStepping(
+            neighbour: { [weak self] delta in self?.channel.rex?.latest.neighbour(offsetBy: delta)?.name },
+            step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false }
+        )
+    }
+
+    /// Shows `blockID` for the switcher's menu and the minimap's cells: the
+    /// session takes the request, and the grid slides in the direction of
+    /// travel. The pane icon and the minimap's highlight follow the session's
+    /// state, as they do for a swipe.
+    private func showPane(_ blockID: String) {
+        guard let rex = channel.rex else { return }
+        let before = rex.latest
+        guard let from = before.shownIndex, let to = before.panes.firstIndex(where: { $0.blockID == blockID }),
+              rex.show(blockID) else { return }
+        gridView?.paneTransition.slide(toward: to > from ? 1 : -1, neighbour: before.panes[to].name)
     }
 
     /// Fades the bar with the keyboard. A hidden bar takes no touches, leaves
@@ -991,7 +982,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         applyBottomBarGeometry(visible: visible)
         guard visible != controlsVisible || animation == nil else { return }
         controlsVisible = visible
-        for pill in [backPill, middlePill, morePill, rexStrip] as [UIView] {
+        for pill in [backPill, middlePill, morePill] as [UIView] {
             pill.isUserInteractionEnabled = visible
             pill.accessibilityElementsHidden = !visible
         }
@@ -999,7 +990,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             self.backPill.alpha = visible ? 1 : 0
             self.middlePill.alpha = visible ? 1 : 0
             self.morePill.alpha = visible ? 1 : 0
-            self.rexStrip.alpha = visible ? 1 : 0
         }
         if let animation, isOnScreen, view.window != nil {
             UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: apply)

@@ -397,7 +397,7 @@ extension SSHPTYSession: RexTransport {}
 /// replaces the grid (`SSHTerminalEventQueue.pushSnapshot`). Switches run one
 /// at a time, so a fast double swipe ends on the last pane asked for, and the
 /// stream of a pane left behind is dropped by generation: it is never fed to
-/// the grid and never ends the terminal. The strip and minimap follow
+/// the grid and never ends the terminal. The pane switcher and minimap follow
 /// `session.view`, read again at each `session_view_changed` (at most one read
 /// at a time, again if another came meanwhile, an older answer dropped).
 ///
@@ -468,7 +468,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     }
 
     let sessionID: String
-    /// The strip and minimap, newest only. Ends with the connection.
+    /// The pane switcher and minimap, newest only. Ends with the connection.
     let updates: AsyncStream<RexSessionState>
     private let updateSink: AsyncStream<RexSessionState>.Continuation
     private let transport: any RexTransport
@@ -525,20 +525,23 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
 
     // MARK: - What the screen reads and asks for
 
-    /// What the strip and minimap show now.
+    /// What the pane switcher and minimap show now.
     var state: RexSessionState { core.withLock { Self.snapshot($0) } }
 
     /// Shows `blockID`: the screen's one way to change pane, for a tap, a
-    /// swipe, and VoiceOver alike. A pane the view does not list is ignored.
-    func show(_ blockID: String) {
-        let start = core.withLock { state -> Bool in
-            guard !state.ended, blockID != state.requested, !state.closedBlocks.contains(blockID) else { return false }
-            if let layout = state.layout, !layout.contains(blockID) { return false }
+    /// swipe, and VoiceOver alike. A pane the view does not list is ignored
+    /// (false); true means the pane is now the one asked for.
+    @discardableResult
+    func show(_ blockID: String) -> Bool {
+        let (accepted, start) = core.withLock { state -> (Bool, Bool) in
+            guard !state.ended, blockID != state.requested, !state.closedBlocks.contains(blockID) else { return (false, false) }
+            if let layout = state.layout, !layout.contains(blockID) { return (false, false) }
             state.requested = blockID
             publish(state)
-            return startSwitching(&state)
+            return (true, startSwitching(&state))
         }
         if start { Task { await runSwitches() } }
+        return accepted
     }
 
     /// Shows the pane `delta` places along the strip from the one last asked
@@ -546,8 +549,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     @discardableResult
     func step(_ delta: Int) -> Bool {
         guard let next = state.pane(offsetBy: delta) else { return false }
-        show(next)
-        return true
+        return show(next)
     }
 
     // MARK: - SSHTerminalConnection
@@ -941,9 +943,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
 
     private static func snapshot(_ state: State) -> RexSessionState {
         // Until a view has been read, the pane that was asked for is the only one known.
-        let order = state.layout?.panes.map(\.blockID) ?? [state.requested]
+        let panes: [RexSessionState.Pane] = state.layout?.panes.map {
+            .init(blockID: $0.blockID, name: name(of: $0.blockID, in: state), windowID: $0.windowID, windowName: $0.windowName)
+        } ?? [.init(blockID: state.requested, name: name(of: state.requested, in: state))]
         return RexSessionState(
-            panes: order.map { .init(blockID: $0, name: name(of: $0, in: state)) },
+            panes: panes,
             shown: state.requested,
             minimap: state.layout?.minimap(around: state.requested) ?? []
         )

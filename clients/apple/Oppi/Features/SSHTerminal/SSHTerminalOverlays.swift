@@ -82,8 +82,8 @@ class SSHTerminalGlassPill: UIView {
 }
 
 /// One symbol in a glass pill. Large Content Viewer shows it at accessibility
-/// text sizes, as bar buttons do.
-final class SSHTerminalPillButton: UIButton {
+/// text sizes, as bar buttons do. The Rex pane switcher draws its own symbol.
+class SSHTerminalPillButton: UIButton {
     /// Every pill symbol's size; a logo is drawn to match it.
     static let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
 
@@ -196,6 +196,8 @@ final class SSHTerminalBackPill: UIView {
 /// then the trailing bar actions the layout shows and the screen can offer
 /// (Herdr or Rex when the host has it, the switcher with more than one
 /// terminal open), in the layout's order, then the … menu, which is always last.
+/// A Rex session with more than one pane adds its pane switcher right after
+/// the Rex sessions button.
 final class SSHTerminalMorePill: SSHTerminalGlassPill {
     let status: SSHTerminalStatusGlyphButton
     /// One button per multiplexer overview (`SSHTerminalBarAction.overviews`).
@@ -214,6 +216,8 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
         label: SSHTerminalBarAction.switcher.accessibilityLabel,
         identifier: SSHTerminalBarAction.switcher.accessibilityIdentifier
     )
+    /// The Rex session's pane switcher, hidden unless the session has more than one pane.
+    let rexPanes = SSHTerminalRexPanesButton()
     let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
 
     init(status: SSHTerminalStatusGlyphButton) {
@@ -223,12 +227,14 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
         switcher.showsMenuAsPrimaryAction = true
         status.isHidden = true
         switcher.isHidden = true
+        rexPanes.isHidden = true
         stack.addArrangedSubview(status)
         for action in SSHTerminalBarAction.overviews {
             guard let button = overviews[action] else { continue }
             button.isHidden = true
             stack.addArrangedSubview(button)
         }
+        stack.addArrangedSubview(rexPanes)
         stack.addArrangedSubview(switcher)
         stack.addArrangedSubview(more)
     }
@@ -242,13 +248,15 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
 
     /// `trailing` is what the layout draws here, in order (`SSHTerminalBarPlacement.trailing`).
     /// `waiting` holds each available multiplexer's count of panes that need
-    /// you; one it does not name has not answered.
+    /// you; one it does not name has not answered. `rex` is a Rex terminal's
+    /// session, which gives the pane switcher its panes.
     func apply(
         themeID: ThemeID,
         trailing: [SSHTerminalBarAction],
         waiting: [SSHTerminalBarAction: Int],
         showsStatus: Bool,
         openTerminals: Int = 0,
+        rex: RexSessionState? = nil,
         foreground: UIColor? = nil
     ) {
         let fg = foreground ?? UIColor(themeID.palette.fg)
@@ -256,7 +264,11 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
         let trailingButtons = (SSHTerminalBarAction.overviews + [.switcher]).compactMap { button(for: $0) }
         let ordered: [UIView] = trailing.compactMap { button(for: $0) }
         // The trailing actions in the layout's order, between status and the menu.
-        let order: [UIView] = [status] + ordered + trailingButtons.filter { !ordered.contains($0) } + [more]
+        var order: [UIView] = [status] + ordered + trailingButtons.filter { !ordered.contains($0) } + [more]
+        // The pane switcher sits beside Rex's sessions, or before … when that
+        // button is in the menu.
+        let panesAt = overviews[.rex].flatMap { rexButton in order.firstIndex { $0 === rexButton }.map { $0 + 1 } } ?? order.count - 1
+        order.insert(rexPanes, at: panesAt)
         if stack.arrangedSubviews != order {
             for view in order { stack.addArrangedSubview(view) }
         }
@@ -273,6 +285,7 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
             button.largeContentTitle = waitingCount > 0
                 ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel
         }
+        rexPanes.apply(state: rex, tint: fg)
         more.apply(tint: fg)
     }
 }
