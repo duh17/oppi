@@ -180,49 +180,52 @@ final class SSHTerminalConnectSession {
                 let owner = try SSHTerminalChannel(answersTerminalQueries: rexPane == nil)
                 channel = owner
                 let queue = SSHTerminalEventQueue()
-                let session: SSHPTYSession
                 // A folder terminal runs the login shell in that folder, or the
                 // multiplexer's own attach command there: the host's Run on
-                // Connect command belongs to its own terminal. A Rex pane runs
-                // no shell: the connection's main channel is Rex's control
-                // connection, with no PTY, and the pane's output comes on a
-                // second channel (`RexSessionConnection`).
+                // Connect command belongs to its own terminal.
                 let command: String?
-                let control = RexControl()
-                if rexPane != nil {
-                    command = RexBridge.command
-                } else if let folder {
+                if let folder {
                     command = folderCommand ?? SSHTerminalFolderCommand.command(folder: folder)
                 } else {
                     command = value.startupCommand
                 }
-                do {
-                    session = try await SSHPTYSession.connect(
-                        username: value.username, savedHostKey: savedKey,
-                        inboundFlow: rexPane == nil ? queue.flow : nil,
-                        command: command,
-                        requestsPTY: rexPane == nil,
-                        prepareAuthentication: authenticate,
-                        dial: dial,
-                        sink: { event in
-                            guard rexPane != nil else { return queue.push(event) }
-                            // Typing travels on the control channel, so its
-                            // writability is what lets the input pump resume.
-                            if case .writabilityChanged = event { queue.push(event) }
-                            control.receive(event)
-                        }
-                    )
-                } catch { queue.finish(); throw error }
-                guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
                 if let rexPane {
+                    // A Rex pane runs no shell: the signed-in connection carries
+                    // Rex's control connection and the pane's data connection
+                    // (`RexHostTransport`), and side commands beside them.
+                    let connection: SSHConnection
+                    do {
+                        connection = try await SSHConnection.open(
+                            username: value.username, savedHostKey: savedKey,
+                            prepareAuthentication: authenticate, dial: dial
+                        )
+                    } catch { queue.finish(); throw error }
+                    guard !Task.isCancelled, runID == self.runID else { queue.finish(); connection.close(); return }
                     let pane: RexSessionConnection
                     do {
-                        pane = try await RexSessionConnection.open(transport: session, control: control, target: rexPane, queue: queue)
-                    } catch { queue.finish(); await session.cancel(); throw error }
+                        // Typing travels on the control connection, so its
+                        // writability is what lets the input pump resume.
+                        let (transport, control) = try await RexHostTransport.open(connection: connection) { writable in
+                            queue.push(.writabilityChanged(writable))
+                        }
+                        pane = try await RexSessionConnection.open(transport: transport, control: control, target: rexPane, queue: queue)
+                    } catch { queue.finish(); connection.close(); throw error }
                     guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
                     owner.rex = RexSessionModel(connection: pane)
                     owner.opened(pane)
                 } else {
+                    let session: SSHPTYSession
+                    do {
+                        session = try await SSHPTYSession.connect(
+                            username: value.username, savedHostKey: savedKey,
+                            inboundFlow: queue.flow,
+                            command: command,
+                            prepareAuthentication: authenticate,
+                            dial: dial,
+                            sink: { queue.push($0) }
+                        )
+                    } catch { queue.finish(); throw error }
+                    guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
                     owner.opened(session, command: command)
                 }
                 // Sign-in's task (and its password capture) ends here. The

@@ -1,6 +1,45 @@
 import Compression
 import CryptoKit
 import Foundation
+import Synchronization
+
+/// A WebSocket message to or from Rex, whatever carries the socket.
+enum RexSocketMessage: Equatable, Sendable {
+    case text(String)
+    case binary(Data)
+    /// The server's close frame, or nil code when it sent none.
+    case close(code: UInt16?, reason: String)
+}
+
+/// What one Rex WebSocket reports to its owner, in order and one at a time.
+enum RexSocketEvent: Sendable {
+    case message(RexSocketMessage)
+    /// The bridge's SSH channel can take more writes, or cannot. Typing waits
+    /// on the control socket's.
+    case writable(Bool)
+    /// The socket is over, and why. Nothing follows.
+    case ended(any Error)
+}
+
+/// Rex's two WebSocket endpoints: the control connection and a pane's data.
+struct RexEndpoint: Equatable, Sendable {
+    let path: String
+    let subprotocol: String
+
+    static let control = RexEndpoint(path: "/api/control", subprotocol: "rex.control.v1")
+    static let data = RexEndpoint(path: "/api/data", subprotocol: "rex.data.terminal.v1")
+}
+
+/// One open Rex WebSocket, at the message level: the upgrade is done, pings
+/// are answered, and the owner's handler hears each `RexSocketEvent`.
+/// `RexPipeSocket` carries it over the SSH bridge; the protocols above it
+/// (`RexControl`, `RexDataStream`) do not know which.
+protocol RexSocket: Sendable {
+    /// Sends a text or binary message.
+    func send(_ message: RexSocketMessage) async throws
+    /// Closes without waiting. The handler then hears `.ended`.
+    func close()
+}
 
 /// The client half of a WebSocket (RFC 6455) over a byte pipe iOS cannot open
 /// as a socket: an SSH exec stream to Rex's Unix socket on the host. Only what
@@ -12,12 +51,7 @@ import Foundation
 /// This client's own messages (requests, keys) go uncompressed, as the
 /// extension allows.
 struct RexWebSocketCodec {
-    enum Message: Equatable, Sendable {
-        case text(String)
-        case binary(Data)
-        /// The server's close frame, or nil code when it sent none.
-        case close(code: UInt16?, reason: String)
-    }
+    typealias Message = RexSocketMessage
 
     enum Failure: Error, Equatable, LocalizedError {
         /// The server did not switch protocols: its status line and, when it
@@ -326,5 +360,160 @@ struct RexWebSocketCodec {
         let tail: [UInt8] = [0x00, 0x00, 0xFF, 0xFF]
         _ = try tail.withUnsafeBytes(feed)
         return output
+    }
+}
+
+/// A Rex WebSocket over the SSH bridge: `RexBridge.command` (`nc -U` to Rex's
+/// socket) on an exec stream, with this side doing the client's framing
+/// (`RexWebSocketCodec`). `open` returns once Rex switched protocols. The
+/// bridge's exit status says why it ended (`RexBridge.failure`).
+///
+/// Thread-safe: the stream's events arrive on the SSH event loop.
+final class RexPipeSocket: RexSocket {
+    typealias OpenStream = @Sendable (_ sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
+
+    private struct State {
+        var codec: RexWebSocketCodec
+        var stream: SSHExecStream?
+        var exitStatus: Int?
+        /// `open` waits here for the upgrade; a result that came first waits for it.
+        var upgrade: CheckedContinuation<Void, any Error>?
+        var upgraded: Result<Void, any Error>?
+        var ended = false
+    }
+
+    private let state: Mutex<State>
+    private let onEvent: @Sendable (RexSocketEvent) -> Void
+
+    private init(_ endpoint: RexEndpoint, key: String, onEvent: @escaping @Sendable (RexSocketEvent) -> Void) {
+        state = Mutex(State(codec: RexWebSocketCodec(subprotocol: endpoint.subprotocol, key: key)))
+        self.onEvent = onEvent
+    }
+
+    /// Opens the bridge with `openStream` and upgrades it to `endpoint`, within
+    /// `timeout`. `onEvent` hears every message after the upgrade.
+    static func open(
+        _ endpoint: RexEndpoint,
+        key: String = RexWebSocketCodec.makeKey(),
+        timeout: Duration = RexControl.requestTimeout,
+        openStream: OpenStream,
+        onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> RexPipeSocket {
+        let socket = RexPipeSocket(endpoint, key: key, onEvent: onEvent)
+        let stream = try await openStream { socket.receive($0) }
+        let request = socket.state.withLock { state -> Data in
+            state.stream = stream
+            return state.codec.upgradeRequest(path: endpoint.path)
+        }
+        let timer = Task { [weak socket] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            socket?.settleUpgrade(.failure(RexClientError.timedOut))
+        }
+        defer { timer.cancel() }
+        do {
+            try await withTaskCancellationHandler {
+                // A bridge that exits at once (no Rex, no `nc`) can close the
+                // channel before this write: its exit status, which settles
+                // the upgrade, is the reason worth reporting.
+                try? await stream.send(request)
+                try await withCheckedThrowingContinuation { continuation in
+                    let ready = socket.state.withLock { state -> Result<Void, any Error>? in
+                        if let result = state.upgraded { return result }
+                        state.upgrade = continuation
+                        return nil
+                    }
+                    if let ready { continuation.resume(with: ready) }
+                }
+            } onCancel: {
+                socket.settleUpgrade(.failure(CancellationError()))
+            }
+        } catch {
+            socket.state.withLock { $0.ended = true }
+            stream.close()
+            throw error
+        }
+        return socket
+    }
+
+    func send(_ message: RexSocketMessage) async throws {
+        let frame: Data
+        switch message {
+        case .text(let text): frame = RexWebSocketCodec.frame(.text, payload: Data(text.utf8))
+        case .binary(let bytes): frame = RexWebSocketCodec.frame(.binary, payload: bytes)
+        case .close: return
+        }
+        guard let stream = state.withLock({ $0.ended ? nil : $0.stream }) else { throw RexClientError.connectionClosed }
+        try await stream.send(frame)
+    }
+
+    func close() {
+        state.withLock { $0.stream }?.close()
+    }
+
+    /// The stream's events. EOF comes before the bridge's exit status;
+    /// `.closed` follows both, so only it ends the socket.
+    private func receive(_ event: SSHPTYEvent) {
+        switch event {
+        case .data(let bytes):
+            let parsed = state.withLock { state -> Result<([RexSocketMessage], [Data], Bool), any Error>? in
+                guard !state.ended else { return nil }
+                let wasUpgraded = state.codec.upgraded
+                do {
+                    let (messages, replies) = try state.codec.receive(bytes)
+                    return .success((messages, replies, !wasUpgraded && state.codec.upgraded))
+                } catch {
+                    return .failure(error)
+                }
+            }
+            switch parsed {
+            case nil:
+                break
+            case .failure(let error)?:
+                fail(error)
+            case .success(let (messages, replies, upgraded))?:
+                if upgraded { settleUpgrade(.success(())) }
+                if !replies.isEmpty, let stream = state.withLock({ $0.stream }) {
+                    Task { for reply in replies { try? await stream.send(reply) } }
+                }
+                for message in messages { onEvent(.message(message)) }
+            }
+        case .writabilityChanged(let writable):
+            onEvent(.writable(writable))
+        case .exitStatus(let status):
+            state.withLock { $0.exitStatus = status }
+        case .closed:
+            fail(RexBridge.failure(exitStatus: state.withLock { $0.exitStatus }))
+        case .eof, .exitSignal:
+            break
+        }
+    }
+
+    /// Ends the socket: `open` throws `error` if it still waits on the
+    /// upgrade, else the owner hears it.
+    private func fail(_ error: any Error) {
+        let (first, opened, stream) = state.withLock { state -> (Bool, Bool, SSHExecStream?) in
+            guard !state.ended else { return (false, false, nil) }
+            state.ended = true
+            guard case .success? = state.upgraded else { return (true, false, state.stream) }
+            return (true, true, state.stream)
+        }
+        guard first else { return }
+        stream?.close()
+        if opened {
+            onEvent(.ended(error))
+        } else {
+            settleUpgrade(.failure(error))
+        }
+    }
+
+    private func settleUpgrade(_ result: Result<Void, any Error>) {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, any Error>? in
+            guard state.upgraded == nil else { return nil }
+            state.upgraded = result
+            defer { state.upgrade = nil }
+            return state.upgrade
+        }
+        waiter?.resume(with: result)
     }
 }

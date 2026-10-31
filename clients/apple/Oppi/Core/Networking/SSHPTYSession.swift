@@ -40,8 +40,9 @@ final class SSHPTYInboundFlow: Sendable {
         wake?()
     }
 
-    fileprivate var isPaused: Bool { state.withLock { $0.paused } }
-    fileprivate func attach(_ wake: (@Sendable () -> Void)?) { state.withLock { $0.wake = wake } }
+    var isPaused: Bool { state.withLock { $0.paused } }
+    /// What `resume` calls: the reader that stopped reading. One reader at a time.
+    func attach(_ wake: (@Sendable () -> Void)?) { state.withLock { $0.wake = wake } }
 }
 
 struct SSHPTYConfiguration: Sendable {
@@ -67,10 +68,6 @@ struct SSHPTYConfiguration: Sendable {
     /// exec-with-TTY request as OpenSSH `RemoteCommand` + `RequestTTY yes`
     /// (`ssh -t host 'command'`). The session ends when the command exits.
     var command: String?
-    /// False runs `command` with no PTY (`ssh -T host 'command'`): its stdin
-    /// and stdout are a clean 8-bit pipe, with no line discipline, echo, or
-    /// CRLF translation, for a protocol rather than a person. Requires `command`.
-    var requestsPTY = true
     /// How long sign-in may take once the socket exists. Tests shorten it.
     var signInTimeout = SSHConnection.signInTimeout
 }
@@ -93,18 +90,8 @@ final class SSHPTYSession: @unchecked Sendable {
     private let closed: EventLoopFuture<Void>
 
     private init(connection: SSHConnection, terminal: Channel) {
-        let parent = connection.channel
-        // This also works over tailscale_dial's socketpair: opening a child
-        // requires a real SSH reply, unlike TCP probes or window-change. No
-        // PTY/shell/exec is requested, so sshd starts no process. Backgrounding
-        // closes the parent and cancels the timer with it.
-        let keepalive = parent.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(60), delay: .seconds(60)) { task in
-            guard parent.isActive else { task.cancel(); return }
-            Self.probe(parent, timeout: .seconds(15))
-        }
-        parent.closeFuture.whenComplete { _ in keepalive.cancel() }
-        closed = parent.closeFuture
-        channels = Mutex(Channels(connection: connection, terminal: terminal, keepalive: keepalive))
+        closed = connection.channel.closeFuture
+        channels = Mutex(Channels(connection: connection, terminal: terminal, keepalive: connection.startKeepalive()))
     }
 
     /// Owns the pre-dial authentication boundary. No sign-in deadline or socket
@@ -114,7 +101,6 @@ final class SSHPTYSession: @unchecked Sendable {
         savedHostKey: SSHHostKey?,
         inboundFlow: SSHPTYInboundFlow? = nil,
         command: String? = nil,
-        requestsPTY: Bool = true,
         signInTimeout: TimeAmount = SSHConnection.signInTimeout,
         prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
         dial: @Sendable () async throws -> Int32,
@@ -130,7 +116,6 @@ final class SSHPTYSession: @unchecked Sendable {
             savedHostKey: savedHostKey, inboundFlow: inboundFlow
         )
         configuration.command = command
-        configuration.requestsPTY = requestsPTY
         configuration.signInTimeout = signInTimeout
         return try await connect(configuration: configuration, socket: socket, sink: sink)
     }
@@ -257,42 +242,11 @@ final class SSHPTYSession: @unchecked Sendable {
         }
     }
 
-    /// Opens and closes an empty session channel. Success needs a real SSH
-    /// round trip; failure or timeout closes the whole connection, because a
-    /// peer that cannot answer a channel open cannot carry the terminal either.
-    @discardableResult
-    private static func probe(_ parent: Channel, timeout: TimeAmount) -> EventLoopFuture<Void> {
-        let opened = parent.eventLoop.makePromise(of: Channel.self)
-        let deadline = parent.eventLoop.scheduleTask(in: timeout) {
-            opened.fail(SSHConnectionError.requestTimedOut)
-        }
-        opened.futureResult.whenComplete { result in
-            deadline.cancel()
-            switch result {
-            case .success(let probe): probe.close(promise: nil)
-            case .failure: parent.close(promise: nil)
-            }
-        }
-        parent.eventLoop.execute {
-            do {
-                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
-                ssh.createChannel(opened, channelType: .session) { child, _ in
-                    // Even a late channel-open response after the timeout must
-                    // close its child; it never acquires a shell or credentials.
-                    child.eventLoop.makeCompletedFuture {
-                        try child.pipeline.syncOperations.addHandler(SSHKeepaliveProbeHandler())
-                    }
-                }
-            } catch { opened.fail(error) }
-        }
-        return opened.futureResult.map { _ in }
-    }
-
     /// Checks on demand (e.g. after a network path change) that the peer still
     /// answers. A failed check has already closed the connection.
     func checkAlive(timeout: TimeAmount = .seconds(8)) async throws {
-        guard let parent = channels.withLock({ $0?.connection.channel }) else { throw SSHConnectionError.notConnected }
-        do { try await Self.probe(parent, timeout: timeout).get() } catch { throw SSHConnectionError(mapping: error) }
+        guard let connection = channels.withLock({ $0?.connection }) else { throw SSHConnectionError.notConnected }
+        try await connection.checkAlive(timeout: timeout)
     }
 
     /// Runs one command next to the terminal on the same connection. Used for
@@ -413,12 +367,66 @@ extension SSHPTYChannelHandler.Options {
             term: configuration.term, columns: configuration.columns, rows: configuration.rows,
             pixelWidth: configuration.pixelWidth, pixelHeight: configuration.pixelHeight,
             inboundFlow: configuration.inboundFlow, command: configuration.command,
-            requestsPTY: configuration.requestsPTY
+            requestsPTY: true
         )
     }
 }
 
 extension SSHConnection {
+    /// Probes the peer every 60 s while the connection is open; a probe that
+    /// fails closes it. This also works over tailscale_dial's socketpair:
+    /// opening a child requires a real SSH reply, unlike TCP probes or
+    /// window-change. Backgrounding closes the connection and cancels the
+    /// timer with it.
+    @discardableResult
+    func startKeepalive() -> RepeatedTask {
+        let parent = channel
+        let keepalive = parent.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(60), delay: .seconds(60)) { task in
+            guard parent.isActive else { task.cancel(); return }
+            Self.probe(parent, timeout: .seconds(15))
+        }
+        parent.closeFuture.whenComplete { _ in keepalive.cancel() }
+        return keepalive
+    }
+
+    /// Checks on demand (e.g. after a network path change) that the peer still
+    /// answers. A failed check has already closed the connection.
+    func checkAlive(timeout: TimeAmount = .seconds(8)) async throws {
+        do { try await Self.probe(channel, timeout: timeout).get() } catch { throw SSHConnectionError(mapping: error) }
+    }
+
+    /// Opens and closes an empty session channel. No PTY, shell, or exec is
+    /// requested, so sshd starts no process. Success needs a real SSH round
+    /// trip; failure or timeout closes the whole connection, because a peer
+    /// that cannot answer a channel open cannot carry the terminal either.
+    @discardableResult
+    private static func probe(_ parent: Channel, timeout: TimeAmount) -> EventLoopFuture<Void> {
+        let opened = parent.eventLoop.makePromise(of: Channel.self)
+        let deadline = parent.eventLoop.scheduleTask(in: timeout) {
+            opened.fail(SSHConnectionError.requestTimedOut)
+        }
+        opened.futureResult.whenComplete { result in
+            deadline.cancel()
+            switch result {
+            case .success(let probe): probe.close(promise: nil)
+            case .failure: parent.close(promise: nil)
+            }
+        }
+        parent.eventLoop.execute {
+            do {
+                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+                ssh.createChannel(opened, channelType: .session) { child, _ in
+                    // Even a late channel-open response after the timeout must
+                    // close its child; it never acquires a shell or credentials.
+                    child.eventLoop.makeCompletedFuture {
+                        try child.pipeline.syncOperations.addHandler(SSHKeepaliveProbeHandler())
+                    }
+                }
+            } catch { opened.fail(error) }
+        }
+        return opened.futureResult.map { _ in }
+    }
+
     /// Opens a command on this connection with no PTY, as a long-lived byte
     /// pipe in both directions (a bridge to a socket on the host, say). Unlike
     /// `run`, its output streams to `sink` as it arrives and nothing is

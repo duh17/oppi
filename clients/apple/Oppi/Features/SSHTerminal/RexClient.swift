@@ -68,15 +68,12 @@ enum RexClientError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Rex's control connection (`/api/control`, `rex.control.v1`) over a byte
-/// pipe: one hello, then JSON requests matched to their responses by id.
-/// Events go to `onEvent` when one is set, and are skipped otherwise. Pings
-/// are answered.
+/// Rex's control connection (`/api/control`, `rex.control.v1`) over a
+/// `RexSocket`: one hello, then JSON requests matched to their responses by
+/// id. Events go to `onEvent` when one is set, and are skipped otherwise.
 ///
-/// Thread-safe: `receive` runs on the SSH event loop, requests on any task.
+/// Thread-safe: `receive` runs on the socket's thread, requests on any task.
 final class RexControl: Sendable {
-    typealias Write = @Sendable (Data) async throws -> Void
-
     /// The API revision this client was written against, from the server's
     /// own API page.
     static let apiRevision = 7
@@ -85,21 +82,18 @@ final class RexControl: Sendable {
     static let requestTimeout: Duration = .seconds(15)
 
     private struct State {
-        var codec = RexWebSocketCodec(subprotocol: "rex.control.v1")
-        var write: Write?
+        var socket: (any RexSocket)?
         var nextID = 0
         /// A result that arrived before its caller waited for it.
         var early: [String: Result<Data, any Error>] = [:]
         var waiting: [String: CheckedContinuation<Data, any Error>] = [:]
         /// Requests given up on, and why; an answer that comes later is dropped.
         var abandoned: [String: any Error] = [:]
-        var exitStatus: Int?
         var ended: (any Error)?
         var onEnd: (@Sendable (any Error) -> Void)?
         var onEvent: (@Sendable ([String: Any]) -> Void)?
     }
 
-    private static let upgradeID = "upgrade"
     private static let welcomeID = "welcome"
     private let state = Mutex(State())
     private let timeout: Duration
@@ -108,8 +102,11 @@ final class RexControl: Sendable {
         timeout = requestTimeout
     }
 
-    /// Where requests go: the SSH channel this control connection runs on.
-    func attach(write: @escaping Write) { state.withLock { $0.write = write } }
+    /// Where requests go: the socket whose events reach `receive`.
+    func attach(_ socket: any RexSocket) { state.withLock { $0.socket = socket } }
+
+    /// Closes the socket; the connection ends when it reports its end.
+    func close() { state.withLock { $0.socket }?.close() }
 
     /// Called once when the connection ends, with why.
     func onEnd(_ handler: @escaping @Sendable (any Error) -> Void) {
@@ -121,23 +118,21 @@ final class RexControl: Sendable {
     }
 
     /// Called for every server event, as Rex framed it (`{"type":"event","seq":…,"payload":{…}}`),
-    /// on the SSH event loop and in the order Rex sent them. A single pane
+    /// on the socket's thread and in the order Rex sent them. A single pane
     /// does not set one: the connection only receives events once it has
     /// attached to a session or to the whole server.
     func onEvent(_ handler: @escaping @Sendable ([String: Any]) -> Void) {
         state.withLock { $0.onEvent = handler }
     }
 
-    /// Upgrades the pipe and says hello. Returns once Rex welcomed this client.
+    /// Says hello on the attached socket. Returns once Rex welcomed this client.
     func open() async throws {
-        let request = state.withLock { $0.codec.upgradeRequest(path: "/api/control") }
-        _ = try await exchange(id: Self.upgradeID, frame: request)
         let hello = try Self.json([
             "type": "hello",
             "api_revision": Self.apiRevision,
             "client": ["kind": "app", "platform": "ios", "name": "Oppi"],
         ])
-        _ = try await exchange(id: Self.welcomeID, frame: RexWebSocketCodec.frame(.text, payload: hello))
+        _ = try await exchange(id: Self.welcomeID, message: hello)
     }
 
     /// Calls a method and returns its result's JSON.
@@ -147,42 +142,19 @@ final class RexControl: Sendable {
             return String(state.nextID)
         }
         let request = try Self.json(["type": "request", "id": id, "method": method, "payload": payload])
-        return try await exchange(id: id, frame: RexWebSocketCodec.frame(.text, payload: request))
+        return try await exchange(id: id, message: request)
     }
 
-    /// Feeds what the SSH channel delivered. The channel reports EOF before
-    /// the command's exit status, so only `.closed`, which follows both, ends
-    /// the connection with the reason the status gives.
-    func receive(_ event: SSHPTYEvent) {
+    /// Feeds what the socket reports. Its end ends the connection, with its reason.
+    func receive(_ event: RexSocketEvent) {
         switch event {
-        case .data(let bytes):
-            let parsed = state.withLock { state -> Result<([RexWebSocketCodec.Message], [Data], Bool), any Error> in
-                let wasUpgraded = state.codec.upgraded
-                do {
-                    let (messages, replies) = try state.codec.receive(bytes)
-                    return .success((messages, replies, !wasUpgraded && state.codec.upgraded))
-                } catch {
-                    return .failure(error)
-                }
-            }
-            switch parsed {
-            case .failure(let error):
-                end(error)
-            case .success(let (messages, replies, upgraded)):
-                if upgraded { resolve(Self.upgradeID, .success(Data())) }
-                for reply in replies { send(reply) }
-                for message in messages { handle(message) }
-            }
-        case .exitStatus(let status):
-            state.withLock { $0.exitStatus = status }
-        case .closed:
-            end(RexBridge.failure(exitStatus: state.withLock { $0.exitStatus }))
-        case .eof, .exitSignal, .writabilityChanged:
-            break
+        case .message(let message): handle(message)
+        case .ended(let error): end(error)
+        case .writable: break
         }
     }
 
-    private func handle(_ message: RexWebSocketCodec.Message) {
+    private func handle(_ message: RexSocketMessage) {
         switch message {
         case .text(let text):
             guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
@@ -213,15 +185,15 @@ final class RexControl: Sendable {
         }
     }
 
-    /// Writes `frame`, then waits for the result filed under `id`, at most
+    /// Sends `message`, then waits for the result filed under `id`, at most
     /// `timeout`.
-    private func exchange(id: String, frame: Data) async throws -> Data {
-        let write = try state.withLock { state -> Write in
+    private func exchange(id: String, message: Data) async throws -> Data {
+        let socket = try state.withLock { state -> any RexSocket in
             if let ended = state.ended { throw ended }
-            guard let write = state.write else { throw RexClientError.connectionClosed }
-            return write
+            guard let socket = state.socket else { throw RexClientError.connectionClosed }
+            return socket
         }
-        try await write(frame)
+        try await socket.send(.text(String(decoding: message, as: UTF8.self)))
         let timer = Task { [weak self, timeout] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
@@ -273,25 +245,18 @@ final class RexControl: Sendable {
         handler?(error)
     }
 
-    private func send(_ frame: Data) {
-        guard let write = state.withLock({ $0.ended == nil ? $0.write : nil }) else { return }
-        Task { try? await write(frame) }
-    }
-
     private static func json(_ object: [String: Any]) throws -> Data {
         try JSONSerialization.data(withJSONObject: object)
     }
 }
 
 /// A pane's data connection (`/api/data`, `rex.data.terminal.v1`) as a state
-/// machine: bytes from the pipe in, frames to send and what the terminal gets
-/// out. The connection opens and upgrades while `data.connect` is still
-/// issuing its ticket: HELLO goes out once both the upgrade landed and the
-/// ticket is in (`receive`, `ticket(_:)`), whichever is last. It reads WELCOME
-/// for the stream's nonce, then splits the stream (`RexTerminalStream`).
+/// machine: the socket's messages in, what the terminal gets out. The socket
+/// opens and upgrades while `data.connect` is still issuing its ticket; its
+/// owner sends `hello(ticket:)` once both are in. It reads WELCOME for the
+/// stream's nonce, then splits the stream (`RexTerminalStream`).
 struct RexDataStream {
     enum Output: Equatable, Sendable {
-        case send(Data)
         /// The snapshot's screen (`RexTerminalStream.Piece.snapshot`).
         case snapshot(Data)
         /// Its records after READY (`RexTerminalStream.Piece.snapshotRecords`).
@@ -304,49 +269,23 @@ struct RexDataStream {
         case ended(String)
     }
 
-    private var codec: RexWebSocketCodec
-    private var ticket: Data?
-    private var helloSent = false
     private var terminal: RexTerminalStream?
     private var over = false
 
-    init(key: String = RexWebSocketCodec.makeKey()) {
-        codec = RexWebSocketCodec(subprotocol: RexSessionConnection.dataSubprotocol, key: key)
-    }
+    /// HELLO with the ticket `data.connect` issued: the first message on the open socket.
+    static func hello(ticket: Data) -> RexSocketMessage { .binary(RexDataHandshake.hello(ticket: ticket)) }
 
-    /// The ticket `data.connect` issued. HELLO, if the upgrade already landed.
-    mutating func ticket(_ ticket: Data) -> [Output] {
-        self.ticket = ticket
-        return hello()
-    }
-
-    private mutating func hello() -> [Output] {
-        guard !helloSent, !over, codec.upgraded, let ticket else { return [] }
-        helloSent = true
-        return [.send(RexWebSocketCodec.frame(.binary, payload: RexDataHandshake.hello(ticket: ticket)))]
-    }
-
-    var upgradeRequest: Data { codec.upgradeRequest(path: "/api/data") }
-
-    mutating func receive(_ bytes: Data) -> [Output] {
+    mutating func receive(_ message: RexSocketMessage) -> [Output] {
         guard !over else { return [] }
-        var outputs: [Output] = []
         do {
-            let (messages, replies) = try codec.receive(bytes)
-            outputs += hello()
-            outputs += replies.map(Output.send)
-            for message in messages {
-                outputs += try deliver(message)
-                if over { break }
-            }
+            return try deliver(message)
         } catch {
-            outputs.append(.ended(error.localizedDescription))
             over = true
+            return [.ended(error.localizedDescription)]
         }
-        return outputs
     }
 
-    private mutating func deliver(_ message: RexWebSocketCodec.Message) throws -> [Output] {
+    private mutating func deliver(_ message: RexSocketMessage) throws -> [Output] {
         switch message {
         case .binary(let payload):
             guard var stream = terminal else {
@@ -379,12 +318,59 @@ struct RexDataStream {
     }
 }
 
-/// What a Rex terminal needs of its SSH connection: writes to the control
-/// channel (its main channel), more exec streams beside it, side commands, and
-/// the connection's own lifecycle. `SSHPTYSession` is one; tests and previews
-/// stand in for the host with another.
+/// How this device reaches one host's Rex, and opens its WebSockets: over the
+/// SSH bridge, an exec stream of `RexBridge.command` per socket.
+struct RexLink: Sendable {
+    typealias OpenStream = @Sendable (
+        _ command: String, _ inboundFlow: SSHPTYInboundFlow?, _ sink: @escaping SSHPTYByteSink
+    ) async throws -> SSHExecStream
+
+    /// Opens an exec stream on the host's SSH connection.
+    let openStream: OpenStream
+
+    /// Opens one of Rex's sockets; `onEvent` hears everything after the upgrade.
+    func open(
+        _ endpoint: RexEndpoint,
+        inboundFlow: SSHPTYInboundFlow? = nil,
+        onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> any RexSocket {
+        try await RexPipeSocket.open(
+            endpoint,
+            openStream: { [openStream] sink in try await openStream(RexBridge.command, inboundFlow, sink) },
+            onEvent: onEvent
+        )
+    }
+
+    /// A control connection Rex has welcomed. `onWritable` hears the control
+    /// socket's writability, which typing waits on. Cancelling closes it.
+    static func connect(
+        openStream: @escaping OpenStream,
+        onWritable: (@Sendable (Bool) -> Void)? = nil
+    ) async throws -> (RexLink, RexControl) {
+        let link = RexLink(openStream: openStream)
+        let control = RexControl()
+        let socket = try await link.open(.control) { event in
+            if case .writable(let writable) = event { onWritable?(writable) }
+            control.receive(event)
+        }
+        control.attach(socket)
+        try await withTaskCancellationHandler {
+            try await control.open()
+        } onCancel: {
+            socket.close()
+        }
+        return (link, control)
+    }
+}
+
+/// What a Rex terminal needs of its host: a data socket per pane beside the
+/// control connection, side commands and streams on SSH, and the connection's
+/// own lifecycle. `RexHostTransport` is one; tests and previews stand in for
+/// the host with another.
 protocol RexTransport: Sendable {
-    func send(_ bytes: Data) async throws
+    func openData(
+        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> any RexSocket
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
     func run(_ command: String, input: Data) async throws -> SSHExecResult
     func checkAlive() async throws
@@ -392,14 +378,74 @@ protocol RexTransport: Sendable {
     func cancel() async
 }
 
-extension SSHPTYSession: RexTransport {}
+/// A Rex terminal's signed-in SSH connection, which runs no shell: Rex's
+/// control connection and each pane's data connection go over its `RexLink`,
+/// and side commands (uploads, the theme, keybindings) run beside them. It
+/// probes the peer as a shell's connection does (`SSHConnection.startKeepalive`).
+final class RexHostTransport: RexTransport {
+    let link: RexLink
+    private let connection: SSHConnection
+    private let control: RexControl
 
-/// One Rex session shown as a terminal, over the SSH connection to its host:
+    private init(connection: SSHConnection, link: RexLink, control: RexControl) {
+        self.connection = connection
+        self.link = link
+        self.control = control
+        // Ends with the connection.
+        connection.startKeepalive()
+        // Side commands need the SSH connection: when it goes, the terminal
+        // goes with it, whatever carries Rex.
+        connection.channel.closeFuture.whenComplete { _ in control.close() }
+    }
+
+    /// Opens Rex's control connection on `connection` and says hello.
+    static func open(
+        connection: SSHConnection,
+        onWritable: (@Sendable (Bool) -> Void)? = nil
+    ) async throws -> (RexHostTransport, RexControl) {
+        let (link, control) = try await RexLink.connect(
+            openStream: { try await connection.openStream(command: $0, inboundFlow: $1, sink: $2) },
+            onWritable: onWritable
+        )
+        return (RexHostTransport(connection: connection, link: link, control: control), control)
+    }
+
+    func openData(
+        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> any RexSocket {
+        try await link.open(.data, inboundFlow: inboundFlow, onEvent: onEvent)
+    }
+
+    func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        try await connection.openStream(command: command, inboundFlow: inboundFlow, sink: sink)
+    }
+
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        // An upload over a slow link needs longer than an API call.
+        try await connection.run(
+            command, input: input, maximumOutputBytes: 2 * 1024 * 1024,
+            timeout: input.count > 64 * 1024 ? .seconds(120) : .seconds(10)
+        )
+    }
+
+    func checkAlive() async throws { try await connection.checkAlive() }
+
+    func close() {
+        control.close()
+        connection.close()
+    }
+
+    func cancel() async {
+        close()
+        _ = try? await connection.channel.closeFuture.get()
+    }
+}
+
+/// One Rex session shown as a terminal, over the connection to its host:
 /// one control connection, attached to the session, and one data connection
 /// for the pane on screen.
 ///
-/// The connection's main channel is the control connection. The shown pane's
-/// output comes on a second channel, the data connection, which first opens on
+/// The shown pane's output comes on the data connection, which first opens on
 /// the first resize so the snapshot Rex starts it with is already at this
 /// screen's size. This client owns the pane while it shows it
 /// (`session.own_block`, take), so the pane follows the phone's size; a pane
@@ -421,7 +467,6 @@ extension SSHPTYSession: RexTransport {}
 /// (uploads, the Ghostty theme, keybindings) run on the same SSH connection as
 /// for a shell, since the pane is on the same host.
 final class RexSessionConnection: SSHTerminalConnection, Sendable {
-    static let dataSubprotocol = "rex.data.terminal.v1"
     /// A screen that never sizes the terminal still gets its pane.
     static let firstResizeWait: Duration = .milliseconds(1500)
 
@@ -458,17 +503,16 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// way, to go back to if Rex refuses the new one.
         var fallback: String?
         var generation = 0
-        /// Generations whose pane Rex closed. `nc` exits when Rex closes its
-        /// socket, so the channel's end follows the close frame: that end is
-        /// the pane leaving, not the connection failing.
+        /// Generations whose pane Rex closed. The socket's end follows the
+        /// close frame (over the bridge, `nc` exits when Rex closes its
+        /// socket): that end is the pane leaving, not the connection failing.
         var retired: Set<Int> = []
         /// Panes Rex closed (by event, by their stream, or by dropping out of
         /// the view). The layout held here is stale until the next view is
         /// read, so a pane in it is not a pane that is still there.
         var closedBlocks: Set<String> = []
-        var stream: SSHExecStream?
+        var stream: (any RexSocket)?
         var parser: RexDataStream?
-        var exitStatus: Int?
         /// The first resize came (or its wait ran out): data may open.
         var armed = false
         /// The switch loop is running.
@@ -511,10 +555,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         (updates, updateSink) = AsyncStream.makeStream(of: RexSessionState.self, bufferingPolicy: .bufferingNewest(1))
     }
 
-    /// Says hello on the control connection already running on `transport`,
-    /// attaches to the pane's session (which starts its events, and answers
-    /// with its view), and takes the pane. Cancelling it closes the
-    /// connection, so a background cancel leaves nothing open.
+    /// Over a control connection Rex has welcomed on `transport`, attaches to
+    /// the pane's session (which starts its events, and answers with its
+    /// view), and takes the pane. Cancelling it closes the connection, so a
+    /// background cancel leaves nothing open.
     static func open(
         transport: any RexTransport,
         control: RexControl,
@@ -522,8 +566,6 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         queue: SSHTerminalEventQueue
     ) async throws -> RexSessionConnection {
         try await withTaskCancellationHandler {
-            control.attach { try await transport.send($0) }
-            try await control.open()
             let connection = RexSessionConnection(transport: transport, control: control, target: target, queue: queue)
             control.onEvent { [weak connection] frame in
                 if let event = RexEvent(frame: frame) { connection?.receive(event) }
@@ -670,18 +712,24 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     func checkAlive() async throws { try await transport.checkAlive() }
 
     func close() {
-        core.withLock { state in
+        let stream = core.withLock { state -> (any RexSocket)? in
             state.ended = true
             state.generation += 1
-            state.stream = nil
+            defer { state.stream = nil }
+            return state.stream
         }
         updateSink.finish()
+        stream?.close()
         transport.close()
     }
 
     func cancel() async {
-        core.withLock { $0.ended = true }
+        let stream = core.withLock { state -> (any RexSocket)? in
+            state.ended = true
+            return state.stream
+        }
         updateSink.finish()
+        stream?.close()
         await transport.cancel()
     }
 
@@ -816,13 +864,13 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let ticketAnswer = Task { [control, sessionID] in
             try await control.call("data.connect", [
                 "session_id": sessionID, "block_id": block,
-                "data_ref_id": "terminal", "subprotocol": Self.dataSubprotocol,
+                "data_ref_id": "terminal", "subprotocol": RexEndpoint.data.subprotocol,
             ])
         }
         let parser = RexDataStream()
         // From here the old pane's stream is dead to the grid: its events
         // carry the generation they were opened under.
-        let (old, generation) = core.withLock { state -> (SSHExecStream?, Int) in
+        let (old, generation) = core.withLock { state -> ((any RexSocket)?, Int) in
             state.generation += 1
             let old = state.stream
             // The pane on screen before the first of switches that overtake
@@ -831,12 +879,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             state.stream = nil
             state.parser = parser
             state.streamBlock = block
-            state.exitStatus = nil
             return (old, state.generation)
         }
         old?.close()
         /// This connection will never say HELLO: its end is not the pane's.
-        func abandon(_ stream: SSHExecStream?) {
+        func abandon(_ stream: (any RexSocket)?) {
             core.withLock { state in
                 guard state.generation == generation else { return }
                 state.retired.insert(generation)
@@ -844,9 +891,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             }
             stream?.close()
         }
-        let stream: SSHExecStream
+        // The socket opens and upgrades while the ticket is issued.
+        let stream: any RexSocket
         do {
-            stream = try await transport.openStream(command: RexBridge.command, inboundFlow: queue.flow) { [weak self] event in
+            stream = try await transport.openData(inboundFlow: queue.flow) { [weak self] event in
                 self?.receiveData(event, generation: generation)
             }
         } catch {
@@ -865,7 +913,6 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
         let bytes: Data
         do {
-            try await stream.send(parser.upgradeRequest)
             struct Ticket: Decodable { let ticket: String }
             let answer = try await ticketAnswer.value
             guard let ticket = try? JSONDecoder().decode(Ticket.self, from: answer),
@@ -882,59 +929,45 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             abandon(stream)
             return
         }
-        // The upgrade may have landed already, and then HELLO goes now.
-        let hello = core.withLock { state -> [RexDataStream.Output] in
-            guard !state.ended, state.generation == generation, var parser = state.parser else { return [] }
-            let outputs = parser.ticket(bytes)
-            state.parser = parser
+        let current = core.withLock { state -> Bool in
+            guard !state.ended, state.generation == generation else { return false }
             state.fallback = nil
-            return outputs
+            return true
         }
-        for case .send(let frame) in hello {
-            try await stream.send(frame)
-        }
+        guard current else { return }
+        try await stream.send(RexDataStream.hello(ticket: bytes))
     }
 
-    /// The data connection's events, on the SSH event loop and in order, so
+    /// The data connection's events, on the socket's thread and in order, so
     /// the snapshot and output reach the queue in the order Rex sent them.
-    /// EOF comes before the bridge's exit status; `.closed` follows both.
     /// Events of a connection that was replaced (`generation`) are dropped.
-    private func receiveData(_ event: SSHPTYEvent, generation mine: Int) {
+    private func receiveData(_ event: RexSocketEvent, generation mine: Int) {
         switch event {
-        case .data(let bytes):
-            let (outputs, stream, block) = core.withLock { state -> ([RexDataStream.Output], SSHExecStream?, String?) in
-                guard !state.ended, state.generation == mine, var parser = state.parser else { return ([], nil, nil) }
-                let outputs = parser.receive(bytes)
+        case .message(let message):
+            let (outputs, block) = core.withLock { state -> ([RexDataStream.Output], String?) in
+                guard !state.ended, state.generation == mine, var parser = state.parser else { return ([], nil) }
+                let outputs = parser.receive(message)
                 state.parser = parser
-                return (outputs, state.stream, state.streamBlock)
+                return (outputs, state.streamBlock)
             }
             for output in outputs {
                 switch output {
-                case .send(let frame):
-                    Task { [weak self] in
-                        do { try await stream?.send(frame) } catch { self?.end(error.localizedDescription) }
-                    }
                 case .snapshot(let snapshot): queue.pushSnapshot(snapshot, block: block)
                 case .snapshotRecords(let records): queue.pushSnapshotRecords(records, block: block)
                 case .output(let bytes): queue.push(.data(bytes))
                 case .exited(let code):
                     if let block { core.withLock { $0.exitCodes[block] = code } }
                 case .paneClosed:
-                    // The bridge's end follows this frame; it is not a failure.
+                    // The socket's end follows this frame; it is not a failure.
                     core.withLock { _ = $0.retired.insert(mine) }
                     if let block { closed(block, reason: "The pane closed in Rex.") }
                 case .ended(let reason): end(reason)
                 }
             }
-        case .exitStatus(let status):
-            core.withLock { if $0.generation == mine, !$0.retired.contains(mine) { $0.exitStatus = status } }
-        case .closed:
-            let reason = core.withLock { state -> String? in
-                guard !state.ended, state.generation == mine, !state.retired.contains(mine) else { return nil }
-                return RexBridge.failure(exitStatus: state.exitStatus).localizedDescription
-            }
-            if let reason { end(reason) }
-        case .eof, .exitSignal, .writabilityChanged:
+        case .ended(let error):
+            let current = core.withLock { !$0.ended && $0.generation == mine && !$0.retired.contains(mine) }
+            if current { end(error.localizedDescription) }
+        case .writable:
             break
         }
     }

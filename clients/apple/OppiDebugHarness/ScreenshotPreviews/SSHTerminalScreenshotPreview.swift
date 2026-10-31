@@ -134,8 +134,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
             RexFakeSession.Pane(block: "block:preview-claude", label: "shell", title: "\u{2733} Fixing the build", screen: "\(esc)1mclaude\(esc)0m in ~/dotfiles\r\n\(esc)32m>\(esc)0m fix the build\r\n\r\nReading the failing target.\r\n", records: #"[{"state":"idle","app":"claude"}]"#),
         ]
         let fake = RexFakeSession(sessionID: "session:preview", panes: panes)
-        let control = RexControl()
-        let transport = fake.transport(control: control)
+        guard let (transport, control) = try? await fake.connect() else { return nil }
         let queue = SSHTerminalEventQueue()
         guard let connection = try? await RexSessionConnection.open(
             transport: transport, control: control,

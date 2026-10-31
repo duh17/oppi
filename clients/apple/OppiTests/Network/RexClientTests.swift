@@ -267,18 +267,21 @@ struct RexWebSocketCompressionTests {
     /// accepts it, and a message it compressed inflates to the pane's
     /// snapshot: the screen restores, and Rex's `resize` message leaves it.
     @Test @MainActor func aRealCompressedRexStreamInflatesToThePanesScreen() throws {
-        var stream = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
-        _ = stream.ticket(Data(repeating: 9, count: 16))
-        let request = String(decoding: stream.upgradeRequest, as: UTF8.self)
+        var codec = RexWebSocketCodec(subprotocol: RexEndpoint.data.subprotocol, key: "dGhlIHNhbXBsZSBub25jZQ==")
+        let request = String(decoding: codec.upgradeRequest(path: RexEndpoint.data.path), as: UTF8.self)
         #expect(request.contains("Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\n"))
 
-        #expect(stream.receive(Data(compressedRexUpgrade.utf8)).count == 1, "HELLO")
+        #expect(try codec.receive(Data(compressedRexUpgrade.utf8)).messages.isEmpty)
+        #expect(codec.upgraded)
+        var stream = RexDataStream()
         var outputs: [RexDataStream.Output] = []
         // A few bytes at a time, as an SSH channel may deliver them.
         var index = compressedRexFrames.startIndex
         while index < compressedRexFrames.endIndex {
             let end = min(index + 100, compressedRexFrames.endIndex)
-            outputs += stream.receive(compressedRexFrames[index..<end])
+            for message in try codec.receive(compressedRexFrames[index..<end]).messages {
+                outputs += stream.receive(message)
+            }
             index = end
         }
         guard case .snapshot(let screen)? = outputs.first, outputs.count == 2, case .snapshotRecords(let records) = outputs[1] else {
@@ -362,23 +365,47 @@ struct RexWebSocketCompressionTests {
     }
 }
 
-/// A byte pipe that records what the control client writes.
+/// A message-level Rex socket that records what its owner sends: what a
+/// WebSocket that frames for itself (the direct route) hands `RexControl`.
+private final class RecordingSocket: RexSocket {
+    private let sent = Mutex<[RexSocketMessage]>([])
+    private let closed = Mutex(false)
+
+    var all: [RexSocketMessage] { sent.withLock { $0 } }
+    var isClosed: Bool { closed.withLock { $0 } }
+
+    func send(_ message: RexSocketMessage) async throws { sent.withLock { $0.append(message) } }
+    func close() { closed.withLock { $0 = true } }
+
+    func json(_ index: Int) throws -> [String: Any] {
+        guard case .text(let text) = all[index] else { throw CancellationError() }
+        return try #require(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    }
+}
+
+/// A byte pipe that records what the bridge's client side writes.
 private final class WrittenFrames: Sendable {
     let frames = Mutex<[Data]>([])
     func append(_ frame: Data) { frames.withLock { $0.append(frame) } }
     var all: [Data] { frames.withLock { $0 } }
 }
 
+private func waitUntil(_ condition: @escaping @Sendable () -> Bool) async throws {
+    for _ in 0..<200 where !condition() { try await Task.sleep(for: .milliseconds(5)) }
+    try #require(condition())
+}
+
 @Suite("Rex control connection")
 struct RexControlTests {
     /// Hello, then requests matched to their answers by id, an error answer
-    /// as Rex's reason, and the bridge's exit status 4 as "Rex is not running"
-    /// for a call still waiting. Events arrive as the SSH channel reports them:
-    /// EOF first, then the exit status, then closed.
-    @Test func helloRequestsAndTheBridgeEndingAreRead() async throws {
-        let written = WrittenFrames()
+    /// as Rex's reason, events in order, and the socket's end failing a call
+    /// still waiting and every call after it, with the socket's own reason.
+    /// The socket frames for itself: the control connection sends and reads
+    /// whole messages.
+    @Test func helloRequestsEventsAndTheSocketEndingAreRead() async throws {
+        let socket = RecordingSocket()
         let control = RexControl()
-        control.attach { written.append($0) }
+        control.attach(socket)
         let events = Mutex<[String]>([])
         control.onEvent { event in
             let inner = event["payload"] as? [String: Any]
@@ -386,79 +413,129 @@ struct RexControlTests {
         }
 
         let opening = Task { try await control.open() }
-        try await waitUntil { !written.all.isEmpty }
-        let request = String(decoding: written.all[0], as: UTF8.self)
-        let key = try #require(request.split(separator: "\r\n").first { $0.hasPrefix("Sec-WebSocket-Key: ") }?.dropFirst(19))
-        control.receive(.data(upgradeAnswer(key: String(key), subprotocol: "rex.control.v1")))
-        try await waitUntil { written.all.count == 2 }
-        let hello = try JSONSerialization.jsonObject(with: try clientPayload(written.all[1]).payload) as? [String: Any]
-        #expect(hello?["type"] as? String == "hello" && hello?["api_revision"] as? Int == RexControl.apiRevision)
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576}}"#.utf8))))
+        try await waitUntil { socket.all.count == 1 }
+        let hello = try socket.json(0)
+        #expect(hello["type"] as? String == "hello" && hello["api_revision"] as? Int == RexControl.apiRevision)
+        control.receive(.message(.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576}}"#)))
         try await opening.value
 
         let first = Task { try await control.call("server.version", [:]) }
         let second = Task { try await control.call("session.attach", ["session_id": "session:x"]) }
-        try await waitUntil { written.all.count == 4 }
+        try await waitUntil { socket.all.count == 3 }
         var ids: [String: String] = [:]
-        for frame in written.all.suffix(2) {
-            let object = try JSONSerialization.jsonObject(with: try clientPayload(frame).payload) as? [String: Any]
-            ids[object?["method"] as? String ?? ""] = object?["id"] as? String
+        for index in 1...2 {
+            let object = try socket.json(index)
+            ids[object["method"] as? String ?? ""] = object["id"] as? String
         }
         let attachID = try #require(ids["session.attach"]), versionID = try #require(ids["server.version"])
         // Answers in the other order still reach their callers.
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"response","id":"\#(attachID)","seq":0,"error":{"code":"session_not_found","message":"no session","status":404}}"#.utf8))))
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"event","seq":1,"payload":{"type":"session_created"}}"#.utf8))))
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"response","id":"\#(versionID)","seq":1,"payload":{"rex_version":"0.1.0"}}"#.utf8))))
+        control.receive(.message(.text(#"{"type":"response","id":"\#(attachID)","seq":0,"error":{"code":"session_not_found","message":"no session","status":404}}"#)))
+        control.receive(.message(.text(#"{"type":"event","seq":1,"payload":{"type":"session_created"}}"#)))
+        control.receive(.writable(false))
+        control.receive(.message(.text(#"{"type":"response","id":"\#(versionID)","seq":1,"payload":{"rex_version":"0.1.0"}}"#)))
         let version = try JSONSerialization.jsonObject(with: try await first.value) as? [String: Any]
         #expect(version?["rex_version"] as? String == "0.1.0")
         #expect(events.withLock { $0 } == ["session_created"], "events reach the handler, whole, in order")
         await #expect(throws: RexClientError.refused(code: "session_not_found", message: "no session")) { try await second.value }
 
         let waiting = Task { try await control.call("server.status", [:]) }
-        try await waitUntil { written.all.count == 5 }
-        control.receive(.eof)
-        control.receive(.exitStatus(4))
-        control.receive(.closed)
+        try await waitUntil { socket.all.count == 4 }
+        control.receive(.ended(RexClientError.notRunning))
         await #expect(throws: RexClientError.notRunning) { try await waiting.value }
         await #expect(throws: RexClientError.notRunning) { try await control.call("server.version", [:]) }
+        control.close()
+        #expect(socket.isClosed)
     }
 
     /// A request Rex never answers fails in time instead of holding typing
     /// forever; its answer arriving later is dropped, and the next request
     /// still gets its own answer.
     @Test func anUnansweredRequestTimesOut() async throws {
-        let written = WrittenFrames()
+        let socket = RecordingSocket()
         // Long enough that the test's own answer to the second request, on a
         // busy machine, still lands inside it.
         let control = RexControl(requestTimeout: .seconds(1))
-        control.attach { written.append($0) }
+        control.attach(socket)
         let opening = Task { try await control.open() }
-        try await waitUntil { written.all.count == 1 }
-        let upgrade = String(decoding: written.all[0], as: UTF8.self)
-        let key = try #require(upgrade.split(separator: "\r\n").first { $0.hasPrefix("Sec-WebSocket-Key: ") }?.dropFirst(19))
-        control.receive(.data(upgradeAnswer(key: String(key), subprotocol: "rex.control.v1")))
-        try await waitUntil { written.all.count == 2 }
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"welcome","protocol":"rex.control.v1"}"#.utf8))))
+        try await waitUntil { socket.all.count == 1 }
+        control.receive(.message(.text(#"{"type":"welcome","protocol":"rex.control.v1"}"#)))
         try await opening.value
 
         await #expect(throws: RexClientError.timedOut) { try await control.call("server.version", [:]) }
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"response","id":"\#(try requestID(written.all[2]))","seq":0,"payload":{"late":true}}"#.utf8))))
+        let late = try #require(socket.json(1)["id"] as? String)
+        control.receive(.message(.text(#"{"type":"response","id":"\#(late)","seq":0,"payload":{"late":true}}"#)))
 
         let next = Task { try await control.call("server.status", [:]) }
-        try await waitUntil { written.all.count == 4 }
-        control.receive(.data(serverFrame(.text, Data(#"{"type":"response","id":"\#(try requestID(written.all[3]))","seq":0,"payload":{"sessions":1}}"#.utf8))))
+        try await waitUntil { socket.all.count == 3 }
+        let id = try #require(socket.json(2)["id"] as? String)
+        control.receive(.message(.text(#"{"type":"response","id":"\#(id)","seq":0,"payload":{"sessions":1}}"#)))
         let answer = try JSONSerialization.jsonObject(with: try await next.value) as? [String: Any]
         #expect(answer?["sessions"] as? Int == 1)
     }
+}
 
-    private func requestID(_ frame: Data) throws -> String {
-        let request = try JSONSerialization.jsonObject(with: try clientPayload(frame).payload) as? [String: Any]
-        return try #require(request?["id"] as? String)
-    }
+@Suite("Rex bridge socket")
+struct RexPipeSocketTests {
+    /// Over the SSH bridge this side does the WebSocket: it upgrades to the
+    /// endpoint's path and subprotocol, hands over whole messages (one that
+    /// came in the upgrade's read too), answers a ping with a masked pong, and
+    /// frames what it sends. The bridge's exit status says why it ended, as
+    /// the SSH channel reports it: EOF, then the status, then closed.
+    @Test func theBridgeUpgradesAnswersPingsAndEndsWithTheBridgesReason() async throws {
+        let written = WrittenFrames()
+        let sink = Mutex<SSHPTYByteSink?>(nil)
+        let events = Mutex<[String]>([])
+        let key = "dGhlIHNhbXBsZSBub25jZQ=="
+        let opening = Task {
+            try await RexPipeSocket.open(.control, key: key, openStream: { delivered in
+                sink.withLock { $0 = delivered }
+                return SSHExecStream(send: { written.append($0) }, close: {})
+            }, onEvent: { event in
+                let text: String
+                switch event {
+                case .message(.text(let body)): text = "text \(body)"
+                case .message(let other): text = "\(other)"
+                case .writable(let writable): text = "writable \(writable)"
+                case .ended(let error): text = "ended \(error)"
+                }
+                events.withLock { $0.append(text) }
+            })
+        }
+        try await waitUntil { written.all.count == 1 }
+        let request = String(decoding: written.all[0], as: UTF8.self)
+        #expect(request.hasPrefix("GET /api/control HTTP/1.1\r\n") && request.contains("Sec-WebSocket-Protocol: rex.control.v1\r\n"))
+        let deliver = try #require(sink.withLock { $0 })
+        deliver(.writabilityChanged(true))
+        deliver(.data(upgradeAnswer(key: key, subprotocol: "rex.control.v1") + serverFrame(.ping, Data("p1".utf8)) + serverFrame(.text, Data("hi".utf8))))
+        let socket = try await opening.value
+        try await waitUntil { written.all.count == 2 }
+        let pong = try clientPayload(written.all[1])
+        #expect(pong.opcode == RexWebSocketCodec.Opcode.pong.rawValue && pong.payload == Data("p1".utf8))
 
-    private func waitUntil(_ condition: @escaping @Sendable () -> Bool) async throws {
-        for _ in 0..<200 where !condition() { try await Task.sleep(for: .milliseconds(5)) }
-        try #require(condition())
+        try await socket.send(.text("hello"))
+        let sent = try clientPayload(written.all[2])
+        #expect(sent.opcode == RexWebSocketCodec.Opcode.text.rawValue && sent.payload == Data("hello".utf8))
+
+        deliver(.eof)
+        deliver(.exitStatus(4))
+        deliver(.closed)
+        #expect(events.withLock { $0 } == ["writable true", "text hi", "ended \(RexClientError.notRunning)"])
+        await #expect(throws: RexClientError.connectionClosed) { try await socket.send(.text("late")) }
+
+        // A bridge that exits before Rex answers (no `nc` that speaks Unix
+        // sockets, 126) fails the open with its reason, not a timeout.
+        let early = Mutex<SSHPTYByteSink?>(nil)
+        let refused = Task {
+            try await RexPipeSocket.open(.data, openStream: { delivered in
+                early.withLock { $0 = delivered }
+                return SSHExecStream(send: { _ in }, close: {})
+            }, onEvent: { _ in })
+        }
+        try await waitUntil { early.withLock { $0 } != nil }
+        let end = try #require(early.withLock { $0 })
+        end(.exitStatus(126))
+        end(.closed)
+        await #expect(throws: RexClientError.bridgeMissing) { try await refused.value }
     }
 }
 
@@ -514,48 +591,32 @@ struct RexEventTests {
 
 @Suite("Rex pane data connection")
 struct RexDataStreamTests {
-    /// The whole data handshake and stream: the connection upgrades before its
-    /// ticket is issued, HELLO goes out with the ticket once both are in
-    /// (whichever comes last), WELCOME's nonce, then the snapshot, output with
+    /// The whole data handshake and stream, as whole messages from the socket:
+    /// HELLO with the ticket, WELCOME's nonce, then the snapshot, output with
     /// Rex's messages removed, the program's exit, and close 4000 as the pane
     /// closing. Nothing comes out after the end.
     @Test func helloWelcomeSnapshotOutputExitAndClose() throws {
         let ticket = Data((1...16).map { UInt8($0) })
-        var stream = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
-        #expect(String(decoding: stream.upgradeRequest, as: UTF8.self).contains("Sec-WebSocket-Protocol: rex.data.terminal.v1\r\n"))
-
-        #expect(stream.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1")).isEmpty,
-                "no HELLO before the ticket")
-        let upgraded = stream.ticket(ticket)
-        guard case .send(let hello)? = upgraded.first, upgraded.count == 1 else {
-            Issue.record("expected HELLO alone, got \(upgraded)")
-            return
-        }
-        #expect(stream.ticket(ticket).isEmpty, "one HELLO")
-        let helloFrame = try clientPayload(hello)
-        #expect(helloFrame.opcode == RexWebSocketCodec.Opcode.binary.rawValue)
-        #expect(helloFrame.payload == Data([0x01]) + ticket)
+        var stream = RexDataStream()
+        #expect(RexDataStream.hello(ticket: ticket) == .binary(Data([0x01]) + ticket))
 
         var welcome = Data([0x81]) + Data(repeating: 0, count: 19) + Data([0x60, 0xEA, 0, 0])
         welcome += Data([42, 0, 0, 0, 0, 0, 0, 0])
-        #expect(stream.receive(serverFrame(.binary, welcome)).isEmpty)
+        #expect(stream.receive(.binary(welcome)).isEmpty)
 
         let snapshot = try ghosttySnapshot(of: "first line\r\n$ ")
         let (screen, records) = try snapshotParts(snapshot)
         let message = { (json: String) in Data("\u{1B}_rex1;42;\(json)\u{1B}\\".utf8) }
         let body = snapshot + message(#"{"type":"resize","cols":80,"rows":24}"#) + Data("$ ls\r\n".utf8)
             + message(#"{"type":"child_exited","exit_code":2}"#)
-        #expect(stream.receive(serverFrame(.binary, body)) == [
+        #expect(stream.receive(.binary(body)) == [
             .snapshot(screen), .snapshotRecords(records.reduce(Data(), +)), .output(Data("$ ls\r\n".utf8)), .exited(code: 2),
         ])
-        #expect(stream.receive(serverFrame(.close, Data([0x0F, 0xA0]))) == [.paneClosed])
-        #expect(stream.receive(serverFrame(.binary, Data("late".utf8))).isEmpty)
+        #expect(stream.receive(.close(code: 4000, reason: "block closed")) == [.paneClosed])
+        #expect(stream.receive(.binary(Data("late".utf8))).isEmpty)
 
-        // The ticket first, then the upgrade: HELLO the moment it lands.
-        var refused = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
-        #expect(refused.ticket(ticket).isEmpty)
-        #expect(refused.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1")).count == 1)
-        #expect(refused.receive(serverFrame(.binary, Data([0x82, 0x01]))) == [
+        var refused = RexDataStream()
+        #expect(refused.receive(.binary(Data([0x82, 0x01]))) == [
             .ended(RexDataHandshake.Failure.rejected(0x01).localizedDescription),
         ])
     }
@@ -1066,8 +1127,7 @@ struct RexSessionTerminalTests {
                 records: reporting[$0] ?? "[]", pwd: folders[$0]
             )
         })
-        let control = RexControl()
-        let transport = fake.transport(control: control)
+        let (transport, control) = try await fake.connect()
         let queue = SSHTerminalEventQueue()
         let opening = first ?? names[0]
         let connection = try await RexSessionConnection.open(

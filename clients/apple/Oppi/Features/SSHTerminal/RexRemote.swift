@@ -755,14 +755,14 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// One stream: open, read everything, then apply events until it ends.
     /// Throws the reason it ended; returns only when the task is cancelled.
     private func subscribe(on host: any RexStreamHost, synced: inout Bool) async throws {
-        let control = RexControl()
         let inbox = RexEventInbox()
+        let (_, control) = try await RexLink.connect(openStream: { @MainActor command, _, sink in
+            try await host.openStream(command: command, sink: sink)
+        })
         control.onEvent { frame in
             if let event = RexEvent(frame: frame) { inbox.push(event) }
         }
         control.onEnd { inbox.end($0) }
-        let stream = try await host.openStream(command: RexBridge.command) { control.receive($0) }
-        control.attach { try await stream.send($0) }
         generation += 1
         let mine = generation
         // A cancelled subscription's reads can outlive it (its calls end when
@@ -775,7 +775,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
         self.inbox = inbox
         publishing = false
         defer {
-            stream.close()
+            control.close()
             if generation == mine {
                 self.inbox = nil
                 self.control = nil
@@ -788,7 +788,6 @@ final class RexMonitor: SSHTerminalOverviewSource {
             }
         }
         try await withTaskCancellationHandler {
-            try await control.open()
             try await bootstrap(control, inbox, generation: mine)
             synced = true
             self.control = control
@@ -804,7 +803,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
                 }
             }
         } onCancel: {
-            stream.close()
+            control.close()
         }
     }
 

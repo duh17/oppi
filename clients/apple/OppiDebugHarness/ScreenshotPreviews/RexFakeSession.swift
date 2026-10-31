@@ -316,15 +316,17 @@ final class RexFakeSession: Sendable {
         host.withLock { $0 }?.blockEvent(sessionID, block, "title_changed", #"{"title":"\#(title)"}"#)
     }
 
-    /// A transport for `RexSessionConnection.open` over this session: its
-    /// control channel speaks to the fake host, and each data stream the
-    /// terminal opens is the next pane stream `data.connect` queued.
-    func transport(control: RexControl) -> RexFakeTransport {
+    /// A transport and a welcomed control connection for
+    /// `RexSessionConnection.open` over this session, both over the bridge:
+    /// the control connection speaks to the fake host, and each data socket
+    /// the terminal opens is the next pane stream `data.connect` queued.
+    func connect() async throws -> (RexFakeTransport, RexControl) {
         let fake = RexFakeHost { [weak self] in
             self?.answer($0) ?? .refuse(code: "gone", message: "the fake session is gone")
         }
         host.withLock { $0 = fake }
-        return RexFakeTransport(host: fake, control: control, session: self)
+        let (_, control) = try await RexLink.connect(openStream: { _, _, sink in fake.open(sink: sink) })
+        return (RexFakeTransport(control: control, session: self), control)
     }
 
     /// A Ghostty snapshot of a terminal that was written `text`.
@@ -441,32 +443,35 @@ final class RexFakeSession: Sendable {
     }
 }
 
-/// The SSH connection under a `RexFakeSession`'s terminal: the control channel
-/// is the fake host's, and every other stream the terminal opens is the next
-/// pane stream.
+/// The host connection under a `RexFakeSession`'s terminal: the control
+/// connection is the fake host's, and every data socket the terminal opens is
+/// the next pane stream, over the bridge's framing.
 final class RexFakeTransport: RexTransport {
     private struct State {
-        var streams: [SSHExecStream] = []
+        var streams: [any RexSocket] = []
     }
 
-    private let control: SSHExecStream
+    private let control: RexControl
     private let session: RexFakeSession
     private let state = Mutex(State())
 
-    fileprivate init(host: RexFakeHost, control: RexControl, session: RexFakeSession) {
+    fileprivate init(control: RexControl, session: RexFakeSession) {
+        self.control = control
         self.session = session
-        self.control = host.open(sink: { control.receive($0) })
     }
 
-    func send(_ bytes: Data) async throws { try await control.send(bytes) }
+    func openData(
+        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> any RexSocket {
+        let data = session.nextDataHost()
+        let socket = try await RexPipeSocket.open(.data, openStream: { data.open(sink: $0) }, onEvent: onEvent)
+        state.withLock { $0.streams.append(socket) }
+        session.serve(data)
+        return socket
+    }
 
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
-        let data = session.nextDataHost()
-        let stream = data.open(sink: sink)
-        state.withLock { $0.streams.append(stream) }
-        session.serve(data)
-        return stream
+        throw SSHConnectionError.notConnected
     }
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
