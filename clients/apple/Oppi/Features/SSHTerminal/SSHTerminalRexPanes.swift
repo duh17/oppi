@@ -415,11 +415,13 @@ final class SSHTerminalRexMinimapView: UIView {
 
     /// How long after a switch settles the map starts to fade out.
     var hideDelay = SSHTerminalRexMinimapView.defaultHideDelay
-    /// The session has a window of more than one pane to draw. Without it the
-    /// map is gone at once, whatever a switch asks.
-    var isAvailable = false { didSet { if isAvailable != oldValue { updateVisibility(animated: false) } } }
-    /// A switch is under way: the map is (or is fading in to be) on screen.
-    private(set) var isRevealed = false
+    /// The shown pane's window has more than one pane to draw. The map shows
+    /// only while a switch runs and it is available, so a switch from a
+    /// window of one pane into a window of several shows it as the new window
+    /// arrives, and the other way it fades out.
+    var isAvailable = false { didSet { if isAvailable != oldValue { updateVisibility(animated: true) } } }
+    /// A switch is under way, whether or not there is a map to draw for it.
+    private var isRevealed = false
     /// Counts reveals and hides, so a late fade completion or hide timer cannot act on a newer one.
     private var visibilityToken = 0
     private var hideTask: Task<Void, Never>?
@@ -458,7 +460,6 @@ final class SSHTerminalRexMinimapView: UIView {
     func setSwitching(_ switching: Bool) {
         hideTask?.cancel()
         hideTask = nil
-        guard isAvailable else { return }
         if switching {
             isRevealed = true
             updateVisibility(animated: true)
@@ -471,6 +472,15 @@ final class SSHTerminalRexMinimapView: UIView {
                 self.updateVisibility(animated: true)
             }
         }
+    }
+
+    /// Another terminal's map: nothing under way, nothing to draw, gone at once.
+    func reset() {
+        hideTask?.cancel()
+        hideTask = nil
+        isRevealed = false
+        isAvailable = false
+        updateVisibility(animated: false)
     }
 
     /// At rest the map is invisible, takes no touches, and is not in the
@@ -486,7 +496,6 @@ final class SSHTerminalRexMinimapView: UIView {
         visibilityToken += 1
         let token = visibilityToken
         let show = isAvailable && isRevealed
-        if !isAvailable { isRevealed = false }
         let fades = animated && window != nil && !UIAccessibility.isReduceMotionEnabled
         if show {
             isHidden = false

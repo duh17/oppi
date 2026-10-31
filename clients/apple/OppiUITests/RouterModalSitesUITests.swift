@@ -394,11 +394,11 @@ final class RouterModalSitesUITests: XCTestCase {
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()
         XCTAssertTrue(waitFor(switcher.value as? String == "tail -f server.log, 2 of 3"), "A swipe left must show the next pane")
-        XCTAssertTrue(waitForDisappearance(of: cells[1]), "The minimap fades out once the switch has settled")
+        XCTAssertTrue(waitForDisappearance(of: cells[1]), "The minimap is not left on screen after the switch settles")
         attachScreenshot("rex-panes-second")
         grid.swipeRight()
         XCTAssertTrue(waitFor(switcher.value as? String == "\u{03C0} - oppi, 1 of 3"), "A swipe right must show the previous pane")
-        XCTAssertTrue(waitForDisappearance(of: cells[0]))
+        XCTAssertTrue(waitForDisappearance(of: cells[0]), "The minimap is not left on screen after the swipe back")
 
         // The switcher's menu lists the panes in strip order and shows the one chosen.
         switcher.tap()
@@ -408,7 +408,7 @@ final class RouterModalSitesUITests: XCTestCase {
         attachScreenshot("rex-panes-menu")
         third.tap()
         XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
-        XCTAssertTrue(waitForDisappearance(of: cells[2]), "The minimap is hidden again after a menu choice")
+        XCTAssertTrue(waitForDisappearance(of: cells[2]), "The minimap is not left on screen after a menu choice")
         assertRunning()
     }
 

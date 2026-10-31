@@ -691,7 +691,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // Another terminal's switcher and swipe are not this one's; the next
         // pass shows this one's.
         rexPanesShown = false
-        rexMinimap.isAvailable = false
+        rexMinimap.reset()
         stashComposerDraft()
         destroyComposer()
         shownIdentity = terminalIdentity

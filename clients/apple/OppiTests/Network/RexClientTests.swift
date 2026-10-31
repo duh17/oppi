@@ -695,6 +695,16 @@ struct RexSessionTerminalTests {
             Issue.record("the first pane never showed")
             throw CancellationError()
         }
+        // The pane's size is on its way to Rex, not just the grid's: a stall on a
+        // cold start could let the data connection arm before the size arrives,
+        // and the first switch then has no geometry to size the next pane by.
+        guard await waitForMainActorCondition(timeout: .seconds(5), {
+            fake.requests("com.superlogical.terminal.resize").contains { $0.string("block_id") == Self.block(opening) }
+        }) else {
+            await rig.stop()
+            Issue.record("the opening pane was never sized")
+            throw CancellationError()
+        }
         return rig
     }
 
