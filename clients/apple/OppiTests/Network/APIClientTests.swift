@@ -585,7 +585,7 @@ struct APIClientTests {
                 #expect(query["status"] == "stopped")
                 #expect(query["beforeMs"] == "1000")
                 return self.mockResponse(json: """
-                {"workspaceId":"w1","status":"stopped","beforeMs":1000,"serverNow":3000,"buckets":[{"bucketId":"day:2026-05-10","bucketKind":"day","startMs":0,"endMs":86400000,"itemCount":1,"managedStoppedCount":1,"importableLocalCount":0}]}
+                {"workspaceId":"w1","status":"stopped","beforeMs":1000,"serverNow":3000,"buckets":[{"bucketId":"day:2026-05-10","bucketKind":"day","startMs":0,"endMs":86400000,"itemCount":17,"managedStoppedCount":16,"importableLocalCount":1,"latestActivity":1778452656439}]}
                 """)
 
             case "/workspaces/w1/attention":
@@ -610,6 +610,14 @@ struct APIClientTests {
         #expect(response.sessionSummaries.map(\.id) == ["active", "stopped"])
         #expect(response.importableSessions.map(\.path) == ["/tmp/local.jsonl"])
         #expect(response.archiveBuckets.map(\.id) == ["day:2026-05-10"])
+        let bucket = try #require(response.archiveBuckets.first)
+        #expect(bucket.kind == .day)
+        #expect(bucket.itemCount == 17)
+        #expect(bucket.managedStoppedCount == 16)
+        #expect(bucket.importableLocalCount == 1)
+        // Wire value is epoch milliseconds; Date is seconds.
+        let latest = try #require(bucket.latestActivity)
+        #expect(abs(latest.timeIntervalSince1970 - 1778452656.439) < 0.001)
     }
 
     @Test func getWorkspaceSessionListBucketRequestsStoppedSessionCollection() async throws {
