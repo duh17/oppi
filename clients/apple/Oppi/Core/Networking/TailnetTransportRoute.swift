@@ -63,14 +63,28 @@ enum TailnetTransportRoute {
     /// hosts stay direct. Failover keeps a system Tailscale VPN usable if the
     /// embedded node's loopback listener is gone.
     static func apply(to configuration: URLSessionConfiguration, proxy: TailnetSOCKSProxy?) {
-        guard let proxy, let port = NWEndpoint.Port(rawValue: proxy.port) else { return }
+        guard let socks = socksConfiguration(proxy) else { return }
+        configuration.proxyConfigurations = [socks]
+    }
+
+    /// The same route for a Network framework connection (a raw TLS stream,
+    /// such as Rex's WebSockets over Tailscale, which frame themselves).
+    static func apply(to parameters: NWParameters, route: Snapshot) {
+        guard let socks = socksConfiguration(route.proxy) else { return }
+        let context = NWParameters.PrivacyContext(description: "Tailnet")
+        context.proxyConfigurations = [socks]
+        parameters.setPrivacyContext(context)
+    }
+
+    private static func socksConfiguration(_ proxy: TailnetSOCKSProxy?) -> ProxyConfiguration? {
+        guard let proxy, let port = NWEndpoint.Port(rawValue: proxy.port) else { return nil }
         var socks = ProxyConfiguration(
             socksv5Proxy: .hostPort(host: NWEndpoint.Host(proxy.host), port: port)
         )
         socks.applyCredential(username: TailnetSOCKSProxy.username, password: proxy.credential)
         socks.matchDomains = matchDomains
         socks.allowFailover = true
-        configuration.proxyConfigurations = [socks]
+        return socks
     }
 
     /// `URLSessionConfiguration.default` routed for Oppi server transports.

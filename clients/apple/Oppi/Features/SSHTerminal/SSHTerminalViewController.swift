@@ -795,6 +795,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let hidden = barPlacement.menu.map(menuElement(for:))
         if !hidden.isEmpty { groups.append(UIMenu(options: .displayInline, children: hidden)) }
         var items: [UIMenuElement] = []
+        if channel.connected, let route = channel.rex?.route {
+            // How this Rex terminal reaches Rex; information, not an action.
+            let info = UIAction(title: route.label, image: UIImage(systemName: "network"), attributes: .disabled) { _ in }
+            info.accessibilityIdentifier = "sshTerminal.menu.rexRoute"
+            items.append(info)
+        }
         items.append(UIAction(title: "Edit Host", image: UIImage(systemName: "pencil")) { [weak self] _ in
             self?.editHost()
         })
@@ -2139,9 +2145,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// A terminal's Rex monitor tells the Terminal tab what it found on the
     /// host (`SSHTerminalRexHostStore`): a host Rex was read on gets a live Rex
-    /// section there, and one with no `rex` loses it.
+    /// section there, and one with no `rex` loses it. It reaches the host's
+    /// Rex over Tailscale when it can (`RexRoutePlan`).
     static func makeRexMonitor(for profile: SSHTerminalProfile?, hosts: SSHTerminalRexHostStore?) -> RexMonitor {
-        let monitor = RexMonitor()
+        let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init))
         if let profile, let hosts {
             monitor.onFinding = { hosts.record($0, on: profile) }
         }

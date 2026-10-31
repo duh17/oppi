@@ -165,6 +165,11 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
             let idle = SSHTerminalOverviewRow(id: "idle", title: "Not connected. Pull down to connect.", kind: .placeholder, focus: nil)
             return [.init(id: "idle", rows: [idle])]
         }
-        return connection + monitor.sections
+        // Which way Rex was reached, under its sessions.
+        var footer: [SSHTerminalOverviewSection] = []
+        if monitor.snapshot != nil, monitor.failure == nil, let route = monitor.route {
+            footer = [.init(id: "route", rows: [.init(id: "route", title: route.label, kind: .placeholder, focus: nil)])]
+        }
+        return connection + monitor.sections + footer
     }
 }

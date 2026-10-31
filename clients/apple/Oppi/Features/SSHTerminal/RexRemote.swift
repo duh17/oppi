@@ -511,12 +511,14 @@ private final class RexEventInbox: Sendable {
 }
 
 /// A connection `RexMonitor` can follow Rex on: it opens the bridge to Rex's
-/// socket as a stream, and says whether it is still up. A terminal's channel
-/// and a Rex host's own sessions connection (`SSHConnection`) are both one.
+/// socket as a stream, runs Rex's CLI, and says whether it is still up. A
+/// terminal's channel and a Rex host's own sessions connection
+/// (`SSHConnection`) are both one.
 @MainActor
 protocol RexStreamHost {
     var isConnected: Bool { get }
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
+    func run(_ command: String, input: Data) async throws -> SSHExecResult
 }
 
 extension SSHTerminalChannel: RexStreamHost {
@@ -528,6 +530,10 @@ extension SSHConnection: RexStreamHost {
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
         try await openStream(command: command, inboundFlow: nil, sink: sink)
+    }
+
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        try await run(command, input: input, maximumOutputBytes: 64 * 1024, timeout: .seconds(10))
     }
 }
 
@@ -563,8 +569,9 @@ enum RexAbsence: Equatable, Sendable {
 /// host's sessions screen shows, so the bar can offer the session list and a
 /// needs-you count, and a tapped pane opens on this device.
 ///
-/// It subscribes instead of polling: one `nc -U` stream (`RexBridge.command`)
-/// on the SSH connection speaks Rex's control protocol, reads the
+/// It subscribes instead of polling: one control connection, over Tailscale
+/// when its `RexRoutePlan` allows, else an `nc -U` stream (`RexBridge.command`)
+/// on the SSH connection, speaks Rex's control protocol, reads the
 /// whole server once (`session.attach_all`, then `session.view` and the three
 /// block calls per terminal), and from then on patches that picture from Rex's
 /// events. `session.attach` is not used: the overview needs events and
@@ -600,6 +607,8 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     let title = "Rex"
     let identifierPrefix = "sshTerminal.rex"
+    /// Which way the stream that last read Rex reached it.
+    private(set) var route: RexRoute?
     /// The last snapshot read. A stream that fails keeps it on screen, as what
     /// Rex last reported, and reports `failure`.
     private(set) var snapshot: RexSnapshot?
@@ -634,6 +643,9 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     /// How long a burst of changes waits before it reaches `snapshot`, so a
     /// busy pane is one UI update, not one per event.
+    /// The saved host this follows, whose Rex may be reached over Tailscale
+    /// (`RexRoutePlan`); nil reads it over the SSH bridge only.
+    @ObservationIgnored private let directHost: RexDirectHost?
     @ObservationIgnored private let publishDelay: Duration
     @ObservationIgnored private let retryDelay: @MainActor (Retry, Int) -> Duration
     @ObservationIgnored private var mirror = RexMirror()
@@ -667,9 +679,11 @@ final class RexMonitor: SSHTerminalOverviewSource {
     var needsAttention: Int { failure == nil ? snapshot?.needsAttention ?? 0 : 0 }
 
     init(
+        directHost: RexDirectHost? = nil,
         publishDelay: Duration = .milliseconds(150),
         retryDelay: @escaping @MainActor (Retry, Int) -> Duration = { Retry.delay($0, failures: $1) }
     ) {
+        self.directHost = directHost
         self.publishDelay = publishDelay
         self.retryDelay = retryDelay
     }
@@ -683,11 +697,13 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// host turns out to have no `nc` or no Rex.
     func run(over host: any RexStreamHost) async {
         var failures = 0
+        // One open: a direct route that fails is not tried again by this run.
+        let plan = directHost.map { RexRoutePlan(host: $0) }
         while !Task.isCancelled, host.isConnected {
             var synced = false
             let retry: Retry
             do {
-                try await subscribe(on: host, synced: &synced)
+                try await subscribe(on: host, plan: plan, synced: &synced)
                 return
             } catch is CancellationError {
                 return
@@ -754,11 +770,14 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     /// One stream: open, read everything, then apply events until it ends.
     /// Throws the reason it ended; returns only when the task is cancelled.
-    private func subscribe(on host: any RexStreamHost, synced: inout Bool) async throws {
+    private func subscribe(on host: any RexStreamHost, plan: RexRoutePlan?, synced: inout Bool) async throws {
         let inbox = RexEventInbox()
-        let (_, control) = try await RexLink.connect(openStream: { @MainActor command, _, sink in
-            try await host.openStream(command: command, sink: sink)
-        })
+        let (link, control) = try await RexLink.connect(
+            plan: plan,
+            openStream: { @MainActor command, _, sink in try await host.openStream(command: command, sink: sink) },
+            run: { @MainActor command in try await host.run(command, input: Data()) }
+        )
+        route = link.route
         control.onEvent { frame in
             if let event = RexEvent(frame: frame) { inbox.push(event) }
         }

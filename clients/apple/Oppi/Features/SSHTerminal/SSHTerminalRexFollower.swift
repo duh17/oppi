@@ -62,7 +62,7 @@ final class SSHTerminalRexFollower {
         suppliedPassword: String? = nil,
         promptsAutomatically: Bool,
         session: SSHTerminalConnectSession = SSHTerminalConnectSession(),
-        monitor: RexMonitor = RexMonitor(),
+        monitor: RexMonitor? = nil,
         standIn: (any RexStreamHost)? = nil,
         signsInSilently: @escaping @MainActor (SSHTerminalProfile) -> Bool = { $0.connectsWithoutPrompt() }
     ) {
@@ -70,6 +70,8 @@ final class SSHTerminalRexFollower {
         self.suppliedPassword = suppliedPassword
         self.promptsAutomatically = promptsAutomatically
         self.session = session
+        // The host's Rex over Tailscale when it can be (`RexRoutePlan`), else the bridge.
+        let monitor = monitor ?? RexMonitor(directHost: RexDirectHost(profile: profile))
         self.monitor = monitor
         self.standIn = standIn
         self.signsInSilently = signsInSilently

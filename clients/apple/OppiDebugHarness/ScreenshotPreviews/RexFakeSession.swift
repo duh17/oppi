@@ -325,7 +325,7 @@ final class RexFakeSession: Sendable {
             self?.answer($0) ?? .refuse(code: "gone", message: "the fake session is gone")
         }
         host.withLock { $0 = fake }
-        let (_, control) = try await RexLink.connect(openStream: { _, _, sink in fake.open(sink: sink) })
+        let control = try await RexLink(openStream: { _, _, sink in fake.open(sink: sink) }).connect()
         return (RexFakeTransport(control: control, session: self), control)
     }
 
@@ -447,6 +447,8 @@ final class RexFakeSession: Sendable {
 /// connection is the fake host's, and every data socket the terminal opens is
 /// the next pane stream, over the bridge's framing.
 final class RexFakeTransport: RexTransport {
+    let route = RexRoute.ssh
+
     private struct State {
         var streams: [any RexSocket] = []
     }

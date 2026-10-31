@@ -172,6 +172,9 @@ final class RexSessionModel {
     /// later, so two swipes in a row read this to go two panes.
     var latest: RexSessionState { connection.state }
 
+    /// Which way Rex is reached: over Tailscale or the SSH bridge.
+    var route: RexRoute { connection.route }
+
     /// The pane on screen, named: what a new connection reopens.
     var shownTarget: RexPaneTarget {
         RexPaneTarget(sessionID: sessionID, blockID: state.shown, label: state.shownName)

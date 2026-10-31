@@ -383,6 +383,7 @@ struct SSHTerminalProfileStore {
         try write(profiles.filter { $0.id != id })
         SSHTerminalColorStore(defaults: defaults).forget(id)
         SSHTerminalRexHostStore(defaults: defaults).forget(id)
+        RexDirectStore(defaults: defaults).forget(id)
     }
 
     /// Drops a catalog value that does not decode. A readable catalog is left

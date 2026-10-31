@@ -224,6 +224,11 @@ private final class ExitingStreamHost: RexStreamHost {
         Task { host.end(status: status) }
         return stream
     }
+
+    /// No Rex CLI to ask either (`RexBridge.statusCommand`).
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        throw SSHConnectionError.commandRequestRejected
+    }
 }
 
 /// Which hosts Rex was seen on: what is remembered, for whom, and what a

@@ -1952,6 +1952,10 @@ struct SSHTerminalTests {
         func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
             host.open(sink: sink)
         }
+
+        func run(_ command: String, input: Data) async throws -> SSHExecResult {
+            throw SSHConnectionError.commandRequestRejected
+        }
     }
 
     @Test func rexRetriesBackOffFromOneSecondOrFifteenAndStopAtTheirCaps() {

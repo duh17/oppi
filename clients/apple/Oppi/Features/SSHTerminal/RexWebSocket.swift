@@ -105,11 +105,11 @@ struct RexWebSocketCodec {
         return Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }).base64EncodedString()
     }
 
-    /// Any host name works over a Unix socket.
-    func upgradeRequest(path: String) -> Data {
+    /// Any host name works over a Unix socket; over Tailscale it is Rex's name.
+    func upgradeRequest(path: String, host: String = "localhost") -> Data {
         let lines: [String] = [
             "GET \(path) HTTP/1.1",
-            "Host: localhost",
+            "Host: \(host)",
             "Upgrade: websocket",
             "Connection: Upgrade",
             "Sec-WebSocket-Key: \(key)",
@@ -363,12 +363,13 @@ struct RexWebSocketCodec {
     }
 }
 
-/// A Rex WebSocket over the SSH bridge: `RexBridge.command` (`nc -U` to Rex's
-/// socket) on an exec stream, with this side doing the client's framing
-/// (`RexWebSocketCodec`). `open` returns once Rex switched protocols. The
+/// A Rex WebSocket over a byte stream, with this side doing the client's
+/// framing (`RexWebSocketCodec`): the SSH bridge (`RexBridge.command`, `nc -U`
+/// to Rex's socket, on an exec stream), or a TLS stream to Rex's Tailscale
+/// serving (`RexTLSStream`). `open` returns once Rex switched protocols. The
 /// bridge's exit status says why it ended (`RexBridge.failure`).
 ///
-/// Thread-safe: the stream's events arrive on the SSH event loop.
+/// Thread-safe: the stream's events arrive on its own thread, in order.
 final class RexPipeSocket: RexSocket {
     typealias OpenStream = @Sendable (_ sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
 
@@ -394,6 +395,7 @@ final class RexPipeSocket: RexSocket {
     /// `timeout`. `onEvent` hears every message after the upgrade.
     static func open(
         _ endpoint: RexEndpoint,
+        host: String = "localhost",
         key: String = RexWebSocketCodec.makeKey(),
         timeout: Duration = RexControl.requestTimeout,
         openStream: OpenStream,
@@ -403,7 +405,7 @@ final class RexPipeSocket: RexSocket {
         let stream = try await openStream { socket.receive($0) }
         let request = socket.state.withLock { state -> Data in
             state.stream = stream
-            return state.codec.upgradeRequest(path: endpoint.path)
+            return state.codec.upgradeRequest(path: endpoint.path, host: host)
         }
         let timer = Task { [weak socket] in
             try? await Task.sleep(for: timeout)

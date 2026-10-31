@@ -459,9 +459,9 @@ extension SSHConnection {
     }
 }
 
-/// A command's stdin and stdout on an SSH connection, opened by
-/// `SSHConnection.openStream`. Its output and end arrive on the sink it was
-/// opened with.
+/// A two-way byte stream: a command's stdin and stdout on an SSH connection,
+/// opened by `SSHConnection.openStream`, or another stream in the same shape.
+/// Its output and end arrive on the sink it was opened with.
 final class SSHExecStream: Sendable {
     private let write: @Sendable (Data) async throws -> Void
     private let closeChannel: @Sendable () -> Void
@@ -471,14 +471,12 @@ final class SSHExecStream: Sendable {
         closeChannel = { channel.close(promise: nil) }
     }
 
-    #if DEBUG
-    /// A stream with no SSH channel behind it, for previews and tests that
-    /// stand in for the host.
+    /// A byte stream with no SSH channel behind it: Rex over Tailscale
+    /// (`RexTLSStream`), and previews and tests that stand in for the host.
     init(send: @escaping @Sendable (Data) async throws -> Void, close: @escaping @Sendable () -> Void) {
         write = send
         closeChannel = close
     }
-    #endif
 
     func send(_ bytes: Data) async throws { try await write(bytes) }
 

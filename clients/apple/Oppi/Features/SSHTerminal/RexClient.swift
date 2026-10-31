@@ -15,7 +15,8 @@ struct RexPaneTarget: Hashable, Sendable {
 /// How Oppi reaches the host's Rex server: a command on the SSH connection
 /// whose stdin and stdout are Rex's local socket. Rex trusts a caller on that
 /// socket as the account it runs as, which is the SSH user, so it needs no
-/// sign-in or network access of its own (its Tailscale serving can stay off).
+/// sign-in or network access of its own. The fallback when Rex is not
+/// reached over Tailscale (`RexRoutePlan`).
 enum RexBridge {
     /// Rex's socket: in the app's Application Support folder on macOS, in
     /// `$XDG_RUNTIME_DIR/rex` or `~/.local/state/rex/run` elsewhere.
@@ -319,37 +320,63 @@ struct RexDataStream {
 }
 
 /// How this device reaches one host's Rex, and opens its WebSockets: over the
-/// SSH bridge, an exec stream of `RexBridge.command` per socket.
+/// SSH bridge, an exec stream of `RexBridge.command` per socket, or over a TLS
+/// stream to Rex's Tailscale serving. Either way this side frames the
+/// WebSocket (`RexPipeSocket`). `RexRoutePlan` picks the route.
 struct RexLink: Sendable {
     typealias OpenStream = @Sendable (
         _ command: String, _ inboundFlow: SSHPTYInboundFlow?, _ sink: @escaping SSHPTYByteSink
     ) async throws -> SSHExecStream
+    /// Opens a byte stream to Rex's Tailscale serving at a URL, within a
+    /// timeout (`RexTLSStream.open`).
+    typealias OpenDirect = @Sendable (
+        _ url: URL, _ inboundFlow: SSHPTYInboundFlow?, _ timeout: Duration, _ sink: @escaping SSHPTYByteSink
+    ) async throws -> SSHExecStream
 
+    let route: RexRoute
     /// Opens an exec stream on the host's SSH connection.
     let openStream: OpenStream
+    let openDirect: OpenDirect
 
-    /// Opens one of Rex's sockets; `onEvent` hears everything after the upgrade.
+    init(route: RexRoute = .ssh, openStream: @escaping OpenStream, openDirect: @escaping OpenDirect = RexTLSStream.open) {
+        self.route = route
+        self.openStream = openStream
+        self.openDirect = openDirect
+    }
+
+    /// Opens one of Rex's sockets within `timeout`; `onEvent` hears everything
+    /// after the upgrade.
     func open(
         _ endpoint: RexEndpoint,
         inboundFlow: SSHPTYInboundFlow? = nil,
+        timeout: Duration = RexControl.requestTimeout,
         onEvent: @escaping @Sendable (RexSocketEvent) -> Void
     ) async throws -> any RexSocket {
-        try await RexPipeSocket.open(
-            endpoint,
-            openStream: { [openStream] sink in try await openStream(RexBridge.command, inboundFlow, sink) },
-            onEvent: onEvent
-        )
+        switch route {
+        case .ssh:
+            try await RexPipeSocket.open(
+                endpoint, timeout: timeout,
+                openStream: { [openStream] sink in try await openStream(RexBridge.command, inboundFlow, sink) },
+                onEvent: onEvent
+            )
+        case .tailscale(let url):
+            try await RexPipeSocket.open(
+                endpoint, host: url.host ?? "localhost", timeout: timeout,
+                openStream: { [openDirect] sink in try await openDirect(url, inboundFlow, timeout, sink) },
+                onEvent: onEvent
+            )
+        }
     }
 
-    /// A control connection Rex has welcomed. `onWritable` hears the control
-    /// socket's writability, which typing waits on. Cancelling closes it.
-    static func connect(
-        openStream: @escaping OpenStream,
+    /// A control connection Rex has welcomed over this link. `onWritable`
+    /// hears the control socket's writability, which typing waits on.
+    /// Cancelling closes it.
+    func connect(
+        timeout: Duration = RexControl.requestTimeout,
         onWritable: (@Sendable (Bool) -> Void)? = nil
-    ) async throws -> (RexLink, RexControl) {
-        let link = RexLink(openStream: openStream)
+    ) async throws -> RexControl {
         let control = RexControl()
-        let socket = try await link.open(.control) { event in
+        let socket = try await open(.control, timeout: timeout) { event in
             if case .writable(let writable) = event { onWritable?(writable) }
             control.receive(event)
         }
@@ -359,7 +386,7 @@ struct RexLink: Sendable {
         } onCancel: {
             socket.close()
         }
-        return (link, control)
+        return control
     }
 }
 
@@ -368,6 +395,8 @@ struct RexLink: Sendable {
 /// own lifecycle. `RexHostTransport` is one; tests and previews stand in for
 /// the host with another.
 protocol RexTransport: Sendable {
+    /// Which way Rex's sockets go.
+    var route: RexRoute { get }
     func openData(
         inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
     ) async throws -> any RexSocket
@@ -384,6 +413,7 @@ protocol RexTransport: Sendable {
 /// probes the peer as a shell's connection does (`SSHConnection.startKeepalive`).
 final class RexHostTransport: RexTransport {
     let link: RexLink
+    var route: RexRoute { link.route }
     private let connection: SSHConnection
     private let control: RexControl
 
@@ -398,13 +428,17 @@ final class RexHostTransport: RexTransport {
         connection.channel.closeFuture.whenComplete { _ in control.close() }
     }
 
-    /// Opens Rex's control connection on `connection` and says hello.
+    /// Opens Rex's control connection by `plan`'s route (the bridge on
+    /// `connection` without one) and says hello.
     static func open(
         connection: SSHConnection,
+        plan: RexRoutePlan? = nil,
         onWritable: (@Sendable (Bool) -> Void)? = nil
     ) async throws -> (RexHostTransport, RexControl) {
         let (link, control) = try await RexLink.connect(
+            plan: plan,
             openStream: { try await connection.openStream(command: $0, inboundFlow: $1, sink: $2) },
+            run: { try await connection.run($0, maximumOutputBytes: 64 * 1024, timeout: .seconds(10)) },
             onWritable: onWritable
         )
         return (RexHostTransport(connection: connection, link: link, control: control), control)
@@ -428,7 +462,18 @@ final class RexHostTransport: RexTransport {
         )
     }
 
-    func checkAlive() async throws { try await connection.checkAlive() }
+    /// One SSH round trip, and over Tailscale one Rex round trip too: either
+    /// failing closes the connection, as a failed probe does.
+    func checkAlive() async throws {
+        try await connection.checkAlive()
+        guard case .tailscale = route else { return }
+        do {
+            _ = try await control.call("server.status", [:])
+        } catch {
+            close()
+            throw error
+        }
+    }
 
     func close() {
         control.close()
@@ -522,6 +567,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// Panes whose program exited, with its exit status. Rex closes such a
         /// pane by default; until it does, the pane stays where it is.
         var exitCodes: [String: Int] = [:]
+        /// When the shown pane's stream was asked for, until its snapshot came.
+        var snapshotAsked: ContinuousClock.Instant?
 
         var layout: RexSessionLayout?
         var revision: Int?
@@ -595,6 +642,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
 
     /// What the pane switcher and minimap show now.
     var state: RexSessionState { core.withLock { Self.snapshot($0) } }
+
+    /// Which way Rex is reached.
+    var route: RexRoute { transport.route }
 
     /// Shows `blockID`: the screen's one way to change pane, for a tap, a
     /// swipe, and VoiceOver alike. A pane the view does not list is ignored
@@ -861,6 +911,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             core.withLock { $0.sized[block] = geometry }
         }
         guard wanted() else { return }
+        core.withLock { $0.snapshotAsked = .now }
         let ticketAnswer = Task { [control, sessionID] in
             try await control.call("data.connect", [
                 "session_id": sessionID, "block_id": block,
@@ -952,7 +1003,13 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             }
             for output in outputs {
                 switch output {
-                case .snapshot(let snapshot): queue.pushSnapshot(snapshot, block: block)
+                case .snapshot(let snapshot):
+                    // The screen is up (READY); its history follows.
+                    if let asked = core.withLock({ state in defer { state.snapshotAsked = nil }; return state.snapshotAsked }) {
+                        let elapsed = ContinuousClock.now - asked
+                        RexRouteLog.snapshot(route, milliseconds: Int(elapsed / .milliseconds(1)), bytes: snapshot.count)
+                    }
+                    queue.pushSnapshot(snapshot, block: block)
                 case .snapshotRecords(let records): queue.pushSnapshotRecords(records, block: block)
                 case .output(let bytes): queue.push(.data(bytes))
                 case .exited(let code):

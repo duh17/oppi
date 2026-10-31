@@ -18,6 +18,11 @@ final class RexPreviewStreamHost: RexStreamHost {
         hosts.append(host)
         return host.open(sink: sink)
     }
+
+    /// The fake host has no Rex CLI (`RexBridge.statusCommand`); the bridge is its way in.
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        throw SSHConnectionError.commandRequestRejected
+    }
 }
 
 /// `SCREENSHOT_SCREEN=ssh-terminal-rex-list`: the Terminal tab over two saved

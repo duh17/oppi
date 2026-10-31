@@ -191,8 +191,9 @@ final class SSHTerminalConnectSession {
                 }
                 if let rexPane {
                     // A Rex pane runs no shell: the signed-in connection carries
-                    // Rex's control connection and the pane's data connection
-                    // (`RexHostTransport`), and side commands beside them.
+                    // side commands, and Rex's control and data connections go
+                    // over Tailscale when the host's Rex serves there, else over
+                    // the SSH bridge (`RexHostTransport`, `RexRoutePlan`).
                     let connection: SSHConnection
                     do {
                         connection = try await SSHConnection.open(
@@ -205,7 +206,8 @@ final class SSHTerminalConnectSession {
                     do {
                         // Typing travels on the control connection, so its
                         // writability is what lets the input pump resume.
-                        let (transport, control) = try await RexHostTransport.open(connection: connection) { writable in
+                        let plan = RexRoutePlan(host: RexDirectHost(profile: value))
+                        let (transport, control) = try await RexHostTransport.open(connection: connection, plan: plan) { writable in
                             queue.push(.writabilityChanged(writable))
                         }
                         pane = try await RexSessionConnection.open(transport: transport, control: control, target: rexPane, queue: queue)
