@@ -89,7 +89,11 @@ function editTargetFor(request: {
       root: request.origin.agentDir,
       requestedPath: request.path,
       // The allowlist again, on the path after symlinks: a link inside the
-      // agent directory must not reach a file the list does not name.
+      // agent directory must not reach a file the list does not name. This is
+      // also where a *linked* Pi file stays read-only — `inspectFileForEdit`
+      // refuses a final-component symlink and the canonical recheck refuses a
+      // link that leads elsewhere — so whether a linked SYSTEM.md may be edited
+      // is decided here and in that one refusal, and nowhere else.
       allowsCanonical: (relativeToRealRoot) => piAgentEditablePath(relativeToRealRoot) !== null,
     };
   }

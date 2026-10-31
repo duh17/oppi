@@ -79,10 +79,14 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         skills: [ServerSkillSummary]
     ) -> (hostPath: String, skillFile: SkillFileEditTarget, summary: ServerSkillSummary)? {
         let skillPath = (detail.skill.path as NSString).standardizingPath
-        guard let summary = skills.first(where: {
-            guard let candidate = $0.path else { return false }
-            return (candidate as NSString).standardizingPath == skillPath
-        }),
+        // The path only identifies the Skill; `editable` is the summary's to say.
+        // A path either side cannot name picks no Skill at all, so a project
+        // Skill that shadows a global one is never edited as that Skill.
+        guard !skillPath.isEmpty, skillPath != ".",
+              let summary = skills.first(where: {
+                  guard let candidate = $0.path, !candidate.isEmpty else { return false }
+                  return (candidate as NSString).standardizingPath == skillPath
+              }),
             case .editable(let hostPath) = ServerSkillFilePresentation.resolve(
                 editable: summary.editable,
                 resourcePath: summary.path,
