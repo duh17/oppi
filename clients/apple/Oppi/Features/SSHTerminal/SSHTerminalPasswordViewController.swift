@@ -89,7 +89,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
             guard let self else { return }
             var content = UIListContentConfiguration.valueCell()
             content.text = "Save Password"
-            content.textProperties.color = UIColor(self.themePalette.fg)
+            content.textProperties.color = self.themePalette.ui.fg
             cell.contentConfiguration = content
             let toggle = UISwitch()
             toggle.isOn = self.savesPassword
@@ -105,7 +105,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
             var content = UIListContentConfiguration.subtitleCell()
             content.text = "Saving requires a device passcode. Face ID or passcode approval is required when Oppi reads it, except for 5 minutes after you approve."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(self?.themePalette.comment ?? ThemeRuntimeState.currentThemeID().palette.comment)
+            content.textProperties.color = self?.themePalette.ui.comment ?? ThemeRuntimeState.currentThemeID().palette.ui.comment
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
         }

@@ -158,7 +158,7 @@ final class DiffReaderView: UIView {
     }
 
     private func applyThemeColors() {
-        let background = UIColor(currentPalette.bgDark)
+        let background = currentPalette.ui.bgDark
         backgroundColor = background
         collectionView.backgroundColor = background
         FullScreenViewingOptionsController.updateFloatingButton(
