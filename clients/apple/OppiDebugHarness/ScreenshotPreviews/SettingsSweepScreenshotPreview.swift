@@ -4,12 +4,14 @@ import UIKit
 /// The settings-like pages outside App, Server, and Workspace Settings: the
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
-/// `ssh-hosts`, `mcp`, `theme-import`,
+/// `ssh-hosts`, `mcp`, `theme-import` (`theme-import-failed`: the themes request
+/// answers 404; `theme-import` with `SCREENSHOT_SWEEP_READ_DELAY` holds the
+/// page's load so a capture sees its loading row),
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
-/// `mcp-detail`, `mcp-failed`,
+/// `mcp-detail` (`mcp-detail-failed`: the scope request answers 404), `mcp-failed`,
 /// `model-providers` (the connected and available groups over fixture usage),
 /// `model-providers-failed` (the status request answers 404) and
 /// `model-providers-loading` (with `SCREENSHOT_SWEEP_READ_DELAY`, which holds
@@ -356,7 +358,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack {
                 AgentDetailViewController(root: root, agentId: Self.agent.id) { _ in }
             }
-        case "mcp-detail":
+        case "mcp-detail", "mcp-detail-failed":
+            // `-failed`: the scope request answers 404, so the page shows its
+            // failed row over the server it was opened for.
             return stack {
                 McpServerDetailViewController(
                     scope: Self.mcpGlobal,
@@ -386,7 +390,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     startsTailnet: {}
                 )
             }
-        case "theme-import":
+        case "theme-import", "theme-import-failed":
+            // `-failed`: the themes request answers 404, so the list shows its
+            // failed row.
             return stack { ThemeImportViewController(root: root) }
         case "schedules", "schedules-failed", "schedules-loading":
             // `-failed`: the schedules request answers 404; `-loading` is held by
@@ -685,8 +691,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
         if page == "agent-detail-failed" {
             SettingsSweepFixtureURLProtocol.routes["/agents/\(agent.id)"] = nil
         }
-        if page == "mcp-failed" {
+        if page == "mcp-failed" || page == "mcp-detail-failed" {
             SettingsSweepFixtureURLProtocol.routes["/mcp/scopes/global/servers"] = nil
+        }
+        if page == "theme-import-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/themes"] = nil
         }
         if page == "schedules-failed" {
             SettingsSweepFixtureURLProtocol.routes["/schedules"] = nil

@@ -4,28 +4,20 @@ import UIKit
 /// one with an Oppi control session (swipe or touch and hold), or describe a
 /// new one in the guided composer, as Agents and Schedules do. An import is a
 /// copy saved on this device.
+///
+/// A `ListScreenController`: the base runs the load (`themes.list`) on every
+/// appearance, on pull to refresh, and for its Retry, and draws the page's
+/// one loading, empty, or failed row in its state section.
 @MainActor
 final class ThemeImportViewController: ListScreenController<ThemeImportViewController.Section, ThemeImportViewController.Item> {
     enum Section: Hashable, Sendable { case state, themes }
-    enum Item: Hashable, Sendable {
-        case loading
-        case failed
-        case empty
-        case theme(String)
-    }
+    enum Item: Hashable, Sendable { case theme(String) }
 
     private let root: AppRootEnvironment
-    private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
     private let revisionSheet = RouterModalPresenter()
 
     private var remoteThemes: [RemoteThemeSummary] = [] {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var isLoadingThemes = true {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var error: String? {
         didSet { setNeedsUpdateProperties() }
     }
     private var importingName: String? {
@@ -34,7 +26,6 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
     private var revisingTheme: RemoteThemeSummary? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
 
     init(root: AppRootEnvironment) {
         self.root = root
@@ -60,27 +51,13 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
         composer.install(in: self)
         revisionSheet.anchor = self
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Like the SwiftUI `.task` it replaces, a load each time it shows.
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.loadThemes() }
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         revisionSheet.sync()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
     }
 
     override func viewDidLayoutSubviews() {
@@ -90,7 +67,9 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     override func updateProperties() {
         super.updateProperties()
-        composer.setScreenError(remoteThemes.isEmpty ? nil : error, identifier: "themes.error")
+        // With themes listed the list has no room for the load's failure: the
+        // composer says it, under the list.
+        composer.setScreenError(remoteThemes.isEmpty ? nil : loadFailure.map { $0.reason ?? $0.title }, identifier: "themes.error")
         let revising = revisingTheme
         revisionSheet.update(
             id: revising.map { AnyHashable($0.id) },
@@ -116,13 +95,25 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
         )
     }
 
+    // MARK: - Load
+
+    /// The server's themes, each time the page shows: an import or an edit on
+    /// another device changes the list.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        guard let api = root.coordinator.activeConnection.apiClient else {
+            throw LoadFailure(String(localized: "Not connected"))
+        }
+        let themes = try await api.listThemes()
+        guard !Task.isCancelled else { return }
+        remoteThemes = themes
+    }
+
     // MARK: - List
 
     override func sections() -> [ListSection<Section, Item>] {
-        guard !remoteThemes.isEmpty else {
-            let state: Item = isLoadingThemes ? .loading : (error != nil ? .failed : .empty)
-            return [ListSection(.state, items: [state])]
-        }
+        guard !remoteThemes.isEmpty else { return [ListSection(.state, items: [])] }
         return [ListSection(
             .themes,
             footer: "Tap a theme to import and apply it. Swipe or touch and hold to edit it with Oppi.",
@@ -130,78 +121,63 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
         )]
     }
 
+    /// The list's own state: its one row is the base's, in `.state`.
+    override func stateSection() -> Section? { .state }
+
+    override func hasContent() -> Bool { !remoteThemes.isEmpty }
+
+    override func loadingCaption() -> String? { String(localized: "Fetching themes…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Themes") }
+
+    override func emptyState() -> LoadState? {
+        .empty(
+            title: String(localized: "No custom themes yet. Describe a theme below and Oppi writes it to your server."),
+            systemImage: "paintpalette"
+        )
+    }
+
+    override var rowStyle: ListRowStyle { .card }
+
     override func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .loading, .empty: return AnyHashable(0)
-        case .failed: return AnyHashable(error)
-        case .theme(let filename):
-            guard let summary = remoteThemes.first(where: { $0.filename == filename }) else { return AnyHashable(0) }
-            return AnyHashable([
-                AnyHashable(summary.name),
-                AnyHashable(summary.colorScheme),
-                AnyHashable(importingName == filename),
-                AnyHashable(CustomThemeStore.load(name: summary.name) != nil),
-            ])
-        }
-    }
-
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
-        switch item {
-        case .loading:
-            cell.configure(.loading("Fetching themes…"))
-        case .failed:
-            cell.configure(.failure(
-                ["Unable to load themes.", self?.error].compactMap { $0 }.joined(separator: " "),
-                retry: { [weak self] in self?.refresh() }
-            ))
-        default:
-            cell.configure(.message("No custom themes yet. Describe a theme below and Oppi writes it to your server."))
-        }
-    }
-
-    override func prepareRegistrations() {
-        _ = stateRow
-    }
-
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        if case .theme = item {
-            return cardCell(for: item, at: indexPath)
-        }
-        return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        guard case .theme(let filename) = item,
+              let summary = remoteThemes.first(where: { $0.filename == filename }) else { return AnyHashable(0) }
+        return AnyHashable([
+            AnyHashable(summary.name),
+            AnyHashable(summary.colorScheme),
+            AnyHashable(importingName == filename),
+            AnyHashable(CustomThemeStore.load(name: summary.name) != nil),
+        ])
     }
 
     override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        switch item {
-        case .loading, .failed, .empty:
-            break
-        case .theme(let filename):
-            guard let summary = remoteThemes.first(where: { $0.filename == filename }) else { return }
-            let isImported = CustomThemeStore.load(name: summary.name) != nil
-            ListScreen.buttonRow(
-                cell,
-                identifier: "themes.row.\(summary.filename)",
-                label: summary.name,
-                value: importingName == filename ? "Importing" : (isImported ? "Imported" : summary.colorScheme),
-                contextMenu: contextMenu(summary, isImported: isImported)
-            ) { [weak self] in
-                self?.startImport(summary)
-            }
-            var content = content(.subtitle)
-            content.text = summary.name
-            content.secondaryText = summary.colorScheme
-            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .caption1)
-            content.textToSecondaryTextVerticalPadding = 2
-            cell.contentConfiguration = content
-            if importingName == filename {
-                let spinner = UIActivityIndicatorView(style: .medium)
-                spinner.startAnimating()
-                cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
-            } else if isImported {
-                let check = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
-                check.tintColor = palette.ui.green
-                cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
-            }
+        guard case .theme(let filename) = item,
+              let summary = remoteThemes.first(where: { $0.filename == filename }) else { return }
+        let isImported = CustomThemeStore.load(name: summary.name) != nil
+        ListScreen.buttonRow(
+            cell,
+            identifier: "themes.row.\(summary.filename)",
+            label: summary.name,
+            value: importingName == filename ? "Importing" : (isImported ? "Imported" : summary.colorScheme),
+            contextMenu: contextMenu(summary, isImported: isImported)
+        ) { [weak self] in
+            self?.startImport(summary)
+        }
+        var content = content(.subtitle)
+        content.text = summary.name
+        content.secondaryText = summary.colorScheme
+        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .caption1)
+        content.textToSecondaryTextVerticalPadding = 2
+        cell.contentConfiguration = content
+        if importingName == filename {
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.startAnimating()
+            cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
+        } else if isImported {
+            let check = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
+            check.tintColor = palette.ui.green
+            cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
         }
     }
 
@@ -256,35 +232,6 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
         ).present(from: self, anchor: nil) { [weak self] in
             self?.root.themeStore.removeImportedTheme(named: summary.name)
             self?.setNeedsUpdateProperties()
-        }
-    }
-
-    private func refresh() {
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in
-            await self?.loadThemes()
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
-    private func loadThemes() async {
-        guard let api = root.coordinator.activeConnection.apiClient else {
-            error = "Not connected"
-            isLoadingThemes = false
-            return
-        }
-        isLoadingThemes = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoadingThemes = false } }
-        do {
-            let themes = try await api.listThemes()
-            guard !Task.isCancelled else { return }
-            remoteThemes = themes
-            error = nil
-        } catch {
-            // A load this screen cancelled (it left, or a refresh replaced it) is no error.
-            guard !Task.isCancelled else { return }
-            self.error = error.localizedDescription
         }
     }
 

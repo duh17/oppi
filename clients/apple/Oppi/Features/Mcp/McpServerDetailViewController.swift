@@ -11,7 +11,7 @@ import UIKit
 @MainActor
 final class McpServerDetailViewController: ListScreenController<McpServerDetailViewController.Section, McpServerDetailViewController.Item> {
     enum Section: Hashable, Sendable {
-        case info, config, oauth, headers, environment, connectionError, scopeErrors, tools, busy, error, remove
+        case state, info, config, oauth, headers, environment, connectionError, scopeErrors, tools, busy, error, remove
     }
 
     enum Item: Hashable, Sendable {
@@ -43,7 +43,6 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
     private let serverName: String
     private let signIn: McpSignInOwner
     private let root: AppRootEnvironment
-    private let refreshControl = UIRefreshControl()
     private let signInPresenter = McpSignInPresenter()
     private var observedFlowStatus: ProviderAuthFlowSnapshot.Status?
 
@@ -96,21 +95,33 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
 
     // MARK: - Lifecycle
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in
-            Task { [weak self] in
-                await self?.reload()
-                self?.refreshControl.endRefreshing()
-            }
-        }, for: .valueChanged)
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
     }
+
+    /// The scope as the host has it now: a save on another screen, or a sign-in,
+    /// changes it. A sign-in in flight owns the page's reloads, so nothing here
+    /// reads over it.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        guard attempt?.isSettled != false else { return }
+        let currentScope = try await client.listMcpServers(scopeId: scope.id).scope
+        guard !Task.isCancelled else { return }
+        scope = currentScope
+        if let current = currentScope.servers.first(where: { $0.name == entry.name }) { entry = current }
+        error = nil
+    }
+
+    /// The load's own failed row: the base draws it above the server's facts.
+    override func stateSection() -> Section? { .state }
+
+    /// The load's own row carries no heading, and neither does the section it
+    /// sits in.
+    override func showsHeader(for section: Section) -> Bool { section != .state }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load This Server") }
 
     override func updateProperties() {
         // The page's rows read the sign-in owner, so this pass tracks it.
@@ -120,7 +131,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         let status = attempt?.flow.status
         if status != observedFlowStatus {
             observedFlowStatus = status
-            if status == .completed { Task { [weak self] in await self?.reload() } }
+            if status == .completed { setNeedsLoad() }
         }
         signInPresenter.sync(owner: signIn, root: root, from: self)
         super.updateProperties()
@@ -129,7 +140,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
     // MARK: - List
 
     override func sections() -> [ListSection<Section, Item>] {
-        var result: [ListSection<Section, Item>] = []
+        var result: [ListSection<Section, Item>] = [ListSection(.state, items: [])]
         var info: [Item] = [.status, .transport]
         if entry.config.url != nil { info.append(.url) }
         if entry.config.command != nil { info.append(.command) }
@@ -444,21 +455,6 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         }
     }
 
-    /// Reads this server again, on pull to refresh and after a change saves.
-    /// The page keeps its own refresh control (a sign-in's state decides what
-    /// reloads), so this is its own reload, not the base's `refresh()`.
-    private func reload() async {
-        guard attempt?.isSettled != false else { return }
-        do {
-            let currentScope = try await client.listMcpServers(scopeId: scope.id).scope
-            scope = currentScope
-            if let current = currentScope.servers.first(where: { $0.name == entry.name }) { entry = current }
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
     /// One change at a time: save it to the host, then read the scope again.
     private func perform(_ action: @escaping () async throws -> Void) {
         guard !busy else { return }
@@ -467,7 +463,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         Task { [weak self] in
             do {
                 try await action()
-                await self?.reload()
+                self?.setNeedsLoad()
             } catch {
                 self?.error = error.localizedDescription
             }

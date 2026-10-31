@@ -191,11 +191,13 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     /// The visible server's providers and usage: the base runs it on every
     /// appearance, on pull to refresh, when the app becomes active, and when the
     /// server changes; a credential change or a settled sign-in asks for it
-    /// through `setNeedsLoad()`.
+    /// through `setNeedsLoad()`. A load that cannot run throws, and the base's
+    /// failed row says so with a Retry; a load this page cancelled (it left, or
+    /// a newer one replaced it) leaves the providers it had, which are hidden
+    /// with the failure and kept for the retry.
     override func load() async throws {
         guard let serverId = server?.id else { return }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
-            setupState = .unavailable
             throw LoadFailure(String(localized: "Unable to prepare the server connection"))
         }
         async let fetchedQuotas = try? await client.fetchProviderQuotas()
@@ -203,13 +205,8 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         do {
             loaded = try await client.listProviderAuthStatus()
         } catch {
-            // A load this page cancelled (it left, or a newer one replaced it)
-            // shows no failure: the providers it had stay.
-            guard !Task.isCancelled, !error.isLoadCancellation else { return }
-            statuses = []
-            setupState = .unavailable
-            // The request's own reason is the row's second line; the page's title
-            // says what failed.
+            // A load this page cancelled shows no failure and drops nothing.
+            guard !Task.isCancelled else { return }
             throw error
         }
         guard !Task.isCancelled else { return }
@@ -258,7 +255,9 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         }
         // The load's own state, and its Retry: the base draws it in this place.
         sections.append(ListSection(.state, items: []))
-        if ProviderConfigurationPresentation(state: setupState).showsProviderSections {
+        // A failure hides the provider groups: what they would list is the load
+        // that failed, and the row says so above them.
+        if loadFailure == nil, ProviderConfigurationPresentation(state: setupState).showsProviderSections {
             let connected = connectedProviders.map { Item.provider($0.id) }
             sections.append(ListSection(
                 .connected,
