@@ -54,8 +54,9 @@ struct RexTailnetDiscoveryTests {
     /// The node's online computers on its own tailnet are asked once each
     /// (phones, offline or nameless machines, and machines shared in from
     /// another tailnet, such as Mullvad exit nodes, are not); only Rex is
-    /// listed, named by its device name. Verdicts last for the app's run; a
-    /// forced pass (pull to refresh) asks again.
+    /// listed, named by its device name. An answer lasts for the app's run; a
+    /// machine that did not answer is asked again on the next visit; a forced
+    /// pass (pull to refresh) asks every one.
     @Test func discoveryAsksEachComputerOnceAndListsOnlyRex() async {
         let probed = Mutex<[String]>([])
         let discovery = RexTailnetDiscovery { name in
@@ -78,9 +79,13 @@ struct RexTailnetDiscoveryTests {
         #expect(discovery.found(among: peers, selfDNSName: me) == [RexTailnetHost(dnsName: "rex.tail0000.ts.net", name: "rex")!])
 
         await discovery.discover(peers: peers, selfDNSName: me)
-        #expect(probed.withLock { $0.count } == 3, "a verdict is kept")
+        #expect(probed.withLock { $0.count } == 3, "nothing is asked twice in a visit")
+        #expect(discovery.pendingNames(peers: peers, selfDNSName: me).isEmpty)
+        discovery.forgetUnanswered()
+        await discovery.discover(peers: peers, selfDNSName: me)
+        #expect(Array(probed.withLock { $0 }.dropFirst(3)) == ["mac-mini.tail0000.ts.net"], "the next visit asks only the one that did not answer")
         await discovery.discover(peers: peers, selfDNSName: me, force: true)
-        #expect(probed.withLock { $0.count } == 6, "a refresh asks again")
+        #expect(probed.withLock { $0.count } == 7, "a refresh asks every one")
         #expect(discovery.found(among: peers.filter { $0.hostName != "rex" }, selfDNSName: me).isEmpty, "a Rex that left is not listed")
         #expect(RexTailnetDiscovery.candidates(peers, selfDNSName: nil).isEmpty, "no own name, no tailnet to ask")
     }

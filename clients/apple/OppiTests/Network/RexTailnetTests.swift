@@ -2,6 +2,7 @@ import Foundation
 import LocalAuthentication
 import Synchronization
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Rex on the tailnet without SSH", .serialized, .timeLimit(.minutes(1)))
@@ -45,6 +46,46 @@ struct RexTailnetTests {
             },
             close: { sink(.closed) }
         )
+    }
+
+    // MARK: - Listing once
+
+    /// A Rex added by name and found again by discovery is listed once, as a
+    /// Rex section of its own with the same rows as a saved host's. A Rex a
+    /// listed SSH host already reaches (its remembered address names it, in
+    /// any spelling) is left to that host's section: one section, one link.
+    @Test func aRexKnownSeveralWaysIsListedOnce() async throws {
+        let store = Self.store()
+        store.saveTailnetHost(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio Rex")!)
+        let discovery = RexTailnetDiscovery { $0.hasPrefix("rex.") || $0.hasPrefix("box.") ? .rex : .notRex }
+        let peers = [Self.peer("rex", dns: Self.rex.dnsName), Self.peer("box", dns: "box.tail0000.ts.net")]
+        let me = "oppi-ios.tail0000.ts.net"
+        await discovery.discover(peers: peers, selfDNSName: me)
+        var reach = RexTailnetReach.peers
+        let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }) {
+            RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
+        }
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
+        #expect(section.entries.map(\.host.dnsName) == [Self.rex.dnsName, "box.tail0000.ts.net"])
+        #expect(section.entries.map(\.saved) == [true, false])
+        #expect(section.listedFollowers.map(\.host.name) == ["Studio Rex", "box"])
+        let rows = SSHTerminalRexListRow.rows(hostName: Self.rex.dnsName, state: try #require(section.listedFollowers.first).listState)
+        #expect(rows.map(\.id) == ["header", "loading"], "a node not read yet is a host's section, loading")
+
+        // An SSH host on the tab that reaches the same Rex lists it instead.
+        let ssh = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let said = try #require(URL(string: "https://Rex.Tail0000.ts.net/"))
+        store.apply(.available(url: said, hostID: "host-1"), for: RexDirectHost(profile: ssh))
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [ssh], active: false)
+        #expect(section.entries.map(\.host.dnsName) == ["box.tail0000.ts.net"])
+        #expect(section.follower(id: Self.rex.id) == nil, "its follower is dropped with it")
+
+        // With only the Tailscale app's VPN there is no machine list: the
+        // saved Rex stays, and the card says how to add one.
+        reach = .systemOnly
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
+        #expect(section.entries.map(\.host.dnsName) == [Self.rex.dnsName])
+        #expect(section.cardRows == [.title(note: RexTailnetCardRow.listsNoMachines), .add])
     }
 
     // MARK: - Opening a session without SSH
@@ -153,5 +194,118 @@ struct RexTailnetTests {
         session.openTailnetRexPane(RexPaneTarget(sessionID: "s", blockID: "b", label: "zsh"), on: Self.rex)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !session.connecting })
         #expect(session.failure == expected && !session.showsTerminal)
+    }
+
+    // MARK: - The Terminal tab
+
+    /// A Rex added by name is listed as a section of its own in the update the
+    /// add asks for, with nothing else to set off another one.
+    @Test func aRexAddedByNameIsListedInTheSameUpdate() throws {
+        let section = RexTailnetSection(
+            store: Self.store(), discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
+        ) {
+            RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
+        }
+        let list = SSHTerminalHostListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = RouterNavigationController(rootViewController: list)
+        window.makeKeyAndVisible()
+        defer {
+            section.listedFollowers.forEach { $0.close() }
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        list.updatePropertiesIfNeeded()
+        list.view.layoutIfNeeded()
+        let header = "sshTerminal.rexList.\(Self.rex.id.uuidString).header"
+        #expect(Self.cellIdentifiers(list).contains("sshTerminal.rexTailnet.title"))
+        #expect(!Self.cellIdentifiers(list).contains(header))
+
+        #expect(list.addTailnetRex(named: "https://Rex.tail0000.ts.net/"))
+        list.updatePropertiesIfNeeded()
+        list.view.layoutIfNeeded()
+        #expect(Self.cellIdentifiers(list).contains(header), "the added Rex's section is listed in that update")
+        #expect(!list.addTailnetRex(named: "rex.example.com"), "a name off the tailnet is refused")
+    }
+
+    /// What a tailnet Rex's monitor dialed: a fresh fake Rex (two sessions) per
+    /// connection, the latest one kept to send events and read requests.
+    @MainActor private final class FakeRexes {
+        private(set) var opened: [RexFakeHost] = []
+        var latest: RexFakeHost? { opened.last }
+
+        var openDirect: RexLink.OpenDirect {
+            { [self] _, _, _, sink in
+                await MainActor.run {
+                    let host = RexFakeHost.preview()
+                    opened.append(host)
+                    return host.open(sink: sink)
+                }
+            }
+        }
+    }
+
+    /// A Rename prompt (or Close's confirmation) over the tab covers it, but
+    /// must not drop the tailnet Rex's stream: Rex changing meanwhile still
+    /// reaches the list, and the change the prompt submits goes over the same
+    /// control connection.
+    @Test func aPromptOverTheTabKeepsTheTailnetRexConnected() async throws {
+        let rexes = FakeRexes()
+        let store = Self.store()
+        store.saveTailnetHost(Self.rex)
+        var made: RexTailnetFollower?
+        let section = RexTailnetSection(
+            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
+        ) { host in
+            let follower = RexTailnetFollower(
+                host: host,
+                monitor: RexMonitor(tailnet: host, openDirect: rexes.openDirect, publishDelay: .milliseconds(20))
+            )
+            made = follower
+            return follower
+        }
+        let list = SSHTerminalHostListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = RouterNavigationController(rootViewController: list)
+        window.makeKeyAndVisible()
+        defer {
+            section.listedFollowers.forEach { $0.close() }
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let oppi = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            list.updatePropertiesIfNeeded()
+            return made?.monitor.snapshot?.sessions.count == 2
+        })
+        let follower = try #require(made)
+
+        // The prompt covers the tab, and a pass runs under it.
+        let prompt = UIAlertController(title: "Rename Session", message: nil, preferredStyle: .alert)
+        list.present(prompt, animated: false)
+        list.setNeedsUpdateProperties()
+        list.updatePropertiesIfNeeded()
+        // Rex changes meanwhile; the list still follows it.
+        rexes.latest?.viewChanged(oppi, revision: 9)
+        try await Task.sleep(for: .milliseconds(100))
+        await follower.rename(session: oppi, to: "renamed")
+        #expect(follower.manageFailure == nil)
+        #expect(rexes.opened.count == 1, "the same connection, not a new one")
+        #expect(rexes.latest?.requests.contains { $0.method == "session.set_label" && $0.string("label") == "renamed" } == true)
+        prompt.dismiss(animated: false)
+    }
+
+    private static func cellIdentifiers(_ list: UIViewController) -> [String] {
+        func collection(in view: UIView) -> UICollectionView? {
+            if let found = view as? UICollectionView { return found }
+            return view.subviews.lazy.compactMap(collection).first
+        }
+        return collection(in: list.view)?.visibleCells.compactMap(\.accessibilityIdentifier) ?? []
     }
 }

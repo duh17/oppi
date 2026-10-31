@@ -17,7 +17,7 @@ import UIKit
 /// session's connection state, the monitor's snapshot) is observable, so the
 /// screen redraws as Rex changes.
 @MainActor @Observable
-final class SSHTerminalRexFollower {
+final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     let session: SSHTerminalConnectSession
     let monitor: RexMonitor
     var profile: SSHTerminalProfile
@@ -284,11 +284,13 @@ final class SSHTerminalRexFollower {
     private(set) var managing = false
     private(set) var manageFailure: String?
 
-    /// Rex can be changed now: it has been read, the stream is up, and no
-    /// other change is in flight.
-    var canManage: Bool { monitor.canManage && !managing }
+    /// The sessions whose panes the list shows. Kept for the follower's life,
+    /// which is the tab's visit: nothing is saved.
+    var expandedSessions: Set<String> = []
 
-    private func manage(_ what: String, _ work: () async throws -> Void) async {
+    var isOpening: Bool { session.connecting || session.passwordPrompt }
+
+    func manage(_ what: String, _ work: () async throws -> Void) async {
         guard !managing else { return }
         managing = true
         manageFailure = nil
@@ -300,6 +302,34 @@ final class SSHTerminalRexFollower {
             manageFailure = "\(what) \(error.localizedDescription)"
         }
     }
+}
+
+/// A Rex the Terminal tab lists in a section of its own: a saved SSH host's
+/// (`SSHTerminalRexFollower`, signed in over SSH) or one reached over Tailscale
+/// alone (`RexTailnetFollower`). The tab draws both with the same rows
+/// (`SSHTerminalRexListRow`) and runs the same actions on them: open a session
+/// or a pane, show a session's panes, and make, rename, or close sessions.
+@MainActor
+protocol SSHTerminalRexListFollowing: AnyObject {
+    var monitor: RexMonitor { get }
+    /// A pane or the list is opening: a second tap waits.
+    var isOpening: Bool { get }
+    /// A change to Rex is in flight, and why the last one failed.
+    var managing: Bool { get }
+    var manageFailure: String? { get }
+    var expandedSessions: Set<String> { get set }
+
+    /// The person tapped the row that asks to connect.
+    func connect()
+    /// Runs one change to Rex, one at a time; a failure is kept, with `what`,
+    /// for the section to show.
+    func manage(_ what: String, _ work: () async throws -> Void) async
+}
+
+extension SSHTerminalRexListFollowing {
+    /// Rex can be changed now: it has been read, the stream is up, and no
+    /// other change is in flight.
+    var canManage: Bool { monitor.canManage && !managing }
 
     /// Makes a session with a shell and opens it.
     func createSession() async {
@@ -321,10 +351,6 @@ final class SSHTerminalRexFollower {
         }
     }
 
-    /// The sessions whose panes the list shows. Kept for the follower's life,
-    /// which is the tab's visit: nothing is saved.
-    private(set) var expandedSessions: Set<String> = []
-
     func toggleExpanded(session sessionID: String) {
         if expandedSessions.contains(sessionID) {
             expandedSessions.remove(sessionID)
@@ -342,9 +368,8 @@ final class SSHTerminalRexFollower {
     }
 
     /// A tapped session opens in a terminal of its own, on its focused pane,
-    /// or its first (`SSHTerminalConnectSession.openRexPane`: the session's
-    /// open terminal is shown instead of a second connection). False when the
-    /// session is no longer in Rex's list.
+    /// or its first (an open terminal for the session is shown instead of a
+    /// second connection). False when the session is no longer in Rex's list.
     @discardableResult
     func open(session sessionID: String) -> Bool {
         guard let session = monitor.snapshot?.sessions.first(where: { $0.sessionID == sessionID }),

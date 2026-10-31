@@ -103,18 +103,23 @@ private final class RexProbeRedirects: NSObject, URLSessionTaskDelegate {
 /// every online machine of this device's own tailnet (its MagicDNS suffix;
 /// machines shared in from elsewhere, such as hundreds of Mullvad exit nodes,
 /// are not asked) that can run a server (phones and tablets cannot) is
-/// probed once (`RexTailnetProbe`), and the verdict is kept
-/// for the app's run, so coming back to the Terminal tab does not probe again;
-/// a pull to refresh does. With only the Tailscale app's VPN, Oppi has no
+/// probed once (`RexTailnetProbe`). An answer (Rex or not) is kept for the
+/// app's run, so coming back to the Terminal tab does not probe again; a
+/// machine that did not answer is asked again on the next visit, and a pull to
+/// refresh asks every one. With only the Tailscale app's VPN, Oppi has no
 /// machine list, and a Rex is added by its name instead.
 @MainActor @Observable
 final class RexTailnetDiscovery {
     static let shared = RexTailnetDiscovery()
 
-    /// Each probed name's verdict, for this run of the app.
+    /// Each name that answered, Rex or not, for this run of the app.
     private(set) var verdicts: [String: RexTailnetProbe.Verdict] = [:]
+    /// Names that did not answer, not asked again until `forgetUnanswered`.
+    @ObservationIgnored private var unanswered: Set<String> = []
+    /// Passes running; a cancelled one can still be winding down beside its replacement.
+    private var passes = 0
     /// Probes are running.
-    private(set) var probing = false
+    var probing: Bool { passes > 0 }
     @ObservationIgnored private let probe: @Sendable (String) async -> RexTailnetProbe.Verdict
 
     init(probe: @escaping @Sendable (String) async -> RexTailnetProbe.Verdict = { await RexTailnetProbe.probe(dnsName: $0) }) {
@@ -135,16 +140,33 @@ final class RexTailnetDiscovery {
     /// them with `force`), and returns when they have answered or the caller
     /// was cancelled.
     func discover(peers: [TailnetPeer], selfDNSName: String?, force: Bool = false) async {
-        let names = Self.candidates(peers, selfDNSName: selfDNSName).compactMap { RexTailnetHost.normalizedName($0.dnsName) }
-            .filter { force || verdicts[$0] == nil }
+        let names = pendingNames(peers: peers, selfDNSName: selfDNSName, force: force)
         guard !names.isEmpty else { return }
-        probing = true
-        defer { probing = false }
+        passes += 1
+        defer { passes -= 1 }
         await RexTailnetProbe.probeAll(names, probe: probe, onVerdict: { name, verdict, elapsed in
-            verdicts[name] = verdict
+            if verdict == .unreachable {
+                verdicts[name] = nil
+                unanswered.insert(name)
+            } else {
+                verdicts[name] = verdict
+                unanswered.remove(name)
+            }
             let ms = Int(elapsed / .milliseconds(1))
             logger.info("Rex probe \(name, privacy: .private) verdict=\(String(describing: verdict), privacy: .public) ms=\(ms, privacy: .public)")
         })
+    }
+
+    /// The candidates `discover` would ask now: those with no answer and not
+    /// already unanswered this visit, or every one with `force`.
+    func pendingNames(peers: [TailnetPeer], selfDNSName: String?, force: Bool = false) -> [String] {
+        Self.candidates(peers, selfDNSName: selfDNSName).compactMap { RexTailnetHost.normalizedName($0.dnsName) }
+            .filter { force || (verdicts[$0] == nil && !unanswered.contains($0)) }
+    }
+
+    /// A new visit: machines that did not answer are asked again.
+    func forgetUnanswered() {
+        unanswered = []
     }
 
     /// The Rex nodes among `peers`, named by their Tailscale device name.

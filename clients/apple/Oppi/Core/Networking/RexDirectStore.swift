@@ -154,10 +154,16 @@ struct RexDirectStore: @unchecked Sendable {
         writeTailnetHosts(tailnetHosts().filter { $0.dnsName != dnsName })
     }
 
-    /// The saved SSH host whose Rex said it serves at `url`, so the Terminal
-    /// tab shows that Rex once, not once per way in.
-    func sshHost(servingAt url: URL, among profiles: [SSHTerminalProfile]) -> SSHTerminalProfile? {
-        profiles.first { $0.opensRexSessions && self.url(for: RexDirectHost(profile: $0)) == url }
+    /// The Tailscale names the Rex of `profiles` said they serve at, so the
+    /// Terminal tab lists such a Rex once, under its SSH host. Names are
+    /// MagicDNS names (lowercased, no root dot), not URL strings.
+    func tailnetNames(among profiles: [SSHTerminalProfile]) -> Set<String> {
+        Set(profiles.compactMap { url(for: RexDirectHost(profile: $0))?.host.flatMap { RexTailnetHost(dnsName: $0)?.dnsName } })
+    }
+
+    /// Posted for this store's own defaults when anything in them changes.
+    var changes: (name: Notification.Name, object: UserDefaults) {
+        (UserDefaults.didChangeNotification, defaults)
     }
 
     private func writeTailnetHosts(_ hosts: [RexTailnetHost]) {

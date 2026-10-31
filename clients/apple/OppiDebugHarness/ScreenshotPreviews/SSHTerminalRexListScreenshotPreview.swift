@@ -81,7 +81,11 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
                 }
             }
             return follower
-        })
+        }, tailnetRex: RexTailnetSection(
+            // Off the tailnet whatever the machine running it is on, so the
+            // saved host's Rex section is the whole Rex list.
+            store: RexDirectStore(defaults: UserDefaults(suiteName: "rex-list-preview-tailnet") ?? .standard), reach: { .none }
+        ), startsTailnet: {})
         listRef = list
         self.consumers = consumers
         super.init(

@@ -1515,6 +1515,7 @@
 		A0343FE6E51DA587713EC3D4 /* WorkspaceFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57F49C65D24FAC0EB9145592 /* WorkspaceFiles.swift */; };
 		A03CB37AAC84EE898D6B9C64 /* AttentionNotificationPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F24671E04B05124466AB226 /* AttentionNotificationPolicyTests.swift */; };
 		A088036E94BD9FA4B0BBED3D /* OppiActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4A370DBCECC528A7D6BA3 /* OppiActivityAttributes.swift */; };
+		A0A7160FCDF60B24F1FE0566 /* RexTailnetList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C204F8C65B9A249EC65F923 /* RexTailnetList.swift */; };
 		A0B85F8353D6F3C1E1411FA6 /* PushRegistrationSignature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8484CE0D118929D1041FCFB4 /* PushRegistrationSignature.swift */; };
 		A0C2F2F338ECA62AB89ACEFB /* ChatViewController+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D985B6594EB7AB0C00046D /* ChatViewController+Actions.swift */; };
 		A0D9B74966824F37C3701966 /* ReviewCommentFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108BB8C94EE6FC1E33CB64E9 /* ReviewCommentFormattingTests.swift */; };
@@ -3315,6 +3316,7 @@
 		5B951537F33FB2D70AF5C89D /* SSHTerminalRexPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexPanes.swift; sourceTree = "<group>"; };
 		5BA4DC898631CE91243B52B2 /* SSHTerminalFolderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalFolderViewController.swift; sourceTree = "<group>"; };
 		5BF5CE9F5FA051497A8877B8 /* ServerExtensionListPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionListPresentation.swift; sourceTree = "<group>"; };
+		5C204F8C65B9A249EC65F923 /* RexTailnetList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnetList.swift; sourceTree = "<group>"; };
 		5C3CF4C076077FF51CEA017E /* ServerSkillBrowserViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillBrowserViewController.swift; sourceTree = "<group>"; };
 		5C9839B31B27438F781745E0 /* FullScreenCodeHighlighterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeHighlighterTests.swift; sourceTree = "<group>"; };
 		5CA2CB5F59B92776414187A8 /* GitStatusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatusStore.swift; sourceTree = "<group>"; };
@@ -7216,6 +7218,7 @@
 				6A2CE1597226D02FF6DD3DA4 /* RexSession.swift */,
 				658CA553D9FA00CE4481C751 /* RexTailnet.swift */,
 				B9D8A5B9AE9B78E7AC209093 /* RexTailnetDiscovery.swift */,
+				5C204F8C65B9A249EC65F923 /* RexTailnetList.swift */,
 				3B94BF3953D00D38E6C62D09 /* RexTerminalStream.swift */,
 				0527EF2FC300030C4F00F633 /* RexWebSocket.swift */,
 				943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */,
@@ -10597,6 +10600,7 @@
 				E5276CB03FA9EF9ABC3BC00C /* RexSession.swift in Sources */,
 				E3E22F9297DF1F145F7963DE /* RexTailnet.swift in Sources */,
 				CF139A08A9A55D38C1BDF486 /* RexTailnetDiscovery.swift in Sources */,
+				A0A7160FCDF60B24F1FE0566 /* RexTailnetList.swift in Sources */,
 				F5079A83AC817294E0319DA5 /* RexTerminalStream.swift in Sources */,
 				D88EF897305F3FC74E18EA0C /* RexWebSocket.swift in Sources */,
 				F06E10EB71E757D19FC37B08 /* Router.swift in Sources */,

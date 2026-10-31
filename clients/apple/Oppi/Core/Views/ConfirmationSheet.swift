@@ -99,6 +99,8 @@ struct TextPrompt {
     var cancelTitle = String(localized: "Cancel")
     var fieldIdentifier: String?
     var actionIdentifier: String?
+    /// `.URL` also turns off autocorrection and capitals, for a name like `rex.tail1234.ts.net`.
+    var keyboardType: UIKeyboardType = .default
 
     /// Presents the prompt over `screen`. `onSubmit` gets the field's text, as typed.
     /// - Returns: the controller, so a screen can refuse to stack a second one.
@@ -110,6 +112,11 @@ struct TextPrompt {
             field.placeholder = placeholder
             field.text = text
             field.accessibilityIdentifier = fieldIdentifier
+            field.keyboardType = keyboardType
+            if keyboardType == .URL {
+                field.autocorrectionType = .no
+                field.autocapitalizationType = .none
+            }
         }
         let submit = UIAlertAction(title: actionTitle, style: .default) { [weak alert] _ in
             onSubmit(alert?.textFields?.first?.text ?? "")

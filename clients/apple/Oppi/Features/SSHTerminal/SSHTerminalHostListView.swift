@@ -25,6 +25,15 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     private var rexHosts: [UUID: RexHost] = [:]
+    /// Rex on your tailnet: Rex reached over Tailscale alone, each listed as a
+    /// Rex section of its own under the card that heads them.
+    private let tailnetRex: RexTailnetSection
+    /// The connect chrome of each tailnet Rex's follower, by its id: it pushes
+    /// the terminal a tapped session opens.
+    private var tailnetChromes: [UUID: SSHTerminalConnectChrome] = [:]
+    /// Starts Oppi's own Tailscale node when the person connected it in
+    /// Settings, for its machine list. Tests pass one that does nothing.
+    private let startsTailnet: @MainActor () -> Void
     /// What the Rex rows drew last, by item: only a row whose inputs changed is
     /// reconfigured, so a working pane's mark keeps animating.
     private var rexRows: [Item: SSHTerminalRexListRow] = [:]
@@ -38,8 +47,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case status, rex(UUID), hosts, empty, terminal, reset }
+    private enum Section: Hashable { case status, rex(UUID), tailnet, hosts, empty, terminal, reset }
     private enum Item: Hashable {
+        /// A row of the Rex on your tailnet card.
+        case tailnetCard(RexTailnetCardRow)
         case corrupt
         case connecting
         case failure(String)
@@ -59,11 +70,15 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
             SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
-        }
+        },
+        tailnetRex: RexTailnetSection = RexTailnetSection(),
+        startsTailnet: @escaping @MainActor () -> Void = { TailnetNodeController.shared.startIfEnabled() }
     ) {
         self.showsSidebarToggle = showsSidebarToggle
         self.profileStore = profileStore
         self.makeFollower = makeFollower
+        self.tailnetRex = tailnetRex
+        self.startsTailnet = startsTailnet
         var config = SettingsListStyle.layoutConfiguration(headers: false, footers: false)
         config.trailingSwipeActionsConfigurationProvider = { indexPath in
             nil
@@ -110,6 +125,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         // covered must not be signed in, or saved back, from the old copy.
         reload()
         for host in rexHosts.values { host.follower.appeared() }
+        for follower in tailnetRex.listedFollowers { follower.appeared() }
+        // Oppi's own node lists the tailnet's machines; it starts only if
+        // the person connected Tailscale in Settings.
+        startsTailnet()
         setNeedsUpdateProperties()
     }
 
@@ -131,6 +150,11 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             host.chrome.hostDidDisappear()
             if !covered { host.follower.close() }
         }
+        for follower in tailnetRex.listedFollowers {
+            follower.stopReading()
+            tailnetChromes[follower.host.id]?.hostDidDisappear()
+        }
+        tailnetRex.stop()
     }
 
     override func updateProperties() {
@@ -146,23 +170,23 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         _ = AppScenePhase.shared.isBackground
         for profile in profiles { _ = SSHTerminalRegistry.shared.terminals(for: profile.id) }
         for host in rexHosts.values { _ = host.follower.session.showsTerminal }
+        for follower in tailnetRex.listedFollowers { _ = follower.session.showsTerminal }
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
             SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
-        let terminalShown = session.showsTerminal || rexHosts.values.contains { $0.follower.session.showsTerminal }
         if !terminalShown, let id = editAfterTerminal {
             editAfterTerminal = nil
             openEditor(profileID: id)
         }
+        let active = isActive
+        // Before the snapshot: a Rex just added (or found) is listed in this
+        // pass. A change made after the snapshot read would wait for an
+        // unrelated update, since this pass does not run again for it.
+        syncTailnetRex(active: active)
         applySnapshot()
         chrome?.sync()
-        // The tab follows Rex only while it shows, in the foreground, with
-        // nothing over it: a pane's terminal, the form, and a sign-in sheet
-        // each cover it.
-        let covered = terminalShown || editAfterTerminal != nil || presentedViewController != nil
-        let active = isOnScreen && !AppScenePhase.shared.isBackground && !covered
         for host in rexHosts.values {
             host.chrome.sync()
             host.follower.sync(active: active)
@@ -224,6 +248,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let rexSessionCell = UICollectionView.CellRegistration<SSHTerminalRexListSessionCell, Item> { [weak self] cell, _, item in
             self?.configureRexSession(cell, item: item)
         }
+        let tailnetAddCell = UICollectionView.CellRegistration<SSHTerminalRexListActionCell, Item> { [weak self] cell, _, _ in
+            self?.configureTailnetAdd(cell)
+        }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, item in
             switch item {
             case .rexRow:
@@ -237,6 +264,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 default:
                     collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
                 }
+            case .tailnetCard(.add):
+                collectionView.dequeueConfiguredReusableCell(using: tailnetAddCell, for: indexPath, item: item)
             case .host:
                 collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
             case .bottomBar:
@@ -283,7 +312,19 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
-        case .host, .bottomBar, .rexRow:
+        case .tailnetCard(.title(let note)):
+            content.text = "Rex on your tailnet"
+            content.textProperties.font = .preferredFont(forTextStyle: .headline)
+            content.secondaryText = note
+            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.secondaryTextProperties.numberOfLines = 0
+            cell.accessibilityIdentifier = "sshTerminal.rexTailnet.title"
+        case .tailnetCard(.discovery(let text)):
+            content.text = text
+            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.numberOfLines = 0
+            cell.accessibilityIdentifier = "sshTerminal.rexTailnet.discovery"
+        case .host, .bottomBar, .rexRow, .tailnetCard(.add):
             break
         case .reset:
             content.text = "Reset Host List"
@@ -338,6 +379,19 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             snapshot.appendItems(items, toSection: section)
             for (item, row) in zip(items, hostRows) { rows[item] = row }
         }
+        // Rex on your tailnet: its card, then each node as a Rex section like a host's.
+        if tailnetRex.isShown {
+            snapshot.appendSections([.tailnet])
+            snapshot.appendItems(tailnetRex.cardRows.map { .tailnetCard($0) }, toSection: .tailnet)
+            for follower in tailnetRex.listedFollowers {
+                let section = Section.rex(follower.host.id)
+                let hostRows = SSHTerminalRexListRow.rows(hostName: follower.host.dnsName, state: follower.listState)
+                let items = hostRows.map { Item.rexRow(host: follower.host.id, id: $0.id) }
+                snapshot.appendSections([section])
+                snapshot.appendItems(items, toSection: section)
+                for (item, row) in zip(items, hostRows) { rows[item] = row }
+            }
+        }
         if profiles.isEmpty && !metadataIsCorrupt {
             snapshot.appendSections([.empty])
             snapshot.appendItems([.addHost], toSection: .empty)
@@ -365,6 +419,11 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         rexRows = rows
         rexRowsThemeID = themeID
         dataSource?.apply(snapshot, animatingDifferences: false)
+        // One pull to refresh for every Rex the tab lists: the hosts' and the tailnet's.
+        let refreshes = !rexHosts.isEmpty || tailnetRex.isShown
+        if (collectionView.refreshControl != nil) != refreshes {
+            collectionView.refreshControl = refreshes ? rexRefreshControl : nil
+        }
     }
 
     /// Makes, updates, and drops a follower per Rex host: one saved with
@@ -385,7 +444,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 rexHosts[profile.id] = makeRexHost(profile)
             }
         }
-        collectionView.refreshControl = rexHosts.isEmpty ? nil : rexRefreshControl
     }
 
     private lazy var rexRefreshControl: UIRefreshControl = {
@@ -400,11 +458,98 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }()
 
     /// A pull reads Rex again on every host it can without asking for anything,
-    /// and tries again where it had no `nc` or no Rex.
+    /// and tries again where it had no `nc` or no Rex; on the tailnet it asks
+    /// every machine whether it is Rex again and reads each node's Rex again.
     private func refreshRexHosts() async {
-        let followers = rexHosts.values.map(\.follower).filter { $0.isConnected || $0.profile.connectsWithoutPrompt() }
-        let reads = followers.map { follower in Task { @MainActor in await follower.refresh() } }
+        let hosts = rexHosts.values.map(\.follower).filter { $0.isConnected || $0.profile.connectsWithoutPrompt() }
+        var reads = hosts.map { follower in Task { @MainActor in await follower.refresh() } }
+        reads += tailnetRex.listedFollowers.map { follower in Task { @MainActor in await follower.refresh() } }
+        reads.append(Task { @MainActor [tailnetRex] in await tailnetRex.refresh() })
         for read in reads { await read.value }
+    }
+
+    /// The tailnet card and its nodes, from what Oppi's node knows now: makes
+    /// and drops a follower (and its connect chrome) per listed node and runs
+    /// each only while the tab is `active`. Reads the node's machine list, so a
+    /// machine joining or leaving updates it.
+    private func syncTailnetRex(active: Bool) {
+        let tailnet = TailnetNodeController.shared
+        // Discovery does not outlive the foreground (the followers stop on their own).
+        if AppScenePhase.shared.isBackground { tailnetRex.stop() }
+        let sshRexHosts = profiles.filter { rexHosts[$0.id] != nil }
+        tailnetRex.update(
+            peers: tailnet.onlinePeers, selfDNSName: tailnet.snapshot?.selfDNSName, sshRexHosts: sshRexHosts, active: active
+        )
+        let followers = tailnetRex.listedFollowers
+        let listed = Set(followers.map(\.host.id))
+        for id in tailnetChromes.keys where !listed.contains(id) {
+            tailnetChromes[id]?.hostDidDisappear()
+            tailnetChromes[id] = nil
+        }
+        for follower in followers {
+            if tailnetChromes[follower.host.id] == nil {
+                // No prompts: Rex admits this device by its Tailscale identity.
+                tailnetChromes[follower.host.id] = SSHTerminalConnectChrome(
+                    host: self, session: follower.session,
+                    profile: { [weak follower] in follower?.profile ?? SSHTerminalProfile() },
+                    setProfile: { _ in }, editHost: {}, submitPassword: { _ in }, onSaved: { _ in }
+                )
+            }
+            tailnetChromes[follower.host.id]?.sync()
+            follower.sync(active: active)
+        }
+    }
+
+    /// The follower behind a Rex section: a saved host's, or a tailnet node's.
+    private func rexFollower(_ id: UUID) -> (any SSHTerminalRexListFollowing)? {
+        rexHosts[id]?.follower ?? tailnetRex.follower(id: id)
+    }
+
+    private func configureTailnetAdd(_ cell: SSHTerminalRexListActionCell) {
+        let palette = sshTerminalThemeID.palette
+        var content = UIListContentConfiguration.cell()
+        content.text = "Add Rex by Tailscale Name\u{2026}"
+        content.textProperties.color = UIColor(palette.blue)
+        content.image = UIImage(systemName: "plus")
+        content.imageProperties.tintColor = UIColor(palette.blue)
+        cell.contentConfiguration = content
+        cell.accessories = []
+        cell.indentationLevel = 0
+        cell.configureAction(
+            identifier: "sshTerminal.rexTailnet.add", label: "Add Rex by Tailscale Name", value: nil,
+            hint: "Lists a Rex on your tailnet by its Tailscale name"
+        ) { [weak self] in self?.promptForTailnetRex() }
+    }
+
+    /// Add Rex by Tailscale Name: for a Rex Oppi cannot find itself (with only
+    /// the Tailscale app's VPN, Oppi has no machine list).
+    private func promptForTailnetRex(message: String? = nil, text: String = "") {
+        TextPrompt(
+            title: "Add Rex by Tailscale Name",
+            message: message ?? "The Rex's Tailscale name, as rex server tailscale pair shows it. Rex lets in the Tailscale account that signed it in.",
+            placeholder: "rex.tailnet-name.ts.net",
+            text: text,
+            actionTitle: "Add",
+            fieldIdentifier: "sshTerminal.rexTailnet.addName",
+            actionIdentifier: "sshTerminal.rexTailnet.addConfirm",
+            keyboardType: .URL
+        ).present(from: self) { [weak self] typed in
+            guard let self, !self.addTailnetRex(named: typed) else { return }
+            self.promptForTailnetRex(
+                message: "That is not a Tailscale name. Enter the full name, such as rex.tail1234.ts.net.",
+                text: typed
+            )
+        }
+    }
+
+    /// Saves the Rex named by what was typed and lists it on the next pass.
+    /// False for a name that is not a Rex's Tailscale name.
+    @discardableResult
+    func addTailnetRex(named typed: String) -> Bool {
+        guard let host = RexTailnetHost.parse(typed) else { return false }
+        tailnetRex.add(host)
+        setNeedsUpdateProperties()
+        return true
     }
 
     private func makeRexHost(_ profile: SSHTerminalProfile) -> RexHost {
@@ -562,8 +707,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     /// The session a row stands for and the follower that can change it now,
     /// resolved when the action runs from the row's identity.
-    private func manageableSession(host hostID: UUID, id: String) -> (follower: SSHTerminalRexFollower, sessionID: String, name: String)? {
-        guard let follower = rexHosts[hostID]?.follower, follower.canManage,
+    private func manageableSession(host hostID: UUID, id: String) -> (follower: any SSHTerminalRexListFollowing, sessionID: String, name: String)? {
+        guard let follower = rexFollower(hostID), follower.canManage,
               case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return nil }
         let label = follower.monitor.snapshot?.sessions.first { $0.sessionID == session.sessionID }?.label
         return (follower, session.sessionID, label ?? "")
@@ -599,7 +744,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     /// Shows or hides a session's panes. Resolved from the row's identity when it runs.
     private func toggleRexSession(host hostID: UUID, id: String) {
-        guard let follower = rexHosts[hostID]?.follower, case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return }
+        guard let follower = rexFollower(hostID), case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return }
         follower.toggleExpanded(session: session.sessionID)
         setNeedsUpdateProperties()
     }
@@ -607,13 +752,13 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// The one action a Rex row has, for a touch (the row's selection) and for
     /// VoiceOver's activation: resolved from the row's identity when it runs.
     private func activateRexRow(host hostID: UUID, id: String) {
-        guard let follower = rexHosts[hostID]?.follower, let row = rexRows[.rexRow(host: hostID, id: id)] else { return }
+        guard let follower = rexFollower(hostID), let row = rexRows[.rexRow(host: hostID, id: id)] else { return }
         switch row.kind {
         case .session(let session):
-            guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
+            guard !follower.isOpening else { return }
             follower.open(session: session.sessionID)
         case .pane(let pane):
-            guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
+            guard !follower.isOpening else { return }
             follower.open(session: pane.sessionID, pane: pane.blockID)
         case .newSession:
             guard follower.canManage else { return }
@@ -645,6 +790,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// must not run it, and the row stays until the person confirms). Only
     /// while Rex can be changed.
     private func rexSwipeActions(host hostID: UUID, id: String) -> UISwipeActionsConfiguration? {
+        if id == "header" { return tailnetHeaderSwipeActions(host: hostID) }
         guard manageableSession(host: hostID, id: id) != nil else { return nil }
         let rename = UIContextualAction(style: .normal, title: "Rename") { [weak self] _, _, done in
             self?.renameRexSession(host: hostID, id: id)
@@ -674,6 +820,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             confirmReset()
         case .rexRow(let hostID, let id):
             activateRexRow(host: hostID, id: id)
+        case .tailnetCard(.add):
+            promptForTailnetRex()
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         default:
@@ -682,7 +830,24 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     /// A Rex host's heading and its notes do nothing when tapped.
+    /// A Rex added by Tailscale name is removed from its heading; one discovery
+    /// found stays while it is on the tailnet, and a saved host's has no swipe.
+    private func tailnetHeaderSwipeActions(host hostID: UUID) -> UISwipeActionsConfiguration? {
+        guard let follower = tailnetRex.follower(id: hostID), tailnetRex.isSaved(follower.host.dnsName) else { return nil }
+        let name = follower.host.dnsName
+        let remove = UIContextualAction(style: .destructive, title: "Remove") { [weak self] _, _, done in
+            self?.tailnetRex.remove(dnsName: name)
+            self?.setNeedsUpdateProperties()
+            done(true)
+        }
+        remove.accessibilityLabel = "Remove Rex"
+        let config = UISwipeActionsConfiguration(actions: [remove])
+        config.performsFirstActionWithFullSwipe = false
+        return config
+    }
+
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        if case .tailnetCard(let row)? = dataSource?.itemIdentifier(for: indexPath) { return row == .add }
         guard case .rexRow = dataSource?.itemIdentifier(for: indexPath) else { return true }
         return dataSource?.itemIdentifier(for: indexPath).flatMap { rexRows[$0]?.kind.isAction } ?? false
     }
@@ -755,6 +920,22 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         profiles = store.load()
         if metadataIsCorrupt { profiles = [] }
         syncRexHosts()
+        // The SSH hosts' Rex just changed: the tailnet list leaves out what they list.
+        syncTailnetRex(active: isActive)
         applySnapshot()
+    }
+
+    /// A terminal of this tab's own or of one of its Rex sections is showing.
+    private var terminalShown: Bool {
+        session.showsTerminal || rexHosts.values.contains { $0.follower.session.showsTerminal }
+            || tailnetRex.listedFollowers.contains { $0.session.showsTerminal }
+    }
+
+    /// The tab follows Rex only while it shows, in the foreground, with
+    /// nothing over it: a pane's terminal, the form, and a sign-in sheet each
+    /// cover it.
+    private var isActive: Bool {
+        let covered = terminalShown || editAfterTerminal != nil || presentedViewController != nil
+        return isOnScreen && !AppScenePhase.shared.isBackground && !covered
     }
 }

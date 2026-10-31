@@ -350,7 +350,15 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 ) {}
             }
         case "ssh-hosts":
-            return stack { SSHTerminalHostListViewController() }
+            // Off the tailnet whatever machine runs it, so the capture shows the hosts alone.
+            return stack {
+                SSHTerminalHostListViewController(
+                    tailnetRex: RexTailnetSection(
+                        store: RexDirectStore(defaults: UserDefaults(suiteName: "settings-sweep-tailnet") ?? .standard), reach: { .none }
+                    ),
+                    startsTailnet: {}
+                )
+            }
         case "theme-import":
             return stack { ThemeImportViewController(root: root) }
         case "schedules":

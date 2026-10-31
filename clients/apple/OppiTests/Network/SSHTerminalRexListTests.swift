@@ -530,7 +530,16 @@ struct SSHTerminalRexSectionTests {
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
     ) throws -> Rig {
         try hosts.save(profiles)
-        let list = SSHTerminalHostListViewController(profileStore: hosts.store, makeFollower: makeFollower)
+        // Off the tailnet whatever machine runs the test, with nothing saved:
+        // these tests are about the saved hosts' Rex sections alone.
+        let tailnetRex = RexTailnetSection(
+            store: RexDirectStore(defaults: UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)") ?? .standard),
+            discovery: RexTailnetDiscovery { _ in .unreachable },
+            reach: { .none }
+        )
+        let list = SSHTerminalHostListViewController(
+            profileStore: hosts.store, makeFollower: makeFollower, tailnetRex: tailnetRex, startsTailnet: {}
+        )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
