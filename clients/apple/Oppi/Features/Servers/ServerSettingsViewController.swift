@@ -22,7 +22,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     }
 
     enum Item: Hashable, Sendable {
-        case summary, summaryError
+        case summary
         case modelProviders, workspaces, dictionary, pairedDevices, about
         case mobileOutputGuide, serverMetrics, durableSessions, startDurable, settingFailure(String)
         case pushSwitch, pushWorking, pushError
@@ -41,7 +41,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     private struct WeakScreen {
         weak var screen: UIViewController?
     }
-    private var loadTask: Task<Void, Never>?
     private var hasAppeared = false
     /// Counts the redraws a switch needs when its state did not change (a cancelled
     /// save, a refused unlock), so the switch returns to what the state says.
@@ -89,23 +88,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
     // MARK: - Lifecycle
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        let refresh = UIRefreshControl()
-        refresh.addAction(UIAction { [weak self, weak refresh] _ in
-            Task {
-                await self?.model.load()
-                // The page's own switch reads the store; a pull reads the document again.
-                _ = await self?.settings?.reload(SettingsCatalog.serverMetricsEnabled)
-                _ = await self?.settings?.reload(SettingsCatalog.mobileOutputGuideEnabled)
-                _ = await self?.settings?.reload(SettingsCatalog.durableSessionsEnabled)
-                refresh?.endRefreshing()
-            }
-        }, for: .valueChanged)
-        collectionView.refreshControl = refresh
-        loadTask = Task { [model] in await model.load() }
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         // Another surface (the discovery card) may have turned push on.
         notifications.reload()
@@ -127,6 +109,28 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         updateBar()
     }
 
+    // MARK: - Load
+
+    /// The server's facts, once: a page back from one it pushed keeps what it
+    /// has, and `viewWillAppear` reads the three settings again.
+    override var loadPolicy: LoadPolicy { .onceUntilSubjectChanges }
+
+    /// The server's summary, its providers, its devices, and the three settings
+    /// this page switches, as its pull to refresh and its Retry run it. The
+    /// model keeps the failure, so the row is built from its facts.
+    override func load() async throws {
+        await model.load()
+        if let settings {
+            _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
+            _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
+            _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
+        }
+    }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Server Settings") }
+
+    override func loadingCaption() -> String? { String(localized: "Loading server settings…") }
+
     // MARK: - Bar
 
     /// The switcher for the pinned server. A switch changes the visible server,
@@ -143,10 +147,17 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
     // MARK: - Snapshot
 
+    /// The snapshot of this server's settings, with the load's own row at the
+    /// top of the summary section: the model's failure, or the compact loading
+    /// row until its facts are here.
     override func sections() -> [ListSection<Section, Item>] {
         let name = current.name
+        let summaryState = stateRow(
+            hasContent: model.info != nil,
+            isLoading: isLoading,
+            failure: failureReport(reason: model.error)
+        )
         var summary: [Item] = [.summary]
-        if model.error != nil { summary.append(.summaryError) }
 
         var notificationItems: [Item] = []
         if relayHost != nil {
@@ -164,7 +175,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         }
 
         let serverSections: [ListSection<Section, Item>] = [
-            ListSection(.summary, items: summary),
+            ListSection(.summary, items: summary, state: summaryState),
             ListSection(.pages, items: [.modelProviders, .workspaces, .dictionary, .pairedDevices, .about]),
             ListSection(
                 .badge,
@@ -254,8 +265,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 AnyHashable(model.isLoading),
                 AnyHashable(ThemeRuntimeState.currentThemeID()),
             ])
-        case .summaryError:
-            return AnyHashable(model.error ?? "")
         case .modelProviders:
             return AnyHashable([model.providerSummary, String(describing: model.providerSetupState)])
         case .workspaces:
@@ -311,9 +320,11 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     }
 
     private var pairedDeviceCount: String? {
-        let state = model.pairedDevicesState(currentDeviceId: current.deviceCredential?.deviceId)
-        guard case .loaded(let rows, _) = state else { return nil }
-        return String(rows.count)
+        let current = coordinator.serverStore.server(for: server.id) ?? server
+        guard let devices = model.pairedDevices else { return nil }
+        return String(
+            PairedDeviceRoster.rows(from: devices, currentDeviceId: current.deviceCredential?.deviceId).count
+        )
     }
 
     private var lockScope: ScopedLockScope { .server(serverId: server.id) }
@@ -325,7 +336,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         configureIndex(cell, item: item)
     }
 
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+    /// The failures a setting or a switch reports: the kit's state row, under each
+    /// one's identifier.
+    private lazy var failureRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         configureState(cell, item: item)
     }
@@ -350,7 +363,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     }
 
     override func prepareRegistrations() {
-        _ = (indexRow, stateRow, actionRow, summaryRow)
+        _ = (indexRow, failureRow, actionRow, summaryRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -359,9 +372,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             collectionView.dequeueConfiguredReusableCell(using: summaryRow, for: indexPath, item: item)
         case .modelProviders, .workspaces, .dictionary, .pairedDevices, .about, .badge:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
-        case .summaryError, .settingFailure, .pushWorking, .pushError,
+        case .settingFailure, .pushWorking, .pushError,
              .liveActivityWorking, .liveActivityError, .liveActivitySystemOff:
-            collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+            collectionView.dequeueConfiguredReusableCell(using: failureRow, for: indexPath, item: item)
         case .remove:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         case .mobileOutputGuide, .serverMetrics, .durableSessions, .startDurable, .pushSwitch, .liveActivitySwitch, .lock:
@@ -480,11 +493,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
     private func configureState(_ cell: SettingsStateRowCell, item: Item) {
         switch item {
-        case .summaryError:
-            cell.configure(
-                .failure(model.error ?? "", retry: { [weak self] in self?.retryLoad() }),
-                identifier: "server.summary.error"
-            )
         case .settingFailure(let id):
             guard let settings else { return }
             let retry: (() -> Void)? = settings.canRetry(id: id) ? { settings.retry(id: id) } : nil
@@ -571,11 +579,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     private func push(_ screen: UIViewController) {
         Router.push(screen, from: self)
         track(screen)
-    }
-
-    private func retryLoad() {
-        let model = model
-        Task { await model.load() }
     }
 
     /// A save that settled without changing what the state says leaves the switch

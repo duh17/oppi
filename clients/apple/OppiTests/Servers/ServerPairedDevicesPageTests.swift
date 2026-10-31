@@ -67,13 +67,9 @@ struct ServerPairedDevicesPageTests {
     }
 
     private func row(_ id: String, in h: Harness) throws -> PairedDeviceRoster.Row {
-        guard case .loaded(let rows, _) = h.model.pairedDevicesState(currentDeviceId: "dev-me") else {
-            throw TestFailure("roster not loaded")
-        }
+        let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         return try #require(rows.first { $0.id == id })
     }
-
-    private struct TestFailure: Error { let message: String; init(_ message: String) { self.message = message } }
 
     @Test("This device is marked and offers no Revoke; every other device does")
     func thisDeviceOffersNoRevoke() async throws {
@@ -136,11 +132,9 @@ struct ServerPairedDevicesPageTests {
         await h.page.revoke(try row("dev-1", in: h))
 
         #expect(h.roster.revokes == ["server-a.devices.test DELETE /auth/devices/dev-1"])
-        guard case .loaded(let rows, let error) = h.model.pairedDevicesState(currentDeviceId: "dev-me") else {
-            throw TestFailure("roster not loaded")
-        }
+        let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         #expect(rows.map(\.id) == ["dev-me", "dev-2"])
-        #expect(error == nil)
+        #expect(h.model.pairedDevicesError == nil)
     }
 
     @Test("A model never revokes this device, even when asked to")
@@ -160,11 +154,9 @@ struct ServerPairedDevicesPageTests {
 
         await h.page.revoke(try row("dev-1", in: h))
 
-        guard case .loaded(let rows, let error) = h.model.pairedDevicesState(currentDeviceId: "dev-me") else {
-            throw TestFailure("roster not loaded")
-        }
+        let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         #expect(rows.map(\.id).contains("dev-1"))
-        #expect(error == "Not allowed.")
+        #expect(h.model.pairedDevicesError == "Not allowed.")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             h.page.view.layoutIfNeeded()
             return h.page.shownItems.contains(.error)

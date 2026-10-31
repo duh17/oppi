@@ -72,15 +72,6 @@ final class ServerSettingsModel {
         return update.isSourceLink ? "Rebuild Available" : "Update Available"
     }
 
-    func pairedDevicesState(currentDeviceId: String?) -> ServerDetailPairedDevicesState {
-        ServerDetailPairedDevicesState.resolve(
-            devices: pairedDevices,
-            currentDeviceId: currentDeviceId,
-            isLoading: isLoadingPairedDevices,
-            error: pairedDevicesError
-        )
-    }
-
     // MARK: - Loading
 
     func load() async {

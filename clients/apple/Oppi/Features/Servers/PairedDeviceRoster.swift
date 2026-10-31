@@ -92,27 +92,3 @@ enum PairedDeviceRoster {
         return lhs.id < rhs.id
     }
 }
-
-enum ServerDetailPairedDevicesState: Equatable {
-    case loading
-    case loaded(rows: [PairedDeviceRoster.Row], error: String?)
-    case failed(String)
-
-    static func resolve(
-        devices: [AuthDevice]?,
-        currentDeviceId: String?,
-        isLoading: Bool,
-        error: String?
-    ) -> Self {
-        if let devices {
-            return .loaded(
-                rows: PairedDeviceRoster.rows(from: devices, currentDeviceId: currentDeviceId),
-                error: error
-            )
-        }
-        if isLoading {
-            return .loading
-        }
-        return .failed(error ?? "Paired devices are unavailable")
-    }
-}

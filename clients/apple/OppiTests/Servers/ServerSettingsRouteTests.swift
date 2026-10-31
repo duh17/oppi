@@ -56,6 +56,9 @@ struct ServerSettingsRouteTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = navigation
+        // The route builds its page as it loads, so the window shows that page: its
+        // appearance — and the load the kit starts there — begins with the route's.
+        route.loadViewIfNeeded()
         window.makeKeyAndVisible()
         HeldRequestProtocol.reset()
         return Harness(root: root, route: route, navigation: navigation, window: window)
@@ -294,22 +297,25 @@ struct ServerSettingsRouteTests {
         h.route.loadViewIfNeeded()
         let pageA = try #require(h.route.page)
         let modelA = pageA.model
+        // The page the route shows is the page that appears, so it is the page whose
+        // load the kit starts.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pageA.isShowing })
         #expect(modelA.isLoading)
 
         _ = h.root.coordinator.restoreActiveServer("server-b")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
         let pageB = try #require(h.route.page)
         let modelB = pageB.model
-        // Both servers' requests are still out.
-        #expect(modelA.isLoading)
-        #expect(modelB.isLoading)
+        // The page the route replaced A with appears in its place.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pageB.isShowing })
+        // A left with the switch, so the load the kit started for it is cancelled and
+        // settles where it started: A's own model, which nothing shows.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelA.isLoading })
 
         HeldRequestProtocol.answer(host: "server-a.held.test")
 
-        // A's answer arrives and settles A's model, which is no longer on screen.
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelA.isLoading })
-        #expect(modelA.error != nil)
-        // B's model never heard of it: still loading, nothing of A's in it.
+        // B's model never heard of A's answer: it waits on its own load, with nothing
+        // of A's in it.
         #expect(modelB.isLoading)
         #expect(modelB.error == nil)
         #expect(modelB.info == nil)

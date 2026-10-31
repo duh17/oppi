@@ -136,40 +136,6 @@ struct PairedDeviceRosterTests {
         #expect(!rows[0].caption.contains("Invite"))
         #expect(!rows[0].caption.contains("This device"))
     }
-
-    @Test func loadedStateKeepsLastRowsWhenRefreshFails() {
-        let devices = [
-            AuthDevice(id: "dev_me", name: "Phone", scope: "device", createdAt: 1, lastUsedAt: 2, revokedAt: nil, keyEnrolled: true),
-        ]
-
-        #expect(
-            ServerDetailPairedDevicesState.resolve(
-                devices: nil,
-                currentDeviceId: "dev_me",
-                isLoading: true,
-                error: nil
-            ) == .loading
-        )
-        #expect(
-            ServerDetailPairedDevicesState.resolve(
-                devices: devices,
-                currentDeviceId: "dev_me",
-                isLoading: false,
-                error: "Offline"
-            ) == .loaded(
-                rows: PairedDeviceRoster.rows(from: devices, currentDeviceId: "dev_me"),
-                error: "Offline"
-            )
-        )
-        #expect(
-            ServerDetailPairedDevicesState.resolve(
-                devices: nil,
-                currentDeviceId: "dev_me",
-                isLoading: false,
-                error: "Offline"
-            ) == .failed("Offline")
-        )
-    }
 }
 
 @Suite("Pairing device name")

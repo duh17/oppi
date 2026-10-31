@@ -42,19 +42,6 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
     /// The pinned server as the pairing list has it now.
     private var current: PairedServer { coordinator.serverStore.server(for: server.id) ?? server }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        let refresh = UIRefreshControl()
-        refresh.addAction(UIAction { [weak self, weak refresh] _ in
-            Task {
-                // A pull reads the server again, so a `checking` or stale voice row can move on.
-                await self?.model.load()
-                refresh?.endRefreshing()
-            }
-        }, for: .valueChanged)
-        collectionView.refreshControl = refresh
-    }
-
     // MARK: - What shows
 
     /// The rows of the Update section for what the server reports, in order.
@@ -98,6 +85,19 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         return items
     }
 
+    /// The server's facts, as the page shows and as its pull to refresh and its
+    /// Retry run them: a `checking` or stale voice row moves on. The model keeps
+    /// the failure, so the row is built from its facts.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        await model.load()
+    }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load This Server") }
+
+    override func loadingCaption() -> String? { String(localized: "Loading server info…") }
+
     override func sections() -> [ListSection<Section, Item>] {
         var statusItems: [Item] = [.connection]
         if let info = model.info {
@@ -109,7 +109,12 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
             .status,
             header: String(localized: "Status"),
             footer: String(localized: "Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the pi command-line app installed on this server."),
-            items: statusItems
+            items: statusItems,
+            state: stateRow(
+                hasContent: model.info != nil,
+                isLoading: isLoading,
+                failure: failureReport(reason: model.error)
+            )
         )]
         if let backends = model.info?.voiceBackends, !backends.isEmpty {
             sections.append(ListSection(
@@ -190,7 +195,9 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         cell.configure(backend, identifier: "server.about.voice.\(feature)")
     }
 
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+    /// The load's own state rows (the update's progress, a failure it reported), and
+    /// the failures a switch reported over the facts.
+    private lazy var statusRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         configureState(cell, item: item)
     }
@@ -201,7 +208,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
     }
 
     override func prepareRegistrations() {
-        _ = (voiceRow, stateRow, actionRow)
+        _ = (voiceRow, statusRow, actionRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -209,7 +216,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         case .voice:
             collectionView.dequeueConfiguredReusableCell(using: voiceRow, for: indexPath, item: item)
         case .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError:
-            collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+            collectionView.dequeueConfiguredReusableCell(using: statusRow, for: indexPath, item: item)
         case .updateButton, .manualCopy:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         case .connection, .uptime, .piSDK, .piTUI, .oppiServer, .minimumVersion, .updateAvailable, .manualCommand:

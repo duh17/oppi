@@ -73,22 +73,25 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        let refresh = UIRefreshControl()
-        refresh.addAction(UIAction { [weak self] action in
-            guard let self, let control = action.sender as? UIRefreshControl else { return }
-            Task {
-                await self.tailnet.refresh()
-                self.reprobe()
-                control.endRefreshing()
-            }
-        }, for: .valueChanged)
-        collectionView.refreshControl = refresh
         if onClose != nil {
             navigationItem.leftBarButtonItem = UIBarButtonItem(
                 systemItem: .cancel,
                 primaryAction: UIAction { [weak self] _ in self?.onClose?() }
             )
         }
+    }
+
+    // MARK: - Load
+
+    /// The node's state, each time the page shows and on pull to refresh: it
+    /// can have started, signed in, or failed while the page was away. The
+    /// probes start from what arrives (`startProbesIfNeeded()`).
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        await tailnet.refresh()
+        guard !Task.isCancelled else { return }
+        reprobe()
     }
 
     override func viewWillAppear(_ animated: Bool) {
