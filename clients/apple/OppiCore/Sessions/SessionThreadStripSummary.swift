@@ -33,17 +33,6 @@ struct SessionThreadStripSummary: Equatable, Sendable {
             }
         }
 
-        /// The bucket of one member, from the list's classification: no section means stopped, and a live
-        /// member reads by the status the list resolved for it.
-        init(_ classification: SessionListClassification) {
-            guard let section = classification.section else {
-                self = .stopped
-                return
-            }
-            // A live member is never resolved as stopped or as working-through-Your-Turn; both fall to idle.
-            self.init(section == .working ? SessionStatusKind.working : classification.status)
-        }
-
         /// The status whose tint and word this bucket uses.
         var kind: SessionStatusKind {
             switch self {
@@ -92,7 +81,9 @@ struct SessionThreadStripSummary: Equatable, Sendable {
     init(rollup: SessionThreadRollup, classify: (Session) -> SessionListClassification) {
         var countByBucket: [Bucket: Int] = [:]
         for member in rollup.descendants {
-            countByBucket[Bucket(classify(member)), default: 0] += 1
+            // `settledKind` is the strip's one rule for what a member reads: stopped with no section, idle
+            // for a settled outcome.
+            countByBucket[Bucket(classify(member).settledKind), default: 0] += 1
         }
         counts = Bucket.allCases.compactMap { bucket in
             countByBucket[bucket].map { Count(bucket: bucket, count: $0) }

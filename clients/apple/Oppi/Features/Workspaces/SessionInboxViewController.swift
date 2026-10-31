@@ -53,7 +53,7 @@ final class SessionInboxViewController: UIViewController {
         didSet { setNeedsUpdateProperties() }
     }
     /// What the person chose for an open thread's Stopped fold, by thread root. A root without a choice
-    /// settles when its thread first lists open (`SessionListEntries.settledFolds`) and is kept after that.
+    /// settles when its thread first lists open (`SessionListEntries.expanded`) and is kept after that.
     private var threadStoppedFolds: [String: Bool] = [:] {
         didSet { setNeedsUpdateProperties() }
     }
@@ -664,17 +664,11 @@ final class SessionInboxViewController: UIViewController {
             }
             // A thread's fold is settled the first time it lists open, and kept, so a member starting or
             // stopping never unfolds the stopped rows under the person's hand.
-            let folds = SessionListEntries.settledFolds(
+            let expanded = SessionListEntries.expanded(
                 entries, expandedRoots: expandedThreadRoots, stoppedFolds: threadStoppedFolds, attention: attention
             )
-            if folds != threadStoppedFolds { threadStoppedFolds = folds }
-            let rows = SessionListEntries.expanding(
-                entries,
-                expandedRoots: expandedThreadRoots,
-                stoppedFolds: folds,
-                attention: attention
-            )
-            next.append(sessions: rows, to: section, item: item) { rowContent(for: $0, data: data) }
+            if expanded.folds != threadStoppedFolds { threadStoppedFolds = expanded.folds }
+            next.append(sessions: expanded.rows, to: section, item: item) { rowContent(for: $0, data: data) }
         }
 
         if state.showsVersionNotice, let server = state.selectedServer {

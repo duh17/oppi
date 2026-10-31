@@ -13,6 +13,18 @@ struct SessionListClassification: Equatable, Sendable {
     /// stopped fold whatever its settled outcome reads.
     let section: SessionListActiveSectionKind?
     let status: SessionStatusKind
+
+    /// Whether the row waits on the person: a blocked status on a row that lists live. A stopped row never
+    /// does, however a lingering ask resolves it (`SessionStatusKind.resolve` leads with pending asks).
+    var isBlocked: Bool { section != nil && status.isBlocked }
+
+    /// What a thread strip calls the row: a row with no section reads stopped, and a settled outcome reads
+    /// idle, since the strip has no Done. The strip's counts (`SessionThreadStripSummary.Bucket`) and its
+    /// headline both read this, so they agree on what a member is.
+    var settledKind: SessionStatusKind {
+        guard section != nil else { return .stopped }
+        return status == .done ? .idle : status
+    }
 }
 
 struct SessionListAttentionCounts: Equatable, Sendable {
@@ -104,10 +116,10 @@ enum SessionListPresentation {
         classify(session, attention: attention).section
     }
 
-    /// Whether the session waits on the person (any blocked kind). Server program status
+    /// Whether the session waits on the person (any blocked kind, while it lists live). Server program status
     /// owns this; `attention` covers a missing program status.
     static func isBlocked(_ session: Session, attention: SessionListAttentionCounts = .none) -> Bool {
-        classify(session, attention: attention).status.isBlocked
+        classify(session, attention: attention).isBlocked
     }
 
     /// Your Turn order: blocked first, then the oldest visible activity, the

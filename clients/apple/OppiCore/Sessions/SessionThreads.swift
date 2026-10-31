@@ -38,14 +38,14 @@ struct SessionThreadRollup: Sendable, Equatable {
         var sectionById: [String: SessionListActiveSectionKind] = [:]
         var blockedIds: Set<String> = []
         for member in descendants {
-            let memberAttention = attention(member)
-            guard let section = SessionListPresentation.activeSectionKind(for: member, attention: memberAttention) else {
+            let classification = SessionListPresentation.classify(member, attention: attention(member))
+            guard let section = classification.section else {
                 stopped.append(member)
                 continue
             }
             live.append(member)
             sectionById[member.id] = section
-            if SessionListPresentation.isBlocked(member, attention: memberAttention) { blockedIds.insert(member.id) }
+            if classification.isBlocked { blockedIds.insert(member.id) }
         }
         return (
             forest(live) { lhs, rhs in
@@ -201,13 +201,10 @@ enum SessionThreadGrouping {
         var sawWorking = false
         var sawYourTurn = false
         for member in rollup.members {
-            let memberAttention = attention(member)
-            let kind = SessionListPresentation.activeSectionKind(for: member, attention: memberAttention)
-            if kind != nil, SessionListPresentation.isBlocked(member, attention: memberAttention) {
-                return .yourTurn
-            }
-            sawWorking = sawWorking || kind == .working
-            sawYourTurn = sawYourTurn || kind == .yourTurn
+            let classification = SessionListPresentation.classify(member, attention: attention(member))
+            if classification.isBlocked { return .yourTurn }
+            sawWorking = sawWorking || classification.section == .working
+            sawYourTurn = sawYourTurn || classification.section == .yourTurn
         }
         if sawWorking { return .working }
         return sawYourTurn ? .yourTurn : nil
@@ -219,7 +216,7 @@ enum SessionThreadGrouping {
         attention: (Session) -> SessionListAttentionCounts
     ) -> Bool {
         rollup.members.contains {
-            $0.status != .stopped && SessionListPresentation.isBlocked($0, attention: attention($0))
+            SessionListPresentation.classify($0, attention: attention($0)).isBlocked
         }
     }
 }
@@ -257,7 +254,7 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
     /// Whether the row waits on the person: a thread when any live member does.
     func isBlocked(attention: (Session) -> SessionListAttentionCounts) -> Bool {
         if let thread { return SessionThreadGrouping.isBlocked(thread, attention: attention) }
-        return session.status != .stopped && SessionListPresentation.isBlocked(session, attention: attention(session))
+        return SessionListPresentation.classify(session, attention: attention(session)).isBlocked
     }
 
     /// A thread sits where its most urgent member would; a plain row by its own state.
@@ -303,30 +300,38 @@ enum SessionListEntries {
         sessions.map { SessionListEntry(session: $0, thread: nil, outsideRoot: nil) }
     }
 
-    /// The rows of `entries` with each thread in `expandedRoots` open: its root row, its
-    /// live members, then one fold row for its stopped members and, when the fold is open,
-    /// those members. Each member is its own row, indented by `depth`; order and depth rules
-    /// are `SessionThreadRollup.listing`. Members that run in another workspace are listed
-    /// too: a thread is the whole launch tree, not the part this list's workspace shows.
-    /// Other entries pass through.
+    /// The rows of `entries` with each thread in `expandedRoots` open, and the folds they settled, in one
+    /// pass: each open thread's `listing` is built once for both.
     ///
-    /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id; a root with
-    /// no choice follows the thread (`settledFolds`). A settled (or chosen) open fold lists the thread's
-    /// stopped members under its fold row. A thread with nothing live and no closed fold of its own has no
-    /// fold row at all: it lists its stopped members directly, since its strip's chevron is the only fold
-    /// there is and a second card would repeat what the strip already says. A thread that lists live members
-    /// above its stopped ones keeps the fold, so a big thread does not bury them.
-    /// `attention` supplies each member's pending asks, which make it blocked.
+    /// A thread's rows are its root row, its live members, then one fold row for its stopped members and,
+    /// when the fold is open, those members. Each member is its own row, indented by `depth`; order and depth
+    /// rules are `SessionThreadRollup.listing`. Members that run in another workspace are listed too: a thread
+    /// is the whole launch tree, not the part this list's workspace shows. Other entries pass through.
+    ///
+    /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id; `folds` also
+    /// carries the state every open thread's unset fold settled to, for the owner to keep: a thread opens with
+    /// its fold open when it has nothing live (the strip's chevron is then its only fold), and closed when it
+    /// lists live members above its stopped ones. Settling the first state a thread opens with keeps its rows
+    /// steady after that: a member starting or stopping changes which rows the thread lists, never whether the
+    /// stopped ones are folded away, so a thread whose last live member stops does not unfold its stopped rows
+    /// inline. A settled or chosen entry is kept as it is, so passing `folds` back changes nothing.
+    ///
+    /// A settled (or chosen) open fold lists the thread's stopped members under its fold row. A thread with
+    /// nothing live and no closed fold of its own has no fold row at all: it lists its stopped members
+    /// directly, since its strip's chevron is the only fold there is and a second card would repeat what the
+    /// strip already says. A thread that lists live members above its stopped ones keeps the fold, so a big
+    /// thread does not bury them. `attention` supplies each member's pending asks, which make it blocked.
     ///
     /// The fold row is an entry whose `session` is the root and whose `stoppedFold` is set.
     /// A thread with no stopped member has no fold row.
-    static func expanding(
+    static func expanded(
         _ entries: [SessionListEntry],
         expandedRoots: Set<String>,
         stoppedFolds: [String: Bool],
         attention: (Session) -> SessionListAttentionCounts
-    ) -> [SessionListEntry] {
-        guard !expandedRoots.isEmpty else { return entries }
+    ) -> (rows: [SessionListEntry], folds: [String: Bool]) {
+        guard !expandedRoots.isEmpty else { return (entries, stoppedFolds) }
+        var folds = stoppedFolds
         var rows: [SessionListEntry] = []
         rows.reserveCapacity(entries.count)
         for entry in entries {
@@ -345,9 +350,10 @@ enum SessionListEntries {
             guard !listing.stopped.isEmpty else { continue }
             // Nothing live, and no closed fold of the person's own: the stopped members list directly, under
             // the strip's chevron, rather than behind a row that repeats the strip's count. A fold they
-            // closed keeps its row, so a thread whose last live member stops does not unfold its stopped
-            // rows inline. `settledFolds` records which of the two a thread opens with.
-            let foldState = stoppedFolds[entry.session.id] ?? listing.live.isEmpty
+            // closed keeps its row. The settled state is recorded here, so the pass below needs no second
+            // `listing`.
+            let foldState = folds[entry.session.id] ?? listing.live.isEmpty
+            folds[entry.session.id] = foldState
             guard !listing.live.isEmpty || foldState == false else {
                 rows.append(contentsOf: listing.stopped.map(member))
                 continue
@@ -363,30 +369,7 @@ enum SessionListEntries {
             ))
             if foldState { rows.append(contentsOf: listing.stopped.map(member)) }
         }
-        return rows
-    }
-
-    /// `stoppedFolds` with every open thread's unset fold settled, for `expanding` to draw and the owner to
-    /// keep: a thread opens with its fold open when it has nothing live (the strip's chevron is then its only
-    /// fold), and closed when it lists live members above its stopped ones. Settling the first state a thread
-    /// opens with keeps its rows steady after that: a member starting or stopping changes which rows the
-    /// thread lists, never whether the stopped ones are folded away. A settled or chosen entry is kept as it
-    /// is, so passing the result back changes nothing.
-    static func settledFolds(
-        _ entries: [SessionListEntry],
-        expandedRoots: Set<String>,
-        stoppedFolds: [String: Bool],
-        attention: (Session) -> SessionListAttentionCounts
-    ) -> [String: Bool] {
-        var settled = stoppedFolds
-        for entry in entries {
-            guard let thread = entry.thread, expandedRoots.contains(entry.session.id),
-                  settled[entry.session.id] == nil else { continue }
-            let listing = thread.listing(attention: attention)
-            guard !listing.stopped.isEmpty else { continue }
-            settled[entry.session.id] = listing.live.isEmpty
-        }
-        return settled
+        return (rows, folds)
     }
 
     /// Thread rows for the sessions a list shows (`listed`). Launch trees are

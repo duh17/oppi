@@ -221,6 +221,28 @@ struct SessionThreadStripViewTests {
         #expect(blockedLines.last == "1 stopped", Comment(rawValue: blockedLines.description))
     }
 
+    /// A pending ask the server still lists for a stopped child resolves as a question (`resolve` leads with
+    /// pending asks), but the list folds that child into stopped whatever its status reads. The thread is not
+    /// blocked and not Your Turn, the strip names no child to answer, and the child counts stopped: the
+    /// fold's own test wins over a lingering ask.
+    @Test func aPendingAskOnAStoppedChildDoesNotBlockTheThread() {
+        let root = session("root", parent: nil, .working)
+        // No program status, so the ask alone resolves the child's status.
+        let child = session("child", parent: "root", .stopped)
+        let rollup = SessionThreadGrouping.rollups(from: [root, child])[0]
+        let attention = { (session: Session) in
+            SessionListAttentionCounts(askCount: session.id == "child" ? 1 : 0)
+        }
+        let content = SessionThreadStripView.Content(rollup: rollup, askCounts: ["child": 1])
+
+        #expect(content.classification(child).status == .question, "The lingering ask still reads as a question")
+        #expect(SessionThreadGrouping.sectionKind(for: rollup, attention: attention) == .working)
+        #expect(!SessionThreadGrouping.isBlocked(rollup, attention: attention))
+        #expect(content.blockedMember == nil, "The strip named a stopped child as the one to answer")
+        let summary = SessionThreadStripSummary(rollup: rollup, classify: content.classification)
+        #expect(summary.counts.map(\.bucket) == [.stopped])
+    }
+
     /// A state with nothing to say draws no line at all: never a laid-out line with nothing in it.
     @Test func noStateDrawsAnEmptyLine() {
         let states: [[SessionStatusKind]] = [

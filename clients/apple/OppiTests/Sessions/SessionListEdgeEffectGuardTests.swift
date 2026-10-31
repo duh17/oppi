@@ -93,12 +93,12 @@ struct SessionListEdgeEffectGuardTests {
 
     /// The rows the list draws for `open` thread, as the list's own snapshot.
     private func snapshot(threadOpen expanded: Bool) -> SessionListCollection<Int, String, Int, Int>.Snapshot {
-        let entries = SessionListEntries.expanding(
+        let entries = SessionListEntries.expanded(
             SessionListEntries.threads(listed: listedSessions, loaded: []),
             expandedRoots: expanded ? [rootId] : [],
             stoppedFolds: [:],
             attention: { _ in .none }
-        )
+        ).rows
         var snapshot = SessionListCollection<Int, String, Int, Int>.Snapshot()
         snapshot.appendSection(0)
         snapshot.append(sessions: entries, to: 0, item: { $0 }, content: { entry in

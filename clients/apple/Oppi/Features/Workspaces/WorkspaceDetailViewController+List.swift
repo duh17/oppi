@@ -257,16 +257,11 @@ extension WorkspaceDetailViewController {
         }
         // A thread's fold is settled the first time it lists open, and kept, so a member starting or
         // stopping never unfolds the stopped rows under the person's hand.
-        let folds = SessionListEntries.settledFolds(
+        let expanded = SessionListEntries.expanded(
             entries, expandedRoots: state.expandedThreadRoots, stoppedFolds: state.threadStoppedFolds, attention: attention
         )
-        if folds != state.threadStoppedFolds { state.threadStoppedFolds = folds }
-        return SessionListEntries.expanding(
-            entries,
-            expandedRoots: state.expandedThreadRoots,
-            stoppedFolds: folds,
-            attention: attention
-        )
+        if expanded.folds != state.threadStoppedFolds { state.threadStoppedFolds = expanded.folds }
+        return expanded.rows
     }
 
     /// A state row, or a local session that imports and resumes on a tap.

@@ -48,9 +48,9 @@ final class SessionThreadStripView: UIControl {
             )
         }
 
-        /// A blocked child, shown so the user knows where to answer.
+        /// A blocked child, shown so the user knows where to answer: a live one, as the list counts it.
         var blockedMember: Session? {
-            rollup.descendants.first { classification($0).status.isBlocked }
+            rollup.descendants.first { classification($0).isBlocked }
         }
     }
 
@@ -137,9 +137,8 @@ final class SessionThreadStripView: UIControl {
         }
 
         var parts: [String] = [statusSummary.text]
-        if rollup.workspaceCount > 1 {
-            parts.append("\(rollup.workspaceCount) workspaces")
-        }
+        let workspacesNote = rollup.workspaceCount > 1 ? "\(rollup.workspaceCount) workspaces" : nil
+        if let workspacesNote { parts.append(workspacesNote) }
         // Same rule as a row: unknown or zero cost is absent, never "$0.00". It comes last, where the line
         // draws it, beside the chevron.
         let cost = display.showsCost && !content.hidesDetails && !content.hidesCost && rollup.totalCost > 0
@@ -154,7 +153,7 @@ final class SessionThreadStripView: UIControl {
         // truncate. VoiceOver (above) always hears every bucket.
         summaryLabel.setCounts(
             statusSummary.quietText,
-            note: rollup.workspaceCount > 1 ? "\(rollup.workspaceCount) workspaces" : nil
+            note: workspacesNote
         )
         summaryLabel.textColor = colors.comment
         footer.cost.text = cost
@@ -170,11 +169,7 @@ final class SessionThreadStripView: UIControl {
         // The thread's own headline in the strip's words, with each member's real state: a child waiting on a
         // question says Question, not the "needs you" the counts use for every blocked kind. A stopped member
         // reads Stopped and a settled outcome reads Idle, since the strip has no Done.
-        let statusRollup = rollup.statusRollup { session in
-            let classification = content.classification(session)
-            if classification.section == nil { return .stopped }
-            return classification.status == .done ? .idle : classification.status
-        }
+        let statusRollup = rollup.statusRollup { content.classification($0).settledKind }
         let blocked = content.blockedMember.map { "\(content.classification($0).status.label) from \($0.displayTitle). " } ?? ""
         let headlineStatus = statusRollup.headline.map { "\($0.label). " } ?? ""
         let children = rollup.descendants.count

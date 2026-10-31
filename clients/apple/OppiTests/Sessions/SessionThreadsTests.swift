@@ -224,12 +224,12 @@ struct SessionThreadsTests {
         folds: [String: Bool] = [:],
         attention: (Session) -> SessionListAttentionCounts = { _ in .none }
     ) -> [SessionListEntry] {
-        SessionListEntries.expanding(
+        SessionListEntries.expanded(
             SessionListEntries.threads(listed: sessions, loaded: []),
             expandedRoots: roots,
             stoppedFolds: folds,
             attention: attention
-        )
+        ).rows
     }
 
     /// A row's id, with the Stopped fold written `fold(<count>)` or `fold(<count>, open)`.
@@ -244,12 +244,12 @@ struct SessionThreadsTests {
         roots: Set<String> = ["root"],
         folds: [String: Bool] = [:]
     ) -> [String: Bool] {
-        SessionListEntries.settledFolds(
+        SessionListEntries.expanded(
             SessionListEntries.threads(listed: sessions, loaded: []),
             expandedRoots: roots,
             stoppedFolds: folds,
             attention: { _ in .none }
-        )
+        ).folds
     }
 
     /// A thread's fold is settled when it opens and kept afterwards, so a member starting or stopping never
@@ -459,7 +459,7 @@ struct SessionThreadsTests {
         let child = live("child", .working, parent: "root", created: 10)
         let entries = SessionListEntries.threads(listed: [root, child], loaded: [])
         func expanding(_ roots: Set<String>) -> [SessionListEntry] {
-            SessionListEntries.expanding(entries, expandedRoots: roots, stoppedFolds: ["root": true], attention: { _ in .none })
+            SessionListEntries.expanded(entries, expandedRoots: roots, stoppedFolds: ["root": true], attention: { _ in .none }).rows
         }
 
         #expect(expanding([]) == entries)
@@ -476,9 +476,9 @@ struct SessionThreadsTests {
         let remoteChild = session("remote-child", parent: "remote", workspace: "b", created: 40)
         let entries = SessionListEntries.threads(listed: [root, local], loaded: [root, local, remote, remoteChild])
 
-        let rows = SessionListEntries.expanding(
+        let rows = SessionListEntries.expanded(
             entries, expandedRoots: ["root"], stoppedFolds: ["root": true], attention: { _ in .none }
-        )
+        ).rows
 
         // All stopped, so nothing live lists first and there is no fold to open. The newest member's
         // tree lists first, a parent before its child.

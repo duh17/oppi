@@ -43,12 +43,12 @@ struct SessionRowGridTests {
             session("grandchild", "Write the route table", status: .busy, parent: "child-working", minutesAgo: 30),
             session("child-stopped", "Audit the old routes", status: .stopped, parent: rootId, minutesAgo: 35),
         ]
-        return SessionListEntries.expanding(
+        return SessionListEntries.expanded(
             SessionListEntries.threads(listed: sessions, loaded: []),
             expandedRoots: [rootId],
             stoppedFolds: [:],
             attention: { _ in .none }
-        )
+        ).rows
     }
 
     private var rowActions: SessionListRowActions {
