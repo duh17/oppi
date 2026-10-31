@@ -536,7 +536,8 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                         sourcePath: "Schedules/\(schedule.id)/Prompt.md",
                         // The pencil edits the schedule's own prompt, saved against
                         // the version this screen read.
-                        subject: .schedulePrompt(scheduleId: schedule.id)
+                        subject: .schedulePrompt(scheduleId: schedule.id),
+                        connection: connection
                     )
                 }
             }

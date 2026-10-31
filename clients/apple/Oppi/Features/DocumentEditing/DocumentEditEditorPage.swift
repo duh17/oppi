@@ -76,10 +76,19 @@ final class DocumentEditEditorPage: UIViewController {
     /// A reader with no editor of its own presents this page in a navigation
     /// stack of its own; then the page puts its bar on its own navigation item.
     /// (Embedded in a viewer, the viewer's bar is the one that shows them.)
-    override func updateProperties() {
-        super.updateProperties()
+    /// Not from `updateProperties`: writing bar items during an observation pass
+    /// can feed back into layout, so this runs on appearance and on a toggle.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        installOwnBarItemsIfPresented()
+    }
+
+    private func installOwnBarItemsIfPresented() {
         guard navigationController?.topViewController === self else { return }
-        let items = barButtons
+        // The status is a symbol here: a custom-view item makes a navigation bar
+        // lay out forever (the viewer's own bar keeps the live view).
+        _ = barButtons
+        let items = barItems.navigationItems
         if navigationItem.rightBarButtonItems?.elementsEqual(items, by: ===) != true {
             navigationItem.rightBarButtonItems = items
         }
@@ -162,6 +171,8 @@ final class DocumentEditEditorPage: UIViewController {
     func togglePreview() {
         isShowingPreview.toggle()
         editor.setShowingPreview(isShowingPreview)
+        // The Preview item's own title flips with it.
+        installOwnBarItemsIfPresented()
     }
 
     /// Hands the editor's live buffer to the session and closes the sheet it

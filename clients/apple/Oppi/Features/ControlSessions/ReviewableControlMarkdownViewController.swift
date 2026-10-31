@@ -163,6 +163,9 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     let targetPath: String?
     private let viewer: Viewer
     private let languageHint: String?
+    /// The server whose records this reader edits, when the caller has it (an
+    /// Agent's or a schedule's page does). Nil falls back to the active server.
+    private let serverConnection: ServerConnection?
     /// What the edit entry edits. `.snapshot` means the text has no document
     /// behind it, so only Edit with Session is offered.
     let subject: DocumentEditSubject
@@ -193,12 +196,14 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         sourcePath: String,
         targetPath: String? = nil,
         subject: DocumentEditSubject = .snapshot,
-        agentInstructionMode: AgentInstructionMode = .append
+        agentInstructionMode: AgentInstructionMode = .append,
+        connection: ServerConnection? = nil
     ) {
         viewer = .fullScreen
         languageHint = "markdown"
         self.subject = subject
         self.agentInstructionMode = agentInstructionMode
+        self.serverConnection = connection
         shownText = content
         self.domain = domain
         self.targetId = targetId
@@ -229,6 +234,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         languageHint = Self.languageHint(for: hostFilePath)
         subject = .snapshot
         agentInstructionMode = .append
+        serverConnection = connection
         shownText = ""
         self.domain = domain
         self.targetId = targetId
@@ -247,11 +253,11 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         AppRootEnvironment.near(self)
     }
 
-    /// A skill file opens under its own server's scope; other targets live
-    /// on the active server.
+    /// A skill file opens under its own server's scope; other targets live on
+    /// the server the screen handed in, else the active one.
     private var connection: ServerConnection? {
         if case .hostFile(_, _, _, let connection) = viewer { return connection }
-        return root?.coordinator.activeConnection
+        return serverConnection ?? root?.coordinator.activeConnection
     }
 
     private var draftSessionId: String {
@@ -290,7 +296,11 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         let subject = subject
         return DocumentEditOwner(
             subject: subject,
-            serverId: connection?.currentServerId ?? connection?.sessionStore.activeServerId,
+            // Read when the owner reads: a sheet can resolve its server after it
+            // is built, and a nil captured here would hide the pencil for good.
+            serverId: { [weak self] in
+                self?.connection?.currentServerId ?? self?.connection?.sessionStore.activeServerId
+            },
             agentInstructionMode: agentInstructionMode,
             agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
             backend: { [weak self] in
@@ -309,7 +319,12 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
                 }
             },
             handlers: .init(
-                didShowText: { [weak self] text in self?.showText(text) },
+                didShowText: { [weak self] text in
+                    self?.showText(text)
+                    // Done closes the editor here, not in an update pass: a reader
+                    // under a full-screen page gets none while it is covered.
+                    self?.closeEditor()
+                },
                 didReload: { [weak self] in self?.setNeedsUpdateProperties() },
                 makePreview: { [weak self] text in
                     guard let self else { return UIViewController() }
@@ -449,9 +464,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// editing and closes when it is done.
     private func syncEditorPresentation() {
         if let page = editOwner.makeEditorPage(checkoutSubtitle: nil) {
-            if let editorPage {
-                // Preview, status, and the mode control redraw on the page's own pass.
-                editorPage.setNeedsUpdateProperties()
+            if editorPage != nil {
+                // The page redraws its own bar and status; nothing to re-present.
                 return
             }
             editorPage = page
@@ -468,11 +482,17 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
                     self.editOwner.endEditing()
                 }
             )
-        } else if let editorPage {
-            self.editorPage = nil
-            if let container = editorPage.navigationController {
-                Router.finish(container)
-            }
+        } else {
+            closeEditor()
+        }
+    }
+
+    /// The editor is finished: the page goes and the reader stays.
+    private func closeEditor() {
+        guard let editorPage else { return }
+        self.editorPage = nil
+        if let container = editorPage.navigationController {
+            Router.finish(container)
         }
     }
 

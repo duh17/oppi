@@ -101,8 +101,9 @@ final class DocumentEditOwner {
     let handlers: Handlers
     /// Edit with Session, when the screen offers one.
     let agentAction: DocumentAgentEditAction?
-    /// The server a record's prompt lives on. A file subject carries its own.
-    let serverId: String?
+    /// The server a record's prompt lives on, read when the owner reads: a file
+    /// subject carries its own, and a reader's server can arrive after the owner.
+    private let serverIdSource: @MainActor () -> String?
     /// The Agent prompt's append/replace mode: what the editor's control shows
     /// and what the next save sends. A new prompt appends to Pi's own.
     private(set) var agentInstructionMode: AgentInstructionMode
@@ -141,7 +142,7 @@ final class DocumentEditOwner {
 
     init(
         subject: DocumentEditSubject,
-        serverId: String? = nil,
+        serverId: @escaping @MainActor () -> String? = { nil },
         agentInstructionMode: AgentInstructionMode = .append,
         agentAction: DocumentAgentEditAction? = nil,
         backend: @escaping @MainActor () -> Backend?,
@@ -152,7 +153,7 @@ final class DocumentEditOwner {
         onChange: @escaping @MainActor () -> Void
     ) {
         self.subject = subject
-        self.serverId = serverId
+        self.serverIdSource = serverId
         self.agentInstructionMode = agentInstructionMode
         self.agentAction = agentAction
         self.backendSource = backend
@@ -179,7 +180,7 @@ final class DocumentEditOwner {
     /// editor's base is exactly the bytes the reader shows.
     func read() async -> ReadResult {
         let generation = generation
-        guard let identity = subject.editIdentity(serverId: serverId),
+        guard let identity = subject.editIdentity(serverId: serverIdSource()),
               subject.fileType?.previewCategory == .text,
               let backend = backendSource() else {
             reset()

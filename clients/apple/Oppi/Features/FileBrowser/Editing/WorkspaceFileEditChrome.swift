@@ -439,6 +439,10 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
 final class WorkspaceFileEditBarItems {
     private let statusView = WorkspaceFileEditStatusView()
     private lazy var statusItem = UIBarButtonItem(customView: statusView)
+    /// The same status as a symbol, for a `UINavigationItem`: a navigation bar
+    /// lays a custom-view item out in an endless loop, so a page presented in
+    /// a stack of its own shows this instead of `statusItem`.
+    private lazy var statusImageItem = UIBarButtonItem(image: nil, style: .plain, target: nil, action: nil)
     /// Keeps the passive status glyph out of the buttons' glass group.
     private let spacer = UIBarButtonItem.fixedSpace()
     private let optionsItem: UIBarButtonItem
@@ -476,8 +480,21 @@ final class WorkspaceFileEditBarItems {
         [doneItem, previewItem, optionsItem, spacer, statusItem]
     }
 
+    /// The same controls for a `UINavigationItem`, where the status is a symbol
+    /// rather than a custom view.
+    var navigationItems: [UIBarButtonItem] {
+        [doneItem, previewItem, optionsItem, statusImageItem]
+    }
+
     func update(status: WorkspaceFileEditSession.Status, isShowingPreview: Bool) {
         statusView.status = status
+        switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
+        case .symbol(let name):
+            statusImageItem.image = UIImage(systemName: name)
+        case .progress:
+            statusImageItem.image = UIImage(systemName: "arrow.triangle.2.circlepath")
+        }
+        statusImageItem.accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
         let title = isShowingPreview ? String(localized: "Source") : String(localized: "Preview")
         if previewItem.title != title {
             previewItem.title = title

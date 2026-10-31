@@ -134,7 +134,7 @@ struct DocumentEditOwnerTests {
         )
         return DocumentEditOwner(
             subject: subject,
-            serverId: serverId,
+            serverId: { serverId },
             agentAction: agentAction,
             backend: { backend },
             draftStore: draftStore ?? self.draftStore(),
