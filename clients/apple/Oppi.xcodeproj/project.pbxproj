@@ -2238,6 +2238,7 @@
 		E8C0190FA5CA753291E4C1A5 /* ClientLogUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A416BBF704B084E8F76ED3 /* ClientLogUploadModels.swift */; };
 		E8D9F87BA5D95048F7BD5BA6 /* MermaidNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B1ED7BE6519C6D91B2FD15 /* MermaidNode.swift */; };
 		E91AF9EC096ED037C96FB307 /* MermaidQuadrantRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1AAD026AA75319F22E703B /* MermaidQuadrantRenderer.swift */; };
+		E9499533BE1E9E94151444D7 /* ListScreenStateRowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B78E22B1B6A862D51A6DCDE /* ListScreenStateRowTests.swift */; };
 		E95F7BF4C10478118033700D /* MarkdownInlineUSDZTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5C27087DEF06F8D1B5B921 /* MarkdownInlineUSDZTests.swift */; };
 		E97045F6F22D62B3984FFD45 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 6027C6A9952DDB33A451CAF9 /* Localizable.xcstrings */; };
 		E991B47B7E4D0303F3B05793 /* ChatActionHandlerRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F54EBF5A2788A7C540F408 /* ChatActionHandlerRecoveryTests.swift */; };
@@ -3313,6 +3314,7 @@
 		5B461FE67356E6AE92BEDA0E /* SessionListEntryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListEntryRow.swift; sourceTree = "<group>"; };
 		5B65FEE66FAB328B15B0F651 /* TerminalMirrorIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalMirrorIndicatorView.swift; sourceTree = "<group>"; };
 		5B6B578A2C27753BD281561B /* AskResponseEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskResponseEncoder.swift; sourceTree = "<group>"; };
+		5B78E22B1B6A862D51A6DCDE /* ListScreenStateRowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListScreenStateRowTests.swift; sourceTree = "<group>"; };
 		5B951537F33FB2D70AF5C89D /* SSHTerminalRexPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexPanes.swift; sourceTree = "<group>"; };
 		5BA4DC898631CE91243B52B2 /* SSHTerminalFolderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalFolderViewController.swift; sourceTree = "<group>"; };
 		5BF5CE9F5FA051497A8877B8 /* ServerExtensionListPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionListPresentation.swift; sourceTree = "<group>"; };
@@ -6501,6 +6503,7 @@
 				9F95252400EA1479563D4AB9 /* InteractionPreferencesTests.swift */,
 				765313D43E3CDF3A6D42CF59 /* KeychainServiceTests.swift */,
 				CCE2FE576E7864DBCB98BD92 /* ListScreenLoadTests.swift */,
+				5B78E22B1B6A862D51A6DCDE /* ListScreenStateRowTests.swift */,
 				D39D8E6C30794119E5A36F95 /* LiveActivityManagerTests.swift */,
 				16FA6D27C69F68B3843140B7 /* LocalCacheAtRestTests.swift */,
 				45A91CBC3B1179BE7063A317 /* MetricKitSerializerTests.swift */,
@@ -9587,6 +9590,7 @@
 				313F8FA0BCC0EF9013F166BB /* LANEndpointSelectionTests.swift in Sources */,
 				63621D358745653959758610 /* LANFirstConnectionPolicyTests.swift in Sources */,
 				B912677DC1E739F19B19B854 /* ListScreenLoadTests.swift in Sources */,
+				E9499533BE1E9E94151444D7 /* ListScreenStateRowTests.swift in Sources */,
 				638DE60402A9862E865C339B /* LiveActivityManagerTests.swift in Sources */,
 				BF69EFA249DA99B955A4AB48 /* LiveStreamingPresentationTests.swift in Sources */,
 				AF7942E219C85F1F021BB2A5 /* LiveVoiceAudioOwnerTests.swift in Sources */,

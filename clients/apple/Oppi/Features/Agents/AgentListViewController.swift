@@ -117,7 +117,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             footer: "Pi uses the server's global Pi configuration. Saved Agents add reusable instructions, resources, and session defaults.",
             items: items
         )]
-        if let state = stateRow() { sections.append(ListSection(.status, items: [], state: state)) }
+        sections.append(ListSection(.status, items: []))
         return sections
     }
 
@@ -128,23 +128,15 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// A load settles the list in place; its rows should not slide.
     override var animatesUpdates: Bool { false }
 
-    /// Saved Agents are loading, or the load failed: one row under Pi and the
-    /// Agents it already has, with Retry.
-    private func stateRow() -> ListStateRow? {
-        guard loadFailure != nil || (isLoading && agents.isEmpty) else { return nil }
-        // A Retry keeps its row and turns it into the loading row.
-        if !isLoading, let loadFailure {
-            return ListStateRow(
-                state: .failed(
-                    title: loadFailure,
-                    message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
-                ),
-                identifier: "agents.state"
-            )
-        }
-        return ListStateRow(state: .loading("Loading saved Agents…"), identifier: "agents.state")
-    }
+    /// The saved Agents are what the load fetches: until they are here the list
+    /// shows the loading row under Pi, and a failure row under whatever it has.
+    override func stateSection() -> Section? { .status }
+
+    override func hasContent() -> Bool { !agents.isEmpty }
+
+    override func loadingCaption() -> String? { String(localized: "Loading saved Agents…") }
+
+    override var stateRowIdentifiers: StateRowIdentifiers { StateRowIdentifiers("agents.state") }
 
     override func inputs(of item: Item) -> AnyHashable {
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
@@ -305,7 +297,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// changes. Throws the reason the list's state row shows.
     override func load() async throws {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure("Server offline")
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         let loaded = try await apiClient.listAgents()
         // A load the page cancelled (it left, or another subject's load replaced

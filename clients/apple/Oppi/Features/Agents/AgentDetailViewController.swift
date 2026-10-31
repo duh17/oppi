@@ -14,7 +14,7 @@ import UIKit
 /// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
 final class AgentDetailViewController: ListScreenController<AgentDetailViewController.Section, AgentDetailViewController.Item> {
-    enum Section: Hashable, Sendable { case definition, prompt, defaults, resources, constraints, run }
+    enum Section: Hashable, Sendable { case definition, status, prompt, defaults, resources, constraints, run }
     enum Item: Hashable, Sendable {
         case icon
         case value(title: String, value: String)
@@ -140,11 +140,11 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         updateBarItems()
         updateComposer()
         updateModals()
-        // OK clears only the error the person read, never a newer one.
-        errorAlerts.sync(title: "Agent", message: error ?? loadFailure) { [weak self] shown in
-            guard let self else { return }
-            if error == shown { error = nil }
-            if loadFailure == shown { clearLoadFailure() }
+        // OK clears only the error the person read, never a newer one. A failed
+        // load is the base's row, not this alert.
+        errorAlerts.sync(title: "Agent", message: error) { [weak self] shown in
+            guard let self, error == shown else { return }
+            error = nil
         }
     }
 
@@ -187,6 +187,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         items.append(.value(title: "Status", value: agent.status.rawValue.capitalized))
         items.append(.value(title: "Version", value: "v\(agent.version)"))
         sections.append(ListSection(.definition, header: "Definition", items: items))
+        sections.append(ListSection(.status, items: []))
 
         if let instructions = definition.instructions {
             sections.append(ListSection(
@@ -224,13 +225,16 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
-    /// Nothing loaded yet, or no such Agent: the page is its state.
-    override func wholeScreenState() -> LoadState? {
-        guard agent == nil else { return nil }
-        return isLoading
-            ? .loading(String(localized: "Loading agent…"))
-            : .empty(title: String(localized: "Agent Not Found"), systemImage: "questionmark.circle")
-    }
+    /// The definition, resources, and run carry headings; the state row, which
+    /// has none of its own, gets no empty header above it.
+    override func showsHeader(for section: Section) -> Bool { section != .status }
+
+    /// A failed load keeps the rows it already had and says so under them, with
+    /// Retry; with no Agent there is nothing to list, so the page is its whole
+    /// screen's state.
+    override func stateSection() -> Section? { .status }
+
+    override func loadingCaption() -> String? { String(localized: "Loading agent…") }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {

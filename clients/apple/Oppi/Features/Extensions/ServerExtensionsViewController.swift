@@ -155,7 +155,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
                 sections.append(ListSection(.notice, items: [.cachedWarning]))
             }
         }
-        if let row = stateRow(state) {
+        if let row = catalogStateRow(state) {
             sections.append(ListSection(.state, items: [], state: row))
         }
         switch state.catalog {
@@ -172,7 +172,9 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             if state.presentation.hasNoPiExtensions {
                 sections.append(ListSection(.noPi, items: [], state: ListStateRow(
                     state: .empty(
-                        title: "No Pi extensions found. Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings.",
+                        title: String(
+                            localized: "No Pi extensions found. Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings."
+                        ),
                         systemImage: "puzzlepiece.extension"
                     ),
                     identifier: "extensions.noPi"
@@ -194,31 +196,36 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         return false
     }
 
+    /// The caption the catalog's compact loading row shows.
+    override func loadingCaption() -> String? { String(localized: "Loading extensions…") }
+
     /// The list's state, where its rows would be: loading, a catalog this server
-    /// never loaded, or nothing matched the search.
-    private func stateRow(_ state: ViewState) -> ListStateRow? {
-        switch state.catalog {
-        case .firstLoad:
-            return ListStateRow(state: .loading("Loading extensions…"), identifier: "extensions.loading")
-        case .unavailable:
-            return ListStateRow(
-                state: .failed(
-                    title: "Extensions are unavailable. The selected server has no cached Extensions catalog.",
-                    message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
-                ),
-                identifier: "extensions.retry"
-            )
-        case .filteredNoResults:
-            return ListStateRow(
-                state: .empty(
-                    title: "No extensions match “\(state.presentation.query)”.", systemImage: "puzzlepiece.extension"
-                ),
-                identifier: "extensions.noResults"
-            )
-        case .cachedOffline, .content:
-            return nil
-        }
+    /// never loaded, or nothing matched the search. The store owns the catalog's
+    /// load, so the row is built from the store's sync state with the kit's one
+    /// row: a failure outranks a load in flight, and both outrank the empty
+    /// state.
+    private func catalogStateRow(_ state: ViewState) -> ListStateRow? {
+        stateRow(
+            hasContent: !state.presentation.visibleExtensions.isEmpty,
+            isLoading: state.catalog == .firstLoad,
+            failure: state.catalog == .unavailable
+                ? String(localized: "Extensions are unavailable. The selected server has no cached Extensions catalog.")
+                : nil
+        )
+    }
+
+    /// A search that matched nothing: the one empty state this page has.
+    override func emptyState() -> LoadState? {
+        guard let state, state.catalog == .filteredNoResults else { return nil }
+        return .empty(
+            title: String(localized: "No extensions match “\(state.presentation.query)”."),
+            systemImage: "puzzlepiece.extension"
+        )
+    }
+
+    /// The identifiers this page's state row has always had, one per kind.
+    override var stateRowIdentifiers: StateRowIdentifiers {
+        StateRowIdentifiers(loading: "extensions.loading", failed: "extensions.retry", empty: "extensions.noResults")
     }
 
     override func inputs(of item: Item) -> AnyHashable {
@@ -297,7 +304,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     private lazy var cachedWarningRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
         guard let self, let server = state?.server else { return }
         var content = UIListContentConfiguration.cell()
-        content.text = "Showing cached settings for \(server.name). Pull to retry."
+        content.text = String(localized: "Showing cached settings for \(server.name). Pull to retry.")
         content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
         content.textProperties.font = .scaled(.subheadline)
         content.textProperties.adjustsFontForContentSizeCategory = true

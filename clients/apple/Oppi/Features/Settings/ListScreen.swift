@@ -1,15 +1,15 @@
 import UIKit
 
 /// The kit's list chrome and row builders, for a screen that is not on
-/// `ListScreenController` yet: its collection view and layout, the full-width
-/// pin, the theme, the bar's items, and rows whose one accessibility element is
-/// a button.
+/// `ListScreenController` yet: its collection view and layout, the theme, the
+/// bar's items, and rows whose one accessibility element is a button. A list
+/// is pinned at the readable form width by `SettingsListStyle.pin`.
 ///
-/// The Agents, Schedules, and the detail screens, and the workspace forms,
-/// still build their own list with these; a page on the base takes its look
-/// from `SettingsListStyle` instead. The row builders (`buttonRow`,
-/// `staticRow`, `stateRow`, `background`) are also what a page on the base
-/// draws its own cell classes with (`SidebarListCell`).
+/// The Schedules list, the Skill browser, and the workspace forms still build
+/// their own list with these; a page on the base takes its look from
+/// `SettingsListStyle` instead. The row builders (`buttonRow`, `staticRow`,
+/// `stateRow`, `background`) are also what a page on the base draws its own cell
+/// classes with (`SidebarListCell`).
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
@@ -54,19 +54,6 @@ enum ListScreen {
         if !(item.leftBarButtonItems ?? []).elementsEqual(leading, by: ===) {
             item.leftBarButtonItems = leading
         }
-    }
-
-    /// The list across the whole screen. Settings-style pages keep the
-    /// readable form width instead (`SettingsListStyle.pin`).
-    static func pinFullWidth(_ collectionView: UICollectionView, in view: UIView) {
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
     }
 
     /// The theme's page behind the list and its color scheme on the screen.

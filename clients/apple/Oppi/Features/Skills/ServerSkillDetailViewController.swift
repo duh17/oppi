@@ -26,7 +26,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         case loadError
         case warning(String)
         case retry
-        case loadingContents
         case browse
     }
 
@@ -82,10 +81,13 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             ListSection(.source, header: "Source", items: sourceItems),
             ListSection(.validation, header: "Validation", items: validationItems),
         ]
-        if state.isLoading && state.detail == nil {
-            // The file list has a section of its own, without a heading.
-            sections.append(ListSection(.loading, items: [.loadingContents]))
-        } else if state.detail != nil {
+        // The Contents place holds the kit's compact loading row until the detail
+        // arrives; a request that failed says so in Validation, with its own
+        // Retry, so the row is not repeated here.
+        if state.detail == nil, state.loadError == nil {
+            sections.append(ListSection(.loading, items: []))
+        }
+        if state.detail != nil {
             sections.append(ListSection(.contents, header: "Contents", items: [.browse]))
         }
         return sections
@@ -110,6 +112,17 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         if hasError || state.loadError != nil { items.append(.retry) }
         return items
     }
+
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`; the contents' load is the kit's compact state
+    /// row, in a section of its own below them.
+    override func stateSection() -> Section? { .loading }
+
+    /// The contents are what the detail request fetches: until they are here the
+    /// list shows the compact loading row in the Contents place.
+    override func hasContent() -> Bool { state?.detail != nil }
+
+    override func loadingCaption() -> String? { String(localized: "Loading skill contents…") }
 
     /// The group headings are the ones this page wrote, so only the sections
     /// with one show it.
@@ -218,8 +231,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             content.text = "Retry"
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
-        case .loadingContents:
-            ListScreen.stateRow(cell, .loading(String(localized: "Loading skill contents…")), palette: palette)
         case .browse:
             let count = state.detail?.files.count ?? 0
             let countLabel = count == 1 ? "1 file" : "\(count) files"

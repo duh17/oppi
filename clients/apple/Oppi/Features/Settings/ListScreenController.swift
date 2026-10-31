@@ -46,6 +46,30 @@ struct ListStateRow {
     var identifier: String
 }
 
+/// The identifiers the base's own state row carries, one per kind of state it
+/// can show: the compact loading row's, the failed row's (its text and its Retry
+/// are the one button), and the page's empty state's. A page whose tests name
+/// each keeps the name it had; the default is the list's own name
+/// (`skills.list` → `skills.state` for all three).
+struct StateRowIdentifiers {
+    var loading: String
+    var failed: String
+    var empty: String
+
+    /// The same identifier for all three kinds.
+    init(_ identifier: String) {
+        loading = identifier
+        failed = identifier
+        empty = identifier
+    }
+
+    init(loading: String, failed: String, empty: String? = nil) {
+        self.loading = loading
+        self.failed = failed
+        self.empty = empty ?? failed
+    }
+}
+
 /// The cell a page draws its rows in. `.card` is the kit's theme-card row
 /// (`SidebarListCell`, filled by `configureCard(_:item:)`); `.plain` is a plain
 /// list cell, filled by `configure(_:item:)`.
@@ -120,8 +144,12 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   `setNeedsLoad()`; cancelled when the page leaves; a cancelled load is never
 ///   a failure. `isLoading` and `loadFailure` are what the rows read.
 /// - `animatesUpdates`: whether a snapshot change animates its rows.
-/// - `ListSection.state`: the list's own loading, empty, or failed state
-///   (`LoadState`) where the section's rows would be, drawn with its identifier.
+/// - `stateSection()` with `emptyState()`, `hasContent()`, `loadingCaption()`
+///   and `stateRowIdentifiers`: the list's one state row (a failure with Retry,
+///   the compact loading row, the page's empty state), which the base writes
+///   and draws. A page whose store owns its state builds the row with
+///   `stateRow(hasContent:isLoading:failure:)`; `ListSection.state` remains for a
+///   section that states itself on its own.
 /// - `wholeScreenState()`: the same state for a page with no rows at all, drawn
 ///   over the whole screen.
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
@@ -194,6 +222,9 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     let pageScope: SettingsScope?
     /// The store behind the page's declared settings (`SettingsCatalog`).
     let settings: SettingsStore?
+    /// The list's accessibility identifier, `<feature>.<page>.list`: the base
+    /// derives the state row's identifier from it.
+    let listIdentifier: String
     private let showsHeaders: Bool
     private let showsFooters: Bool
     private let listEndsAtKeyboard: Bool
@@ -236,6 +267,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     ) {
         pageScope = scope
         self.settings = settings
+        self.listIdentifier = listIdentifier
         showsHeaders = headers
         showsFooters = footers
         listEndsAtKeyboard = endsAtKeyboard
@@ -344,10 +376,72 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         if isShowing { startLoad() }
     }
 
-    /// The page's state while it has no rows to show at all. The base draws it
-    /// over the empty list; a page with rows states itself in a section
-    /// (`ListSection.state`).
-    func wholeScreenState() -> LoadState? { nil }
+    /// The page's state while it has no rows to show at all: the same failure
+    /// with Retry and the same loading as the row, then the page's empty state.
+    /// A page whose whole-screen states differ (connecting to its server, a
+    /// server that is gone) overrides this.
+    func wholeScreenState() -> LoadState? {
+        if isLoading { return .loading(loadingCaption()) }
+        if let loadFailure { return Self.failureState(loadFailure) { [weak self] in self?.setNeedsLoad() } }
+        return emptyState()
+    }
+
+    // MARK: - State row
+
+    /// The section the base puts the list's own state row in, as its first row:
+    /// the page lists the section even when it holds nothing else. nil leaves the
+    /// row to the page: a store-backed page builds the same row with
+    /// `stateRow(hasContent:isLoading:failure:)`, and a page with nothing to list
+    /// at all states itself over the whole screen.
+    func stateSection() -> Section? { nil }
+
+    /// Whether the load's content is on screen yet: false while the first load is
+    /// on its way, so the base shows its loading row where the rows will be.
+    func hasContent() -> Bool { true }
+
+    /// The words under the compact loading row's spinner: "Loading skills…". The
+    /// whole-screen loading state draws the same.
+    func loadingCaption() -> String? { nil }
+
+    /// What the list says when it has nothing to show and nothing failed: no
+    /// Skills resolved, nothing matched the search.
+    func emptyState() -> LoadState? { nil }
+
+    /// The identifiers of the base's own state row, per kind.
+    var stateRowIdentifiers: StateRowIdentifiers {
+        let name = listIdentifier.hasSuffix(".list")
+            ? String(listIdentifier.dropLast(".list".count))
+            : listIdentifier
+        return StateRowIdentifiers("\(name).state")
+    }
+
+    /// The list's one state row: a load in flight where the rows will be (a Retry
+    /// keeps its row and turns it into this one), the failure — one row, one
+    /// Retry — and then the page's empty state while it has nothing to show.
+    /// The base fills its `stateSection()` with it; a page whose store owns the
+    /// load passes the store's facts instead of the base's `isLoading` and
+    /// `loadFailure`.
+    func stateRow(hasContent: Bool, isLoading: Bool, failure: String?) -> ListStateRow? {
+        if isLoading, !hasContent || failure != nil {
+            return ListStateRow(
+                state: .loading(loadingCaption()), identifier: stateRowIdentifiers.loading
+            )
+        }
+        if let failure {
+            return ListStateRow(
+                state: Self.failureState(failure) { [weak self] in self?.setNeedsLoad() },
+                identifier: stateRowIdentifiers.failed
+            )
+        }
+        guard !hasContent, let settled = emptyState() else { return nil }
+        return ListStateRow(state: settled, identifier: stateRowIdentifiers.empty)
+    }
+
+    /// A failure as the list says it: the reason, and one Retry that runs
+    /// `retry`.
+    static func failureState(_ failure: String, retry: @escaping @MainActor () -> Void) -> LoadState {
+        .failed(title: failure, message: nil, retry: RetryAction(run: retry))
+    }
 
     /// Whether a snapshot change animates its rows (the default: once the list
     /// has rows).
@@ -528,10 +622,22 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             appliedThemeID = themeID
             SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
-        let sections = sections()
+        let sections = stateSections()
         applySnapshot(sections, themeID: themeID)
         // A page with nothing to list is its state: no rows, one screen.
         showWholeScreenState(hasRows(sections) ? nil : wholeScreenState(), themeID: themeID)
+    }
+
+    /// The page's sections with the base's own state row in the section that
+    /// carries it (`stateSection()`).
+    private func stateSections() -> [ListSection<Section, Item>] {
+        var sections = sections()
+        guard let stateSection = stateSection(),
+              let index = sections.firstIndex(where: { $0.id == stateSection }) else { return sections }
+        sections[index].state = stateRow(
+            hasContent: hasContent(), isLoading: isLoading, failure: loadFailure
+        )
+        return sections
     }
 
     /// Whether `sections` show anything: a row, or a section's state row.

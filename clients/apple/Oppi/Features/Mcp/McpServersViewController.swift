@@ -10,8 +10,9 @@ import UIKit
 /// has open is adopted here (Continue / Cancel), and the sheet it opens is
 /// presented from whichever MCP screen is on top (`McpSignInPresenter`).
 ///
-/// A `ListScreenController`: the base owns the list, the loading and
-/// unavailable rows, and the probe on appearance and pull to refresh.
+/// A `ListScreenController`: the base owns the list, the probe on appearance
+/// and pull to refresh, and the text of its one state row — a probe failure or
+/// a host that cannot answer it is one failed row with Retry.
 @MainActor
 final class McpServersViewController: ListScreenController<McpServersViewController.Section, McpServersViewController.Item> {
     let scopeId: String
@@ -21,13 +22,12 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     }
 
     enum Section: Hashable, Sendable {
-        case host, signIn, error, loading, servers, inherited, unavailable, note
+        case host, signIn, state, servers, inherited, note
     }
 
     enum Item: Hashable, Sendable {
         case host
         case signInProvider, signInContinue, signInCancel, signInError
-        case error, retry
         case scopeError(Int)
         case noServers
         case server(String)
@@ -221,14 +221,8 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             if attempt.actionError != nil { items.append(.signInError) }
             sections.append(ListSection(.signIn, header: "Sign-In on \(attempt.serverName)", items: items))
         }
-        if state.error != nil {
-            sections.append(ListSection(.error, items: [.error, .retry]))
-        }
-        if state.loading {
-            sections.append(ListSection(
-                .loading, items: [],
-                state: ListStateRow(state: .loading("Probing MCP servers…"), identifier: "mcp.loading")
-            ))
+        if let row = stateRow(hasContent: hasContent, isLoading: state.loading, failure: stateFailure) {
+            sections.append(ListSection(.state, items: [], state: row))
         }
         if let scope = state.snapshot?.scope, state.hasClient, state.server != nil {
             var items: [Item] = scope.errors.indices.map(Item.scopeError)
@@ -243,20 +237,30 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                     items: inherited.map { Item.inherited($0.name) }
                 ))
             }
-        } else if !state.loading, state.error == nil {
-            sections.append(ListSection(
-                .unavailable, items: [],
-                state: ListStateRow(
-                    state: .empty(
-                        title: "MCP servers are unavailable. Connect to a paired server to manage MCP.",
-                        systemImage: "server.rack"
-                    ),
-                    identifier: "mcp.unavailable"
-                )
-            ))
         }
         sections.append(ListSection(.note, items: [.note]))
         return sections
+    }
+
+    /// Whether the host's scope is here: the probe answers with the servers and
+    /// the errors they had, so without it there is nothing to list.
+    private var hasContent: Bool {
+        state.snapshot != nil && state.hasClient && state.server != nil
+    }
+
+    /// A host that cannot provide the list (no client, no scope) is a failure
+    /// with Retry, like a catalog's; a scope that answered with no servers is
+    /// not.
+    private var stateFailure: String? {
+        if let error = state.error { return error }
+        guard !hasContent, !state.loading else { return nil }
+        return String(localized: "MCP servers are unavailable. Connect to a paired server to manage MCP.")
+    }
+
+    override func loadingCaption() -> String? { String(localized: "Probing MCP servers…") }
+
+    override var stateRowIdentifiers: StateRowIdentifiers {
+        StateRowIdentifiers(loading: "mcp.loading", failed: "mcp.retry")
     }
 
     private var serverSectionHeader: String? {
@@ -288,8 +292,6 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                 AnyHashable(ObjectIdentifier(attempt)), AnyHashable(attempt.providerName),
                 AnyHashable(attempt.isCancelling), AnyHashable(attempt.actionError),
             ])
-        case .error, .retry:
-            return AnyHashable(state.error)
         case .scopeError(let index):
             return AnyHashable(scopeError(at: index))
         case .server(let name):
@@ -335,7 +337,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         switch item {
         case .host:
             collectionView.dequeueConfiguredReusableCell(using: hostRow, for: indexPath, item: item)
-        case .signInProvider, .signInContinue, .signInCancel, .signInError, .error, .retry,
+        case .signInProvider, .signInContinue, .signInCancel, .signInError,
              .scopeError, .noServers, .server, .inherited, .note:
             cardCell(for: item, at: indexPath)
         }
@@ -374,17 +376,6 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
-        case .error:
-            ListScreen.staticRow(cell, identifier: "mcp.error")
-            let message = state.error
-            cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
-            }
-        case .retry:
-            ListScreen.buttonRow(cell, identifier: "mcp.retry", label: "Retry") { [weak self] in
-                self?.setNeedsLoad()
-            }
-            cell.contentConfiguration = Self.actionContent("Retry", color: UIColor(palette.blue))
         case .scopeError(let index):
             ListScreen.staticRow(cell)
             let message = scopeError(at: index)
@@ -394,7 +385,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         case .noServers:
             ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
-            content.text = "No MCP servers configured"
+            content.text = String(localized: "No MCP servers configured")
             content.textProperties.color = UIColor(palette.comment)
             cell.contentConfiguration = content
         case .server(let name):

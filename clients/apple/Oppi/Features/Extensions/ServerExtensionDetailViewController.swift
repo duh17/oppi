@@ -29,7 +29,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case loadError
         case warning(String)
         case retry
-        case loadingContributions
         case tool(String)
         case command(String)
     }
@@ -95,8 +94,11 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             ListSection(.source, header: "Source", items: sourceItems),
             ListSection(.status, header: "Status", items: statusItems),
         ]
-        if state.isLoading && state.detail == nil {
-            sections.append(ListSection(.loading, items: [.loadingContributions]))
+        // The contributions' place holds the kit's compact loading row until the
+        // detail arrives; a request that failed says so in Status, with its own
+        // Retry, so the row is not repeated here.
+        if state.detail == nil, state.loadError == nil {
+            sections.append(ListSection(.loading, items: []))
         }
         if let tools = state.detail?.contributedTools, !tools.isEmpty {
             sections.append(ListSection(.tools, header: "Contributed Tools", items: Self.unique(tools).map(Item.tool)))
@@ -127,6 +129,14 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         if summary.state == .error || state.loadError != nil { items.append(.retry) }
         return items
     }
+
+    /// The contributions are what the detail request fetches: until they are here
+    /// the list shows the compact loading row in their place.
+    override func stateSection() -> Section? { .loading }
+
+    override func hasContent() -> Bool { state?.detail != nil }
+
+    override func loadingCaption() -> String? { String(localized: "Loading contributions…") }
 
     /// The group headings are the ones this page wrote, so only the sections
     /// with one show it.
@@ -237,8 +247,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             content.text = "Retry"
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
-        case .loadingContributions:
-            ListScreen.stateRow(cell, .loading(String(localized: "Loading contributions…")), palette: palette)
         case .tool(let name), .command(let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {

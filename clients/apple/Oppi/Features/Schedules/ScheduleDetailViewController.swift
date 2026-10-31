@@ -10,7 +10,7 @@ import UIKit
 /// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
 final class ScheduleDetailViewController: ListScreenController<ScheduleDetailViewController.Section, ScheduleDetailViewController.Item> {
-    enum Section: Hashable, Sendable { case summary, instructions, runWith, actions, history }
+    enum Section: Hashable, Sendable { case summary, status, instructions, runWith, actions, history }
     enum Item: Hashable, Sendable {
         case summary
         case prompt
@@ -128,11 +128,11 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         updateBarItems()
         updateComposer()
         updateModals()
-        // OK clears only the error the person read, never a newer one.
-        errorAlerts.sync(title: "Schedule", message: error ?? loadFailure) { [weak self] shown in
-            guard let self else { return }
-            if error == shown { error = nil }
-            if loadFailure == shown { clearLoadFailure() }
+        // OK clears only the error the person read, never a newer one. A failed
+        // load is the base's row, not this alert.
+        errorAlerts.sync(title: "Schedule", message: error) { [weak self] shown in
+            guard let self, error == shown else { return }
+            error = nil
         }
     }
 
@@ -178,6 +178,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         let runItems = runs.filter { seenRuns.insert($0.id).inserted }.map { Item.run($0.id) }
         return [
             ListSection(.summary, items: [.summary]),
+            ListSection(.status, items: []),
             ListSection(.instructions, header: "Instructions", items: [.prompt]),
             ListSection(
                 .runWith,
@@ -208,12 +209,9 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     }
 
     /// Nothing loaded yet, or no such schedule: the page is its state.
-    override func wholeScreenState() -> LoadState? {
-        guard schedule == nil else { return nil }
-        return isLoading
-            ? .loading(String(localized: "Loading schedule…"))
-            : .empty(title: String(localized: "Schedule Not Found"), systemImage: "questionmark.circle")
-    }
+    override func stateSection() -> Section? { .status }
+
+    override func loadingCaption() -> String? { String(localized: "Loading schedule…") }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
@@ -552,7 +550,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     /// appearance, on pull to refresh, and after a Retry.
     override func load() async throws {
         guard let apiClient = connection.apiClient else {
-            throw LoadFailure("Server is offline")
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         async let fetchedSchedule = apiClient.getAgentSchedule(scheduleId)
         async let fetchedRuns = apiClient.listAgentScheduleRuns(scheduleId: scheduleId, limit: 20)

@@ -18,12 +18,11 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     let target: ModelProvidersNavTarget
 
     enum Section: Hashable, Sendable {
-        case signInAttempt, loading, connected, available, error
+        case signInAttempt, state, connected, available, error
     }
 
     enum Item: Hashable, Sendable {
         case signInAttempt
-        case loading
         case onboarding
         case provider(String)
         case allConnected
@@ -197,7 +196,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         guard let serverId = server?.id else { return }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
             setupState = .unavailable
-            throw LoadFailure("Unable to prepare server transport")
+            throw LoadFailure(String(localized: "Unable to prepare the server connection"))
         }
         async let fetchedQuotas = try? await client.fetchProviderQuotas()
         let loaded: [ProviderAuthProviderStatus]
@@ -209,7 +208,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             guard !Task.isCancelled, !error.isLoadCancellation else { return }
             statuses = []
             setupState = .unavailable
-            throw LoadFailure("Failed to load provider status: \(error.localizedDescription)")
+            throw LoadFailure(String(localized: "Failed to load provider status: \(error.localizedDescription)"))
         }
         guard !Task.isCancelled else { return }
         statuses = loaded
@@ -255,10 +254,9 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         if flowAttempt != nil, flowSheet == nil {
             sections.append(ListSection(.signInAttempt, items: [.signInAttempt]))
         }
-        let presentation = ProviderConfigurationPresentation(state: setupState)
-        if presentation.showsLoading {
-            sections.append(ListSection(.loading, items: [.loading]))
-        } else if presentation.showsProviderSections {
+        // The load's own state, and its Retry: the base draws it in this place.
+        sections.append(ListSection(.state, items: []))
+        if ProviderConfigurationPresentation(state: setupState).showsProviderSections {
             let connected = connectedProviders.map { Item.provider($0.id) }
             sections.append(ListSection(
                 .connected,
@@ -271,17 +269,28 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 .available, header: "Available", items: available.isEmpty ? [.allConnected] : available
             ))
         }
-        if errorMessage != nil || loadFailure != nil {
+        // A credential change or a sign-in that failed is the page's own error,
+        // not the load's: it is a line of its own, with nothing to retry.
+        if errorMessage != nil {
             sections.append(ListSection(.error, items: [.error]))
         }
         return sections
     }
 
     /// "Connected" and "Available" carry a heading; the sign-in attempt, the
-    /// loading and error rows do not.
+    /// state and error rows do not.
     override func showsHeader(for section: Section) -> Bool {
         section == .connected || section == .available
     }
+
+    /// The load's own state, in the list: a compact loading row until the
+    /// providers are here, and one failed row with Retry.
+    override func stateSection() -> Section? { .state }
+
+    /// Nothing loaded yet: the page does not know what the server has.
+    override func hasContent() -> Bool { setupState != .unknown }
+
+    override func loadingCaption() -> String? { String(localized: "Loading providers…") }
 
     /// A page with no server says so over the whole screen instead of in a row.
     override func wholeScreenState() -> LoadState? {
@@ -307,8 +316,8 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 AnyHashable(actionInFlightId == id), AnyHashable(hasLiveSignIn), AnyHashable(actionInFlightId != nil),
             ])
         case .error:
-            return AnyHashable([AnyHashable(loadFailure), AnyHashable(errorMessage)])
-        case .loading, .onboarding, .allConnected:
+            return AnyHashable([AnyHashable(errorMessage)])
+        case .onboarding, .allConnected:
             return AnyHashable(0)
         }
     }
@@ -335,9 +344,6 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
         switch item {
         case .signInAttempt:
             configureAttemptRow(cell, palette: palette)
-        case .loading:
-            // The state fills its row; it is not a card of its own.
-            ListScreen.stateRow(cell, .loading(String(localized: "Loading providers…")), palette: palette)
         case .onboarding:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.onboarding")
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
@@ -373,7 +379,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             cell.contentConfiguration = content
         case .error:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.error")
-            let message = loadFailure ?? errorMessage
+            let message = errorMessage
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }

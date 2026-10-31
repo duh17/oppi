@@ -46,7 +46,6 @@ enum ProviderSetupPromptListRow {
 struct ProviderConfigurationPresentation: Equatable {
     let state: ProviderSetupState
 
-    var showsLoading: Bool { state == .unknown }
     var showsProviderSections: Bool {
         state == .needsConfiguration || state == .configured
     }

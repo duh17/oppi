@@ -8,8 +8,12 @@ import UIKit
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
-/// `model-providers` (the connected and available groups over fixture usage).
+/// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
+/// `mcp-detail`, `mcp-failed`,
+/// `model-providers` (the connected and available groups over fixture usage),
+/// `model-providers-failed` (the status request answers 404) and
+/// `model-providers-loading` (with `SCREENSHOT_SWEEP_READ_DELAY`, which holds
+/// every read so a capture can see the load).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -153,6 +157,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? ""
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
+        SettingsSweepFixtureURLProtocol.readDelay = environment["SCREENSHOT_SWEEP_READ_DELAY"].flatMap(Double.init) ?? 0
 
         let credentials = ServerCredentials(
             host: "mac-studio.tail1234.ts.net",
@@ -195,7 +200,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page == "mcp" || page == "model-providers" {
+        if page == "mcp" || page == "model-providers" || page == "mcp-failed"
+            || page == "model-providers-failed" || page == "model-providers-loading" {
             // The MCP and provider screens wait for `apiClientReady`, so their
             // connection is a ready one whose requests the fixture answers, as
             // the Router and Metrics previews build theirs.
@@ -339,8 +345,32 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )
         case "mcp":
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
+        case "mcp-failed":
+            // The host's probe answers 404: what the list says when it cannot
+            // provide the servers is the one failed row (`mcp.retry`).
+            return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
         case "model-providers":
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
+        case "model-providers-failed", "model-providers-loading":
+            // The status request answers 404 (failed), or is held by
+            // `SCREENSHOT_SWEEP_READ_DELAY` (loading).
+            return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
+        case "agent-detail-failed":
+            return stack {
+                AgentDetailViewController(root: root, agentId: Self.agent.id) { _ in }
+            }
+        case "mcp-detail":
+            return stack {
+                McpServerDetailViewController(
+                    scope: Self.mcpGlobal,
+                    entry: Self.mcpGlobal.servers[0],
+                    client: client,
+                    serverId: server.id,
+                    serverName: server.name,
+                    signIn: McpSignInOwner(),
+                    root: root
+                )
+            }
         case "mcp-add":
             // The add-server form at the root instead of in its sheet, for a
             // capture of the form itself.
@@ -580,6 +610,17 @@ final class SettingsSweepPreviewController: PreviewRootController {
         if page == "skills-offline" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/skills"] = nil
         }
+        // The failure captures: the page's own request answers 404, so the list
+        // shows what it says when its load fails.
+        if page == "model-providers-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/provider-auth/status"] = nil
+        }
+        if page == "agent-detail-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/agents/\(agent.id)"] = nil
+        }
+        if page == "mcp-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/mcp/scopes/global/servers"] = nil
+        }
     }
 }
 
@@ -598,11 +639,20 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
     private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
+    /// How long a read's answer is held, so a capture can see the page loading.
+    nonisolated(unsafe) static var readDelay: TimeInterval = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if request.httpMethod == "GET", Self.readDelay > 0 {
+            nonisolated(unsafe) let fixture = self
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.readDelay) {
+                fixture.answer()
+            }
+            return
+        }
         guard let method = request.httpMethod, method != "GET" else {
             answer()
             return

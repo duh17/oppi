@@ -165,7 +165,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         if state.catalog == .cachedOffline, state.server != nil {
             sections.append(ListSection(.warning, items: [.cachedWarning]))
         }
-        if let row = stateRow(state) {
+        if let row = catalogStateRow(state) {
             sections.append(ListSection(.status, items: [], state: row))
         }
         switch state.catalog {
@@ -195,44 +195,53 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         return false
     }
 
+    /// The caption the catalog's compact loading row shows.
+    override func loadingCaption() -> String? { String(localized: "Loading skills…") }
+
     /// The list's state, where its rows would be: loading, a catalog this server
-    /// never loaded, nothing resolved, or nothing matched the search.
-    private func stateRow(_ state: ViewState) -> ListStateRow? {
+    /// never loaded, nothing resolved, or nothing matched the search. The store
+    /// owns the catalog's load, so the row is built from the store's sync state
+    /// with the kit's one row: a failure outranks a load in flight, and both
+    /// outrank the empty state.
+    private func catalogStateRow(_ state: ViewState) -> ListStateRow? {
+        stateRow(
+            hasContent: !state.presentation.visibleSkills.isEmpty,
+            isLoading: state.catalog == .firstLoad,
+            failure: state.catalog == .unavailable
+                ? String(localized: "Skills are unavailable. The selected server has no cached Skills catalog.")
+                : nil
+        )
+    }
+
+    /// Nothing resolved, or a search that matched nothing: the two empty states
+    /// this page has, each with the identifier it always had.
+    override func emptyState() -> LoadState? {
+        guard let state else { return nil }
         switch state.catalog {
-        case .firstLoad:
-            return ListStateRow(
-                state: .loading(String(localized: "Loading skills…")), identifier: "skills.loading"
-            )
-        case .unavailable:
-            return ListStateRow(
-                state: .failed(
-                    title: String(localized: "Skills are unavailable. The selected server has no cached Skills catalog."),
-                    message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
-                ),
-                identifier: "skills.retry"
+        case .filteredNoResults:
+            return .empty(
+                title: String(localized: "No skills match “\(state.presentation.query)”."),
+                systemImage: "sparkles.rectangle.stack"
             )
         case .empty:
-            return ListStateRow(
-                state: .empty(
-                    title: String(
-                        localized: "No skills found. Pi did not resolve any skills on \(state.server?.name ?? String(localized: "this server"))."
-                    ),
-                    systemImage: "sparkles.rectangle.stack"
+            return .empty(
+                title: String(
+                    localized: "No skills found. Pi did not resolve any skills on \(state.server?.name ?? String(localized: "this server"))."
                 ),
-                identifier: "skills.noSkills"
+                systemImage: "sparkles.rectangle.stack"
             )
-        case .filteredNoResults:
-            return ListStateRow(
-                state: .empty(
-                    title: String(localized: "No skills match “\(state.presentation.query)”."),
-                    systemImage: "sparkles.rectangle.stack"
-                ),
-                identifier: "skills.noResults"
-            )
-        case .cachedOffline, .content:
+        default:
             return nil
         }
+    }
+
+    /// The identifiers this page's state row has always had, one per kind.
+    override var stateRowIdentifiers: StateRowIdentifiers {
+        StateRowIdentifiers(
+            loading: "skills.loading",
+            failed: "skills.retry",
+            empty: state?.catalog == .filteredNoResults ? "skills.noResults" : "skills.noSkills"
+        )
     }
 
     override func inputs(of item: Item) -> AnyHashable {

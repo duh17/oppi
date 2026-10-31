@@ -110,15 +110,16 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     // MARK: - List
 
     override func sections() -> [ListSection<Section, Item>] {
-        var sections: [ListSection<Section, Item>] = [ListSection(.identity, items: [.identity])]
-        if let state = stateRow() { sections.append(ListSection(.status, items: [], state: state)) }
-        sections.append(ListSection(.prompt, header: "System Prompt", items: [.file, .prompt]))
-        sections.append(ListSection(
-            .tools,
-            footer: "Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled.",
-            items: [.tools]
-        ))
-        return sections
+        [
+            ListSection(.identity, items: [.identity]),
+            ListSection(.status, items: []),
+            ListSection(.prompt, header: "System Prompt", items: [.file, .prompt]),
+            ListSection(
+                .tools,
+                footer: "Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled.",
+                items: [.tools]
+            ),
+        ]
     }
 
     /// Only the system prompt's section carries a heading.
@@ -128,23 +129,13 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     override var animatesUpdates: Bool { false }
 
     /// A failed load: one row between the identity and the system prompt, with
-    /// Retry. It is a row, never an alert; `tools.error` (a failed save) is the
-    /// only alert.
-    private func stateRow() -> ListStateRow? {
-        guard let loadFailure else { return nil }
-        // A Retry keeps its row and turns it into the loading row.
-        if !isLoading {
-            return ListStateRow(
-                state: .failed(
-                    title: loadFailure,
-                    message: nil,
-                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
-                ),
-                identifier: "agents.pi.state"
-            )
-        }
-        return ListStateRow(state: .loading("Loading Pi settings…"), identifier: "agents.pi.state")
-    }
+    /// Retry, which turns into the loading row while the Retry runs. It is a row,
+    /// never an alert; `tools.error` (a failed save) is the only alert.
+    override func stateSection() -> Section? { .status }
+
+    override func loadingCaption() -> String? { String(localized: "Loading Pi settings…") }
+
+    override var stateRowIdentifiers: StateRowIdentifiers { StateRowIdentifiers("agents.pi.state") }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
@@ -299,7 +290,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     /// `loadPolicy`), and again on pull to refresh or after a Retry.
     override func load() async throws {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure("Server offline")
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         async let fetchedPrompt = apiClient.getPiSystemPrompt()
         async let fetchedTools = apiClient.getPiDefaultTools()

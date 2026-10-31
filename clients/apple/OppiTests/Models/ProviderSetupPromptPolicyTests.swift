@@ -7,7 +7,6 @@ struct ProviderSetupPromptPolicyTests {
         let presentation = ProviderConfigurationPresentation(state: .unknown)
 
         #expect(!ProviderSetupPromptPolicy.shouldShow(for: .unknown))
-        #expect(presentation.showsLoading)
         #expect(!presentation.showsProviderSections)
         #expect(presentation.summary(connectedCount: 0) == "Loading…")
     }
@@ -16,7 +15,6 @@ struct ProviderSetupPromptPolicyTests {
         let presentation = ProviderConfigurationPresentation(state: .unavailable)
 
         #expect(!ProviderSetupPromptPolicy.shouldShow(for: .unavailable))
-        #expect(!presentation.showsLoading)
         #expect(!presentation.showsProviderSections)
         #expect(presentation.summary(connectedCount: 0) == "Unavailable")
     }

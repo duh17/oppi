@@ -9,7 +9,7 @@ enum AgentsLoadStateTests {
     @MainActor
     @Suite("Agents list load states")
     struct AgentListViewControllerTests {
-        @Test("with no server the list shows one inline Server offline row, never an alert, and loads by itself when the server comes back")
+        @Test("with no server the list shows one inline Server is offline row, never an alert, and loads by itself when the server comes back")
         func offlineRowClearsWhenTheServerReturns() async throws {
             AgentsURLProtocol.reset()
             let root = makeTestAppRoot()
@@ -17,7 +17,7 @@ enum AgentsLoadStateTests {
             let window = try Self.show(screen)
             defer { Self.hide(window) }
 
-            let row = try #require(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server offline" })
+            let row = try #require(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server is offline" })
             #expect(row.accessibilityTraits.contains(.button))
             #expect(row.accessibilityHint == SettingsStateRowCell.retryTitle)
             #expect(Self.button("agents.row.pi", in: screen.view) != nil, "Pi stays listed")
@@ -44,60 +44,6 @@ enum AgentsLoadStateTests {
             }, "the state row leaves once the list loads")
         }
 
-        @Test("Retry keeps its row and shows loading, with the saved Agents listed or not, then recovers")
-        func retryKeepsTheRowWhileLoading() async throws {
-            AgentsURLProtocol.reset()
-            AgentsURLProtocol.mode = .failing
-            let root = makeTestAppRoot()
-            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
-            let screen = AgentListViewController(root: root)
-            let window = try Self.show(screen)
-            defer { Self.hide(window) }
-
-            // Nothing loaded yet: the failure says why and offers Retry.
-            let retry = try #require(await waitForStateRow(in: screen) {
-                $0.accessibilityTraits.contains(.button) && $0.accessibilityLabel?.isEmpty == false
-            })
-            #expect(retry.accessibilityLabel != "Server offline", "a failed request says what failed")
-            #expect(screen.presentedViewController == nil)
-
-            AgentsURLProtocol.mode = .held
-            retry.sendActions(for: .touchUpInside)
-            let loading = try #require(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Loading saved Agents…" })
-            #expect(loading === retry, "the same row, so VoiceOver focus stays on it")
-            #expect(!loading.accessibilityTraits.contains(.button))
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
-            AgentsURLProtocol.releaseHeldRequest()
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-                screen.view.layoutIfNeeded()
-                return Self.button("agents.row.reviewer", in: screen.view) != nil
-            })
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-                screen.view.layoutIfNeeded()
-                return Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
-            })
-
-            // The server drops: the loaded Agent stays and the row returns below it.
-            AgentsURLProtocol.mode = .failing
-            screen.beginAppearanceTransition(true, animated: false)
-            screen.endAppearanceTransition()
-            let again = try #require(await waitForStateRow(in: screen) { $0.accessibilityTraits.contains(.button) })
-            #expect(Self.button("agents.row.reviewer", in: screen.view) != nil,
-                    "the Agents it listed stay listed under the failure row")
-
-            // Retry with Agents listed still shows the loading row, not an empty gap.
-            AgentsURLProtocol.mode = .held
-            again.sendActions(for: .touchUpInside)
-            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Loading saved Agents…" } != nil)
-            #expect(Self.button("agents.row.reviewer", in: screen.view) != nil)
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
-            AgentsURLProtocol.releaseHeldRequest()
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-                screen.view.layoutIfNeeded()
-                return Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
-            }, "a successful retry clears the row")
-        }
-
         @Test("a load that was running when the server went away neither sticks on loading nor shows its late answer")
         func serverChangeMidLoadDropsTheOldResult() async throws {
             AgentsURLProtocol.reset()
@@ -116,14 +62,14 @@ enum AgentsLoadStateTests {
             // client that goes away is another subject: the load for it is
             // cancelled and the page ends in the offline row, not loading.
             connection.setAPIClientForTesting(nil)
-            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server offline" } != nil,
+            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server is offline" } != nil,
                     "no client ends the load instead of leaving the row loading")
 
             AgentsURLProtocol.releaseHeldRequest(agentId: "stale")
             #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
                 screen.view.layoutIfNeeded()
                 return Self.button("agents.row.stale", in: screen.view) == nil
-                    && Self.buttons("agents.state", in: screen.view).contains { !$0.isHiddenInHierarchy && $0.accessibilityLabel == "Server offline" }
+                    && Self.buttons("agents.state", in: screen.view).contains { !$0.isHiddenInHierarchy && $0.accessibilityLabel == "Server is offline" }
             }, "the old server's answer is dropped")
         }
 
@@ -218,26 +164,6 @@ enum AgentsLoadStateTests {
             #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
             #expect(row?.accessibilityTraits.contains(.button) == true)
         }
-
-        @Test("Pi shows the certificate failure with Retry instead of nothing")
-        func piShowsTheRejection() async throws {
-            AgentsURLProtocol.reset()
-            AgentsURLProtocol.mode = .certificateRejected
-            let root = makeTestAppRoot()
-            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
-            let screen = PiAgentDetailViewController(root: root)
-            let window = try AgentListViewControllerTests.show(screen)
-            defer { AgentListViewControllerTests.hide(window) }
-
-            var row: UIButton?
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-                screen.view.layoutIfNeeded()
-                row = AgentListViewControllerTests.buttons("agents.pi.state", in: screen.view)
-                    .first { !$0.isHiddenInHierarchy && $0.accessibilityLabel == PinnedServerTrustDelegate.rejectionMessage }
-                return row != nil
-            })
-            #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
-        }
     }
 
     @MainActor
@@ -261,6 +187,7 @@ enum AgentsLoadStateTests {
             let pi = PiAgentDetailViewController(root: root)
             #expect(pi.inputs(of: .file) == pi.inputs(of: .file))
         }
+
         private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
             screen.presentedViewController != nil || window.rootViewController?.presentedViewController != nil
         }
@@ -279,32 +206,7 @@ enum AgentsLoadStateTests {
             return found
         }
 
-        @Test("a failed load is an inline row with Retry, never an alert; Retry shows loading in the same row")
-        func failedLoadIsAnInlineRow() async throws {
-            AgentsURLProtocol.reset()
-            AgentsURLProtocol.mode = .failing
-            let root = makeTestAppRoot()
-            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
-            let screen = PiAgentDetailViewController(root: root)
-            let window = try AgentListViewControllerTests.show(screen)
-            defer { AgentListViewControllerTests.hide(window) }
-
-            let failure = try #require(await waitForStateRow(in: screen) {
-                $0.accessibilityTraits.contains(.button) && $0.accessibilityLabel?.isEmpty == false
-            })
-            #expect(!hasAlert(screen, window))
-
-            AgentsURLProtocol.mode = .held
-            failure.sendActions(for: .touchUpInside)
-            let loading = try #require(await waitForStateRow(in: screen) { !$0.accessibilityTraits.contains(.button) })
-            #expect(loading === failure, "the same row, so VoiceOver focus stays on it")
-            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.hasHeldRequest })
-            AgentsURLProtocol.failHeldRequests()
-            #expect(await waitForStateRow(in: screen) { $0.accessibilityTraits.contains(.button) } != nil)
-            #expect(!hasAlert(screen, window))
-        }
-
-        @Test("with no server the page says Server offline in a row")
+        @Test("with no server the page says Server is offline in a row")
         func offlineIsAnInlineRow() async throws {
             AgentsURLProtocol.reset()
             let root = makeTestAppRoot()
@@ -312,7 +214,7 @@ enum AgentsLoadStateTests {
             let window = try AgentListViewControllerTests.show(screen)
             defer { AgentListViewControllerTests.hide(window) }
 
-            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server offline" } != nil)
+            #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server is offline" } != nil)
             #expect(!hasAlert(screen, window))
         }
 
@@ -415,10 +317,6 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
 
     static func releaseHeldRequest(agentId: String = "reviewer") {
         for request in takeHeld() { request.respond(status: 200, body: agentsBody(id: agentId)) }
-    }
-
-    static func failHeldRequests() {
-        for request in takeHeld() { request.respond(status: 500, body: Data(#"{"error":"down"}"#.utf8)) }
     }
 
     private static func takeHeld() -> [AgentsURLProtocol] {
