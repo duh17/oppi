@@ -1,6 +1,6 @@
 import UIKit
 
-/// Settings > SSH Terminal > Bottom Bar: which buttons the terminal's bottom
+/// Settings > Terminal > Bottom Bar: which buttons the terminal's bottom
 /// bar shows, and in what order. Middle holds the customizable middle pill
 /// (Type in Terminal, Chat Bar, keys, Paste, Browse Files Here); Right holds
 /// Herdr, Rex, and the switcher, which sit beside … at the trailing end. A row's

@@ -13,7 +13,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 - [Reverse proxy](reverse-proxy.md): put Oppi behind Caddy, nginx, or Cloudflare Tunnel
 - [Sandbox workspaces](sandbox.md): run agent tools in a VM
 - [Oppi Mirror](oppi-mirror.md): show a live terminal Pi session in Oppi
-- [SSH Terminal](ssh-terminal.md): shell on a saved host
+- [Terminal](ssh-terminal.md): shell on a saved host
 - [Document viewers](document-viewers.md): viewers, wiki links, file editing
 - [Provider quotas](provider-quotas.md): remaining quota and pace
 - [Deep links](deeplinks.md): `oppi://` links

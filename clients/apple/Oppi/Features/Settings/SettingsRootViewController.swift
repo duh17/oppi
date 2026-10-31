@@ -217,7 +217,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .sessions: String(localized: "Session Rows")
         case .voice: String(localized: "Voice & Dictation")
         case .tailscale: String(localized: "Tailscale")
-        case .sshTerminal: String(localized: "SSH Terminal")
+        case .sshTerminal: String(localized: "Terminal")
         case .privacy: String(localized: "Privacy & Security")
         case .experiments: String(localized: "Experiments")
         case .storage: String(localized: "Storage & About")

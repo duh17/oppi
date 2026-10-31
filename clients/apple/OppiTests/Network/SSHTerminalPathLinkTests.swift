@@ -267,7 +267,7 @@ struct SSHTerminalHostPathPolicyTests {
 struct SSHTerminalMenuHeaderTests {
     @Test func theHeaderNamesTheScreenAndTheFolder() {
         #expect(SSHTerminalMenuHeader.text(title: "pi", folder: "") == "pi")
-        #expect(SSHTerminalMenuHeader.text(title: "", folder: "") == "SSH Terminal")
+        #expect(SSHTerminalMenuHeader.text(title: "", folder: "") == "Terminal")
         #expect(SSHTerminalMenuHeader.text(title: "pi", folder: "/Users/duh/workspace") == "pi — /Users/duh/workspace")
         #expect(SSHTerminalMenuHeader.text(title: "  pi  ", folder: "  /tmp  ") == "pi — /tmp")
     }
@@ -287,7 +287,7 @@ struct SSHTerminalMenuHeaderTests {
         )
         // A title the shell set wins, and no host at all keeps the generic name.
         #expect(SSHTerminalMenuHeader.name(shellTitle: " pi ", hostLabel: label, hostName: nil, shellFolder: "/tmp") == "pi")
-        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: "", hostName: nil, shellFolder: "") == "SSH Terminal")
+        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: "", hostName: nil, shellFolder: "") == "Terminal")
         // Without a profile name (a preview), the label stays.
         #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: "host", hostName: nil, shellFolder: "/tmp") == "host")
     }

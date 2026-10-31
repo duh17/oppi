@@ -2,7 +2,7 @@ import GhosttyVt
 import UIKit
 import UniformTypeIdentifiers
 
-/// A button the SSH terminal's bottom bar can show. Settings > SSH Terminal >
+/// A button the SSH terminal's bottom bar can show. Settings > Terminal >
 /// Bottom Bar picks which and in what order (`SSHTerminalBarLayout`), and the
 /// cases read in the default order.
 ///

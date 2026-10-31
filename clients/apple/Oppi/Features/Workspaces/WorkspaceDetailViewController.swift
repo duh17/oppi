@@ -790,7 +790,7 @@ extension WorkspaceDetailViewController {
         let configurationLabel: String
         /// The workspace may be a Git repository (`ChatBarItems.mayOfferGit`).
         let showsGit: Bool
-        /// SSH Terminal is on, so the bar offers "Open Terminal here".
+        /// Terminal is on, so the bar offers "Open Terminal here".
         let showsTerminal: Bool
         /// The rail's worktree item carries the title's menu.
         let title: TitleState

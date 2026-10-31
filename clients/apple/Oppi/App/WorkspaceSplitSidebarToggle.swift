@@ -1,7 +1,7 @@
 import UIKit
 
 /// The split detail root's sidebar toggle (`workspace.split.sidebarToggle`)
-/// for the screens there (All Sessions, SSH Terminal's host list, and the other
+/// for the screens there (All Sessions, the Terminal tab's host list, and the other
 /// routes that take `showsSidebarToggle`). The split controller
 /// hides its own display-mode button, so the detail root carries this one.
 @MainActor

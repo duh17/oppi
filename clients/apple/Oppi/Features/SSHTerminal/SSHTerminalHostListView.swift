@@ -28,7 +28,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case trustMismatch
         case addHost
         case host(UUID)
-        /// Settings > SSH Terminal > Bottom Bar.
+        /// Settings > Terminal > Bottom Bar.
         case bottomBar
         case reset
     }
@@ -41,7 +41,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
-        title = "SSH Terminal"
+        title = "Terminal"
         navigationItem.largeTitleDisplayMode = .inline
     }
 

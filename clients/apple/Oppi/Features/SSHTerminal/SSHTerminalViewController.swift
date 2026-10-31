@@ -50,7 +50,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var backToLiveThemeID: ThemeID?
     private let statusGlyph = SSHTerminalStatusGlyphButton()
     private lazy var morePill = SSHTerminalMorePill(status: statusGlyph)
-    /// The customizable middle of the bottom bar (Settings > SSH Terminal >
+    /// The customizable middle of the bottom bar (Settings > Terminal >
     /// Bottom Bar), between Back and the trailing pill.
     private let middlePill = SSHTerminalBarMiddlePill()
     private var barLayout = AppPreferences.SSHTerminalBar.layout
@@ -430,7 +430,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             }
         }
 
-        navigationItem.title = channel.title.isEmpty ? "SSH Terminal" : channel.title
+        navigationItem.title = channel.title.isEmpty ? "Terminal" : channel.title
         updatePolling()
         refreshPairedHome()
         updateFloatingControls(themeID: chromeID)
@@ -872,7 +872,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    /// Settings > SSH Terminal > Bottom Bar, pushed over the terminal so the
+    /// Settings > Terminal > Bottom Bar, pushed over the terminal so the
     /// bar being customized is one Back away.
     private func customizeBar() {
         Router.push(SSHTerminalBarSettingsViewController(), from: self)

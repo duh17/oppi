@@ -89,9 +89,9 @@ enum WorkspaceSidebarPrimaryUtilities {
             target: .sshTerminal,
             title: "Terminal",
             systemImage: "terminal",
-            accessibilityLabel: "Open SSH Terminal",
+            accessibilityLabel: "Open Terminal",
             accessibilityIdentifier: "workspace.terminal.open",
-            accessibilityHint: "Opens your saved SSH hosts"
+            accessibilityHint: "Opens your saved hosts and Rex sessions"
         ),
     ]
 

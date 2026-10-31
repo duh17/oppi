@@ -180,7 +180,7 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 - [Reverse proxy](docs/reverse-proxy.md)
 - [Sandbox workspaces](docs/sandbox.md)
 - [Oppi Mirror](docs/oppi-mirror.md)
-- [SSH Terminal](docs/ssh-terminal.md)
+- [Terminal](docs/ssh-terminal.md)
 - [Document viewers](docs/document-viewers.md)
 - [Provider quotas](docs/provider-quotas.md)
 - [Deep links](docs/deeplinks.md)

@@ -321,13 +321,13 @@ enum SSHTerminalMenuHeader {
         if !shell.isEmpty { return shell }
         let reportsFolder = !shellFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let host = reportsFolder ? (hostName ?? hostLabel) : hostLabel
-        return host.isEmpty ? "SSH Terminal" : host
+        return host.isEmpty ? "Terminal" : host
     }
 
     static func text(title: String, folder: String) -> String {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = title.isEmpty ? "SSH Terminal" : title
+        let name = title.isEmpty ? "Terminal" : title
         guard !folder.isEmpty else { return name }
         let room = maximumLength - name.count - 3
         guard room > 8 else { return name }

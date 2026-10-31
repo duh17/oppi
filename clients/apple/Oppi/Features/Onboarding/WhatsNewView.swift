@@ -117,7 +117,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             id: "ssh-terminal",
             icon: .symbol("terminal"),
             iconColor: \.green,
-            title: String(localized: "SSH Terminal"),
+            title: String(localized: "Terminal"),
             description: String(localized: "The terminal is out of Experiments and much more polished. We rewrote its rendering on the GPU, so it is a lot faster and scrolls smoothly, and added support for the Kitty image protocol. With an SSH host set up, a chat can open a terminal in its own folder.")
         ),
         WhatsNewFeature(

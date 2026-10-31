@@ -243,7 +243,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Allow Paste alert and blocks the main thread until it is answered.
         pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold for Open, Copy, and Paste, or hold then drag to select."
+        accessibilityLabel = "Terminal. Tap to hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold for Open, Copy, and Paste, or hold then drag to select."
         addInteraction(editMenu)
         installGestures()
         bar = makeAccessoryBar()

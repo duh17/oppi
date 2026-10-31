@@ -52,7 +52,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         var config = SettingsListStyle.layoutConfiguration(headers: true, footers: true)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
-        title = "SSH Terminal"
+        title = "Terminal"
         navigationItem.largeTitleDisplayMode = .inline
     }
 
