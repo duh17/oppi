@@ -3,15 +3,16 @@ import UIKit
 /// Pi: the server's global Pi configuration. Its system prompt (read it, or
 /// read and comment on SYSTEM.md), its tools (a pushed page), and the compact
 /// Oppi bar, which starts a guided session that edits SYSTEM.md.
+///
+/// A `ListScreenController`: the base owns the list, the failure row, and the
+/// pull to refresh. This page loads once when it appears, so coming back from
+/// Tools keeps the selection that page saved.
 @MainActor
-final class PiAgentDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case identity, state, prompt, tools }
-    private enum Item: Hashable { case identity, state, file, prompt, tools }
+final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewController.Section, PiAgentDetailViewController.Item> {
+    enum Section: Hashable, Sendable { case identity, status, prompt, tools }
+    enum Item: Hashable, Sendable { case identity, file, prompt, tools }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private let refreshControl = UIRefreshControl()
     private let tools = PiToolsEditor()
 
     private let fileReview = RouterModalPresenter()
@@ -35,7 +36,6 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private var showsDefaultPrompt = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
 
     init(root: AppRootEnvironment) {
         self.root = root
@@ -49,10 +49,12 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Pi", listIdentifier: "agents.pi.list",
+            headers: true, footers: true,
+            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+        )
         traitOverrides.appRootEnvironment = root
-        title = "Pi"
-        navigationItem.largeTitleDisplayMode = .never
     }
 
     @available(*, unavailable)
@@ -65,26 +67,13 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "agents.pi.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ListScreen.pinFullWidth(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
         for presenter in [fileReview, defaultPromptViewer] { presenter.anchor = self }
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Coming back from Tools keeps the selection it saved.
-        guard !tools.hasLoadedTools else { return }
-        startLoad()
-    }
+    /// Coming back from Tools keeps the selection it saved: the page loads
+    /// once, and a pull to refresh or a Retry loads again.
+    override var loadsWhenAppearing: Bool { !tools.hasLoadedTools }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
@@ -98,11 +87,6 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         setNeedsUpdateProperties()
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         composer.insetContent(of: collectionView)
@@ -110,11 +94,9 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // Only a SYSTEM.md that exists is a host file to name.
         composer.model.updateTarget(id: nil, name: "Pi global configuration", path: prompt?.resolvedPath)
         _ = tools.defaultTools
-        applySnapshot()
         updateModals()
         // A failed save of the tools, which the Tools page made.
         errorAlerts.sync(title: "Pi", message: tools.error) { [tools] shown in
@@ -124,72 +106,76 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.identity])
-        if loadError != nil { snapshot.appendSections([.state]) }
-        snapshot.appendSections([.prompt, .tools])
-        snapshot.appendItems([.identity], toSection: .identity)
-        if loadError != nil { snapshot.appendItems([.state], toSection: .state) }
-        snapshot.appendItems([.file, .prompt], toSection: .prompt)
-        snapshot.appendItems([.tools], toSection: .tools)
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+    override func sections() -> [ListSection<Section, Item>] {
+        var sections: [ListSection<Section, Item>] = [ListSection(.identity, items: [.identity])]
+        if let state = stateRow() { sections.append(ListSection(.status, items: [], state: state)) }
+        sections.append(ListSection(.prompt, header: "System Prompt", items: [.file, .prompt]))
+        sections.append(ListSection(
+            .tools,
+            footer: "Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled.",
+            items: [.tools]
+        ))
+        return sections
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
+    /// Only the system prompt's section carries a heading.
+    override func showsHeader(for section: Section) -> Bool { section == .prompt }
+
+    /// A load settles the page in place; its rows should not slide.
+    override var animatesUpdates: Bool { false }
+
+    /// A failed load: one row between the identity and the system prompt, with
+    /// Retry. It is a row, never an alert; `tools.error` (a failed save) is the
+    /// only alert.
+    private func stateRow() -> ListStateRow? {
+        guard let loadError else { return nil }
+        // A Retry keeps its row and turns it into the loading row.
+        if !isLoading {
+            return ListStateRow(
+                state: .failed(
+                    title: loadError,
+                    message: nil,
+                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                ),
+                identifier: "agents.pi.state"
+            )
         }
-        let state = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            // A Retry keeps its row and turns it into the loading row.
-            if !isLoading, let message = loadError {
-                cell.configure(.failure(message, retry: { [weak self] in self?.startLoad() }), identifier: "agents.pi.state")
-            } else {
-                cell.configure(.loading("Loading Pi settings…"), identifier: "agents.pi.state")
-            }
+        return ListStateRow(state: .loading("Loading Pi settings…"), identifier: "agents.pi.state")
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .identity, .file:
+            return AnyHashable(0)
+        case .prompt:
+            return AnyHashable([
+                AnyHashable(source == .file), AnyHashable(prompt?.content), AnyHashable(isLoading),
+            ])
+        case .tools:
+            return AnyHashable(AgentManagementPresentation.piToolsSummary(defaultTools: tools.defaultTools))
         }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .prompt ? "System Prompt" : nil
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .tools:
-                content.text = "Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled."
-            default:
-                content.text = nil
-            }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            if case .state = item {
-                collectionView.dequeueConfiguredReusableCell(using: state, for: indexPath, item: item)
-            } else {
-                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
+    }
+
+    /// The page's rows: one `SidebarListCell`, a themed card, filled by
+    /// `configure(_:item:)`.
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = row
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
-        case .state:
-            break // drawn by the state registration, never by this cell
         case .identity:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -314,17 +300,10 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         }
     }
 
-    private func refresh() {
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in
-            await self?.load()
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
-    private func startLoad() {
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.load() }
+    /// The Pi configuration: on pull to refresh and after a Retry; the page
+    /// loads once when it appears (see `loadsWhenAppearing`).
+    override func refresh() async {
+        await load()
     }
 
     private func load() async {

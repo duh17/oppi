@@ -8,12 +8,14 @@ import UIKit
 /// labeled row, not a bottom-bar compose glyph, so it does not read as a third
 /// edit control beside Edit and the change bar. Edits go back to the list
 /// through `onUpdated`.
+///
+/// A `ListScreenController`: the base owns the list, the snapshot, the section
+/// headings, and the load on appearance and pull to refresh. This page keeps
+/// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
-final class AgentDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case state, definition, prompt, defaults, resources, constraints, run }
-    private enum Item: Hashable {
-        case loading
-        case notFound
+final class AgentDetailViewController: ListScreenController<AgentDetailViewController.Section, AgentDetailViewController.Item> {
+    enum Section: Hashable, Sendable { case definition, prompt, defaults, resources, constraints, run }
+    enum Item: Hashable, Sendable {
         case icon
         case value(title: String, value: String)
         case block(title: String, value: String)
@@ -28,9 +30,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private let root: AppRootEnvironment
     private let agentId: String
     private let onUpdated: (StoredAgentDefinition) -> Void
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private let refreshControl = UIRefreshControl()
     private let editItem = UIBarButtonItem()
     private let actionsItem = UIBarButtonItem()
 
@@ -68,7 +67,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private var showsSchedule = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
 
     init(root: AppRootEnvironment, agentId: String, onUpdated: @escaping (StoredAgentDefinition) -> Void) {
         self.root = root
@@ -83,9 +81,12 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Agent", listIdentifier: "agents.detail.list",
+            headers: true,
+            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+        )
         traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
         editItem.primaryAction = UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { [weak self] _ in
             self?.editingAgent = self?.agent
         }
@@ -112,32 +113,11 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "agents.detail.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ListScreen.pinFullWidth(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
         for presenter in presenters { presenter.anchor = self }
         // The icon picker's style follows the size classes.
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
-        }
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        cancelLoad()
-        loadTask = Task { [weak self] in
-            await self?.loadAgent()
-            // A replaced load leaves the resources to the load that replaced it.
-            guard !Task.isCancelled else { return }
-            await self?.loadResources()
         }
     }
 
@@ -155,7 +135,10 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        cancelLoad()
+        // The base cancels the load that was running; its resource flag is this
+        // page's to clear, since a cancelled load skips its own reset so it
+        // cannot clear a newer load's flag.
+        isLoadingResources = false
     }
 
     override func viewDidLayoutSubviews() {
@@ -165,11 +148,9 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = agent?.name ?? "Agent"
         updateBarItems()
         updateComposer()
-        applySnapshot()
         updateModals()
         // OK clears only the error the person read, never a newer one.
         errorAlerts.sync(title: "Agent", message: error) { [weak self] shown in
@@ -203,57 +184,80 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        if let agent {
-            let definition = agent.definition
-            snapshot.appendSections([.definition])
-            var items: [Item] = [.icon, .value(title: "Name", value: definition.name)]
-            if let description = definition.description, !description.isEmpty {
-                items.append(.block(title: "Description", value: description))
-            }
-            items.append(.value(title: "Status", value: agent.status.rawValue.capitalized))
-            items.append(.value(title: "Version", value: "v\(agent.version)"))
-            snapshot.appendItems(items, toSection: .definition)
+    override func sections() -> [ListSection<Section, Item>] {
+        // Without an Agent there are no rows: the page is its state.
+        guard let agent else { return [] }
+        let definition = agent.definition
+        var sections: [ListSection<Section, Item>] = []
 
-            if definition.instructions != nil {
-                snapshot.appendSections([.prompt])
-                snapshot.appendItems([.prompt], toSection: .prompt)
-            }
-
-            snapshot.appendSections([.defaults])
-            let defaults = definition.sessionDefaults
-            snapshot.appendItems([
-                .value(title: "Model", value: defaults?.model?.nilIfBlank ?? "Server default"),
-                .value(title: "Thinking Level", value: defaults?.thinkingLevel?.rawValue ?? "Default"),
-            ] + toolDefaultItems(defaults), toSection: .defaults)
-
-            snapshot.appendSections([.resources])
-            snapshot.appendItems(resourceItems(definition.resources), toSection: .resources)
-
-            if let constraints = definition.launchConstraints {
-                snapshot.appendSections([.constraints])
-                snapshot.appendItems([
-                    .value(title: "Runtime", value: constraints.requiredRuntime?.rawValue.capitalized ?? "Any"),
-                    .value(title: "Workspaces", value: allowedWorkspaceNames(constraints.allowedWorkspaceIds)),
-                ], toSection: .constraints)
-            }
-
-            snapshot.appendSections([.run])
-            var run: [Item] = [.schedule]
-            // Only an active Agent starts a session, as only it offers Edit.
-            if agent.status == .active { run.append(.startSession) }
-            run.append(.caption(connection.workspaceStore.workspaces.isEmpty
-                ? "Create or sync a workspace before starting or scheduling this Agent."
-                : "Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time."))
-            snapshot.appendItems(run, toSection: .run)
-        } else {
-            snapshot.appendSections([.state])
-            snapshot.appendItems([isLoading ? .loading : .notFound], toSection: .state)
+        var items: [Item] = [.icon, .value(title: "Name", value: definition.name)]
+        if let description = definition.description, !description.isEmpty {
+            items.append(.block(title: "Description", value: description))
         }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        items.append(.value(title: "Status", value: agent.status.rawValue.capitalized))
+        items.append(.value(title: "Version", value: "v\(agent.version)"))
+        sections.append(ListSection(.definition, header: "Definition", items: items))
+
+        if let instructions = definition.instructions {
+            sections.append(ListSection(
+                .prompt, header: Self.systemPromptTitle(instructions.mode), items: [.prompt]
+            ))
+        }
+
+        let defaults = definition.sessionDefaults
+        sections.append(ListSection(.defaults, header: "Pi Session Defaults", items: [
+            .value(title: "Model", value: defaults?.model?.nilIfBlank ?? "Server default"),
+            .value(title: "Thinking Level", value: defaults?.thinkingLevel?.rawValue ?? "Default"),
+        ] + toolDefaultItems(defaults)))
+
+        sections.append(ListSection(.resources, header: "Resources", items: resourceItems(definition.resources)))
+
+        if let constraints = definition.launchConstraints {
+            sections.append(ListSection(.constraints, header: "Launch Constraints", items: [
+                .value(title: "Runtime", value: constraints.requiredRuntime?.rawValue.capitalized ?? "Any"),
+                .value(title: "Workspaces", value: allowedWorkspaceNames(constraints.allowedWorkspaceIds)),
+            ]))
+        }
+
+        var run: [Item] = [.schedule]
+        // Only an active Agent starts a session, as only it offers Edit.
+        if agent.status == .active { run.append(.startSession) }
+        run.append(.caption(connection.workspaceStore.workspaces.isEmpty
+            ? "Create or sync a workspace before starting or scheduling this Agent."
+            : "Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time."))
+        sections.append(ListSection(.run, header: "Run", items: run))
+        return sections
+    }
+
+    /// A load settles the page in place; its rows should not slide.
+    override var animatesUpdates: Bool { false }
+
+    /// Nothing loaded yet, or no such Agent: the page is its state.
+    override func wholeScreenState() -> LoadState? {
+        guard agent == nil else { return nil }
+        return isLoading
+            ? .loading(String(localized: "Loading agent…"))
+            : .empty(title: String(localized: "Agent Not Found"), systemImage: "questionmark.circle")
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .icon:
+            return AnyHashable(agent?.definition.icon)
+        case .prompt:
+            guard let instructions = agent?.definition.instructions else { return AnyHashable(0) }
+            return AnyHashable([AnyHashable(Self.systemPromptTitle(instructions.mode)), AnyHashable(instructions.text)])
+        case .schedule:
+            return AnyHashable(connection.workspaceStore.workspaces.isEmpty)
+        case .startSession:
+            return AnyHashable([
+                AnyHashable(agent?.name), AnyHashable(agent?.status.rawValue),
+                AnyHashable(connection.workspaceStore.workspaces.isEmpty),
+                AnyHashable(connection.currentServerId),
+            ])
+        case .value, .block, .resourceList, .notice, .caption:
+            return AnyHashable(0)
+        }
     }
 
     private func toolDefaultItems(_ defaults: AgentSessionDefaults?) -> [Item] {
@@ -296,59 +300,27 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         return .resourceList(title: title, value: (displayValues ?? values).joined(separator: ", "))
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).flatMap { self?.title(for: $0) }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
+    /// The page's rows: one `SidebarListCell`, a themed card, filled by
+    /// `configure(_:item:)`.
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        configure(cell, item: item)
     }
 
-    private func title(for section: Section) -> String? {
-        switch section {
-        case .state: nil
-        case .definition: "Definition"
-        case .prompt: agent?.definition.instructions.map { Self.systemPromptTitle($0.mode) }
-        case .defaults: "Pi Session Defaults"
-        case .resources: "Resources"
-        case .constraints: "Launch Constraints"
-        case .run: "Run"
-        }
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = row
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         let rowInsets = NSDirectionalEdgeInsets(top: 11, leading: 0, bottom: 11, trailing: 0)
         switch item {
-        case .loading:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Loading agent…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
-        case .notFound:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .empty(
-                    title: String(localized: "Agent Not Found"),
-                    systemImage: "questionmark.circle"
-                ),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
         case .icon:
             guard let agent else { return }
             ListScreen.buttonRow(
@@ -663,20 +635,15 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: - Actions
 
-    private func refresh() {
-        cancelLoad()
-        loadTask = Task { [weak self] in
-            await self?.loadAgent()
-            if !Task.isCancelled { await self?.loadResources() }
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
-    /// A cancelled load skips its resource flag reset so it cannot clear a
-    /// newer load's flag; the canceller clears it instead.
-    private func cancelLoad() {
-        loadTask?.cancel()
+    /// The Agent and its resource catalogs: on every appearance, on pull to
+    /// refresh, and after a Retry.
+    override func refresh() async {
+        // A cancelled load skips its resource flag reset so it cannot clear a
+        // newer load's flag; the canceller clears it instead.
         isLoadingResources = false
+        await loadAgent()
+        guard !Task.isCancelled else { return }
+        await loadResources()
     }
 
     private func loadAgent() async {
@@ -693,7 +660,8 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             agent = loaded
             error = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             self.error = error.localizedDescription
         }
     }

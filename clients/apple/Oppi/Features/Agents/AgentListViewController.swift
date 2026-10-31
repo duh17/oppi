@@ -3,24 +3,26 @@ import UIKit
 /// Agents: Pi (the server's global Pi configuration) and the saved Agents,
 /// with the guided composer to describe a new one. A row pushes its detail,
 /// which reports edits back.
+///
+/// A `ListScreenController`: the base owns the list, the loading and failure
+/// row, and the load on appearance and pull to refresh. This page keeps its
+/// rows, its composer, and the sidebar toggle.
 @MainActor
-final class AgentListViewController: UIViewController, UICollectionViewDelegate {
+final class AgentListViewController: ListScreenController<AgentListViewController.Section, AgentListViewController.Item> {
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
     }
 
-    private enum Item: Hashable {
+    enum Section: Hashable, Sendable {
+        case agents, status
+    }
+
+    enum Item: Hashable, Sendable {
         case pi
         case saved(String)
-        /// Saved Agents are loading, or the load failed. One row, as in
-        /// Extensions and MCP Servers.
-        case state
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Int, Item>?
-    private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
     private var sidebarToggle: UIBarButtonItem?
 
@@ -33,8 +35,6 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     private var error: String? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
-    private var isOnScreen = false
     /// The server and API client the last load started with. The page reads
     /// both in `updateProperties()`, so a connection that comes up, drops, or
     /// moves to another server reloads the list without a Retry.
@@ -65,10 +65,12 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Agents", listIdentifier: "agents.list",
+            headers: true, footers: true,
+            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+        )
         traitOverrides.appRootEnvironment = root
-        title = "Agents"
-        navigationItem.largeTitleDisplayMode = .never
     }
 
     @available(*, unavailable)
@@ -80,35 +82,12 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "agents.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ListScreen.pinFullWidth(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Like the SwiftUI `.task` it replaces, a load each time it shows.
-        isOnScreen = true
-        startLoad()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
-        loadTask?.cancel()
     }
 
     override func viewDidLayoutSubviews() {
@@ -118,11 +97,9 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
         // The connection or the server changed under the screen: load again.
-        if isOnScreen, currentSource != loadedSource { startLoad() }
-        applySnapshot()
+        if isShowing, currentSource != loadedSource { setNeedsRefresh() }
     }
 
     /// The sidebar toggle at the split detail root.
@@ -136,69 +113,73 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
-        snapshot.appendSections([0])
+    override func sections() -> [ListSection<Section, Item>] {
         // A diffable list traps on a repeated item; a repeated agent id shows once.
         var shown = Set<Item>()
-        snapshot.appendItems(AgentManagementPresentation.rows(savedAgents: agents).map { row in
+        let items = AgentManagementPresentation.rows(savedAgents: agents).map { row in
             switch row {
             case .pi: Item.pi
             case .saved(let agent): Item.saved(agent.id)
             }
-        }.filter { shown.insert($0).inserted })
-        if error != nil || (isLoading && agents.isEmpty) {
-            snapshot.appendItems([.state])
-        }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        }.filter { shown.insert($0).inserted }
+        var sections: [ListSection<Section, Item>] = [ListSection(
+            .agents,
+            header: "Agents",
+            footer: "Pi uses the server's global Pi configuration. Saved Agents add reusable instructions, resources, and session defaults.",
+            items: items
+        )]
+        if let state = stateRow() { sections.append(ListSection(.status, items: [], state: state)) }
+        return sections
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
+    /// A load settles the list in place; its rows should not slide.
+    override var animatesUpdates: Bool { false }
+
+    /// Saved Agents are loading, or the load failed: one row under Pi and the
+    /// Agents it already has, with Retry.
+    private func stateRow() -> ListStateRow? {
+        guard error != nil || (isLoading && agents.isEmpty) else { return nil }
+        // A Retry keeps its row and turns it into the loading row.
+        if !isLoading, let error {
+            return ListStateRow(
+                state: .failed(
+                    title: error,
+                    message: nil,
+                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                ),
+                identifier: "agents.state"
+            )
         }
-        let state = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            // A Retry keeps its row and turns it into the loading row.
-            if !isLoading, let message = error {
-                cell.configure(.failure(message, retry: { [weak self] in self?.startLoad() }), identifier: "agents.state")
-            } else {
-                cell.configure(.loading("Loading saved Agents…"), identifier: "agents.state")
-            }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { view, _, _ in
-            var content = UIListContentConfiguration.header()
-            content.text = "Agents"
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { view, _, _ in
-            var content = UIListContentConfiguration.footer()
-            content.text = "Pi uses the server's global Pi configuration. Saved Agents add reusable instructions, resources, and session defaults."
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            if case .state = item {
-                collectionView.dequeueConfiguredReusableCell(using: state, for: indexPath, item: item)
-            } else {
-                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
+        return ListStateRow(state: .loading("Loading saved Agents…"), identifier: "agents.state")
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
+        guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
+        return AnyHashable([
+            AnyHashable(agent.name), AnyHashable(agent.version), AnyHashable(agent.description),
+            AnyHashable(agent.icon), AnyHashable(agent.updatedAt),
+        ])
+    }
+
+    /// The page's rows: one `SidebarListCell`, a themed card, filled by
+    /// `configure(_:item:)`.
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = row
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .pi:
             ListScreen.buttonRow(cell, identifier: "agents.row.pi", label: "Pi", value: "Global Pi configuration") { [weak self] in
@@ -255,8 +236,6 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
                 )
             }
             cell.accessories = [.disclosureIndicator()]
-        case .state:
-            break // drawn by the state registration, never by this cell
         }
     }
 
@@ -331,19 +310,11 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         )
     }
 
-    private func refresh() {
-        loadTask?.cancel()
+    /// The active server's saved Agents: on every appearance, on pull to
+    /// refresh, and after a Retry.
+    override func refresh() async {
         loadedSource = currentSource
-        loadTask = Task { [weak self] in
-            await self?.loadAgents()
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
-    private func startLoad() {
-        loadTask?.cancel()
-        loadedSource = currentSource
-        loadTask = Task { [weak self] in await self?.loadAgents() }
+        await loadAgents()
     }
 
     private func loadAgents() async {

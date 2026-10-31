@@ -4,12 +4,14 @@ import UIKit
 /// switch (or Restore), and its recent runs. Edit opens the native editor;
 /// the actions menu offers Archive; the compact Oppi bar describes a change.
 /// Changes go back to the list through `onChanged`.
+///
+/// A `ListScreenController`: the base owns the list, the snapshot, the section
+/// headings, and the load on appearance and pull to refresh. This page keeps
+/// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
-final class ScheduleDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case state, summary, instructions, runWith, actions, history }
-    private enum Item: Hashable {
-        case loading
-        case notFound
+final class ScheduleDetailViewController: ListScreenController<ScheduleDetailViewController.Section, ScheduleDetailViewController.Item> {
+    enum Section: Hashable, Sendable { case summary, instructions, runWith, actions, history }
+    enum Item: Hashable, Sendable {
         case summary
         case prompt
         case detail(title: String, value: String)
@@ -24,9 +26,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     private let root: AppRootEnvironment
     private let scheduleId: String
     private let onChanged: (AgentScheduleSummary) -> Void
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private let refreshControl = UIRefreshControl()
     private let editItem = UIBarButtonItem()
     private let actionsItem = UIBarButtonItem()
 
@@ -58,7 +57,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     private var showPromptReader = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
 
     init(root: AppRootEnvironment, scheduleId: String, onChanged: @escaping (AgentScheduleSummary) -> Void) {
         self.root = root
@@ -73,9 +71,12 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Schedule", listIdentifier: "schedule.detail.list",
+            headers: true,
+            dismissesKeyboardOnDrag: true, pullsToRefresh: true
+        )
         traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
         editItem.title = "Edit"
         editItem.image = UIImage(systemName: "pencil")
         editItem.accessibilityIdentifier = "schedule.detail.nativeEdit"
@@ -101,24 +102,8 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "schedule.detail.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ListScreen.pinFullWidth(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
         for presenter in [nativeEditor, promptReader] { presenter.anchor = self }
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.load() }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -133,11 +118,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         setNeedsUpdateProperties()
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         composer.insetContent(of: collectionView)
@@ -145,11 +125,9 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = schedule?.name ?? "Schedule"
         updateBarItems()
         updateComposer()
-        applySnapshot()
         updateModals()
         // OK clears only the error the person read, never a newer one.
         errorAlerts.sync(title: "Schedule", message: error) { [weak self] shown in
@@ -191,32 +169,89 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        if let schedule {
-            snapshot.appendSections([.summary, .instructions, .runWith, .actions, .history])
-            snapshot.appendItems([.summary], toSection: .summary)
-            snapshot.appendItems([.prompt], toSection: .instructions)
-            snapshot.appendItems(runWithItems(schedule.action), toSection: .runWith)
-            snapshot.appendItems([.runNow, schedule.status == .archived ? .restore : .enabled], toSection: .actions)
-            // A diffable list traps on a repeated item; a repeated run id shows once.
-            var seenRuns = Set<String>()
-            let runItems = runs.filter { seenRuns.insert($0.id).inserted }.map { Item.run($0.id) }
-            snapshot.appendItems(runs.isEmpty ? [.noRuns] : runItems, toSection: .history)
-        } else {
-            snapshot.appendSections([.state])
-            snapshot.appendItems([isLoading ? .loading : .notFound], toSection: .state)
+    override func sections() -> [ListSection<Section, Item>] {
+        // Without a schedule there are no rows: the page is its state.
+        guard let schedule else { return [] }
+        // A diffable list traps on a repeated item; a repeated run id shows once.
+        var seenRuns = Set<String>()
+        let runItems = runs.filter { seenRuns.insert($0.id).inserted }.map { Item.run($0.id) }
+        return [
+            ListSection(.summary, items: [.summary]),
+            ListSection(.instructions, header: "Instructions", items: [.prompt]),
+            ListSection(
+                .runWith,
+                header: SchedulePresentation.runWithSectionTitle(schedule.action),
+                items: runWithItems(schedule.action)
+            ),
+            ListSection(.actions, items: [.runNow, schedule.status == .archived ? .restore : .enabled]),
+            ListSection(.history, header: "Run History", items: runs.isEmpty ? [.noRuns] : runItems),
+        ]
+    }
+
+    /// A load settles the page in place; its rows should not slide.
+    override var animatesUpdates: Bool { false }
+
+    /// The summary and the actions carry no heading.
+    override func showsHeader(for section: Section) -> Bool {
+        section == .instructions || section == .runWith || section == .history
+    }
+
+    /// Run History's heading carries how many runs it lists.
+    override func decorate(header content: inout UIListContentConfiguration, section: Section) {
+        guard section == .history, !runs.isEmpty else { return }
+        content.secondaryText = "\(runs.count) recent"
+        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.prefersSideBySideTextAndSecondaryText = true
+    }
+
+    /// Nothing loaded yet, or no such schedule: the page is its state.
+    override func wholeScreenState() -> LoadState? {
+        guard schedule == nil else { return nil }
+        return isLoading
+            ? .loading(String(localized: "Loading schedule…"))
+            : .empty(title: String(localized: "Schedule Not Found"), systemImage: "questionmark.circle")
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .summary:
+            guard let schedule else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(schedule.name), AnyHashable(schedule.status.rawValue),
+                AnyHashable(schedule.trigger.detailTimingSummary()),
+            ])
+        case .runNow, .restore:
+            return AnyHashable([AnyHashable(isMutating), AnyHashable(schedule?.status.rawValue)])
+        case .enabled:
+            return AnyHashable([AnyHashable(schedule?.status.rawValue), AnyHashable(isMutating)])
+        case .run(let id):
+            guard let run = runs.first(where: { $0.id == id }) else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(run.status.rawValue), AnyHashable(run.createdAt), AnyHashable(run.kind),
+                AnyHashable(run.sessionId), AnyHashable(SchedulePresentation.runErrorSummary(run.error)),
+            ])
+        case .prompt, .detail, .caption, .noRuns:
+            return AnyHashable(0)
         }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
-        // Reconfiguring items leaves headers as they were; Run History's
-        // carries the run count.
-        let kind = UICollectionView.elementKindSectionHeader
-        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-            guard let header = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell else { continue }
-            configureHeader(header, section: dataSource.sectionIdentifier(for: indexPath.section))
-        }
+    }
+
+    // MARK: - Rows
+
+    /// The page's rows: one `SidebarListCell`, a themed card, filled by
+    /// `configure(_:item:)`.
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = row
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func runWithItems(_ action: AgentScheduleAction) -> [Item] {
@@ -250,61 +285,9 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         }
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            self?.configureHeader(view, section: self?.dataSource?.sectionIdentifier(for: indexPath.section))
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
-    }
-
-    private func configureHeader(_ view: UICollectionViewListCell, section: Section?) {
-        var content = UIListContentConfiguration.header()
-        switch section {
-        case .instructions: content.text = "Instructions"
-        case .runWith: content.text = schedule.map { SchedulePresentation.runWithSectionTitle($0.action) }
-        case .history:
-            content.text = "Run History"
-            if !runs.isEmpty {
-                content.secondaryText = "\(runs.count) recent"
-                content.secondaryTextProperties.color = UIColor(palette.comment)
-                content.prefersSideBySideTextAndSecondaryText = true
-            }
-        default: content.text = nil
-        }
-        view.contentConfiguration = content
-    }
-
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
-        case .loading:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Loading schedule…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
-        case .notFound:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .empty(
-                    title: String(localized: "Schedule Not Found"),
-                    systemImage: "questionmark.circle"
-                ),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
         case .summary:
             ListScreen.staticRow(cell)
             guard let schedule else { return }
@@ -562,12 +545,10 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         case pause, resume, archive, restore
     }
 
-    private func refresh() {
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in
-            await self?.load()
-            self?.refreshControl.endRefreshing()
-        }
+    /// The schedule, its runs, and the Agent names: on every appearance, on
+    /// pull to refresh, and after a Retry.
+    override func refresh() async {
+        await load()
     }
 
     private func load() async {
@@ -593,7 +574,8 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             }
             error = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
+            guard !Task.isCancelled, !error.isLoadCancellation else { return }
             self.error = error.localizedDescription
         }
     }

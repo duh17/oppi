@@ -83,6 +83,9 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   returns, and cancels it when the page leaves; `setNeedsRefresh()` runs it
 ///   again on demand (another server became active), and `isShowing` says
 ///   whether the page can be seen.
+/// - `loadsWhenAppearing`: whether appearing starts `refresh()`. A page that
+///   loads once and keeps what it loaded (Pi keeps the tools the Tools page
+///   saved) answers false once loaded; a pull to refresh still loads it.
 /// - `animatesUpdates`: whether a snapshot change animates its rows. A catalog
 ///   list that swaps whole sections answers false.
 /// - `ListSection.state`: the list's own loading, empty, or failed state
@@ -234,6 +237,13 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// returns. A page with nothing to load leaves it empty.
     func refresh() async {}
 
+    /// Whether appearing runs `refresh()`. The default is on: a page that pulls
+    /// to refresh loads again each time it shows. A page that loads once and
+    /// keeps what it loaded answers false once it has, so a page coming back
+    /// from a pushed editor keeps the change that editor saved; a pull to
+    /// refresh and `setNeedsRefresh()` still load.
+    var loadsWhenAppearing: Bool { true }
+
     /// Runs `refresh()` now, cancelling one already running: a page calls it
     /// when what it loads changed (another server became active).
     func setNeedsRefresh() {
@@ -375,7 +385,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         // A page that loads its content loads it again each time it shows, as
         // the SwiftUI `.task` it replaces did. A page that does not pull to
         // refresh has nothing to load, so no task is scheduled for it.
-        if pullsToRefresh { setNeedsRefresh() }
+        if pullsToRefresh, loadsWhenAppearing { setNeedsRefresh() }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
