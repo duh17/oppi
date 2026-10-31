@@ -219,7 +219,14 @@ enum AgentsLoadStateTests {
 
             #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.requestCount > 0 })
             // A cancel is control flow: the page says it has no Agent, and no
-            // alert reports a failure that did not happen.
+            // alert reports a failure that did not happen. The cancel's answer
+            // lands a run loop after the request starts (longer under load), so
+            // the page's own state is waited for first; the hold is that nothing
+            // replaces it afterwards.
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                let state = screen.contentUnavailableConfiguration as? UIContentUnavailableConfiguration
+                return state?.text == "Agent Not Found"
+            }, "a cancelled load leaves the page saying it has no Agent")
             #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
                 let state = screen.contentUnavailableConfiguration as? UIContentUnavailableConfiguration
                 return state?.text == "Agent Not Found" && screen.presentedViewController == nil
