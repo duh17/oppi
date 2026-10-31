@@ -51,6 +51,9 @@ enum RexClientError: Error, Equatable, LocalizedError {
     case notInstalled
     case bridgeMissing
     case connectionClosed
+    /// The stream under the socket failed, and why (a network error, or the
+    /// signal that ended the bridge).
+    case lost(String)
     case timedOut
     /// The server answered a request with an error.
     case refused(code: String, message: String)
@@ -62,6 +65,7 @@ enum RexClientError: Error, Equatable, LocalizedError {
         case .notInstalled: "Rex is not installed on this host."
         case .bridgeMissing: "The host has no nc that can reach Rex's socket (nc -U)."
         case .connectionClosed: "The connection to Rex closed."
+        case .lost(let reason): "The connection to Rex was lost: \(reason)"
         case .timedOut: "Rex did not answer in time."
         case .refused(_, let message): "Rex refused: \(message)"
         case .unreadable(let detail): "Rex sent something Oppi cannot read: \(detail)"
@@ -126,14 +130,15 @@ final class RexControl: Sendable {
         state.withLock { $0.onEvent = handler }
     }
 
-    /// Says hello on the attached socket. Returns once Rex welcomed this client.
-    func open() async throws {
+    /// Says hello on the attached socket. Returns once Rex welcomed this
+    /// client, within `timeout` (the request timeout by default).
+    func open(timeout: Duration? = nil) async throws {
         let hello = try Self.json([
             "type": "hello",
             "api_revision": Self.apiRevision,
             "client": ["kind": "app", "platform": "ios", "name": "Oppi"],
         ])
-        _ = try await exchange(id: Self.welcomeID, message: hello)
+        _ = try await exchange(id: Self.welcomeID, message: hello, timeout: timeout ?? self.timeout)
     }
 
     /// Calls a method and returns its result's JSON.
@@ -143,7 +148,7 @@ final class RexControl: Sendable {
             return String(state.nextID)
         }
         let request = try Self.json(["type": "request", "id": id, "method": method, "payload": payload])
-        return try await exchange(id: id, message: request)
+        return try await exchange(id: id, message: request, timeout: timeout)
     }
 
     /// Feeds what the socket reports. Its end ends the connection, with its reason.
@@ -188,14 +193,14 @@ final class RexControl: Sendable {
 
     /// Sends `message`, then waits for the result filed under `id`, at most
     /// `timeout`.
-    private func exchange(id: String, message: Data) async throws -> Data {
+    private func exchange(id: String, message: Data, timeout: Duration) async throws -> Data {
         let socket = try state.withLock { state -> any RexSocket in
             if let ended = state.ended { throw ended }
             guard let socket = state.socket else { throw RexClientError.connectionClosed }
             return socket
         }
         try await socket.send(.text(String(decoding: message, as: UTF8.self)))
-        let timer = Task { [weak self, timeout] in
+        let timer = Task { [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
             self?.abandon(id, RexClientError.timedOut)
@@ -361,16 +366,17 @@ struct RexLink: Sendable {
             )
         case .tailscale(let url):
             try await RexPipeSocket.open(
-                endpoint, host: url.host ?? "localhost", timeout: timeout,
+                endpoint, host: Self.hostHeader(url), timeout: timeout,
                 openStream: { [openDirect] sink in try await openDirect(url, inboundFlow, timeout, sink) },
                 onEvent: onEvent
             )
         }
     }
 
-    /// A control connection Rex has welcomed over this link. `onWritable`
-    /// hears the control socket's writability, which typing waits on.
-    /// Cancelling closes it.
+    /// A control connection Rex has welcomed over this link, the upgrade and
+    /// the welcome each within `timeout`. `onWritable` hears the control
+    /// socket's writability, which typing waits on. Cancelling closes it, and
+    /// so does a hello that fails: no bridge or stream is left behind.
     func connect(
         timeout: Duration = RexControl.requestTimeout,
         onWritable: (@Sendable (Bool) -> Void)? = nil
@@ -381,12 +387,24 @@ struct RexLink: Sendable {
             control.receive(event)
         }
         control.attach(socket)
-        try await withTaskCancellationHandler {
-            try await control.open()
-        } onCancel: {
+        do {
+            try await withTaskCancellationHandler {
+                try await control.open(timeout: timeout)
+            } onCancel: {
+                socket.close()
+            }
+        } catch {
             socket.close()
+            throw error
         }
         return control
+    }
+
+    /// `Host` for an upgrade to Rex at `url`: its name, and its port when the
+    /// URL names one.
+    static func hostHeader(_ url: URL) -> String {
+        let host = url.host ?? "localhost"
+        return url.port.map { "\(host):\($0)" } ?? host
     }
 }
 

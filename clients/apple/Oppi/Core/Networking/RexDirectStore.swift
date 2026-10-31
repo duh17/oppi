@@ -20,8 +20,9 @@ struct RexDirectHost: Equatable, Sendable {
 enum RexDirectDiscovery {
     enum Outcome: Equatable, Sendable {
         /// Rex serves its API at `url` (`https://<name>.ts.net`) to its
-        /// owner's tailnet identity.
-        case available(url: URL, dnsName: String?)
+        /// owner's tailnet identity. `hostID` is that Rex's own host id, which
+        /// tells it apart from another Rex later answering at the same name.
+        case available(url: URL, hostID: String?)
         /// Tailscale serving is off, not running, or not HTTPS.
         case unavailable
     }
@@ -37,13 +38,13 @@ enum RexDirectDiscovery {
                     let url: String?
                 }
 
-                let dnsName: String?
                 let https: HTTPS?
-                enum CodingKeys: String, CodingKey { case dnsName = "dns_name", https }
             }
 
             let pid: Int?
+            let hostID: String?
             let tailscale: Tailscale?
+            enum CodingKeys: String, CodingKey { case pid, hostID = "host_id", tailscale }
         }
         guard let status = try? JSONDecoder().decode(Status.self, from: statusJSON),
               status.pid != nil || status.tailscale != nil else { return nil }
@@ -53,7 +54,7 @@ enum RexDirectDiscovery {
               url.user == nil, url.query == nil, url.path.isEmpty || url.path == "/" else {
             return .unavailable
         }
-        return .available(url: url, dnsName: tailscale.dnsName)
+        return .available(url: url, hostID: status.hostID)
     }
 }
 
@@ -65,7 +66,8 @@ enum RexDirectDiscovery {
 struct RexDirectStore: @unchecked Sendable {
     struct Entry: Codable, Equatable {
         let url: URL
-        let dnsName: String?
+        /// The Rex the URL was learned from (`server.status`'s `host_id`).
+        let hostID: String?
         let target: String
         let username: String
     }
@@ -80,18 +82,23 @@ struct RexDirectStore: @unchecked Sendable {
     }
 
     func url(for host: RexDirectHost) -> URL? {
+        entry(for: host)?.url
+    }
+
+    private func entry(for host: RexDirectHost) -> Entry? {
         guard let data = defaults.data(forKey: Self.key(host.id)),
               let entry = try? JSONDecoder().decode(Entry.self, from: data),
               entry.target == host.target, entry.username == host.username else { return nil }
-        return entry.url
+        return entry
     }
 
-    /// Remembers what Rex said; an unreadable answer (`nil`) changes nothing.
+    /// Remembers what the host's Rex said over the SSH bridge, which is the
+    /// host's own Rex; an unreadable answer (`nil`) changes nothing.
     func apply(_ outcome: RexDirectDiscovery.Outcome?, for host: RexDirectHost) {
         switch outcome {
-        case .available(let url, let dnsName):
-            let entry = Entry(url: url, dnsName: dnsName, target: host.target, username: host.username)
-            guard url != self.url(for: host), let data = try? JSONEncoder().encode(entry) else { return }
+        case .available(let url, let hostID):
+            let entry = Entry(url: url, hostID: hostID, target: host.target, username: host.username)
+            guard entry != self.entry(for: host), let data = try? JSONEncoder().encode(entry) else { return }
             defaults.set(data, forKey: Self.key(host.id))
         case .unavailable:
             forget(host.id)
@@ -100,8 +107,21 @@ struct RexDirectStore: @unchecked Sendable {
         }
     }
 
+    /// Checks the address against what the Rex reached over Tailscale says
+    /// of itself: another Rex there (a different `host_id`), or serving that
+    /// moved or stopped, drops the address, so the next open goes over SSH
+    /// and learns it again. The connection that read it is the caller's.
+    func confirm(_ outcome: RexDirectDiscovery.Outcome?, for host: RexDirectHost) {
+        guard let outcome, let entry = entry(for: host) else { return }
+        switch outcome {
+        case .available(let url, let hostID):
+            if url != entry.url || (entry.hostID != nil && hostID != entry.hostID) { forget(host.id) }
+        case .unavailable:
+            forget(host.id)
+        }
+    }
+
     func forget(_ id: UUID) {
         defaults.removeObject(forKey: Self.key(id))
     }
 }
-

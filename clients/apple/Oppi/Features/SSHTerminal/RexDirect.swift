@@ -37,7 +37,7 @@ enum RexTailnetPath {
         TailnetTransportRoute.proxy != nil || hasTailscaleAddress()
     }
 
-    /// An interface that is up holds a Tailscale (CGNAT) IPv4 address.
+    /// A tunnel interface (`utun*`) that is up holds a Tailscale (CGNAT) IPv4 address.
     static func hasTailscaleAddress() -> Bool {
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0, let first = list else { return false }
@@ -47,6 +47,8 @@ enum RexTailnetPath {
             guard item.ifa_flags & UInt32(IFF_UP) != 0, let address = item.ifa_addr,
                   address.pointee.sa_family == UInt8(AF_INET) else { continue }
             let ipv4 = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
+            // A VPN's tunnel: a CGNAT address on Wi-Fi or cellular is not Tailscale.
+            guard String(cString: item.ifa_name).hasPrefix("utun") else { continue }
             if isTailscaleAddress(UInt32(bigEndian: ipv4)) { return true }
         }
         return false
@@ -134,6 +136,14 @@ final class RexRoutePlan: Sendable {
         store.apply(RexDirectDiscovery.outcome(statusJSON: answer), for: host)
     }
 
+    /// Reads `server.status` over a direct connection and drops the address
+    /// if another Rex answered there, or its serving moved or stopped
+    /// (`RexDirectStore.confirm`).
+    func confirm(over control: RexControl) async {
+        guard let answer = try? await control.call("server.status", [:]) else { return }
+        store.confirm(RexDirectDiscovery.outcome(statusJSON: answer), for: host)
+    }
+
     /// The same from Rex's CLI on the host, for a host whose bridge cannot
     /// run (no `nc` that speaks Unix sockets).
     func discover(run: RexLink.Run) async {
@@ -154,8 +164,14 @@ final class RexRoutePlan: Sendable {
             let control = try await Self.within(Self.directTimeout) {
                 try await link.connect(timeout: Self.directTimeout, onWritable: onWritable)
             }
+            // Cancelled while the welcome came in: nobody takes it.
+            guard !Task.isCancelled else {
+                control.close()
+                throw CancellationError()
+            }
             directWorked()
             RexRouteLog.chosen(link.route, directMs: Int((ContinuousClock.now - started) / .milliseconds(1)))
+            Task { await confirm(over: control) }
             return (link, control)
         } catch {
             try Task.checkCancellation()
@@ -165,26 +181,37 @@ final class RexRoutePlan: Sendable {
         }
     }
 
-    /// `body`'s control connection if it comes within `limit`; one that comes
-    /// later is closed.
-    private static func within(
+    /// `body`'s control connection if it comes within `limit`. The deadline,
+    /// or the caller's cancellation, returns at once (cancelling `body`
+    /// without waiting for it), and a connection that comes after either is
+    /// closed: the fallback never waits on a stalled attempt.
+    static func within(
         _ limit: Duration, _ body: @escaping @Sendable () async throws -> RexControl
     ) async throws -> RexControl {
-        try await withThrowingTaskGroup(of: RexControl?.self) { group in
-            group.addTask { try await body() }
-            group.addTask {
-                try await Task.sleep(for: limit)
-                return nil
+        let attempt = Task { try await body() }
+        let settled = Mutex(false)
+        /// True for the first outcome only; later ones are someone else's to clean up.
+        @Sendable func first() -> Bool { settled.withLock { done in defer { done = true }; return !done } }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RexControl, any Error>) in
+                Task {
+                    do {
+                        let control = try await attempt.value
+                        if first() { continuation.resume(returning: control) } else { control.close() }
+                    } catch {
+                        if first() { continuation.resume(throwing: error) }
+                    }
+                }
+                Task {
+                    try? await Task.sleep(for: limit)
+                    if first() {
+                        attempt.cancel()
+                        continuation.resume(throwing: RexClientError.timedOut)
+                    }
+                }
             }
-            if let control = try await group.next() ?? nil {
-                group.cancelAll()
-                return control
-            }
-            group.cancelAll()
-            while let late = await group.nextResult() {
-                if case .success(let control?) = late { control.close() }
-            }
-            throw RexClientError.timedOut
+        } onCancel: {
+            attempt.cancel()
         }
     }
 }
@@ -243,7 +270,8 @@ enum RexRouteLog {
     static func directFailed(_ error: any Error, milliseconds: Int) {
         var metadata = ["route": "tailscale", "status": "error", "directMs": String(milliseconds)]
         metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
-        logger.info("Rex direct failed after \(milliseconds, privacy: .public) ms: \(String(describing: error), privacy: .public)")
+        // Rex's refusal carries its JSON reason (the Tailscale login): private.
+        logger.info("Rex direct failed after \(milliseconds, privacy: .public) ms (\(String(describing: type(of: error)), privacy: .public)): \(String(describing: error), privacy: .private)")
         ClientLog.info("Network", "Rex direct failed", metadata: metadata)
     }
 
@@ -263,7 +291,11 @@ enum RexRouteLog {
 /// its owner's Tailscale user (or its tailnet's members, when it allows them).
 ///
 /// Its events reach the sink on one serial queue, in order, as an SSH
-/// channel's do. With `inboundFlow`, a paused consumer stops the reads.
+/// channel's do; a network failure is reported before `.closed` the way a
+/// channel reports a signal (`.exitSignal` with the error), which
+/// `RexPipeSocket` turns into `RexClientError.lost`. With `inboundFlow`, a
+/// paused consumer stops the reads. TCP keepalives (10 s idle, then 3 probes
+/// 10 s apart) end a stream whose path died without a word.
 final class RexTLSStream: Sendable {
     private struct State {
         var opened: CheckedContinuation<Void, any Error>?
@@ -297,7 +329,9 @@ final class RexTLSStream: Sendable {
         sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, "http/1.1")
         let tcp = NWProtocolTCP.Options()
         tcp.enableKeepalive = true
-        tcp.keepaliveIdle = 30
+        tcp.keepaliveIdle = 10
+        tcp.keepaliveInterval = 10
+        tcp.keepaliveCount = 3
         let parameters = NWParameters(tls: tls, tcp: tcp)
         TailnetTransportRoute.apply(to: parameters, route: .forHost(host))
         let queue = DispatchQueue(label: "Rex Tailscale stream")
@@ -331,6 +365,8 @@ final class RexTLSStream: Sendable {
             stream.connection.cancel()
             throw error
         }
+        // The consumer's resume reads on, once per pause.
+        inboundFlow?.attach { [weak stream] in stream?.queue.async { stream?.readNext() } }
         queue.async { stream.readNext() }
         return SSHExecStream(send: { try await stream.send($0) }, close: { stream.close() })
     }
@@ -359,7 +395,7 @@ final class RexTLSStream: Sendable {
             // No route to the name right now: fall back rather than wait.
             if !opened { settleOpen(.failure(error)); connection.cancel() }
         case .failed(let error):
-            if opened { finish() } else { settleOpen(.failure(error)) }
+            if opened { finish(error) } else { settleOpen(.failure(error)) }
             connection.cancel()
         case .cancelled:
             if opened { finish() } else { settleOpen(.failure(RexClientError.connectionClosed)) }
@@ -378,10 +414,7 @@ final class RexTLSStream: Sendable {
     /// Reads the next chunk, unless the consumer paused reading: then
     /// `inboundFlow`'s resume reads on.
     private func readNext() {
-        if let inboundFlow {
-            inboundFlow.attach { [weak self] in self?.queue.async { self?.readNext() } }
-            if inboundFlow.isPaused { return }
-        }
+        if inboundFlow?.isPaused == true { return }
         let start = state.withLock { state -> Bool in
             guard !state.closed, !state.reading else { return false }
             state.reading = true
@@ -394,15 +427,16 @@ final class RexTLSStream: Sendable {
             if let data, !data.isEmpty, !state.withLock({ $0.closed }) { sink(.data(data)) }
             if complete || error != nil {
                 connection.cancel()
-                finish()
+                finish(error)
             } else {
                 readNext()
             }
         }
     }
 
-    /// The stream is over: the sink hears it once.
-    private func finish() {
+    /// The stream is over: the sink hears it once, with the network error
+    /// that ended it, if one did.
+    private func finish(_ error: NWError? = nil) {
         let first = state.withLock { state -> Bool in
             guard !state.closed else { return false }
             state.closed = true
@@ -410,6 +444,7 @@ final class RexTLSStream: Sendable {
         }
         guard first else { return }
         sink(.eof)
+        if let error { sink(.exitSignal(error.localizedDescription)) }
         sink(.closed)
     }
 

@@ -377,6 +377,9 @@ final class RexPipeSocket: RexSocket {
         var codec: RexWebSocketCodec
         var stream: SSHExecStream?
         var exitStatus: Int?
+        /// Why the stream failed, when it said (`.exitSignal`): the bridge's
+        /// signal, or `RexTLSStream`'s network error.
+        var lostReason: String?
         /// `open` waits here for the upgrade; a result that came first waits for it.
         var upgrade: CheckedContinuation<Void, any Error>?
         var upgraded: Result<Void, any Error>?
@@ -453,8 +456,9 @@ final class RexPipeSocket: RexSocket {
         state.withLock { $0.stream }?.close()
     }
 
-    /// The stream's events. EOF comes before the bridge's exit status;
-    /// `.closed` follows both, so only it ends the socket.
+    /// The stream's events. EOF comes before the bridge's exit status (or
+    /// the reason a stream failed); `.closed` follows them, so only it ends
+    /// the socket.
     private func receive(_ event: SSHPTYEvent) {
         switch event {
         case .data(let bytes):
@@ -484,9 +488,12 @@ final class RexPipeSocket: RexSocket {
             onEvent(.writable(writable))
         case .exitStatus(let status):
             state.withLock { $0.exitStatus = status }
+        case .exitSignal(let reason):
+            state.withLock { $0.lostReason = reason }
         case .closed:
-            fail(RexBridge.failure(exitStatus: state.withLock { $0.exitStatus }))
-        case .eof, .exitSignal:
+            let (status, reason) = state.withLock { ($0.exitStatus, $0.lostReason) }
+            fail(reason.map(RexClientError.lost) ?? RexBridge.failure(exitStatus: status))
+        case .eof:
             break
         }
     }

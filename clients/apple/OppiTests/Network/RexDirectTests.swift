@@ -8,13 +8,24 @@ struct RexDirectTests {
     static let rexName = "rex.tail0000.ts.net"
     static let rexURL = URL(string: "https://\(rexName)")!
 
+    static let rexHostID = "ae49134e-0000-4000-8000-000000000001"
+
     /// `server.status` as Rex 1642 answers it with Tailscale HTTPS serving on.
-    static func status(https: String = #"{"state":"available","url":"https://rex.tail0000.ts.net"}"#) -> String {
-        #"{"pid":52834,"session_count":3,"tailscale":{"state":"running","dns_name":"rex.tail0000.ts.net","account":{"login_name":"someone@example.com"},"allow_tailnet_members":false,"https":\#(https)},"api_revision":7}"#
+    static func status(
+        https: String = #"{"state":"available","url":"https://rex.tail0000.ts.net"}"#, hostID: String = rexHostID
+    ) -> String {
+        #"{"pid":52834,"host_id":"\#(hostID)","session_count":3,"tailscale":{"state":"running","dns_name":"rex.tail0000.ts.net","account":{"login_name":"someone@example.com"},"allow_tailnet_members":false,"https":\#(https)},"api_revision":7}"#
     }
 
     static func profile(host: String = "mac-studio", port: UInt16 = 22, id: UUID = UUID()) -> SSHTerminalProfile {
         SSHTerminalProfile(id: id, host: host, port: port, username: "chen", opensRexSessions: true)
+    }
+
+    /// Waits for `condition` up to `timeout`; a busy simulator can be slow.
+    static func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        return condition()
     }
 
     static func store() -> RexDirectStore {
@@ -54,7 +65,7 @@ struct RexDirectTests {
     /// changes nothing.
     @Test func serverStatusSaysWhereRexServesOverTailscale() {
         let available = RexDirectDiscovery.outcome(statusJSON: Data(Self.status().utf8))
-        #expect(available == .available(url: Self.rexURL, dnsName: Self.rexName))
+        #expect(available == .available(url: Self.rexURL, hostID: Self.rexHostID))
         for https in [#"{"state":"unavailable"}"#, #"{"state":"available","url":"https://rex.example.com"}"#,
                       #"{"state":"available","url":"http://rex.tail0000.ts.net"}"#,
                       #"{"state":"available","url":"https://rex.tail0000.ts.net/elsewhere"}"#] {
@@ -71,7 +82,7 @@ struct RexDirectTests {
         let store = Self.store()
         let profile = Self.profile()
         let host = RexDirectHost(profile: profile)
-        store.apply(.available(url: Self.rexURL, dnsName: nil), for: host)
+        store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
         #expect(store.url(for: host) == Self.rexURL)
         var moved = profile
         moved.host = "build-box"
@@ -101,15 +112,17 @@ struct RexDirectTests {
         // A host edited after the screen opened does not reach the old Rex.
         let store = Self.store()
         let host = RexDirectHost(profile: Self.profile())
-        store.apply(.available(url: url, dnsName: nil), for: host)
+        store.apply(.available(url: url, hostID: Self.rexHostID), for: host)
         #expect(RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { false }).directCandidate() == nil)
         #expect(RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }).directCandidate() == url)
     }
 
     /// The first open has no address: it goes over the bridge, which reads
     /// `server.status` and remembers where Rex serves. The next open goes
-    /// straight to Rex over Tailscale, upgrading with Rex's own name, and
-    /// speaks the same control protocol there.
+    /// straight to Rex over Tailscale, upgrading with Rex's own name (and port,
+    /// when the URL has one), and speaks the same control protocol there. A
+    /// direct open asks Rex who it is: another Rex at that name drops the
+    /// address, so the next open learns it again over SSH.
     @Test func theBridgeLearnsTheAddressAndTheNextOpenGoesDirect() async throws {
         let store = Self.store()
         let host = RexDirectHost(profile: Self.profile())
@@ -127,7 +140,7 @@ struct RexDirectTests {
             plan: plan(), openStream: { _, _, sink in bridge.open(sink) }, run: nil
         )
         #expect(first.route == .ssh)
-        for _ in 0..<200 where store.url(for: host) == nil { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(try await Self.eventually { store.url(for: host) != nil })
         #expect(store.url(for: host) == Self.rexURL)
         #expect(bridge.host.requests.map(\.method) == ["server.status"])
         firstControl.close()
@@ -139,8 +152,54 @@ struct RexDirectTests {
         #expect(opened.withLock { $0 } == [Self.rexURL])
         let head = try #require(direct.upgrades.first)
         #expect(head.hasPrefix("GET /api/control HTTP/1.1\r\n") && head.contains("\r\nHost: \(Self.rexName)\r\n"))
-        let answer = try await control.call("server.status", [:])
-        #expect(RexDirectDiscovery.outcome(statusJSON: answer) == .available(url: Self.rexURL, dnsName: Self.rexName))
+        #expect(try await Self.eventually { direct.host.requests.contains { $0.method == "server.status" } })
+        #expect(store.url(for: host) == Self.rexURL, "the same Rex answered: the address stays")
+        control.close()
+        #expect(RexLink.hostHeader(URL(string: "https://\(Self.rexName):8443")!) == "\(Self.rexName):8443")
+        #expect(RexLink.hostHeader(Self.rexURL) == Self.rexName)
+
+        let impostor = FakeRex(status: Self.status(hostID: "another-rex"))
+        let (_, impostorControl) = try await RexLink.connect(
+            plan: RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in impostor.open(sink) },
+            openStream: { _, _, _ in throw SSHConnectionError.notConnected }, run: nil
+        )
+        #expect(try await Self.eventually { store.url(for: host) == nil }, "another Rex at that name: the address goes")
+        impostorControl.close()
+    }
+
+    /// A control connection whose hello Rex never answers is closed, not left
+    /// open behind the failure: a monitor that retries must not pile up
+    /// bridges or streams.
+    @Test func aHelloThatIsNeverWelcomedClosesItsStream() async throws {
+        let silent = SilentRex()
+        await #expect(throws: RexClientError.timedOut) {
+            _ = try await RexLink(openStream: { _, _, sink in silent.open(sink) }).connect(timeout: .milliseconds(200))
+        }
+        #expect(silent.sawHello && silent.isClosed)
+    }
+
+    /// A direct attempt that has not reached Rex's welcome by the deadline
+    /// falls back to SSH at the deadline, without waiting for the attempt,
+    /// and the stream that comes in late is closed.
+    @Test func aDirectAttemptPastTheDeadlineFallsBackAndItsLateStreamIsClosed() async throws {
+        let store = Self.store()
+        let host = RexDirectHost(profile: Self.profile())
+        store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
+        let late = FakeRex()
+        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in
+            // A stream that ignores cancellation and arrives after the deadline.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(5500)) { continuation.resume() }
+            }
+            return late.open(sink)
+        }
+        let bridge = FakeRex()
+        let started = ContinuousClock.now
+        let (link, control) = try await RexLink.connect(plan: plan, openStream: { _, _, sink in bridge.open(sink) }, run: nil)
+        let elapsed = ContinuousClock.now - started
+        #expect(link.route == .ssh)
+        #expect(elapsed >= RexRoutePlan.directTimeout && elapsed < RexRoutePlan.directTimeout + .seconds(1), "\(elapsed)")
+        #expect(try await Self.eventually(.seconds(5)) { late.host.isOpen && late.host.isClosed }, "the late stream is closed")
         control.close()
     }
 
@@ -151,7 +210,7 @@ struct RexDirectTests {
     @Test func aFailedDirectAttemptFallsBackAndIsNotRetriedRightAway() async throws {
         let store = Self.store()
         let host = RexDirectHost(profile: Self.profile())
-        store.apply(.available(url: Self.rexURL, dnsName: nil), for: host)
+        store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
         let attempts = Mutex(0)
         let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, _ in
             attempts.withLock { $0 += 1 }
@@ -213,6 +272,36 @@ struct RexDirectTests {
                     return stream
                 },
                 run: { _ in SSHExecResult(output: Data(Self.status(https: #"{"state":"unavailable"}"#).utf8), errorOutput: Data(), exitStatus: 0) }
+            )
+        }
+    }
+
+    /// Upgrades the WebSocket and then says nothing: a Rex that never
+    /// welcomes the hello.
+    final class SilentRex: Sendable {
+        private struct State {
+            var sink: SSHPTYByteSink?
+            var writes = 0
+            var closed = false
+        }
+
+        private let state = Mutex(State())
+        var sawHello: Bool { state.withLock { $0.writes >= 2 } }
+        var isClosed: Bool { state.withLock { $0.closed } }
+
+        func open(_ sink: @escaping SSHPTYByteSink) -> SSHExecStream {
+            state.withLock { $0.sink = sink }
+            return SSHExecStream(
+                send: { [self] bytes in
+                    let sink = state.withLock { state -> SSHPTYByteSink? in
+                        state.writes += 1
+                        return state.writes == 1 ? state.sink : nil
+                    }
+                    guard let sink, let head = String(data: bytes, encoding: .utf8),
+                          let key = head.split(separator: "\r\n").first(where: { $0.hasPrefix("Sec-WebSocket-Key: ") })?.dropFirst(19) else { return }
+                    sink(.data(Data("HTTP/1.1 101 Switching Protocols\r\nSec-Websocket-Accept: \(RexWebSocketCodec.accept(for: String(key)))\r\nSec-Websocket-Protocol: rex.control.v1\r\n\r\n".utf8)))
+                },
+                close: { [self] in state.withLock { $0.closed = true } }
             )
         }
     }
