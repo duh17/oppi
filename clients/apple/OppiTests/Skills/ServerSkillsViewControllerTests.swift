@@ -17,7 +17,8 @@ struct ServerSkillsViewControllerTests {
 
     @Test("a row is one button that opens its detail through AppNavigation")
     func rowOpensDetailRoute() async throws {
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
         let root = try makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill()], serverId: serverId)
@@ -44,8 +45,9 @@ struct ServerSkillsViewControllerTests {
 
     @Test("the screen follows the active server and loads its catalog only while it is showing")
     func reloadsWhenActiveServerChanges() async throws {
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
-        let root = try makeTwoServerRoot()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
+        let root = try makeTestTwoServerRoot(firstId: serverId, otherId: "skills-list-other")
         let coordinator = root.coordinator
         let servers = coordinator.serverStore.servers
         let first = try #require(servers.first)
@@ -100,6 +102,8 @@ struct ServerSkillsViewControllerTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             firstConnection.serverResourceStore.activeServerId == first.id
         }, "the list loads the active server when it shows again")
+        // The refresh the list starts loads both catalogs, and ends with this test.
+        #expect(await routes.settle(), "a request outlived the test that answered it")
     }
 
     @Test("the Enabled switch snaps back and saves nothing while the server is offline")
@@ -174,10 +178,11 @@ struct ServerSkillsViewControllerTests {
                 decoding: JSONEncoder().encode(ServerSkillsCatalog(skills: [skill()])), as: UTF8.self
             )
         )
-        TestURLProtocol.handler = mockPageRoutes { request in
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
             guard request.url?.path.hasSuffix("/server/resources/skills") == true else { return nil }
             return try catalog.answer(for: request)
-        }
+        })
+        defer { routes.end() }
         let root = try makeTestAppRoot(
             readyServerId: retryServerId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
@@ -219,18 +224,6 @@ struct ServerSkillsViewControllerTests {
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
-    }
-
-    /// Two paired servers, the first active: the second, `Other`, is the one a host
-    /// switch makes active.
-    private func makeTwoServerRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(readyServers: [
-            TestReadyServer(id: serverId, client: makeTestURLProtocolClient(host: "ready-server.test")),
-            TestReadyServer(
-                id: "skills-list-other", name: "Other", host: "other-server.test",
-                client: makeTestURLProtocolClient(host: "other-server.test")
-            ),
-        ])
     }
 
     private func show(_ controller: UIViewController) throws -> UIWindow {

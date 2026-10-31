@@ -18,12 +18,14 @@ struct ServerListRepeatedIdTests {
     @Test("Workspace sidebar shows one row for a workspace id the server repeats")
     func workspaceSidebarShowsRepeatedIdOnce() throws {
         let serverId = "sha256:repeat-ws-\(UUID().uuidString)"
-        let client = APIClient(
-            baseURL: try #require(URL(string: "http://127.0.0.1:1")),
-            token: "sk_test",
-            configuration: .ephemeral
+        // The server's own work is not what this test is about: it answers as an
+        // unreachable server does, and a route it did not plan fails the test.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
+        let root = try makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "repeat-workspace.test")
         )
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let store = try #require(root.coordinator.connection(for: serverId)).workspaceStore
         store.setActiveServer(serverId)
         store.workspacesByServer[serverId] = [

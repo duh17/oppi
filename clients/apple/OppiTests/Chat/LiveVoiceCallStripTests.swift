@@ -87,8 +87,14 @@ struct LiveVoiceCallStripTests {
 
     @Test("A locked server, workspace, or session keeps the session title out of the strip")
     func lockedTitleSaysLiveVoice() async throws {
-        let client = APIClient(baseURL: try #require(URL(string: "http://127.0.0.1:1")), token: "sk_test", configuration: .ephemeral)
-        let ready = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
+        // The server's own work is not what this test is about: it answers as an
+        // unreachable server does, and a route it did not plan fails the test.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
+        let ready = try makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "live-voice-strip.test")
+        )
         let connection = try #require(ready.coordinator.connection(for: serverId))
         connection.sessionStore.upsert(makeTestSession(id: "a", workspaceId: "ws", name: "Salary review"))
         let app = CallApp()

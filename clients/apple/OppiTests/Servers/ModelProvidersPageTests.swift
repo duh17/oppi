@@ -35,20 +35,21 @@ struct ModelProvidersPageTests {
         )
     }
 
-    /// Answers each host's provider routes, over the app's own refreshes; a request for a
-    /// host or route this test did not plan fails it.
-    private static func useAnswers(_ hosts: [String: ProviderHostAnswers]) {
-        TestURLProtocol.handler = mockPageRoutes { request in
+    /// Answers each host's provider routes, over the app's own refreshes; a route this test
+    /// did not plan fails it, through the scope `useAnswers` returns.
+    private static func useAnswers(_ hosts: [String: ProviderHostAnswers]) -> TestURLProtocol.RouteScope {
+        TestURLProtocol.routeScope(mockPageRoutes { request in
             try hosts[request.url?.host ?? ""]?.answer(for: request)
-        }
+        })
     }
 
     @Test("the page loads the visible server's providers when it appears")
     func providersLoadOnFirstAppearance() async throws {
-        Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [
+        let routes = Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [
             provider("claude", name: "Claude", authenticated: true),
             provider("gemini", name: "Gemini", authenticated: false, oauth: true),
         ])])
+        defer { routes.end() }
         let root = try makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
@@ -66,7 +67,8 @@ struct ModelProvidersPageTests {
     @Test("a load whose request ends as a cancel keeps its providers and reports no failure")
     func cancelledLoadKeepsProviders() async throws {
         let answers = ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)])
-        Self.useAnswers(["ready-server.test": answers])
+        let routes = Self.useAnswers(["ready-server.test": answers])
+        defer { routes.end() }
         let root = try makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
@@ -92,10 +94,11 @@ struct ModelProvidersPageTests {
 
     @Test("a host switch drops the old server's providers and shows the new one's")
     func hostSwitchReloadsTheNewServer() async throws {
-        Self.useAnswers([
+        let routes = Self.useAnswers([
             "first-providers.test": ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)]),
             "second-providers.test": ProviderHostAnswers(providers: [provider("gemini", name: "Gemini", authenticated: true)]),
         ])
+        defer { routes.end() }
         let root = try makeTestAppRoot(readyServers: [
             TestReadyServer(
                 id: "providers-first", name: "First", host: "first-providers.test",
@@ -127,7 +130,8 @@ struct ModelProvidersPageTests {
 
     @Test("the API key sheet saves the trimmed key and refuses to be swiped away with one typed")
     func apiKeySheetSavesTheTrimmedKey() async throws {
-        Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [])])
+        let routes = Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [])])
+        defer { routes.end() }
         let root = try makeRoot()
         var saved: String?
         let sheet = ProviderAPIKeyViewController(

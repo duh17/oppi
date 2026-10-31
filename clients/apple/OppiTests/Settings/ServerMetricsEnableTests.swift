@@ -16,6 +16,8 @@ struct ServerMetricsEnableTests {
         var transport: FakeSettingsTransport
         var root: AppRootEnvironment
         var window: UIWindow
+        /// The app's own connected-server refreshes, answered for this test only.
+        var routes: TestURLProtocol.RouteScope
     }
 
     private func makePage(_ root: AppRootEnvironment) throws -> (ServerMetricsViewController, UIWindow) {
@@ -31,7 +33,7 @@ struct ServerMetricsEnableTests {
     private func makeHarness(revision: Int? = 4) throws -> Harness {
         // The app's own refreshes once a server is connected are not what these tests are
         // about; they answer as an unreachable server does, and anything else fails.
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: revision)
         let serverId = serverId
         let client = makeTestURLProtocolClient(host: "ready-server.test")
@@ -40,7 +42,7 @@ struct ServerMetricsEnableTests {
         // Known off: the page shows its Turn On state without asking for history.
         root.coordinator.setServerMetricsEnabledCache(false, for: serverId)
         let (page, window) = try makePage(root)
-        return Harness(page: page, transport: transport, root: root, window: window)
+        return Harness(page: page, transport: transport, root: root, window: window, routes: routes)
     }
 
     /// The app's stores over fake routes: `live`'s write side effect included, which
@@ -89,6 +91,7 @@ struct ServerMetricsEnableTests {
     private func hide(_ harness: Harness) {
         harness.window.isHidden = true
         harness.window.rootViewController = nil
+        harness.routes.end()
     }
 
     private static func button(titled title: String, in view: UIView) -> UIButton? {
@@ -280,40 +283,37 @@ struct ServerMetricsEnableTests {
 
     // MARK: - Two servers, and the stores' lifecycle
 
+    @MainActor
     private struct TwoServers {
-        var coordinator: ConnectionCoordinator
+        var root: AppRootEnvironment
         var a: FakeSettingsTransport
         var b: FakeSettingsTransport
+        /// The app's own connected-server refreshes, answered for this test only.
+        var routes: TestURLProtocol.RouteScope
+
+        var coordinator: ConnectionCoordinator { root.coordinator }
     }
 
     private func makeTwoServers() throws -> TwoServers {
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
-        func server(_ id: String, order: Int) throws -> PairedServer {
-            try #require(PairedServer(
-                from: ServerCredentials(host: "\(id).test", port: 7749, token: "sk_test", name: id, scheme: .https, serverFingerprint: id),
-                sortOrder: order
-            ))
-        }
-        let (serverA, serverB) = (try server("server-a", order: 0), try server("server-b", order: 1))
-        let serverStore = ServerStore()
-        serverStore.replaceServersForPreview([serverA, serverB])
-        let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        for paired in [serverA, serverB] {
-            coordinator.ensureConnection(for: paired).setAPIClientForTesting(
-                makeTestURLProtocolClient(host: "\(paired.id).test")
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        let root = try makeTestAppRoot(readyServers: ["server-a", "server-b"].map { id in
+            TestReadyServer(
+                id: id, name: id, host: "\(id).test",
+                client: makeTestURLProtocolClient(host: "\(id).test")
             )
-        }
+        })
         let a = FakeSettingsTransport(fields: ["enabled": false], revision: 1)
         let b = FakeSettingsTransport(fields: ["enabled": false], revision: 10)
-        Self.useStores(on: coordinator) { id in id == "server-a" ? a : b }
-        return TwoServers(coordinator: coordinator, a: a, b: b)
+        Self.useStores(on: root.coordinator) { id in id == "server-a" ? a : b }
+        return TwoServers(root: root, a: a, b: b, routes: routes)
     }
 
     @Test("Two servers' Server Settings at once: B's save in flight while A saves; each page, store and pill cache is its own")
     func twoServersAtOnce() async throws {
         let two = try makeTwoServers()
+        defer { two.routes.end() }
         let coordinator = two.coordinator
-        let root = makeTestAppRoot(coordinator: coordinator)
+        let root = two.root
         let (pageA, windowA) = try makeServerSettings(root, serverId: "server-a")
         let (pageB, windowB) = try makeServerSettings(root, serverId: "server-b")
         defer {
@@ -347,6 +347,7 @@ struct ServerMetricsEnableTests {
     @Test("A server's store is made once, is its own, and a removed server's is dropped and never cached again")
     func storeLifecycle() async throws {
         let two = try makeTwoServers()
+        defer { two.routes.end() }
         let coordinator = two.coordinator
 
         let first = coordinator.settings(for: "server-a")

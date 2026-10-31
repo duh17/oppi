@@ -30,10 +30,10 @@ struct ChatSessionStateTests {
         #expect(state.cachedModels.isEmpty)
         #expect(!state.modelsCacheReady)
 
-        // Create an API client pointing at an unreachable host.
-        // refreshModelCache should catch the error silently.
-        let api = APIClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
-        await state.refreshModelCache(api: api)
+        // The server is not reachable: refreshModelCache catches the error silently.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
+        await state.refreshModelCache(api: makeTestURLProtocolClient(host: "unreachable.test"))
 
         // Error path: models stay empty, ready stays false
         #expect(state.cachedModels.isEmpty)

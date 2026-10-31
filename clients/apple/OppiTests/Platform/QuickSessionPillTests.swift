@@ -10,7 +10,11 @@ import UIKit
 struct QuickSessionPillTests {
     @Test("Incognito and engine pills report not enabled until setup finishes")
     func pillsAreNotEnabledWhileSetupRuns() throws {
-        let client = APIClient(baseURL: try #require(URL(string: "http://127.0.0.1:1")), token: "sk_test", configuration: .ephemeral)
+        // Setup's own server work is not what this test is about: it answers as an
+        // unreachable server does, and a route it did not plan fails the test.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
+        let client = makeTestURLProtocolClient(host: "quick-session-pills.test")
         let root = try makeTestAppRoot(readyServerId: "sha256:qs-pills-\(UUID().uuidString)", apiClient: client)
         try #require(root.coordinator.activeConnection).setSplitStreamCapabilitiesForTesting(durableSessions: true)
 

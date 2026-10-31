@@ -9,16 +9,84 @@ import Testing
 /// process-wide slot. `handler` reads and writes the running test's slot, and a session
 /// must be built with `install(in:)` so its requests name the test whose handler
 /// answers them. Build sessions with `install(in:)`, never by assigning `protocolClasses`.
+/// A test keeps its handler for its lifetime through `routeScope(_:)`, which is what ends
+/// it: a request that outlives its test then finds no handler, instead of being answered
+/// by a stale one.
 class TestURLProtocol: URLProtocol, @unchecked Sendable {
     typealias Handler = (URLRequest) throws -> (Data, HTTPURLResponse)
 
+    /// A handler's answer for a route it did not plan: `startLoading` reports it to the
+    /// owning test rather than failing the run from URLSession's thread.
+    struct UnplannedRoute: Error {
+        let route: String
+    }
+
     private static let ownerHeader = "X-Oppi-Test-Handler-Owner"
     private static let handlers = OSAllocatedUnfairLock(uncheckedState: [String: Handler]())
+    /// Rows a handler left unanswered, per test, for the scope that installed it to report.
+    private static let unplanned = OSAllocatedUnfairLock(uncheckedState: [String: [String]]())
+    /// Tests that hold a scope, so a route with nobody to report it still fails the run.
+    private static let scoped = OSAllocatedUnfairLock(uncheckedState: Set<String>())
+    /// When each test's last request arrived, for `RouteScope.settle(quiet:)`.
+    private static let lastRequest = OSAllocatedUnfairLock(uncheckedState: [String: ContinuousClock.Instant]())
 
     /// The handler of the running test (and of tasks it starts).
     static var handler: Handler? {
         get { handlers.withLockUnchecked { $0[currentOwner] } }
         set { handlers.withLockUnchecked { $0[currentOwner] = newValue } }
+    }
+
+    /// Answers this test's requests with `handler` until `end()`: the scope is what clears
+    /// the handler, so no request outlives it, and it fails the test, on the test's own
+    /// thread, for every route the handler did not plan.
+    static func routeScope(_ handler: @escaping Handler) -> RouteScope {
+        let owner = currentOwner
+        Self.handler = handler
+        unplanned.withLockUnchecked { $0[owner] = [] }
+        lastRequest.withLockUnchecked { $0[owner] = nil }
+        scoped.withLockUnchecked { $0.insert(owner) }
+        return RouteScope(owner: owner)
+    }
+
+    /// Holds only its owner's name and touches `TestURLProtocol`'s locks, so a test can
+    /// carry it across an `await`.
+    final class RouteScope: Sendable {
+        private let owner: String
+
+        fileprivate init(owner: String) {
+            self.owner = owner
+        }
+
+        /// Ends the scope: from here no handler answers this test's requests, and a route
+        /// the handler left unanswered fails the test with the routes named.
+        func end() {
+            TestURLProtocol.handlers.withLockUnchecked { $0[owner] = nil }
+            TestURLProtocol.scoped.withLockUnchecked { $0.remove(owner) }
+            TestURLProtocol.lastRequest.withLockUnchecked { $0[owner] = nil }
+            let routes = TestURLProtocol.unplanned.withLockUnchecked { $0.removeValue(forKey: owner) ?? [] }
+            #expect(routes.isEmpty, "the handler did not answer \(routes.joined(separator: ", "))")
+        }
+
+        /// Waits until nothing new has reached this scope for `quiet`, and never less than
+        /// `quiet` from the call itself: work a test just started (a load its screen triggers
+        /// on the way out) has time to ask, so none of it outlives the handler that answers it.
+        func settle(quiet: Duration = .milliseconds(400), timeout: Duration = .seconds(5)) async -> Bool {
+            let started = ContinuousClock.now
+            let deadline = started.advanced(by: timeout)
+            while ContinuousClock.now < deadline {
+                if ContinuousClock.now - started >= quiet, TestURLProtocol.isQuiet(owner, for: quiet) {
+                    return true
+                }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+            return TestURLProtocol.isQuiet(owner, for: quiet)
+        }
+    }
+
+    /// Whether this test's requests have stopped for `duration`.
+    private static func isQuiet(_ owner: String, for duration: Duration) -> Bool {
+        guard let last = lastRequest.withLockUnchecked({ $0[owner] }) else { return true }
+        return ContinuousClock.now - last >= duration
     }
 
     /// Routes `configuration`'s requests to this test's `handler`.
@@ -48,14 +116,30 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
             fail("\(request.url?.absoluteString ?? "request") reached TestURLProtocol with no handler set by \(owner)")
             return
         }
+        Self.lastRequest.withLockUnchecked { $0[owner] = .now }
         do {
             let (data, response) = try handler(request)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
+        } catch let unplanned as UnplannedRoute {
+            Self.report(unplanned.route, to: owner)
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
+    }
+
+    /// A route nobody planned belongs to the test whose session asked: its scope fails with
+    /// it. A test that installed a handler without a scope has nobody to report to, so the
+    /// route fails the run here rather than passing silently.
+    private static func report(_ route: String, to owner: String) {
+        let hasScope = scoped.withLockUnchecked { $0.contains(owner) }
+        guard hasScope else {
+            Issue.record(Comment(rawValue: "unexpected request: \(route) (install handlers with TestURLProtocol.routeScope)"))
+            return
+        }
+        unplanned.withLockUnchecked { $0[owner, default: []].append(route) }
     }
 
     /// A setup mistake is not a server answer: it fails with its own error, and the run,
@@ -119,18 +203,36 @@ private func mockJSONResponse(
     return (data, response)
 }
 
-/// A handler for the routes a test answers: a request outside them is a route the test
-/// did not plan, so it records an issue and fails the test instead of answering 404.
-private func mockRoutes(
+/// `body` with `status` and `contentType`, the answer to one request: for a route that
+/// serves bytes rather than JSON.
+func mockBinaryResponse(
+    status: Int = 200,
+    contentType: String,
+    body: Data,
+    for request: URLRequest
+) throws -> (Data, HTTPURLResponse) {
+    let response = (try #require(HTTPURLResponse(
+        url: request.url ?? URL(fileURLWithPath: "/"),
+        statusCode: status,
+        httpVersion: nil,
+        headerFields: ["Content-Type": contentType, "Content-Length": "\(body.count)"]
+    )))
+    return (body, response)
+}
+
+/// A page test's routes, over the app's own refreshes: `answer` gets the routes the test
+/// scripts, the ones it leaves out answer as an unreachable server does, and a route
+/// outside both throws `UnplannedRoute`, which the test's `TestURLProtocol.routeScope`
+/// fails with. `{ _ in nil }` is a server that refuses everything.
+func mockPageRoutes(
     _ answer: @escaping (URLRequest) throws -> (Data, HTTPURLResponse)?
 ) -> TestURLProtocol.Handler {
     { request in
-        guard let answer = try answer(request) else {
-            let route = "\(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "no url")"
-            Issue.record(Comment(rawValue: "unexpected request: \(route)"))
-            throw URLError(.unsupportedURL)
-        }
-        return answer
+        if let answered = try answer(request) { return answered }
+        if let background = try unreachableBackgroundAnswer(request) { return background }
+        throw TestURLProtocol.UnplannedRoute(
+            route: "\(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "no url")"
+        )
     }
 }
 
@@ -147,6 +249,8 @@ private func unreachableBackgroundAnswer(_ request: URLRequest) throws -> (Data,
         "/server/metrics/settings",
         "/provider-auth/status",
         "/auth/devices",
+        "/models",
+        "/agents",
     ].contains(path)
         || path.hasSuffix("/git/status")
         || path.hasSuffix("/paths")
@@ -155,21 +259,6 @@ private func unreachableBackgroundAnswer(_ request: URLRequest) throws -> (Data,
         || path.hasSuffix("/server/resources/extensions")
     guard isBackground else { return nil }
     throw URLError(.cannotConnectToHost)
-}
-
-/// The app's own refreshes, answered as an unreachable server does: for a page test that is
-/// not about them, and a request outside them fails the test.
-func mockUnreachableBackgroundRoutes() -> TestURLProtocol.Handler {
-    mockRoutes { request in try unreachableBackgroundAnswer(request) }
-}
-
-/// A page test's own routes over the app's own refreshes: `answer` gets the routes the test
-/// scripts, the ones it leaves out answer as an unreachable server does, and a request
-/// outside both fails the test.
-func mockPageRoutes(
-    _ answer: @escaping (URLRequest) throws -> (Data, HTTPURLResponse)?
-) -> TestURLProtocol.Handler {
-    mockRoutes { request in try answer(request) ?? unreachableBackgroundAnswer(request) }
 }
 
 /// A route a page finds missing until the test says the server is back: 404 until

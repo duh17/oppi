@@ -57,7 +57,8 @@ struct LiveVoiceExperimentTests {
 
     @Test("Quick Session offers Live Voice only with the experiment on and the server advertising it")
     func quickSessionEntryNeedsExperimentAndCapability() async throws {
-        let root = try makeQuickSessionRoot(liveVoice: true)
+        let (root, routes) = try makeQuickSessionRoot(liveVoice: true)
+        defer { routes.end() }
         let model = QuickSessionModel(root: root)
 
         await withExperiment(false) { #expect(model.liveVoiceEntry == nil) }
@@ -76,7 +77,8 @@ struct LiveVoiceExperimentTests {
         )
         await store.load()
         store.setQuickSessionDraftText("half-typed thought")
-        let root = try makeQuickSessionRoot(liveVoice: true, composerDraftStore: store)
+        let (root, routes) = try makeQuickSessionRoot(liveVoice: true, composerDraftStore: store)
+        defer { routes.end() }
         let model = QuickSessionModel(root: root)
         root.navigation.pendingQuickSessionStart = QuickSessionStart(mode: .liveVoice)
 
@@ -91,7 +93,8 @@ struct LiveVoiceExperimentTests {
 
     @Test("A Live Voice start with the experiment on is not refused for the experiment")
     func requestedStartWithExperimentOnIsNotRefusedForIt() async throws {
-        let root = try makeQuickSessionRoot(liveVoice: true)
+        let (root, routes) = try makeQuickSessionRoot(liveVoice: true)
+        defer { routes.end() }
         let model = QuickSessionModel(root: root)
         root.navigation.pendingQuickSessionStart = QuickSessionStart(mode: .liveVoice)
 
@@ -108,15 +111,20 @@ struct LiveVoiceExperimentTests {
     private func makeQuickSessionRoot(
         liveVoice: Bool,
         composerDraftStore: ComposerDraftStore? = nil
-    ) throws -> AppRootEnvironment {
-        let client = APIClient(baseURL: try #require(URL(string: "http://127.0.0.1:1")), token: "sk_test", configuration: .ephemeral)
-        let ready = try makeTestAppRoot(readyServerId: "sha256:live-voice-\(UUID().uuidString)", apiClient: client)
+    ) throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
+        // The server's own work is not what these tests are about: it answers as an
+        // unreachable server does, and a route it did not plan fails the test.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        let ready = try makeTestAppRoot(
+            readyServerId: "sha256:live-voice-\(UUID().uuidString)",
+            apiClient: makeTestURLProtocolClient(host: "live-voice-experiment.test")
+        )
         let connection = try #require(ready.coordinator.activeConnection)
         connection.setSplitStreamCapabilitiesForTesting(liveVoice: liveVoice)
         // A cold launch waits for the workspace list; this server has loaded its (empty) one.
         connection.workspaceStore.isLoaded = true
-        guard let composerDraftStore else { return ready }
-        return makeTestAppRoot(coordinator: ready.coordinator, composerDraftStore: composerDraftStore)
+        guard let composerDraftStore else { return (ready, routes) }
+        return (makeTestAppRoot(coordinator: ready.coordinator, composerDraftStore: composerDraftStore), routes)
     }
 }
 

@@ -94,7 +94,8 @@ struct MobileOutputGuideSettingTests {
     func serverSettingsSwitchSaves() async throws {
         // The app's own refreshes once a server is connected are not what this test is
         // about; they answer as an unreachable server does, and anything else fails.
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        defer { routes.end() }
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: 4)
         let serverId = "guide-switch-server"
         let client = makeTestURLProtocolClient(host: "ready-server.test")

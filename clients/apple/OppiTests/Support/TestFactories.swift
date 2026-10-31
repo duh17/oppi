@@ -94,6 +94,25 @@ func makeTestAppRoot(
     )
 }
 
+/// App root services for a host switch: `firstId` active on `ready-server.test`, the one a
+/// screen opened for, and `otherId` paired beside it as `Other`. Both read through
+/// `TestURLProtocol`, so the test's `routeScope` answers them.
+@MainActor
+func makeTestTwoServerRoot(
+    firstId: String,
+    otherId: String,
+    otherName: String = "Other",
+    otherHost: String = "other-server.test"
+) throws -> AppRootEnvironment {
+    try makeTestAppRoot(readyServers: [
+        TestReadyServer(id: firstId, client: makeTestURLProtocolClient(host: "ready-server.test")),
+        TestReadyServer(
+            id: otherId, name: otherName, host: otherHost,
+            client: makeTestURLProtocolClient(host: otherHost)
+        ),
+    ])
+}
+
 /// One server for `makeTestAppRoot(readyServers:)`: paired as `name`, reached through
 /// `client`. Its fingerprint is its id, so the server store lists it under `id`.
 struct TestReadyServer {

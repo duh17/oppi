@@ -19,6 +19,8 @@ struct DurableSessionsSettingTests {
         var root: AppRootEnvironment
         var defaults: UserDefaults
         var window: UIWindow
+        /// The app's own connected-server refreshes, answered for this test only.
+        var routes: TestURLProtocol.RouteScope
 
         var connection: ServerConnection? { root.coordinator.connection(for: page.server.id) }
         var store: SettingsStore { root.coordinator.settings(for: page.server.id) }
@@ -27,7 +29,7 @@ struct DurableSessionsSettingTests {
     private func makeHarness() throws -> Harness {
         // The app's own refreshes once a server is connected are not what these tests are
         // about; they answer as an unreachable server does, and anything else fails.
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: 4)
         let client = makeTestURLProtocolClient(host: "ready-server.test")
         let defaults = makeSettingsDefaults()
@@ -51,12 +53,13 @@ struct DurableSessionsSettingTests {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 3000)
         window.rootViewController = UINavigationController(rootViewController: page)
         window.makeKeyAndVisible()
-        return Harness(page: page, transport: transport, root: root, defaults: defaults, window: window)
+        return Harness(page: page, transport: transport, root: root, defaults: defaults, window: window, routes: routes)
     }
 
     private func hide(_ h: Harness) {
         h.window.isHidden = true
         h.window.rootViewController = nil
+        h.routes.end()
     }
 
     /// The switch on screen: a removed row's cell stays in the list as a hidden, reusable view.

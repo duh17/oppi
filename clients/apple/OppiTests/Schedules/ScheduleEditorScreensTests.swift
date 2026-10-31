@@ -223,15 +223,18 @@ private final class ScheduleRowsPage: ListScreenController<ScheduleRowsPage.Sect
 struct ScheduleDetailPageTests {
     @Test("a schedule the server changed redraws its What it does row")
     func aChangedScheduleRedrawsItsPrompt() async throws {
-        ScheduleDetailURLProtocol.reset(prompt: "Summarize the day.")
-        let screen = try makeScreen()
-        defer { screen.hide() }
+        let answers = ScheduleDetailAnswers(prompt: "Summarize the day.")
+        let (screen, routes) = try makeScreen(answers: answers)
+        defer {
+            screen.hide()
+            routes.end()
+        }
 
         let first = try #require(await screen.waitForButton("schedule.detail.prompt"))
         #expect(first.accessibilityLabel?.contains("Summarize the day.") == true)
 
         // Edit Schedule saved another prompt; the pull to refresh finds it.
-        ScheduleDetailURLProtocol.prompt = "Summarize the week."
+        answers.prompt = "Summarize the week."
         screen.root.collectionView.refreshControl?.sendActions(for: .valueChanged)
         #expect(await screen.waitFor {
             screen.button("schedule.detail.prompt")?.accessibilityLabel?.contains("Summarize the week.") == true
@@ -240,28 +243,38 @@ struct ScheduleDetailPageTests {
 
     @Test("a load cancelled under the page keeps the schedule and raises no alert")
     func cancelledLoadKeepsTheSchedule() async throws {
-        ScheduleDetailURLProtocol.reset(prompt: "Summarize the day.")
-        let screen = try makeScreen()
-        defer { screen.hide() }
+        let answers = ScheduleDetailAnswers(prompt: "Summarize the day.")
+        let (screen, routes) = try makeScreen(answers: answers)
+        defer {
+            screen.hide()
+            routes.end()
+        }
 
         let prompt = try #require(await screen.waitForButton("schedule.detail.prompt"))
         let shown = try #require(prompt.accessibilityLabel)
 
         // The server answers a cancel: control flow, not a failure to alert.
-        ScheduleDetailURLProtocol.mode = .cancelled
+        answers.mode = .cancelled
         screen.root.collectionView.refreshControl?.sendActions(for: .valueChanged)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { ScheduleDetailURLProtocol.requests > 1 })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { answers.requests > 1 })
         #expect(await screen.staysTrue(for: .milliseconds(400)) {
             screen.button("schedule.detail.prompt")?.accessibilityLabel == shown
                 && screen.root.presentedViewController == nil
         }, "a cancelled load keeps the schedule it shows and reports nothing")
     }
 
-    private func makeScreen() throws -> DetailScreen {
+    private func makeScreen(
+        answers: ScheduleDetailAnswers
+    ) throws -> (screen: DetailScreen, routes: TestURLProtocol.RouteScope) {
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try answers.answer(for: request)
+        })
         let root = makeTestAppRoot()
-        root.coordinator.activeConnection.setAPIClientForTesting(ScheduleDetailURLProtocol.makeClient())
-        let page = ScheduleDetailViewController(root: root, scheduleId: "schedule-page-tests") { _ in }
-        return try DetailScreen(page)
+        root.coordinator.activeConnection.setAPIClientForTesting(
+            makeTestURLProtocolClient(host: ScheduleDetailAnswers.host)
+        )
+        let page = ScheduleDetailViewController(root: root, scheduleId: answers.scheduleId) { _ in }
+        return (try DetailScreen(page), routes)
     }
 }
 
@@ -312,76 +325,55 @@ private final class DetailScreen {
 
 /// Answers a schedule's page: the schedule, its runs, and the Agents it names.
 /// The prompt is what the server holds, so a test can change the schedule
-/// between loads; a cancelled mode answers like a request a page cancelled.
-private final class ScheduleDetailURLProtocol: URLProtocol, @unchecked Sendable {
+/// between loads; a cancelled mode answers like a request a page cancelled. One per test,
+/// so no two pages share a schedule.
+private final class ScheduleDetailAnswers: @unchecked Sendable {
     enum Mode { case available, cancelled }
 
     static let host = "schedule-page.test"
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var currentMode = Mode.available
-    nonisolated(unsafe) private static var currentPrompt = ""
-    nonisolated(unsafe) private static var countedRequests = 0
+    let scheduleId = "schedule-page-tests"
 
-    static var mode: Mode {
+    private let lock = NSLock()
+    private var currentMode = Mode.available
+    private var currentPrompt: String
+    private var countedRequests = 0
+
+    init(prompt: String) {
+        currentPrompt = prompt
+    }
+
+    var mode: Mode {
         get { lock.withLock { currentMode } }
         set { lock.withLock { currentMode = newValue } }
     }
 
-    static var prompt: String {
+    var prompt: String {
         get { lock.withLock { currentPrompt } }
         set { lock.withLock { currentPrompt = newValue } }
     }
 
-    static var requests: Int { lock.withLock { countedRequests } }
+    var requests: Int { lock.withLock { countedRequests } }
 
-    static func reset(prompt: String) {
-        lock.withLock {
-            currentMode = .available
-            currentPrompt = prompt
-            countedRequests = 0
+    func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let mode = lock.withLock { () -> Mode in
+            countedRequests += 1
+            return currentMode
         }
-    }
-
-    static func makeClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [ScheduleDetailURLProtocol.self]
-        return APIClient(
-            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
-            token: "test-token",
-            configuration: config
-        )
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == host
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        let mode = Self.lock.withLock { () -> Mode in
-            Self.countedRequests += 1
-            return Self.currentMode
-        }
-        if case .cancelled = mode {
-            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
-            return
-        }
+        if case .cancelled = mode { throw URLError(.cancelled) }
         let path = request.url?.path ?? ""
         if path.hasSuffix("/runs") {
-            respond(body: Data(#"{"runs":[]}"#.utf8))
-        } else if path.hasSuffix("/agents") {
-            respond(body: Data(#"{"agents":[]}"#.utf8))
-        } else {
-            respond(body: Self.scheduleBody())
+            return try mockJSONResponse(json: #"{"runs":[]}"#, for: request)
         }
+        if path.hasSuffix("/agents") {
+            return try mockJSONResponse(json: #"{"agents":[]}"#, for: request)
+        }
+        struct Body: Encodable { let schedule: AgentSchedule }
+        return try mockJSONResponse(encoding: Body(schedule: schedule()), for: request)
     }
 
-    override func stopLoading() {}
-
-    private static func scheduleBody() -> Data {
-        let schedule = AgentSchedule(
-            id: "schedule-page-tests",
+    private func schedule() -> AgentSchedule {
+        AgentSchedule(
+            id: scheduleId,
             name: "Nightly digest",
             status: .active,
             trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
@@ -393,24 +385,6 @@ private final class ScheduleDetailURLProtocol: URLProtocol, @unchecked Sendable 
             updatedAt: Date(timeIntervalSince1970: 2),
             archivedAt: nil
         )
-        struct Body: Encodable { let schedule: AgentSchedule }
-        return (try? JSONEncoder().encode(Body(schedule: schedule)))
-            ?? Data()
-    }
-
-    private func respond(body: Data) {
-        guard let url = request.url, let response = HTTPURLResponse(
-            url: url,
-            statusCode: 200,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
     }
 }
 

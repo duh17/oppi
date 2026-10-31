@@ -15,21 +15,24 @@ struct UsagePageTests {
         ))
     }
 
-    private func makeRoot(servers: [PairedServer]) throws -> AppRootEnvironment {
+    /// The root over `servers`, with the server's own routes refusing every request: a page
+    /// whose own loads must end. `routes` is the scope the test ends.
+    private func makeRoot(
+        servers: [PairedServer]
+    ) throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try mockJSONResponse(status: 500, json: #"{"error":"refused"}"#, for: request)
+        })
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview(servers)
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UsageRefusingProtocol.self]
         for server in servers {
-            coordinator.ensureConnection(for: server).setAPIClientForTesting(APIClient(
-                baseURL: try #require(URL(string: "https://\(server.id).usage.test:7749")),
-                token: "sk_test",
-                configuration: configuration
-            ))
+            coordinator.ensureConnection(for: server).setAPIClientForTesting(
+                makeTestURLProtocolClient(host: "\(server.id).usage.test")
+            )
         }
         if let first = servers.first { #expect(coordinator.restoreActiveServer(first.id)) }
-        return makeTestAppRoot(coordinator: coordinator)
+        return (makeTestAppRoot(coordinator: coordinator), routes)
     }
 
     private func present(_ screen: UIViewController) throws -> UIWindow {
@@ -64,7 +67,8 @@ struct UsagePageTests {
     @Test("The range control and the totals pick the range and the metric of the pinned model")
     func controlsDriveTheModel() async throws {
         let server = try makeServer("server-a", order: 0)
-        let root = try makeRoot(servers: [server])
+        let (root, routes) = try makeRoot(servers: [server])
+        defer { routes.end() }
         let client = ScriptedUsageClient()
         client.statsByRange = [.week: stats(), .month: stats()]
         let model = UsageModel(serverId: server.id) { client }
@@ -97,7 +101,8 @@ struct UsagePageTests {
     func providerSetupOpensTheServersProviders() async throws {
         let server = try makeServer("server-a", order: 0)
         let other = try makeServer("server-b", order: 1)
-        let root = try makeRoot(servers: [server, other])
+        let (root, routes) = try makeRoot(servers: [server, other])
+        defer { routes.end() }
         let client = ScriptedUsageClient()
         client.statsByRange = [.week: stats()]
         client.providers = [
@@ -152,7 +157,8 @@ struct UsagePageTests {
     @Test("A switch replaces the page with the new server's own, and the old page's late answer stays there")
     func routeReplacesThePage() async throws {
         let servers = [try makeServer("server-a", order: 0), try makeServer("server-b", order: 1)]
-        let root = try makeRoot(servers: servers)
+        let (root, routes) = try makeRoot(servers: servers)
+        defer { routes.end() }
         let route = UsageRouteViewController(root: root)
         let window = try present(route)
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -174,26 +180,13 @@ struct UsagePageTests {
 
     @Test("With no server paired the route offers Add Server instead of a page")
     func noServers() throws {
-        let root = try makeRoot(servers: [])
+        let (root, routes) = try makeRoot(servers: [])
+        defer { routes.end() }
         let route = UsageRouteViewController(root: root)
         let window = try present(route)
         defer { window.isHidden = true; window.rootViewController = nil }
 
         #expect(route.page == nil)
         #expect(route.contentUnavailableConfiguration != nil)
-    }
-}
-
-/// Answers every request on a `*.usage.test` host with a refusal, so a page's own loads end.
-private final class UsageRefusingProtocol: URLProtocol, @unchecked Sendable {
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".usage.test") == true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func stopLoading() {}
-    override func startLoading() {
-        let url = request.url ?? URL(fileURLWithPath: "/")
-        let response = HTTPURLResponse(url: url, statusCode: 500, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])
-        if let response { client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
-        client?.urlProtocol(self, didLoad: Data(#"{"error":"refused"}"#.utf8))
-        client?.urlProtocolDidFinishLoading(self)
     }
 }

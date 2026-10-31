@@ -17,14 +17,17 @@ struct ChatRouteLockGateTests {
         let navigation: UINavigationController
         let locks: ScopedLockService
         let restoreLookup: @MainActor (_ serverId: String, _ sessionId: String) -> Session?
+        /// The chat route's own refreshes (git status, the file index, the trace page), answered
+        /// for this test only.
+        let routes: TestURLProtocol.RouteScope
     }
 
     private func makeFixture() throws -> Fixture {
         let serverId = "sha256:chat-route-lock-\(UUID().uuidString)"
         // The chat route starts the app's own refreshes (git status, the file index, the
-        // session's trace page); they answer as an unreachable server does, and a request
-        // for any other route fails the test.
-        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        // session's trace page); they answer as an unreachable server does, and a route the
+        // test did not plan fails it.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let client = makeTestURLProtocolClient(host: "ready-server.test")
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let connection = try #require(root.coordinator.connection(for: serverId))
@@ -44,7 +47,8 @@ struct ChatRouteLockGateTests {
             window: window,
             navigation: navigation,
             locks: locks,
-            restoreLookup: restoreLookup
+            restoreLookup: restoreLookup,
+            routes: routes
         )
     }
 
@@ -53,6 +57,7 @@ struct ChatRouteLockGateTests {
         fixture.window.isHidden = true
         fixture.locks.sessionLookup = fixture.restoreLookup
         fixture.locks.forgetServer(fixture.serverId)
+        fixture.routes.end()
     }
 
     private func push(_ sessionId: String, workspaceId: String, in fixture: Fixture) -> ChatRouteViewController {
@@ -96,6 +101,10 @@ struct ChatRouteLockGateTests {
         }
         #expect(covered, "the chat stayed up (or no cover showed) for a session in a locked workspace")
         #expect(chat.viewIfLoaded?.superview == nil, "the chat's content is still in the hierarchy")
+        // A mounted chat retries its own loads; releasing it first means the requests it still
+        // had running end with this test, not after the handler that answers them.
+        fixture.navigation.setViewControllers([], animated: false)
+        #expect(await fixture.routes.settle(), "a request outlived the test that answered it")
     }
 
     /// The route under a newer one (the open was superseded, or the person pushed another screen)
@@ -121,6 +130,8 @@ struct ChatRouteLockGateTests {
             return moved.chat == nil && hasLockCover(moved)
         }
         #expect(covered, "Back revealed the chat of a session in a locked workspace")
+        fixture.navigation.setViewControllers([], animated: false)
+        #expect(await fixture.routes.settle(), "a request outlived the test that answered it")
     }
 
     @Test("a covered moved session shows its chat again once the new workspace is unlocked")
@@ -142,5 +153,7 @@ struct ChatRouteLockGateTests {
             return route.chat != nil && !hasLockCover(route)
         }
         #expect(revealed, "unlocking the new workspace did not bring the chat back")
+        fixture.navigation.setViewControllers([], animated: false)
+        #expect(await fixture.routes.settle(), "a request outlived the test that answered it")
     }
 }

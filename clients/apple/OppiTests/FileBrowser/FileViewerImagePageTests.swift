@@ -11,12 +11,16 @@ import UIKit
 struct FileViewerImagePageTests {
     @Test func imagePageIsAnActivatableButtonThatOpensFullScreen() async throws {
         let (_, pngData) = try makePNG()
-        FileViewerImageURLProtocol.pngData = pngData
-        let client = FileViewerImageURLProtocol.makeClient()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard request.url?.path == "/files/current" else { return nil }
+            return try mockBinaryResponse(status: 200, contentType: "image/png", body: pngData, for: request)
+        })
+        defer { routes.end() }
+        let client = makeTestURLProtocolClient(host: "file-viewer-image.test")
 
         let viewer = FileViewerViewController(
             configuration: .init(
-                workspaceId: FileViewerImageURLProtocol.workspaceId,
+                workspaceId: "ws-image",
                 serverId: "srv-image-\(UUID().uuidString)",
                 filePath: "images/shot.png",
                 fileName: "shot.png",
@@ -82,55 +86,4 @@ private func makePNG() throws -> (UIImage, Data) {
         context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
     }
     return (image, try #require(image.pngData()))
-}
-
-/// Serves one workspace image to the mounted viewer.
-private final class FileViewerImageURLProtocol: URLProtocol, @unchecked Sendable {
-    static let host = "file-viewer-image.test"
-    static let workspaceId = "ws-image"
-    nonisolated(unsafe) static var pngData = Data()
-
-    static func makeClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [FileViewerImageURLProtocol.self]
-        return APIClient(
-            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
-            token: "test-token",
-            configuration: config
-        )
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == host
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let url = request.url else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-        let isImage = url.path == "/files/current"
-        let body = isImage ? Self.pngData : Data(#"{"error":"not found"}"#.utf8)
-        guard let response = HTTPURLResponse(
-            url: url,
-            statusCode: isImage ? 200 : 404,
-            httpVersion: "HTTP/1.1",
-            headerFields: [
-                "Content-Type": isImage ? "image/png" : "application/json",
-                "Content-Length": "\(body.count)",
-            ]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

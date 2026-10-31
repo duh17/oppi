@@ -13,6 +13,9 @@ struct ServerPairedDevicesPageTests {
         var page: ServerPairedDevicesViewController
         var model: ServerSettingsModel
         var window: UIWindow
+        var roster: DeviceRosterAnswers
+        /// The app's own connected-server refreshes, answered for this test only.
+        var routes: TestURLProtocol.RouteScope
     }
 
     private func makeServer(_ id: String, order: Int, deviceId: String?) throws -> PairedServer {
@@ -30,21 +33,20 @@ struct ServerPairedDevicesPageTests {
 
     /// Two paired servers; the page is for `server-a`, whose own device is `dev-me`.
     private func makeHarness(failRevokes: Bool = false) async throws -> Harness {
+        let roster = DeviceRosterAnswers(failRevokes: failRevokes)
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try roster.answer(for: request)
+        })
         let serverA = try makeServer("server-a", order: 0, deviceId: "dev-me")
         let serverB = try makeServer("server-b", order: 1, deviceId: nil)
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview([serverA, serverB])
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [DeviceRosterProtocol.self]
         for server in [serverA, serverB] {
-            coordinator.ensureConnection(for: server).setAPIClientForTesting(APIClient(
-                baseURL: try #require(URL(string: "https://\(server.id).devices.test:7749")),
-                token: "sk_test",
-                configuration: configuration
-            ))
+            coordinator.ensureConnection(for: server).setAPIClientForTesting(
+                makeTestURLProtocolClient(host: "\(server.id).devices.test")
+            )
         }
-        DeviceRosterProtocol.reset(failRevokes: failRevokes)
         let root = makeTestAppRoot(coordinator: coordinator)
         let model = ServerSettingsModel(coordinator: coordinator, serverId: serverA.id)
         await model.reloadPairedDevices()
@@ -55,13 +57,13 @@ struct ServerPairedDevicesPageTests {
         window.rootViewController = UINavigationController(rootViewController: page)
         window.makeKeyAndVisible()
         page.view.layoutIfNeeded()
-        return Harness(root: root, page: page, model: model, window: window)
+        return Harness(root: root, page: page, model: model, window: window, roster: roster, routes: routes)
     }
 
     private func hide(_ harness: Harness) {
-        DeviceRosterProtocol.reset(failRevokes: false)
         harness.window.isHidden = true
         harness.window.rootViewController = nil
+        harness.routes.end()
     }
 
     private func row(_ id: String, in h: Harness) throws -> PairedDeviceRoster.Row {
@@ -118,7 +120,7 @@ struct ServerPairedDevicesPageTests {
 
         let sheet = try #require(h.page.presentedViewController as? UIAlertController)
         #expect(sheet.title == "Revoke Chen's iPad?")
-        #expect(DeviceRosterProtocol.revokes.isEmpty)
+        #expect(h.roster.revokes.isEmpty)
         // This device's row never asks.
         sheet.dismiss(animated: false)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.page.presentedViewController == nil })
@@ -133,7 +135,7 @@ struct ServerPairedDevicesPageTests {
 
         await h.page.revoke(try row("dev-1", in: h))
 
-        #expect(DeviceRosterProtocol.revokes == ["server-a.devices.test DELETE /auth/devices/dev-1"])
+        #expect(h.roster.revokes == ["server-a.devices.test DELETE /auth/devices/dev-1"])
         guard case .loaded(let rows, let error) = h.model.pairedDevicesState(currentDeviceId: "dev-me") else {
             throw TestFailure("roster not loaded")
         }
@@ -148,7 +150,7 @@ struct ServerPairedDevicesPageTests {
 
         await h.model.revokeDevice(try row("dev-me", in: h))
 
-        #expect(DeviceRosterProtocol.revokes.isEmpty)
+        #expect(h.roster.revokes.isEmpty)
     }
 
     @Test("A refused Revoke keeps the device listed and says why")
@@ -180,58 +182,55 @@ struct ServerPairedDevicesPageTests {
     }
 }
 
-/// `GET /auth/devices` and `DELETE /auth/devices/<id>` for the `*.devices.test` hosts,
-/// logging each revoke by host.
-private final class DeviceRosterProtocol: URLProtocol, @unchecked Sendable {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var log: [String] = []
-    nonisolated(unsafe) private static var deleted: Set<String> = []
-    nonisolated(unsafe) private static var failing = false
+/// `GET /auth/devices` and `DELETE /auth/devices/<id>` per test, logging each revoke by
+/// host, so one test's roster is never another's.
+private final class DeviceRosterAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private let failing: Bool
+    private var log: [String] = []
+    private var deleted: Set<String> = []
 
-    static var revokes: [String] { lock.withLock { log } }
-
-    static func reset(failRevokes: Bool) {
-        lock.withLock {
-            log = []
-            deleted = []
-            failing = failRevokes
-        }
+    init(failRevokes: Bool) {
+        failing = failRevokes
     }
 
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".devices.test") == true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func stopLoading() {}
+    var revokes: [String] { lock.withLock { log } }
 
-    override func startLoading() {
+    func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
         let url = request.url ?? URL(fileURLWithPath: "/")
-        let method = request.httpMethod ?? "GET"
-        var status = 200
-        var body = Data("{}".utf8)
-        if method == "DELETE" {
-            let id = url.lastPathComponent
-            let refuse = Self.lock.withLock {
-                Self.log.append("\(url.host ?? "") DELETE \(url.path)")
-                if Self.failing { return true }
-                Self.deleted.insert(id)
-                return false
-            }
-            if refuse {
-                status = 403
-                body = Data(#"{"error":"Not allowed."}"#.utf8)
-            }
-        } else {
-            let gone = Self.lock.withLock { Self.deleted }
+        guard request.httpMethod == "DELETE" else {
+            let gone = lock.withLock { deleted }
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
-            let devices: [[String: Any]] = [
-                ["id": "dev-me", "name": "This phone", "scope": "device", "createdAt": now - 9_000, "lastUsedAt": now, "keyEnrolled": true],
-                ["id": "dev-1", "name": "Chen's iPad", "scope": "device", "createdAt": now - 30_000, "lastUsedAt": now - 5_000, "keyEnrolled": true],
-                ["id": "dev-2", "name": "oppi CLI", "scope": "device", "createdAt": now - 60_000, "keyEnrolled": false],
-            ].filter { !gone.contains($0["id"] as? String ?? "") }
-            body = (try? JSONSerialization.data(withJSONObject: ["devices": devices])) ?? body
+            let rows = [
+                Row(id: "dev-me", name: "This phone", createdAt: now - 9_000, lastUsedAt: now, keyEnrolled: true),
+                Row(id: "dev-1", name: "Chen's iPad", createdAt: now - 30_000, lastUsedAt: now - 5_000, keyEnrolled: true),
+                Row(id: "dev-2", name: "oppi CLI", createdAt: now - 60_000, lastUsedAt: nil, keyEnrolled: false),
+            ].filter { !gone.contains($0.id) }
+            return try mockJSONResponse(encoding: Roster(devices: rows), for: request)
         }
-        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])
-        if let response { client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
+        let id = url.lastPathComponent
+        let refuse = lock.withLock {
+            log.append("\(url.host ?? "") DELETE \(url.path)")
+            guard !failing else { return true }
+            deleted.insert(id)
+            return false
+        }
+        guard !refuse else {
+            return try mockJSONResponse(status: 403, json: #"{"error":"Not allowed."}"#, for: request)
+        }
+        return try mockJSONResponse(status: 200, json: "{}", for: request)
+    }
+
+    private struct Roster: Encodable {
+        let devices: [Row]
+    }
+
+    private struct Row: Encodable {
+        let id: String
+        let name: String
+        let scope = "device"
+        let createdAt: Int64
+        let lastUsedAt: Int64?
+        let keyEnrolled: Bool
     }
 }
