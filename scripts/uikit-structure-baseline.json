@@ -61,11 +61,17 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Extensions/ServerExtensionsViewController.swift": {
+      "resolvedBadgeIcon.symbolName": 1
+    },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "UIAlertController(": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
       ".settingsToggle(": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
+      "resolvedBadgeIcon.symbolName": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       ".settingsToggle(": 1
@@ -96,10 +102,18 @@
       "UIAlertController(": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
-      "toggleRow(": 1
+      "toggleRow(": 1,
+      "resolvedBadgeIcon.symbolName": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionListCollection.swift": {
+      "resolvedBadgeIcon.symbolName": 3
     },
     "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
       "AppPreferences.*.set": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionRowView.swift": {
+      "providerLogoAssetName(": 1,
+      "providerMonogram(": 1
     },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryModel.swift": {
       "APIClient settings write": 3
@@ -127,6 +141,9 @@
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
       "AppPreferences.*.set": 1,
       "toggleRow(": 2
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsRootViewController.swift": {
+      "resolvedBadgeIcon.symbolName": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
       "FontPreferences.set": 4,

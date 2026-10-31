@@ -93,6 +93,18 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    only goes down. Strings are stripped before matching, so the guard cannot see
  *    a retyped "Retry" or "Connecting…"; those live in `LoadState` only.
  *
+ *  - Entity artwork is a ratchet of the same kind, with `EntityIcon.swift`
+ *    exempt: `providerLogoAssetName(`, `providerMonogram(`, and
+ *    `resolvedBadgeIcon.symbolName` drawn anywhere else, and a menu row
+ *    (`UIAction(title:`) titled with a server's, Agent's, workspace's, model's,
+ *    or provider's own name instead of `UIAction.choice(...)`, which carries
+ *    the entity's icon and the menu's own checkmark. The baseline keeps what is
+ *    not artwork: `SessionRowView`'s VoiceOver label (a provider's *name*), the
+ *    badge state colors of the rail item and the pill (a symbol tinted by
+ *    connection state, not the entity's mark), and four `inputs(of:)` keys that
+ *    compare a server's badge. A menu that lists a thing with a name and no
+ *    icon is what this catches; nothing else should add to it.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -126,6 +138,8 @@ const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmati
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.swift";
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
+/** The one owner of entity artwork: see `EntityIcon` and "Entity icons" below. */
+const entityIconOwner = "clients/apple/Oppi/Core/Views/EntityIcon.swift";
 
 /** A file that declares a page on the list kit: a subclass of the base, or of
  * the resource-detail base both detail pages share. */
@@ -331,6 +345,34 @@ const constructs: Construct[] = [
     pathMustMatch: featuresOnly,
     fileMustMatch: listPageSubclass,
   },
+  // Entity artwork outside `EntityIcon`: see the guide's shared building blocks.
+  {
+    name: "providerLogoAssetName(",
+    pattern: /\bproviderLogoAssetName\s*\(/g,
+    disallowed: false,
+    exemptFiles: [entityIconOwner],
+  },
+  {
+    name: "providerMonogram(",
+    pattern: /\bproviderMonogram\s*\(/g,
+    disallowed: false,
+    exemptFiles: [entityIconOwner],
+  },
+  {
+    // A badge's symbol drawn by the caller, rather than through `EntityIcon`.
+    name: "resolvedBadgeIcon.symbolName",
+    pattern: /\bresolvedBadgeIcon\s*\.\s*symbolName\b/g,
+    disallowed: false,
+    exemptFiles: [entityIconOwner],
+  },
+  {
+    // A menu row that titles a server, Agent, workspace, model, or provider by
+    // its own name: its artwork goes with the title (`UIAction.choice`).
+    name: "UIAction(title: entity name",
+    pattern: /\bUIAction\s*\(\s*title:\s*(?:\w+\.)*(?:server|agent|workspace|model|provider)\w*\.\s*(?:name|displayName|title)\b/g,
+    disallowed: false,
+    exemptFiles: [entityIconOwner],
+  },
 ];
 
 /**
@@ -478,6 +520,15 @@ UIContentUnavailableConfiguration.empty(/.loading(/.search( outside LoadStateCon
 means a screen builds its own loading, empty, or failed state. Show a \`LoadState\` with
 \`contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette:, background:)\`
 (or \`UIContentUnavailableView(loadState:)\` for a region); see ${loadStateGuide}.
+
+providerLogoAssetName(, providerMonogram(, and resolvedBadgeIcon.symbolName outside
+EntityIcon.swift, and a UIAction(title:) that titles a server, Agent, workspace,
+model, or provider by its own name, mean a screen draws an entity's artwork
+itself. Draw it with EntityIcon.image(.agent/.workspace/.provider/.model/.server,
+size:, assets:) in a row, or build a menu row with UIAction.choice(title, entity,
+selected:, assets:), which carries the icon and the menu's own checkmark; see
+the shared UIKit building blocks in dev/architecture-client.md. The baseline
+keeps a provider's VoiceOver name, the badge's state colors, and inputs keys.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
 call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside
