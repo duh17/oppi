@@ -316,7 +316,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .text:
             Router.push(SettingsTextViewController(), from: self)
         case .editor:
-            Router.push(SettingsEditorViewController(), from: self)
+            Router.push(SettingsEditorViewController(settings: root.settings), from: self)
         case .chat:
             Router.push(SettingsChatViewController(root: root), from: self)
         case .sessions:

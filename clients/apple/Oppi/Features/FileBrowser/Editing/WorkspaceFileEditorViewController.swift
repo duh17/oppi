@@ -117,6 +117,9 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     private var appliedThemeID: ThemeID
     private var detectedIndentation: CodeIndentation?
     private var appliedKeybindings: CodeEditorKeybindings?
+    /// The Auto-Save the session was last told about, so a change reaches an
+    /// editor that is open (on: the idle save starts; off: the timer stops).
+    private var appliedAutoSaves: Bool?
     private var appliedTabWidth: Int?
     private var keyCommandCache: (key: String, commands: [UIKeyCommand])?
     /// Set while this controller moves the selection, so the change is not
@@ -278,6 +281,13 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             vimStateDidChange()
         }
 
+        let autoSaves = preferences.autoSaves
+        if autoSaves != appliedAutoSaves {
+            let isFirstPass = appliedAutoSaves == nil
+            appliedAutoSaves = autoSaves
+            if !isFirstPass { session.autoSaveSettingChanged(isOn: autoSaves) }
+        }
+
         let keys = preferences.keyBarKeys.filter { $0 != .escape || keybindings == .vim }
         keyBar.apply(keys: keys, foreground: appliedThemeID.palette.ui.fg, background: appliedThemeID.palette.ui.bg)
         let accessory: UIView? = preferences.showsKeyBar ? keyBar : nil
@@ -297,7 +307,8 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        // Covered or popped: checkpoint and start a save; never wait.
+        // Covered or popped: checkpoint the draft, and start a save if the
+        // session may write one; never wait.
         if !isFinished { session.flush() }
     }
 
@@ -434,8 +445,15 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         for request in requests {
             switch request {
             case .save:
-                session.flush()
-            case .quit, .saveAndQuit:
+                // `:w` is a person's save: it writes with Auto-Save off.
+                session.saveNow()
+            case .quit:
+                // `:q` closes, and asks first when there are edits no save covers.
+                onDone()
+            case .saveAndQuit:
+                // `:wq` saves, then closes without asking again: the session
+                // counts the save as the person's own.
+                session.saveNow()
                 onDone()
             case .commandLine(let prompt):
                 statusBar.beginCommand(prompt)
@@ -571,7 +589,9 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         let buffer = textView.textStorage.mutableString
         let selection = textView.selectedRange
         switch command {
-        case "save": session.flush()
+        case "save":
+            // ⌘S is a person's save: it writes with Auto-Save off, no dialog.
+            session.saveNow()
         case "goToLine": presentGoToLine()
         case "comment": toggleComment()
         case "indent": apply(CodeTextEditing.indent(buffer, selection: selection, indentation: indentation))

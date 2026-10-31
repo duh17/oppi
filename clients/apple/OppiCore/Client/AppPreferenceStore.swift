@@ -197,6 +197,22 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - Editor
+
+    /// The code editor's Auto-Save, for every document the editor writes. Key
+    /// matches `CodeEditorPreferences`, which stores and reads this same value,
+    /// so the editor's "…" menu, Settings > Editor, and the edit session's
+    /// write gate see one setting.
+    enum Editor {
+        static let autoSaveKey = "\(AppIdentifiers.subsystem).editor.autoSave"
+        /// Off: nothing is written until a person saves. `SettingsCatalog.autoSave` uses this constant.
+        static let autoSaveDefault = false
+
+        static var autoSaves: Bool {
+            UserDefaults.standard.object(forKey: autoSaveKey) as? Bool ?? autoSaveDefault
+        }
+    }
+
     // MARK: - Interaction
 
     /// Optional tactile feedback. Key matches iOS `AppPreferences.Interaction`.

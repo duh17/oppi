@@ -178,6 +178,24 @@ enum SettingsCatalog {
         copy: SettingCopy(title: String(localized: "Open Links"))
     )
 
+    // MARK: - Editor
+
+    /// Whether the editor writes a document as you type. Off (the default), nothing
+    /// is written until a person saves it: Done asks, ⌘S and Vim's `:w` write, and a
+    /// retry only resends bytes a person already confirmed. A device setting on the
+    /// key `CodeEditorPreferences` stores, so the editor's "…" menu and this row show
+    /// one value.
+    static let autoSave = SettingDeclaration<Bool>(
+        id: "settings.editor.autoSave",
+        key: AppPreferenceStore.Editor.autoSaveKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Editor.autoSaveDefault,
+        copy: SettingCopy(
+            title: String(localized: "Auto-Save"),
+            footer: String(localized: "Saves a file as you type. With it off, a file is written only when you save it: Done asks first, and ⌘S saves right away. Until then your edits stay on this device as a draft.")
+        )
+    )
+
     // MARK: - Server Metrics
 
     /// Whether the server samples its CPU, memory, and disk, for every device
@@ -249,5 +267,6 @@ enum SettingsCatalog {
         mobileOutputGuideEnabled.descriptor,
         durableSessionsEnabled.descriptor,
         startSessionsAsDurable.descriptor,
+        autoSave.descriptor,
     ]
 }

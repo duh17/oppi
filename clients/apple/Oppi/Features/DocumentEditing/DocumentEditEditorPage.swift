@@ -1,5 +1,11 @@
 import UIKit
 
+/// Holds the editor's and the bar's Done so they can call this page before `self`
+/// exists: their closures are made before `super.init`, which may not capture it.
+private final class DocumentEditDoneForwarder {
+    var handler: (() -> Void)?
+}
+
 /// The open editor under its header: the checkout the file writes to, the
 /// conflict banner, a notice line, and `WorkspaceFileEditorViewController`.
 ///
@@ -23,6 +29,15 @@ final class DocumentEditEditorPage: UIViewController {
         onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
     )
     private let noticeLabel = UILabel()
+    /// The sentence Done's confirmation adds for one of Pi's own files (Pi reads
+    /// it for every new session); nil keeps the confirmation to the name.
+    private let saveConfirmationMessage: String?
+    /// Auto-Save, read when Done is pressed: on, the editor closes and the
+    /// session's own save runs; off, Done asks first.
+    private let preferences: CodeEditorPreferences
+    private weak var saveConfirmation: UIAlertController?
+    /// The owner's Done, once this page has asked whatever it must.
+    private let onDone: @MainActor () -> Void
     private var appliedReplacementID: UUID?
     private weak var conflictReview: WorkspaceFileConflictReviewViewController?
     private(set) var isShowingPreview = false
@@ -34,28 +49,90 @@ final class DocumentEditEditorPage: UIViewController {
         onDone: @escaping @MainActor () -> Void,
         onTogglePreview: @escaping @MainActor () -> Void,
         makePreview: @escaping (String) -> UIViewController,
+        saveConfirmationMessage: String? = nil,
+        preferences: CodeEditorPreferences = .shared,
         onUseDisk: @escaping @MainActor () -> Void
     ) {
         self.session = session
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
         self.onUseDisk = onUseDisk
+        self.saveConfirmationMessage = saveConfirmationMessage
+        self.preferences = preferences
+        self.onDone = onDone
+        // Done asks this page before it closes (Auto-Save off), and the closure
+        // that reaches it cannot hold `self` yet.
+        let done = DocumentEditDoneForwarder()
         editor = WorkspaceFileEditorViewController(
             session: session,
-            onDone: onDone,
+            preferences: preferences,
+            onDone: { done.handler?() },
             makePreview: makePreview
         )
         let grammar: CodeEditorHighlightEngine.Grammar = CodeEditorHighlightEngine.grammar(forPath: session.identity.path)
         barItems = WorkspaceFileEditBarItems(
             wrapKind: { CodeEditorWrapKind(grammar: grammar) },
             onTogglePreview: onTogglePreview,
-            onDone: onDone
+            onDone: { done.handler?() }
         )
         super.init(nibName: nil, bundle: nil)
+        done.handler = { [weak self] in self?.donePressed() }
         checkoutLabel.text = checkoutSubtitle
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Done, or Vim's `:q`: with Auto-Save off and edits no save covers, ask
+    /// first; otherwise just close (the session's own save runs on the way out).
+    /// A session that has stopped saving (a conflict, a deleted file, a server
+    /// refusal) never asks: its banner and Review are the way out, and a Save
+    /// button there would do nothing.
+    private func donePressed() {
+        guard !preferences.autoSaves, session.hasUnconfirmedChanges, !session.status.stopsAutosave else {
+            onDone()
+            return
+        }
+        presentSaveConfirmation()
+    }
+
+    /// Save, Discard Changes, or Keep Editing. Save writes exactly the buffer on
+    /// screen; the sheet points at the bar Done lives in on iPad.
+    private func presentSaveConfirmation() {
+        guard saveConfirmation == nil else { return }
+        let name = title ?? (session.identity.path as NSString).lastPathComponent
+        let confirmation = Confirmation(
+            title: session.createsOnFirstSave
+                ? String(localized: "Create \(name)?")
+                : String(localized: "Save \(name)?"),
+            message: saveConfirmationMessage,
+            actionTitle: String(localized: "Save"),
+            style: .actionSheet,
+            isDestructive: false,
+            cancelTitle: String(localized: "Keep Editing"),
+            prefersAction: true,
+            actionIdentifier: "workspaceFileEditor.save",
+            additionalActions: [
+                .init(
+                    title: String(localized: "Discard Changes"),
+                    identifier: "workspaceFileEditor.discard",
+                    style: .destructive,
+                    handler: { [weak self] in
+                        self?.session.discardChanges()
+                        self?.onDone()
+                    }
+                )
+            ]
+        )
+        saveConfirmation = confirmation.present(
+            from: self,
+            anchor: navigationController?.navigationBar,
+            onConfirm: { [weak self] in
+                self?.session.saveNow()
+                self?.onDone()
+            },
+            onCancel: { [weak self] in self?.saveConfirmation = nil }
+        )
+    }
 
     /// `rightBarButtonItems` order: Done is the trailing-most.
     var barButtons: [UIBarButtonItem] {

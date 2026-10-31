@@ -37,6 +37,15 @@ enum AlertAnchor {
 struct Confirmation {
     enum Style { case alert, actionSheet }
 
+    /// A further way out, after the confirming action and before Cancel: the
+    /// answer that is neither "do it" nor "never mind" (Discard Changes).
+    struct AdditionalAction {
+        var title: String
+        var identifier: String?
+        var style: UIAlertAction.Style = .default
+        var handler: () -> Void
+    }
+
     var title: String
     var message: String?
     /// The confirming button.
@@ -49,6 +58,8 @@ struct Confirmation {
     var prefersAction = false
     /// The confirming button's accessibility identifier, for a test to find it.
     var actionIdentifier: String?
+    /// Extra answers between the confirming button and Cancel, in order.
+    var additionalActions: [AdditionalAction] = []
 
     /// Presents the confirmation over `screen`. `anchor` is where an action
     /// sheet points on iPad: the row that asked, or nil when nothing does (it
@@ -78,6 +89,13 @@ struct Confirmation {
         }
         confirm.accessibilityIdentifier = actionIdentifier
         alert.addAction(confirm)
+        for additional in additionalActions {
+            let action = UIAlertAction(title: additional.title, style: additional.style) { _ in
+                additional.handler()
+            }
+            action.accessibilityIdentifier = additional.identifier
+            alert.addAction(action)
+        }
         alert.addAction(UIAlertAction(title: cancelTitle, style: .cancel) { _ in onCancel?() })
         if prefersAction { alert.preferredAction = confirm }
         AlertAnchor.present(alert, from: screen, anchor: anchor)

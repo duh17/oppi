@@ -5,22 +5,26 @@ import UIKit
 /// editor observes, so changes apply without reopening the file. Everything
 /// here is saved on this device.
 final class SettingsEditorViewController: ListScreenController<SettingsEditorViewController.Section, SettingsEditorViewController.Item> {
-    enum Section: Hashable, Sendable { case keyboard, display, indentation, typing }
+    enum Section: Hashable, Sendable { case keyboard, display, saving, indentation, typing }
     enum Item: Hashable, Sendable {
         case keybindings, keyBar, customizeKeyBar
         case syntax, lineNumbers, currentLine, wrapText, wrapCode
+        case autoSave
         case detectIndentation, indentWith, tabWidth
         case closeBrackets
     }
 
     private let preferences: CodeEditorPreferences
 
-    init(preferences: CodeEditorPreferences = .shared) {
+    /// Auto-Save is declared in `SettingsCatalog` and stored on the key the
+    /// editor's "…" menu writes, so this row and that menu are one setting.
+    init(preferences: CodeEditorPreferences = .shared, settings: SettingsStore? = nil) {
         self.preferences = preferences
         super.init(
             title: String(localized: "Editor"),
             listIdentifier: "settings.editor.list",
             scope: .device,
+            settings: settings,
             headers: true,
             footers: true
         )
@@ -43,6 +47,12 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
                 header: String(localized: "Display"),
                 footer: String(localized: "The editor uses your code font and size from Text."),
                 items: [.syntax, .lineNumbers, .currentLine, .wrapText, .wrapCode]
+            ),
+            ListSection(
+                .saving,
+                header: String(localized: "Saving"),
+                footer: SettingsCatalog.autoSave.copy.footer,
+                items: [.autoSave]
             ),
             ListSection(
                 .indentation,
@@ -70,6 +80,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         case .currentLine: AnyHashable(preferences.highlightsCurrentLine)
         case .wrapText: AnyHashable(preferences.wrapsText)
         case .wrapCode: AnyHashable(preferences.wrapsCode)
+        case .autoSave: settingInputs(SettingsCatalog.autoSave)
         case .detectIndentation: AnyHashable(preferences.detectsIndentation)
         case .indentWith: AnyHashable(preferences.indentsWithTabs)
         case .tabWidth: AnyHashable(preferences.tabWidth)
@@ -162,8 +173,12 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
     }
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
-        cell.accessibilityIdentifier = "settings.editor.\(item)"
+        // A declared row's switch carries the setting's id (and a recycled cell must
+        // not keep the cell id a plain row gave it); every other row is the cell.
+        cell.accessibilityIdentifier = item == .autoSave ? nil : "settings.editor.\(item)"
         switch item {
+        case .autoSave:
+            settingToggleRow(cell, SettingsCatalog.autoSave)
         case .keyBar:
             toggleRow(cell, title: String(localized: "Keyboard Bar"), isOn: preferences.showsKeyBar) { [weak self] in self?.preferences.showsKeyBar = $0 }
         case .syntax:

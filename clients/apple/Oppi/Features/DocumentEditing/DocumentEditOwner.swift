@@ -87,6 +87,11 @@ final class DocumentEditOwner {
         var didReload: () -> Void = {}
         /// The reader a Preview shows, built over the editor's draft.
         var makePreview: (String) -> UIViewController = { _ in UIViewController() }
+        /// What Done's confirmation says about this document beyond its name.
+        /// Pi's own files add that Pi uses them for every new session on the
+        /// server, which is display metadata the screen showing them knows. Nil
+        /// keeps the confirmation short.
+        var saveConfirmationMessage: @MainActor () -> String? = { nil }
     }
 
     private(set) var subject: DocumentEditSubject
@@ -103,6 +108,9 @@ final class DocumentEditOwner {
     let draftStore: WorkspaceFileDraftStore
     private let registry: WorkspaceFileEditSessionRegistry
     private let onChange: @MainActor () -> Void
+    /// Auto-Save, handed to every session this owner opens: one editor setting
+    /// for every document, whatever its owner or name.
+    private let isAutoSaveOn: @MainActor () -> Bool
     /// Bumped by every `begin`: a read that started for the previous document
     /// must not write this one's state.
     private var generation = 0
@@ -140,6 +148,7 @@ final class DocumentEditOwner {
         draftStore: WorkspaceFileDraftStore = .shared,
         registry: WorkspaceFileEditSessionRegistry = .shared,
         handlers: Handlers = Handlers(),
+        isAutoSaveOn: @MainActor @escaping () -> Bool = { CodeEditorPreferences.shared.autoSaves },
         onChange: @escaping @MainActor () -> Void
     ) {
         self.subject = subject
@@ -150,6 +159,7 @@ final class DocumentEditOwner {
         self.draftStore = draftStore
         self.registry = registry
         self.handlers = handlers
+        self.isAutoSaveOn = isAutoSaveOn
         self.onChange = onChange
     }
 
@@ -227,7 +237,8 @@ final class DocumentEditOwner {
                 maxBytes: capability.maxBytes,
                 transport: backend.transport,
                 registry: registry,
-                draftStore: draftStore
+                draftStore: draftStore,
+                isAutoSaveOn: isAutoSaveOn
             ) else {
                 // Nothing kept: the reader reports the miss its own way.
                 reset()
@@ -278,7 +289,8 @@ final class DocumentEditOwner {
                   disk: snapshot,
                   maxBytes: maxBytes,
                   transport: backend.transport,
-                  draftStore: draftStore
+                  draftStore: draftStore,
+                  isAutoSaveOn: isAutoSaveOn
               ) else { return nil }
         // A recovered draft, or a notice that an unreadable one was moved aside.
         guard recovered.recoveredDraft || recovered.draftNotice != nil else { return nil }
@@ -365,7 +377,8 @@ final class DocumentEditOwner {
                       disk: base,
                       maxBytes: maxBytes,
                       transport: backend.transport,
-                      draftStore: draftStore
+                      draftStore: draftStore,
+                      isAutoSaveOn: isAutoSaveOn
                   ) {
             session = created
             registry.register(created)
@@ -456,6 +469,9 @@ final class DocumentEditOwner {
                 self?.onChange()
             },
             makePreview: handlers.makePreview,
+            // Pi's own files say what they are used by; a workspace file, a
+            // Skill file, and a prompt keep Done's confirmation to the name.
+            saveConfirmationMessage: subject.isPiOwnedFile ? handlers.saveConfirmationMessage() : nil,
             onUseDisk: { [weak self] in self?.useDiskVersion() }
         )
         editorPage = page

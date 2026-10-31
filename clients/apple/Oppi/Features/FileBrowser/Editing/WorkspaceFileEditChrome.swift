@@ -541,6 +541,7 @@ enum WorkspaceFileEditorOptions {
             }
         )
         let toggles: [(String, Bool, (Bool) -> Void)] = [
+            (String(localized: "Auto-Save"), preferences.autoSaves, { preferences.autoSaves = $0 }),
             (String(localized: "Syntax Highlighting"), preferences.highlightsSyntax, { preferences.highlightsSyntax = $0 }),
             (String(localized: "Line Numbers"), preferences.showsLineNumbers, { preferences.showsLineNumbers = $0 }),
             (String(localized: "Wrap Lines"), preferences.wrapsLines(for: wrapKind), { preferences.setWrapsLines($0, for: wrapKind) }),

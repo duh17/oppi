@@ -14,7 +14,8 @@ enum WorkspaceFileEditRecovery {
         maxBytes: Int,
         transport: WorkspaceFileEditTransport,
         registry: WorkspaceFileEditSessionRegistry = .shared,
-        draftStore: WorkspaceFileDraftStore = .shared
+        draftStore: WorkspaceFileDraftStore = .shared,
+        isAutoSaveOn: @MainActor @escaping () -> Bool = { CodeEditorPreferences.shared.autoSaves }
     ) -> WorkspaceFileEditSession? {
         if let live = registry.session(for: identity), live.hasUnsavedChanges {
             live.noteFileMissing()
@@ -26,7 +27,8 @@ enum WorkspaceFileEditRecovery {
                   deletedFileDraft: draft,
                   maxBytes: maxBytes,
                   transport: transport,
-                  draftStore: draftStore
+                  draftStore: draftStore,
+                  isAutoSaveOn: isAutoSaveOn
               ) else { return nil }
         registry.register(session)
         return session

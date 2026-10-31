@@ -170,6 +170,23 @@ final class CodeEditorPreferences {
     var showsKeyBar: Bool { didSet { defaults.set(showsKeyBar, forKey: Key.keyBar) } }
     var keyBarKeys: [CodeEditorBarKey] { didSet { defaults.set(keyBarKeys.map(\.id), forKey: Key.keyBarKeys) } }
 
+    /// Auto-Save: write the document as you type. Off (the default), the edit
+    /// session writes nothing on its own and a person saves: Done asks, ⌘S and
+    /// Vim's `:w` write. Read through `defaults` rather than held in memory, so
+    /// Settings > Editor's declared row (`SettingsCatalog.autoSave`, kept on the
+    /// same key) and this menu are one value whichever side wrote it.
+    var autoSaves: Bool {
+        get {
+            access(keyPath: \.autoSaves)
+            return defaults.object(forKey: Key.autoSave) == nil
+                ? AppPreferenceStore.Editor.autoSaveDefault
+                : defaults.bool(forKey: Key.autoSave)
+        }
+        set {
+            withMutation(keyPath: \.autoSaves) { defaults.set(newValue, forKey: Key.autoSave) }
+        }
+    }
+
     static let tabWidths = [2, 4, 8]
 
     private enum Key {
@@ -189,6 +206,8 @@ final class CodeEditorPreferences {
         static let tabWidth = prefix + "tabWidth"
         static let keyBar = prefix + "keyBar"
         static let keyBarKeys = prefix + "keyBarKeys"
+        /// The declared setting's key; see `AppPreferenceStore.Editor`.
+        static let autoSave = AppPreferenceStore.Editor.autoSaveKey
     }
 
     init(defaults: UserDefaults = .standard) {

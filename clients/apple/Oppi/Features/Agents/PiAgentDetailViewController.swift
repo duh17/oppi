@@ -238,6 +238,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     private func updateModals() {
         let prompt = prompt
         let connection = root.coordinator.activeConnection
+        let serverName = root.activeServerName
         fileReview.update(
             // The reader opens whether or not SYSTEM.md exists: a missing file is
             // still the prompt's document, and the reader is where its pencil is.
@@ -271,7 +272,12 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                         refreshDocument: { [weak self] in
                             guard let api = connection.apiClient else { return nil }
                             return (try? await api.getPiSystemPrompt())?.content
-                        }
+                        },
+                        // Done asks before writing Pi's own file (Auto-Save off), and
+                        // says what else reads it: every new session on this server.
+                        editSaveMessage: String(
+                            localized: "Pi uses this file for every new session on \(serverName)."
+                        )
                     )
                 }
             }

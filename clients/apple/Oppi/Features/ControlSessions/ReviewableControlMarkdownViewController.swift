@@ -181,6 +181,9 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// The document as the record holds it now, for after an edit: a prompt's
     /// reader shows the whole definition, not just the prompt.
     private let refreshDocument: (@MainActor () async -> String?)?
+    /// The sentence Done's confirmation adds for one of Pi's own files (Pi reads
+    /// it for every new session); nil keeps the confirmation to the name.
+    private let editSaveMessage: String?
 
     private var reader: FullScreenCodeViewController?
     /// The file viewer of a host file; its bar is this screen's.
@@ -196,13 +199,15 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         targetPath: String? = nil,
         subject: DocumentEditSubject = .snapshot,
         connection: ServerConnection? = nil,
-        refreshDocument: (@MainActor () async -> String?)? = nil
+        refreshDocument: (@MainActor () async -> String?)? = nil,
+        editSaveMessage: String? = nil
     ) {
         viewer = .fullScreen
         languageHint = "markdown"
         self.subject = subject
         self.serverConnection = connection
         self.refreshDocument = refreshDocument
+        self.editSaveMessage = editSaveMessage
         shownText = content
         self.domain = domain
         self.targetId = targetId
@@ -234,6 +239,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         subject = .snapshot
         serverConnection = connection
         refreshDocument = nil
+        // A Skill's or a host file's reader has no Pi-specific sentence to add.
+        editSaveMessage = nil
         shownText = ""
         self.domain = domain
         self.targetId = targetId
@@ -314,7 +321,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
                         content: .markdown(content: text, filePath: sourcePath),
                         presentationMode: .contentOnly()
                     )
-                }
+                },
+                saveConfirmationMessage: { [weak self] in self?.editSaveMessage }
             ),
             onChange: { [weak self] in self?.setNeedsUpdateProperties() }
         )
