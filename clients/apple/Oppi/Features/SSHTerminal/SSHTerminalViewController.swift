@@ -828,9 +828,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             info.accessibilityIdentifier = "sshTerminal.menu.rexRoute"
             items.append(info)
         }
-        items.append(UIAction(title: "Edit Host", image: UIImage(systemName: "pencil")) { [weak self] _ in
-            self?.editHost()
-        })
+        // A Rex reached over Tailscale alone has no saved host to edit.
+        if session?.currentProfile?.rexTailnet == nil {
+            items.append(UIAction(title: "Edit Host", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                self?.editHost()
+            })
+        }
         if channel.connected {
             items.append(UIAction(
                 title: "Disconnect",
@@ -1824,7 +1827,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The multiplexer a trailing bar action opens the overview of.
     private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
         switch action {
-        case .herdr: herdr
+        // Herdr is read with side commands, which a terminal without SSH has none of.
+        case .herdr: channel.sideCommandsUnavailable == nil ? herdr : nil
         case .rex: rex
         default: nil
         }
@@ -2170,6 +2174,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// its path. Claude Code and pi read a pasted image path as the image.
     private func pasteImage(_ image: SSHTerminalPastedImage) {
         guard channel.connected else { channel.send(Data()); return }
+        if let reason = channel.sideCommandsUnavailable {
+            presentPasteFailure("The image was not pasted. \(reason)")
+            return
+        }
         let channel = channel
         showPasteNotice("Saving the image on the host\u{2026}")
         Task { [weak self] in
@@ -2281,7 +2289,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// host (`SSHTerminalRexHostStore`): a host Rex was read on gets a live Rex
     /// section there, and one with no `rex` loses it. It reaches the host's
     /// Rex over Tailscale when it can (`RexRoutePlan`).
+    /// A Rex reached over Tailscale alone is no saved host: it is followed
+    /// straight over Tailscale and nothing is recorded for it.
     static func makeRexMonitor(for profile: SSHTerminalProfile?, hosts: SSHTerminalRexHostStore?) -> RexMonitor {
+        if profile?.rexTailnet != nil { return RexMonitor.forTerminal(of: profile) }
         let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init))
         if let profile, let hosts {
             monitor.onFinding = { hosts.record($0, on: profile) }
@@ -2317,7 +2328,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             stopOverviewPolls()
         }
         let dark = appIsDark
-        let colorKey = channel.connected && colorChoice != .oppi ? "\(colorChoice)|\(dark)" : nil
+        // The host's Ghostty colors are read with side commands; a terminal
+        // without them keeps the colors it has (Oppi's theme, or the last read).
+        let readsColors = channel.connected && colorChoice != .oppi && channel.sideCommandsUnavailable == nil
+        let colorKey = readsColors ? "\(colorChoice)|\(dark)" : nil
         if colorToken != colorKey {
             colorToken = colorKey
             colorTask?.cancel()

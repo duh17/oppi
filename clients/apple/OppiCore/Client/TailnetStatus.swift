@@ -221,6 +221,8 @@ struct TailnetStatusSnapshot: Equatable, Sendable {
     let tailnetName: String?
     /// Every peer in the netmap, sorted by display name.
     let peers: [TailnetPeer]
+    /// The Tailscale account this node is signed in as (`User[Self.UserID].LoginName`).
+    var selfLoginName: String? = nil
 
     var onlinePeers: [TailnetPeer] { peers.filter(\.isOnline) }
 }
@@ -260,7 +262,8 @@ enum TailnetStatusProjection {
             authURL: authURL,
             selfDNSName: nonEmpty(trimmedDNSName(status.SelfStatus?.DNSName)),
             tailnetName: nonEmpty(status.CurrentTailnet?.Name),
-            peers: peers
+            peers: peers,
+            selfLoginName: status.SelfStatus?.UserID.flatMap { status.User?[String($0)]?.LoginName }.flatMap(nonEmpty)
         )
     }
 
@@ -282,9 +285,10 @@ enum TailnetStatusProjection {
         let SelfStatus: PeerStatus?
         let CurrentTailnet: TailnetStatus?
         let Peer: [String: PeerStatus]?
+        let User: [String: UserProfile]?
 
         enum CodingKeys: String, CodingKey {
-            case BackendState, AuthURL, CurrentTailnet, Peer
+            case BackendState, AuthURL, CurrentTailnet, Peer, User
             case SelfStatus = "Self"
         }
     }
@@ -296,6 +300,11 @@ enum TailnetStatusProjection {
         let OS: String?
         let TailscaleIPs: [String]?
         let Online: Bool?
+        let UserID: Int64?
+    }
+
+    private struct UserProfile: Decodable {
+        let LoginName: String?
     }
 
     private struct TailnetStatus: Decodable {

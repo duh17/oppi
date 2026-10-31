@@ -116,6 +116,7 @@ struct TailnetStatusProjectionTests {
         #expect(snapshot.backendState == .running)
         #expect(snapshot.selfDNSName == "oppi-ios.tail1234.ts.net")
         #expect(snapshot.tailnetName == "chen@example.com")
+        #expect(snapshot.selfLoginName == "chen@example.com", "the account a Rex refusal names")
         #expect(snapshot.peers.map(\.displayName) == ["build-box", "mac-studio", "old-laptop"])
 
         let online = snapshot.onlinePeers
@@ -597,6 +598,7 @@ private enum TailnetFixtures {
         "HostName": "oppi-ios",
         "DNSName": "oppi-ios.tail1234.ts.net.",
         "OS": "iOS",
+        "UserID": 123,
         "TailscaleIPs": ["100.90.1.2"],
         "Online": true,
         "ExitNode": false,

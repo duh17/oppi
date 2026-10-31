@@ -1825,6 +1825,7 @@
 		BE1FED752A04007DAB3B6A2A /* McpServersModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BDDCE0F0735EB78B55B0A99 /* McpServersModelTests.swift */; };
 		BE59429C6E1F515417F435D7 /* SessionInboxGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74EB3C33F8069566D2C48FD1 /* SessionInboxGrouping.swift */; };
 		BE680B1B4C3DFD777889D723 /* TableBodyLeakRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2D1A41291EA1313BB195AC /* TableBodyLeakRegressionTests.swift */; };
+		BE7B4AC7636204BF2FC92838 /* RexTailnetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108F85495F7C286E9BDFD05C /* RexTailnetTests.swift */; };
 		BE910209B51DF6706BEE3D9E /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 45CC369552CCB81E34595239 /* NIOPosix */; };
 		BE9410F2AC20682C3B6DCCAA /* ExtensionUINativeSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74343B20957C6BCACDE5A263 /* ExtensionUINativeSurface.swift */; };
 		BEAC62757CE7C20A5CDB39C3 /* MermaidClassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E14A4BC931984D4A4464CDB /* MermaidClassRenderer.swift */; };
@@ -2179,6 +2180,7 @@
 		E34017E5DDAAA11850FC4F02 /* SSHIdentityKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1915BE34EB3A7D4D3127CF1 /* SSHIdentityKeyStore.swift */; };
 		E3695E35F4D2EEB46AD009BE /* SkillInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BDD324CE2BD1D22E6C2D53 /* SkillInfo.swift */; };
 		E3A0D3BD8BB84225C4C62632 /* TestTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A6BDC80537E6B118273A8D /* TestTags.swift */; };
+		E3E22F9297DF1F145F7963DE /* RexTailnet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658CA553D9FA00CE4481C751 /* RexTailnet.swift */; };
 		E40301E04E036B44B35BA935 /* LiveActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B678D2C7494B1364BEEEC6F /* LiveActivityPresentation.swift */; };
 		E4236BFDBA95943D45CE666D /* ExtensionSurfacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F477E5264D3B76FDE67B4E /* ExtensionSurfacePanel.swift */; };
 		E436FCCD8E5BBCDF822033ED /* SkillDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03B7FB8CCC785E87E67A19A /* SkillDetail.swift */; };
@@ -2709,6 +2711,7 @@
 		0FF6746D222A7B263141452D /* TimelineOffsetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineOffsetController.swift; sourceTree = "<group>"; };
 		102D18AD71072B6D8DC4124C /* PushPairingPlaintextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushPairingPlaintextTests.swift; sourceTree = "<group>"; };
 		108BB8C94EE6FC1E33CB64E9 /* ReviewCommentFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentFormattingTests.swift; sourceTree = "<group>"; };
+		108F85495F7C286E9BDFD05C /* RexTailnetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnetTests.swift; sourceTree = "<group>"; };
 		1096B582B3F2CB854CBB4A89 /* QuickSessionViewController+Pickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "QuickSessionViewController+Pickers.swift"; sourceTree = "<group>"; };
 		10ECB7266E12083547C5138A /* ServerMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMessage.swift; sourceTree = "<group>"; };
 		113C208DAA1E0A0043F698D2 /* TerminalLogEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalLogEngineTests.swift; sourceTree = "<group>"; };
@@ -3367,6 +3370,7 @@
 		647313DD05F5684F1E9F54C9 /* SSHTerminalProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalProgressTests.swift; sourceTree = "<group>"; };
 		64AF3E296F82DF19DF4FDD9E /* SSHInstall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHInstall.swift; sourceTree = "<group>"; };
 		6555571A8BEC13631255650C /* MacSessionCommandPendingChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionCommandPendingChangeTests.swift; sourceTree = "<group>"; };
+		658CA553D9FA00CE4481C751 /* RexTailnet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnet.swift; sourceTree = "<group>"; };
 		6598CC67F49112C7E21F80C8 /* FullScreenCodeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeSupport.swift; sourceTree = "<group>"; };
 		65A309AD3649A6997370E56C /* PiDefaultPromptViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiDefaultPromptViewController.swift; sourceTree = "<group>"; };
 		65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamFinishFormattingTests.swift; sourceTree = "<group>"; };
@@ -4827,6 +4831,7 @@
 				4B38BE9DB5548968B9EEDB21 /* RexClientTests.swift */,
 				B6C5B1E50E46C5294B5DC883 /* RexDirectTests.swift */,
 				85362ECA3B359FF990E8A67F /* RexTailnetDiscoveryTests.swift */,
+				108F85495F7C286E9BDFD05C /* RexTailnetTests.swift */,
 				07D6D176BA726AD604D6BB90 /* ServerConnectionForegroundRecoveryTests.swift */,
 				AF62E83D666C51FC2AB5B0BF /* ServerConnectionInvariantTests.swift */,
 				8D4ED5F6D7342021B60F0C49 /* ServerConnectionLANTransportTests.swift */,
@@ -7209,6 +7214,7 @@
 				6B3663390119E359762046DE /* RexDirect.swift */,
 				7C789B4C7A85C528507B1EB4 /* RexRemote.swift */,
 				6A2CE1597226D02FF6DD3DA4 /* RexSession.swift */,
+				658CA553D9FA00CE4481C751 /* RexTailnet.swift */,
 				B9D8A5B9AE9B78E7AC209093 /* RexTailnetDiscovery.swift */,
 				3B94BF3953D00D38E6C62D09 /* RexTerminalStream.swift */,
 				0527EF2FC300030C4F00F633 /* RexWebSocket.swift */,
@@ -9705,6 +9711,7 @@
 				EB446A5C91D434B1E8FAD911 /* RexClientTests.swift in Sources */,
 				AA8C14BED5F090DEF57CB917 /* RexDirectTests.swift in Sources */,
 				712B079CC3788331480BCA2F /* RexTailnetDiscoveryTests.swift in Sources */,
+				BE7B4AC7636204BF2FC92838 /* RexTailnetTests.swift in Sources */,
 				41E175DE8988BFF7FDBB99C8 /* RouterHostFactoryTests.swift in Sources */,
 				513053E87FAF117D65790734 /* SQLHighlightDebugTests.swift in Sources */,
 				95387380750A5E1610B654D4 /* SSHApprovalCacheTests.swift in Sources */,
@@ -10588,6 +10595,7 @@
 				4D67AE0723175C3795C5680B /* RexFakeWorld.swift in Sources */,
 				DE2E32453D245EA54E56C8B1 /* RexRemote.swift in Sources */,
 				E5276CB03FA9EF9ABC3BC00C /* RexSession.swift in Sources */,
+				E3E22F9297DF1F145F7963DE /* RexTailnet.swift in Sources */,
 				CF139A08A9A55D38C1BDF486 /* RexTailnetDiscovery.swift in Sources */,
 				F5079A83AC817294E0319DA5 /* RexTerminalStream.swift in Sources */,
 				D88EF897305F3FC74E18EA0C /* RexWebSocket.swift in Sources */,

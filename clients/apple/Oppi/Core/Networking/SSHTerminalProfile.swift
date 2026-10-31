@@ -24,6 +24,14 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     /// Connecting opens the host's Rex sessions instead of a terminal; the
     /// login shell opens from there. Such a host runs no Run on Connect command.
     var opensRexSessions = false
+    /// Set only on the stand-in profile of a Rex reached over Tailscale alone
+    /// (`RexTailnetHost.profile`): its terminals speak to Rex at this URL with
+    /// no SSH connection. Not encoded, so it can never land in the host list.
+    var rexTailnet: URL? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id, host, port, username, authentication, savesPassword, savesSudoPassword, startupCommand, opensRexSessions
+    }
 
     init(
         id: UUID = UUID(),
@@ -34,7 +42,8 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         savesPassword: Bool = false,
         savesSudoPassword: Bool = false,
         startupCommand: String? = nil,
-        opensRexSessions: Bool = false
+        opensRexSessions: Bool = false,
+        rexTailnet: URL? = nil
     ) {
         self.id = id
         self.host = host
@@ -45,6 +54,7 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         self.savesSudoPassword = savesSudoPassword
         self.startupCommand = startupCommand
         self.opensRexSessions = opensRexSessions
+        self.rexTailnet = rexTailnet
     }
 
     /// Catalogs saved before the sudo password or Rex existed have no such key.

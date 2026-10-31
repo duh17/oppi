@@ -547,10 +547,14 @@ enum RexAbsence: Equatable, Sendable {
     case notInstalled
     /// `rex` is installed and no Rex server is listening (exit 4).
     case notRunning
+    /// A Rex reached over Tailscale alone did not let this device in, with
+    /// what to tell the person (`RexTailnetAccess.refusal`).
+    case refused(String)
 
-    /// Asking again cannot help until someone changes the host, so the monitor
-    /// stops until a pull to refresh. A Rex that is not running may be
-    /// started, so it is asked again with backoff.
+    /// Asking again cannot help until someone changes the host (or, for a
+    /// refusal, the Tailscale sign-in), so the monitor stops until a pull to
+    /// refresh. A Rex that is not running may be started, so it is asked
+    /// again with backoff.
     var givesUp: Bool { self != .notRunning }
 
     var advice: String {
@@ -561,6 +565,8 @@ enum RexAbsence: Equatable, Sendable {
             "Rex is not installed on this host. Install it, then pull down to try again."
         case .notRunning:
             "Rex is not running on this host. Start it (rex server start) and this list fills in."
+        case .refused(let message):
+            message
         }
     }
 }
@@ -644,6 +650,10 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// The saved host this follows, whose Rex may be reached over Tailscale
     /// (`RexRoutePlan`); nil reads it over the SSH bridge only.
     @ObservationIgnored private let directHost: RexDirectHost?
+    /// A Rex reached over Tailscale alone (`RexTailnetHost`): every stream goes
+    /// straight to it, with no SSH to fall back on.
+    @ObservationIgnored private let tailnet: RexTailnetHost?
+    @ObservationIgnored private let openDirect: RexLink.OpenDirect
     /// How long a burst of changes waits before it reaches `snapshot`, so a
     /// busy pane is one UI update, not one per event.
     @ObservationIgnored private let publishDelay: Duration
@@ -680,30 +690,75 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     init(
         directHost: RexDirectHost? = nil,
+        tailnet: RexTailnetHost? = nil,
+        openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
         publishDelay: Duration = .milliseconds(150),
         retryDelay: @escaping @MainActor (Retry, Int) -> Duration = { Retry.delay($0, failures: $1) }
     ) {
         self.directHost = directHost
+        self.tailnet = tailnet
+        self.openDirect = openDirect
         self.publishDelay = publishDelay
         self.retryDelay = retryDelay
     }
 
-    /// The terminal's overview source: `run(over:)` on its channel.
+    /// The monitor a terminal of `profile` follows its Rex with: straight over
+    /// Tailscale for a Rex reached that way alone, else through the host.
+    static func forTerminal(of profile: SSHTerminalProfile?) -> RexMonitor {
+        if let profile, profile.rexTailnet != nil, let host = RexTailnetHost(dnsName: profile.host) {
+            return RexMonitor(tailnet: host)
+        }
+        return RexMonitor(directHost: profile.map(RexDirectHost.init))
+    }
+
+    /// The terminal's overview source: `run(over:)` on its channel, or straight
+    /// to a Rex reached over Tailscale alone while the terminal is connected.
     func run(on channel: SSHTerminalChannel) async {
-        await run(over: channel)
+        if tailnet != nil {
+            await runTailnet(while: { channel.connected })
+        } else {
+            await run(over: channel)
+        }
     }
 
     /// Subscribes until the task is cancelled, the connection goes, or the
     /// host turns out to have no `nc` or no Rex.
     func run(over host: any RexStreamHost) async {
-        var failures = 0
         // One open: a direct route that fails is not tried again by this run.
         let plan = directHost.map { RexRoutePlan(host: $0) }
-        while !Task.isCancelled, host.isConnected {
+        await follow(while: { host.isConnected }, connect: {
+            try await RexLink.connect(
+                plan: plan,
+                openStream: { @MainActor command, _, sink in try await host.openStream(command: command, sink: sink) },
+                run: { @MainActor command in try await host.run(command, input: Data()) }
+            )
+        })
+    }
+
+    /// Subscribes to a Rex reached over Tailscale alone until the task is
+    /// cancelled, `alive` says stop, or Rex refuses this device's Tailscale
+    /// identity (until `retry()`).
+    func runTailnet(while alive: @escaping @MainActor () -> Bool = { true }) async {
+        guard let tailnet else { return }
+        let openDirect = openDirect
+        await follow(while: alive, connect: {
+            let link = RexLink(route: .tailscale(tailnet.url), openStream: RexTailnetTransport.noBridge, openDirect: openDirect)
+            return (link, try await link.connect(timeout: RexTailnetHost.connectTimeout))
+        })
+    }
+
+    /// One stream after another, by `connect`, with the backoff and the
+    /// reasons to stop that `Retry` and `RexAbsence` describe.
+    private func follow(
+        while alive: @MainActor () -> Bool,
+        connect: @MainActor () async throws -> (RexLink, RexControl)
+    ) async {
+        var failures = 0
+        while !Task.isCancelled, alive() {
             var synced = false
             let retry: Retry
             do {
-                try await subscribe(on: host, plan: plan, synced: &synced)
+                try await subscribe(connect: connect, synced: &synced)
                 return
             } catch is CancellationError {
                 return
@@ -713,7 +768,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
                 case .bridgeMissing?: absence = .noNc
                 case .notInstalled?: absence = .notInstalled
                 case .notRunning?: absence = .notRunning
-                default: absence = nil
+                default: absence = tailnet.flatMap { RexTailnetAccess.refusal(error, host: $0) }.map { .refused($0) }
                 }
                 if let absence { onFinding?(.absent(absence)) }
                 if let absence, absence.givesUp {
@@ -770,13 +825,9 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     /// One stream: open, read everything, then apply events until it ends.
     /// Throws the reason it ended; returns only when the task is cancelled.
-    private func subscribe(on host: any RexStreamHost, plan: RexRoutePlan?, synced: inout Bool) async throws {
+    private func subscribe(connect: @MainActor () async throws -> (RexLink, RexControl), synced: inout Bool) async throws {
         let inbox = RexEventInbox()
-        let (link, control) = try await RexLink.connect(
-            plan: plan,
-            openStream: { @MainActor command, _, sink in try await host.openStream(command: command, sink: sink) },
-            run: { @MainActor command in try await host.run(command, input: Data()) }
-        )
+        let (link, control) = try await connect()
         route = link.route
         control.onEvent { frame in
             if let event = RexEvent(frame: frame) { inbox.push(event) }

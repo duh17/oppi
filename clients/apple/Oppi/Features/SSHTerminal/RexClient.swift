@@ -423,6 +423,12 @@ protocol RexTransport: Sendable {
     func checkAlive() async throws
     func close()
     func cancel() async
+    /// Why side commands cannot run, or nil on a host with SSH beside Rex.
+    var sideCommandsUnavailable: String? { get }
+}
+
+extension RexTransport {
+    var sideCommandsUnavailable: String? { nil }
 }
 
 /// A Rex terminal's signed-in SSH connection, which runs no shell: Rex's
@@ -778,6 +784,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     }
 
     func checkAlive() async throws { try await transport.checkAlive() }
+
+    var sideCommandsUnavailable: String? { transport.sideCommandsUnavailable }
 
     func close() {
         let stream = core.withLock { state -> (any RexSocket)? in

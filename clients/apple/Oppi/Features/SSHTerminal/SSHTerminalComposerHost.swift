@@ -117,7 +117,9 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             appliesOuterPadding: true,
             alwaysShowActionRow: false,
             allowsExpansion: false,
-            allowsAttachments: true,
+            // Attachments are saved on the host over SSH, which a Rex reached
+            // over Tailscale alone does not have.
+            allowsAttachments: channel.sideCommandsUnavailable == nil,
             attachmentButtonPlacement: .leading,
             actionRowMinimumHeight: ComposerInputMetrics.controlDiameter,
             showsAccessoryRow: true,

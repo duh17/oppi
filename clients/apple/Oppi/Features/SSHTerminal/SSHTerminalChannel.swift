@@ -24,6 +24,21 @@ protocol SSHTerminalConnection: Sendable {
     func close()
     /// `close()`, then waits until the connection is closed.
     func cancel() async
+    /// Why this connection has no side commands, or nil when it has them: a
+    /// Rex reached over Tailscale alone has no SSH beside it, so uploads, the
+    /// host's Ghostty colors, keybinding files, and Herdr are not there.
+    var sideCommandsUnavailable: String? { get }
+}
+
+extension SSHTerminalConnection {
+    var sideCommandsUnavailable: String? { nil }
+}
+
+/// A side command asked of a terminal that has none (`sideCommandsUnavailable`):
+/// it fails at once with the reason, so nothing waits on it.
+struct SSHTerminalSideCommandsUnavailable: LocalizedError, Equatable {
+    let reason: String
+    var errorDescription: String? { reason }
 }
 
 extension SSHPTYSession: SSHTerminalConnection {
@@ -326,6 +341,9 @@ final class SSHTerminalChannel {
         }
     }
     private var connection: (any SSHTerminalConnection)?
+    /// Why this terminal cannot run side commands (`SSHTerminalConnection`),
+    /// kept after it ends so a screen still says why.
+    private(set) var sideCommandsUnavailable: String?
     /// The startup command running instead of a shell, if any. Exit reasons
     /// name it so a finished `herdr` attach is not reported as a shell exit.
     private(set) var command: String?
@@ -361,6 +379,7 @@ final class SSHTerminalChannel {
     func opened(_ connection: any SSHTerminalConnection, command: String? = nil) {
         self.connection = connection
         self.command = command
+        sideCommandsUnavailable = connection.sideCommandsUnavailable
         connected = true
         connecting = false
         reason = "Connected"
@@ -486,12 +505,14 @@ final class SSHTerminalChannel {
 
     /// Runs a structured side command on this terminal's connection.
     func run(_ command: String, input: Data = Data()) async throws -> SSHExecResult {
+        if let sideCommandsUnavailable { throw SSHTerminalSideCommandsUnavailable(reason: sideCommandsUnavailable) }
         guard connected, let connection else { throw SSHConnectionError.notConnected }
         return try await connection.run(command, input: input)
     }
 
     /// Opens a long-lived command on this terminal's connection (`SSHTerminalConnection.openStream`).
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        if let sideCommandsUnavailable { throw SSHTerminalSideCommandsUnavailable(reason: sideCommandsUnavailable) }
         guard connected, let connection else { throw SSHConnectionError.notConnected }
         return try await connection.openStream(command: command, sink: sink)
     }

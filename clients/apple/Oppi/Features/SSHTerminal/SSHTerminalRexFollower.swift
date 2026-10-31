@@ -400,7 +400,7 @@ extension SSHTerminalRexHostStore {
         switch finding {
         case .reached: markSeen(profile)
         case .absent(.notInstalled): forget(profile.id)
-        case .absent(.notRunning), .absent(.noNc): break
+        case .absent(.notRunning), .absent(.noNc), .absent(.refused): break
         }
     }
 }

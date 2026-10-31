@@ -198,6 +198,7 @@ final class RexFakeSession: Sendable {
         var refusing: Set<String> = []
         /// Limits `refusing` to requests that name one of these panes.
         var refusingBlocks: Set<String>?
+        var directURLs: [URL] = []
     }
 
     let sessionID: String
@@ -321,12 +322,50 @@ final class RexFakeSession: Sendable {
     /// the control connection speaks to the fake host, and each data socket
     /// the terminal opens is the next pane stream `data.connect` queued.
     func connect() async throws -> (RexFakeTransport, RexControl) {
+        let fake = controlHost()
+        let control = try await RexLink(openStream: { _, _, sink in fake.open(sink: sink) }).connect()
+        return (RexFakeTransport(control: control, session: self), control)
+    }
+
+    /// This session as a Rex reached over Tailscale is (`RexLink.OpenDirect`):
+    /// a connection whose upgrade asks for `/api/control` reaches a control
+    /// host for this session, and each `/api/data` the next pane stream, all
+    /// over the client's own framing. `directURLs` records what was dialed.
+    func openDirect() -> RexLink.OpenDirect {
+        { [self] url, _, _, sink in
+            state.withLock { $0.directURLs.append(url) }
+            let target = Mutex<SSHExecStream?>(nil)
+            return SSHExecStream(
+                send: { [self] bytes in
+                    if let stream = target.withLock({ $0 }) { return try await stream.send(bytes) }
+                    let stream: SSHExecStream
+                    if String(decoding: bytes.prefix(64), as: UTF8.self).hasPrefix("GET /api/data ") {
+                        let data = nextDataHost()
+                        stream = data.open(sink: sink)
+                        serve(data)
+                    } else {
+                        stream = controlHost().open(sink: sink)
+                    }
+                    target.withLock { $0 = stream }
+                    try await stream.send(bytes)
+                },
+                close: {
+                    if let stream = target.withLock({ $0 }) { stream.close() } else { sink(.closed) }
+                }
+            )
+        }
+    }
+
+    /// Every URL `openDirect` was asked to dial, in order.
+    var directURLs: [URL] { state.withLock { $0.directURLs } }
+
+    /// A control host answering for this session; requests are recorded on the latest.
+    private func controlHost() -> RexFakeHost {
         let fake = RexFakeHost { [weak self] in
             self?.answer($0) ?? .refuse(code: "gone", message: "the fake session is gone")
         }
         host.withLock { $0 = fake }
-        let control = try await RexLink(openStream: { _, _, sink in fake.open(sink: sink) }).connect()
-        return (RexFakeTransport(control: control, session: self), control)
+        return fake
     }
 
     /// A Ghostty snapshot of a terminal that was written `text`.

@@ -73,13 +73,18 @@ final class SSHTerminalConnectSession {
     /// Where profiles and saved passwords live. Tests pass a store over their
     /// own defaults and an in-memory keychain.
     @ObservationIgnored private let profileStore: @Sendable () -> SSHTerminalProfileStore
+    /// How a Rex reached over Tailscale alone is dialed (`RexTLSStream.open`);
+    /// tests pass a stand-in Rex.
+    @ObservationIgnored private let openRexDirect: RexLink.OpenDirect
 
     init(
         registry: SSHTerminalRegistry = .shared,
-        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
+        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
+        openRexDirect: @escaping RexLink.OpenDirect = RexTLSStream.open
     ) {
         self.registry = registry
         self.profileStore = profileStore
+        self.openRexDirect = openRexDirect
     }
 
     /// Which hosts Rex was seen on, in the store this session's hosts live in.
@@ -92,6 +97,9 @@ final class SSHTerminalConnectSession {
         sudoPassword: String? = nil,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
+        if let host = profile.rexTailnet.flatMap({ _ in RexTailnetHost(dnsName: profile.host) }) {
+            return connectTailnetRex(host)
+        }
         let value = profile.normalized()
         guard value.isConfigured else { return }
         // Same host, same folder, same connection settings, shell still open:
@@ -343,6 +351,75 @@ final class SSHTerminalConnectSession {
         listsRexSessions = false
         rexPane = pane
         connect(profile: profile)
+    }
+
+    /// Shows a session of a Rex reached over Tailscale alone, on `pane`: the
+    /// session's open terminal if it is still connected, else a new one
+    /// (`connectTailnetRex`). The session then stands for it, so Reconnect
+    /// reopens it the same way.
+    func openTailnetRexPane(_ pane: RexPaneTarget, on host: RexTailnetHost) {
+        folder = nil
+        folderTerminalCommand = nil
+        multiplexerFolder = nil
+        listsRexSessions = false
+        rexPane = pane
+        connect(profile: host.profile)
+    }
+
+    /// A Rex pane over Rex's own Tailscale serving, with no SSH: no sign-in,
+    /// password, Face ID, or host-key trust, since Rex admits this device by
+    /// its Tailscale identity. The terminal is registered under the node's
+    /// stand-in profile (`RexTailnetHost.profile`). A refusal says which
+    /// Tailscale account Rex wants (`RexTailnetAccess`).
+    private func connectTailnetRex(_ host: RexTailnetHost) {
+        guard let rexPane else { return }
+        let value = host.profile
+        if let live = registry.terminal(for: value.id, folder: nil, rexPane: rexPane) {
+            show(live, movingTo: rexPane)
+            return
+        }
+        begin(value, savingHostOnly: false)
+        promptTarget = nil
+        connectedProfile = value
+        let attempt = runID
+        let openDirect = openRexDirect
+        task = Task {
+            defer { registry.untrack(attempt: attempt) }
+            do {
+                let owner = try SSHTerminalChannel(answersTerminalQueries: false)
+                channel = owner
+                let queue = SSHTerminalEventQueue()
+                let pane: RexSessionConnection
+                do {
+                    let (transport, control) = try await RexTailnetTransport.open(host: host, openDirect: openDirect) { writable in
+                        queue.push(.writabilityChanged(writable))
+                    }
+                    pane = try await RexSessionConnection.open(transport: transport, control: control, target: rexPane, queue: queue)
+                } catch { queue.finish(); throw error }
+                guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
+                owner.rex = RexSessionModel(connection: pane)
+                owner.opened(pane)
+                let adopted = registry.adopt(owner, profile: value, rexPane: rexPane, queue: queue)
+                task = nil
+                connecting = false
+                if adopted {
+                    showsTerminal = true
+                } else {
+                    failure = Self.backgroundFailure
+                }
+            } catch {
+                guard runID == self.runID, !Task.isCancelled else { return }
+                let message = RexTailnetAccess.refusal(error, host: host) ?? SSHTerminalChannel.message(error)
+                failure = message
+                closeUnregisteredChannel(reason: message)
+                connecting = false
+            }
+        }
+        if let task {
+            registry.track(attempt: attempt, task: task) { [weak self] in
+                self?.handleBackground()
+            }
+        }
     }
 
     /// Ends the Rex sessions connection; its screen has closed or Oppi left
