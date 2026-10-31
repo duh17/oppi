@@ -1273,26 +1273,8 @@ actor APIClient: ClientLogUploading {
         let attention: Attention
     }
 
-    struct WorkspaceSessionManagedRow: Decodable, Sendable, Equatable {
-        let summary: SessionSummary
-        let pendingAskCount: Int
-        let hasPendingAskCount: Bool
-
-        private enum CodingKeys: String, CodingKey {
-            case pendingAskCount
-        }
-
-        init(from decoder: Decoder) throws {
-            summary = try SessionSummary(from: decoder)
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let decodedPendingAskCount = try container.decodeIfPresent(Int.self, forKey: .pendingAskCount)
-            pendingAskCount = decodedPendingAskCount ?? 0
-            hasPendingAskCount = decodedPendingAskCount != nil
-        }
-    }
-
     enum WorkspaceSessionListRow: Decodable, Sendable, Equatable {
-        case session(WorkspaceSessionManagedRow)
+        case session(SessionSummary)
         case tui(LocalSession)
 
         private enum CodingKeys: String, CodingKey {
@@ -1304,7 +1286,7 @@ actor APIClient: ClientLogUploading {
             if try container.decodeIfPresent(String.self, forKey: .source) == "tui" {
                 self = .tui(try LocalSession(from: decoder))
             } else {
-                self = .session(try WorkspaceSessionManagedRow(from: decoder))
+                self = .session(try SessionSummary(from: decoder))
             }
         }
     }
@@ -1319,7 +1301,7 @@ actor APIClient: ClientLogUploading {
 
         var sessionSummaries: [SessionSummary] {
             (active + stopped).compactMap { row in
-                if case .session(let row) = row { return row.summary }
+                if case .session(let summary) = row { return summary }
                 return nil
             }
         }
@@ -1354,31 +1336,23 @@ actor APIClient: ClientLogUploading {
         let buckets: [WorkspaceSessionArchiveBucket]
     }
 
-    struct WorkspaceSessionListResponse: Decodable, Sendable {
+    /// Assembled on device from the sessions, session-buckets, and attention routes; never decoded.
+    struct WorkspaceSessionListResponse: Sendable {
         let workspace: Workspace
         let serverNow: Int64
         let sessionSummaries: [SessionSummary]
         let attention: WorkspaceAttentionResponse.Attention
         let importableSessions: [LocalSession]
         let archiveBuckets: [WorkspaceSessionArchiveBucket]
-
-        enum CodingKeys: String, CodingKey {
-            case workspace, serverNow, attention, importableSessions, archiveBuckets
-            case sessionSummaries = "sessions"
-        }
     }
 
-    struct WorkspaceSessionListBucketResponse: Decodable, Sendable {
+    /// Assembled on device from one sessions route response; never decoded.
+    struct WorkspaceSessionListBucketResponse: Sendable {
         let workspaceId: String
         let sinceMs: Int64
         let untilMs: Int64
         let sessionSummaries: [SessionSummary]
         let importableSessions: [LocalSession]
-
-        enum CodingKeys: String, CodingKey {
-            case workspaceId, sinceMs, untilMs, importableSessions
-            case sessionSummaries = "sessions"
-        }
     }
 
     func getWorkspaceAttention(workspaceId: String) async throws -> WorkspaceAttentionResponse {
