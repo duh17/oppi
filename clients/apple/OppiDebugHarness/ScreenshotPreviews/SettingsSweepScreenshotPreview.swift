@@ -16,7 +16,11 @@ import UIKit
 /// `model-providers-failed` (the status request answers 404) and
 /// `model-providers-loading` (with `SCREENSHOT_SWEEP_READ_DELAY`, which holds
 /// every read so a capture can see the load); `schedules-failed` and
-/// `schedules-loading` do the same for the schedules list.
+/// `schedules-loading` do the same for the schedules list. Server Settings and
+/// its pages: `server-settings` (its first open, held by
+/// `SCREENSHOT_SWEEP_READ_DELAY`), `paired-devices` (`paired-devices-offline`:
+/// the devices request answers 404) and `about` (`about-failed`: the server info
+/// request answers 404).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -203,7 +207,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed", "model-providers-loading"]
+        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed", "model-providers-loading",
+            "server-settings", "paired-devices", "paired-devices-offline", "about", "about-failed"]
             .contains(page) {
             // The MCP and provider screens wait for `apiClientReady`, so their
             // connection is a ready one whose requests the fixture answers, as
@@ -354,6 +359,28 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // The status request answers 404 (`-failed`), or is held by
             // `SCREENSHOT_SWEEP_READ_DELAY` (`-loading`).
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
+        case "server-settings":
+            // The first open: with `SCREENSHOT_SWEEP_READ_DELAY` the page is still
+            // loading its facts, which is when it shows one row saying so.
+            return stack { ServerSettingsViewController(server: server, root: root) }
+        case "paired-devices", "paired-devices-offline":
+            // `-offline`: the devices request answers 404, so the page says why once.
+            return stack {
+                ServerPairedDevicesViewController(
+                    model: ServerSettingsModel(coordinator: root.coordinator, serverId: server.id),
+                    server: server,
+                    root: root
+                )
+            }
+        case "about", "about-failed":
+            // `-failed`: the server info request answers 404, so the page says so.
+            return stack {
+                ServerAboutViewController(
+                    model: ServerSettingsModel(coordinator: root.coordinator, serverId: server.id),
+                    server: server,
+                    root: root
+                )
+            }
         case "agent-detail-failed":
             return stack {
                 AgentDetailViewController(root: root, agentId: Self.agent.id) { _ in }
@@ -561,6 +588,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
+            // Server Settings' pages: the server's facts, its providers and its
+            // devices. `paired-devices-offline` and `about-failed` drop one.
+            "/auth/devices": Data(#"{"devices":[{"id":"dev-iphone","name":"Chen's iPhone","scope":"device","createdAt":1770000000000,"lastUsedAt":1770000900000,"revokedAt":null,"keyEnrolled":true},{"id":"dev-ipad","name":"Chen's iPad","scope":"device","createdAt":1769000000000,"lastUsedAt":1769900000000,"revokedAt":null,"keyEnrolled":true}]}"#.utf8),
             // Model Providers: the statuses and the usage the page loads.
             "/provider-auth/status": json(Providers(providers: providers)),
             "/server/provider-quotas": json(providerQuotas),
@@ -702,6 +732,14 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         if page == "skill-detail-failed" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/skills/release"] = nil
+        }
+        // Paired Devices with a read that fails: the kit's one failed row.
+        if page == "paired-devices-offline" {
+            SettingsSweepFixtureURLProtocol.routes["/auth/devices"] = nil
+        }
+        // About This Server with a server that cannot be read: its failed row.
+        if page == "about-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/server/info"] = nil
         }
     }
 }
