@@ -356,22 +356,29 @@ struct UserTimelineRowContentTests {
             )
         )
         let identity = try #require(firstSubview(ofType: IconChoiceUIView.self, in: view))
-        // The sender's emoji is drawn pixels now, not a label: what the icon shows
-        // is the image `EntityIcon` draws for it.
-        func shownIcon() throws -> Data {
+        // The sender's emoji is drawn pixels now, not a label.
+        func shownIcon() throws -> UIImage {
             let icon = try #require(firstSubview(ofType: IconChoiceUIView.self, in: view))
             let imageView = try #require(allSubviews(ofType: UIImageView.self, in: icon).first)
-            let image = try #require(imageView.image)
-            return try #require(image.pngData())
+            return try #require(imageView.image)
         }
-        let senderIcon = try shownIcon()
+        func shownIconPNG() throws -> Data {
+            try #require(try shownIcon().pngData())
+        }
+        let senderImage = try shownIcon()
+        let senderIcon = try shownIconPNG()
+        // It is the emoji, not the default person symbol a Genmoji falls back to,
+        // and not the global Pi avatar.
+        #expect(!senderImage.isSymbolImage)
+        let personSymbol = try #require(EntityIcon.image(.agent(nil), size: 22).pngData())
+        #expect(senderIcon != personSymbol)
         // Decorative: the header's label already names the sender.
         #expect(!identity.isAccessibilityElement)
 
         // A sender the store holds without an Agent reads as the global avatar,
         // not as the previous card's Agent.
         view.configuration = configuration(sender: SessionLaunchMetadata(agentId: nil, agentIcon: nil))
-        let globalAvatar = try shownIcon()
+        let globalAvatar = try shownIconPNG()
         #expect(globalAvatar != senderIcon)
 
         // The same view drawn again for a sender with an Agent, then for a plain
@@ -379,7 +386,7 @@ struct UserTimelineRowContentTests {
         view.configuration = configuration(
             sender: SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
         )
-        let senderAgain = try shownIcon()
+        let senderAgain = try shownIconPNG()
         #expect(senderAgain == senderIcon)
         view.configuration = UserTimelineRowConfiguration(
             text: "Ship it",
@@ -388,7 +395,7 @@ struct UserTimelineRowContentTests {
             onFork: nil,
             itemID: "user-1"
         )
-        let afterReuse = try shownIcon()
+        let afterReuse = try shownIconPNG()
         #expect(afterReuse == globalAvatar)
         #expect(firstSubview(ofType: IconChoiceUIView.self, in: view) === identity)
     }

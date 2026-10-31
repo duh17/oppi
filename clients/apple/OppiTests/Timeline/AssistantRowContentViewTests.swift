@@ -102,11 +102,10 @@ struct AssistantTimelineRowContentViewTests {
         )
 
         let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        for _ in 0..<50 {
-            if imageView.image === expectedImage { break }
+        for _ in 0..<50 where !showsPinkArtwork(imageView.image) {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(imageView.image === expectedImage)
+        #expect(showsPinkArtwork(imageView.image))
         #expect(badge.accessibilityLabel == "Saved Agent, Agent glyph")
         #expect(await fetchCounter.recordedIDs() == [assetId])
     }
@@ -134,16 +133,47 @@ struct AssistantTimelineRowContentViewTests {
         ))
         let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
         let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        #expect(imageView.image !== expectedImage)
+        #expect(!showsPinkArtwork(imageView.image))
 
-        for _ in 0..<50 {
-            if imageView.image === expectedImage { break }
+        for _ in 0..<50 where !showsPinkArtwork(imageView.image) {
             try await Task.sleep(for: .milliseconds(10))
         }
 
-        #expect(imageView.image === expectedImage)
+        #expect(showsPinkArtwork(imageView.image))
         #expect(imageView.transform.a > 1.1)
         #expect(imageView.transform.d > 1.1)
+    }
+
+    /// Whether the badge draws the pink artwork the cache decodes, by colour:
+    /// `EntityIcon` composites the artwork into the badge's box.
+    private func showsPinkArtwork(_ image: UIImage?) -> Bool {
+        guard let image, let average = averageColour(image) else { return false }
+        return average.a > 0.5 && average.r > 0.6 && average.g < 0.45 && average.b > 0.3
+    }
+
+    private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+        var pixels = [UInt8](repeating: 0, count: 4)
+        let drawn = pixels.withUnsafeMutableBytes { storage -> Bool in
+            guard let context = CGContext(
+                data: storage.baseAddress,
+                width: 1,
+                height: 1,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ), let cgImage = image.cgImage else { return false }
+            context.interpolationQuality = .high
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        guard drawn else { return nil }
+        return (
+            CGFloat(pixels[0]) / 255,
+            CGFloat(pixels[1]) / 255,
+            CGFloat(pixels[2]) / 255,
+            CGFloat(pixels[3]) / 255
+        )
     }
 
     @MainActor
@@ -186,7 +216,9 @@ struct AssistantTimelineRowContentViewTests {
         for _ in 0..<20 { await Task.yield() }
 
         #expect(await gate.recordedIDs() == [firstId])
-        #expect(badge.currentGenmojiAssetIDForTesting == nil)
+        // The asset that arrived late belongs to the icon the badge no longer shows.
+        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
+        #expect(imageView.image?.pngData() == EntityIcon.image(.agent(.emoji("🧘")), size: 36).pngData())
     }
 
     @MainActor

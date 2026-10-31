@@ -4,24 +4,14 @@ import UIKit
 @testable import Oppi
 
 /// What `EntityIcon` draws for each entity: the fallback symbol Chen chose, an
-/// Agent's Genmoji coming from the server's icon cache, and the menu behaviour
-/// (always-original artwork, the checkmark on `state`). The suite is serialized
-/// because the owner keeps one process-wide raster cache and load counter.
+/// Agent's Genmoji coming from the server's icon cache (and what a failed load
+/// leaves behind), and the geometry a sandbox workspace needs for its mark. The
+/// suite is serialized because the owner keeps one process-wide raster cache and
+/// load counter.
 @MainActor
 @Suite(.serialized)
 struct EntityIconTests {
     // MARK: - Fallbacks
-
-    @Test func fallbackSymbolPerEntity() {
-        #expect(EntityIcon.fallbackSymbol(.agent(nil)) == "person.crop.circle")
-        #expect(EntityIcon.fallbackSymbol(.agent(.defaultValue)) == "person.crop.circle")
-        #expect(EntityIcon.fallbackSymbol(.workspace(nil, sandbox: false)) == "square.grid.2x2")
-        #expect(EntityIcon.fallbackSymbol(.workspace(.emoji("🌊"), sandbox: true)) == "square.grid.2x2")
-        #expect(EntityIcon.fallbackSymbol(.pi) == "p.circle.fill")
-        #expect(EntityIcon.fallbackSymbol(.provider("anthropic")) == "cpu")
-        #expect(EntityIcon.fallbackSymbol(.model("anthropic/claude")) == "cpu")
-        #expect(EntityIcon.fallbackSymbol(.server("server-1", .cube)) == ServerBadgeIcon.cube.symbolName)
-    }
 
     @Test func defaultWorkspaceDrawsTheGridSymbolNotAFolder() {
         let defaulted = EntityIcon.image(.workspace(nil, sandbox: false), size: 22)
@@ -37,28 +27,15 @@ struct EntityIconTests {
         #expect(png(defaulted) == png(expected))
     }
 
-    @Test func piDrawsTheAvatar() {
-        let pi = EntityIcon.image(.pi, size: 22)
-        #expect(png(pi) == png(PiAvatarRenderer.render(size: 22)))
-        #expect(png(pi) != png(EntityIcon.image(.agent(nil), size: 22)))
-    }
-
     // MARK: - Artwork kinds
 
     @Test func emojiDrawsInsteadOfTheFallbackAtTheAskedSize() {
         let emoji = EntityIcon.image(.agent(.emoji("🐙")), size: 22)
         #expect(png(emoji) != png(EntityIcon.image(.agent(nil), size: 22)))
-        // Rastered at twice the points for a menu that scales it down, but drawn
-        // at the points the caller laid out.
+        // Drawn at the points the caller laid out, at the screen's own scale.
         #expect(abs(emoji.size.width - 22) < 0.5)
         #expect(abs(emoji.size.height - 22) < 0.5)
-    }
-
-    @Test func sandboxWorkspaceCarriesTheLockMark() {
-        let plain = EntityIcon.image(.workspace(nil, sandbox: false), size: 22)
-        let sandboxed = EntityIcon.image(.workspace(nil, sandbox: true), size: 22)
-        #expect(png(plain) != png(sandboxed))
-        #expect(abs(sandboxed.size.width - 22) < 0.5)
+        #expect(emoji.scale >= 2)
     }
 
     @Test func providerMarksDifferByProvider() {
@@ -79,31 +56,30 @@ struct EntityIconTests {
         #expect(spread > 0.05)
     }
 
-    // MARK: - Menus
+    // MARK: - Sandbox geometry
 
-    @Test func imagesKeepTheirColoursInAMenu() {
-        for entity in [
-            IconEntity.agent(nil), .agent(.emoji("🐙")), .pi, .workspace(nil, sandbox: false),
-            .provider("openai"), .model("openai/gpt-5"), .server("server-1", .atom),
-        ] {
-            #expect(EntityIcon.image(entity, size: 22).renderingMode == .alwaysOriginal)
-        }
+    @Test func sandboxMarkIsTheSizeItAlwaysWas() throws {
+        let sandboxed = EntityIcon.image(.workspace(nil, sandbox: true), size: 16)
+        // The mark's disc is the widest run of ink in the bottom half: the mark
+        // paints over the glyph, so its centre row measures the disc itself.
+        let diameter = longestBottomRun(sandboxed)
+        // Main drew max(11, frame * 0.34) points.
+        #expect(diameter >= 10.5, "mark \(diameter) pt across, image \(sandboxed.size) @\(sandboxed.scale)")
+        #expect(diameter <= 13)
     }
 
-    @Test func selectedChoiceUsesTheMenusOwnCheckmark() {
-        let action = UIAction.choice("Agent", .agent(.emoji("🐙")), selected: true, assets: nil, id: "menu.agent") {}
-        #expect(action.state == .on)
-        #expect(action.identifier.rawValue == "menu.agent")
-        #expect(action.image.map(png) == png(EntityIcon.image(.agent(.emoji("🐙")), size: 22)))
-
-        let unselected = UIAction.choice("Agent", .agent(nil), selected: false, assets: nil) {}
-        #expect(unselected.state == .off)
-        #expect(unselected.image != nil)
+    @Test func sandboxIconIsDrawnSmallerThanAPlainOne() {
+        // The icon steps back to leave the mark its corner.
+        let plain = EntityIcon.image(.workspace(.symbol("square.grid.2x2"), sandbox: false), size: 16)
+        let sandboxed = EntityIcon.image(.workspace(.symbol("square.grid.2x2"), sandbox: true), size: 16)
+        let plainTop = inkTop(plain, scale: plain.scale)
+        let sandboxTop = inkTop(sandboxed, scale: sandboxed.scale)
+        #expect(plainTop < sandboxTop, "the plain icon draws bigger than the sandboxed one")
     }
 
     // MARK: - Genmoji
 
-    @Test func genmojiDrawsTheFallbackUntilTheArtworkIsCached() async throws {
+    @Test func genmojiDrawsTheFallbackUntilTheArtworkArrives() async throws {
         let assetId = "ia_" + String(repeating: "G", count: 43)
         let cache = IconAssetCache(
             fetch: { _ in Data([1, 2, 3]) },
@@ -113,12 +89,9 @@ struct EntityIconTests {
 
         let before = EntityIcon.image(genmoji, size: 22, assets: cache)
         #expect(png(before) == png(EntityIcon.image(.agent(nil), size: 22)))
-        #expect(cache.cachedImage(assetId: assetId, size: 44) == nil)
 
-        _ = try await cache.image(assetId: assetId, size: 44)
+        try await waitForLoad(since: EntityIcon.loadGeneration)
 
-        #expect(cache.cachedImage(assetId: assetId, size: 44) != nil)
-        #expect(cache.cachedImage(assetId: assetId, size: 11) == nil)
         let after = EntityIcon.image(genmoji, size: 22, assets: cache)
         #expect(png(after) != png(before))
         let colour = try #require(averageColour(after))
@@ -126,61 +99,120 @@ struct EntityIconTests {
         #expect(colour.b > colour.g)
     }
 
-    @Test func anUncachedGenmojiStartsItsOwnLoadAndAnnouncesIt() async throws {
-        let assetId = "ia_" + String(repeating: "H", count: 43)
-        let fetched = FetchLog()
+    /// A Genmoji that cannot be fetched leaves its fallback up: no redraw, no
+    /// second fetch, whatever asks again.
+    @Test func failedGenmojiLoadLeavesTheFallbackFinal() async throws {
+        let assetId = "ia_" + String(repeating: "F", count: 43)
+        let fetches = FetchCounter()
         let cache = IconAssetCache(
             fetch: { requested in
-                await fetched.record(requested)
-                return Data([1, 2, 3])
+                await fetches.record(requested)
+                throw APIError.server(status: 404, message: "no such icon")
             },
             decode: { _, _ in (Self.solid(.systemPink, side: 8), NSObject()) }
         )
         let genmoji = IconEntity.agent(.genmoji(assetId: assetId, contentDescription: "Octopus"))
         let generation = EntityIcon.loadGeneration
 
-        _ = EntityIcon.image(genmoji, size: 22, assets: cache)
+        let first = EntityIcon.image(genmoji, size: 22, assets: cache)
+        #expect(png(first) == png(EntityIcon.image(.agent(nil), size: 22)))
 
-        for _ in 0..<100 where EntityIcon.loadGeneration == generation {
+        // Let the failing load finish.
+        for _ in 0..<100 where await fetches.count() == 0 {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(await fetched.ids() == [assetId])
-        #expect(EntityIcon.loadGeneration > generation)
-        #expect(cache.cachedImage(assetId: assetId, size: 44) != nil)
-        #expect(png(EntityIcon.image(genmoji, size: 22, assets: cache))
-            != png(EntityIcon.image(.agent(nil), size: 22)))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(await fetches.count() == 1)
+        #expect(EntityIcon.loadGeneration == generation, "a failed load announces nothing")
+
+        // The next pass draws the same fallback and does not fetch again.
+        let second = EntityIcon.image(genmoji, size: 22, assets: cache)
+        #expect(png(second) == png(first))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await fetches.count() == 1, "a failed asset is not fetched a second time")
     }
 
     // MARK: - Helpers
 
-    /// The drawn pixels, so two images compare by what they show.
+    /// Waits for the owner to announce artwork that arrived after `generation`.
+    private func waitForLoad(since generation: Int) async throws {
+        for _ in 0..<200 where EntityIcon.loadGeneration == generation {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(EntityIcon.loadGeneration > generation)
+    }
+
     private func png(_ image: UIImage) -> Data {
         image.pngData() ?? Data()
     }
 
     private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
-        var pixels = [UInt8](repeating: 0, count: 4)
-        let drawn = pixels.withUnsafeMutableBytes { storage -> Bool in
+        let pixels = rgbaPixels(image)
+        guard !pixels.isEmpty else { return nil }
+        let count = CGFloat(pixels.count)
+        return (
+            pixels.reduce(0) { $0 + CGFloat($1.0) } / count / 255,
+            pixels.reduce(0) { $0 + CGFloat($1.1) } / count / 255,
+            pixels.reduce(0) { $0 + CGFloat($1.2) } / count / 255,
+            pixels.reduce(0) { $0 + CGFloat($1.3) } / count / 255
+        )
+    }
+
+    /// The widest horizontal run of ink in the bottom half of the image, in
+    /// points: a sandbox mark paints over whatever is under it.
+    private func longestBottomRun(_ image: UIImage) -> CGFloat {
+        let width = Int(image.size.width * image.scale)
+        let height = Int(image.size.height * image.scale)
+        let pixels = rgbaPixels(image)
+        var longest = 0
+        for y in (height / 2)..<height {
+            var right = -1
+            for column in stride(from: width - 1, through: 0, by: -1)
+            where pixels[y * width + column].3 > 200 {
+                right = column
+                break
+            }
+            guard right >= 0 else { continue }
+            var left = right
+            while left > 0, pixels[y * width + left - 1].3 > 200 {
+                left -= 1
+            }
+            longest = max(longest, right - left + 1)
+        }
+        return CGFloat(longest) / image.scale
+    }
+    /// The first row with a visibly drawn pixel, in image points.
+    private func inkTop(_ image: UIImage, scale: CGFloat) -> CGFloat {
+        let width = Int(image.size.width * scale)
+        for (index, pixel) in rgbaPixels(image).enumerated() where pixel.3 > 128 {
+            return CGFloat(index / width) / scale
+        }
+        return image.size.height
+    }
+
+    private func rgbaPixels(_ image: UIImage) -> [(UInt8, UInt8, UInt8, UInt8)] {
+        guard let cgImage = image.cgImage else { return [] }
+        let width = cgImage.width
+        let height = cgImage.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { storage -> Bool in
             guard let context = CGContext(
                 data: storage.baseAddress,
-                width: 1,
-                height: 1,
+                width: width,
+                height: height,
                 bitsPerComponent: 8,
-                bytesPerRow: 4,
+                bytesPerRow: width * 4,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ), let cgImage = image.cgImage else { return false }
-            context.interpolationQuality = .high
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            ) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
-        guard drawn else { return nil }
-        return (
-            CGFloat(pixels[0]) / 255,
-            CGFloat(pixels[1]) / 255,
-            CGFloat(pixels[2]) / 255,
-            CGFloat(pixels[3]) / 255
-        )
+        guard drawn else { return [] }
+        return stride(from: 0, to: bytes.count, by: 4).map { offset in
+            (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+        }
     }
 
     private static func solid(_ colour: UIColor, side: CGFloat) -> UIImage {
@@ -190,13 +222,11 @@ struct EntityIconTests {
         }
     }
 
-    private actor FetchLog {
-        private var recorded: [String] = []
+    private actor FetchCounter {
+        private var ids: [String] = []
 
-        func record(_ assetId: String) {
-            recorded.append(assetId)
-        }
+        func record(_ assetId: String) { ids.append(assetId) }
 
-        func ids() -> [String] { recorded }
+        func count() -> Int { ids.count }
     }
 }

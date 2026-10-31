@@ -1079,11 +1079,10 @@ struct IconAssetCacheTests {
             }
         )
         let icon = IconChoiceUIView(size: 24, frameSize: 24)
-        let colors = ComposerThemeColors.placeholder
 
-        icon.apply(genmoji(firstID), colors: colors, assetCache: cache)
+        icon.apply(genmoji(firstID), assetCache: cache)
         for _ in 0..<50 where await gate.requestedIDs().isEmpty { await Task.yield() }
-        icon.apply(genmoji(secondID), colors: colors, assetCache: cache)
+        icon.apply(genmoji(secondID), assetCache: cache)
         for _ in 0..<50 where !(await gate.requestedIDs()).contains(secondID) { await Task.yield() }
         await gate.succeed(secondID, data: Data([2]))
         for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
@@ -1109,11 +1108,10 @@ struct IconAssetCacheTests {
             decode: { _, _ in (newImage, NSObject()) }
         )
         let icon = IconChoiceUIView(size: 24, frameSize: 24)
-        let colors = ComposerThemeColors.placeholder
 
-        icon.apply(genmoji(assetID), colors: colors, assetCache: oldCache)
+        icon.apply(genmoji(assetID), assetCache: oldCache)
         for _ in 0..<50 where await oldGate.requestedIDs().isEmpty { await Task.yield() }
-        icon.apply(genmoji(assetID), colors: colors, assetCache: newCache)
+        icon.apply(genmoji(assetID), assetCache: newCache)
         for _ in 0..<50 where await newGate.requestedIDs().isEmpty { await Task.yield() }
         await newGate.succeed(assetID, data: Data([2]))
         for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
