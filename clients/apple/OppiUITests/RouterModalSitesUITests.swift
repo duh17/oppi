@@ -409,6 +409,19 @@ final class RouterModalSitesUITests: XCTestCase {
         third.tap()
         XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
         XCTAssertTrue(waitForDisappearance(of: cells[2]), "The minimap is not left on screen after a menu choice")
+
+        // Customize Bar opened from this Rex pane lists Rex and the switcher but
+        // not Herdr: a terminal in Rex offers only Rex.
+        app.buttons["sshTerminal.more"].tap()
+        let customize = app.buttons["sshTerminal.menu.customize"]
+        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu did not open")
+        customize.tap()
+        let list = app.descendants(matching: .any)["settings.sshTerminal.bar.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5), "Customize Bar did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.rex"].waitForExistence(timeout: 5), "A Rex pane's Customize Bar must list Rex")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.herdr"].exists, "A Rex pane's Customize Bar must not list Herdr")
+        attachScreenshot("rex-customize-bar")
         assertRunning()
     }
 

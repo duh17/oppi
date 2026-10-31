@@ -192,6 +192,42 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
 
 typealias SSHTerminalBarLayout = BarLayout<SSHTerminalBarAction>
 
+/// Which multiplexer a terminal belongs to, and so which of the two overview
+/// buttons it can offer: a terminal in Rex is only Rex's, one in Herdr only
+/// Herdr's, and a plain shell, where each is a launcher, keeps both. The one
+/// owner of that rule: the bar, the … menu, and Customize Bar opened from the
+/// terminal all hide `hidden` and nothing else, so the saved layout is never
+/// edited to say it and a plain shell shows the user's choice again.
+enum SSHTerminalBarContext: Equatable, Sendable {
+    case plain
+    /// A pane of a Rex session (`SSHTerminalChannel.rex`).
+    case rex
+    /// A terminal whose own program is Herdr: the host's Run on Connect command
+    /// starts it (`SSHTerminalChannel.command`), so it ends with Herdr. A
+    /// `herdr` typed into a shell is not this, and nothing in the terminal's
+    /// bytes says so reliably.
+    case herdr
+
+    init(isRexPane: Bool, command: String?) {
+        if isRexPane {
+            self = .rex
+        } else if SSHTerminalMultiplexerKind.detected(in: command) == .herdr {
+            self = .herdr
+        } else {
+            self = .plain
+        }
+    }
+
+    /// The actions this terminal's multiplexer rules out.
+    var hidden: Set<SSHTerminalBarAction> {
+        switch self {
+        case .plain: []
+        case .rex: [.herdr]
+        case .herdr: [.rex]
+        }
+    }
+}
+
 /// What the bottom bar draws, split by pill, and what the … menu offers.
 struct SSHTerminalBarPlacement: Equatable {
     var middle: [SSHTerminalBarAction]

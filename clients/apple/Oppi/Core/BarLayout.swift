@@ -66,6 +66,16 @@ struct BarLayout<Action: BarLayoutAction>: Hashable, Sendable {
         return Self(order: order, shown: next)
     }
 
+    /// Puts `visible`, the order of some of the actions, in the places those
+    /// actions held. Every other action keeps its place and its shown state, so
+    /// a screen that offers only some actions can reorder them without
+    /// rewriting the rest.
+    func reordering(_ visible: [Action]) -> Self {
+        var next = visible.makeIterator()
+        let members = Set(visible)
+        return Self(order: order.map { members.contains($0) ? (next.next() ?? $0) : $0 }, shown: shown)
+    }
+
     /// What the bar draws, in order: the shown actions this screen can offer.
     /// An action it cannot offer is not drawn and not offered in the menu
     /// either, because a button that could only fail is worse than no button.

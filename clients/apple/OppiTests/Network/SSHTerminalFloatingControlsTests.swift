@@ -360,6 +360,51 @@ struct SSHTerminalBarPlacementTests {
         #expect(placement.menu.isEmpty)
     }
 
+    /// What a terminal in this context draws and offers in its … menu, from the
+    /// user's layout, as the terminal computes it.
+    private func placement(
+        _ layout: SSHTerminalBarLayout = .defaultValue, in context: SSHTerminalBarContext
+    ) -> SSHTerminalBarPlacement {
+        layout.placement(available: everything.subtracting(context.hidden), middleCapacity: 4)
+    }
+
+    @Test func aRexPaneOffersOnlyRexAndAHerdrTerminalOnlyHerdr() {
+        #expect(placement(in: .rex).trailing == [.rex, .switcher])
+        #expect(placement(in: .herdr).trailing == [.herdr, .switcher])
+        // A plain shell on a host with both keeps both.
+        #expect(placement(in: .plain).trailing == [.herdr, .rex, .switcher])
+
+        // The … menu follows: a multiplexer turned off in the layout is offered
+        // there only where its terminal can use it.
+        let hiddenBoth = SSHTerminalBarLayout.defaultValue.setting(.herdr, shown: false).setting(.rex, shown: false)
+        #expect(placement(hiddenBoth, in: .rex).menu == [.browseFiles, .rex])
+        #expect(placement(hiddenBoth, in: .herdr).menu == [.browseFiles, .herdr])
+        #expect(placement(hiddenBoth, in: .plain).menu == [.browseFiles, .herdr, .rex])
+    }
+
+    @Test func theContextComesFromTheTerminalsOwnProgram() {
+        #expect(SSHTerminalBarContext(isRexPane: true, command: nil) == .rex)
+        #expect(SSHTerminalBarContext(isRexPane: true, command: "herdr") == .rex)
+        #expect(SSHTerminalBarContext(isRexPane: false, command: "herdr") == .herdr)
+        #expect(SSHTerminalBarContext(isRexPane: false, command: "/Users/me/.local/bin/herdr --attach") == .herdr)
+        // Login shells, other multiplexers, and other programs are plain.
+        for command in [nil, "", "tmux new -A -s main", "fish", "sh -c 'cd /tmp && herdr'"] {
+            #expect(SSHTerminalBarContext(isRexPane: false, command: command) == .plain, "\(command ?? "nil")")
+        }
+    }
+
+    @Test func reorderingTheShownRowsKeepsTheHiddenOnesPlaceAndChoice() {
+        let saved = SSHTerminalBarLayout(
+            order: [.keyboard, .herdr, .switcher, .rex, .chatBar],
+            shown: [.keyboard, .herdr, .switcher]
+        )
+        // A Rex terminal's page lists Rex and the switcher; the person drags Rex first.
+        let moved = saved.reordering([.rex, .switcher])
+        #expect(Array(moved.order.prefix(5)) == [.keyboard, .herdr, .rex, .switcher, .chatBar])
+        #expect(moved.shown == saved.shown)
+        #expect(moved.reordering([.switcher, .rex]) == saved)
+    }
+
     @MainActor
     @Test func theMiddleGetsWhatIsLeftBetweenBackAndTheTrailingPill() {
         // iPhone portrait: 393 pt, Back, and a 4-item trailing pill leave room for 3.

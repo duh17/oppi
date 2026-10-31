@@ -839,7 +839,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The actions this terminal can offer now. One that could only fail is
     /// neither drawn nor in the menu.
     private func availableBarActions(openTerminals: Int) -> Set<SSHTerminalBarAction> {
-        var available = Set(SSHTerminalBarAction.allCases)
+        var available = Set(SSHTerminalBarAction.allCases).subtracting(barContext.hidden)
         for action in SSHTerminalBarAction.overviews where overview(action)?.available != true {
             available.remove(action)
         }
@@ -848,6 +848,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // report one and to be a paired Oppi server.
         if channel.workingDirectory.isEmpty || pairedServer == nil { available.remove(.browseFiles) }
         return available
+    }
+
+    /// Which multiplexer this terminal belongs to: the owner of what the bar,
+    /// the … menu, and Customize Bar leave out.
+    private var barContext: SSHTerminalBarContext {
+        SSHTerminalBarContext(isRexPane: channel.rex != nil, command: channel.command)
     }
 
     private var canSendKeys: Bool { channel.connected && !channel.inputClosed }
@@ -875,7 +881,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Settings > Terminal > Bottom Bar, pushed over the terminal so the
     /// bar being customized is one Back away.
     private func customizeBar() {
-        Router.push(SSHTerminalBarSettingsViewController(), from: self)
+        Router.push(SSHTerminalBarSettingsViewController(context: barContext), from: self)
     }
 
     private func updateFloatingControls(themeID: ThemeID) {
@@ -1742,7 +1748,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Panes that need you, per multiplexer that has answered.
     private var overviewsWaiting: [SSHTerminalBarAction: Int] {
         var waiting: [SSHTerminalBarAction: Int] = [:]
-        for action in SSHTerminalBarAction.overviews {
+        for action in SSHTerminalBarAction.overviews where !barContext.hidden.contains(action) {
             if let source = overview(action), source.available { waiting[action] = source.needsAttention }
         }
         return waiting
@@ -2150,7 +2156,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if channel.connected {
             openMultiplexerFolderIfNeeded()
             for action in SSHTerminalBarAction.overviews where overviewTasks[action] == nil {
-                guard let source = overview(action) else { continue }
+                guard !barContext.hidden.contains(action), let source = overview(action) else { continue }
                 let channel = channel
                 overviewTasks[action] = Task { await source.run(on: channel) }
             }

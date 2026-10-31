@@ -10,7 +10,11 @@ import UIKit
 /// editing stays on and there is no Edit button.
 ///
 /// The terminal can push this page from its … menu (Customize Bar…), so the
-/// bar being changed is one Back away.
+/// bar being changed is one Back away. Opened from a terminal, the page leaves
+/// out the rows that terminal's multiplexer rules out (`SSHTerminalBarContext`:
+/// a Rex pane has no Herdr row), for presentation only: the saved layout keeps
+/// those actions' places and switches, and reordering moves only the rows shown.
+/// Opened from Settings it has every row.
 final class SSHTerminalBarSettingsViewController: ListScreenController<
     SSHTerminalBarSettingsViewController.Section, SSHTerminalBarSettingsViewController.Item
 > {
@@ -23,7 +27,10 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
 
     private var layout: SSHTerminalBarLayout { AppPreferences.SSHTerminalBar.layout }
 
-    init() {
+    private let context: SSHTerminalBarContext
+
+    init(context: SSHTerminalBarContext = .plain) {
+        self.context = context
         super.init(
             title: String(localized: "Bottom Bar"),
             listIdentifier: "settings.sshTerminal.bar.list",
@@ -46,13 +53,13 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
             // The base keeps a drag inside its section, so the sections in
             // order are the order.
             let snapshot = transaction.finalSnapshot
-            let order = [Section.middle, .trailing].flatMap { section in
-                snapshot.itemIdentifiers(inSection: section).compactMap(\.pageItem).compactMap { item -> SSHTerminalBarAction? in
+            let next = [Section.middle, .trailing].reduce(layout) { layout, section in
+                layout.reordering(snapshot.itemIdentifiers(inSection: section).compactMap(\.pageItem).compactMap { item -> SSHTerminalBarAction? in
                     if case .action(let action) = item { return action }
                     return nil
-                }
+                })
             }
-            save(SSHTerminalBarLayout(order: order, shown: layout.shown))
+            save(next)
         }
     }
 
@@ -66,7 +73,7 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
     override func sections() -> [ListSection<Section, Item>] {
         let layout = layout
         func items(_ group: SSHTerminalBarAction.Group) -> [Item] {
-            layout.order.filter { $0.group == group }.map(Item.action)
+            layout.order.filter { $0.group == group && !context.hidden.contains($0) }.map(Item.action)
         }
         var sections: [ListSection<Section, Item>] = [
             ListSection(
@@ -78,7 +85,7 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
             ListSection(
                 .trailing,
                 header: String(localized: "Right"),
-                footer: String(localized: "Herdr and Rex show when the host runs them, and Switch Terminal when more than one terminal is open."),
+                footer: String(localized: "Herdr and Rex show when the host runs them, but not in a terminal that is already inside the other, and Switch Terminal when more than one terminal is open."),
                 items: items(.trailing)
             ),
         ]
