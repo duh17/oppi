@@ -35,7 +35,7 @@ struct ServerConnectionSessionCacheTests {
         connection.workspaceStore.workspaces = [makeTestWorkspace(id: "w-mini", name: "Mini")]
         connection.workspaceStore.isLoaded = true
         connection._cacheForTesting = cache
-        connection.setAPIClientForTesting(makeMockAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "127.0.0.1", scheme: "http"))
 
         TestURLProtocol.handler = { request in
             if request.url?.path == "/sessions/recent" {
@@ -80,12 +80,12 @@ struct ServerConnectionSessionCacheTests {
         connection.workspaceStore.workspaces = []
         connection.workspaceStore.isLoaded = true
         connection._cacheForTesting = cache
-        connection.setAPIClientForTesting(makeMockAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "127.0.0.1", scheme: "http"))
 
         TestURLProtocol.handler = { request in
             if request.url?.path == "/sessions/recent" {
-                let body = try JSONEncoder().encode(["sessions": [String]()] as [String: [String]])
-                return (body, (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil))))
+                let sessions: [String: [String]] = ["sessions": []]
+                return try mockJSONResponse(encoding: sessions, for: request)
             }
             throw URLError(.unsupportedURL)
         }
@@ -96,15 +96,5 @@ struct ServerConnectionSessionCacheTests {
         #expect(connection.sessionStore.listProjectionSessions.isEmpty)
         #expect(connection.sessionStore.sessions.map(\.id) == ["studio-session"])
         #expect(persisted?.isEmpty == true)
-    }
-
-    private func makeMockAPIClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        TestURLProtocol.install(in: config)
-        return APIClient(
-            baseURL: URL(string: "http://127.0.0.1:7749")!,
-            token: "sk_test",
-            configuration: config
-        )
     }
 }

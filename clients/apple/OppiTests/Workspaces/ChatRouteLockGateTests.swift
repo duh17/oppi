@@ -21,7 +21,11 @@ struct ChatRouteLockGateTests {
 
     private func makeFixture() throws -> Fixture {
         let serverId = "sha256:chat-route-lock-\(UUID().uuidString)"
-        let client = APIClient(baseURL: try #require(URL(string: "https://ready-server.test:7749")), token: "sk_test")
+        // The chat route starts the app's own refreshes (git status, the file index, the
+        // session's trace page); they answer as an unreachable server does, and a request
+        // for any other route fails the test.
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let client = makeTestURLProtocolClient(host: "ready-server.test")
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let connection = try #require(root.coordinator.connection(for: serverId))
         let locks = ScopedLockService.shared

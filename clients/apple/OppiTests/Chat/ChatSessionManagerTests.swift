@@ -19,27 +19,6 @@ struct ChatSessionManagerTests {
         return (controller, { captured })
     }
 
-    private func makeURLProtocolAPIClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        TestURLProtocol.install(in: config)
-        return APIClient(
-            baseURL: URL(string: "http://localhost:7749")!,
-            token: "sk_test",
-            configuration: config
-        )
-    }
-
-    private func mockAPIResponse(status: Int = 200, json: String) throws -> (Data, HTTPURLResponse) {
-        let data = (try #require(json.data(using: .utf8)))
-        let response = (try #require(HTTPURLResponse(
-            url: URL(string: "http://localhost:7749")!,
-            statusCode: status,
-            httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"]
-        )))
-        return (data, response)
-    }
-
     @Test func staleTracePageFallsBackToFullSessionTrace() {
         let cases: [(status: Int, shouldFallback: Bool)] = [
             (404, true),
@@ -600,7 +579,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(
             id: sessionId,
@@ -625,18 +604,18 @@ struct ChatSessionManagerTests {
         let sessionId = "trace-page-fallback"
         let manager = ChatSessionManager(sessionId: sessionId)
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
 
         TestURLProtocol.handler = { request in
             if request.url?.path == "/workspaces/w1/sessions/\(sessionId)/trace-page" {
-                return try mockAPIResponse(status: 404, json: #"{"error":"Not found"}"#)
+                return try mockJSONResponse(status: 404, json: #"{"error":"Not found"}"#, for: request)
             }
 
             #expect(request.url?.path == "/workspaces/w1/sessions/\(sessionId)")
             #expect(request.url?.query == "view=full")
-            return try mockAPIResponse(json: """
+            return try mockJSONResponse(json: """
             {
                 "session":{"id":"\(sessionId)","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
@@ -644,7 +623,7 @@ struct ChatSessionManagerTests {
                     {"id":"a1","type":"assistant","timestamp":"2025-01-01T00:00:01Z","text":"Full trace"}
                 ]
             }
-            """)
+            """, for: request)
         }
 
         let reloaded = await manager.forceHistoryReload(
@@ -2642,14 +2621,14 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         // The connection's own connected-time refreshes (models, slash commands) are not what this test is
         // about, and the double fails a request no test answers: answer them here, and wait for the model
         // preload below before the handler goes away.
         TestURLProtocol.handler = { request in
             switch request.url?.path {
-            case "/models": return try mockAPIResponse(json: #"{"models":[]}"#)
-            default: return try mockAPIResponse(json: "{}")
+            case "/models": return try mockJSONResponse(json: #"{"models":[]}"#, for: request)
+            default: return try mockJSONResponse(json: "{}", for: request)
             }
         }
         defer { TestURLProtocol.handler = nil }
@@ -2771,7 +2750,7 @@ struct ChatSessionManagerTests {
 
         let manager = ChatSessionManager(sessionId: sessionId)
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         let sessionStore = SessionStore()
         sessionStore.upsert(session)
 

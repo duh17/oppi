@@ -179,15 +179,11 @@ struct GitStatusStoreTests {
 
     // MARK: - Helpers
 
+    /// The store's server, answered by the test's handler: `gitStatusEnabled: false`
+    /// keeps its own fetch from asking, and a request no test answers fails the run
+    /// instead of outliving it.
     private func makeMockAPIClient() -> APIClient {
-        // Create an APIClient with a mock URLSession that won't actually make requests
-        let config = URLSessionConfiguration.ephemeral
-        TestURLProtocol.install(in: config)
-        return APIClient(
-            baseURL: URL(string: "http://localhost:1234")!,
-            token: "test-token",
-            configuration: config
-        )
+        makeTestURLProtocolClient(host: "localhost", port: 1234, scheme: "http")
     }
 
     /// Answers a git status without a URLSession. A test that loads with git enabled starts the store's own

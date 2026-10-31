@@ -116,10 +116,10 @@ struct ServerConnectionStreamRecoveryTests {
             case "/server/info":
                 return try self.mockServerInfoResponse(for: request, appEventStream: true)
             case "/sessions/recent":
-                return try self.jsonResponse("{\"sessions\":[]}", for: request)
+                return try mockJSONResponse(json: #"{"sessions":[]}"#, for: request)
             default:
                 Issue.record("Unexpected request path: \(path)")
-                return try self.jsonResponse("{}", for: request, statusCode: 404)
+                return try mockJSONResponse(status: 404, json: "{}", for: request)
             }
         }
 
@@ -624,13 +624,7 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     private func makeMockAPIClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        TestURLProtocol.install(in: config)
-        return APIClient(
-            baseURL: URL(string: "http://127.0.0.1:7749")!,
-            token: "sk_test",
-            configuration: config
-        )
+        makeTestURLProtocolClient(host: "127.0.0.1", scheme: "http")
     }
 
     private func mockServerInfo() throws -> ServerInfo {
@@ -674,21 +668,6 @@ struct ServerConnectionStreamRecoveryTests {
         let response = (try #require(HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:7749/server/info")!,
             statusCode: 200,
-            httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"]
-        )))
-        return (data, response)
-    }
-
-    private func jsonResponse(
-        _ json: String,
-        for request: URLRequest,
-        statusCode: Int = 200
-    ) throws -> (Data, HTTPURLResponse) {
-        let data = (try #require(json.data(using: .utf8)))
-        let response = (try #require(HTTPURLResponse(
-            url: request.url ?? URL(string: "http://127.0.0.1:7749")!,
-            statusCode: statusCode,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
         )))

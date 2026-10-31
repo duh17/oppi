@@ -17,6 +17,7 @@ struct ServerSkillsViewControllerTests {
 
     @Test("a row is one button that opens its detail through AppNavigation")
     func rowOpensDetailRoute() async throws {
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
         let root = try makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill()], serverId: serverId)
@@ -43,20 +44,14 @@ struct ServerSkillsViewControllerTests {
 
     @Test("the screen follows the active server and loads its catalog only while it is showing")
     func reloadsWhenActiveServerChanges() async throws {
-        let root = try makeRoot()
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let root = try makeTwoServerRoot()
         let coordinator = root.coordinator
-        let first = try #require(coordinator.serverStore.servers.first)
-        let other = try #require(PairedServer(
-            from: ServerCredentials(
-                host: "other-server.test", port: 7749, token: "sk_test", name: "Other", scheme: .https,
-                serverFingerprint: "skills-list-other"
-            ),
-            sortOrder: 1
-        ))
-        coordinator.serverStore.replaceServersForPreview([first, other])
+        let servers = coordinator.serverStore.servers
+        let first = try #require(servers.first)
+        let other = try #require(servers.dropFirst().first)
         let firstConnection = try #require(coordinator.connection(for: first.id))
-        let otherConnection = coordinator.ensureConnection(for: other)
-        otherConnection.setAPIClientForTesting(try makeClient())
+        let otherConnection = try #require(coordinator.connection(for: other.id))
 
         // A store starts on its own server; a marker shows that the screen's load
         // is what moves it to the active server.
@@ -172,14 +167,24 @@ struct ServerSkillsViewControllerTests {
 
     @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")
     func retryReloadsAnUnavailableCatalog() async throws {
-        SkillsCatalogURLProtocol.reset()
         // A fresh server id: the shared cache holds no catalog for it.
         let retryServerId = UUID().uuidString
-        let root = try makeTestAppRoot(readyServerId: retryServerId, apiClient: SkillsCatalogURLProtocol.makeClient())
+        let catalog = MissingRouteThenAvailable(
+            availableJSON: try String(
+                decoding: JSONEncoder().encode(ServerSkillsCatalog(skills: [skill()])), as: UTF8.self
+            )
+        )
+        TestURLProtocol.handler = mockPageRoutes { request in
+            guard request.url?.path.hasSuffix("/server/resources/skills") == true else { return nil }
+            return try catalog.answer(for: request)
+        }
+        let root = try makeTestAppRoot(
+            readyServerId: retryServerId,
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
+        )
         let screen = ServerSkillsViewController(root: root)
         let window = try show(UINavigationController(rootViewController: screen))
         defer { hide(window) }
-        defer { Task { await TimelineCache.shared.removeServer(retryServerId) } }
 
         var retry: UIButton?
         #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
@@ -192,12 +197,12 @@ struct ServerSkillsViewControllerTests {
         #expect(Self.button(withIdentifier: "skills.row.release", in: screen.view) == nil)
 
         // The server comes back, but nothing reloads by itself.
-        let settled = SkillsCatalogURLProtocol.skillsRequests
-        SkillsCatalogURLProtocol.catalogAvailable = true
+        let settled = catalog.requests
+        catalog.makeAvailable()
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
             screen.view.layoutIfNeeded()
             return Self.button(withIdentifier: "skills.retry", in: screen.view) != nil
-                && SkillsCatalogURLProtocol.skillsRequests == settled
+                && catalog.requests == settled
         })
 
         button.sendActions(for: .touchUpInside)
@@ -205,18 +210,27 @@ struct ServerSkillsViewControllerTests {
             screen.view.layoutIfNeeded()
             return Self.button(withIdentifier: "skills.row.release", in: screen.view) != nil
         })
-        #expect(SkillsCatalogURLProtocol.skillsRequests == settled + 1)
-    }
-
-    private func makeClient() throws -> APIClient {
-        APIClient(
-            baseURL: try #require(URL(string: "https://ready-server.test:7749")),
-            token: "sk_test"
-        )
+        #expect(catalog.requests == settled + 1)
+        await TimelineCache.shared.removeServer(retryServerId)
     }
 
     private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(readyServerId: serverId, apiClient: makeClient())
+        try makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
+        )
+    }
+
+    /// Two paired servers, the first active: the second, `Other`, is the one a host
+    /// switch makes active.
+    private func makeTwoServerRoot() throws -> AppRootEnvironment {
+        try makeTestAppRoot(readyServers: [
+            TestReadyServer(id: serverId, client: makeTestURLProtocolClient(host: "ready-server.test")),
+            TestReadyServer(
+                id: "skills-list-other", name: "Other", host: "other-server.test",
+                client: makeTestURLProtocolClient(host: "other-server.test")
+            ),
+        ])
     }
 
     private func show(_ controller: UIViewController) throws -> UIWindow {
@@ -248,98 +262,4 @@ struct ServerSkillsViewControllerTests {
         }
         return nil
     }
-}
-
-/// Answers the Skills catalog request with a 404 until `catalogAvailable`, then
-/// with one `release` skill; every other request gets a 404. Counts the catalog
-/// requests, so a test can tell a request Retry sent from one it did not.
-private final class SkillsCatalogURLProtocol: URLProtocol, @unchecked Sendable {
-    static let host = "skills-catalog.test"
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var requests = 0
-    nonisolated(unsafe) private static var available = false
-
-    static var skillsRequests: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests
-    }
-
-    static var catalogAvailable: Bool {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return available
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            available = newValue
-        }
-    }
-
-    static func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        requests = 0
-        available = false
-    }
-
-    static func makeClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [SkillsCatalogURLProtocol.self]
-        return APIClient(
-            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
-            token: "test-token",
-            configuration: config
-        )
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == host
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let url = request.url else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-        var body = Data(#"{"error":"not found"}"#.utf8)
-        var status = 404
-        if url.path.hasSuffix("/server/resources/skills") {
-            Self.lock.lock()
-            Self.requests += 1
-            let isAvailable = Self.available
-            Self.lock.unlock()
-            if isAvailable {
-                let catalog = ServerSkillsCatalog(skills: [
-                    ServerSkillSummary(
-                        id: "release", name: "release", description: "Review release readiness.",
-                        provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"), path: nil,
-                        state: .enabled, loadError: nil, warnings: [], editable: false
-                    ),
-                ])
-                body = (try? JSONEncoder().encode(catalog)) ?? body
-                status = 200
-            }
-        }
-        guard let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

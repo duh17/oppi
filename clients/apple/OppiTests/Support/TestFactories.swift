@@ -87,20 +87,52 @@ func makeTestAppRoot(
     settings: SettingsStore? = nil,
     serverSettings: ((String) -> SettingsStore)? = nil
 ) throws -> AppRootEnvironment {
-    let credentials = ServerCredentials(
-        host: "ready-server.test",
-        port: 7749,
-        token: "sk_test",
-        name: "Ready",
-        scheme: .https,
-        serverFingerprint: serverId
+    try makeTestAppRoot(
+        readyServers: [TestReadyServer(id: serverId, client: apiClient)],
+        settings: settings,
+        serverSettings: serverSettings
     )
-    let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+}
+
+/// One server for `makeTestAppRoot(readyServers:)`: paired as `name`, reached through
+/// `client`. Its fingerprint is its id, so the server store lists it under `id`.
+struct TestReadyServer {
+    var id: String
+    var name: String = "Ready"
+    var host: String = "ready-server.test"
+    var client: APIClient
+}
+
+/// App root services whose coordinator has `readyServers` paired and the first active,
+/// so a screen's host switch to any of them succeeds at once, each reading through its
+/// own `client`. The servers live only in memory, never in the Keychain.
+@MainActor
+func makeTestAppRoot(
+    readyServers: [TestReadyServer],
+    settings: SettingsStore? = nil,
+    serverSettings: ((String) -> SettingsStore)? = nil
+) throws -> AppRootEnvironment {
+    let servers = try readyServers.enumerated().map { index, setup in
+        try #require(PairedServer(
+            from: ServerCredentials(
+                host: setup.host,
+                port: 7749,
+                token: "sk_test",
+                name: setup.name,
+                scheme: .https,
+                serverFingerprint: setup.id
+            ),
+            sortOrder: index
+        ))
+    }
     let serverStore = ServerStore()
-    serverStore.replaceServersForPreview([server])
+    serverStore.replaceServersForPreview(servers)
     let coordinator = ConnectionCoordinator(serverStore: serverStore)
-    coordinator.ensureConnection(for: server).setAPIClientForTesting(apiClient)
-    #expect(coordinator.restoreActiveServer(server.id))
+    for (server, setup) in zip(servers, readyServers) {
+        coordinator.ensureConnection(for: server).setAPIClientForTesting(setup.client)
+    }
+    let first = try #require(servers.first)
+    #expect(coordinator.restoreActiveServer(first.id))
     return makeTestAppRoot(coordinator: coordinator, settings: settings, serverSettings: serverSettings)
 }
 

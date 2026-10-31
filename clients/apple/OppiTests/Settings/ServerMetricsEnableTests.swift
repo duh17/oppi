@@ -29,9 +29,12 @@ struct ServerMetricsEnableTests {
     }
 
     private func makeHarness(revision: Int? = 4) throws -> Harness {
+        // The app's own refreshes once a server is connected are not what these tests are
+        // about; they answer as an unreachable server does, and anything else fails.
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: revision)
         let serverId = serverId
-        let client = APIClient(baseURL: try #require(URL(string: "https://ready-server.test:7749")), token: "sk_test")
+        let client = makeTestURLProtocolClient(host: "ready-server.test")
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
         Self.useStores(on: root.coordinator) { _ in transport }
         // Known off: the page shows its Turn On state without asking for history.
@@ -284,6 +287,7 @@ struct ServerMetricsEnableTests {
     }
 
     private func makeTwoServers() throws -> TwoServers {
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
         func server(_ id: String, order: Int) throws -> PairedServer {
             try #require(PairedServer(
                 from: ServerCredentials(host: "\(id).test", port: 7749, token: "sk_test", name: id, scheme: .https, serverFingerprint: id),
@@ -296,7 +300,7 @@ struct ServerMetricsEnableTests {
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         for paired in [serverA, serverB] {
             coordinator.ensureConnection(for: paired).setAPIClientForTesting(
-                APIClient(baseURL: try #require(URL(string: "https://\(paired.id).test:7749")), token: "sk_test")
+                makeTestURLProtocolClient(host: "\(paired.id).test")
             )
         }
         let a = FakeSettingsTransport(fields: ["enabled": false], revision: 1)

@@ -9,6 +9,7 @@ struct ServerExtensionsViewControllerTests {
 
     @Test("a row is one button that opens its detail through AppNavigation")
     func rowOpensDetailRoute() async throws {
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
         let root = try makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceExtensions(
@@ -44,20 +45,14 @@ struct ServerExtensionsViewControllerTests {
 
     @Test("the screen follows the active server and loads its catalog only while it is showing")
     func reloadsWhenActiveServerChanges() async throws {
-        let root = try makeRoot()
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
+        let root = try makeTwoServerRoot()
         let coordinator = root.coordinator
-        let first = try #require(coordinator.serverStore.servers.first)
-        let other = try #require(PairedServer(
-            from: ServerCredentials(
-                host: "other-server.test", port: 7749, token: "sk_test", name: "Other", scheme: .https,
-                serverFingerprint: "extensions-list-other"
-            ),
-            sortOrder: 1
-        ))
-        coordinator.serverStore.replaceServersForPreview([first, other])
+        let servers = coordinator.serverStore.servers
+        let first = try #require(servers.first)
+        let other = try #require(servers.dropFirst().first)
         let firstConnection = try #require(coordinator.connection(for: first.id))
-        let otherConnection = coordinator.ensureConnection(for: other)
-        otherConnection.setAPIClientForTesting(try makeClient())
+        let otherConnection = try #require(coordinator.connection(for: other.id))
 
         // The stores already name their own server from setup; a marker makes each
         // wait below see only a load the screen itself starts.
@@ -110,13 +105,32 @@ struct ServerExtensionsViewControllerTests {
 
     @Test("Retry on an unavailable catalog sends one new request and loads the catalog")
     func retryReloadsAnUnavailableCatalog() async throws {
-        ExtensionsCatalogURLProtocol.reset()
         // A fresh server id: the shared cache holds no catalog for it, and the
         // catalog this test loads is removed again at the end.
         let serverId = UUID().uuidString
+        let catalog = MissingRouteThenAvailable(
+            availableJSON: try String(
+                decoding: JSONEncoder().encode(ServerExtensionCatalog(
+                    extensions: [
+                        ServerExtensionSummary(
+                            id: "workflow", name: "workflow", description: "Coordinates local automation.",
+                            kind: .file, provenance: .init(kind: .piAgent, label: "~/.pi/agent/extensions"),
+                            path: nil, state: .on, loadError: nil, warnings: [], isRemovable: true
+                        ),
+                    ],
+                    builtInTools: [],
+                    optionalTools: []
+                )),
+                as: UTF8.self
+            )
+        )
+        TestURLProtocol.handler = mockPageRoutes { request in
+            guard request.url?.path.hasSuffix("/server/resources/extensions") == true else { return nil }
+            return try catalog.answer(for: request)
+        }
         let root = try makeTestAppRoot(
             readyServerId: serverId,
-            apiClient: ExtensionsCatalogURLProtocol.makeClient()
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
         let screen = ServerExtensionsViewController(root: root)
         let window = try show(UINavigationController(rootViewController: screen))
@@ -128,28 +142,24 @@ struct ServerExtensionsViewControllerTests {
             retryButton = Self.button(withIdentifier: "extensions.retry", in: screen.view)
             return retryButton != nil
         })
-        guard let retry = retryButton else {
-            await Self.removeCachedCatalog(of: serverId)
-            return
-        }
+        let retry = try #require(retryButton)
         #expect(Self.button(withIdentifier: "extensions.row.workflow", in: screen.view) == nil)
 
         // The server comes back, but nothing reloads by itself.
-        let settled = ExtensionsCatalogURLProtocol.extensionsRequests
-        ExtensionsCatalogURLProtocol.catalogAvailable = true
+        let settled = catalog.requests
+        catalog.makeAvailable()
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
             screen.view.layoutIfNeeded()
             return Self.button(withIdentifier: "extensions.retry", in: screen.view) != nil
-                && ExtensionsCatalogURLProtocol.extensionsRequests == settled
+                && catalog.requests == settled
         })
 
-        let before = ExtensionsCatalogURLProtocol.extensionsRequests
         retry.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
             return Self.button(withIdentifier: "extensions.row.workflow", in: screen.view) != nil
         })
-        #expect(ExtensionsCatalogURLProtocol.extensionsRequests == before + 1)
+        #expect(catalog.requests == settled + 1)
         // The replaced state row leaves the screen (a recycled cell may linger, hidden).
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
@@ -163,15 +173,23 @@ struct ServerExtensionsViewControllerTests {
         await TimelineCache.shared.removeServer(serverId)
     }
 
-    private func makeClient() throws -> APIClient {
-        APIClient(
-            baseURL: try #require(URL(string: "https://ready-server.test:7749")),
-            token: "sk_test"
+    private func makeRoot() throws -> AppRootEnvironment {
+        try makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
     }
 
-    private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(readyServerId: serverId, apiClient: makeClient())
+    /// Two paired servers, the first active: the second, `Other`, is the one a host
+    /// switch makes active.
+    private func makeTwoServerRoot() throws -> AppRootEnvironment {
+        try makeTestAppRoot(readyServers: [
+            TestReadyServer(id: serverId, client: makeTestURLProtocolClient(host: "ready-server.test")),
+            TestReadyServer(
+                id: "extensions-list-other", name: "Other", host: "other-server.test",
+                client: makeTestURLProtocolClient(host: "other-server.test")
+            ),
+        ])
     }
 
     private func show(_ controller: UIViewController) throws -> UIWindow {
@@ -212,102 +230,4 @@ private extension UIView {
         }
         return false
     }
-}
-
-/// Answers the Extensions catalog request with a 404 until `catalogAvailable`,
-/// then with one `workflow` extension; every other request gets a 404. Counts the
-/// catalog requests, so a test can tell a request Retry sent from one it did not.
-private final class ExtensionsCatalogURLProtocol: URLProtocol, @unchecked Sendable {
-    static let host = "extensions-catalog.test"
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var requests = 0
-    nonisolated(unsafe) private static var available = false
-
-    static var extensionsRequests: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests
-    }
-
-    static var catalogAvailable: Bool {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return available
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            available = newValue
-        }
-    }
-
-    static func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        requests = 0
-        available = false
-    }
-
-    static func makeClient() -> APIClient {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [ExtensionsCatalogURLProtocol.self]
-        return APIClient(
-            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
-            token: "test-token",
-            configuration: config
-        )
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == host
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let url = request.url else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-        var body = Data(#"{"error":"not found"}"#.utf8)
-        var status = 404
-        if url.path.hasSuffix("/server/resources/extensions") {
-            Self.lock.lock()
-            Self.requests += 1
-            let isAvailable = Self.available
-            Self.lock.unlock()
-            if isAvailable {
-                let catalog = ServerExtensionCatalog(
-                    extensions: [
-                        ServerExtensionSummary(
-                            id: "workflow", name: "workflow", description: "Coordinates local automation.",
-                            kind: .file, provenance: .init(kind: .piAgent, label: "~/.pi/agent/extensions"), path: nil,
-                            state: .on, loadError: nil, warnings: [], isRemovable: true
-                        ),
-                    ],
-                    builtInTools: [],
-                    optionalTools: []
-                )
-                body = (try? JSONEncoder().encode(catalog)) ?? body
-                status = 200
-            }
-        }
-        guard let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

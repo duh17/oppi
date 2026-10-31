@@ -25,8 +25,11 @@ struct DurableSessionsSettingTests {
     }
 
     private func makeHarness() throws -> Harness {
+        // The app's own refreshes once a server is connected are not what these tests are
+        // about; they answer as an unreachable server does, and anything else fails.
+        TestURLProtocol.handler = mockUnreachableBackgroundRoutes()
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: 4)
-        let client = APIClient(baseURL: try #require(URL(string: "https://ready-server.test:7749")), token: "sk_test")
+        let client = makeTestURLProtocolClient(host: "ready-server.test")
         let defaults = makeSettingsDefaults()
         let deviceStore = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: deviceStore)

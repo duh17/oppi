@@ -18,18 +18,14 @@ struct McpServersViewControllerTests {
         let firstClient = server.client(host: "first.mcp-list.test", serverNames: ["alpha"], holdsAnswers: false)
         let otherClient = server.client(host: "other.mcp-list.test", serverNames: ["beta"], holdsAnswers: true)
 
-        let root = try makeTestAppRoot(readyServerId: firstId, apiClient: firstClient)
+        let root = try makeTestAppRoot(readyServers: [
+            TestReadyServer(id: firstId, name: "First", host: "first.mcp-list.test", client: firstClient),
+            TestReadyServer(id: otherId, name: "Other", host: "other.mcp-list.test", client: otherClient),
+        ])
         let coordinator = root.coordinator
-        let first = try #require(coordinator.serverStore.servers.first)
-        let other = try #require(PairedServer(
-            from: ServerCredentials(
-                host: "other.mcp-list.test", port: 7749, token: "sk_test", name: "Other", scheme: .https,
-                serverFingerprint: otherId
-            ),
-            sortOrder: 1
-        ))
-        coordinator.serverStore.replaceServersForPreview([first, other])
-        coordinator.ensureConnection(for: other).setAPIClientForTesting(otherClient)
+        let servers = coordinator.serverStore.servers
+        let first = try #require(servers.first)
+        let other = try #require(servers.dropFirst().first)
 
         let screen = McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root)
         let window = try show(UINavigationController(rootViewController: screen))

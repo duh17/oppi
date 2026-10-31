@@ -5,7 +5,7 @@ import UIKit
 
 /// Model Providers and its two sheets, on the list kit: the rows each page
 /// draws, what it loads when it appears, and what a host switch does to them.
-@Suite("Model providers page", .serialized)
+@Suite("Model providers page")
 @MainActor
 struct ModelProvidersPageTests {
     private let serverId = "providers-server"
@@ -28,19 +28,28 @@ struct ModelProvidersPageTests {
         )
     }
 
-    private func makeRoot(providers: [ProviderAuthProviderStatus]) throws -> AppRootEnvironment {
+    private func makeRoot() throws -> AppRootEnvironment {
         try makeTestAppRoot(
             readyServerId: serverId,
-            apiClient: ProvidersURLProtocol.makeClient(providers: providers)
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
+    }
+
+    /// Answers each host's provider routes, over the app's own refreshes; a request for a
+    /// host or route this test did not plan fails it.
+    private static func useAnswers(_ hosts: [String: ProviderHostAnswers]) {
+        TestURLProtocol.handler = mockPageRoutes { request in
+            try hosts[request.url?.host ?? ""]?.answer(for: request)
+        }
     }
 
     @Test("the page loads the visible server's providers when it appears")
     func providersLoadOnFirstAppearance() async throws {
-        let root = try makeRoot(providers: [
+        Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [
             provider("claude", name: "Claude", authenticated: true),
             provider("gemini", name: "Gemini", authenticated: false, oauth: true),
-        ])
+        ])])
+        let root = try makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
         defer { hide(window) }
@@ -56,7 +65,9 @@ struct ModelProvidersPageTests {
 
     @Test("a load whose request ends as a cancel keeps its providers and reports no failure")
     func cancelledLoadKeepsProviders() async throws {
-        let root = try makeRoot(providers: [provider("claude", name: "Claude", authenticated: true)])
+        let answers = ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)])
+        Self.useAnswers(["ready-server.test": answers])
+        let root = try makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
         defer { hide(window) }
@@ -67,11 +78,11 @@ struct ModelProvidersPageTests {
         // The next load's request ends as a cancel — what leaving the page, or a
         // refresh replacing this one, produces. That is control flow: the rows
         // this server already showed stay, and nothing is reported as failed.
-        let before = ProvidersURLProtocol.statusRequests
-        ProvidersURLProtocol.cancelNextStatusRequest()
+        let before = answers.statusRequests
+        answers.cancelNextStatusRequest()
         page.setNeedsRefresh()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            ProvidersURLProtocol.statusRequests == before + 1
+            answers.statusRequests == before + 1
         }, "the second load asked the server")
         // Its answer lands on the main actor a moment later.
         try await Task.sleep(for: .milliseconds(200))
@@ -81,35 +92,24 @@ struct ModelProvidersPageTests {
 
     @Test("a host switch drops the old server's providers and shows the new one's")
     func hostSwitchReloadsTheNewServer() async throws {
-        let serverStore = ServerStore()
-        let first = try #require(PairedServer(
-            from: ServerCredentials(
-                host: ProvidersURLProtocol.firstHost, port: 7749, token: "sk_test", name: "First",
-                scheme: .https, serverFingerprint: "providers-first"
+        Self.useAnswers([
+            "first-providers.test": ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)]),
+            "second-providers.test": ProviderHostAnswers(providers: [provider("gemini", name: "Gemini", authenticated: true)]),
+        ])
+        let root = try makeTestAppRoot(readyServers: [
+            TestReadyServer(
+                id: "providers-first", name: "First", host: "first-providers.test",
+                client: makeTestURLProtocolClient(host: "first-providers.test")
             ),
-            sortOrder: 0
-        ))
-        let second = try #require(PairedServer(
-            from: ServerCredentials(
-                host: ProvidersURLProtocol.secondHost, port: 7749, token: "sk_test", name: "Second",
-                scheme: .https, serverFingerprint: "providers-second"
+            TestReadyServer(
+                id: "providers-second", name: "Second", host: "second-providers.test",
+                client: makeTestURLProtocolClient(host: "second-providers.test")
             ),
-            sortOrder: 1
-        ))
-        serverStore.replaceServersForPreview([first, second])
-        let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        coordinator.ensureConnection(for: first).setAPIClientForTesting(ProvidersURLProtocol.makeClient(
-            host: ProvidersURLProtocol.firstHost,
-            providers: [provider("claude", name: "Claude", authenticated: true)],
-            quotas: ProviderQuotasInfo(providers: [], fetchedAt: 0)
-        ))
-        coordinator.ensureConnection(for: second).setAPIClientForTesting(ProvidersURLProtocol.makeClient(
-            host: ProvidersURLProtocol.secondHost,
-            providers: [provider("gemini", name: "Gemini", authenticated: true)],
-            quotas: ProviderQuotasInfo(providers: [], fetchedAt: 0)
-        ))
-        #expect(coordinator.restoreActiveServer(first.id))
-        let root = makeTestAppRoot(coordinator: coordinator)
+        ])
+        let coordinator = root.coordinator
+        let servers = coordinator.serverStore.servers
+        let first = try #require(servers.first)
+        let second = try #require(servers.dropFirst().first)
 
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: first.id), root: root)
         let window = try show(page)
@@ -127,7 +127,8 @@ struct ModelProvidersPageTests {
 
     @Test("the API key sheet saves the trimmed key and refuses to be swiped away with one typed")
     func apiKeySheetSavesTheTrimmedKey() async throws {
-        let root = try makeRoot(providers: [])
+        Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [])])
+        let root = try makeRoot()
         var saved: String?
         let sheet = ProviderAPIKeyViewController(
             provider: provider("claude", name: "Claude", authenticated: true), root: root
@@ -227,94 +228,45 @@ private final class RefusingProviderAuthClient: ProviderAuthFlowClient, @uncheck
     }
 }
 
-/// Answers the provider status and quota requests per host, so a test can tell
-/// one server's rows from another's, and can answer the next status request as
-/// a cancel, the way a request cancelled under its page arrives.
-private final class ProvidersURLProtocol: URLProtocol, @unchecked Sendable {
-    static let firstHost = "first-providers.test"
-    static let secondHost = "second-providers.test"
-
+/// What one host's provider routes answer: the status rows and the quota windows,
+/// with a status request that can be made to end as a cancel, the way a request
+/// cancelled under its page arrives. Counts the status requests, so a test can tell
+/// the one a refresh sent from one it did not.
+private final class ProviderHostAnswers: @unchecked Sendable {
     private struct Envelope<Value: Encodable>: Encodable { let providers: Value }
 
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var answers: [String: (providers: [ProviderAuthProviderStatus], quotas: ProviderQuotasInfo)] = [:]
-    nonisolated(unsafe) private static var cancelsStatus = false
-    nonisolated(unsafe) private static var statusRequestCount = 0
+    private let providers: [ProviderAuthProviderStatus]
+    private let quotas: ProviderQuotasInfo
+    private let lock = NSLock()
+    private var cancelsNextStatus = false
+    private var statusCount = 0
 
-    static func makeClient(
-        host: String = "ready-server.test",
+    init(
         providers: [ProviderAuthProviderStatus],
         quotas: ProviderQuotasInfo = ProviderQuotasInfo(providers: [], fetchedAt: 0)
-    ) -> APIClient {
-        lock.lock()
-        answers[host] = (providers, quotas)
-        lock.unlock()
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ProvidersURLProtocol.self]
-        return APIClient(
-            baseURL: URL(string: "https://\(host):7749") ?? URL(fileURLWithPath: "/"),
-            token: "sk_test",
-            configuration: configuration
-        )
+    ) {
+        self.providers = providers
+        self.quotas = quotas
     }
 
-    static var statusRequests: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return statusRequestCount
-    }
+    var statusRequests: Int { lock.withLock { statusCount } }
 
-    /// The next status request answers as a cancelled request, once.
-    static func cancelNextStatusRequest() {
-        lock.lock()
-        cancelsStatus = true
-        lock.unlock()
-    }
+    func cancelNextStatusRequest() { lock.withLock { cancelsNextStatus = true } }
 
-    override class func canInit(with request: URLRequest) -> Bool {
-        [firstHost, secondHost, "ready-server.test"].contains(request.url?.host ?? "")
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url, let host = url.host else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-        Self.lock.lock()
-        let isStatus = url.path.hasSuffix("/provider-auth/status")
-        if isStatus { Self.statusRequestCount += 1 }
-        let cancels = isStatus && Self.cancelsStatus
-        if cancels { Self.cancelsStatus = false }
-        let answer = Self.answers[host]
-        Self.lock.unlock()
-        if cancels {
-            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
-            return
-        }
-        var body = Data(#"{"error":"not found"}"#.utf8)
-        var status = 404
-        if let answer {
-            if url.path.hasSuffix("/provider-auth/status") {
-                body = (try? JSONEncoder().encode(Envelope(providers: answer.providers))) ?? body
-                status = 200
-            } else if url.path.hasSuffix("/server/provider-quotas") {
-                body = (try? JSONEncoder().encode(answer.quotas)) ?? body
-                status = 200
+    func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
+        switch request.url?.path {
+        case let path? where path.hasSuffix("/provider-auth/status"):
+            let cancels = lock.withLock {
+                statusCount += 1
+                defer { cancelsNextStatus = false }
+                return cancelsNextStatus
             }
+            if cancels { throw URLError(.cancelled) }
+            return try mockJSONResponse(encoding: Envelope(providers: providers), for: request)
+        case let path? where path.hasSuffix("/server/provider-quotas"):
+            return try mockJSONResponse(encoding: quotas, for: request)
+        default:
+            return nil
         }
-        guard let response = HTTPURLResponse(
-            url: url, statusCode: status, httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
     }
-
-    override func stopLoading() {}
 }
