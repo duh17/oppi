@@ -8,24 +8,31 @@ import Synchronization
 /// reads HELLO's ticket, answers WELCOME, and sends what the caller makes up
 /// (`emitSnapshot`, `emit`, `closePane`), as Rex frames it. The client under
 /// test speaks the real wire protocol to something that only decides the bytes.
+/// As on Rex, the connection belongs to no pane until HELLO's ticket names one.
 final class RexFakeDataHost: Sendable {
     private struct State {
         var sink: SSHPTYByteSink?
         var inbound = Data()
         var upgraded = false
         var ticket: Data?
+        var block: String?
         var closed = false
     }
 
-    /// The pane this connection serves.
-    let block: String
     private let nonce: UInt64
+    /// The pane a ticket was issued for, as `data.connect` recorded it.
+    private let pane: @Sendable (Data) -> String?
     private let state = Mutex(State())
 
-    init(block: String, nonce: UInt64 = 42) {
-        self.block = block
+    init(nonce: UInt64 = 42, pane: @escaping @Sendable (Data) -> String?) {
         self.nonce = nonce
+        self.pane = pane
     }
+
+    /// The pane this connection serves: nil until HELLO's ticket names one.
+    var block: String? { state.withLock { $0.block } }
+    /// The client upgraded the connection to a WebSocket.
+    var isUpgraded: Bool { state.withLock { $0.upgraded } }
 
     /// The client's end of the pipe. Its output reaches `sink`; closing it
     /// reports `.closed` there, as an SSH channel's close does.
@@ -126,6 +133,7 @@ final class RexFakeDataHost: Sendable {
                 // reconnect token, 60 s of keep, and the stream's nonce.
                 guard bytes[0] & 0x0F == 0x02, payload.first == 0x01, payload.count == 17 else { continue }
                 state.ticket = Data(payload[1...])
+                state.block = pane(Data(payload[1...]))
                 var welcome = Data([0x81]) + Data(repeating: 0, count: 19)
                 welcome += Data([0x60, 0xEA, 0, 0])
                 welcome += Data((0..<8).map { UInt8((nonce >> ($0 * 8)) & 0xFF) })
@@ -177,7 +185,9 @@ final class RexFakeSession: Sendable {
     private struct State {
         var view: String
         var revision = 1
-        var dataHosts: [RexFakeDataHost] = []
+        /// Each ticket `data.connect` issued, by its pane.
+        var tickets: [Data: String] = [:]
+        var issued = 0
         var served: [RexFakeDataHost] = []
         var held: Set<String> = []
         var refusing: Set<String> = []
@@ -245,7 +255,7 @@ final class RexFakeSession: Sendable {
         guard let host = host.withLock({ $0 }),
               let request = host.requests.last(where: { $0.method == "data.connect" && $0.string("block_id") == block }) else { return }
         state.withLock { _ = $0.held.remove(block) }
-        host.respond(to: request, Self.ticketJSON)
+        host.respond(to: request, issueTicket(for: block))
     }
 
     /// Answers the held `data.connect` for `block` with `not_found`: the pane closed meanwhile.
@@ -262,7 +272,8 @@ final class RexFakeSession: Sendable {
     /// The requests of `method`.
     func requests(_ method: String) -> [RexFakeHost.Request] { requests.filter { $0.method == method } }
 
-    /// The data connections the terminal opened, in order.
+    /// The data connections the terminal opened, in order, including any it
+    /// closed before its ticket came (`RexFakeDataHost.block` is nil for those).
     var dataHosts: [RexFakeDataHost] { state.withLock { $0.served } }
 
     /// A server event for this session, as the control connection delivers it.
@@ -324,34 +335,37 @@ final class RexFakeSession: Sendable {
         return Data(bytes: pointer, count: length)
     }
 
-    /// The pane whose connection this data host serves shows its screen.
+    /// Once HELLO names its pane, the connection shows that pane's screen.
     func serve(_ data: RexFakeDataHost) {
-        guard let pane = panes.first(where: { $0.block == data.block }), let snapshot = try? Self.snapshot(of: pane.screen) else { return }
-        Task { [weak data] in
-            // The terminal sends HELLO once the upgrade lands; Rex starts the stream after WELCOME.
+        Task { [weak self, weak data] in
+            // Rex starts the stream after WELCOME, which answers HELLO.
             for _ in 0..<400 where data?.isWelcomed != true { try? await Task.sleep(for: .milliseconds(5)) }
-            data?.emitSnapshot(snapshot)
+            guard let self, let data, let block = data.block,
+                  let pane = panes.first(where: { $0.block == block }),
+                  let snapshot = try? Self.snapshot(of: pane.screen) else { return }
+            data.emitSnapshot(snapshot)
         }
     }
 
-    fileprivate func nextDataHost() -> RexFakeDataHost? {
-        state.withLock { state in
-            // The latest data.connect is the one being opened; an older one was
-            // overtaken before its stream was.
-            guard let next = state.dataHosts.popLast() else { return nil }
-            state.dataHosts = []
-            state.served.append(next)
-            return next
-        }
+    fileprivate func nextDataHost() -> RexFakeDataHost {
+        let host = RexFakeDataHost { [weak self] ticket in self?.state.withLock { $0.tickets[ticket] } ?? nil }
+        state.withLock { $0.served.append(host) }
+        return host
     }
 
-    /// 16 bytes, base64url without padding, as Rex writes tickets.
-    private static let ticketJSON = #"{"ticket":"AAECAwQFBgcICQoLDA0ODw","expires_in_ms":60000}"#
-
-    /// Rex issues a ticket; the stream that uses it is this pane's.
+    /// Rex issues a ticket, 16 bytes written base64url without padding; the
+    /// stream that says HELLO with it is this pane's.
     private func issueTicket(for block: String) -> String {
-        state.withLock { $0.dataHosts.append(RexFakeDataHost(block: block)) }
-        return Self.ticketJSON
+        let ticket = state.withLock { state -> Data in
+            state.issued += 1
+            let ticket = Data((0..<16).map { UInt8(truncatingIfNeeded: state.issued >> ($0 * 8)) })
+            state.tickets[ticket] = block
+            return ticket
+        }
+        let text = ticket.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return #"{"ticket":"\#(text)","expires_in_ms":60000}"#
     }
 
     private func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
@@ -371,8 +385,7 @@ final class RexFakeSession: Sendable {
         case "session.own_block", "session.disown_block":
             return .result(#"{"blocks":[]}"#)
         case "data.connect":
-            let ticket = issueTicket(for: block)
-            return state.withLock({ $0.held.contains(block) }) ? .hold : .result(ticket)
+            return state.withLock({ $0.held.contains(block) }) ? .hold : .result(issueTicket(for: block))
         case "com.superlogical.terminal.title":
             return .result(#"{"title":"\#(panes.first { $0.block == block }?.title ?? "")"}"#)
         case "com.superlogical.terminal.program_status":
@@ -405,7 +418,8 @@ final class RexFakeTransport: RexTransport {
     func send(_ bytes: Data) async throws { try await control.send(bytes) }
 
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command, let data = session.nextDataHost() else { throw SSHConnectionError.notConnected }
+        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        let data = session.nextDataHost()
         let stream = data.open(sink: sink)
         state.withLock { $0.streams.append(stream) }
         session.serve(data)

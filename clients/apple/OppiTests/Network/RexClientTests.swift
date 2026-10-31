@@ -267,8 +267,8 @@ struct RexWebSocketCompressionTests {
     /// accepts it, and a message it compressed inflates to the pane's
     /// snapshot: the screen restores, and Rex's `resize` message leaves it.
     @Test @MainActor func aRealCompressedRexStreamInflatesToThePanesScreen() throws {
-        let ticket = Data(repeating: 9, count: 16)
-        var stream = RexDataStream(ticket: ticket, key: "dGhlIHNhbXBsZSBub25jZQ==")
+        var stream = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
+        _ = stream.ticket(Data(repeating: 9, count: 16))
         let request = String(decoding: stream.upgradeRequest, as: UTF8.self)
         #expect(request.contains("Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\n"))
 
@@ -514,20 +514,24 @@ struct RexEventTests {
 
 @Suite("Rex pane data connection")
 struct RexDataStreamTests {
-    /// The whole data handshake and stream: HELLO with the ticket the moment
-    /// the upgrade lands, WELCOME's nonce, then the snapshot, output with Rex's
-    /// messages removed, the program's exit, and close 4000 as the pane closing.
-    /// Nothing comes out after the end.
+    /// The whole data handshake and stream: the connection upgrades before its
+    /// ticket is issued, HELLO goes out with the ticket once both are in
+    /// (whichever comes last), WELCOME's nonce, then the snapshot, output with
+    /// Rex's messages removed, the program's exit, and close 4000 as the pane
+    /// closing. Nothing comes out after the end.
     @Test func helloWelcomeSnapshotOutputExitAndClose() throws {
         let ticket = Data((1...16).map { UInt8($0) })
-        var stream = RexDataStream(ticket: ticket, key: "dGhlIHNhbXBsZSBub25jZQ==")
+        var stream = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
         #expect(String(decoding: stream.upgradeRequest, as: UTF8.self).contains("Sec-WebSocket-Protocol: rex.data.terminal.v1\r\n"))
 
-        let upgraded = stream.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1"))
+        #expect(stream.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1")).isEmpty,
+                "no HELLO before the ticket")
+        let upgraded = stream.ticket(ticket)
         guard case .send(let hello)? = upgraded.first, upgraded.count == 1 else {
             Issue.record("expected HELLO alone, got \(upgraded)")
             return
         }
+        #expect(stream.ticket(ticket).isEmpty, "one HELLO")
         let helloFrame = try clientPayload(hello)
         #expect(helloFrame.opcode == RexWebSocketCodec.Opcode.binary.rawValue)
         #expect(helloFrame.payload == Data([0x01]) + ticket)
@@ -547,8 +551,10 @@ struct RexDataStreamTests {
         #expect(stream.receive(serverFrame(.close, Data([0x0F, 0xA0]))) == [.paneClosed])
         #expect(stream.receive(serverFrame(.binary, Data("late".utf8))).isEmpty)
 
-        var refused = RexDataStream(ticket: ticket, key: "dGhlIHNhbXBsZSBub25jZQ==")
-        _ = refused.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1"))
+        // The ticket first, then the upgrade: HELLO the moment it lands.
+        var refused = RexDataStream(key: "dGhlIHNhbXBsZSBub25jZQ==")
+        #expect(refused.ticket(ticket).isEmpty)
+        #expect(refused.receive(upgradeAnswer(key: "dGhlIHNhbXBsZSBub25jZQ==", subprotocol: "rex.data.terminal.v1")).count == 1)
         #expect(refused.receive(serverFrame(.binary, Data([0x82, 0x01]))) == [
             .ended(RexDataHandshake.Failure.rejected(0x01).localizedDescription),
         ])
@@ -976,7 +982,9 @@ struct RexSessionTerminalTests {
     static func block(_ name: String) -> String { "block:\(name)" }
 
     /// `reporting` gives a pane's OSC 7501 records (Rex's JSON) by pane name.
-    func open(_ names: [String], first: String? = nil, reporting: [String: String] = [:]) async throws -> Rig {
+    /// `holding` panes' `data.connect` waits for `release`; the first pane's
+    /// screen is then not waited for.
+    func open(_ names: [String], first: String? = nil, reporting: [String: String] = [:], holding: Set<String> = []) async throws -> Rig {
         let fake = RexFakeSession(sessionID: Self.session, panes: names.map {
             .init(
                 block: Self.block($0), label: "shell", title: "title \($0)", screen: "screen of \($0)\r\n$ ",
@@ -996,8 +1004,10 @@ struct RexSessionTerminalTests {
         channel.rex = model
         channel.opened(connection)
         let consumer = Task { await channel.consume(queue) }
+        fake.hold(dataConnectFor: Set(holding.map(Self.block)))
         channel.resize(.init(columns: 40, rows: 10))
         let rig = Rig(fake: fake, channel: channel, connection: connection, model: model, consumer: consumer)
+        guard holding.isEmpty else { return rig }
         guard await waitForMainActorCondition(timeout: .seconds(5), { rig.shows("screen of \(opening)") }) else {
             await rig.stop()
             Issue.record("the first pane never showed")
@@ -1060,6 +1070,23 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
+    /// Opening a pane costs as few round trips as it can: the screen's first
+    /// size goes at once and is the only resize the pane gets, and its data
+    /// connection opens and upgrades while Rex is still issuing the ticket
+    /// HELLO needs.
+    @Test func theFirstPaneIsSizedOnceAndItsStreamOpensBeforeItsTicket() async throws {
+        let rig = try await open(["a"], holding: ["a"])
+        let a = Self.block("a")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.dataHosts.first?.isUpgraded == true },
+                "upgraded with data.connect still unanswered")
+        #expect(rig.fake.dataHosts.first?.isWelcomed == false, "HELLO waits for the ticket")
+        rig.fake.release(dataConnectFor: a)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+        let resizes = rig.fake.requests("com.superlogical.terminal.resize")
+        #expect(resizes.count == 1 && resizes.first?.string("block_id") == a, "sized once, by the screen")
+        await rig.stop()
+    }
+
     /// A pane's status and progress belong to its program: a pane swapped in
     /// does not show the one before's.
     @Test func statusOfThePaneLeftBehindDoesNotFollowTheSwitch() async throws {
@@ -1091,7 +1118,10 @@ struct RexSessionTerminalTests {
         rig.fake.release(dataConnectFor: b)
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
-        #expect(rig.fake.dataHosts.map(\.block) == [Self.block("a"), c], "b never got a stream")
+        let helloed = rig.fake.dataHosts.compactMap { $0.block }
+        #expect(helloed == [Self.block("a"), c], "b's stream never said HELLO")
+        let abandonedClosed = rig.fake.dataHosts.filter { $0.block == nil }.allSatisfy { $0.isClosed }
+        #expect(abandonedClosed, "and it was closed")
         #expect(rig.model.step(1) == false, "a swipe past the last pane does nothing")
 
         // Output the first pane's stream sends after it was left is not drawn.
@@ -1177,7 +1207,7 @@ struct RexSessionTerminalTests {
         rig.model.show(c)
         rig.fake.refuse(dataConnectFor: b)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
-        #expect(rig.model.state.shown == c && rig.channel.connected)
+        #expect(rig.model.state.shown == c && rig.channel.connected, "\(rig.channel.reason)")
         await rig.stop()
     }
 
@@ -1225,7 +1255,10 @@ struct RexSessionTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             rig.fake.requests("session.disown_block").contains { $0.payload.contains(b) }
         })
-        #expect(rig.fake.dataHosts.map(\.block) == [a], "b never got a stream")
+        let helloed = rig.fake.dataHosts.compactMap { $0.block }
+        #expect(helloed.allSatisfy { $0 == a }, "b's stream never said HELLO")
+        let abandonedClosed = rig.fake.dataHosts.filter { $0.block == nil }.allSatisfy { $0.isClosed }
+        #expect(abandonedClosed, "and it was closed")
         await rig.stop()
     }
 

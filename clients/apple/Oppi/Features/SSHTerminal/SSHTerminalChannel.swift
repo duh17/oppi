@@ -655,9 +655,16 @@ final class SSHTerminalChannel {
     func resize(_ geometry: SSHTerminalGeometry) {
         requestedGeometry = geometry
         // Both local and remote grid changes share the same coalesced geometry.
+        // The connection's first size goes at once: a Rex pane opens its data
+        // connection only once sized, so waiting would delay its screen.
+        let coalesce = connected && remoteGeometry == nil ? Duration.zero : .milliseconds(80)
         resizeTask?.cancel()
         resizeTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
+            if coalesce > .zero {
+                do { try await Task.sleep(for: coalesce) } catch { return }
+            } else if Task.isCancelled {
+                return
+            }
             guard let self else { return }
             // A size the grid already has is not a change. Resizing the engine on a
             // repeat forces a full rebuild and bumps `changeCount`, so the grid
