@@ -182,8 +182,8 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         assertRunning()
     }
 
-    /// A Rex session with more than one pane keeps its pane switcher in a pill
-    /// of its own at the bottom right; the bar's pill sits between Back and it.
+    /// A Rex pane keeps its one Rex control in a pill of its own at the bottom
+    /// right; the bar's pill sits between Back and it.
     func testRexPaneSwitcherHasItsOwnPillAtTheTrailingCorner() {
         launch(screen: "ssh-terminal-rex-panes")
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]

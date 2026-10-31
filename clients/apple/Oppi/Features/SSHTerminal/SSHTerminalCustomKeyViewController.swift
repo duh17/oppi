@@ -92,6 +92,8 @@ final class SSHTerminalCustomKeyViewController: ListScreenController<
         let message: String
         if draft.key.isEmpty {
             message = String(localized: "Type a key, or pick a named one.")
+        } else if draft.shift, draft.key.count == 1, draft.key.first?.isLetter != true {
+            message = String(localized: "Shift works with a letter or a named key. Turn Shift off, or pick another key.")
         } else if !draft.isValid {
             message = String(localized: "Oppi can't send that key. Use a letter, a digit, one of - = [ ] \\ ; ' , . / `, or pick a named key.")
         } else {

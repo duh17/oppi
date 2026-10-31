@@ -143,6 +143,13 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
             view.alpha = 0
             view.isHidden = true
         }
+        // Nothing to move when the views on show are already these, in order:
+        // this runs on every pass, and re-adding them would rebuild the stack.
+        let onShow = stack.arrangedSubviews.filter { !$0.isHidden }
+        if incoming.isEmpty, outgoing.isEmpty, onShow.count == wanted.count, zip(onShow, wanted).allSatisfy({ $0 === $1 }) {
+            refreshButtons()
+            return
+        }
         for view in wanted { stack.addArrangedSubview(view) }
         let change = {
             for view in incoming {

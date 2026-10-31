@@ -229,6 +229,25 @@ struct SSHTerminalBarMigrationTests {
         #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.rex), .action(.chatBar)])
     }
 
+    @Test func retiringTheOldKeysAnnouncesTheChangeEvenWhenTheNewLayoutIsTheDefault() {
+        let defaults = isolatedDefaults()
+        let prefix = AppIdentifiers.subsystem
+        // A saved bar the old way: not the default.
+        defaults.set(["escape", "keyboard"], forKey: "\(prefix).sshTerminal.barOrder")
+        defaults.set(["escape"], forKey: "\(prefix).sshTerminal.barShown")
+        let store = SSHTerminalBarStore(defaults: defaults)
+        #expect(store.layout != .defaultValue)
+        final class Counter: @unchecked Sendable { var posts = 0 }
+        let counter = Counter()
+        let token = NotificationCenter.default.addObserver(forName: SSHTerminalBarStore.didChange, object: nil, queue: nil) { _ in counter.posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        // Saving the default writes nothing new, but the bar now reads the default, not the migrated one.
+        store.setLayout(.defaultValue)
+        #expect(counter.posts >= 1, "the open terminal must hear that the layout it reads changed")
+        #expect(store.layout == .defaultValue)
+        #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barOrder") == nil)
+    }
+
     @Test func aFreshInstallHasTheDefaultBarAndResetBringsItBack() {
         let defaults = isolatedDefaults()
         let store = SSHTerminalBarStore(defaults: defaults)
@@ -344,6 +363,34 @@ struct SSHTerminalCustomKeyTests {
         #expect(SSHTerminalCustomKey.NamedKey.all.count == 13 + 12)
         for invalid in ["", "!", "é", "ab", " ", "f13"] {
             #expect(!SSHTerminalCustomKey(key: invalid).isValid, "\(invalid.debugDescription)")
+        }
+    }
+
+    @Test func oneStoredKeyThatDoesNotDecodeDoesNotTakeTheOthersWithIt() throws {
+        let defaults = isolatedDefaults()
+        let store = SSHTerminalBarStore(defaults: defaults)
+        let kept = SSHTerminalCustomKey(name: "EOF", control: true, key: "d")
+        let other = SSHTerminalCustomKey(name: "Clear", control: true, key: "l", showFor: .shell)
+        // A damaged entry and one with a field another version added in place of ours, between two good ones.
+        var entries = try [kept, other].map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) }
+        entries.insert(["id": "not-a-uuid", "name": 7], at: 1)
+        entries.append(["future": true])
+        defaults.set(try JSONSerialization.data(withJSONObject: entries), forKey: "\(AppIdentifiers.subsystem).sshTerminal.barKeys")
+        #expect(store.customKeys == [kept, other])
+        // Saving another key keeps them, so the next write does not lose what still decodes.
+        let added = SSHTerminalCustomKey(name: "Quit", key: "q")
+        store.save(added)
+        #expect(SSHTerminalBarStore(defaults: defaults).customKeys == [kept, other, added])
+    }
+
+    @Test func shiftOnlyTakesALetterOrANamedKey() {
+        #expect(SSHTerminalCustomKey(shift: true, key: "d").isValid)
+        #expect(SSHTerminalCustomKey(shift: true, key: "tab").isValid)
+        #expect(SSHTerminalCustomKey(shift: true, key: "f5").isValid)
+        // Shift-1 is `!` and shift-/ is `?`: the keymap cannot say that, so it is not offered.
+        for typed in ["1", "/", "-", ";", "["] {
+            #expect(!SSHTerminalCustomKey(shift: true, key: typed).isValid, "shift + \(typed)")
+            #expect(SSHTerminalCustomKey(key: typed).isValid, "\(typed) alone")
         }
     }
 

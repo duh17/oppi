@@ -1530,9 +1530,9 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
-    @Test func aSessionOfOnePaneHasNoSwitcherAndAWindowOfOneHasNoMinimap() async throws {
+    @Test func aWindowOfOnePaneHasNoMinimapAndNothingToStepTo() async throws {
         let rig = try await open(["a"])
-        #expect(rig.model.state.panes.count == 1 && !rig.model.state.showsMinimap)
+        #expect(!rig.model.state.showsMinimap)
         #expect(rig.model.step(1) == false && rig.model.step(-1) == false)
         await rig.stop()
     }

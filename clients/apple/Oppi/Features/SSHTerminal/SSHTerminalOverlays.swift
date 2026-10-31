@@ -1,9 +1,12 @@
 import UIKit
 
 /// Hits pass through empty space to the grid; cards and buttons keep theirs.
-/// A child is asked for its own hit whatever its frame, so a pill that answers
-/// a touch a few points outside its glass (`SSHTerminalGlassPill`) keeps that
-/// reach inside this view's bounds.
+/// It asks each child for its own hit instead of leaving that to UIKit's
+/// default traversal: a pill answers a touch up to 4 pt outside its glass
+/// (`SSHTerminalGlassPill.touchOutset`), and with the default traversal this
+/// view returned nil for such a touch although the pill's own `hitTest` returned
+/// its button (measured on the iOS 27.1 simulator; with the default, the
+/// strip-above-the-bar test fails for every button).
 final class SSHTerminalPassthroughView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
@@ -190,7 +193,10 @@ final class SSHTerminalBackPill: UIView {
         pill.point(inside: convert(point, to: pill), with: event)
     }
 
-    /// The pill answers for the strip around its glass; the attention dot takes no touch.
+    /// The pill answers for the strip around its glass. Forwarded explicitly for
+    /// the same reason as `SSHTerminalPassthroughView`: the default traversal
+    /// did not ask the pill for a touch outside its frame; the attention dot
+    /// takes no touch.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
         return pill.hitTest(convert(point, to: pill), with: event)

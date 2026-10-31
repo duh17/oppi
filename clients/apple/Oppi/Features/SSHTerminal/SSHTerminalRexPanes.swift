@@ -275,8 +275,8 @@ enum SSHTerminalPaneIcon: Hashable, Sendable {
     }
 }
 
-/// The bar's pane switcher: one button in the trailing pill, beside Rex's
-/// sessions, for a session with more than one pane. It draws the shown pane's
+/// The Rex control: the one button of the Rex pill at the bar's trailing
+/// corner, for every Rex pane. It draws the shown pane's
 /// icon (`SSHTerminalPaneIcon`), which rolls to the next pane's when the pane
 /// changes (up for a pane further along the strip, down for one before it; a
 /// crossfade with Reduce Motion). It is the terminal's one Rex control: a tap

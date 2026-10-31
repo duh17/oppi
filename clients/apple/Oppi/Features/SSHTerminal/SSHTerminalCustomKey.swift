@@ -131,6 +131,9 @@ struct SSHTerminalCustomKey: Codable, Hashable, Identifiable, Sendable {
 
     /// What the button sends, nothing for a key the terminal cannot encode.
     var strokes: [SSHTerminalKeyStroke] {
+        // Shift changes what a typed character types (`!` for `1`), which the
+        // keymap cannot say: only a letter or a named key takes it.
+        if shift, key.count == 1, key.first?.isLetter != true { return [] }
         guard !key.isEmpty, !key.contains(" "), var stroke = SSHTerminalKeymap.parse(spec, syntax: .plus)?.first else { return [] }
         // The keymap's text is the key without modifiers; a shifted letter
         // types its capital.
@@ -199,6 +202,15 @@ struct SSHTerminalBarStore {
     private static let keysKey = "\(AppIdentifiers.subsystem).sshTerminal.barKeys"
     private static let rexPanelKey = "\(AppIdentifiers.subsystem).sshTerminal.rexPanel"
 
+    /// One stored key, or nil when it does not decode.
+    private struct Lossy: Decodable {
+        let key: SSHTerminalCustomKey?
+
+        init(from decoder: any Decoder) throws {
+            key = try? SSHTerminalCustomKey(from: decoder)
+        }
+    }
+
     let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -207,8 +219,10 @@ struct SSHTerminalBarStore {
 
     var customKeys: [SSHTerminalCustomKey] {
         guard let data = defaults.data(forKey: Self.keysKey),
-              let keys = try? JSONDecoder().decode([SSHTerminalCustomKey].self, from: data) else { return [] }
-        return keys.filter(\.isValid)
+              let entries = try? JSONDecoder().decode([Lossy].self, from: data) else { return [] }
+        // Entry by entry: one this build cannot read (written by another
+        // version, or damaged) must not take the others with it.
+        return entries.compactMap(\.key).filter(\.isValid)
     }
 
     /// The saved layout, or the one this bar had before it was one list
@@ -244,9 +258,13 @@ struct SSHTerminalBarStore {
     }
 
     func setLayout(_ layout: SSHTerminalBarLayout) {
+        let hadLegacy = defaults.object(forKey: Self.legacyOrderKey) != nil || defaults.object(forKey: Self.legacyShownKey) != nil
         Self.preference.save(layout, in: defaults)
         defaults.removeObject(forKey: Self.legacyOrderKey)
         defaults.removeObject(forKey: Self.legacyShownKey)
+        // Retiring the old keys changes what `layout` reads even when the new
+        // layout equals the default and `save` skipped the write.
+        if hadLegacy { NotificationCenter.default.post(name: Self.preference.didChangeNotification, object: nil) }
     }
 
     /// Adds a key, or replaces the one with its id.

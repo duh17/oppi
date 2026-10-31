@@ -37,8 +37,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// switcher is the bar's trailing pill (`rexPill`).
     private let rexMinimap = SSHTerminalRexMinimapView()
     /// The terminal shows a Rex session: the grid swipes (past the last pane
-    /// that opens a new one) and takes VoiceOver's pane actions. The switcher
-    /// shows only for more than one pane.
+    /// that opens a new one) and takes VoiceOver's pane actions. The Rex
+    /// control (`rexPill`) shows for every such session.
     private var rexSwipes = false
     /// The pane being opened (`createPane`), while one is. One at a time.
     private var newPaneTask: Task<Void, Never>?
@@ -56,7 +56,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The bottom bar's one centred pill (Settings > Terminal > Bottom
     /// Bar), between Back and the pane switcher.
     private lazy var barPill = SSHTerminalBarPill(status: statusGlyph)
-    /// A Rex session's pane switcher, bottom trailing, only with more than one pane.
+    /// A Rex pane's one Rex control, bottom trailing.
     private let rexPill = SSHTerminalRexPanesPill()
     private let barStore: SSHTerminalBarStore
     private lazy var barLayout = barStore.layout
@@ -1030,10 +1030,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
     }
 
-    /// A Rex terminal's minimap and swipe. The swipe works (and the bar shows
-    /// its pane switcher) only for a session with more than one pane; the
-    /// minimap is available only for a window with more than one, and shows
-    /// only while a switch runs.
+    /// A Rex terminal's minimap and swipe. The swipe works for every session
+    /// (past the last pane it opens a new one); the minimap is available only
+    /// for a window with more than one pane, and shows only while a switch runs.
     private func updateRexPanes(themeID: ThemeID) {
         let rex = channel.rex?.state
         let swipes = channel.rex != nil

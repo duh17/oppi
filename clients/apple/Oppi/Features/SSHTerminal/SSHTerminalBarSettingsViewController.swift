@@ -126,7 +126,7 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         var sections: [ListSection<Section, Item>] = [
             ListSection(
                 .items,
-                footer: String(localized: "The bar draws the buttons that are on, in this order, centred between Back and the corner. A button turned off moves into the \u{2026} menu, except keys, Program Shortcuts, and Paste, which the keyboard bars have. A button that doesn't fit the screen moves there too, except Paste, which is left out. Herdr and Rex show when the host runs them, but not in a terminal that is already inside the other, and Switch Terminal when more than one terminal is open. Program Shortcuts shows the keys of the program in front, and a custom key shows only for the program you pick."),
+                footer: String(localized: "The bar draws the buttons that are on, in this order, centred between Back and the corner. A button turned off moves into the \u{2026} menu, except the built-in keys, Program Shortcuts, and Paste, which the keyboard bars have. A button that doesn't fit the screen moves there too, except Paste, which is left out. Herdr and Rex show when the host runs them, but not in a terminal that is already inside the other, and Switch Terminal when more than one terminal is open. Program Shortcuts shows the keys of the program in front, and a custom key shows only for the program you pick."),
                 items: layout.order.filter(isListed).map(Item.bar)
             ),
             ListSection(.add, items: [.addKey]),
