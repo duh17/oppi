@@ -741,8 +741,6 @@ struct AgentSchedule: Identifiable, Sendable, Equatable {
     var status: AgentScheduleStatus
     var trigger: AgentScheduleTrigger
     var action: AgentScheduleAction
-    /// Bumped by every update; an edit conditions on it. A record built here
-    /// rather than read from a server starts at the server's first version.
     /// The definition's version, bumped when the definition changes. Nil on a
     /// server from before schedules had one: an edit then sends no
     /// `expectedVersion`, and a prompt has no pencil (no tag to condition on).

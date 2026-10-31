@@ -50,12 +50,12 @@ struct DocumentEditOwnerTests {
 
     /// The transport a test never gets to: the owner only reads here.
     private var idleTransport: WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _ in .notSent })
+        WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent })
     }
 
     private var savedTransport: WorkspaceFileEditTransport {
         let saved = tag("b")
-        return WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _ in .saved(etag: saved) })
+        return WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .saved(etag: saved) })
     }
 
     /// Counts the tagged reads, so a test can prove the owner never asks a
@@ -131,7 +131,7 @@ struct DocumentEditOwnerTests {
                     await readSpy?.note()
                     return outcome ?? .snapshot(snapshot)
                 },
-                write: { identity, request in await transport.write(identity, request) }
+                write: { identity, bytes, ifMatch in await transport.write(identity, bytes, ifMatch) }
             )
         )
         return DocumentEditOwner(
@@ -284,7 +284,7 @@ struct DocumentEditOwnerTests {
                     await gate.enter()
                     return .snapshot(snapshot)
                 },
-                write: { _, _ in .notSent }
+                write: { _, _, _ in .notSent }
             )
         )
         let owner = DocumentEditOwner(
@@ -371,7 +371,8 @@ struct DocumentEditOwnerTests {
         #expect(owner.session?.status == .deleted)
 
         owner.endEditing()
-        #expect(finished == 1, "the reader is told the editor closed")
+        // The reader hears once the write in flight has landed.
+        #expect(await eventually { finished == 1 }, "the reader is told the editor closed")
         #expect(identifiers(owner) == ["workspace-file-editor.edit"], "a deleted file's kept draft has a pencil")
 
         owner.beginEditing()
@@ -381,9 +382,9 @@ struct DocumentEditOwnerTests {
 
     // MARK: A record's prompt
 
-    /// An Agent's prompt is a document the owner can open, and its editor
-    /// carries Pi's append/replace mode.
-    @Test func agentPromptOpensTheEditorWithItsModeControl() async {
+    /// An Agent's prompt is a document the owner can open, on its prompt alone:
+    /// the mode stays with the Agent's own form, not this editor.
+    @Test func agentPromptOpensTheEditorOnItsText() async {
         let owner = owner(
             subject: .agentInstructions(agentId: "agent-1"),
             serverId: "srv",
@@ -402,18 +403,11 @@ struct DocumentEditOwnerTests {
         owner.beginEditing()
         let page = owner.makeEditorPage(checkoutSubtitle: nil)
         page?.loadViewIfNeeded()
-        #expect(page?.modeControl != nil, "an Agent's prompt shows the mode control")
-        #expect(page?.modeControl?.selectedSegmentIndex == 0, "a prompt that appends opens on Append")
-        #expect(page?.modeControl?.accessibilityValue == "Append to Pi's prompt")
-
-        page?.modeControl?.selectedSegmentIndex = 1
-        page?.modeControl?.sendActions(for: .valueChanged)
-        #expect(owner.agentInstructionMode == .replace, "the control is the owner's mode")
-        #expect(page?.modeControl?.accessibilityValue == "Replace Pi's prompt")
+        #expect(page?.editor.textView.text == "Review the diff.", "the editor holds the prompt")
     }
 
-    /// A Schedule's prompt has no mode, and neither does a file.
-    @Test func onlyAnAgentPromptShowsTheModeControl() async {
+    /// A Schedule's prompt opens the same editor, on the schedule's own prompt.
+    @Test func schedulePromptOpensTheEditorOnItsPrompt() async {
         let schedule = owner(
             subject: .schedulePrompt(scheduleId: "schedule-1"),
             serverId: "srv",
@@ -425,15 +419,8 @@ struct DocumentEditOwnerTests {
         schedule.beginEditing()
         let schedulePage = schedule.makeEditorPage(checkoutSubtitle: nil)
         schedulePage?.loadViewIfNeeded()
-        #expect(schedulePage?.modeControl == nil)
+        #expect(schedulePage?.editor.textView.text == "Summarize.")
         #expect(schedule.identity == WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-1"))
-
-        let file = owner(subject: workspaceSubject(), capability: capability, transport: savedTransport)
-        _ = await file.read()
-        file.beginEditing()
-        let filePage = file.makeEditorPage(checkoutSubtitle: nil)
-        filePage?.loadViewIfNeeded()
-        #expect(filePage?.modeControl == nil)
     }
 
     /// A prompt subject with no server has nothing to write, so no pencil.

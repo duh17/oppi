@@ -7,10 +7,6 @@ struct WorkspaceFileDraft: Codable, Equatable, Sendable {
     var baseEtag: String
     var bytes: Data
     var updatedAt: Date
-    /// The document's mode outside its text (an Agent prompt's append/replace),
-    /// kept with the unsaved text so a recovery saves the same choice. Nil for a
-    /// file, and for a draft stored before prompts had one.
-    var instructionMode: AgentInstructionMode? = nil
 }
 
 /// Protected on-disk drafts, one file per identity under Application Support.

@@ -6,16 +6,7 @@ import Observation
 /// `skill`); a record's prompt has its own route. Tests supply scripted closures.
 struct WorkspaceFileEditTransport: Sendable {
     var read: @Sendable (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
-    var write: @Sendable (WorkspaceFileEditIdentity, WorkspaceFileWriteRequest) async -> WorkspaceFileWriteOutcome
-}
-
-/// One write of a document: the bytes, the tag they extend, and the document's
-/// mode outside its text — an Agent prompt's append/replace, which its own route
-/// sends. A file has no mode and ignores it.
-struct WorkspaceFileWriteRequest: Sendable {
-    let bytes: Data
-    let ifMatch: String
-    let instructionMode: AgentInstructionMode?
+    var write: @Sendable (WorkspaceFileEditIdentity, Data, String) async -> WorkspaceFileWriteOutcome
 }
 
 extension WorkspaceFileEditTransport {
@@ -24,8 +15,8 @@ extension WorkspaceFileEditTransport {
             read: { identity in
                 await api.readFileForEditingOutcome(identity)
             },
-            write: { identity, request in
-                await api.writeEditedFile(identity, bytes: request.bytes, ifMatch: request.ifMatch)
+            write: { identity, bytes, ifMatch in
+                await api.writeEditedFile(identity, bytes: bytes, ifMatch: ifMatch)
             }
         )
     }
@@ -86,15 +77,10 @@ final class WorkspaceFileEditSession {
         let epoch: Int
         let generation: Int
         let bytes: Data
-        let instructionMode: AgentInstructionMode?
     }
 
     let identity: WorkspaceFileEditIdentity
     let maxBytes: Int
-    /// The Agent prompt's append/replace mode, when the document has one. It is
-    /// part of what a save writes and what a draft keeps, so a change to it
-    /// alone is a change to save.
-    private(set) var instructionMode: AgentInstructionMode?
     private(set) var status: Status = .saved
     /// Disk version fetched by Review. Replace uses exactly this tag.
     private(set) var reviewedDisk: WorkspaceFileDiskSnapshot?
@@ -107,8 +93,6 @@ final class WorkspaceFileEditSession {
     private(set) var draftNotice: String?
 
     @ObservationIgnored private(set) var baseEtag: String
-    /// The mode the server last acknowledged; a mode that differs is unsaved.
-    @ObservationIgnored private var savedInstructionMode: AgentInstructionMode?
     @ObservationIgnored private(set) var diskBytes: Data
     @ObservationIgnored private(set) var editGeneration = 0
     @ObservationIgnored private(set) var savedGeneration = 0
@@ -132,7 +116,6 @@ final class WorkspaceFileEditSession {
         diskBytes: Data,
         bufferText: String,
         maxBytes: Int,
-        instructionMode: AgentInstructionMode?,
         transport: WorkspaceFileEditTransport,
         draftStore: WorkspaceFileDraftStore,
         idleDelay: Duration,
@@ -140,8 +123,6 @@ final class WorkspaceFileEditSession {
     ) {
         self.identity = identity
         self.maxBytes = maxBytes
-        self.instructionMode = instructionMode
-        self.savedInstructionMode = instructionMode
         self.transport = transport
         self.draftStore = draftStore
         self.idleDelay = idleDelay
@@ -154,8 +135,6 @@ final class WorkspaceFileEditSession {
     /// Opens a session from one tagged read. Returns nil when the server did not
     /// tag the bytes, they are not exact UTF-8, or they exceed `maxBytes`, or
     /// when an unreadable stored draft could not be moved aside.
-    /// `instructionMode` is the record's mode; a recovered draft's own mode wins
-    /// over it, so a kept choice is what the next save sends.
     /// A stored draft is recovered: same base tag resumes autosave; a different
     /// disk tag opens in conflict with autosave stopped. A draft that cannot be
     /// applied is quarantined, never deleted.
@@ -163,7 +142,6 @@ final class WorkspaceFileEditSession {
         identity: WorkspaceFileEditIdentity,
         disk: WorkspaceFileDiskSnapshot,
         maxBytes: Int,
-        instructionMode: AgentInstructionMode? = nil,
         transport: WorkspaceFileEditTransport,
         draftStore: WorkspaceFileDraftStore = .shared,
         idleDelay: Duration = .seconds(1),
@@ -198,7 +176,6 @@ final class WorkspaceFileEditSession {
             diskBytes: disk.bytes,
             bufferText: diskText,
             maxBytes: maxBytes,
-            instructionMode: instructionMode,
             transport: transport,
             draftStore: draftStore,
             idleDelay: idleDelay,
@@ -209,11 +186,6 @@ final class WorkspaceFileEditSession {
         bufferText = recovered.text
         editGeneration = 1
         recoveredDraft = true
-        // The draft's mode is the one the person chose, not the record's, so it is
-        // a change against the record's mode that the next save carries.
-        if let draftMode = recovered.draft.instructionMode {
-            self.instructionMode = draftMode
-        }
         if recovered.draft.baseEtag == etag {
             status = .pending
             scheduleIdle()
@@ -243,7 +215,6 @@ final class WorkspaceFileEditSession {
             diskBytes: Data(),
             bufferText: text,
             maxBytes: maxBytes,
-            instructionMode: draft.instructionMode,
             transport: transport,
             draftStore: draftStore,
             idleDelay: idleDelay,
@@ -261,26 +232,7 @@ final class WorkspaceFileEditSession {
     var currentText: String { textProvider?() ?? bufferText }
 
     var hasUnsavedChanges: Bool {
-        editGeneration != savedGeneration || instructionMode != savedInstructionMode
-    }
-
-    /// A mode change is a change: it is saved at once, and it keeps the buffer
-    /// dirty for Done. Autosave stays paused where it was (conflict, deleted).
-    func setInstructionMode(_ mode: AgentInstructionMode?) {
-        guard instructionMode != mode else { return }
-        instructionMode = mode
-        if status == .saved || status == .tooLarge { setStatus(.pending) }
-        checkpoint()
-        startSaveIfPossible()
-    }
-
-    /// The record's mode after a re-read (Use Disk Version): it is what disk
-    /// holds, so it is not a change to save.
-    func adoptRecordInstructionMode(_ mode: AgentInstructionMode?) {
-        guard instructionMode != mode || savedInstructionMode != mode else { return }
-        instructionMode = mode
-        savedInstructionMode = mode
-        if !hasUnsavedChanges, status == .pending { setStatus(.saved) }
+        editGeneration != savedGeneration
     }
 
     /// Clean, idle, and not shown. The registry may drop it.
@@ -323,9 +275,7 @@ final class WorkspaceFileEditSession {
             identity: identity,
             baseEtag: baseEtag,
             bytes: WorkspaceFileTextCodec.encode(currentText),
-            updatedAt: Date(),
-            // Kept with the text: a recovery saves the same choice.
-            instructionMode: instructionMode
+            updatedAt: Date()
         )
         do {
             try draftStore.save(draft)
@@ -448,7 +398,8 @@ final class WorkspaceFileEditSession {
         draftStore.remove(identity)
         setStatus(.saved)
         notifySettledIfNeeded()
-        return .replaced(text)    }
+        return .replaced(text)
+    }
 
     // MARK: - Save machine
 
@@ -478,7 +429,7 @@ final class WorkspaceFileEditSession {
         }
         let generation = editGeneration
         let bytes = WorkspaceFileTextCodec.encode(currentText)
-        if bytes == diskBytes, instructionMode == savedInstructionMode {
+        if bytes == diskBytes {
             acknowledge(bytes: bytes, etag: baseEtag, generation: generation)
             return
         }
@@ -496,20 +447,14 @@ final class WorkspaceFileEditSession {
             token: UUID(),
             epoch: epoch,
             generation: generation,
-            bytes: bytes,
-            instructionMode: instructionMode
+            bytes: bytes
         )
         inFlight = flight
         setStatus(.saving)
         let transport = transport
         let identity = identity
-        let request = WorkspaceFileWriteRequest(
-            bytes: bytes,
-            ifMatch: ifMatch,
-            instructionMode: instructionMode
-        )
         inFlightTask = Task { [weak self] in
-            let outcome = await transport.write(identity, request)
+            let outcome = await transport.write(identity, bytes, ifMatch)
             self?.handleWrite(outcome, for: flight)
         }
     }
@@ -521,7 +466,7 @@ final class WorkspaceFileEditSession {
         guard flight.epoch == epoch else { return }
         switch outcome {
         case .saved(let etag):
-            acknowledge(bytes: flight.bytes, etag: etag, generation: flight.generation, mode: flight.instructionMode)
+            acknowledge(bytes: flight.bytes, etag: etag, generation: flight.generation)
         case .stale:
             reviewedDisk = nil
             setStatus(.conflict)
@@ -545,17 +490,11 @@ final class WorkspaceFileEditSession {
     }
 
     /// `mode` is what the write carried; nil keeps the mode already known.
-    private func acknowledge(
-        bytes: Data,
-        etag: String,
-        generation: Int,
-        mode: AgentInstructionMode? = nil
-    ) {
+    private func acknowledge(bytes: Data, etag: String, generation: Int) {
         baseEtag = etag
         diskBytes = bytes
         savedGeneration = generation
         reviewedDisk = nil
-        if let mode { savedInstructionMode = mode } else { savedInstructionMode = instructionMode }
         if editGeneration == generation {
             setStatus(.saved)
             draftStore.remove(identity)
@@ -601,12 +540,7 @@ final class WorkspaceFileEditSession {
         switch outcome {
         case .snapshot(let snapshot):
             if snapshot.bytes == flight.bytes, let tag = snapshot.etag {
-                acknowledge(
-                    bytes: flight.bytes,
-                    etag: tag,
-                    generation: flight.generation,
-                    mode: flight.instructionMode
-                )
+                acknowledge(bytes: flight.bytes, etag: tag, generation: flight.generation)
             } else if snapshot.etag == baseEtag {
                 setStatus(.pending)
                 startSaveIfPossible()

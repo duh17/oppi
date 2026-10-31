@@ -512,7 +512,6 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                         // The pencil edits the prompt alone, not the pieced-together
                         // document, and keeps the Agent's append/replace mode.
                         subject: agent.map { .agentInstructions(agentId: $0.id) } ?? .snapshot,
-                        agentInstructionMode: agent?.definition.instructions?.mode ?? .append,
                         connection: connection,
                         // After an edit the reader shows the whole definition again,
                         // read from the Agent the server now holds.

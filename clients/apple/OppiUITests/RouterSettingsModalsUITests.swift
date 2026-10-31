@@ -250,10 +250,10 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertCompactOppiBar(page: "schedule-detail")
     }
 
-    /// An Agent's prompt opens in our editor from the reader's pencil, with
-    /// Pi's append/replace mode; typing saves through the Agent, and Done
-    /// returns to the reader showing what was typed. The "…" keeps Edit with
-    /// Session beside the pencil.
+    /// An Agent's prompt opens in our editor from the reader's pencil; typing
+    /// saves through the Agent with the mode the record already had, and Done
+    /// returns to the definition reader showing the new text. The "…" keeps
+    /// Edit with Session beside the pencil.
     func testAgentPromptReaderEditsInPlace() {
         launch(page: "agents")
         let row = app.buttons["agents.row.agent-design"]
@@ -273,27 +273,13 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         tapBarButton(pencil)
         let text = app.textViews["workspace-file-editor.text"]
         XCTAssertTrue(text.waitForExistence(timeout: 10), "The pencil did not open the editor")
-        let mode = app.segmentedControls["agentPromptEditor.mode"]
-        XCTAssertTrue(mode.waitForExistence(timeout: 5), "The Agent prompt editor shows its mode")
+        XCTAssertFalse(
+            app.segmentedControls["agentPromptEditor.mode"].exists, // ax-id-guard: absent-on-purpose
+            "The prompt editor edits text only; the Agent's own form holds the mode"
+        )
         attachScreenshot("agent-prompt-editor")
         assertRunning()
 
-        // Only the mode changes: that alone must reach the server, with the text
-        // the editor opened on.
-        mode.buttons["Replace"].tap()
-        XCTAssertTrue(
-            waitFor(
-                lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("\"mode\":\"replace\""),
-                timeout: 15
-            ),
-            "A mode change alone must save through the Agent: \(lastWrite)"
-        )
-        XCTAssertTrue(
-            lastWrite.contains("Review the change against the HIG."),
-            "The mode's save carries the prompt it opened on: \(lastWrite)"
-        )
-
-        // Typing saves the text too.
         text.tap()
         text.typeText(" Ship it.")
         XCTAssertTrue(
@@ -302,6 +288,10 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
                 timeout: 15
             ),
             "The edit must save through the Agent: \(lastWrite)"
+        )
+        XCTAssertTrue(
+            lastWrite.contains("\"mode\":\"append\""),
+            "The save keeps the Agent's own mode: \(lastWrite)"
         )
 
         tapBarButton(app.buttons["workspace-file-editor.done"])

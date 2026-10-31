@@ -37,7 +37,7 @@ struct WorkspaceFileEditorPerfBench {
     private final class NoopTransport {
         static let transport = WorkspaceFileEditTransport(
             read: { _ in .failed },
-            write: { _, _ in .notSent }
+            write: { _, _, _ in .notSent }
         )
     }
 

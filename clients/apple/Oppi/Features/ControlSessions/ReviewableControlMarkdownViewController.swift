@@ -169,8 +169,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// What the edit entry edits. `.snapshot` means the text has no document
     /// behind it, so only Edit with Session is offered.
     let subject: DocumentEditSubject
-    /// The Agent prompt's mode as the caller last knew it.
-    let agentInstructionMode: AgentInstructionMode
 
     private let comments = ChatReviewCommentsController()
     private var guidedSessionHandoff = ControlRevisionSheetHandoff()
@@ -197,14 +195,12 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         sourcePath: String,
         targetPath: String? = nil,
         subject: DocumentEditSubject = .snapshot,
-        agentInstructionMode: AgentInstructionMode = .append,
         connection: ServerConnection? = nil,
         refreshDocument: (@MainActor () async -> String?)? = nil
     ) {
         viewer = .fullScreen
         languageHint = "markdown"
         self.subject = subject
-        self.agentInstructionMode = agentInstructionMode
         self.serverConnection = connection
         self.refreshDocument = refreshDocument
         shownText = content
@@ -236,7 +232,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         viewer = .hostFile(serverId: serverId, title: title, skillFile: skillFile, connection: connection)
         languageHint = Self.languageHint(for: hostFilePath)
         subject = .snapshot
-        agentInstructionMode = .append
         serverConnection = connection
         refreshDocument = nil
         shownText = ""
@@ -305,7 +300,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             serverId: { [weak self] in
                 self?.connection?.currentServerId ?? self?.connection?.sessionStore.activeServerId
             },
-            agentInstructionMode: agentInstructionMode,
             agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
             backend: { [weak self] in
                 guard let self, let api = self.connection?.apiClient else { return nil }

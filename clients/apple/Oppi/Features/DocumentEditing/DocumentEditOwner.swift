@@ -29,9 +29,6 @@ final class DocumentEditOwner {
         /// Nil when the server does not edit this owner's files.
         var capability: (WorkspaceFileEditIdentity.Owner) async -> ServerInfo.WorkspaceFileEditingCapability?
         var transport: WorkspaceFileEditTransport
-        /// A record's mode as it is on the server now, for a document that just
-        /// took the disk version; nil for a file.
-        var recordMode: (@Sendable () async -> AgentInstructionMode?)?
 
         static func api(_ api: APIClient) -> Backend {
             Backend(
@@ -44,15 +41,8 @@ final class DocumentEditOwner {
         /// A record's prompt: its own route and version tag, and no file-editing
         /// capability to check (the server has none), so its limit is this
         /// client's.
-        static func record(
-            transport: WorkspaceFileEditTransport,
-            recordMode: (@Sendable () async -> AgentInstructionMode?)? = nil
-        ) -> Backend {
-            Backend(
-                capability: { _ in recordPromptCapability },
-                transport: transport,
-                recordMode: recordMode
-            )
+        static func record(transport: WorkspaceFileEditTransport) -> Backend {
+            Backend(capability: { _ in recordPromptCapability }, transport: transport)
         }
 
         /// What serves this subject on `api`: a record's own route for a prompt,
@@ -60,10 +50,7 @@ final class DocumentEditOwner {
         static func make(for subject: DocumentEditSubject, api: APIClient) -> Backend {
             switch subject {
             case .agentInstructions(let agentId):
-                return .record(
-                    transport: .agentInstructions(api: api, agentId: agentId),
-                    recordMode: { await WorkspaceFileEditTransport.agentPromptMode(api: api, agentId: agentId) }
-                )
+                return .record(transport: .agentInstructions(api: api, agentId: agentId))
             case .schedulePrompt(let scheduleId):
                 return .record(transport: .schedulePrompt(api: api, scheduleId: scheduleId))
             case .file, .snapshot:
@@ -111,8 +98,6 @@ final class DocumentEditOwner {
     private let serverIdSource: @MainActor () -> String?
     /// The server's client, read when the owner reads for the same reason.
     private let backendSource: @MainActor () -> Backend?
-    /// The mode a session starts from, before any session exists.
-    private var startingInstructionMode: AgentInstructionMode
     /// Construction context for the editor page's conflict sheet.
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     let draftStore: WorkspaceFileDraftStore
@@ -149,7 +134,6 @@ final class DocumentEditOwner {
     init(
         subject: DocumentEditSubject,
         serverId: @escaping @MainActor () -> String? = { nil },
-        agentInstructionMode: AgentInstructionMode = .append,
         agentAction: DocumentAgentEditAction? = nil,
         backend: @escaping @MainActor () -> Backend?,
         reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil,
@@ -160,7 +144,6 @@ final class DocumentEditOwner {
     ) {
         self.subject = subject
         self.serverIdSource = serverId
-        self.startingInstructionMode = agentInstructionMode
         self.agentAction = agentAction
         self.backendSource = backend
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
@@ -168,21 +151,6 @@ final class DocumentEditOwner {
         self.registry = registry
         self.handlers = handlers
         self.onChange = onChange
-    }
-
-    /// The mode the editor's control shows and the next save sends: the open
-    /// session's, else the one a session will start from.
-    var agentInstructionMode: AgentInstructionMode {
-        session?.instructionMode ?? startingInstructionMode
-    }
-
-    /// The mode control's one writer. A mode change is a change: the session
-    /// saves it at once, and keeps it with the draft until it does.
-    func setAgentInstructionMode(_ mode: AgentInstructionMode) {
-        guard agentInstructionMode != mode else { return }
-        startingInstructionMode = mode
-        session?.setInstructionMode(mode)
-        onChange()
     }
 
     // MARK: The reader
@@ -286,7 +254,6 @@ final class DocumentEditOwner {
                   identity: identity,
                   disk: snapshot,
                   maxBytes: maxBytes,
-                  instructionMode: startingInstructionMode,
                   transport: backend.transport,
                   draftStore: draftStore
               ) else { return nil }
@@ -374,7 +341,6 @@ final class DocumentEditOwner {
                       identity: identity,
                       disk: base,
                       maxBytes: maxBytes,
-                      instructionMode: startingInstructionMode,
                       transport: backend.transport,
                       draftStore: draftStore
                   ) {
@@ -386,8 +352,10 @@ final class DocumentEditOwner {
         adopt(session)
     }
 
-    /// Done: the editor hands its buffer back and starts the save (the network
-    /// is not awaited), and the page goes because `isEditing` ended.
+    /// Done: the editor hands its buffer back and starts the save, and the page
+    /// goes because `isEditing` ended. The screen hears about it once the write
+    /// in flight has landed, so a reader that re-reads the record shows the save
+    /// and not what it replaced.
     func endEditing() {
         guard let session else {
             isEditing = false
@@ -400,8 +368,12 @@ final class DocumentEditOwner {
         editorPage = nil
         isEditing = false
         closeEditor()
-        handlers.didFinishEditing()
         onChange()
+        Task { [weak self] in
+            await session.waitForInFlightWrite()
+            guard let self, self.session === session || !self.isEditing else { return }
+            self.handlers.didFinishEditing()
+        }
     }
 
     /// Presents the open editor over a reader that has none of its own. The
@@ -454,8 +426,6 @@ final class DocumentEditOwner {
             session: session,
             checkoutSubtitle: checkoutSubtitle,
             reviewCommentSelectionScope: reviewCommentSelectionScope,
-            instructionMode: showsInstructionMode ? agentInstructionMode : nil,
-            onInstructionModeChange: { [weak self] mode in self?.setAgentInstructionMode(mode) },
             onDone: { [weak self] in self?.endEditing() },
             onTogglePreview: { [weak self] in
                 self?.editorPage?.togglePreview()
@@ -466,12 +436,6 @@ final class DocumentEditOwner {
         )
         editorPage = page
         return page
-    }
-
-    /// Only an Agent's prompt carries Pi's append/replace mode.
-    private var showsInstructionMode: Bool {
-        if case .agentInstructions = subject { return true }
-        return false
     }
 
     /// Repaints the open editor and applies a replaced draft.
@@ -500,7 +464,7 @@ final class DocumentEditOwner {
     }
 
     private func useDiskVersion() {
-        guard let session, let backend = backendSource() else { return }
+        guard let session else { return }
         let generation = generation
         Task { [weak self] in
             let outcome = await session.useDiskVersion()
@@ -511,10 +475,6 @@ final class DocumentEditOwner {
             case .replaced(let text):
                 notice = nil
                 replacement = WorkspaceFileEditorReplacement(text: text)
-                // The disk version's mode is the record's now, not this device's.
-                if let recordMode = backend.recordMode {
-                    session.adoptRecordInstructionMode(await recordMode())
-                }
             case .missing, .notEditable:
                 reset()
                 handlers.didReload()

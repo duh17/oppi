@@ -148,14 +148,9 @@ struct PromptEditTransportTests {
         _ transport: WorkspaceFileEditTransport,
         _ identity: WorkspaceFileEditIdentity,
         _ text: String,
-        _ ifMatch: String,
-        mode: AgentInstructionMode? = nil
+        _ ifMatch: String
     ) async -> WorkspaceFileWriteOutcome {
-        await transport.write(identity, WorkspaceFileWriteRequest(
-            bytes: Data(text.utf8),
-            ifMatch: ifMatch,
-            instructionMode: mode
-        ))
+        await transport.write(identity, Data(text.utf8), ifMatch)
     }
 
     // MARK: Agent prompt
@@ -186,31 +181,59 @@ struct PromptEditTransportTests {
         #expect(outcome == .snapshot(WorkspaceFileDiskSnapshot(bytes: Data(), etag: "7")))
     }
 
-    @Test func agentPromptSaveSendsTheVersionAndTheMode() async throws {
+    /// A save sends the mode the read carried, with the version it extends: the
+    /// editor never sends a mode of its own.
+    @Test func agentPromptSaveSendsTheModeItsReadCarried() async throws {
         let client = makeClient()
-        PromptEditURLProtocol.handler = { _ in (200, self.json(["agent": self.agent(version: 3)])) }
+        PromptEditURLProtocol.handler = { _ in
+            (200, self.json(["agent": self.agent(version: 3, instructions: AgentInstructions(mode: .replace, text: "Review the diff."))]))
+        }
         defer { PromptEditURLProtocol.reset() }
 
+        let transport = agentTransport(client)
         let identity = WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1")
-        let outcome = await write(
-            agentTransport(client),
-            identity,
-            "Review the branch.",
-            "2",
-            mode: .replace
-        )
+        // The read records the mode with the version it returns.
+        _ = await transport.read(identity)
+        PromptEditURLProtocol.handler = { _ in (200, self.json(["agent": self.agent(version: 4)])) }
+        let outcome = await write(transport, identity, "Review the branch.", "3")
 
-        #expect(outcome == .saved(etag: "3"))
+        #expect(outcome == .saved(etag: "4"))
         let recorded = try #require(PromptEditURLProtocol.last)
         #expect(recorded.method == "PATCH")
         #expect(recorded.url.path == "/agents/agent-1")
-        #expect(recorded.url.query == "expectedVersion=2")
+        #expect(recorded.url.query == "expectedVersion=3")
         let body = try #require(
             try JSONSerialization.jsonObject(with: recorded.body) as? [String: Any]
         )
         let instructions = try #require(body["instructions"] as? [String: Any])
-        #expect(instructions["mode"] as? String == "replace")
+        #expect(instructions["mode"] as? String == "replace", "the record's own mode")
         #expect(instructions["text"] as? String == "Review the branch.")
+    }
+
+    /// Use Disk Version reads the record again, so the next save sends the mode
+    /// from that same read.
+    @Test func useDiskReadsTheModeWithTheText() async throws {
+        let client = makeClient()
+        let transport = agentTransport(client)
+        let identity = WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1")
+
+        PromptEditURLProtocol.handler = { _ in
+            (200, self.json(["agent": self.agent(version: 2, instructions: AgentInstructions(mode: .replace, text: "Old."))]))
+        }
+        _ = await transport.read(identity)
+        // Another device turns the prompt back to append and the disk version is read.
+        PromptEditURLProtocol.handler = { _ in
+            (200, self.json(["agent": self.agent(version: 5, instructions: AgentInstructions(mode: .append, text: "Disk."))]))
+        }
+        _ = await transport.read(identity)
+        PromptEditURLProtocol.handler = { _ in (200, self.json(["agent": self.agent(version: 6)])) }
+        _ = await write(transport, identity, "Disk, edited.", "5")
+
+        let body = try #require(
+            try JSONSerialization.jsonObject(with: (PromptEditURLProtocol.last?.body ?? Data())) as? [String: Any]
+        )
+        let instructions = try #require(body["instructions"] as? [String: Any])
+        #expect(instructions["mode"] as? String == "append", "the mode the disk read carried")
     }
 
     /// Emptying the prompt clears the custom one: the server refuses an empty
