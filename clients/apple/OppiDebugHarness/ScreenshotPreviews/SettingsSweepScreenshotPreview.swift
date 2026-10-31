@@ -233,12 +233,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] != "1" {
                 Self.seedSSHHosts()
             }
-        case "agents", "agents-prompt-conflict":
+        case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
-            if page == "agents-prompt-conflict" {
-                Self.seedConflictingAgentPromptDraft(serverId: server.id)
-            }
         case "pairing-approval":
             connection.pendingPairingApprovals = [Self.pendingApproval]
         default:
@@ -395,7 +392,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // `-failed`: the schedules request answers 404; `-loading` is held by
             // `SCREENSHOT_SWEEP_READ_DELAY`.
             return stack { ScheduleListViewController(root: root) }
-        case "agents", "agents-prompt-conflict":
+        case "agents":
             return stack { AgentListViewController(root: root) }
         case "agents-pi", "agents-pi-file":
             return stack { PiAgentDetailViewController(root: root) }
@@ -468,19 +465,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)
         ScreenshotVolatileDefaults.apply(values)
-    }
-
-    /// An Agent's prompt with unsaved edits from an older version on this
-    /// device: the editor opens in Conflict, the state a save that lost a race
-    /// reaches, so a capture can show the banner.
-    private static func seedConflictingAgentPromptDraft(serverId: String) {
-        let identity = WorkspaceFileEditIdentity(serverId: serverId, agentId: agent.id)
-        try? WorkspaceFileDraftStore.shared.save(WorkspaceFileDraft(
-            identity: identity,
-            baseEtag: String(agent.version - 1),
-            bytes: Data("Review the change against the HIG, and its copy too.".utf8),
-            updatedAt: Date()
-        ))
     }
 
     private static let workspace = Workspace(
