@@ -34,6 +34,11 @@ final class SSHTerminalPaneTransition {
     /// The incoming pane's name on the placeholder, while one is shown.
     var placeholderTitle: String? { placeholder?.title }
     var isPlaceholderShown: Bool { placeholder != nil }
+    /// `true` when a switch begins (a finger down on the swipe, or a switch
+    /// with no finger) and `false` when it has settled: the slide ended, the
+    /// spring back ended, or the transition was dropped. The layout minimap
+    /// shows between the two.
+    var onSwitching: ((Bool) -> Void)?
 
     private weak var grid: SSHTerminalGridView?
     private var cover: UIView?
@@ -61,6 +66,7 @@ final class SSHTerminalPaneTransition {
     func beginDrag() -> Bool {
         guard phase == .idle, present() else { return false }
         phase = .dragging
+        onSwitching?(true)
         return true
     }
 
@@ -105,16 +111,30 @@ final class SSHTerminalPaneTransition {
             // The screen was springing back and a switch came: drop that
             // cover and slide as from rest, so the new pane is still covered.
             cancel()
-        case .settling, .covering:
+        case .settling:
             // Another switch while one runs: the screen waits for the newest
-            // pane's snapshot instead.
+            // pane's snapshot instead, and the running slide's end settles it.
+            onSwitching?(true)
             armReveal()
             placeholder?.title = neighbour
+            return
+        case .covering:
+            // The slide is over and the screen waits for a snapshot: the new
+            // switch is a flash of its own, and the screen waits for the newest.
+            onSwitching?(true)
+            armReveal()
+            placeholder?.title = neighbour
+            onSwitching?(false)
             return
         case .idle:
             break
         }
-        guard present(), let grid else { return }
+        onSwitching?(true)
+        guard present(), let grid else {
+            // Nothing to slide, but the switch still happened.
+            onSwitching?(false)
+            return
+        }
         placeholder?.title = neighbour
         placeholder?.transform = CGAffineTransform(translationX: step > 0 ? grid.bounds.width : -grid.bounds.width, y: 0)
         commit(step: step, velocityX: 0)
@@ -157,6 +177,7 @@ final class SSHTerminalPaneTransition {
         placeholder = nil
         returning = false
         phase = .idle
+        onSwitching?(false)
     }
 
     // MARK: - Slides
@@ -201,6 +222,7 @@ final class SSHTerminalPaneTransition {
             self.cover = nil
             self.slideFinished = true
             self.phase = .covering
+            self.onSwitching?(false)
             self.revealIfReady()
         }
         if UIAccessibility.isReduceMotionEnabled {

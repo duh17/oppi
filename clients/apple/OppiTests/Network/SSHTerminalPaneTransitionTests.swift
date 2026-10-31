@@ -218,4 +218,56 @@ struct SSHTerminalPaneTransitionTests {
         rig.grid.removeFromSuperview()
         #expect(rig.container.subviews.isEmpty && rig.transition.phase == .idle)
     }
+
+    /// What the layout minimap listens to: a switch begins when a finger goes
+    /// down (or a switch with no finger starts) and settles when the slide or
+    /// the spring back ends, not when the new pane's screen is drawn.
+    @Test func theTransitionSaysWhenASwitchBeginsAndSettles() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        var events: [Bool] = []
+        rig.transition.onSwitching = { events.append($0) }
+
+        rig.commit()
+        #expect(events == [true], "a finger down, then the slide runs")
+        #expect(await settle(rig, to: .covering))
+        #expect(events == [true, false], "the slide ended; the placeholder still covers the grid")
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
+        rig.transition.frameDrawn()
+        #expect(await settle(rig, to: .idle))
+        #expect(events == [true, false], "lifting the cover is not a switch")
+
+        events = []
+        #expect(rig.transition.beginDrag())
+        rig.transition.drag(translationX: -30, neighbour: "logs")
+        rig.transition.endDrag(committing: nil, velocityX: 0)
+        #expect(events == [true])
+        #expect(await settle(rig, to: .idle))
+        #expect(events == [true, false], "the spring back ended")
+
+        events = []
+        rig.transition.slide(toward: 1, neighbour: "next")
+        #expect(events == [true])
+        #expect(await settle(rig, to: .covering))
+        #expect(events == [true, false])
+        // Another switch while the new screen is awaited is a flash of its own.
+        rig.transition.slide(toward: 1, neighbour: "later")
+        #expect(events == [true, false, true, false])
+    }
+
+    /// A grid that leaves its view mid-swipe ends the switch; a switch that
+    /// cannot slide (no view to slide in) still began and settled.
+    @Test func aDroppedOrUnslidableSwitchStillSettles() throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        var events: [Bool] = []
+        rig.transition.onSwitching = { events.append($0) }
+        #expect(rig.transition.beginDrag())
+        rig.grid.removeFromSuperview()
+        #expect(events == [true, false])
+
+        events = []
+        rig.transition.slide(toward: 1, neighbour: "next")
+        #expect(events == [true, false])
+    }
 }

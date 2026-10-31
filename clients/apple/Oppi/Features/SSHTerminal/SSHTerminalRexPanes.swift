@@ -386,10 +386,19 @@ final class SSHTerminalRexPaneGlyphView: UIView {
 /// one rounded cell per pane at its place in the layout, the shown one in the
 /// accent color, the others gray. A cell is a button that shows its pane. The
 /// accent highlight is one view that moves to the new pane's cell when the
-/// pane changes. Drawn for a window with more than one pane.
+/// pane changes. Available for a window with more than one pane, and hidden
+/// until a switch: it fades in when a swipe begins (or a menu choice or
+/// VoiceOver action switches), stays while the switch runs, and fades out
+/// `hideDelay` after it settles. While hidden it takes no touches and is not in
+/// the accessibility tree; the bar's switcher and the grid's custom actions are
+/// what VoiceOver uses.
+@MainActor
 final class SSHTerminalRexMinimapView: UIView {
     static let size = CGSize(width: 76, height: 48)
     static let moveDuration: TimeInterval = 0.25
+    static let fadeInDuration: TimeInterval = 0.15
+    static let fadeOutDuration: TimeInterval = 0.25
+    static let defaultHideDelay: Duration = .milliseconds(800)
     private static let padding: CGFloat = 4
     private static let gap: CGFloat = 1.5
 
@@ -404,9 +413,21 @@ final class SSHTerminalRexMinimapView: UIView {
     /// Where the highlight is, for a test to read while it moves.
     var highlightFrame: CGRect { highlight.frame }
 
+    /// How long after a switch settles the map starts to fade out.
+    var hideDelay = SSHTerminalRexMinimapView.defaultHideDelay
+    /// The session has a window of more than one pane to draw. Without it the
+    /// map is gone at once, whatever a switch asks.
+    var isAvailable = false { didSet { if isAvailable != oldValue { updateVisibility(animated: false) } } }
+    /// A switch is under way: the map is (or is fading in to be) on screen.
+    private(set) var isRevealed = false
+    /// Counts reveals and hides, so a late fade completion or hide timer cannot act on a newer one.
+    private var visibilityToken = 0
+    private var hideTask: Task<Void, Never>?
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
+        conceal()
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.layer.cornerRadius = 8
         backdrop.layer.cornerCurve = .continuous
@@ -430,6 +451,72 @@ final class SSHTerminalRexMinimapView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// A switch began (`true`: a swipe, a menu choice, an action) or settled
+    /// (`false`). The map shows for the first and fades out `hideDelay` after
+    /// the last; a new switch in between keeps it.
+    func setSwitching(_ switching: Bool) {
+        hideTask?.cancel()
+        hideTask = nil
+        guard isAvailable else { return }
+        if switching {
+            isRevealed = true
+            updateVisibility(animated: true)
+        } else if isRevealed {
+            let token = visibilityToken
+            hideTask = Task { [weak self, hideDelay] in
+                try? await Task.sleep(for: hideDelay)
+                guard !Task.isCancelled, let self, self.visibilityToken == token else { return }
+                self.isRevealed = false
+                self.updateVisibility(animated: true)
+            }
+        }
+    }
+
+    /// At rest the map is invisible, takes no touches, and is not in the
+    /// accessibility tree.
+    private func conceal() {
+        alpha = 0
+        isHidden = true
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+    }
+
+    private func updateVisibility(animated: Bool) {
+        visibilityToken += 1
+        let token = visibilityToken
+        let show = isAvailable && isRevealed
+        if !isAvailable { isRevealed = false }
+        let fades = animated && window != nil && !UIAccessibility.isReduceMotionEnabled
+        if show {
+            isHidden = false
+            isUserInteractionEnabled = true
+            accessibilityElementsHidden = false
+            guard fades else {
+                layer.removeAllAnimations()
+                alpha = 1
+                return
+            }
+            UIView.animate(withDuration: Self.fadeInDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                self.alpha = 1
+            }
+            return
+        }
+        // A fading map is already gone for touches and VoiceOver.
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        guard fades, !isHidden else {
+            layer.removeAllAnimations()
+            conceal()
+            return
+        }
+        UIView.animate(withDuration: Self.fadeOutDuration, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
+            self.alpha = 0
+        } completion: { [weak self] _ in
+            guard let self, self.visibilityToken == token else { return }
+            self.conceal()
+        }
+    }
 
     func apply(state: RexSessionState, shownTint: UIColor, otherTint: UIColor, backdropColor: UIColor) {
         let sameCells = state.minimap == cells.map(\.cell)

@@ -2040,12 +2040,13 @@ struct SSHTerminalTests {
             mounted.host.view.layoutIfNeeded()
             return switcher.accessibilityValue == "title a, 1 of 3"
         })
-        #expect((0...2).allSatisfy { shown("sshTerminal.rexMinimap.\($0)") })
         #expect(switcher.accessibilityLabel == "Pane", "the label is the purpose; the value is the pane")
         #expect(switcher.showsMenuAsPrimaryAction && switcher.menu != nil)
-        #expect(selected("sshTerminal.rexMinimap.0") && control("sshTerminal.rexMinimap.2")?.accessibilityLabel == "title c")
+        // The minimap is part of the screen but not on it: hidden at rest.
+        let minimap = try #require(mounted.find { $0 is SSHTerminalRexMinimapView } as? SSHTerminalRexMinimapView)
+        minimap.hideDelay = .milliseconds(150)
+        #expect(!(0...2).contains { shown("sshTerminal.rexMinimap.\($0)") })
         // The minimap sits at the grid's top right, the switcher in the trailing pill beside ….
-        let minimap = try #require(control("sshTerminal.rexMinimap.0")?.superview as? SSHTerminalRexMinimapView)
         let grid = try #require(mounted.controller.gridView)
         let corner = minimap.convert(CGPoint(x: minimap.bounds.maxX, y: minimap.bounds.minY), to: grid)
         #expect(corner.x > grid.bounds.width - 24 && corner.y < 24)
@@ -2054,9 +2055,21 @@ struct SSHTerminalTests {
         #expect(switcher.convert(CGPoint.zero, to: mounted.controller.view).x < more.convert(CGPoint.zero, to: mounted.controller.view).x)
         #expect(grid.paneTransition.phase == .idle)
 
+        // A swipe shows it, with the first pane's cell selected and the cells
+        // labelled with their panes; letting go short hides it again.
+        #expect(grid.paneTransition.beginDrag())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { (0...2).allSatisfy { shown("sshTerminal.rexMinimap.\($0)") } })
+        #expect(selected("sshTerminal.rexMinimap.0") && control("sshTerminal.rexMinimap.2")?.accessibilityLabel == "title c")
+        grid.paneTransition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.isHidden })
+
         // A minimap cell shows its pane: the switcher and the highlight follow,
         // and the grid is covered until that pane's own screen is on it.
+        _ = grid.paneTransition.beginDrag()
         let cell = try #require(control("sshTerminal.rexMinimap.2") as? UIControl)
+        #expect(minimap.hitTest(minimap.convert(cell.center, from: cell.superview), with: nil) === cell, "a visible map takes taps")
+        grid.paneTransition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
         cell.sendActions(for: .touchUpInside)
         #expect(grid.paneTransition.phase != .idle && grid.paneTransition.isPlaceholderShown)
         #expect(grid.paneTransition.placeholderTitle == "title c")
@@ -2068,6 +2081,7 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.highlightFrame == target }, "the highlight moves to the new cell")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle }, "the cover lifts")
         #expect(!grid.paneTransition.isPlaceholderShown)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.isHidden }, "and the map goes again")
 
         // VoiceOver's actions are the swipe's owner: the grid says so, and they move one pane.
         let actions = try #require(grid.accessibilityCustomActions)
@@ -2081,6 +2095,114 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") && grid.paneTransition.phase == .idle })
         #expect(switcher.accessibilityValue == "title a, 1 of 3")
         await rig.stop()
+    }
+
+    /// The layout minimap is for the moment of a switch: hidden at rest (no
+    /// touches, nothing for VoiceOver), on screen while a swipe is down and
+    /// after it commits while the highlight moves, and gone `hideDelay` after
+    /// the switch settles, whether it committed, sprang back, or was a
+    /// VoiceOver step. A switch with no finger flashes it the same way.
+    @Test func theRexMinimapShowsOnlyWhileSwitchingPanes() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        func findSwitcher() -> UIButton? {
+            mounted.host.view.layoutIfNeeded()
+            return mounted.find { $0.accessibilityIdentifier == "sshTerminal.bar.rexPanes" } as? UIButton
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { findSwitcher()?.accessibilityValue == "title a, 1 of 3" })
+        let switcher = try #require(findSwitcher())
+        let minimap = try #require(mounted.find { $0 is SSHTerminalRexMinimapView } as? SSHTerminalRexMinimapView)
+        let grid = try #require(mounted.controller.gridView)
+        minimap.hideDelay = .milliseconds(120)
+        func onScreen() -> Bool { !minimap.isHidden && minimap.alpha > 0 }
+        func inert() -> Bool { minimap.isHidden && !minimap.isUserInteractionEnabled && minimap.accessibilityElementsHidden }
+        func cell(_ index: Int) -> UIView? { mounted.find { $0.accessibilityIdentifier == "sshTerminal.rexMinimap.\(index)" } }
+
+        // At rest, and after opening: hidden, with no touches and no accessibility.
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) { inert() })
+        #expect(minimap.hitTest(CGPoint(x: 10, y: 10), with: nil) == nil)
+
+        // A swipe down shows it and keeps it, however long the finger stays.
+        #expect(grid.paneTransition.beginDrag())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { onScreen() && minimap.alpha == 1 })
+        #expect(minimap.isUserInteractionEnabled && !minimap.accessibilityElementsHidden)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) { onScreen() }, "it stays while dragging")
+        grid.paneTransition.drag(translationX: -150, neighbour: "title b")
+        #expect(onScreen())
+
+        // Letting go past the threshold commits: still there, the highlight moves, then it fades away.
+        #expect(grid.paneStepping?.step(1) == true)
+        grid.paneTransition.endDrag(committing: 1, velocityX: -800)
+        #expect(onScreen())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher.accessibilityValue == "title b, 2 of 3" })
+        let second = try #require(cell(1)).frame
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.highlightFrame == second }, "the highlight moves to the new cell")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") && grid.paneTransition.phase == .idle })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { inert() }, "gone after the switch settles")
+
+        // A short swipe springs back: shown while down, gone after, the pane unchanged.
+        #expect(grid.paneTransition.beginDrag())
+        #expect(onScreen())
+        grid.paneTransition.drag(translationX: 20, neighbour: "title a")
+        grid.paneTransition.endDrag(committing: nil, velocityX: 0)
+        #expect(onScreen(), "still there while the screen springs back")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { inert() })
+        #expect(switcher.accessibilityValue == "title b, 2 of 3")
+
+        // VoiceOver's Next Pane has no finger and flashes it the same way.
+        #expect(grid.stepPane(1) == true)
+        #expect(onScreen())
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher.accessibilityValue == "title c, 3 of 3" })
+        let third = try #require(cell(2)).frame
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.highlightFrame == third })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { inert() })
+
+        // A step that does not happen shows nothing.
+        #expect(grid.stepPane(1) == false)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { inert() })
+        await rig.stop()
+    }
+
+    /// A new switch during the fade-out keeps the map (and its touches), and a
+    /// window that loses its second pane takes it away at once.
+    @Test func aNewSwitchDuringTheMinimapsFadeOutKeepsItAndAnUnavailableMapIsGone() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIViewController()
+        let minimap = SSHTerminalRexMinimapView()
+        host.view.addSubview(minimap)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        minimap.hideDelay = .milliseconds(50)
+        host.view.layoutIfNeeded()
+
+        minimap.setSwitching(true)
+        #expect(!minimap.isRevealed, "a window of one pane has no map to show")
+        #expect(minimap.isHidden)
+
+        minimap.isAvailable = true
+        minimap.setSwitching(true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.alpha == 1 })
+        minimap.setSwitching(false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !minimap.isRevealed }, "the fade-out began")
+        #expect(!minimap.isHidden && !minimap.isUserInteractionEnabled, "a fading map takes no touches")
+
+        minimap.setSwitching(true)
+        #expect(minimap.isRevealed && minimap.isUserInteractionEnabled && !minimap.accessibilityElementsHidden)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.alpha == 1 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) { !minimap.isHidden && minimap.alpha == 1 }, "the hide was cancelled")
+
+        minimap.setSwitching(false)
+        minimap.setSwitching(true)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { minimap.isRevealed && minimap.alpha == 1 }, "a switch before the delay is up cancels the pending hide")
+
+        minimap.isAvailable = false
+        #expect(minimap.isHidden && !minimap.isRevealed && !minimap.isUserInteractionEnabled && minimap.accessibilityElementsHidden)
     }
 
     /// The switcher draws the shown pane's own icon: a monogram for a pane

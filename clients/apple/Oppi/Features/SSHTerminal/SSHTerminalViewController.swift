@@ -541,7 +541,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             middlePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
         ])
 
-        rexMinimap.isHidden = true
+        // Hidden until a switch shows it (`SSHTerminalRexMinimapView`).
         // The minimap's cells, the switcher's menu, and the swipe all show a
         // pane through `showPane`.
         rexMinimap.select = { [weak self] block in self?.showPane(block) }
@@ -634,6 +634,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         grid.openTargetForHeldCell = { [weak self] held in self?.heldOpenTarget(held) }
         grid.open = { [weak self] target in self?.open(target) }
         grid.paneStepping = paneStepping
+        grid.paneTransition.onSwitching = { [weak self] in self?.rexMinimap.setSwitching($0) }
         return grid
     }
 
@@ -690,7 +691,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // Another terminal's switcher and swipe are not this one's; the next
         // pass shows this one's.
         rexPanesShown = false
-        rexMinimap.isHidden = true
+        rexMinimap.isAvailable = false
         stashComposerDraft()
         destroyComposer()
         shownIdentity = terminalIdentity
@@ -932,7 +933,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// A Rex terminal's minimap and swipe. The swipe works (and the bar shows
     /// its pane switcher) only for a session with more than one pane; the
-    /// minimap only for a window with more than one.
+    /// minimap is available only for a window with more than one, and shows
+    /// only while a switch runs.
     private func updateRexPanes(themeID: ThemeID) {
         let rex = channel.rex?.state
         let hasPanes = rex?.showsSwitcher == true
@@ -944,7 +946,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 backdropColor: background.withAlphaComponent(0.75)
             )
         }
-        rexMinimap.isHidden = rex?.showsMinimap != true
+        rexMinimap.isAvailable = rex?.showsMinimap == true
         if hasPanes != rexPanesShown {
             rexPanesShown = hasPanes
             gridView?.paneStepping = paneStepping
