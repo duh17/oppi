@@ -90,6 +90,14 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        // The load this appearance starts is this source: marking it before the
+        // base schedules the load keeps `updateProperties` from asking for it
+        // again and cancelling the load it just started.
+        loadedSource = currentSource
+        super.viewIsAppearing(animated)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         composer.insetContent(of: collectionView)
@@ -132,6 +140,10 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         return sections
     }
 
+    /// The Agents card carries the heading; the state row's card does not, so
+    /// it gets no empty header above it.
+    override func showsHeader(for section: Section) -> Bool { section != .status }
+
     /// A load settles the list in place; its rows should not slide.
     override var animatesUpdates: Bool { false }
 
@@ -155,9 +167,11 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     override func inputs(of item: Item) -> AnyHashable {
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
+        // The row draws the age as text ("2h ago"), which changes without the
+        // agent changing: the string is the input, so a pass redraws it.
         return AnyHashable([
             AnyHashable(agent.name), AnyHashable(agent.version), AnyHashable(agent.description),
-            AnyHashable(agent.icon), AnyHashable(agent.updatedAt),
+            AnyHashable(agent.icon), AnyHashable(agent.updatedAt.relativeString()),
         ])
     }
 

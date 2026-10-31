@@ -216,6 +216,204 @@ private final class ScheduleRowsPage: ListScreenController<ScheduleRowsPage.Sect
     }
 }
 
+/// A schedule's page over a fixture server: a change the server saved and a
+/// load the page cancelled both have to show in the list.
+@MainActor
+@Suite("A schedule's page")
+struct ScheduleDetailPageTests {
+    @Test("a schedule the server changed redraws its What it does row")
+    func aChangedScheduleRedrawsItsPrompt() async throws {
+        ScheduleDetailURLProtocol.reset(prompt: "Summarize the day.")
+        let screen = try makeScreen()
+        defer { screen.hide() }
+
+        let first = try #require(await screen.waitForButton("schedule.detail.prompt"))
+        #expect(first.accessibilityLabel?.contains("Summarize the day.") == true)
+
+        // Edit Schedule saved another prompt; the pull to refresh finds it.
+        ScheduleDetailURLProtocol.prompt = "Summarize the week."
+        screen.root.collectionView.refreshControl?.sendActions(for: .valueChanged)
+        #expect(await screen.waitFor {
+            screen.button("schedule.detail.prompt")?.accessibilityLabel?.contains("Summarize the week.") == true
+        }, "the row draws the schedule's prompt, so a changed one redraws it")
+    }
+
+    @Test("a load cancelled under the page keeps the schedule and raises no alert")
+    func cancelledLoadKeepsTheSchedule() async throws {
+        ScheduleDetailURLProtocol.reset(prompt: "Summarize the day.")
+        let screen = try makeScreen()
+        defer { screen.hide() }
+
+        let prompt = try #require(await screen.waitForButton("schedule.detail.prompt"))
+        let shown = try #require(prompt.accessibilityLabel)
+
+        // The server answers a cancel: control flow, not a failure to alert.
+        ScheduleDetailURLProtocol.mode = .cancelled
+        screen.root.collectionView.refreshControl?.sendActions(for: .valueChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { ScheduleDetailURLProtocol.requests > 1 })
+        #expect(await screen.staysTrue(for: .milliseconds(400)) {
+            screen.button("schedule.detail.prompt")?.accessibilityLabel == shown
+                && screen.root.presentedViewController == nil
+        }, "a cancelled load keeps the schedule it shows and reports nothing")
+    }
+
+    private func makeScreen() throws -> DetailScreen {
+        let root = makeTestAppRoot()
+        root.coordinator.activeConnection.setAPIClientForTesting(ScheduleDetailURLProtocol.makeClient())
+        let page = ScheduleDetailViewController(root: root, scheduleId: "schedule-page-tests") { _ in }
+        return try DetailScreen(page)
+    }
+}
+
+/// A window over the page, with the lookups these claims need.
+@MainActor
+private final class DetailScreen {
+    let window: UIWindow
+    let root: ScheduleDetailViewController
+
+    init(_ root: ScheduleDetailViewController) throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        window.rootViewController = UINavigationController(rootViewController: root)
+        window.makeKeyAndVisible()
+        self.root = root
+    }
+
+    func hide() {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    func button(_ identifier: String) -> UIButton? {
+        root.view.allSubviews(of: UIButton.self).first { $0.accessibilityIdentifier == identifier }
+    }
+
+    func waitForButton(_ identifier: String) async -> UIButton? {
+        _ = await waitFor { [self] in button(identifier) != nil }
+        return button(identifier)
+    }
+
+    func waitFor(_ predicate: @escaping @MainActor () -> Bool) async -> Bool {
+        await waitForMainActorCondition(timeout: .seconds(5)) { [self] in
+            window.layoutIfNeeded()
+            return predicate()
+        }
+    }
+
+    /// A claim about what stays: the condition holds for `duration`.
+    func staysTrue(for duration: Duration, _ predicate: @escaping @MainActor () -> Bool) async -> Bool {
+        await waitForMainActorConditionToStayTrue(for: duration) { [self] in
+            window.layoutIfNeeded()
+            return predicate()
+        }
+    }
+}
+
+/// Answers a schedule's page: the schedule, its runs, and the Agents it names.
+/// The prompt is what the server holds, so a test can change the schedule
+/// between loads; a cancelled mode answers like a request a page cancelled.
+private final class ScheduleDetailURLProtocol: URLProtocol, @unchecked Sendable {
+    enum Mode { case available, cancelled }
+
+    static let host = "schedule-page.test"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var currentMode = Mode.available
+    nonisolated(unsafe) private static var currentPrompt = ""
+    nonisolated(unsafe) private static var countedRequests = 0
+
+    static var mode: Mode {
+        get { lock.withLock { currentMode } }
+        set { lock.withLock { currentMode = newValue } }
+    }
+
+    static var prompt: String {
+        get { lock.withLock { currentPrompt } }
+        set { lock.withLock { currentPrompt = newValue } }
+    }
+
+    static var requests: Int { lock.withLock { countedRequests } }
+
+    static func reset(prompt: String) {
+        lock.withLock {
+            currentMode = .available
+            currentPrompt = prompt
+            countedRequests = 0
+        }
+    }
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ScheduleDetailURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let mode = Self.lock.withLock { () -> Mode in
+            Self.countedRequests += 1
+            return Self.currentMode
+        }
+        if case .cancelled = mode {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+        let path = request.url?.path ?? ""
+        if path.hasSuffix("/runs") {
+            respond(body: Data(#"{"runs":[]}"#.utf8))
+        } else if path.hasSuffix("/agents") {
+            respond(body: Data(#"{"agents":[]}"#.utf8))
+        } else {
+            respond(body: Self.scheduleBody())
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func scheduleBody() -> Data {
+        let schedule = AgentSchedule(
+            id: "schedule-page-tests",
+            name: "Nightly digest",
+            status: .active,
+            trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
+            action: .newSession(
+                workspaceId: "ws-1", prompt: prompt, agentId: nil, model: nil,
+                thinkingLevel: nil, worktreeId: nil, name: nil
+            ),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            archivedAt: nil
+        )
+        struct Body: Encodable { let schedule: AgentSchedule }
+        return (try? JSONEncoder().encode(Body(schedule: schedule)))
+            ?? Data()
+    }
+
+    private func respond(body: Data) {
+        guard let url = request.url, let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 // MARK: - Harness
 
 private final class Chosen {

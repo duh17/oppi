@@ -371,10 +371,55 @@ enum AgentsLoadStateTests {
             #expect(await waitForStateRow(in: screen) { $0.accessibilityLabel == "Server offline" } != nil)
             #expect(!hasAlert(screen, window))
         }
+
+        @Test("coming back from Tools keeps the tools it saved, and a pull to refresh loads the server's")
+        func returningFromToolsKeepsTheSavedTools() async throws {
+            AgentsURLProtocol.reset()
+            let root = makeTestAppRoot()
+            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+            let screen = PiAgentDetailViewController(root: root)
+            let window = try AgentListViewControllerTests.show(screen)
+            defer { AgentListViewControllerTests.hide(window) }
+
+            func toolsValue() -> String? {
+                screen.view.layoutIfNeeded()
+                return AgentListViewControllerTests.button("agents.pi.tools", in: screen.view)?.accessibilityValue
+            }
+            // "Pi standard" is also what the row says before any load, so wait
+            // for the prompt the fixture served: the tools are loaded by then.
+            func hasLoaded() -> Bool {
+                screen.view.layoutIfNeeded()
+                return screen.view.allLabels().contains { $0.text == "You are a coding agent." }
+            }
+            let serverDefault = AgentManagementPresentation.piStandardToolsSummary
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { hasLoaded() && toolsValue() == serverDefault })
+
+            // The Tools page saved a change and Pi is back on screen: coming back
+            // keeps what that page saved instead of loading over it.
+            AgentsURLProtocol.defaultTools = ["+codemode"]
+            screen.beginAppearanceTransition(true, animated: false)
+            screen.endAppearanceTransition()
+            #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+                toolsValue() == serverDefault
+            }, "appearing again does not load Pi's tools")
+
+            // A pull to refresh does load the server's.
+            screen.collectionView.refreshControl?.sendActions(for: .valueChanged)
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                toolsValue() == "\(serverDefault) +codemode"
+            }, "a pull to refresh loads the tools the server has")
+        }
     }
 }
 
 private extension UIView {
+    /// Every label under this view, in view order.
+    func allLabels() -> [UILabel] {
+        var found = (self as? UILabel).map { [$0] } ?? []
+        for subview in subviews { found += subview.allLabels() }
+        return found
+    }
+
     var isHiddenInHierarchy: Bool {
         if window == nil { return true }
         var view: UIView? = self
@@ -397,6 +442,8 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var currentMode = Mode.available
     nonisolated(unsafe) private static var held: [AgentsURLProtocol] = []
     nonisolated(unsafe) private static var requests = 0
+    /// Pi's default tools, as the server holds them for this run.
+    nonisolated(unsafe) private static var currentDefaultTools: [String]?
 
     static var mode: Mode {
         get { lock.withLock { currentMode } }
@@ -412,7 +459,14 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
             currentMode = .available
             held = []
             requests = 0
+            currentDefaultTools = nil
         }
+    }
+
+    /// Pi's default tools, as the server holds them.
+    static var defaultTools: [String]? {
+        get { lock.withLock { currentDefaultTools } }
+        set { lock.withLock { currentDefaultTools = newValue } }
     }
 
     static func releaseHeldRequest(agentId: String = "reviewer") {
@@ -438,6 +492,22 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
             token: "test-token",
             configuration: config
         )
+    }
+
+    /// What Pi's page asks for, when this is that request: its system prompt,
+    /// its default tools (what a test set), or the server's tool catalog.
+    private static func piBody(for path: String) -> Data? {
+        if path.hasSuffix("/pi/system-prompt") {
+            return Data(#"{"source":"default","path":"~/.pi/agent/SYSTEM.md","resolvedPath":null,"content":"You are a coding agent."}"#.utf8)
+        }
+        if path.hasSuffix("/pi/default-tools") {
+            struct Body: Encodable { let defaultTools: [String]? }
+            return (try? JSONEncoder().encode(Body(defaultTools: defaultTools))) ?? Data()
+        }
+        if path.hasSuffix("/server/resources/extensions") {
+            return Data(#"{"extensions":[],"builtInTools":[],"optionalTools":[]}"#.utf8)
+        }
+        return nil
     }
 
     private static func agentsBody(id: String) -> Data {
@@ -468,7 +538,9 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
         switch Self.mode {
         case .cancelled: client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
         case .certificateRejected: challengeServerTrust()
-        case .available: respond(status: 200, body: Self.agentsBody(id: "reviewer"))
+        case .available:
+            // Pi's page loads three resources beside the saved Agents.
+            respond(status: 200, body: Self.piBody(for: request.url?.path ?? "") ?? Self.agentsBody(id: "reviewer"))
         case .failing: respond(status: 500, body: Data(#"{"error":"agents are down"}"#.utf8))
         case .held: Self.lock.withLock { Self.held.append(self) }
         }

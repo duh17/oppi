@@ -230,7 +230,12 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                 AnyHashable(run.status.rawValue), AnyHashable(run.createdAt), AnyHashable(run.kind),
                 AnyHashable(run.sessionId), AnyHashable(SchedulePresentation.runErrorSummary(run.error)),
             ])
-        case .prompt, .detail, .caption, .noRuns:
+        case .prompt:
+            // The row draws the schedule's prompt: a native edit or a guided
+            // change replaces it, and only a changed input redraws the row.
+            guard let schedule else { return AnyHashable(0) }
+            return AnyHashable(SchedulePresentation.prompt(in: schedule.action))
+        case .detail, .caption, .noRuns:
             return AnyHashable(0)
         }
     }
