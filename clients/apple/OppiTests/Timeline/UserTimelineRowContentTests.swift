@@ -356,24 +356,31 @@ struct UserTimelineRowContentTests {
             )
         )
         let identity = try #require(firstSubview(ofType: IconChoiceUIView.self, in: view))
-        let emoji = try #require(
-            allSubviews(ofType: UILabel.self, in: identity).first { $0.text == "\u{1F98A}" }
-        )
-        #expect(!emoji.isHidden)
+        // The sender's emoji is drawn pixels now, not a label: what the icon shows
+        // is the image `EntityIcon` draws for it.
+        func shownIcon() throws -> Data {
+            let icon = try #require(firstSubview(ofType: IconChoiceUIView.self, in: view))
+            let imageView = try #require(allSubviews(ofType: UIImageView.self, in: icon).first)
+            let image = try #require(imageView.image)
+            return try #require(image.pngData())
+        }
+        let senderIcon = try shownIcon()
         // Decorative: the header's label already names the sender.
         #expect(!identity.isAccessibilityElement)
 
         // A sender the store holds without an Agent reads as the global avatar,
         // not as the previous card's Agent.
         view.configuration = configuration(sender: SessionLaunchMetadata(agentId: nil, agentIcon: nil))
-        #expect(emoji.isHidden)
+        let globalAvatar = try shownIcon()
+        #expect(globalAvatar != senderIcon)
 
         // The same view drawn again for a sender with an Agent, then for a plain
         // user message: reuse leaves no sender identity behind.
         view.configuration = configuration(
             sender: SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
         )
-        #expect(!emoji.isHidden)
+        let senderAgain = try shownIcon()
+        #expect(senderAgain == senderIcon)
         view.configuration = UserTimelineRowConfiguration(
             text: "Ship it",
             images: [],
@@ -381,7 +388,8 @@ struct UserTimelineRowContentTests {
             onFork: nil,
             itemID: "user-1"
         )
-        #expect(emoji.isHidden)
+        let afterReuse = try shownIcon()
+        #expect(afterReuse == globalAvatar)
         #expect(firstSubview(ofType: IconChoiceUIView.self, in: view) === identity)
     }
 

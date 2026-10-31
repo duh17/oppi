@@ -1010,6 +1010,54 @@ struct IconAssetCacheTests {
         icon.subviews.compactMap { $0 as? UIImageView }.first?.image
     }
 
+    private func solidImage(_ colour: UIColor) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            colour.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+    }
+
+    /// What the icon shows, by colour: `EntityIcon` owns the drawing and rasters
+    /// the artwork into the icon's box, so the view's image is the composited
+    /// artwork, not the decoded instance the cache holds.
+    private func shows(_ icon: IconChoiceUIView, mostly colour: UIColor) -> Bool {
+        guard let shown = shownImage(icon), let average = averageColour(shown) else { return false }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard colour.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return false }
+        return average.a > 0.5
+            && abs(average.r - red) < 0.12
+            && abs(average.g - green) < 0.12
+            && abs(average.b - blue) < 0.12
+    }
+
+    private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+        var pixels = [UInt8](repeating: 0, count: 4)
+        let drawn = pixels.withUnsafeMutableBytes { storage -> Bool in
+            guard let context = CGContext(
+                data: storage.baseAddress,
+                width: 1,
+                height: 1,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ), let cgImage = image.cgImage else { return false }
+            context.interpolationQuality = .high
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        guard drawn else { return nil }
+        return (
+            CGFloat(pixels[0]) / 255,
+            CGFloat(pixels[1]) / 255,
+            CGFloat(pixels[2]) / 255,
+            CGFloat(pixels[3]) / 255
+        )
+    }
+
     /// Lets the icon's load task and any stale one run to completion.
     private func settle() async throws {
         for _ in 0..<5 {
@@ -1022,7 +1070,7 @@ struct IconAssetCacheTests {
         let gate = IconAssetResultGate()
         let firstID = "ia_" + String(repeating: "A", count: 43)
         let secondID = "ia_" + String(repeating: "B", count: 43)
-        let secondImage = decodedImage()
+        let secondImage = solidImage(.systemPink)
         let cache = IconAssetCache(
             fetch: { try await gate.wait(for: $0) },
             decode: { data, _ in
@@ -1038,20 +1086,20 @@ struct IconAssetCacheTests {
         icon.apply(genmoji(secondID), colors: colors, assetCache: cache)
         for _ in 0..<50 where !(await gate.requestedIDs()).contains(secondID) { await Task.yield() }
         await gate.succeed(secondID, data: Data([2]))
-        for _ in 0..<50 where shownImage(icon) !== secondImage { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(shownImage(icon) === secondImage)
+        for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shows(icon, mostly: .systemPink), "the newer asset's artwork is what the icon shows")
 
         await gate.fail(firstID)
         try await settle()
-        #expect(shownImage(icon) === secondImage)
+        #expect(shows(icon, mostly: .systemPink), "a stale failure leaves the newer artwork alone")
     }
 
     @Test func serverCacheReplacementCannotAssignTheOldCachesResult() async throws {
         let assetID = "ia_" + String(repeating: "C", count: 43)
         let oldGate = IconAssetResultGate()
         let newGate = IconAssetResultGate()
-        let oldImage = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { _ in }
-        let newImage = decodedImage()
+        let oldImage = solidImage(.systemGreen)
+        let newImage = solidImage(.systemPink)
         let oldCache = IconAssetCache(
             fetch: { try await oldGate.wait(for: $0) },
             decode: { _, _ in (oldImage, NSObject()) }
@@ -1068,13 +1116,13 @@ struct IconAssetCacheTests {
         icon.apply(genmoji(assetID), colors: colors, assetCache: newCache)
         for _ in 0..<50 where await newGate.requestedIDs().isEmpty { await Task.yield() }
         await newGate.succeed(assetID, data: Data([2]))
-        for _ in 0..<50 where shownImage(icon) !== newImage { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(shownImage(icon) === newImage)
+        for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shows(icon, mostly: .systemPink))
 
         await oldGate.succeed(assetID, data: Data([1]))
         try await settle()
-        #expect(shownImage(icon) === newImage)
-        #expect(shownImage(icon) !== oldImage)
+        #expect(shows(icon, mostly: .systemPink), "the replaced cache's artwork never shows")
+        #expect(!shows(icon, mostly: .systemGreen))
     }
 
     @Test func productionRemoteDecoderAcceptsVisibleGeneratedHEIF() throws {
