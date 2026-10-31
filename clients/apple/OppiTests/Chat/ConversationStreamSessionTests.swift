@@ -283,6 +283,38 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    /// A page the server refuses is a failure the chat reports; running out of older
+    /// history is not. Both return false, so the chat tells them apart by the flag.
+    @Test func refusedOlderPageIsAFailureButNoOlderHistoryIsNot() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: true, entries: [
+            Wire.user(10, "newer"),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["10"]))
+
+        let refused = Task { @MainActor in await harness.manager.loadOlderTracePage() }
+        #expect(await waitForMainActorCondition { harness.olderRequests.count == 1 })
+        let first = try #require(harness.olderRequests.first)
+        harness.yield(.commandResult(command: "older", requestId: first.requestId, success: false, data: nil, error: "Maximum call stack size exceeded"))
+        #expect(!(await refused.value))
+        #expect(harness.manager.olderHistoryLoadFailed)
+        #expect(harness.manager.reducer.items.map(\.id) == ["10"])
+
+        // A retry that loads the rest clears it; asking again past the start is not a failure.
+        let retry = Task { @MainActor in await harness.manager.loadOlderTracePage() }
+        #expect(await waitForMainActorCondition { harness.olderRequests.count == 2 })
+        let second = harness.olderRequests[1]
+        harness.frame(.older(.init(conversationId: 7, entries: [Wire.user(8, "old")], hasOlder: false)))
+        harness.yield(.commandResult(command: "older", requestId: second.requestId, success: true, data: nil, error: nil))
+        #expect(await retry.value)
+        #expect(!harness.manager.olderHistoryLoadFailed)
+        #expect(!(await harness.manager.loadOlderTracePage()))
+        #expect(!harness.manager.olderHistoryLoadFailed)
+        await harness.finish()
+    }
+
     /// Every frame one client received for a real Harness conversation
     /// (`protocol/conversation-stream-golden.json`), through the runtime: streamed answers
     /// show as live rows, every landing leaves no duplicate, and the end state is the trace.

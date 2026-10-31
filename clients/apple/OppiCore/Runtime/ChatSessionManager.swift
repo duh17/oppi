@@ -2232,9 +2232,11 @@ final class ChatSessionManager {
               let request = conversationStream.olderRequest(limit: limit) else { return false }
         isLoadingOlderTracePage = true
         defer { isLoadingOlderTracePage = false }
-        return await conversationStream.perform(request, timeout: Self.conversationRequestTimeout) { [focusedStreamPort] message in
+        let loaded = await conversationStream.perform(request, timeout: Self.conversationRequestTimeout) { [focusedStreamPort] message in
             try await focusedStreamPort.send(message)
         }
+        if !loaded { olderHistoryLoadFailed = true }
+        return loaded
     }
 
     // MARK: - History Loading
@@ -2493,6 +2495,12 @@ final class ChatSessionManager {
     /// reading "busy" as "no older history".
     private var olderHistoryLoad: Task<Bool, Never>?
 
+    /// The last older page was asked for and not delivered (the server refused it, the
+    /// request failed, or it timed out), as opposed to there being nothing older. Read it
+    /// after `loadOlderTracePage` or `loadOlderHistory(through:)` return false, to tell the
+    /// user instead of doing nothing.
+    @ObservationIgnored private(set) var olderHistoryLoadFailed = false
+
     private func loadOlderHistoryPage(jump: Bool) async -> Bool {
         if let inFlight = olderHistoryLoad {
             return await inFlight.value
@@ -2509,6 +2517,7 @@ final class ChatSessionManager {
     }
 
     private func fetchOlderHistoryPage(jump: Bool) async -> Bool {
+        olderHistoryLoadFailed = false
         if conversationStream != nil {
             return await loadOlderConversationEntries(limit: jump ? Self.conversationJumpPageEntries : nil)
         }
@@ -2533,6 +2542,7 @@ final class ChatSessionManager {
             )
             return applyPrependedTracePage(response)
         } catch {
+            olderHistoryLoadFailed = true
             markSyncFailed()
             log.warning("Older trace page failed for \(self.sessionId): \(error.localizedDescription)")
             return false

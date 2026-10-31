@@ -58,11 +58,24 @@ extension ChatViewController {
         let sessionManager = sessionManager
         let connection = connection
         return {
-            await sessionManager.loadOlderTracePage(
+            let loaded = await sessionManager.loadOlderTracePage(
                 connection: connection,
                 sessionStore: connection.sessionStore
             )
+            Self.reportOlderHistoryFailure(loaded: loaded, sessionManager: sessionManager, connection: connection)
+            return loaded
         }
+    }
+
+    /// An older page the user asked for (Show Earlier, an outline jump) that the server did
+    /// not deliver says so, instead of leaving the tap with no visible result.
+    static func reportOlderHistoryFailure(
+        loaded: Bool,
+        sessionManager: ChatSessionManager,
+        connection: ServerConnection
+    ) {
+        guard !loaded, sessionManager.olderHistoryLoadFailed else { return }
+        connection.extensionToast = "Couldn't load earlier messages from the server. Try again."
     }
 
     static func currentToolFileTarget(
