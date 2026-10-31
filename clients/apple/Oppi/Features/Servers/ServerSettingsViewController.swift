@@ -124,8 +124,11 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     /// take the refusal away a moment after the row said it. The page appearing
     /// takes the documents the store already holds (its rows read them).
     override func load() async throws {
+        // Which of those asked, before anything suspends: a pull that arrives while
+        // this load runs replaces the task and reads the trigger for itself.
+        let asked = loadTrigger == .ask
         await model.load()
-        guard loadTrigger == .ask, let settings else { return }
+        guard asked, let settings else { return }
         _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
         _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
         _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
