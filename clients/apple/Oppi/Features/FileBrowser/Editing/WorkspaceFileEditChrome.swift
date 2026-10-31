@@ -8,8 +8,11 @@ enum WorkspaceFileEditStatusPresentation {
         case progress
     }
 
-    static func label(for status: WorkspaceFileEditSession.Status) -> String {
+    /// `createsFile` says nothing is on disk yet, so a clean buffer has not been
+    /// saved anywhere: the editor says so instead of claiming a saved file.
+    static func label(for status: WorkspaceFileEditSession.Status, createsFile: Bool = false) -> String {
         switch status {
+        case .saved where createsFile: String(localized: "New")
         case .saved: String(localized: "Saved")
         case .pending: String(localized: "Edited")
         case .saving: String(localized: "Saving…")
@@ -487,15 +490,23 @@ final class WorkspaceFileEditBarItems {
         [doneItem, previewItem, optionsItem, statusImageItem]
     }
 
-    func update(status: WorkspaceFileEditSession.Status, isShowingPreview: Bool) {
+    func update(
+        status: WorkspaceFileEditSession.Status,
+        isShowingPreview: Bool,
+        createsFile: Bool = false
+    ) {
         statusView.status = status
+        statusView.createsFile = createsFile
         switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
         case .symbol(let name):
             statusImageItem.image = UIImage(systemName: name)
         case .progress:
             statusImageItem.image = UIImage(systemName: "arrow.triangle.2.circlepath")
         }
-        statusImageItem.accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
+        statusImageItem.accessibilityLabel = WorkspaceFileEditStatusPresentation.label(
+            for: status,
+            createsFile: createsFile
+        )
         let title = isShowingPreview ? String(localized: "Source") : String(localized: "Preview")
         if previewItem.title != title {
             previewItem.title = title
@@ -546,7 +557,12 @@ enum WorkspaceFileEditorOptions {
 /// spinner while saving or checking. VoiceOver speaks `label(for:)`.
 final class WorkspaceFileEditStatusView: UIView {
     var status: WorkspaceFileEditSession.Status = .saved {
-        didSet { if status != oldValue { apply() } }
+        didSet { apply() }
+    }
+
+    /// Nothing is on disk yet: a clean buffer means "not created", not "saved".
+    var createsFile = false {
+        didSet { apply() }
     }
 
     private let canvas = WorkspaceFileEditStatusSymbolCanvas()
@@ -584,7 +600,10 @@ final class WorkspaceFileEditStatusView: UIView {
     private static let slot: CGFloat = 22
 
     private func apply() {
-        accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
+        accessibilityLabel = WorkspaceFileEditStatusPresentation.label(
+            for: status,
+            createsFile: createsFile
+        )
         switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
         case .progress:
             canvas.isHidden = true

@@ -59,7 +59,11 @@ final class DocumentEditEditorPage: UIViewController {
 
     /// `rightBarButtonItems` order: Done is the trailing-most.
     var barButtons: [UIBarButtonItem] {
-        barItems.update(status: session.status, isShowingPreview: isShowingPreview)
+        barItems.update(
+            status: session.status,
+            isShowingPreview: isShowingPreview,
+            createsFile: session.createsOnFirstSave
+        )
         return barItems.items
     }
 

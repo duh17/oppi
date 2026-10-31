@@ -92,7 +92,6 @@ struct ChatReaderViewControllerTests {
             pencilIsInTheWindow(host),
             "the tool row's pencil never reached the reader's bar: \(identifiers(in: host.window).joined(separator: ", ")) | bars: \(barButtonIdentifiers(in: host.window).joined(separator: ", "))"
         )
-        Self.capture(host, named: "tool-row-reader")
     }
 
     /// Every identifier the window's views carry, for a failure that says what
@@ -100,20 +99,6 @@ struct ChatReaderViewControllerTests {
     private func identifiers(in root: UIView) -> [String] {
         let own = root.accessibilityIdentifier.map { [$0] } ?? []
         return own + root.subviews.flatMap { identifiers(in: $0) }
-    }
-
-    /// The window as a picture, so the pencil can be looked at rather than only
-    /// counted: `/tmp/edit-e3/<name>.png`.
-    private static func capture(_ host: Host, named name: String) {
-        let size = host.window.bounds.size
-        guard size.width > 0 else { return }
-        let image = UIGraphicsImageRenderer(size: size).image { _ in
-            host.window.drawHierarchy(in: host.window.bounds, afterScreenUpdates: true)
-        }
-        guard let data = image.pngData() else { return }
-        let directory = URL(fileURLWithPath: "/tmp/edit-e3", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: directory.appendingPathComponent("\(name).png"))
     }
 
     /// The pencil the reader installed, found where a person sees it: a view or a

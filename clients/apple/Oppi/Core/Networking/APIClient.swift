@@ -29,11 +29,9 @@ enum HostFileResolvedPathHeaders {
     }
 }
 
-/// The editor's read of a file that is not there yet: the body is empty, there is
-/// no ETag, and the first save creates the file (`If-None-Match: *`).
-enum WorkspaceFileCreatableHeader {
-    static let name = "X-Oppi-Creatable"
-}
+/// The editor's read of a file that is not there yet: there is no ETag, and the
+/// first save creates the file (`If-None-Match: *`).
+let workspaceFileCreatableHeader = "X-Oppi-Creatable"
 
 /// Network failures that may make an HTTP route unavailable for future work.
 /// HTTP responses, decoding failures, cancellation, and TLS failures are intentionally excluded.
@@ -2072,7 +2070,7 @@ actor APIClient: ClientLogUploading {
         let http = response as? HTTPURLResponse
         // The server names a file it would let the editor create; the body is
         // empty and there is no version to overwrite.
-        let creatable = http?.value(forHTTPHeaderField: WorkspaceFileCreatableHeader.name) != nil
+        let creatable = http?.value(forHTTPHeaderField: workspaceFileCreatableHeader) != nil
         let etag = creatable ? nil : http?.value(forHTTPHeaderField: "ETag")
         return WorkspaceFileDiskSnapshot(bytes: data, etag: etag, creatable: creatable)
     }

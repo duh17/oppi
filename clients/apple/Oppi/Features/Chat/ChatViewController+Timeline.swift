@@ -146,7 +146,7 @@ extension ChatViewController {
             composerDestination: canvasDestination,
             lockOrigin: readerLockOrigin
         )
-        if case .document(let content, _) = readerPayload.kind, readerPayload.editSubject == nil {
+        if case .document(let content, _) = readerPayload.kind {
             readerPayload.editSubject = liveFileSubject(for: content)
         }
         appNavigation.openChatReader(

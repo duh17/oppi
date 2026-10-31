@@ -337,6 +337,55 @@ struct DocumentEditOwnerTests {
 
     /// A path the workspace does not hold has no identity: the host's own file, a
     /// sandbox path outside its mount, and a sandbox home path all stay read-only.
+    @Test func aSessionPathOutsideTheWorkspaceHasNoPencil() async {
+        func sessionSubject(
+            path: String,
+            runtime: WorkspaceRuntime = .host,
+            hostMount: String = "/Users/preview/oppi"
+        ) -> DocumentEditSubject {
+            .file(
+                serverId: "srv",
+                source: .sessionTouched(
+                    SessionTouchedFileOrigin(
+                        sessionId: "session-1",
+                        workspaceRuntime: runtime,
+                        hostMount: hostMount
+                    )
+                ),
+                workspaceId: "w1",
+                worktreeId: nil,
+                path: path,
+                skillFile: nil,
+                fileType: .markdown
+            )
+        }
+
+        for path in [
+            "/tmp/elsewhere.md",
+            "~/notes.md",
+            "/Users/preview/oppi/../elsewhere.md",
+        ] {
+            #expect(sessionSubject(path: path).editIdentity(serverId: "srv") == nil, "\(path) is not the workspace")
+        }
+        // A sandbox guest path is the workspace origin's own form, taken as it is.
+        #expect(
+            sessionSubject(path: "/workspace/preview/src/a.ts", runtime: .sandbox)
+                .editIdentity(serverId: "srv")
+                == WorkspaceFileEditIdentity(
+                    serverId: "srv",
+                    workspaceId: "w1",
+                    worktreeId: nil,
+                    path: "/workspace/preview/src/a.ts"
+                )
+        )
+        #expect(
+            sessionSubject(path: "/etc/hosts", runtime: .sandbox).editIdentity(serverId: "srv") == nil,
+            "a sandbox path outside the mount is not editable"
+        )
+    }
+
+    /// A worktree session's absolute path names the mount, which is another
+    /// checkout, so only its relative paths edit the worktree.
     @Test func aWorktreeSessionDoesNotMapAnAbsolutePathOntoItsWorkspace() async {
         func sessionSubject(path: String, worktreeId: String?) -> DocumentEditSubject {
             .file(

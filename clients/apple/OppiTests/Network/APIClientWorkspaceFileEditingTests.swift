@@ -300,7 +300,7 @@ struct APIClientWorkspaceFileEditingTests {
 
         EditURLProtocol.handler = { record in
             if record.method == "GET" {
-                return (200, [WorkspaceFileCreatableHeader.name: "1"], Data())
+                return (200, [workspaceFileCreatableHeader: "1"], Data())
             }
             return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":5,"mtimeMs":1}"#.utf8))
         }

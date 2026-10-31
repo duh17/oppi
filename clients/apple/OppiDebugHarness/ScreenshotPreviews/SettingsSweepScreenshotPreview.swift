@@ -579,7 +579,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 source: .default, path: "~/.pi/agent/SYSTEM.md", resolvedPath: nil, content: "You are a coding agent."
             )
         // `agents-pi` is the Pi page before SYSTEM.md exists: its reader still has
-        // the pencil, and the editor behind it opens empty.
+        // the pencil, and the editor behind it opens on that default prompt.
         SettingsSweepFixtureURLProtocol.piSystemPromptIsAbsent = page == "agents-pi"
 
         SettingsSweepFixtureURLProtocol.routes = [
@@ -839,7 +839,7 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
            Self.piSystemPromptIsAbsent,
            request.url?.query?.contains("origin=pi") == true {
             headers["ETag"] = nil
-            headers[WorkspaceFileCreatableHeader.name] = "1"
+            headers[workspaceFileCreatableHeader] = "1"
             body = Data()
         }
         let response = HTTPURLResponse(
