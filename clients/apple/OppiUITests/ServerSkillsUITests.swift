@@ -5,8 +5,8 @@ import XCTest
 /// (`SCREENSHOT_SCREEN=settings-sweep`). Writes that reach the fixture server
 /// show in `settingsSweep.lastWrite`.
 @MainActor
-final class ServerSkillsUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -19,7 +19,7 @@ final class ServerSkillsUITests: XCTestCase {
     /// Rows group by what needs attention, speak their name, source, and state,
     /// and search narrows them in the bar until nothing matches.
     func testSkillsListRowsSearchAndNoResults() {
-        launch(page: "skills")
+        launchSettingsSweep(page: "skills", showsWrites: true)
         let release = app.buttons["skills.row.release"]
         XCTAssertTrue(release.waitForExistence(timeout: 10), "Skills list did not load")
         XCTAssertEqual(release.label, "release, ~/.pi/agent/skills, Enabled")
@@ -35,7 +35,7 @@ final class ServerSkillsUITests: XCTestCase {
         search.tap()
         search.typeText("deep")
         XCTAssertTrue(app.buttons["skills.row.deep-research"].waitForExistence(timeout: 5))
-        XCTAssertTrue(waitFor(!release.exists), "Search must narrow the list")
+        XCTAssertTrue(release.waitForNonExistence(timeout: 10), "Search must narrow the list")
         search.clearText()
         search.typeText("no-matching-skill")
         XCTAssertTrue(app.staticTexts["skills.state"].waitForExistence(timeout: 5))
@@ -45,7 +45,7 @@ final class ServerSkillsUITests: XCTestCase {
 
     /// A refresh that fails keeps the seeded catalog and says so.
     func testOfflineCatalogShowsCachedWarning() {
-        launch(page: "skills-offline")
+        launchSettingsSweep(page: "skills-offline", showsWrites: true)
         XCTAssertTrue(
             app.descendants(matching: .any)["skills.cachedWarning"].waitForExistence(timeout: 10),
             "A failed refresh with cached rows must warn"
@@ -56,7 +56,7 @@ final class ServerSkillsUITests: XCTestCase {
     /// The page shows the Skill, its switch saves through the server, and the
     /// file list is one row away.
     func testSkillDetailSwitchSavesAndOffersFiles() {
-        launch(page: "skill-detail")
+        launchSettingsSweep(page: "skill-detail", showsWrites: true)
         let enabled = app.switches["skills.detail.enabled"]
         XCTAssertTrue(enabled.waitForExistence(timeout: 10), "Skill page did not load")
         XCTAssertEqual(enabled.label, "Enable release on mac-studio")
@@ -64,7 +64,7 @@ final class ServerSkillsUITests: XCTestCase {
 
         enabled.tap()
         XCTAssertTrue(
-            waitFor(lastWrite.contains("PUT /server/resources/skills/release/enabled") && lastWrite.contains("\"enabled\":false")),
+            waitFor(lastWrite.contains("PUT /server/resources/skills/release/enabled") && lastWrite.contains("\"enabled\":false"), timeout: 10),
             "The switch must save through the Skill: \(lastWrite)"
         )
 
@@ -77,7 +77,7 @@ final class ServerSkillsUITests: XCTestCase {
 
     /// Folders open and close in place; files are buttons that open by path.
     func testSkillBrowserOpensFolders() {
-        launch(page: "skill-browser")
+        launchSettingsSweep(page: "skill-browser", showsWrites: true)
         let file = app.buttons["skills.file.SKILL.md"]
         XCTAssertTrue(file.waitForExistence(timeout: 10), "The file tree did not load")
         XCTAssertEqual(file.label, "Open SKILL.md")
@@ -90,39 +90,11 @@ final class ServerSkillsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["skills.file.scripts/check.sh"].waitForExistence(timeout: 5), "Opening a folder must list its files")
         XCTAssertEqual(folder.value as? String, "Expanded")
         folder.tap()
-        XCTAssertTrue(waitFor(!app.buttons["skills.file.scripts/check.sh"].exists), "Closing the folder must hide its files")
+        XCTAssertTrue(
+            app.buttons["skills.file.scripts/check.sh"].waitForNonExistence(timeout: 10),
+            "Closing the folder must hide its files"
+        )
         assertRunning()
-    }
-
-    // MARK: Helpers
-
-    private func launch(page: String) {
-        app?.terminate()
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"]
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "settings-sweep"
-        app.launchEnvironment["SCREENSHOT_SWEEP_PAGE"] = page
-        app.launchEnvironment["SCREENSHOT_SWEEP_SHOWS_WRITES"] = "1"
-        app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
-        app.launch()
-        XCTAssertTrue(app.staticTexts["settingsSweep.lastWrite"].waitForExistence(timeout: 10), "Settings sweep harness did not appear")
-    }
-
-    private var lastWrite: String {
-        app.staticTexts["settingsSweep.lastWrite"].label
-    }
-
-    private func waitFor(_ condition: @autoclosure () -> Bool, timeout: TimeInterval = 10) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        return condition()
-    }
-
-    private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(app.state, .runningForeground, "The app must still be running", file: file, line: line)
     }
 }
 

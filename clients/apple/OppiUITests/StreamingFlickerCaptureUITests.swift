@@ -6,8 +6,8 @@ import UIKit
 /// This test writes frame PNGs and per-frame luminance/debug metrics to /tmp so
 /// optimization runs can compare visual stability, not only apply duration.
 @MainActor
-final class StreamingFlickerCaptureUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class StreamingFlickerCaptureUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -17,13 +17,7 @@ final class StreamingFlickerCaptureUITests: XCTestCase {
     }
 
     func testCaptureStreamingMarkdownFlicker() throws {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "streaming-flicker"
-        app.launch()
-
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
-        XCTAssertTrue(ready.waitForExistence(timeout: 8), "Streaming flicker preview did not become ready")
+        launchPreview(screen: "streaming-flicker", readyTimeout: 8)
 
         let outputDirectory = URL(fileURLWithPath: "/tmp/oppi-streaming-flicker", isDirectory: true)
         try? FileManager.default.removeItem(at: outputDirectory)

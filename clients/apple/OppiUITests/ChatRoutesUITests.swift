@@ -8,8 +8,8 @@ import XCTest
 /// service crashes on its first read. Where a modal edits chat state, the edit
 /// is read back from the chat.
 @MainActor
-final class ChatRoutesUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -89,7 +89,7 @@ final class ChatRoutesUITests: XCTestCase {
         let outline = app.buttons["chat.outline.close"]
         XCTAssertTrue(outline.waitForExistence(timeout: 5), "Outline must open from the menu")
         outline.tap()
-        XCTAssertTrue(waitForDisappearance(of: outline), "Close must close the outline")
+        XCTAssertTrue(outline.waitForNonExistence(timeout: 5), "Close must close the outline")
         XCTAssertFalse(tip.exists, "Opening the menu must retire the hint")
 
         app.terminate()
@@ -440,18 +440,18 @@ final class ChatRoutesUITests: XCTestCase {
         }
         XCTAssertTrue(close.waitForExistence(timeout: 5), "Ending search must restore Close")
         close.tap()
-        XCTAssertTrue(waitForDisappearance(of: outline), "Close must close the outline")
+        XCTAssertTrue(outline.waitForNonExistence(timeout: 5), "Close must close the outline")
         assertRunning()
 
         if usesSheets {
             outlineButton.tap()
             XCTAssertTrue(outline.waitForExistence(timeout: 5), "Outline did not reopen")
             dragToBottom(outline)
-            XCTAssertTrue(waitForDisappearance(of: outline), "Swipe-down must close the outline sheet")
+            XCTAssertTrue(outline.waitForNonExistence(timeout: 5), "Swipe-down must close the outline sheet")
             outlineButton.tap()
             XCTAssertTrue(outline.waitForExistence(timeout: 5), "The binding cleared on swipe-down, so the button reopens it")
             app.buttons["chat.outline.close"].tap()
-            XCTAssertTrue(waitForDisappearance(of: outline))
+            XCTAssertTrue(outline.waitForNonExistence(timeout: 5))
         }
         assertRunning()
     }
@@ -476,10 +476,10 @@ final class ChatRoutesUITests: XCTestCase {
             XCTAssertTrue(row.waitForExistence(timeout: 5), "Search must list bash \(turn)")
             row.tap()
             XCTAssertTrue(
-                waitForDisappearance(of: search),
+                search.waitForNonExistence(timeout: 5),
                 "Selecting a search hit must dismiss the outline search field so the chat is visible"
             )
-            XCTAssertTrue(waitForDisappearance(of: outline), "Selecting a row must close the outline")
+            XCTAssertTrue(outline.waitForNonExistence(timeout: 5), "Selecting a row must close the outline")
             XCTAssertTrue(
                 waitFor(outlineButton.isHittable),
                 "The chat must be visible after a search jump (outline toolbar hittable): usesSheets=\(usesSheets) width=\(app.windows.firstMatch.frame.width)"
@@ -559,7 +559,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(folderHit.exists, "Everywhere must find Sources/RouteView.swift")
         attachScreenshot("files-panel-search-everywhere")
         scopes.buttons["Sources"].tap()
-        XCTAssertTrue(waitForDisappearance(of: rootHit), "This folder must drop Route.md, which is outside Sources/")
+        XCTAssertTrue(rootHit.waitForNonExistence(timeout: 5), "This folder must drop Route.md, which is outside Sources/")
         XCTAssertTrue(folderHit.exists, "This folder must keep Sources/RouteView.swift")
         attachScreenshot("files-panel-search-this-folder")
         scopes.buttons["Everywhere"].tap()
@@ -574,10 +574,10 @@ final class ChatRoutesUITests: XCTestCase {
 
         if app.buttons["Done"].exists {
             app.buttons["Done"].tap()
-            XCTAssertTrue(waitForDisappearance(of: files), "Done must close the files panel")
+            XCTAssertTrue(files.waitForNonExistence(timeout: 5), "Done must close the files panel")
         } else {
             app.buttons["chat.toolbar.files"].tap()
-            XCTAssertTrue(waitForDisappearance(of: files), "The files button must close the column")
+            XCTAssertTrue(files.waitForNonExistence(timeout: 5), "The files button must close the column")
         }
         assertRunning()
 
@@ -585,7 +585,7 @@ final class ChatRoutesUITests: XCTestCase {
             app.buttons["chat.toolbar.files"].tap()
             XCTAssertTrue(files.waitForExistence(timeout: 5))
             dragToBottom(files)
-            XCTAssertTrue(waitForDisappearance(of: files), "Swipe-down must close the files sheet")
+            XCTAssertTrue(files.waitForNonExistence(timeout: 5), "Swipe-down must close the files sheet")
         }
         assertRunning()
     }
@@ -654,12 +654,12 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
 
         app.buttons["chat.context.close"].tap()
-        XCTAssertTrue(waitForDisappearance(of: context), "Close must close Context")
+        XCTAssertTrue(context.waitForNonExistence(timeout: 5), "Close must close Context")
         if usesSheets {
             app.buttons["chat.toolbar.context"].tap()
             XCTAssertTrue(context.waitForExistence(timeout: 5))
             dragToBottom(context)
-            XCTAssertTrue(waitForDisappearance(of: context), "Swipe-down must close the Context sheet")
+            XCTAssertTrue(context.waitForNonExistence(timeout: 5), "Swipe-down must close the Context sheet")
         }
         assertRunning()
     }
@@ -677,11 +677,11 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["model.picker.row.openai/gpt-routes"].waitForExistence(timeout: 5), "Model picker must list the chat's models")
         attachScreenshot("model-picker")
         dragToBottom(models)
-        XCTAssertTrue(waitForDisappearance(of: models), "Swipe-down must close the model picker")
+        XCTAssertTrue(models.waitForNonExistence(timeout: 5), "Swipe-down must close the model picker")
         modelPill.tap()
         XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen")
         cancelButton.tap()
-        XCTAssertTrue(waitForDisappearance(of: models), "Cancel must close the model picker")
+        XCTAssertTrue(models.waitForNonExistence(timeout: 5), "Cancel must close the model picker")
         assertRunning()
 
         app.buttons["session.toolbar.thinking"].tap()
@@ -689,7 +689,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(high.waitForExistence(timeout: 5), "Thinking popover did not open")
         attachScreenshot("thinking-popover")
         high.tap()
-        XCTAssertTrue(waitForDisappearance(of: high), "Choosing a level must close the popover")
+        XCTAssertTrue(high.waitForNonExistence(timeout: 5), "Choosing a level must close the popover")
         assertRunning()
     }
 
@@ -704,7 +704,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(followUp.waitForExistence(timeout: 5), "Busy mode popover did not open")
         attachScreenshot("busy-mode-popover")
         followUp.tap()
-        XCTAssertTrue(waitForDisappearance(of: followUp), "Choosing a mode must close the popover")
+        XCTAssertTrue(followUp.waitForNonExistence(timeout: 5), "Choosing a mode must close the popover")
         XCTAssertTrue(waitFor(busyMode.value as? String == "Follow-up"), "The choice must reach the composer")
         assertRunning()
     }
@@ -729,11 +729,11 @@ final class ChatRoutesUITests: XCTestCase {
         let models = app.navigationBars["Models"]
         XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open above the composer")
         dragToBottom(models)
-        XCTAssertTrue(waitForDisappearance(of: models))
+        XCTAssertTrue(models.waitForNonExistence(timeout: 5))
         XCTAssertTrue(editor.exists, "Closing the picker must keep the composer")
 
         app.buttons["expanded.composer.cancel"].tap()
-        XCTAssertTrue(waitForDisappearance(of: editor), "Cancel must close the expanded composer")
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Cancel must close the expanded composer")
         let inline = app.descendants(matching: .any)["chat.input"]
         XCTAssertTrue(waitFor(self.text(of: inline).contains("routed text")), "Typed text must reach the chat composer: \(text(of: inline))")
         assertRunning()
@@ -755,7 +755,7 @@ final class ChatRoutesUITests: XCTestCase {
         )
         // From the header: a drag on the question list scrolls it.
         dragToBottom(app.staticTexts["Question 2 of 2"])
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Swipe-down must close the ask sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Swipe-down must close the ask sheet")
         XCTAssertTrue(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Which route next?")).firstMatch
                 .waitForExistence(timeout: 5),
@@ -765,7 +765,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "The binding cleared on swipe-down, so expand reopens it")
         XCTAssertTrue(app.staticTexts["Question 2 of 2"].exists, "The reopened sheet starts on the card's page")
         app.buttons["ask.expanded.collapse"].tap()
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Collapse must close the ask sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Collapse must close the ask sheet")
         assertRunning()
     }
 
@@ -790,11 +790,11 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(body.waitForExistence(timeout: 5), "A double tap opens the queued message rendered")
         attachScreenshot("message-queue-full-screen")
         app.buttons["fullScreen.code.close"].tap()
-        XCTAssertTrue(waitForDisappearance(of: body), "Back returns to the chat")
+        XCTAssertTrue(body.waitForNonExistence(timeout: 5), "Back returns to the chat")
 
         XCTAssertTrue(waitFor(collapse.isHittable), "The drawer is still open after the reader")
         collapse.tap()
-        XCTAssertTrue(waitForDisappearance(of: edit), "Collapse closes the queue drawer")
+        XCTAssertTrue(edit.waitForNonExistence(timeout: 5), "Collapse closes the queue drawer")
         assertRunning()
     }
 
@@ -834,7 +834,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(waitFor(undo.isEnabled), "Redoing a stroke must enable Undo again")
 
         app.buttons["composer.canvas.addToChat"].tap()
-        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Add to Chat must close the canvas")
+        XCTAssertTrue(app.navigationBars["Canvas"].waitForNonExistence(timeout: 5), "Add to Chat must close the canvas")
         XCTAssertTrue(
             waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
             "The composer must be back after Add to Chat"
@@ -843,7 +843,7 @@ final class ChatRoutesUITests: XCTestCase {
 
         openAnnotateCanvas(from: composerImageTile())
         app.buttons["composer.canvas.cancel"].tap()
-        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Cancel must close the canvas")
+        XCTAssertTrue(app.navigationBars["Canvas"].waitForNonExistence(timeout: 5), "Cancel must close the canvas")
         XCTAssertTrue(
             waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
             "The composer must be back after Cancel"
@@ -860,13 +860,13 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(expandedEditor.waitForExistence(timeout: 5), "Expanded composer did not open")
         openAnnotateCanvas(from: composerImageTile())
         app.buttons["composer.canvas.cancel"].tap()
-        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Cancel must close the expanded canvas")
+        XCTAssertTrue(app.navigationBars["Canvas"].waitForNonExistence(timeout: 5), "Cancel must close the expanded canvas")
         XCTAssertTrue(
             waitFor(expandedEditor.isHittable),
             "The expanded composer must be back after Cancel"
         )
         app.buttons["expanded.composer.cancel"].tap()
-        XCTAssertTrue(waitForDisappearance(of: expandedEditor), "The expanded composer must close")
+        XCTAssertTrue(expandedEditor.waitForNonExistence(timeout: 5), "The expanded composer must close")
         XCTAssertTrue(
             waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
             "The inline composer must be back"
@@ -913,23 +913,23 @@ final class ChatRoutesUITests: XCTestCase {
         editor.tap()
         editor.typeText(" edited")
         app.buttons["Save"].tap()
-        XCTAssertTrue(waitForDisappearance(of: editor))
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
         // The sheet lists the chat's comments; reopening the editor reads the
         // saved body back from them.
         edit.tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "Route comment edited", "The edit must reach the chat's comments")
         app.buttons["Cancel"].firstMatch.tap()
-        XCTAssertTrue(waitForDisappearance(of: editor))
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
         attachScreenshot("stash-edited")
         dragToBottom(edit)
-        XCTAssertTrue(waitForDisappearance(of: edit), "Swipe-down must close the stash sheet")
+        XCTAssertTrue(edit.waitForNonExistence(timeout: 5), "Swipe-down must close the stash sheet")
         assertRunning()
 
         pill.doubleTap()
         XCTAssertTrue(edit.waitForExistence(timeout: 5), "The stash sheet did not reopen")
         cancelButton.tap()
-        XCTAssertTrue(waitForDisappearance(of: edit), "Close must close the stash sheet")
+        XCTAssertTrue(edit.waitForNonExistence(timeout: 5), "Close must close the stash sheet")
         assertRunning()
     }
 
@@ -949,16 +949,16 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(waitFor(emails.value as? String == "0"), "The toggle must follow the policy binding")
         attachScreenshot("share-sheet")
         cancelButton.tap()
-        XCTAssertTrue(waitForDisappearance(of: share), "Cancel must close the share sheet")
+        XCTAssertTrue(share.waitForNonExistence(timeout: 5), "Cancel must close the share sheet")
 
         openShareSheet()
         XCTAssertEqual(app.switches["Email Addresses"].value as? String, "0", "The edited policy must be remembered")
         if usesSheets {
             dragToBottom(share)
-            XCTAssertTrue(waitForDisappearance(of: share), "Swipe-down must close the share sheet")
+            XCTAssertTrue(share.waitForNonExistence(timeout: 5), "Swipe-down must close the share sheet")
         } else {
             cancelButton.tap()
-            XCTAssertTrue(waitForDisappearance(of: share))
+            XCTAssertTrue(share.waitForNonExistence(timeout: 5))
         }
         assertRunning()
     }
@@ -992,13 +992,13 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
 
         app.buttons[closeLabel].firstMatch.tap()
-        XCTAssertTrue(waitForDisappearance(of: commit), "Close must close the commit sheet")
+        XCTAssertTrue(commit.waitForNonExistence(timeout: 5), "Close must close the commit sheet")
         let created = app.descendants(matching: .any)["chatRoutes.createdSessions"]
         XCTAssertEqual(created.value as? String, "1", "The stub must have received the new session")
         tapCommitRow()
         XCTAssertTrue(commit.waitForExistence(timeout: 5))
         dragToBottom(commit)
-        XCTAssertTrue(waitForDisappearance(of: commit), "Swipe-down must close the commit sheet")
+        XCTAssertTrue(commit.waitForNonExistence(timeout: 5), "Swipe-down must close the commit sheet")
         assertRunning()
     }
 
@@ -1021,7 +1021,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(loadMore.waitForExistence(timeout: 5), "A graph with more pages must offer Load more")
         loadMore.tap()
         XCTAssertTrue(baseCommit.waitForExistence(timeout: 5), "Load more must append the next page")
-        XCTAssertTrue(waitForDisappearance(of: loadMore), "The last page must leave no Load more")
+        XCTAssertTrue(loadMore.waitForNonExistence(timeout: 5), "The last page must leave no Load more")
         assertOpenInColumn("chat.toolbar.git")
         let otherChange = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "README.md")).firstMatch
         XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")
@@ -1044,7 +1044,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(sessionCopyBack.waitForExistence(timeout: 10), "The session's copy did not open")
         attachScreenshot("git-panel-session-copy")
         sessionCopyBack.tap()
-        XCTAssertTrue(waitForDisappearance(of: sessionCopyBack), "Back must close the session's copy")
+        XCTAssertTrue(sessionCopyBack.waitForNonExistence(timeout: 5), "Back must close the session's copy")
         XCTAssertTrue(panel.exists, "Closing the session's copy must leave the Git panel open")
         // The summary counts what the list shows.
         XCTAssertTrue(
@@ -1073,7 +1073,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertFalse(sessionCopyRow.exists, "All changes lists Git's changes only")
         attachScreenshot("git-panel-all-changes")
         scope.buttons["This session"].tap()
-        XCTAssertTrue(waitForDisappearance(of: otherChange), "This session must narrow the list again")
+        XCTAssertTrue(otherChange.waitForNonExistence(timeout: 5), "This session must narrow the list again")
 
         // The panel's row carries the line counts; the timeline's file pill
         // beside the column does not.
@@ -1085,20 +1085,20 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 5), "File review sheet did not open")
         attachScreenshot("git-panel-file-review")
         app.buttons[closeLabel].firstMatch.tap()
-        XCTAssertTrue(waitForDisappearance(of: review), "Close must close the file review")
+        XCTAssertTrue(review.waitForNonExistence(timeout: 5), "Close must close the file review")
         fileRow.tap()
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         dragToBottom(review)
-        XCTAssertTrue(waitForDisappearance(of: review), "Swipe-down must close the file review")
+        XCTAssertTrue(review.waitForNonExistence(timeout: 5), "Swipe-down must close the file review")
         XCTAssertTrue(panel.exists, "Closing the review must leave the Git panel open")
         assertRunning()
 
         app.buttons["git.panel.close"].tap()
-        XCTAssertTrue(waitForDisappearance(of: panel), "Close must close the Git panel")
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Close must close the Git panel")
         if usesSheets {
             openGitPanel()
             dragToBottom(panel)
-            XCTAssertTrue(waitForDisappearance(of: panel), "Swipe-down must close the Git sheet")
+            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Swipe-down must close the Git sheet")
         }
         assertRunning()
     }
@@ -1124,7 +1124,7 @@ final class ChatRoutesUITests: XCTestCase {
             NSPredicate(format: "label == %@ AND value == %@", "Rename session", "New routes session")
         ).firstMatch
         XCTAssertTrue(newChatTitle.waitForExistence(timeout: 10), "New Session must open its chat")
-        XCTAssertTrue(waitForDisappearance(of: panel, timeout: 10), "Starting a session must close the Git panel")
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 10), "Starting a session must close the Git panel")
         let created = app.descendants(matching: .any)["chatRoutes.createdSessions"]
         XCTAssertEqual(created.value as? String, "1", "The stub must have received the new session")
         attachScreenshot("git-panel-new-session-chat")
@@ -1153,7 +1153,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(commit.waitForExistence(timeout: 5), "Commit viewer did not open in a router navigation bar")
         openAndCloseDiff()
         app.buttons["chat.commit-detail.dismiss"].tap()
-        XCTAssertTrue(waitForDisappearance(of: commit), "Close must close the commit viewer")
+        XCTAssertTrue(commit.waitForNonExistence(timeout: 5), "Close must close the commit viewer")
         assertRunning()
 
         app.buttons["chatRoutes.openFileViewer"].tap()
@@ -1161,7 +1161,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(back.waitForExistence(timeout: 10), "File viewer did not open with its back control")
         attachScreenshot("file-viewer")
         back.tap()
-        XCTAssertTrue(waitForDisappearance(of: back), "Back at the viewer's root must close it")
+        XCTAssertTrue(back.waitForNonExistence(timeout: 5), "Back at the viewer's root must close it")
         XCTAssertTrue(waitFor(self.app.buttons["chat.toolbar.context"].isHittable), "Closing the viewer must return to the chat")
         assertRunning()
     }
@@ -1185,7 +1185,7 @@ final class ChatRoutesUITests: XCTestCase {
         let sheet = app.navigationBars["Summary Instructions"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Summary sheet did not open in a navigation bar")
         dragToBottom(sheet)
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Swipe-down must close the summary sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Swipe-down must close the summary sheet")
 
         node.tap()
         XCTAssertTrue(custom.waitForExistence(timeout: 5))
@@ -1195,7 +1195,7 @@ final class ChatRoutesUITests: XCTestCase {
         editor.tap()
         editor.typeText("keep router notes")
         app.buttons["tree-summary-navigate"].tap()
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Navigate must close the summary sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Navigate must close the summary sheet")
         let capture = app.staticTexts["session-timeline.last-navigation"]
         XCTAssertTrue(
             waitFor(capture.label.contains("mode=custom instructions=keep router notes")),
@@ -1247,7 +1247,7 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
         // The reader brings its own Back, so the panel's bar under it hides:
         // once the text loads, and animated.
-        XCTAssertTrue(waitForDisappearance(of: bar), "\(name) reader shows the panel's bar above its own Back")
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 5), "\(name) reader shows the panel's bar above its own Back")
         back.tap()
         XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(name) reader's back must pop it")
     }
@@ -1261,13 +1261,13 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["App.swift"].exists, "The diff panel needs its own navigation bar")
         attachScreenshot(usesSheets ? "commit-diff-sheet" : "commit-diff-column")
         close.tap()
-        XCTAssertTrue(waitForDisappearance(of: close), "Close must close the diff panel")
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5), "Close must close the diff panel")
         if usesSheets {
             fileRow.tap()
             let diff = app.navigationBars["App.swift"]
             XCTAssertTrue(diff.waitForExistence(timeout: 5))
             dragToBottom(diff)
-            XCTAssertTrue(waitForDisappearance(of: diff), "Swipe-down must close the diff sheet")
+            XCTAssertTrue(diff.waitForNonExistence(timeout: 5), "Swipe-down must close the diff sheet")
         }
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")
         assertRunning()
@@ -1316,14 +1316,10 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15), "Chat routes harness did not appear")
     }
 
+    /// A chat preview whose test waits for the panel or bar it drives, so the
+    /// launch does not also wait on the host's `screenshot.ready` marker.
     private func launchScreen(_ screen: String, environment: [String: String] = [:], arguments: [String] = []) {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"] + arguments
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
-        for (key, value) in environment {
-            app.launchEnvironment[key] = value
-        }
-        app.launch()
+        launchPreview(screen: screen, environment: environment, arguments: arguments, ready: nil)
     }
 
     /// In the trailing column (regular width) the panel's bar button stays on
@@ -1384,31 +1380,6 @@ final class ChatRoutesUITests: XCTestCase {
 
     private func text(of element: XCUIElement) -> String {
         "\(element.label) \(element.value as? String ?? "")"
-    }
-
-    private func waitFor(_ condition: @autoclosure () -> Bool, timeout: TimeInterval = 5) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        return condition()
-    }
-
-    private func attachScreenshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(app.state, .runningForeground, "The app must still be running", file: file, line: line)
-    }
-
-    private func waitForDisappearance(of element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
 
     /// A 48×32 red tile with a white block, so the canvas has real image bounds.

@@ -17,7 +17,7 @@ import XCTest
 /// `-only-testing:OppiUITests/FileBrowserMotionUITests/testOrdinaryNextTravelCaptureWithReduceMotion`
 /// `-only-testing:OppiUITests/FileBrowserMotionUITests/testReviewNextTravelCaptureWithReduceMotion`
 @MainActor
-final class FileBrowserMotionUITests: XCTestCase {
+final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
 
     override func setUpWithError() throws {
@@ -137,18 +137,10 @@ final class FileBrowserMotionUITests: XCTestCase {
         assertMarker("FILE_MOTION_GAMMA")
     }
 
+    /// The motion previews publish `FILE_MOTION_*` markers in this overlay, on
+    /// top of the preview every launch shares.
     private func launchPreview(screen: String) {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
-        app.launchEnvironment["OPPI_FILE_MOTION_MARKER"] = "1"
-        app.launch()
-
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
-        XCTAssertTrue(
-            ready.waitForExistence(timeout: 8),
-            "Preview \(screen) did not become ready"
-        )
+        launchPreview(screen: screen, environment: ["OPPI_FILE_MOTION_MARKER": "1"], readyTimeout: 8)
     }
 
     private func skipUnlessHostReduceMotionEnabled() throws {

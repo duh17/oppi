@@ -10,8 +10,8 @@ import XCTest
 /// environment crashes on its first service read, so every step checks the
 /// app is still running.
 @MainActor
-final class RouterSettingsModalsUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -36,12 +36,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(back.waitForExistence(timeout: 5), "The default prompt did not open full screen")
         assertRunning()
         back.tap()
-        XCTAssertTrue(waitForDisappearance(of: back), "Back must close the full-screen viewer")
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10), "Back must close the full-screen viewer")
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
         prompt.tap()
         XCTAssertTrue(back.waitForExistence(timeout: 5), "The viewer must open again")
         back.tap()
-        XCTAssertTrue(waitForDisappearance(of: back))
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10))
 
         assertCompactOppiBar(page: "agents-pi")
     }
@@ -59,9 +59,9 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(codemode.waitForExistence(timeout: 5))
         XCTAssertEqual(codemode.value as? String, "1", "Tools must open with Pi's loaded selection")
         codemode.tap()
-        XCTAssertTrue(waitFor(codemode.value as? String == "0"), "The pushed page must show its own change")
+        XCTAssertTrue(waitFor(codemode.value as? String == "0", timeout: 10), "The pushed page must show its own change")
         XCTAssertTrue(
-            waitFor(lastWrite.contains("PUT /server/resources/pi/default-tools")),
+            waitFor(lastWrite.contains("PUT /server/resources/pi/default-tools"), timeout: 10),
             "The change must save at once: \(lastWrite)"
         )
         assertRunning()
@@ -116,12 +116,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
             XCTAssertGreaterThan(pickerBar.frame.minY, detailBarTop + 10, "In regular width the picker is a sheet")
         }
         tapBarButton(app.buttons["agent.iconPicker.cancel"])
-        XCTAssertTrue(waitForDisappearance(of: pickerList), "Cancel must close the icon picker")
+        XCTAssertTrue(pickerList.waitForNonExistence(timeout: 10), "Cancel must close the icon picker")
         if !compactWidth {
             iconRow.tap()
             XCTAssertTrue(pickerList.waitForExistence(timeout: 5), "Icon picker did not reopen")
             dragToBottom(app.navigationBars["Agent Icon"])
-            XCTAssertTrue(waitForDisappearance(of: pickerList), "Swipe-down must close the icon picker")
+            XCTAssertTrue(pickerList.waitForNonExistence(timeout: 10), "Swipe-down must close the icon picker")
         }
         XCTAssertTrue(iconRow.waitForExistence(timeout: 5))
         iconRow.tap()
@@ -135,15 +135,15 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let symbolName = symbol.identifier.replacingOccurrences(of: "agent.iconPicker.symbol.", with: "")
         symbol.tap()
         tapBarButton(app.buttons["agent.iconPicker.save"])
-        XCTAssertTrue(waitForDisappearance(of: pickerList), "Save must close the icon picker")
+        XCTAssertTrue(pickerList.waitForNonExistence(timeout: 10), "Save must close the icon picker")
         XCTAssertTrue(
-            waitFor(lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains(symbolName)),
+            waitFor(lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains(symbolName), timeout: 10),
             "The picked icon must reach the server: \(lastWrite)"
         )
         // The fixture server answers with a fox emoji; the detail under the
         // full-screen picker on iPhone must show it afterwards.
         XCTAssertTrue(
-            waitFor((iconRow.value as? String) == "Emoji 🦊"),
+            waitFor((iconRow.value as? String) == "Emoji 🦊", timeout: 10),
             "The saved agent must reach the detail: \(String(describing: iconRow.value))"
         )
         assertRunning()
@@ -178,14 +178,14 @@ final class RouterSettingsModalsUITests: XCTestCase {
         tapBarButton(edit)
         XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 10), "The editor did not open")
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Edit Agent"]), "Cancel must close the editor")
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForNonExistence(timeout: 10), "Cancel must close the editor")
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Back must return to Agents")
 
         XCTAssertTrue(input.waitForExistence(timeout: 5), "The composer must be back")
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(
-            waitFor(!keyboard.exists || input.frame.maxY <= keyboard.frame.minY + 1),
+            waitFor(!keyboard.exists || input.frame.maxY <= keyboard.frame.minY + 1, timeout: 10),
             "The composer must sit above the keyboard or the keyboard be down: input \(input.frame), keyboard \(keyboard.exists ? keyboard.frame : .zero)"
         )
         // A keyboard left up must belong to the composer, so it can dismiss it.
@@ -215,12 +215,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
         attachScreenshot("guided-composer-model-picker")
         assertRunning()
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: models), "Cancel must close the model picker")
+        XCTAssertTrue(models.waitForNonExistence(timeout: 10), "Cancel must close the model picker")
 
         pill.tap()
         XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen")
         dragToBottom(models)
-        XCTAssertTrue(waitForDisappearance(of: models), "Swipe-down must close the model picker")
+        XCTAssertTrue(models.waitForNonExistence(timeout: 10), "Swipe-down must close the model picker")
         assertRunning()
     }
 
@@ -250,7 +250,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(hostField.waitForExistence(timeout: 5), "Add Host did not push the host form")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(waitForDisappearance(of: hostField), "Back must pop the host form")
+        XCTAssertTrue(hostField.waitForNonExistence(timeout: 10), "Back must pop the host form")
         XCTAssertTrue(add.waitForExistence(timeout: 5), "Back must return to the host list")
         assertRunning()
     }
@@ -345,11 +345,11 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Add MCP Server did not open in a navigation bar")
         attachScreenshot("mcp-add")
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Cancel must close Add MCP Server")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Cancel must close Add MCP Server")
         add.tap()
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Add MCP Server did not reopen")
         dragToBottom(sheet)
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Swipe-down must close Add MCP Server")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Swipe-down must close Add MCP Server")
 
         add.tap()
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Add MCP Server did not reopen after the swipe")
@@ -360,9 +360,9 @@ final class RouterSettingsModalsUITests: XCTestCase {
         url.tap()
         url.typeText("https://notes2.example.com/mcp")
         tapBarButton(app.buttons["mcp.add.save"])
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Add must close the sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Add must close the sheet")
         XCTAssertTrue(
-            waitFor(lastWrite.contains("POST /mcp/scopes/global/servers") && lastWrite.contains("\"name\":\"notes2\"")),
+            waitFor(lastWrite.contains("POST /mcp/scopes/global/servers") && lastWrite.contains("\"name\":\"notes2\""), timeout: 10),
             "The new server must reach the host: \(lastWrite)"
         )
         assertRunning()
@@ -384,12 +384,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
         url.tap()
         url.typeText("https://slow.example.com/mcp")
         tapBarButton(app.buttons["mcp.add.save"])
-        XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"slow\"")), "The add did not start: \(lastWrite)")
+        XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"slow\""), timeout: 10), "The add did not start: \(lastWrite)")
 
         dragToBottom(sheet)
         RunLoop.current.run(until: Date().addingTimeInterval(1))
         XCTAssertTrue(sheet.exists, "Swipe-down must not close the sheet while it saves")
-        XCTAssertTrue(waitForDisappearance(of: sheet, timeout: 20), "The finished add must close the sheet")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 20), "The finished add must close the sheet")
         assertRunning()
     }
 
@@ -407,7 +407,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(app.textFields["mcp.auth.callback"].waitForExistence(timeout: 5))
         attachScreenshot("mcp-sign-in")
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: signIn), "Close must close sign-in")
+        XCTAssertTrue(signIn.waitForNonExistence(timeout: 10), "Close must close sign-in")
         assertRunning()
 
         app.buttons["BackButton"].firstMatch.tap()
@@ -417,11 +417,11 @@ final class RouterSettingsModalsUITests: XCTestCase {
         resume.tap()
         XCTAssertTrue(signIn.waitForExistence(timeout: 5), "Continue Sign-In did not open from the list")
         dragToBottom(signIn)
-        XCTAssertTrue(waitForDisappearance(of: signIn), "Swipe-down must close sign-in")
+        XCTAssertTrue(signIn.waitForNonExistence(timeout: 10), "Swipe-down must close sign-in")
 
         app.buttons["mcp.auth.cancel"].tap()
         XCTAssertTrue(
-            waitFor(lastWrite.contains("POST /mcp/auth/flows/mcp-flow/cancel")),
+            waitFor(lastWrite.contains("POST /mcp/auth/flows/mcp-flow/cancel"), timeout: 10),
             "Cancel must reach the host: \(lastWrite)"
         )
         assertRunning()
@@ -436,7 +436,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["pairing.approval.deviceName"].label, "Chen's iPad")
         attachScreenshot("pairing-approval")
         dragToBottom(prompt)
-        XCTAssertTrue(waitForDisappearance(of: prompt), "Swipe-down must close the approval")
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 10), "Swipe-down must close the approval")
         assertRunning()
 
         launch(page: "pairing-approval")
@@ -445,7 +445,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         // the binding change dismisses it. (The deny request itself waits for
         // a ready server transport, which the fixture connection lacks.)
         app.buttons["pairing.approval.deny"].tap()
-        XCTAssertTrue(waitForDisappearance(of: prompt), "Deny must close the approval")
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 10), "Deny must close the approval")
         assertRunning()
     }
 
@@ -458,11 +458,11 @@ final class RouterSettingsModalsUITests: XCTestCase {
         manual.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Manual entry did not open in a navigation bar")
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: entry), "Cancel must close manual entry")
+        XCTAssertTrue(entry.waitForNonExistence(timeout: 10), "Cancel must close manual entry")
         manual.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Manual entry did not reopen")
         dragToBottom(entry)
-        XCTAssertTrue(waitForDisappearance(of: entry), "Swipe-down must close manual entry")
+        XCTAssertTrue(entry.waitForNonExistence(timeout: 10), "Swipe-down must close manual entry")
         assertRunning()
 
         // An unsigned link names no server identity, so it cannot pair: the
@@ -509,7 +509,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(tailscale.waitForExistence(timeout: 5), "Back must return to Tailscale")
 
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: tailscale), "Cancel must close the Tailscale sheet")
+        XCTAssertTrue(tailscale.waitForNonExistence(timeout: 10), "Cancel must close the Tailscale sheet")
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         assertRunning()
     }
@@ -531,7 +531,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         input.tap()
         XCTAssertTrue(model.waitForExistence(timeout: 5), "Focus must open the pills")
         input.typeText("Make it shorter")
-        XCTAssertTrue(waitFor(send.isEnabled), "Typing must enable Send")
+        XCTAssertTrue(waitFor(send.isEnabled, timeout: 10), "Typing must enable Send")
         attachScreenshot("\(page)-oppi-bar-expanded")
         assertRunning()
     }
@@ -545,15 +545,15 @@ final class RouterSettingsModalsUITests: XCTestCase {
         attachScreenshot(title)
         assertRunning()
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Cancel must close \(title)")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Cancel must close \(title)")
         opener()
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "\(title) did not reopen")
         dragToBottom(sheet)
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Swipe-down must close \(title)")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Swipe-down must close \(title)")
         opener()
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "\(title) did not reopen after the swipe")
         tapBarButton(cancelButton)
-        XCTAssertTrue(waitForDisappearance(of: sheet))
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
         assertRunning()
     }
 
@@ -567,15 +567,15 @@ final class RouterSettingsModalsUITests: XCTestCase {
         attachScreenshot("review-sheet")
         assertRunning()
         dismiss.tap()
-        XCTAssertTrue(waitForDisappearance(of: dismiss), "Its dismiss control must close the review sheet")
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 10), "Its dismiss control must close the review sheet")
         opener()
         XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "The review sheet did not reopen")
         dragToBottom(dismiss)
-        XCTAssertTrue(waitForDisappearance(of: dismiss), "Swipe-down must close the review sheet")
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 10), "Swipe-down must close the review sheet")
         opener()
         XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "The review sheet did not reopen after the swipe")
         dismiss.tap()
-        XCTAssertTrue(waitForDisappearance(of: dismiss))
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 10))
         assertRunning()
     }
 
@@ -587,24 +587,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
     }
 
     private func launch(page: String, writeDelay: Int = 0) {
-        app?.terminate()
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"]
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "settings-sweep"
-        app.launchEnvironment["SCREENSHOT_SWEEP_PAGE"] = page
-        app.launchEnvironment["SCREENSHOT_SWEEP_SHOWS_WRITES"] = "1"
-        app.launchEnvironment["SCREENSHOT_SWEEP_WRITE_DELAY"] = String(writeDelay)
-        app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
-        app.launch()
-        XCTAssertTrue(lastWriteElement.waitForExistence(timeout: 10), "Settings sweep harness did not appear")
-    }
-
-    private var lastWriteElement: XCUIElement {
-        app.staticTexts["settingsSweep.lastWrite"]
-    }
-
-    private var lastWrite: String {
-        lastWriteElement.label
+        launchSettingsSweep(page: page, showsWrites: true, writeDelay: writeDelay)
     }
 
     /// Swipe-down from `element` to the bottom of the screen. `swipeDown()`
@@ -625,23 +608,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
         element.tap()
     }
 
-    /// Waits default to 10 s: a loaded pool simulator can take several
-    /// seconds to finish a sheet's dismissal animation.
-    private func waitFor(_ condition: @autoclosure () -> Bool, timeout: TimeInterval = 10) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        return condition()
-    }
-
-    private func attachScreenshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
+    /// Waits default to 10 s in `waitFor`: a loaded pool simulator can take
+    /// several seconds to finish a sheet's dismissal animation.
 
     /// `Button(role: .cancel)` draws the system cancel control. Bar items can
     /// sit outside the navigation bar element: the iPhone Duo moves them to a
@@ -655,14 +623,5 @@ final class RouterSettingsModalsUITests: XCTestCase {
             "onboarding.cancel"
         ))
         return matches.element(boundBy: max(matches.count - 1, 0))
-    }
-
-    private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(app.state, .runningForeground, "The app must still be running", file: file, line: line)
-    }
-
-    private func waitForDisappearance(of element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
 }

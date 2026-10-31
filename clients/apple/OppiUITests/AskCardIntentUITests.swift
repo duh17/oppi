@@ -6,8 +6,8 @@ import XCTest
 /// Delay is the production `AskInlineAutoAdvanceController` with a parked wait.
 /// Tests register pending, tap the real competing control, then release.
 @MainActor
-final class AskCardIntentUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -115,13 +115,7 @@ final class AskCardIntentUITests: XCTestCase {
     }
 
     func testTallAskCardScrollsInsideCappedSlot() {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "ask-card-tall-scroll"
-        app.launch()
-
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
-        XCTAssertTrue(ready.waitForExistence(timeout: 8), "Tall Ask preview did not become ready")
+        launchPreview(screen: "ask-card-tall-scroll", readyTimeout: 8)
         let scroll = app.scrollViews["chat.ask.scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Ask slot scroll view missing")
         let last = app.descendants(matching: .any)["ask.option.omega"]
@@ -234,13 +228,7 @@ final class AskCardIntentUITests: XCTestCase {
     }
 
     private func launchIntentPreview() {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "ask-card-intent-regression"
-        app.launch()
-
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
-        XCTAssertTrue(ready.waitForExistence(timeout: 8), "Ask intent regression preview did not become ready")
+        launchPreview(screen: "ask-card-intent-regression", readyTimeout: 8)
         XCTAssertTrue(questionOne.waitForExistence(timeout: 5), "Question one should be visible")
     }
 

@@ -164,11 +164,7 @@ final class HarnessRootViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        addChild(content)
-        content.view.frame = view.bounds
-        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(content.view)
-        content.didMove(toParent: self)
+        PreviewHost.fill(self, with: content)
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
             controller.themeStore.followSystemAppearance(from: controller)
         }

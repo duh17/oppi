@@ -6,8 +6,8 @@ import XCTest
 /// `AppNavigation`, which only the shell mounts; the paired-server E2E drives
 /// that.
 @MainActor
-final class ServerExtensionsListUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -18,7 +18,7 @@ final class ServerExtensionsListUITests: XCTestCase {
     }
 
     func testCatalogSectionsAndRowsAreButtons() {
-        launch(page: "extensions")
+        launchSettingsSweep(page: "extensions")
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 10))
 
         let server = app.descendants(matching: .any)["serverCatalog.server.passive"]
@@ -38,13 +38,16 @@ final class ServerExtensionsListUITests: XCTestCase {
     }
 
     func testSearchFiltersAndShowsNoResults() {
-        launch(page: "extensions")
+        launchSettingsSweep(page: "extensions")
         let search = app.searchFields["Search extensions"]
         XCTAssertTrue(search.waitForExistence(timeout: 10), "The search bar did not render")
         search.tap()
         search.typeText("workflow")
         XCTAssertTrue(app.buttons["extensions.row.workflow"].waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForDisappearance(of: app.buttons["extensions.row.simplify"]), "Search must filter rows")
+        XCTAssertTrue(
+            app.buttons["extensions.row.simplify"].waitForNonExistence(timeout: 5),
+            "Search must filter rows"
+        )
         XCTAssertFalse(app.buttons["extensions.row.oppi-ask"].exists)
 
         search.clearAndTypeText("no-matching-extension")
@@ -60,7 +63,7 @@ final class ServerExtensionsListUITests: XCTestCase {
     }
 
     func testCachedCatalogShowsOfflineWarningOverRows() {
-        launch(page: "extensions-offline")
+        launchSettingsSweep(page: "extensions-offline")
         let warning = app.descendants(matching: .any)["extensions.cachedWarning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 10), "A failed sync over a cached catalog warns")
         XCTAssertTrue(warning.label.contains("Showing cached settings for mac-studio"))
@@ -69,7 +72,7 @@ final class ServerExtensionsListUITests: XCTestCase {
     }
 
     func testUnavailableCatalogShowsRetry() {
-        launch(page: "extensions-unavailable")
+        launchSettingsSweep(page: "extensions-unavailable")
         let retry = app.buttons["extensions.state"]
         XCTAssertTrue(retry.waitForExistence(timeout: 20), "A failed first load offers Retry")
         XCTAssertTrue(retry.label.localizedCaseInsensitiveContains("Couldn't Load Extensions"), "The row says what failed: \(retry.label)")
@@ -78,37 +81,10 @@ final class ServerExtensionsListUITests: XCTestCase {
     }
 
     func testCatalogWithoutPiExtensionsSaysSo() {
-        launch(page: "extensions-builtin-only")
+        launchSettingsSweep(page: "extensions-builtin-only")
         XCTAssertTrue(app.staticTexts["extensions.noPi"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["extensions.row.oppi-ask"].exists, "Built-in extensions still list")
         attachScreenshot("extensions-no-pi")
-    }
-
-    private func launch(page: String) {
-        app?.terminate()
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"]
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "settings-sweep"
-        app.launchEnvironment["SCREENSHOT_SWEEP_PAGE"] = page
-        app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
-        app.launch()
-        XCTAssertTrue(
-            app.descendants(matching: .any)["screenshot.ready"].waitForExistence(timeout: 10),
-            "Settings sweep harness did not appear"
-        )
-    }
-
-    private func waitForDisappearance(of element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-        let gone = NSPredicate(format: "exists == false")
-        let expectation = XCTNSPredicateExpectation(predicate: gone, object: element)
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    private func attachScreenshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 }
 

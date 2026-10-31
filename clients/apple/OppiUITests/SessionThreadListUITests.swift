@@ -3,8 +3,8 @@ import XCTest
 /// An open thread in the real All Sessions list over fixture sessions (`SCREENSHOT_SCREEN=router-modal-sites`,
 /// site `inbox-threads`): live members list first, and stopped members fold behind one "N Stopped" row.
 @MainActor
-final class SessionThreadListUITests: XCTestCase {
-    private var app: XCUIApplication!
+final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -14,14 +14,14 @@ final class SessionThreadListUITests: XCTestCase {
     }
 
     private func launch(environment: [String: String] = [:]) {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"]
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "router-modal-sites"
-        app.launchEnvironment["SCREENSHOT_MODAL_SITE"] = "inbox-threads"
-        app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
-        for (key, value) in environment { app.launchEnvironment[key] = value }
-        app.launch()
-        XCTAssertEqual(app.wait(for: .runningForeground, timeout: 10), true)
+        launchPreview(
+            screen: "router-modal-sites",
+            environment: [
+                "SCREENSHOT_MODAL_SITE": "inbox-threads",
+                "SCREENSHOT_COLOR_SCHEME": "dark",
+            ].merging(environment) { _, new in new },
+            ready: nil
+        )
     }
 
     private func waitForValue(_ element: XCUIElement, _ value: String, timeout: TimeInterval = 5) -> Bool {
@@ -37,11 +37,6 @@ final class SessionThreadListUITests: XCTestCase {
             let end = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
-    }
-
-    private func waitForNonExistence(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     /// Lets an open or close animation finish before a frame is read.
@@ -97,10 +92,12 @@ final class SessionThreadListUITests: XCTestCase {
         )
     }
 
-    /// Live members (an idle child from another workspace, then a working child) list in the list's
-    /// own order before the fold; the finished child and its own child sit behind it until it is opened, indented
-    /// under their listed parent.
-    func testOpenThreadListsLiveMembersFirstAndFoldsStoppedOnesBehindOneRow() {
+    /// The two claims the paired-server E2E
+    /// (`SessionThreadsE2ETests.testThreadStripExpandsLiveMembersFirstAndFoldsStoppedOnesBehindOneRow`)
+    /// cannot make: the real list's own order puts Your Turn before Working, and closing the
+    /// fold keeps the live members. The E2E walks the rest of the journey (live members first,
+    /// the stopped ones folded and indented behind one row) against a live server.
+    func testOpenThreadListsYourTurnBeforeWorkingAndClosingTheFoldKeepsLiveMembers() {
         launch()
         let strip = app.buttons["thread.nav.thread-root"]
         XCTAssertTrue(strip.waitForExistence(timeout: 15), "Thread strip missing")
@@ -109,33 +106,21 @@ final class SessionThreadListUITests: XCTestCase {
 
         let working = app.buttons["session.nav.child-working"]
         let idle = app.buttons["session.nav.child-kypu"]
-        let fold = app.buttons["thread.stopped.thread-root"]
         XCTAssertTrue(working.waitForExistence(timeout: 10), "The working member should list")
         XCTAssertTrue(idle.exists, "The idle member should list")
-        XCTAssertTrue(fold.exists, "The stopped members should fold behind one row")
-        XCTAssertEqual(fold.label, "2 Stopped")
-        XCTAssertEqual(fold.value as? String, "Collapsed")
         XCTAssertLessThan(idle.frame.minY, working.frame.minY, "Your Turn lists before Working, as the list does")
-        XCTAssertLessThan(working.frame.minY, fold.frame.minY, "The fold row ends the thread")
-        XCTAssertFalse(app.buttons["session.nav.child-done"].exists, "A stopped member stays folded")
 
+        let fold = app.buttons["thread.stopped.thread-root"]
         scrollClearOfBottomBar(fold)
         fold.tap()
         XCTAssertTrue(waitForValue(fold, "Expanded"))
         let stopped = app.buttons["session.nav.child-done"]
-        let grandchild = app.buttons["session.nav.grandchild"]
         XCTAssertTrue(stopped.waitForExistence(timeout: 5), "Opening the fold should list the stopped member")
-        scrollClearOfBottomBar(grandchild)
-        XCTAssertTrue(grandchild.exists && stopped.exists && fold.exists, "The fold's members list right under it")
-        XCTAssertGreaterThan(stopped.frame.minY, fold.frame.minY)
-        XCTAssertGreaterThan(grandchild.frame.minY, stopped.frame.minY, "A child lists under its parent")
-        XCTAssertGreaterThan(grandchild.frame.minX, stopped.frame.minX + 8, "A child is indented under its parent")
 
-        XCTAssertTrue(fold.exists)
         scrollClearOfBottomBar(fold)
         fold.tap()
         XCTAssertTrue(waitForValue(fold, "Collapsed"))
-        XCTAssertTrue(waitForNonExistence(stopped), "Closing the fold hides the stopped members")
+        XCTAssertTrue(stopped.waitForNonExistence(timeout: 5), "Closing the fold hides the stopped members")
         XCTAssertTrue(working.exists, "Closing the fold keeps the live members")
     }
 
@@ -162,30 +147,6 @@ final class SessionThreadListUITests: XCTestCase {
         launch(environment: ["SCREENSHOT_LIST_FILLER": "25"])
         XCTAssertTrue(app.buttons["session.nav.filler-24"].waitForExistence(timeout: 15), "Filler sessions missing")
         XCTAssertFalse(app.buttons["session.nav.thread-root"].exists, "The root should be below the first screen")
-    }
-
-    /// The strip says how many members are in each state, in the list's words and the strip's order,
-    /// with the root left out and zero counts omitted; "Stopped" replaces the old "finished".
-    func testStripCountsMembersInTheListsWords() {
-        launch()
-        let small = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(small.waitForExistence(timeout: 15), "Thread strip missing")
-        XCTAssertTrue(small.label.contains("Thread with 4 child sessions, 1 working \u{00B7} 1 idle \u{00B7} 2 stopped"), small.label)
-        XCTAssertFalse(small.label.contains("finished"), small.label)
-        app.terminate()
-
-        launch(environment: [
-            "SCREENSHOT_THREAD_STOPPED_COUNT": "100",
-            "SCREENSHOT_THREAD_WORKING_COUNT": "14",
-            "SCREENSHOT_THREAD_BLOCKED_COUNT": "2",
-        ])
-        let big = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(big.waitForExistence(timeout: 15), "Thread strip missing")
-        XCTAssertTrue(
-            big.label.contains("Thread with 120 child sessions, 15 working \u{00B7} 2 need you \u{00B7} 1 idle \u{00B7} 102 stopped"),
-            big.label
-        )
-        XCTAssertEqual(big.value as? String, "Collapsed")
     }
 
     /// The reported case: 100 day-old stopped workers no longer push the live members off the first screen.
