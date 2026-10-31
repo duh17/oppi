@@ -513,7 +513,14 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                         // document, and keeps the Agent's append/replace mode.
                         subject: agent.map { .agentInstructions(agentId: $0.id) } ?? .snapshot,
                         agentInstructionMode: agent?.definition.instructions?.mode ?? .append,
-                        connection: connection
+                        connection: connection,
+                        // After an edit the reader shows the whole definition again,
+                        // read from the Agent the server now holds.
+                        refreshDocument: { [weak self] in
+                            guard let self, let id = agent?.id,
+                                  let fresh = try? await connection.apiClient?.getAgent(id) else { return nil }
+                            return self.definitionMarkdown(fresh)
+                        }
                     )
                 }
             }

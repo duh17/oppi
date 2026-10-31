@@ -14,13 +14,9 @@ enum RecordVersionConflict {
 
     static func isVersionConflict(_ error: Error) -> Bool {
         guard let apiError = error as? APIError else { return false }
-        switch apiError {
-        case .codedServer(let status, _, let code):
-            return status == 409 && (code == "AGENT_VERSION_CONFLICT" || code == "SCHEDULE_VERSION_CONFLICT")
-        case .server(let status, _):
-            return status == 409
-        case .invalidResponse:
-            return false
-        }
+        guard case .codedServer(let status, _, let code) = apiError, status == 409 else { return false }
+        // A plain 409 is another refusal (an ambiguous name, say): only the
+        // server's own conflict code means someone else wrote the record.
+        return code == "AGENT_VERSION_CONFLICT" || code == "SCHEDULE_VERSION_CONFLICT"
     }
 }

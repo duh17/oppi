@@ -590,51 +590,82 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 contributedCommands: ["/workflow"]
             )),
             "/agents": json(Agents(agents: [agentSummary])),
-            "/agents/\(agent.id)": json(AgentBody(agent: agent)),
-            // The saved icon comes back different from the fixture's, so the
-            // detail visibly takes the server's answer.
-            "PATCH /agents/\(agent.id)": json(AgentBody(agent: {
-                var saved = agent
-                saved.icon = .emoji("🦊")
-                saved.definition.icon = .emoji("🦊")
-                return saved
-            }())),
             "/schedules": json(Schedules(schedules: [scheduleSummary])),
-            "/schedules/\(schedule.id)": json(ScheduleBody(schedule: schedule)),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
             "/servers/github/login": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
-        // A save answers with the record at its next version and the text the
-        // request carried, as the server does: the editor sees Saved and the
-        // screen behind it the change. The saved Agent keeps the fox the icon
+        // A record's reads and writes answer from one state, so a save is what
+        // the next read shows: the editor's version, the reader's definition, and
+        // the detail behind it all follow. The saved Agent keeps the fox the icon
         // capture looks for.
-        SettingsSweepFixtureURLProtocol.patchHandler = { path, body in
+        final class Records: @unchecked Sendable {
+            var agent: StoredAgentDefinition
+            var schedule: AgentSchedule
+
+            init(agent: StoredAgentDefinition, schedule: AgentSchedule) {
+                self.agent = agent
+                self.schedule = schedule
+            }
+        }
+        let records = Records(agent: agent, schedule: schedule)
+        SettingsSweepFixtureURLProtocol.recordHandler = { method, path, body in
             let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
             if path == "/agents/\(agent.id)" {
-                var saved = agent
-                if let instructions = object["instructions"] as? [String: Any] {
-                    saved.definition.instructions = AgentInstructions(
-                        mode: (instructions["mode"] as? String) == "replace" ? .replace : .append,
-                        text: instructions["text"] as? String ?? ""
-                    )
-                } else if object.keys.contains("instructions") {
-                    saved.definition.instructions = nil
+                switch method {
+                case "GET":
+                    return json(AgentBody(agent: records.agent))
+                case "PATCH":
+                    var saved = records.agent
+                    if let instructions = object["instructions"] as? [String: Any] {
+                        saved.definition.instructions = AgentInstructions(
+                            mode: (instructions["mode"] as? String) == "replace" ? .replace : .append,
+                            text: instructions["text"] as? String ?? ""
+                        )
+                    } else if object.keys.contains("instructions") {
+                        saved.definition.instructions = nil
+                    }
+                    saved.icon = .emoji("🦊")
+                    saved.definition.icon = .emoji("🦊")
+                    saved.version = records.agent.version + 1
+                    records.agent = saved
+                    return json(AgentBody(agent: saved))
+                default:
+                    return nil
                 }
-                saved.icon = .emoji("🦊")
-                saved.definition.icon = .emoji("🦊")
-                saved.version = agent.version + 1
-                return json(AgentBody(agent: saved))
             }
             if path == "/schedules/\(schedule.id)" {
-                var saved = scheduleSummary
-                saved.version = schedule.version + 1
-                if let action = object["action"] as? [String: Any],
-                   let prompt = action["prompt"] as? String {
-                    saved.action.promptChars = prompt.count
+                switch method {
+                case "GET":
+                    return json(ScheduleBody(schedule: records.schedule))
+                case "PATCH":
+                    if case .newSession(let workspaceId, let prompt, let agentId, let model, let thinkingLevel, let worktreeId, let name) = records.schedule.action,
+                       let action = object["action"] as? [String: Any],
+                       let newPrompt = action["prompt"] as? String {
+                        records.schedule.action = .newSession(
+                            workspaceId: workspaceId,
+                            prompt: newPrompt,
+                            agentId: agentId,
+                            model: model,
+                            thinkingLevel: thinkingLevel,
+                            worktreeId: worktreeId,
+                            name: name
+                        )
+                        _ = prompt
+                    }
+                    records.schedule.version = (records.schedule.version ?? 0) + 1
+                    records.schedule.updatedAt = Date()
+                    var saved = scheduleSummary
+                    saved.version = records.schedule.version
+                    saved.updatedAt = records.schedule.updatedAt
+                    if case .newSession(_, let prompt, _, _, _, _, _) = records.schedule.action {
+                        saved.action.promptChars = prompt.count
+                    }
+                    return json(ScheduleSummaryBody(schedule: saved))
+                default:
+                    return nil
                 }
-                return json(ScheduleSummaryBody(schedule: saved))
             }
             return nil
         }
@@ -678,9 +709,9 @@ final class SettingsSweepWrites {
 /// `"METHOD /path"` key answers that method first. Anything else is a 404.
 final class SettingsSweepFixtureURLProtocol: URLProtocol {
     nonisolated(unsafe) static var routes: [String: Data] = [:]
-    /// Answers a write from its own body (a saved record at its next version).
-    /// Nil falls through to `routes`.
-    nonisolated(unsafe) static var patchHandler: ((String, Data) -> Data?)?
+    /// Answers a record's reads and writes from the state its writes change, so
+    /// a save is what the next read shows. Nil falls through to `routes`.
+    nonisolated(unsafe) static var recordHandler: ((_ method: String, _ path: String, _ body: Data) -> Data?)?
     /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
     private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
@@ -721,9 +752,8 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
         let methodPrefix = "\(request.httpMethod ?? "GET") "
         // Only a write asks the handler: a read answers from `routes`, or a
         // record's read would come back as the write's summary shape.
-        if request.httpMethod != "GET",
-           let patchHandler = Self.patchHandler,
-           let answered = patchHandler(path, Self.requestBody(of: request)) {
+        if let recordHandler = Self.recordHandler,
+           let answered = recordHandler(request.httpMethod ?? "GET", path, Self.requestBody(of: request)) {
             let response = HTTPURLResponse(
                 url: request.url ?? URL(fileURLWithPath: "/"),
                 statusCode: 200,

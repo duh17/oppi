@@ -50,12 +50,12 @@ struct DocumentEditOwnerTests {
 
     /// The transport a test never gets to: the owner only reads here.
     private var idleTransport: WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent })
+        WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _ in .notSent })
     }
 
     private var savedTransport: WorkspaceFileEditTransport {
         let saved = tag("b")
-        return WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .saved(etag: saved) })
+        return WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _ in .saved(etag: saved) })
     }
 
     /// Counts the tagged reads, so a test can prove the owner never asks a
@@ -126,11 +126,13 @@ struct DocumentEditOwnerTests {
         let transport = transport ?? idleTransport
         let backend = DocumentEditOwner.Backend(
             capability: { _ in capability },
-            read: { _ in
-                await readSpy?.note()
-                return outcome ?? .snapshot(snapshot)
-            },
-            transport: transport
+            transport: WorkspaceFileEditTransport(
+                read: { _ in
+                    await readSpy?.note()
+                    return outcome ?? .snapshot(snapshot)
+                },
+                write: { identity, request in await transport.write(identity, request) }
+            )
         )
         return DocumentEditOwner(
             subject: subject,
@@ -277,11 +279,13 @@ struct DocumentEditOwnerTests {
         let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("A".utf8), etag: "\"sha256-a\"")
         let backend = DocumentEditOwner.Backend(
             capability: { _ in ServerInfo.WorkspaceFileEditingCapability(version: 1, maxBytes: 1_024) },
-            read: { _ in
-                await gate.enter()
-                return .snapshot(snapshot)
-            },
-            transport: idleTransport
+            transport: WorkspaceFileEditTransport(
+                read: { _ in
+                    await gate.enter()
+                    return .snapshot(snapshot)
+                },
+                write: { _, _ in .notSent }
+            )
         )
         let owner = DocumentEditOwner(
             subject: workspaceSubject(path: "a.md"),
@@ -352,14 +356,14 @@ struct DocumentEditOwnerTests {
             bytes: Data("kept after delete".utf8),
             updatedAt: Date()
         ))
-        var shown: [String] = []
+        var finished = 0
         let owner = owner(
             subject: workspaceSubject(),
             capability: capability,
             outcome: .missing,
             transport: savedTransport,
             draftStore: store,
-            handlers: .init(didShowText: { shown.append($0) })
+            handlers: .init(didFinishEditing: { finished += 1 })
         )
 
         #expect(await owner.read() == .deletedDraft("kept after delete"))
@@ -367,7 +371,7 @@ struct DocumentEditOwnerTests {
         #expect(owner.session?.status == .deleted)
 
         owner.endEditing()
-        #expect(shown == ["kept after delete"])
+        #expect(finished == 1, "the reader is told the editor closed")
         #expect(identifiers(owner) == ["workspace-file-editor.edit"], "a deleted file's kept draft has a pencil")
 
         owner.beginEditing()

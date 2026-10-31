@@ -245,7 +245,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(pencil.waitForExistence(timeout: 10), "The schedule prompt reader has no pencil")
         XCTAssertTrue(app.buttons["document.edit.more"].exists, "The prompt reader keeps Edit with Session beside the pencil")
         tapBarButton(app.buttons["fullScreen.code.close"])
-        XCTAssertTrue(waitForDisappearance(of: pencil), "Its dismiss control must close the review sheet")
+        XCTAssertTrue(pencil.waitForNonExistence(timeout: 10), "Its dismiss control must close the review sheet")
 
         assertCompactOppiBar(page: "schedule-detail")
     }
@@ -278,20 +278,39 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("agent-prompt-editor")
         assertRunning()
 
+        // Only the mode changes: that alone must reach the server, with the text
+        // the editor opened on.
         mode.buttons["Replace"].tap()
+        XCTAssertTrue(
+            waitFor(
+                lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("\"mode\":\"replace\""),
+                timeout: 15
+            ),
+            "A mode change alone must save through the Agent: \(lastWrite)"
+        )
+        XCTAssertTrue(
+            lastWrite.contains("Review the change against the HIG."),
+            "The mode's save carries the prompt it opened on: \(lastWrite)"
+        )
+
+        // Typing saves the text too.
         text.tap()
         text.typeText(" Ship it.")
         XCTAssertTrue(
-            waitFor(lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("Ship it")),
+            waitFor(
+                lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("Ship it"),
+                timeout: 15
+            ),
             "The edit must save through the Agent: \(lastWrite)"
-        )
-        XCTAssertTrue(
-            lastWrite.contains("\"mode\":\"replace\""),
-            "The mode control's choice must be what saves: \(lastWrite)"
         )
 
         tapBarButton(app.buttons["workspace-file-editor.done"])
         XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        // The reader shows the whole definition again, not the prompt alone.
+        let definitionField = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Pi Session Defaults", "Pi Session Defaults"))
+            .firstMatch
+        XCTAssertTrue(definitionField.waitForExistence(timeout: 10), "The reader must still show the Agent's definition")
         let saved = app.descendants(matching: .any)
             .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Ship it.", "Ship it."))
             .firstMatch

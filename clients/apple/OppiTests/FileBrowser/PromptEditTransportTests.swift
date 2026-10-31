@@ -140,8 +140,22 @@ struct PromptEditTransportTests {
         )
     }
 
-    private func agentTransport(_ client: APIClient, mode: AgentInstructionMode = .append) -> WorkspaceFileEditTransport {
-        .agentInstructions(api: client, agentId: "agent-1", mode: { mode })
+    private func agentTransport(_ client: APIClient) -> WorkspaceFileEditTransport {
+        .agentInstructions(api: client, agentId: "agent-1")
+    }
+
+    private func write(
+        _ transport: WorkspaceFileEditTransport,
+        _ identity: WorkspaceFileEditIdentity,
+        _ text: String,
+        _ ifMatch: String,
+        mode: AgentInstructionMode? = nil
+    ) async -> WorkspaceFileWriteOutcome {
+        await transport.write(identity, WorkspaceFileWriteRequest(
+            bytes: Data(text.utf8),
+            ifMatch: ifMatch,
+            instructionMode: mode
+        ))
     }
 
     // MARK: Agent prompt
@@ -178,8 +192,13 @@ struct PromptEditTransportTests {
         defer { PromptEditURLProtocol.reset() }
 
         let identity = WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1")
-        let outcome = await agentTransport(client, mode: .replace)
-            .write(identity, Data("Review the branch.".utf8), "2")
+        let outcome = await write(
+            agentTransport(client),
+            identity,
+            "Review the branch.",
+            "2",
+            mode: .replace
+        )
 
         #expect(outcome == .saved(etag: "3"))
         let recorded = try #require(PromptEditURLProtocol.last)
@@ -202,7 +221,7 @@ struct PromptEditTransportTests {
         defer { PromptEditURLProtocol.reset() }
 
         let identity = WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1")
-        let outcome = await agentTransport(client).write(identity, Data(), "2")
+        let outcome = await write(agentTransport(client), identity, "", "2")
 
         #expect(outcome == .saved(etag: "3"))
         let body = try #require(
@@ -218,8 +237,12 @@ struct PromptEditTransportTests {
         }
         defer { PromptEditURLProtocol.reset() }
 
-        let outcome = await agentTransport(client)
-            .write(WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1"), Data("x".utf8), "2")
+        let outcome = await write(
+            agentTransport(client),
+            WorkspaceFileEditIdentity(serverId: "s1", agentId: "agent-1"),
+            "x",
+            "2"
+        )
 
         #expect(outcome == .stale)
     }
@@ -231,10 +254,10 @@ struct PromptEditTransportTests {
 
         PromptEditURLProtocol.handler = { _ in (404, Data(#"{"error":"Agent not found"}"#.utf8)) }
         #expect(await agentTransport(client).read(identity) == .missing)
-        #expect(await agentTransport(client).write(identity, Data("x".utf8), "2") == .missing)
+        #expect(await write(agentTransport(client), identity, "x", "2") == .missing)
 
         PromptEditURLProtocol.handler = { _ in (400, Data(#"{"error":"instructions.text must not be empty"}"#.utf8)) }
-        if case .rejected(let status, let message) = await agentTransport(client).write(identity, Data("x".utf8), "2") {
+        if case .rejected(let status, let message) = await write(agentTransport(client), identity, "x", "2") {
             #expect(status == 400)
             #expect(message.contains("must not be empty"))
         } else {
@@ -245,7 +268,7 @@ struct PromptEditTransportTests {
         #expect(await agentTransport(client).read(identity) == .failed)
 
         PromptEditURLProtocol.handler = { _ in throw URLError(.cannotConnectToHost) }
-        #expect(await agentTransport(client).write(identity, Data("x".utf8), "2") == .notSent)
+        #expect(await write(agentTransport(client), identity, "x", "2") == .notSent)
     }
 
     // MARK: Schedule prompt
@@ -288,9 +311,10 @@ struct PromptEditTransportTests {
         defer { PromptEditURLProtocol.reset() }
 
         let transport = WorkspaceFileEditTransport.schedulePrompt(api: client, scheduleId: "schedule-1")
-        let outcome = await transport.write(
+        let outcome = await write(
+            transport,
             WorkspaceFileEditIdentity(serverId: "s1", scheduleId: "schedule-1"),
-            Data("A newer prompt".utf8),
+            "A newer prompt",
             "4"
         )
 
@@ -311,8 +335,12 @@ struct PromptEditTransportTests {
         }
         defer { PromptEditURLProtocol.reset() }
 
-        let outcome = await WorkspaceFileEditTransport.schedulePrompt(api: client, scheduleId: "schedule-1")
-            .write(WorkspaceFileEditIdentity(serverId: "s1", scheduleId: "schedule-1"), Data("x".utf8), "4")
+        let outcome = await write(
+            WorkspaceFileEditTransport.schedulePrompt(api: client, scheduleId: "schedule-1"),
+            WorkspaceFileEditIdentity(serverId: "s1", scheduleId: "schedule-1"),
+            "x",
+            "4"
+        )
 
         #expect(outcome == .stale)
     }

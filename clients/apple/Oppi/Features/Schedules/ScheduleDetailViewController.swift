@@ -537,7 +537,14 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                         // The pencil edits the schedule's own prompt, saved against
                         // the version this screen read.
                         subject: .schedulePrompt(scheduleId: schedule.id),
-                        connection: connection
+                        connection: connection,
+                        // After an edit the reader shows the schedule's prompt as the
+                        // server now holds it.
+                        refreshDocument: {
+                            guard let fresh = try? await connection.apiClient?.getAgentSchedule(schedule.id)
+                            else { return nil }
+                            return SchedulePresentation.prompt(in: fresh.action)
+                        }
                     )
                 }
             }
@@ -628,6 +635,9 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                     current.status = updated.status
                     current.updatedAt = updated.updatedAt
                     current.archivedAt = updated.archivedAt
+                    // A pause leaves the definition's version alone, but keep it in
+                    // step if the server's answer carries a different one.
+                    if let version = updated.version { current.version = version }
                     schedule = current
                 }
                 onChanged(updated)

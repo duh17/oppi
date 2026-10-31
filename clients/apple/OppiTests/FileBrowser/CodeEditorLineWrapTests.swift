@@ -25,7 +25,7 @@ struct CodeEditorLineWrapTests {
             identity: WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md"),
             disk: WorkspaceFileDiskSnapshot(bytes: Data(Self.text.utf8), etag: "\"sha256-\(String(repeating: "a", count: 64))\""),
             maxBytes: 100_000,
-            transport: WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent }),
+            transport: WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _ in .notSent }),
             draftStore: WorkspaceFileDraftStore(
                 directory: FileManager.default.temporaryDirectory.appendingPathComponent("editor-wrap-\(UUID().uuidString)")
             ),

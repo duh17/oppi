@@ -4,67 +4,71 @@ import UIKit
 ///
 /// The owner answers the three questions every reader used to answer for
 /// itself: can these bytes open our editor (a pencil), is there a session to
-/// offer beside it (a "…" holding Edit with Session), and what does the reader
-/// show while an editor is open (the tagged read, a recovered draft, the
+/// offer beside it (a "…" holding Edit with Session), and what the reader
+/// shows while an editor is open (the tagged read, a recovered draft, the
 /// conflict banner). The pencil appears only when the subject resolves to an
 /// edit identity, the server advertises editing for it, and the bytes are a
 /// tagged UTF-8 text read within the server's limit — or when a session already
-/// exists, which is how a draft kept for a deleted file opens again. A screen
-/// shows `barItems` and hosts `editorPage`.
+/// exists, which is how a draft kept for a deleted file opens again.
+///
+/// It also owns the editor's presentation: a screen that embeds the page (the
+/// file viewer) hosts `makeEditorPage`, and a reader with no editor of its own
+/// asks the owner to present it (`presentEditorIfNeeded(from:)`) and the owner
+/// closes it when `isEditing` ends.
 ///
 /// Saves stay with `WorkspaceFileEditSession` and the `WorkspaceFileWriteOutcome`
-/// contract; the owner only picks the transport, so a document served by
-/// something other than `/files/current` (an Agent's prompt) plugs into the
-/// same outcomes.
+/// contract; the owner picks the backend, so a document served by something
+/// other than `/files/current` (an Agent's or a schedule's prompt) plugs into
+/// the same outcomes.
 @MainActor
 final class DocumentEditOwner {
     /// Reads and writes one document. The live backend is the paired server's
-    /// `/files/current`; tests and previews script the answers. `read` answers
-    /// with the transport's own outcome, so a missing file and an unreachable
-    /// server are the API layer's words, not a second mapping here.
+    /// `/files/current`, or the record's own route; tests and previews script
+    /// the answers.
     struct Backend {
         /// Nil when the server does not edit this owner's files.
         var capability: (WorkspaceFileEditIdentity.Owner) async -> ServerInfo.WorkspaceFileEditingCapability?
-        var read: (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
         var transport: WorkspaceFileEditTransport
+        /// A record's mode as it is on the server now, for a document that just
+        /// took the disk version; nil for a file.
+        var recordMode: (@Sendable () async -> AgentInstructionMode?)?
 
         static func api(_ api: APIClient) -> Backend {
             Backend(
                 // The API client is an actor: the capability is its answer, not ours.
                 capability: { await api.fileEditingCapability(for: $0) },
-                read: { await api.readFileForEditingOutcome($0) },
                 transport: .api(api)
             )
         }
 
-        /// An Agent's prompt: its own route, its own version tag. The server
-        /// advertises no file-editing capability for a record, so the prompt's
-        /// limit is this client's (the server has none).
-        static func agentInstructions(
-            api: APIClient,
-            agentId: String,
-            mode: @escaping @Sendable () async -> AgentInstructionMode
+        /// A record's prompt: its own route and version tag, and no file-editing
+        /// capability to check (the server has none), so its limit is this
+        /// client's.
+        static func record(
+            transport: WorkspaceFileEditTransport,
+            recordMode: (@Sendable () async -> AgentInstructionMode?)? = nil
         ) -> Backend {
-            let transport = WorkspaceFileEditTransport.agentInstructions(
-                api: api,
-                agentId: agentId,
-                mode: mode
-            )
-            return Backend(
+            Backend(
                 capability: { _ in recordPromptCapability },
-                read: { await transport.read($0) },
-                transport: transport
+                transport: transport,
+                recordMode: recordMode
             )
         }
 
-        /// A Schedule's prompt, read and written with the schedule's version.
-        static func schedulePrompt(api: APIClient, scheduleId: String) -> Backend {
-            let transport = WorkspaceFileEditTransport.schedulePrompt(api: api, scheduleId: scheduleId)
-            return Backend(
-                capability: { _ in recordPromptCapability },
-                read: { await transport.read($0) },
-                transport: transport
-            )
+        /// What serves this subject on `api`: a record's own route for a prompt,
+        /// `/files/current` for a file. One rule, so a reader never picks.
+        static func make(for subject: DocumentEditSubject, api: APIClient) -> Backend {
+            switch subject {
+            case .agentInstructions(let agentId):
+                return .record(
+                    transport: .agentInstructions(api: api, agentId: agentId),
+                    recordMode: { await WorkspaceFileEditTransport.agentPromptMode(api: api, agentId: agentId) }
+                )
+            case .schedulePrompt(let scheduleId):
+                return .record(transport: .schedulePrompt(api: api, scheduleId: scheduleId))
+            case .file, .snapshot:
+                return .api(api)
+            }
         }
 
         /// What a reader may type into a record's prompt. A prompt is text a
@@ -89,8 +93,9 @@ final class DocumentEditOwner {
     /// What the screen offers the owner beyond its subject.
     @MainActor
     struct Handlers {
-        /// The reader shows this text: Done, or Use Disk Version.
-        var didShowText: (String) -> Void = { _ in }
+        /// The editor closed: the screen shows the document again, read fresh
+        /// when it can (a prompt's reader shows its whole definition).
+        var didFinishEditing: () -> Void = {}
         /// The file is gone and the draft was discarded: reload it.
         var didReload: () -> Void = {}
         /// The reader a Preview shows, built over the editor's draft.
@@ -104,11 +109,10 @@ final class DocumentEditOwner {
     /// The server a record's prompt lives on, read when the owner reads: a file
     /// subject carries its own, and a reader's server can arrive after the owner.
     private let serverIdSource: @MainActor () -> String?
-    /// The Agent prompt's append/replace mode: what the editor's control shows
-    /// and what the next save sends. A new prompt appends to Pi's own.
-    private(set) var agentInstructionMode: AgentInstructionMode
-
+    /// The server's client, read when the owner reads for the same reason.
     private let backendSource: @MainActor () -> Backend?
+    /// The mode a session starts from, before any session exists.
+    private var startingInstructionMode: AgentInstructionMode
     /// Construction context for the editor page's conflict sheet.
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     let draftStore: WorkspaceFileDraftStore
@@ -136,6 +140,8 @@ final class DocumentEditOwner {
     }
     /// The open editor, made on first use and reused until editing ends.
     private(set) var editorPage: DocumentEditEditorPage?
+    /// The page this owner presented over a reader, while it is up.
+    private weak var presentedEditor: DocumentEditEditorPage?
 
     private var cachedOffersEditor: Bool?
     private var cachedBarItems: [UIBarButtonItem] = []
@@ -154,7 +160,7 @@ final class DocumentEditOwner {
     ) {
         self.subject = subject
         self.serverIdSource = serverId
-        self.agentInstructionMode = agentInstructionMode
+        self.startingInstructionMode = agentInstructionMode
         self.agentAction = agentAction
         self.backendSource = backend
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
@@ -162,6 +168,21 @@ final class DocumentEditOwner {
         self.registry = registry
         self.handlers = handlers
         self.onChange = onChange
+    }
+
+    /// The mode the editor's control shows and the next save sends: the open
+    /// session's, else the one a session will start from.
+    var agentInstructionMode: AgentInstructionMode {
+        session?.instructionMode ?? startingInstructionMode
+    }
+
+    /// The mode control's one writer. A mode change is a change: the session
+    /// saves it at once, and keeps it with the draft until it does.
+    func setAgentInstructionMode(_ mode: AgentInstructionMode) {
+        guard agentInstructionMode != mode else { return }
+        startingInstructionMode = mode
+        session?.setInstructionMode(mode)
+        onChange()
     }
 
     // MARK: The reader
@@ -196,7 +217,7 @@ final class DocumentEditOwner {
         guard generation == self.generation else { return .ownRead }
         self.identity = identity
         maxBytes = capability.maxBytes
-        switch await backend.read(identity) {
+        switch await backend.transport.read(identity) {
         case .snapshot(let snapshot):
             guard generation == self.generation else { return .ownRead }
             base = Self.editableBase(snapshot, maxBytes: capability.maxBytes)
@@ -265,6 +286,7 @@ final class DocumentEditOwner {
                   identity: identity,
                   disk: snapshot,
                   maxBytes: maxBytes,
+                  instructionMode: startingInstructionMode,
                   transport: backend.transport,
                   draftStore: draftStore
               ) else { return nil }
@@ -352,6 +374,7 @@ final class DocumentEditOwner {
                       identity: identity,
                       disk: base,
                       maxBytes: maxBytes,
+                      instructionMode: startingInstructionMode,
                       transport: backend.transport,
                       draftStore: draftStore
                   ) {
@@ -363,21 +386,61 @@ final class DocumentEditOwner {
         adopt(session)
     }
 
-    /// Done: the reader shows the current draft. The editor teardown
-    /// checkpoints and starts the save; the network is not awaited.
+    /// Done: the editor hands its buffer back and starts the save (the network
+    /// is not awaited), and the page goes because `isEditing` ended.
     func endEditing() {
         guard let session else {
             isEditing = false
+            closeEditor()
             onChange()
             return
         }
         // Teardown first, so the session holds the final buffer.
         editorPage?.finishEditing()
-        let text = session.currentText
-        isEditing = false
         editorPage = nil
-        handlers.didShowText(text)
+        isEditing = false
+        closeEditor()
+        handlers.didFinishEditing()
         onChange()
+    }
+
+    /// Presents the open editor over a reader that has none of its own. The
+    /// owner closes it in `endEditing`, so the page never outlives `isEditing`.
+    func presentEditorIfNeeded(from presenter: UIViewController) {
+        guard isEditing else {
+            closeEditor()
+            return
+        }
+        guard presentedEditor == nil, let page = makeEditorPage(checkoutSubtitle: nil) else { return }
+        page.title = editorTitle
+        presentedEditor = page
+        Router.present(
+            page,
+            presentation: .fullScreen.inNavigation(),
+            from: presenter,
+            onDismiss: { [weak self] in
+                self?.presentedEditor = nil
+                guard let self, self.isEditing else { return }
+                // Closed by another hand: the reader and the owner stay in step.
+                self.endEditing()
+            }
+        )
+    }
+
+    private func closeEditor() {
+        guard let presentedEditor else { return }
+        self.presentedEditor = nil
+        if let container = presentedEditor.navigationController {
+            Router.finish(container)
+        }
+    }
+
+    private var editorTitle: String {
+        switch subject {
+        case .agentInstructions: String(localized: "System Prompt")
+        case .schedulePrompt: String(localized: "Prompt")
+        case .file, .snapshot: String(localized: "Edit")
+        }
     }
 
     /// Hosts the editor page of an open session; nil when nothing is open.
@@ -411,13 +474,6 @@ final class DocumentEditOwner {
         return false
     }
 
-    /// The mode control's one writer. The next save sends it.
-    func setAgentInstructionMode(_ mode: AgentInstructionMode) {
-        guard agentInstructionMode != mode else { return }
-        agentInstructionMode = mode
-        onChange()
-    }
-
     /// Repaints the open editor and applies a replaced draft.
     func updateEditorPage(palette: ThemePalette, checkoutSubtitle: String?) {
         guard let editorPage else { return }
@@ -444,7 +500,7 @@ final class DocumentEditOwner {
     }
 
     private func useDiskVersion() {
-        guard let session else { return }
+        guard let session, let backend = backendSource() else { return }
         let generation = generation
         Task { [weak self] in
             let outcome = await session.useDiskVersion()
@@ -455,7 +511,10 @@ final class DocumentEditOwner {
             case .replaced(let text):
                 notice = nil
                 replacement = WorkspaceFileEditorReplacement(text: text)
-                handlers.didShowText(text)
+                // The disk version's mode is the record's now, not this device's.
+                if let recordMode = backend.recordMode {
+                    session.adoptRecordInstructionMode(await recordMode())
+                }
             case .missing, .notEditable:
                 reset()
                 handlers.didReload()
@@ -473,6 +532,7 @@ final class DocumentEditOwner {
         // freed text view.
         editorPage?.finishEditing()
         editorPage = nil
+        closeEditor()
         identity = nil
         base = nil
         maxBytes = nil

@@ -176,12 +176,13 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     private var guidedSessionHandoff = ControlRevisionSheetHandoff()
     private weak var guidedSheet: GuidedControlSessionViewController?
     private var loadedDraftSessionId: String?
-    /// What the reader shows: the caller's text, a kept draft that wins over it,
-    /// or what the editor last held when it closed.
+    /// What the reader shows: the document the caller passed, and again what it
+    /// is after an edit (read fresh from the record).
     private var shownText: String
     private var didReadEditSubject = false
-    /// The editor presented over this reader, while one is open.
-    private var editorPage: DocumentEditEditorPage?
+    /// The document as the record holds it now, for after an edit: a prompt's
+    /// reader shows the whole definition, not just the prompt.
+    private let refreshDocument: (@MainActor () async -> String?)?
 
     private var reader: FullScreenCodeViewController?
     /// The file viewer of a host file; its bar is this screen's.
@@ -197,13 +198,15 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         targetPath: String? = nil,
         subject: DocumentEditSubject = .snapshot,
         agentInstructionMode: AgentInstructionMode = .append,
-        connection: ServerConnection? = nil
+        connection: ServerConnection? = nil,
+        refreshDocument: (@MainActor () async -> String?)? = nil
     ) {
         viewer = .fullScreen
         languageHint = "markdown"
         self.subject = subject
         self.agentInstructionMode = agentInstructionMode
         self.serverConnection = connection
+        self.refreshDocument = refreshDocument
         shownText = content
         self.domain = domain
         self.targetId = targetId
@@ -235,6 +238,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         subject = .snapshot
         agentInstructionMode = .append
         serverConnection = connection
+        refreshDocument = nil
         shownText = ""
         self.domain = domain
         self.targetId = targetId
@@ -289,12 +293,12 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     }
 
     /// The document's edit entry: a pencil for a prompt this screen can write
-    /// back, and the "…" that holds Edit with Session.
+    /// back, and the "…" that holds Edit with Session. The owner picks the
+    /// backend, titles and presents the editor, and holds the prompt's mode.
     private lazy var editOwner = makeEditOwner()
 
     private func makeEditOwner() -> DocumentEditOwner {
-        let subject = subject
-        return DocumentEditOwner(
+        DocumentEditOwner(
             subject: subject,
             // Read when the owner reads: a sheet can resolve its server after it
             // is built, and a nil captured here would hide the pencil for good.
@@ -305,26 +309,10 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
             backend: { [weak self] in
                 guard let self, let api = self.connection?.apiClient else { return nil }
-                switch self.subject {
-                case .agentInstructions(let agentId):
-                    // The mode control is the only writer, and it changes after
-                    // the session exists, so the transport reads it when it saves.
-                    return .agentInstructions(api: api, agentId: agentId, mode: { [weak self] in
-                        await self?.currentAgentInstructionMode() ?? .append
-                    })
-                case .schedulePrompt(let scheduleId):
-                    return .schedulePrompt(api: api, scheduleId: scheduleId)
-                case .file, .snapshot:
-                    return .api(api)
-                }
+                return .make(for: subject, api: api)
             },
             handlers: .init(
-                didShowText: { [weak self] text in
-                    self?.showText(text)
-                    // Done closes the editor here, not in an update pass: a reader
-                    // under a full-screen page gets none while it is covered.
-                    self?.closeEditor()
-                },
+                didFinishEditing: { [weak self] in self?.reloadDocument() },
                 didReload: { [weak self] in self?.setNeedsUpdateProperties() },
                 makePreview: { [weak self] text in
                     guard let self else { return UIViewController() }
@@ -374,8 +362,21 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         embed(reader)
     }
 
-    /// The text the reader shows, whichever way it changed: a kept draft on
-    /// open, or the editor's buffer when it closed.
+    /// The document as the record holds it now: after an edit the reader shows
+    /// the whole definition again, not the prompt alone. A kept draft never
+    /// replaces it, so what the reader shows is always the document.
+    private func reloadDocument() {
+        guard let refreshDocument else {
+            setNeedsUpdateProperties()
+            return
+        }
+        Task { [weak self] in
+            guard let self, let text = await refreshDocument() else { return }
+            showText(text)
+        }
+    }
+
+    /// The text the reader shows, when the document behind it changed.
     private func showText(_ text: String) {
         guard shownText != text else { return }
         shownText = text
@@ -429,78 +430,21 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             return
         }
         reader?.setEditBarItems(editOwner.barItems)
-        syncEditorPresentation()
+        editOwner.presentEditorIfNeeded(from: self)
     }
 
     // MARK: The document
 
-    /// One read of the document behind the prompt: a kept draft wins over the
-    /// text the caller passed, and the pencil appears only for a document the
-    /// server answered for.
+    /// One read of the document behind the prompt: the pencil appears only for a
+    /// document the server answered for, and a kept draft opens the editor on
+    /// itself without changing what the reader shows.
     private func startEditReadIfNeeded() {
         guard !didReadEditSubject, subject != .snapshot else { return }
         didReadEditSubject = true
         Task { [weak self] in
             guard let self else { return }
-            switch await editOwner.read() {
-            case .bytes(_, let draftText):
-                if let draftText { showText(draftText) }
-            case .deletedDraft(let text):
-                showText(text)
-            case .ownRead:
-                break
-            }
+            _ = await editOwner.read()
             setNeedsUpdateProperties()
-        }
-    }
-
-    /// The mode a save sends, read by the transport when the write runs.
-    func currentAgentInstructionMode() -> AgentInstructionMode {
-        editOwner.agentInstructionMode
-    }
-
-    /// The open editor, presented over the reader: a prompt reader has no
-    /// editor of its own, so the page covers it while the owner says it is
-    /// editing and closes when it is done.
-    private func syncEditorPresentation() {
-        if let page = editOwner.makeEditorPage(checkoutSubtitle: nil) {
-            if editorPage != nil {
-                // The page redraws its own bar and status; nothing to re-present.
-                return
-            }
-            editorPage = page
-            page.title = editorTitle
-            Router.present(
-                page,
-                presentation: .fullScreen.inNavigation(),
-                from: self,
-                onDismiss: { [weak self] in
-                    self?.editorPage = nil
-                    guard let self, self.editOwner.isEditing else { return }
-                    // Closed by a swipe or by the presenter going away: keep the
-                    // reader and the owner in step.
-                    self.editOwner.endEditing()
-                }
-            )
-        } else {
-            closeEditor()
-        }
-    }
-
-    /// The editor is finished: the page goes and the reader stays.
-    private func closeEditor() {
-        guard let editorPage else { return }
-        self.editorPage = nil
-        if let container = editorPage.navigationController {
-            Router.finish(container)
-        }
-    }
-
-    private var editorTitle: String {
-        switch subject {
-        case .agentInstructions: String(localized: "System Prompt")
-        case .schedulePrompt: String(localized: "Prompt")
-        case .file, .snapshot: String(localized: "Edit")
         }
     }
 

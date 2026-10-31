@@ -1,28 +1,30 @@
 import Foundation
 
-/// The Agent prompt and the Schedule prompt as editable documents.
+/// An Agent's prompt and a Schedule's prompt as editable documents.
 ///
 /// Neither is a file: each is a field on a record the server keeps with a
-/// version, so their transports read the record and write it back conditioned
+/// version, so their transport reads the record and writes it back conditioned
 /// on that version. They answer the same `WorkspaceFileReadOutcome` and
 /// `WorkspaceFileWriteOutcome` as `/files/current`, so the editor, its drafts,
 /// its conflict banner, and its status words need nothing new: the record's
 /// version is the etag, a 409 is `.stale`, and a record that is gone is
 /// `.missing`.
 extension WorkspaceFileEditTransport {
-    /// Reads `GET /agents/:id` (bytes are `instructions.text`, the tag is the
-    /// version; an Agent with no custom prompt reads as empty) and writes
-    /// `PATCH /agents/:id?expectedVersion=` with the prompt and its mode.
-    ///
-    /// `mode` is read when the write runs, because the editor's mode control is
-    /// the only writer and it changes after the session exists.
-    static func agentInstructions(
-        api: APIClient,
-        agentId: String,
-        mode: @escaping @Sendable () async -> AgentInstructionMode
+    /// A record's prompt: the two calls are all that differ between an Agent
+    /// and a schedule, so the outcome mapping lives here once.
+    static func recordPrompt(
+        read: @escaping @Sendable () async -> WorkspaceFileReadOutcome,
+        write: @escaping @Sendable (WorkspaceFileWriteRequest) async -> WorkspaceFileWriteOutcome
     ) -> WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(
-            read: { _ in
+        WorkspaceFileEditTransport(read: { _ in await read() }, write: { _, request in await write(request) })
+    }
+
+    /// `GET /agents/:id`: bytes are `instructions.text` (an Agent with no custom
+    /// prompt reads as empty), the tag is the version. A write is
+    /// `PATCH /agents/:id?expectedVersion=` with the prompt and its mode.
+    static func agentInstructions(api: APIClient, agentId: String) -> WorkspaceFileEditTransport {
+        recordPrompt(
+            read: {
                 do {
                     let agent = try await api.getAgent(agentId)
                     let text = agent.definition.instructions?.text ?? ""
@@ -31,77 +33,79 @@ extension WorkspaceFileEditTransport {
                         etag: String(agent.version)
                     ))
                 } catch {
-                    return Self.readFailure(error)
+                    return readFailure(error)
                 }
             },
-            write: { _, bytes, ifMatch in
-                guard let version = Int(ifMatch) else {
+            write: { request in
+                guard let version = Int(request.ifMatch) else {
                     return .rejected(status: 0, message: String(localized: "The Agent's version could not be read."))
                 }
-                let text = WorkspaceFileTextCodec.decodeDraft(bytes) ?? ""
-                let instructionMode = await mode()
+                let text = WorkspaceFileTextCodec.decodeDraft(request.bytes) ?? ""
                 do {
                     let saved = try await api.updateAgentInstructions(
                         agentId: agentId,
                         expectedVersion: version,
-                        mode: instructionMode,
+                        mode: request.instructionMode ?? .append,
                         text: text
                     )
                     return .saved(etag: String(saved.version))
                 } catch {
-                    return Self.writeFailure(error)
+                    return writeFailure(error)
                 }
             }
         )
     }
 
-    /// Reads `GET /schedules/:id` (bytes are the action's prompt, the tag is the
-    /// version) and writes `PATCH /schedules/:id?expectedVersion=` with the prompt.
+    /// The mode the Agent's record holds now, for a document that took the disk
+    /// version: the next save must not carry this device's older choice.
+    static func agentPromptMode(api: APIClient, agentId: String) async -> AgentInstructionMode? {
+        try? await api.getAgent(agentId).definition.instructions?.mode
+    }
+
+    /// `GET /schedules/:id`: bytes are the action's prompt, the tag is the
+    /// version. A write is `PATCH /schedules/:id?expectedVersion=` with the
+    /// prompt. The prompt is required, so the server refuses an empty one.
     static func schedulePrompt(api: APIClient, scheduleId: String) -> WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(
-            read: { _ in
+        recordPrompt(
+            read: {
                 do {
                     let schedule = try await api.getAgentSchedule(scheduleId)
                     return .snapshot(WorkspaceFileDiskSnapshot(
                         bytes: WorkspaceFileTextCodec.encode(SchedulePresentation.prompt(in: schedule.action)),
-                        etag: String(schedule.version)
+                        etag: schedule.version.map(String.init)
                     ))
                 } catch {
-                    return Self.readFailure(error)
+                    return readFailure(error)
                 }
             },
-            write: { _, bytes, ifMatch in
-                guard let version = Int(ifMatch) else {
+            write: { request in
+                guard let version = Int(request.ifMatch) else {
                     return .rejected(status: 0, message: String(localized: "The schedule's version could not be read."))
                 }
-                let prompt = WorkspaceFileTextCodec.decodeDraft(bytes) ?? ""
+                let prompt = WorkspaceFileTextCodec.decodeDraft(request.bytes) ?? ""
                 do {
                     let saved = try await api.updateAgentSchedulePrompt(
                         scheduleId: scheduleId,
                         expectedVersion: version,
                         prompt: prompt
                     )
-                    return .saved(etag: String(saved.version))
+                    // A server without versions answers no tag: the editor re-reads
+                    // before any retry rather than inventing one.
+                    guard let newVersion = saved.version else { return .unknown }
+                    return .saved(etag: String(newVersion))
                 } catch {
-                    return Self.writeFailure(error)
+                    return writeFailure(error)
                 }
             }
         )
     }
-
-    /// The server's version conflict codes, which mean "someone else wrote it".
-    private static let versionConflictCodes: Set<String> = [
-        "AGENT_VERSION_CONFLICT",
-        "SCHEDULE_VERSION_CONFLICT",
-    ]
 
     private static func readFailure(_ error: Error) -> WorkspaceFileReadOutcome {
         status(of: error) == 404 ? .missing : .failed
     }
 
     private static func writeFailure(_ error: Error) -> WorkspaceFileWriteOutcome {
-        if let coded = error as? APIError, case .codedServer(_, let message, let code) = coded,
-           versionConflictCodes.contains(code) {
+        if RecordVersionConflict.isVersionConflict(error) {
             return .stale
         }
         guard let status = status(of: error) else {
@@ -110,9 +114,6 @@ extension WorkspaceFileEditTransport {
         switch status {
         case 404:
             return .missing
-        case 409:
-            // A version conflict the server answered without its code.
-            return .stale
         default:
             let message = (error as? APIError)?.errorDescription ?? error.localizedDescription
             return .rejected(status: status, message: message)

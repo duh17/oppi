@@ -391,7 +391,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             },
             reviewCommentSelectionScope: configuration.reviewCommentSelectionScope,
             handlers: .init(
-                didShowText: { [weak self] text in self?.content = .text(text) },
+                // The file's reader shows the text the editor left, and the viewer
+                // reloads what it must (a deleted file's draft discarded).
+                didFinishEditing: { [weak self] in
+                    guard let self, let session = editOwner.session else { return }
+                    content = .text(session.currentText)
+                },
                 didReload: { [weak self] in self?.startLoad(force: true) },
                 makePreview: { [weak self] text in
                     guard let self else { return UIViewController() }

@@ -14,11 +14,12 @@ private final class ScriptedEditTransport {
     struct PendingWrite {
         let bytes: Data
         let ifMatch: String
+        let instructionMode: AgentInstructionMode?
         let continuation: CheckedContinuation<WorkspaceFileWriteOutcome, Never>
     }
 
     private(set) var pending: [PendingWrite] = []
-    private(set) var writeLog: [(bytes: Data, ifMatch: String)] = []
+    private(set) var writeLog: [(bytes: Data, ifMatch: String, instructionMode: AgentInstructionMode?)] = []
     var reads: [WorkspaceFileReadOutcome] = []
     private(set) var readCount = 0
 
@@ -30,11 +31,16 @@ private final class ScriptedEditTransport {
                     return self.reads.isEmpty ? .failed : self.reads.removeFirst()
                 }
             },
-            write: { _, bytes, ifMatch in
+            write: { _, request in
                 await withCheckedContinuation { continuation in
                     Task { @MainActor in
-                        self.writeLog.append((bytes, ifMatch))
-                        self.pending.append(PendingWrite(bytes: bytes, ifMatch: ifMatch, continuation: continuation))
+                        self.writeLog.append((request.bytes, request.ifMatch, request.instructionMode))
+                        self.pending.append(PendingWrite(
+                            bytes: request.bytes,
+                            ifMatch: request.ifMatch,
+                            instructionMode: request.instructionMode,
+                            continuation: continuation
+                        ))
                     }
                 }
             }
@@ -82,6 +88,7 @@ private final class Harness {
     func open(
         disk: Data? = nil,
         etag: String = tag("a"),
+        instructionMode: AgentInstructionMode? = nil,
         idleDelay: Duration = .seconds(60),
         retryDelay: Duration = .milliseconds(20)
     ) -> WorkspaceFileEditSession {
@@ -89,6 +96,7 @@ private final class Harness {
             identity: identity,
             disk: WorkspaceFileDiskSnapshot(bytes: disk ?? Data(buffer.utf8), etag: etag),
             maxBytes: 64,
+            instructionMode: instructionMode,
             transport: scripted.transport,
             draftStore: store,
             idleDelay: idleDelay,
@@ -523,6 +531,70 @@ struct WorkspaceFileEditSessionTests {
         #expect(await eventually { second.status == .conflict })
         #expect(other.scripted.writeLog.count == 1)
         #expect(other.store.load(other.identity)?.bytes == Data("hello mine".utf8))
+    }
+
+    // MARK: A record's mode
+
+    /// A mode change is a change: it saves at once, even when the text is
+    /// exactly what disk holds, and the write carries the new mode.
+    @Test func modeChangeAloneSavesAndSendsTheMode() async {
+        let harness = Harness()
+        let session = harness.open(instructionMode: .append)
+        #expect(!session.hasUnsavedChanges)
+
+        session.setInstructionMode(.replace)
+
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.first?.instructionMode == .replace)
+        #expect(harness.scripted.writeLog.first?.bytes == Data("hello".utf8), "the text did not change")
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+        #expect(!session.hasUnsavedChanges)
+        #expect(session.instructionMode == .replace)
+        #expect(harness.store.loadResult(harness.identity) == .none, "a saved mode needs no draft")
+
+        // A second change after Saved saves again.
+        session.setInstructionMode(.append)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog.last?.instructionMode == .append)
+    }
+
+    /// The mode travels with the unsaved text: a recovery saves the choice the
+    /// person made, not the record's older one.
+    @Test func aRecoveredDraftKeepsItsMode() throws {
+        let harness = Harness()
+        try harness.store.save(WorkspaceFileDraft(
+            identity: harness.identity,
+            baseEtag: tag("a"),
+            bytes: Data("kept words".utf8),
+            updatedAt: Date(),
+            instructionMode: .replace
+        ))
+
+        let session = harness.open(instructionMode: .append)
+
+        #expect(session.recoveredDraft)
+        #expect(session.instructionMode == .replace, "the draft's mode wins over the record's")
+        #expect(session.hasUnsavedChanges)
+    }
+
+    /// Use Disk Version takes the record's mode: the next save must not carry
+    /// this device's older choice over another writer's.
+    @Test func useDiskVersionAdoptsTheRecordsMode() async {
+        let harness = Harness()
+        let session = harness.open(instructionMode: .append)
+        session.setInstructionMode(.replace)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        harness.scripted.resolveNext(.stale)
+        #expect(await eventually { session.status == .conflict })
+
+        harness.scripted.reads = [.snapshot(WorkspaceFileDiskSnapshot(bytes: Data("disk words".utf8), etag: tag("c")))]
+        let outcome = await session.useDiskVersion()
+        session.adoptRecordInstructionMode(.append)
+
+        #expect(outcome == .replaced("disk words"))
+        #expect(session.instructionMode == .append)
+        #expect(!session.hasUnsavedChanges, "the record's mode is what disk holds, not a change")
     }
 
     // MARK: Drafts and recovery

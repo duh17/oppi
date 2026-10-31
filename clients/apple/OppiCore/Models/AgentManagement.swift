@@ -726,9 +726,10 @@ struct AgentScheduleSummary: Identifiable, Sendable, Equatable {
     var status: AgentScheduleStatus
     var trigger: AgentScheduleTrigger
     var action: AgentScheduleActionSummary
-    /// Bumped by every update; an edit conditions on it. A record built here
-    /// rather than read from a server starts at the server's first version.
-    var version: Int = 0
+    /// The definition's version, bumped when the definition changes. Nil on a
+    /// server from before schedules had one: an edit then sends no
+    /// `expectedVersion`, and a prompt has no pencil (no tag to condition on).
+    var version: Int? = nil
     var createdAt: Date
     var updatedAt: Date
     var archivedAt: Date?
@@ -742,7 +743,10 @@ struct AgentSchedule: Identifiable, Sendable, Equatable {
     var action: AgentScheduleAction
     /// Bumped by every update; an edit conditions on it. A record built here
     /// rather than read from a server starts at the server's first version.
-    var version: Int = 0
+    /// The definition's version, bumped when the definition changes. Nil on a
+    /// server from before schedules had one: an edit then sends no
+    /// `expectedVersion`, and a prompt has no pencil (no tag to condition on).
+    var version: Int? = nil
     var createdAt: Date
     var updatedAt: Date
     var archivedAt: Date?
@@ -760,7 +764,7 @@ extension AgentScheduleSummary: Codable {
         status = try c.decode(AgentScheduleStatus.self, forKey: .status)
         trigger = try c.decode(AgentScheduleTrigger.self, forKey: .trigger)
         action = try c.decode(AgentScheduleActionSummary.self, forKey: .action)
-        version = try c.decode(Int.self, forKey: .version)
+        version = try c.decodeIfPresent(Int.self, forKey: .version)
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
         updatedAt = try c.decodeUnixMilliseconds(forKey: .updatedAt)
         archivedAt = try c.decodeUnixMillisecondsIfPresent(forKey: .archivedAt)
@@ -773,7 +777,7 @@ extension AgentScheduleSummary: Codable {
         try c.encode(status, forKey: .status)
         try c.encode(trigger, forKey: .trigger)
         try c.encode(action, forKey: .action)
-        try c.encode(version, forKey: .version)
+        try c.encodeIfPresent(version, forKey: .version)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)
         try c.encodeUnixMilliseconds(updatedAt, forKey: .updatedAt)
         try c.encodeUnixMillisecondsIfPresent(archivedAt, forKey: .archivedAt)
@@ -792,7 +796,7 @@ extension AgentSchedule: Codable {
         status = try c.decode(AgentScheduleStatus.self, forKey: .status)
         trigger = try c.decode(AgentScheduleTrigger.self, forKey: .trigger)
         action = try c.decode(AgentScheduleAction.self, forKey: .action)
-        version = try c.decode(Int.self, forKey: .version)
+        version = try c.decodeIfPresent(Int.self, forKey: .version)
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
         updatedAt = try c.decodeUnixMilliseconds(forKey: .updatedAt)
         archivedAt = try c.decodeUnixMillisecondsIfPresent(forKey: .archivedAt)
@@ -805,7 +809,7 @@ extension AgentSchedule: Codable {
         try c.encode(status, forKey: .status)
         try c.encode(trigger, forKey: .trigger)
         try c.encode(action, forKey: .action)
-        try c.encode(version, forKey: .version)
+        try c.encodeIfPresent(version, forKey: .version)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)
         try c.encodeUnixMilliseconds(updatedAt, forKey: .updatedAt)
         try c.encodeUnixMillisecondsIfPresent(archivedAt, forKey: .archivedAt)

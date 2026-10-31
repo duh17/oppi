@@ -164,6 +164,14 @@ final class DocumentEditEditorPage: UIViewController {
             appliedReplacementID = replacement.id
             editor.replaceText(replacement.text)
         }
+        // The mode follows the session: a disk version brings the record's own.
+        if let modeControl, let mode = session.instructionMode {
+            let index = mode == .append ? 0 : 1
+            if modeControl.selectedSegmentIndex != index {
+                modeControl.selectedSegmentIndex = index
+                modeControl.accessibilityValue = Self.modeTitle(mode)
+            }
+        }
         editor.setShowingPreview(isShowingPreview)
     }
 
@@ -225,19 +233,6 @@ final class DocumentEditEditorPage: UIViewController {
         if conflictReview.presentingViewController != nil {
             Router.finish(conflictReview)
         }
-    }
-
-    private static func padded(_ label: UILabel, horizontal: CGFloat, vertical: CGFloat) -> UIView {
-        let container = UIView()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: vertical),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vertical),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontal),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontal),
-        ])
-        return container
     }
 
     private static func padded(_ content: UIView, horizontal: CGFloat, vertical: CGFloat) -> UIView {
