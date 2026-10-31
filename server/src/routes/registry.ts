@@ -614,7 +614,7 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     description:
-      "Guarded write of an existing text file. origin=workspace, origin=skill (an editable Skill's own file), or origin=pi (Pi's own agent files); requires one concrete If-Match; does not create.",
+      "Guarded write of a text file. origin=workspace, origin=skill (an editable Skill's own file), or origin=pi (Pi's own agent files); requires one concrete If-Match, or If-None-Match: * to create a missing Pi agent file. A workspace or Skill file is never created.",
   },
   {
     method: "GET",

@@ -37,3 +37,15 @@ export function piAgentEditablePath(requestedPath: string): string | null {
   }
   return null;
 }
+
+/**
+ * Where a *missing* allowlisted file may be created: directly in the agent
+ * directory (`SYSTEM.md`), or in its `prompts` directory (a template). The
+ * argument is the parent directory relative to the agent directory, `""` for
+ * the agent directory itself. Pi's own files are the only ones the editor
+ * creates, so this is the creation half of the same allowlist — and the caller
+ * still proves the parent is the real directory, never a link.
+ */
+export function piAgentCreatesIn(parentRelativeToAgentDir: string): boolean {
+  return parentRelativeToAgentDir === "" || parentRelativeToAgentDir === PI_AGENT_PROMPTS_DIRECTORY;
+}

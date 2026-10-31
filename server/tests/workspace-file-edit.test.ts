@@ -572,6 +572,45 @@ describe("PUT /files/current?origin=workspace", () => {
     expect(editTemps(fixture.hostRoot)).toEqual([]);
   });
 
+  it("never creates a workspace file, on either precondition", async () => {
+    const fixture = seed();
+    const target = join(fixture.hostRoot, "README.md");
+    const original = readFileSync(target);
+
+    // `If-None-Match: *` is the create precondition, and a workspace file is
+    // never created: the file is not there, so there is nothing to write.
+    const absent = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, "created.md"),
+      Buffer.from("created\n"),
+      { "if-none-match": "*" },
+    );
+    expect(absent.statusCode).toBe(404);
+    expect(readdirSync(fixture.hostRoot)).not.toContain("created.md");
+
+    // The same precondition on a file that does exist cannot apply either: a
+    // create never overwrites what it did not make.
+    const existing = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, "README.md"),
+      Buffer.from("clobbered\n"),
+      { "if-none-match": "*" },
+    );
+    expect(existing.statusCode).toBe(412);
+    expect(readFileSync(target).equals(original)).toBe(true);
+
+    // One write, one condition: a tag and a create together are refused before
+    // the body is read.
+    const both = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, "README.md"),
+      Buffer.from("clobbered\n"),
+      { "if-match": etagFor(original), "if-none-match": "*" },
+    );
+    expect(both.statusCode).toBe(412);
+    expect(readFileSync(target).equals(original)).toBe(true);
+  });
+
   it("rejects oversize UTF-8, invalid UTF-8, NUL, missing files, binaries, and unknown worktrees", async () => {
     const fixture = seed();
     execSync(

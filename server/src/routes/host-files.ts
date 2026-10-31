@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
-import { isAbsolute } from "node:path";
+import { basename, extname, isAbsolute } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -16,10 +16,10 @@ import {
   type ResolvedCurrentFile,
 } from "../current-file.js";
 import { listDirectoryEntries } from "../directory-listing.js";
-import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
+import { decodeWorkspaceRoutePath, getContentType } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
 import { readAudioMediaInfo } from "../media-info.js";
-import { piAgentEditablePath } from "../pi-agent-files.js";
+import { piAgentCreatesIn, piAgentEditablePath } from "../pi-agent-files.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
@@ -27,6 +27,7 @@ import {
   ServerResourceReadOnlyError,
 } from "../server-resource-service.js";
 import {
+  FILE_EDIT_CREATABLE_HEADER,
   type FileEditTarget,
   inspectFileForEdit,
   putEditedFileFromRequest,
@@ -95,6 +96,11 @@ function editTargetFor(request: {
       // link that leads elsewhere — so whether a linked SYSTEM.md may be edited
       // is decided here and in that one refusal, and nowhere else.
       allowsCanonical: (relativeToRealRoot) => piAgentEditablePath(relativeToRealRoot) !== null,
+      // A missing file the editor may create: the same allowlist, plus the one
+      // directory it may appear in. `inspectFileForEdit` still proves that
+      // directory is the real one and refuses a link, so a `prompts` symlink
+      // creates nothing.
+      createsIn: (parentRelativeToRealRoot) => piAgentCreatesIn(parentRelativeToRealRoot),
     };
   }
   return null;
@@ -252,15 +258,25 @@ export function createHostFileRoutes(
       helpers.error(res, request.status, request.message);
       return { status: request.status };
     }
+    const resolved = await resolveRequestFile(request, res);
+    if ("status" in resolved) return resolved;
+    return {
+      file: resolved.file,
+      originKind: request.originKind,
+      origin: request.origin,
+      path: request.path,
+    };
+  }
+
+  /** Resolve a parsed request's file, answering the read's own error statuses. */
+  async function resolveRequestFile(
+    request: Extract<CurrentFileRequest, { kind: "ok" }>,
+    res: ServerResponse,
+  ): Promise<{ file: ResolvedCurrentFile } | { status: number }> {
     const resolved = await resolveCurrentFilePath(request.origin, request.path);
     switch (resolved.kind) {
       case "ok":
-        return {
-          file: resolved.file,
-          originKind: request.originKind,
-          origin: request.origin,
-          path: request.path,
-        };
+        return { file: resolved.file };
       case "outside-sandbox":
         helpers.error(res, 403, "Path outside sandbox workspace");
         return { status: 403 };
@@ -282,29 +298,52 @@ export function createHostFileRoutes(
     let status = 404;
     let originKind: string | undefined;
     try {
-      const resolved = await resolveCurrentFileRequest(url, res);
+      const request = await parseCurrentFileRequest(url);
+      if (request.kind === "error") {
+        status = request.status;
+        helpers.error(res, request.status, request.message);
+        return;
+      }
+      originKind = request.originKind;
+      // One inspection answers both the tag and the miss: an editing origin (a
+      // workspace, a Skill, Pi's agent files) either tags the bytes or — where
+      // the target may create — answers the empty base of a file that is not
+      // there yet. Every other read resolves and serves as before.
+      const editTarget = req.headers.range ? null : editTargetFor(request);
+      const inspection = editTarget ? await inspectFileForEdit(editTarget) : null;
+      if (inspection?.kind === "creatable") {
+        status = sendExactFileBytes(
+          res,
+          method,
+          {
+            bytes: Buffer.alloc(0),
+            contentType: getContentType(
+              extname(request.path).toLowerCase(),
+              basename(request.path),
+            ),
+          },
+          { [FILE_EDIT_CREATABLE_HEADER]: "1" },
+        );
+        return;
+      }
+      const resolved = await resolveRequestFile(request, res);
       if ("status" in resolved) {
         status = resolved.status;
         return;
       }
-      originKind = resolved.originKind;
       const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
       switch (servable.kind) {
         case "ok": {
           const extraHeaders = resolvedPathHeaders(resolved.file);
-          // ETag only for an editing origin (workspace or skill), not session→workspace.
-          const editTarget = req.headers.range ? null : editTargetFor(resolved);
-          if (editTarget) {
-            const inspection = await inspectFileForEdit(editTarget);
-            if (inspection.kind === "eligible") {
-              status = sendExactFileBytes(
-                res,
-                method,
-                { bytes: inspection.bytes, contentType: servable.file.contentType },
-                { ...extraHeaders, ETag: inspection.etag },
-              );
-              return;
-            }
+          // ETag only for an editing origin (workspace, skill, pi), not session→workspace.
+          if (inspection?.kind === "eligible") {
+            status = sendExactFileBytes(
+              res,
+              method,
+              { bytes: inspection.bytes, contentType: servable.file.contentType },
+              { ...extraHeaders, ETag: inspection.etag },
+            );
+            return;
           }
           status = await sendFileBytes(req, res, method, servable.file, {
             rangeLogTag: "current-file",

@@ -1,5 +1,6 @@
 /**
- * File editor write contract (I0): workspace files and editable Skill files.
+ * File editor write contract (I0): workspace files, editable Skill files, and
+ * Pi's own allowlisted agent files.
  *
  * Reads and writes share one eligibility predicate that is stricter than
  * host-workspace current-file fallbacks (`~`, host-absolute, `..`).
@@ -9,6 +10,11 @@
  * Rename and temp cleanup are path operations, not inode-safe. A same-host
  * writer that swaps the temp name after the last inode and byte check, or
  * between cleanup's lstat and unlink, is an accepted residual race.
+ *
+ * Only a target that names where a *missing* file may appear creates one
+ * (`createsIn`), and only on `If-None-Match: *`: an exclusive `O_CREAT|O_EXCL`
+ * open, so a file another writer created first is a 412 and never an overwrite.
+ * A workspace file and a Skill file never create.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -16,7 +22,7 @@ import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, basename } from "node:path";
 
 import { isWorkspaceEditorTextPath, MAX_WORKSPACE_FILE_EDIT_BYTES } from "./file-serving-policy.js";
 import { isPathWithinRoot } from "./git-utils.js";
@@ -25,11 +31,21 @@ import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 
 export const WORKSPACE_FILE_EDIT_MAX_BYTES = MAX_WORKSPACE_FILE_EDIT_BYTES;
 
+/**
+ * Response header on the editor's read of a file that does not exist yet: the
+ * body is empty, there is no ETag, and a `PUT` with `If-None-Match: *` creates
+ * it. Only Pi's own allowlisted files answer it.
+ */
+export const FILE_EDIT_CREATABLE_HEADER = "X-Oppi-Creatable";
+
 const IF_MATCH_RE = /^"sha256-[0-9a-f]{64}"$/;
 const TEMP_PREFIX = ".oppi-edit-";
 const TEMP_SUFFIX = ".tmp";
 const TEMP_OPEN_FLAGS =
   constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+/** A file the editor creates: the mode a plain `writeFile` would leave. */
+const NEW_FILE_MODE = 0o644;
+const NEW_DIRECTORY_MODE = 0o755;
 
 type CapturedTemp = {
   path: string;
@@ -47,6 +63,18 @@ export type FileEditInspection =
       realRoot: string;
       mode: number;
       size: number;
+    }
+  /**
+   * The file does not exist, and this target may create it: the parent is the
+   * real directory the target names, so a first save can put the file there.
+   * `createDirectory` means that directory is `prompts/` itself, absent today.
+   */
+  | {
+      kind: "creatable";
+      createPath: string;
+      parentReal: string;
+      createDirectory: boolean;
+      realRoot: string;
     }
   | { kind: "not-found" }
   | { kind: "forbidden" }
@@ -69,6 +97,12 @@ export interface FileEditTarget {
    * widen what may be written.
    */
   allowsCanonical?: (relativeToRealRoot: string) => boolean;
+  /**
+   * Whether a *missing* file may be created, asked about the parent directory
+   * (root-relative, `""` for the root itself). Absent means this target never
+   * creates: a workspace file and a Skill file only ever overwrite.
+   */
+  createsIn?: (parentRelativeToRealRoot: string) => boolean;
 }
 
 function isSandboxed(target: { workspace?: Workspace }): boolean {
@@ -85,6 +119,13 @@ function containedRelativePath(root: string, requestedPath: string): string | nu
 export type PutEditedFileResult =
   | { kind: "ok"; response: WorkspaceFileEditWriteResponse }
   | { kind: "error"; status: number; message: string };
+
+/** What a write is conditioned on. One of the two headers, never both. */
+export type FileEditPrecondition =
+  /** `If-Match: "<sha256>"`: overwrite exactly this version. */
+  | { kind: "match"; etag: string }
+  /** `If-None-Match: *`: the file must not exist; this write creates it. */
+  | { kind: "create" };
 
 class Mutex {
   private queue: Array<() => void> = [];
@@ -171,6 +212,20 @@ export function evaluateIfMatch(
   return { kind: "invalid" };
 }
 
+/**
+ * `If-None-Match` is only ever `*` here: "create this file, if it is still
+ * absent". A tag or a list of them is refused rather than approximated.
+ */
+export function evaluateIfNoneMatch(
+  header: string | string[] | undefined,
+): { kind: "absent" } | { kind: "create" } | { kind: "invalid" } {
+  if (header === undefined) return { kind: "absent" };
+  const raw = Array.isArray(header) ? header.join(",") : header;
+  const trimmed = raw.trim();
+  if (!trimmed) return { kind: "absent" };
+  return trimmed === "*" ? { kind: "create" } : { kind: "invalid" };
+}
+
 function editorPathForm(
   workspace: Workspace | undefined,
   requestedPath: string,
@@ -222,7 +277,7 @@ async function proveHandleInRoot(
 }
 
 function inspectionError(inspection: FileEditInspection): PutEditedFileResult | null {
-  if (inspection.kind === "eligible") return null;
+  if (inspection.kind === "eligible" || inspection.kind === "creatable") return null;
   if (inspection.kind === "forbidden") {
     return { kind: "error", status: 403, message: "Path outside sandbox workspace" };
   }
@@ -230,10 +285,59 @@ function inspectionError(inspection: FileEditInspection): PutEditedFileResult | 
 }
 
 /**
+ * A missing file. Only a target that names where its files may appear creates
+ * one, and only inside the real directory that would hold it: the parent is
+ * built from the real root, so a link anywhere is refused before anything is
+ * created. A missing `prompts/` is created with the first template; a deeper
+ * missing directory is not.
+ */
+async function inspectCreatable(
+  input: FileEditTarget,
+  requestedPath: string,
+  realRoot: string,
+): Promise<FileEditInspection> {
+  if (!input.createsIn) return { kind: "not-found" };
+  const requested = requestedPath.replaceAll("\\", "/");
+  const parent = dirname(requested);
+  const parentRelative = parent === "." || parent === "" ? "" : parent;
+  if (!input.createsIn(parentRelative)) return { kind: "not-found" };
+
+  const parentPath = parentRelative ? join(realRoot, parentRelative) : realRoot;
+  const createPath = join(parentPath, basename(requested));
+  let parentLst: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    parentLst = await fs.lstat(parentPath);
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" || parentRelative === "") return { kind: "not-found" };
+    return {
+      kind: "creatable",
+      createPath,
+      parentReal: parentPath,
+      createDirectory: true,
+      realRoot,
+    };
+  }
+  if (parentLst.isSymbolicLink() || !parentLst.isDirectory()) return { kind: "not-found" };
+  let parentReal: string;
+  try {
+    parentReal = await fs.realpath(parentPath);
+  } catch {
+    return { kind: "not-found" };
+  }
+  if (parentReal !== parentPath || !isPathWithinRoot(parentReal, realRoot)) {
+    return { kind: "not-found" };
+  }
+  return { kind: "creatable", createPath, parentReal, createDirectory: false, realRoot };
+}
+
+/**
  * Shared editor eligibility. Stricter than host-workspace current-file reads:
  * no `~`, host-absolute, or `..` fallback, no final-component symlink, at most
  * 1 MiB, editor text types only, valid UTF-8, no NUL. Callers map `ineligible`
  * to "no ETag" on GET and existing 404 on PUT. Sandbox escape stays 403.
+ * `creatable` is the one answer about a file that is not there: the target named
+ * a parent it may create files in, and that parent is real.
  */
 export async function inspectFileForEdit(input: FileEditTarget): Promise<FileEditInspection> {
   if (editorPathForm(input.workspace, input.requestedPath) !== "ok") {
@@ -261,7 +365,10 @@ export async function inspectFileForEdit(input: FileEditTarget): Promise<FileEdi
   let lst: Awaited<ReturnType<typeof fs.lstat>>;
   try {
     lst = await fs.lstat(lexicalPath);
-  } catch {
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return inspectCreatable(input, input.requestedPath, realRoot);
+    }
     return { kind: "not-found" };
   }
 
@@ -546,19 +653,156 @@ async function writeEditedFileAtomic(
 }
 
 /**
- * One editor PUT from an HTTP request: a concrete `If-Match` is checked before
- * the body is read, the body is bounded, then `putEditedFile` writes. `size` is
- * the body length once read, for the route's log.
+ * The file the editor creates: `O_CREAT|O_EXCL` in a parent that was proven
+ * real, so a file another writer put there first is a 412 and never an
+ * overwrite. The created file then has to pass the same eligibility an
+ * existing one does (the target's own allowlist again, on the canonical path);
+ * a file that fails it is removed again, because this request made it.
+ */
+async function createEditedFile(
+  input: FileEditTarget & {
+    creatable: Extract<FileEditInspection, { kind: "creatable" }>;
+    bytes: Buffer;
+  },
+): Promise<PutEditedFileResult> {
+  const { creatable, bytes } = input;
+  const parentReal = creatable.parentReal;
+  if (creatable.createDirectory) {
+    try {
+      await fs.mkdir(parentReal, { mode: NEW_DIRECTORY_MODE });
+    } catch (error: unknown) {
+      // Someone else made it meanwhile: it still has to be the real directory.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        return { kind: "error", status: 404, message: "File not found" };
+      }
+    }
+    try {
+      const lst = await fs.lstat(parentReal);
+      if (lst.isSymbolicLink() || !lst.isDirectory()) {
+        return { kind: "error", status: 404, message: "File not found" };
+      }
+      if ((await fs.realpath(parentReal)) !== parentReal) {
+        return { kind: "error", status: 404, message: "File not found" };
+      }
+    } catch {
+      return { kind: "error", status: 404, message: "File not found" };
+    }
+  }
+
+  const createPath = join(parentReal, basename(creatable.createPath));
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(
+      createPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      NEW_FILE_MODE,
+    );
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // EEXIST: the file appeared between the read and this write. An exclusive
+    // open cannot clobber it, so the editor's first save is a stale conflict.
+    if (code === "EEXIST" || code === "ELOOP") {
+      return { kind: "error", status: 412, message: "Precondition failed" };
+    }
+    if (code === "ENOENT") return { kind: "error", status: 404, message: "File not found" };
+    return { kind: "error", status: 500, message: "Failed to write file" };
+  }
+
+  let created: { dev: number; ino: number } | undefined;
+  try {
+    const opened = await handle.stat();
+    created = { dev: opened.dev, ino: opened.ino };
+    const proven = await proveHandleInRoot(handle, createPath, creatable.realRoot);
+    if (!proven || proven.realPath !== createPath) {
+      await unlinkCreatedFile(createPath, created);
+      return { kind: "error", status: 404, message: "File not found" };
+    }
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const written = await handle.stat();
+    if (
+      written.dev !== created.dev ||
+      written.ino !== created.ino ||
+      !written.isFile() ||
+      written.size !== bytes.length
+    ) {
+      await unlinkCreatedFile(createPath, created);
+      return { kind: "error", status: 500, message: "Failed to write file" };
+    }
+  } catch {
+    await unlinkCreatedFile(createPath, created);
+    return { kind: "error", status: 500, message: "Failed to write file" };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+
+  // The file that is now there has to be one this target may write: the same
+  // inspection an existing file gets, allowlist and all, on the created path.
+  const check = await inspectFileForEdit(input);
+  if (check.kind !== "eligible" || check.realPath !== createPath) {
+    await unlinkCreatedFile(createPath, created);
+    return check.kind === "forbidden"
+      ? { kind: "error", status: 403, message: "Path outside sandbox workspace" }
+      : { kind: "error", status: 404, message: "File not found" };
+  }
+
+  let mtimeMs = Date.now();
+  try {
+    mtimeMs = (await fs.stat(createPath)).mtimeMs;
+  } catch {
+    // The create landed; mtime is best-effort for the JSON body.
+  }
+  return {
+    kind: "ok",
+    response: { etag: workspaceFileEtag(bytes), size: bytes.length, mtimeMs },
+  };
+}
+
+/**
+ * Remove a file this request created, and only while it is still that inode:
+ * without the handle's dev/inode there is nothing to prove the path is ours, so
+ * nothing is removed.
+ */
+async function unlinkCreatedFile(
+  path: string,
+  created: { dev: number; ino: number } | undefined,
+): Promise<void> {
+  if (!created) return;
+  try {
+    const lst = await fs.lstat(path);
+    if (lst.isSymbolicLink() || lst.dev !== created.dev || lst.ino !== created.ino) return;
+    await fs.unlink(path);
+  } catch {
+    // Already gone or replaced. Never remove an entry this request did not make.
+  }
+}
+
+/**
+ * One editor PUT from an HTTP request: one precondition (`If-Match` for an
+ * existing file, `If-None-Match: *` for one the target may create) is checked
+ * before the body is read, the body is bounded, then `putEditedFile` writes.
+ * `size` is the body length once read, for the route's log.
  */
 export async function putEditedFileFromRequest(
   req: IncomingMessage,
   target: FileEditTarget,
 ): Promise<PutEditedFileResult & { size?: number }> {
-  const precondition = evaluateIfMatch(req.headers["if-match"]);
-  if (precondition.kind === "missing") {
+  const ifMatch = evaluateIfMatch(req.headers["if-match"]);
+  const ifNoneMatch = evaluateIfNoneMatch(req.headers["if-none-match"]);
+  // One write, one condition: `If-Match` overwrites a version, `If-None-Match: *`
+  // creates a file that must still be absent. Both at once, or a form this
+  // server does not act on, is refused before the body is read.
+  let precondition: FileEditPrecondition;
+  if (ifNoneMatch.kind === "create") {
+    if (ifMatch.kind !== "missing") {
+      return { kind: "error", status: 412, message: "Precondition failed" };
+    }
+    precondition = { kind: "create" };
+  } else if (ifMatch.kind === "etag" && ifNoneMatch.kind === "absent") {
+    precondition = { kind: "match", etag: ifMatch.etag };
+  } else if (ifMatch.kind === "missing" && ifNoneMatch.kind === "absent") {
     return { kind: "error", status: 428, message: "If-Match precondition required" };
-  }
-  if (precondition.kind === "wildcard" || precondition.kind === "invalid") {
+  } else {
     return { kind: "error", status: 412, message: "Precondition failed" };
   }
 
@@ -576,7 +820,7 @@ export async function putEditedFileFromRequest(
   }
   const result = await putEditedFile({
     ...target,
-    ifMatch: req.headers["if-match"],
+    precondition,
     body: body.bytes,
   });
   return { ...result, size: body.bytes.length };
@@ -584,17 +828,11 @@ export async function putEditedFileFromRequest(
 
 export async function putEditedFile(
   input: FileEditTarget & {
-    ifMatch: string | string[] | undefined;
+    precondition: FileEditPrecondition;
     body: Buffer;
   },
 ): Promise<PutEditedFileResult> {
-  const precondition = evaluateIfMatch(input.ifMatch);
-  if (precondition.kind === "missing") {
-    return { kind: "error", status: 428, message: "If-Match precondition required" };
-  }
-  if (precondition.kind === "wildcard" || precondition.kind === "invalid") {
-    return { kind: "error", status: 412, message: "Precondition failed" };
-  }
+  const { precondition } = input;
   if (input.body.length > WORKSPACE_FILE_EDIT_MAX_BYTES) {
     return {
       kind: "error",
@@ -607,10 +845,34 @@ export async function putEditedFile(
   }
 
   const first = await inspectFileForEdit(input);
+  if (first.kind === "creatable") {
+    // Only `If-None-Match: *` creates. An `If-Match` write to a file that is
+    // not there is the 404 it always was.
+    if (precondition.kind !== "create") {
+      return { kind: "error", status: 404, message: "File not found" };
+    }
+    const creatable = first;
+    return withEditorWriteLock(creatable.createPath, async () => {
+      const recheck = await inspectFileForEdit(input);
+      if (recheck.kind !== "creatable" || recheck.createPath !== creatable.createPath) {
+        // The file appeared (412: this create can no longer apply) or its
+        // parent stopped being creatable (404: there is nowhere to put it).
+        return recheck.kind === "eligible"
+          ? { kind: "error", status: 412, message: "Precondition failed" }
+          : { kind: "error", status: 404, message: "File not found" };
+      }
+      return createEditedFile({ ...input, creatable: recheck, bytes: input.body });
+    });
+  }
   const firstError = inspectionError(first);
   if (firstError) return firstError;
   if (first.kind !== "eligible") {
     return { kind: "error", status: 404, message: "File not found" };
+  }
+  if (precondition.kind === "create") {
+    // "Must not exist" and it does: nothing was written, and a create never
+    // overwrites what it did not make.
+    return { kind: "error", status: 412, message: "Precondition failed" };
   }
 
   // The canonical file is the lock: a Skill inside a workspace checkout is

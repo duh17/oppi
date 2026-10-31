@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -119,12 +120,145 @@ describe("/files/current?origin=pi", () => {
     expect(readFileSync(systemPrompt).equals(edited)).toBe(true);
   });
 
-  it("never creates a file, and refuses a path the allowlist does not name", async () => {
+  it("answers an empty creatable base for a missing allowlisted file", async () => {
+    const fixture = seed();
+    rmSync(join(fixture.agentDir, "SYSTEM.md"));
+
+    const read = await call(fixture, "GET", "SYSTEM.md");
+    expect(read.statusCode).toBe(200);
+    expect(read.body.length).toBe(0);
+    // No tag: there is no version to overwrite, and the first save creates it.
+    expect(read.headers.ETag).toBeUndefined();
+    expect(read.headers["X-Oppi-Creatable"]).toBe("1");
+    expect(existsSync(join(fixture.agentDir, "SYSTEM.md"))).toBe(false);
+
+    // A missing template is creatable with the directory it goes in.
+    const prompt = await call(fixture, "GET", "prompts/review.md");
+    expect(prompt.statusCode).toBe(200);
+    expect(prompt.headers["X-Oppi-Creatable"]).toBe("1");
+    expect(existsSync(join(fixture.agentDir, "prompts"))).toBe(false);
+  });
+
+  it("creates a missing file once, on If-None-Match: *", async () => {
+    const fixture = seed();
+    rmSync(join(fixture.agentDir, "SYSTEM.md"));
+    const systemPrompt = join(fixture.agentDir, "SYSTEM.md");
+
+    // A tag precondition cannot create: there is no version to match.
+    const withTag = await call(fixture, "PUT", "SYSTEM.md", Buffer.from("mine\n"), {
+      "if-match": tag("nothing\n"),
+    });
+    expect(withTag.statusCode).toBe(404);
+    expect(existsSync(systemPrompt)).toBe(false);
+
+    const created = Buffer.from("# Pi system prompt, written here\n");
+    const first = await call(fixture, "PUT", "SYSTEM.md", created, { "if-none-match": "*" });
+    expect(first.statusCode).toBe(200);
+    expect(readFileSync(systemPrompt).equals(created)).toBe(true);
+    const createdTag = (JSON.parse(first.body.toString("utf8")) as { etag: string }).etag;
+    expect(JSON.parse(first.body.toString("utf8"))).toMatchObject({ size: created.length });
+
+    // The file is there now: the same create is a stale conflict, and the
+    // bytes on disk stay the ones the first save wrote.
+    const second = await call(fixture, "PUT", "SYSTEM.md", Buffer.from("again\n"), {
+      "if-none-match": "*",
+    });
+    expect(second.statusCode).toBe(412);
+    expect(readFileSync(systemPrompt).equals(created)).toBe(true);
+
+    // The read is an ordinary tagged read again, with the tag the save answered.
+    const read = await call(fixture, "GET", "SYSTEM.md");
+    expect(read.headers["X-Oppi-Creatable"]).toBeUndefined();
+    expect(read.headers.ETag).toBe(createdTag);
+    expect(read.body.equals(created)).toBe(true);
+  });
+
+  it("creates a prompt template and its prompts directory", async () => {
+    const fixture = seed();
+    const prompts = join(fixture.agentDir, "prompts");
+
+    const created = Buffer.from("review the diff twice\n");
+    const res = await call(fixture, "PUT", "prompts/review.md", created, {
+      "if-none-match": "*",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lstatSync(prompts).isDirectory()).toBe(true);
+    expect(lstatSync(prompts).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(prompts, "review.md")).equals(created)).toBe(true);
+  });
+
+  it("never creates through a linked parent directory", async () => {
+    const fixture = seed();
+    const outside = join(fixture.root, "outside-prompts");
+    mkdirSync(outside);
+    // `prompts` is a link to a real directory outside the agent directory.
+    symlinkSync(outside, join(fixture.agentDir, "prompts"));
+
+    const read = await call(fixture, "GET", "prompts/new.md");
+    expect(read.statusCode).toBe(404);
+    expect(read.headers["X-Oppi-Creatable"]).toBeUndefined();
+    const write = await call(fixture, "PUT", "prompts/new.md", Buffer.from("owned\n"), {
+      "if-none-match": "*",
+    });
+    expect(write.statusCode).toBe(404);
+    expect(existsSync(join(outside, "new.md"))).toBe(false);
+
+    // A link to the agent directory itself is the same refusal: `prompts/x.md`
+    // would otherwise create a file in the agent directory.
+    rmSync(join(fixture.agentDir, "prompts"));
+    symlinkSync(".", join(fixture.agentDir, "prompts"));
+    expect((await call(fixture, "GET", "prompts/new.md")).statusCode).toBe(404);
+    expect(
+      (
+        await call(fixture, "PUT", "prompts/new.md", Buffer.from("owned\n"), {
+          "if-none-match": "*",
+        })
+      ).statusCode,
+    ).toBe(404);
+    expect(existsSync(join(fixture.agentDir, "new.md"))).toBe(false);
+  });
+
+  it("refuses to create a name the allowlist does not name", async () => {
+    const fixture = seed();
+    mkdirSync(join(fixture.agentDir, "prompts"));
+    for (const path of ["prompts/notes.json", "prompts/sub/new.md", "notes.md"]) {
+      const read = await call(fixture, "GET", path);
+      expect(read.statusCode).toBe(404);
+      const write = await call(fixture, "PUT", path, Buffer.from("owned\n"), {
+        "if-none-match": "*",
+      });
+      expect(write.statusCode).toBe(404);
+      expect(existsSync(join(fixture.agentDir, path))).toBe(false);
+    }
+  });
+
+  it("keeps a linked SYSTEM.md read-only, and creates nothing in its place", async () => {
+    const fixture = seed();
+    const shared = join(fixture.root, "shared.md");
+    const secret = "a shared prompt\n";
+    writeFileSync(shared, secret);
+    rmSync(join(fixture.agentDir, "SYSTEM.md"));
+    symlinkSync(shared, join(fixture.agentDir, "SYSTEM.md"));
+
+    // One decision point: the read is untagged and not creatable, so the editor
+    // offers nothing, and the write answers the same refusal.
+    const read = await call(fixture, "GET", "SYSTEM.md");
+    expect(read.headers.ETag).toBeUndefined();
+    expect(read.headers["X-Oppi-Creatable"]).toBeUndefined();
+    const write = await call(fixture, "PUT", "SYSTEM.md", Buffer.from("owned\n"), {
+      "if-none-match": "*",
+    });
+    expect(write.statusCode).toBe(404);
+    expect(readFileSync(shared, "utf8")).toBe(secret);
+    expect(lstatSync(join(fixture.agentDir, "SYSTEM.md")).isSymbolicLink()).toBe(true);
+  });
+
+  it("refuses a path the allowlist does not name, and never creates on a tag", async () => {
     const fixture = seed();
     mkdirSync(join(fixture.agentDir, "prompts"));
     const anyTag = `"sha256-${"a".repeat(64)}"`;
 
-    for (const path of ["prompts/new.md", "prompts/.git/config.md", "prompts/sub/new.md"]) {
+    for (const path of ["prompts/.git/config.md", "prompts/sub/new.md"]) {
       const res = await call(fixture, "PUT", path, Buffer.from("created\n"), { "if-match": anyTag });
       expect(res.statusCode).toBe(404);
       expect(existsSync(join(fixture.agentDir, path))).toBe(false);
