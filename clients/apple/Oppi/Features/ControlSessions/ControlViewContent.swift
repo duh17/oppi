@@ -159,17 +159,17 @@ enum ControlRowViews {
 
     static func divider(_ palette: ThemePalette) -> UIView {
         let view = UIView()
-        view.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.3)
+        view.backgroundColor = palette.ui.comment.withAlphaComponent(0.3)
         view.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
         return view
     }
 
     /// A title and its value side by side, the value trailing (SwiftUI `LabeledContent`).
     static func valueRow(_ title: String, _ value: String, palette: ThemePalette, style: UIFont.TextStyle = .subheadline) -> UIView {
-        let titleLabel = label(title, style: style, color: UIColor(palette.comment), lines: 1)
+        let titleLabel = label(title, style: style, color: palette.ui.comment, lines: 1)
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let valueText = selectableText(value, style: style, color: UIColor(palette.fg))
+        let valueText = selectableText(value, style: style, color: palette.ui.fg)
         valueText.textAlignment = .right
         let row = stack([titleLabel, valueText], axis: .horizontal, spacing: 12, alignment: .top)
         row.isAccessibilityElement = true
@@ -218,7 +218,7 @@ final class ControlStatusPill: UIView {
             label.font = UIFont.scaled(.caption2, .medium, monospacedDigits: true)
         }
         backgroundColor = emphasis == .quiet
-            ? UIColor(palette.fg).withAlphaComponent(0.08)
+            ? palette.ui.fg.withAlphaComponent(0.08)
             : tone.withAlphaComponent(0.14)
     }
 }

@@ -192,7 +192,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .host:
             cell.configure(
                 text: profile.host, placeholder: "Hostname or IP", identifier: "sshTerminal.host",
-                keyboard: .URL, textColor: UIColor(palette.fg), enabled: enabled
+                keyboard: .URL, textColor: palette.ui.fg, enabled: enabled
             ) { [weak self] in
                 self?.profile.host = $0
                 self?.session.hostFailure = nil
@@ -202,7 +202,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .port:
             cell.configure(
                 text: portText, placeholder: "Port", identifier: "sshTerminal.port",
-                keyboard: .numberPad, textColor: UIColor(palette.fg), enabled: enabled
+                keyboard: .numberPad, textColor: palette.ui.fg, enabled: enabled
             ) { [weak self] in
                 self?.portText = $0
                 self?.session.hostFailure = nil
@@ -212,7 +212,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .username:
             cell.configure(
                 text: profile.username, placeholder: "Username", identifier: "sshTerminal.username",
-                keyboard: .default, textColor: UIColor(palette.fg), enabled: enabled
+                keyboard: .default, textColor: palette.ui.fg, enabled: enabled
             ) { [weak self] in
                 self?.profile.username = $0
                 self?.reloadActionItems()
@@ -222,14 +222,14 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 text: sudoPasswordText,
                 placeholder: hasSavedSudoPassword ? "Sudo Password: saved, type to replace" : "Sudo Password (optional)",
                 identifier: "sshTerminal.sudoPassword",
-                isSecure: true, textColor: UIColor(palette.fg), enabled: enabled
+                isSecure: true, textColor: palette.ui.fg, enabled: enabled
             ) { [weak self] in
                 self?.sudoPasswordText = $0
             }
         case .startup:
             cell.configure(
                 text: profile.startupCommand ?? "", placeholder: "Login shell", identifier: "sshTerminal.startupCommand",
-                monospaced: true, textColor: UIColor(palette.fg), enabled: enabled
+                monospaced: true, textColor: palette.ui.fg, enabled: enabled
             ) { [weak self] in
                 self?.profile.startupCommand = $0
                 self?.reconfigure(.multiplexer)
@@ -343,13 +343,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         cell.accessories = []
         cell.accessibilityIdentifier = nil
         var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         switch item {
         case .savePassword:
             content = UIListContentConfiguration.valueCell()
             content.text = "Save Password"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             let toggle = UISwitch()
             toggle.isOn = profile.savesPassword
             toggle.isEnabled = !session.connecting
@@ -372,13 +372,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .backing:
             content.text = deviceKey.identity?.backingDescription ?? ""
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .identityStatus:
             content.text = deviceKey.identityFailure ?? "Loading identity…"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .replaceKey:
             content.text = "Device passcode changed — create a new key"
-            content.textProperties.color = UIColor(palette.blue)
+            content.textProperties.color = palette.ui.blue
         case .connecting:
             content.text = session.savingHostOnly ? "Saving Host…" : "Connecting…"
             let cancel = UIButton(type: .system)
@@ -391,19 +391,19 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.accessibilityIdentifier = "sshTerminal.connecting"
         case .connect:
             content.text = "Connect"
-            content.textProperties.color = canConnect ? UIColor(palette.blue) : UIColor(palette.comment)
+            content.textProperties.color = canConnect ? palette.ui.blue : palette.ui.comment
             cell.accessibilityIdentifier = "sshTerminal.connect"
             cell.accessibilityTraits.insert(.button)
             if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
         case .saveHost:
             content.text = "Save Host"
-            content.textProperties.color = canConnect ? UIColor(palette.blue) : UIColor(palette.comment)
+            content.textProperties.color = canConnect ? palette.ui.blue : palette.ui.comment
             cell.accessibilityIdentifier = "sshTerminal.saveHost"
             cell.accessibilityTraits.insert(.button)
             if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
         case .failure:
             content.text = "Disconnected — \(session.failure ?? "")"
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.failure"
         case .trustUnknown:
@@ -412,11 +412,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.accessibilityIdentifier = "sshTerminal.trustPrompt"
         case .trustMismatch:
             content.text = "Host key changed — connection blocked."
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.secondaryText = "Forget the trusted key only after you verify why it changed."
         case .deleteHost:
             content.text = "Delete Host"
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             cell.accessibilityIdentifier = "sshTerminal.deleteHost"
         default:
             break

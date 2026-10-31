@@ -230,7 +230,7 @@ final class SkillDetailViewController: UIViewController {
     private func apply(_ detail: SkillDetail, themeChanged: Bool) {
         let palette = ThemeRuntimeState.currentPalette()
         let themeID = ThemeRuntimeState.currentThemeID()
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         let hasFiles = detail.files.count > 1
 
         descriptionLabel.text = detail.skill.description
@@ -248,7 +248,7 @@ final class SkillDetailViewController: UIViewController {
                 range: NSRange(location: 0, length: label.length)
             )
             filesPill.attributedText = label
-            filesPill.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.08)
+            filesPill.backgroundColor = palette.ui.fg.withAlphaComponent(0.08)
             filesPill.accessibilityLabel = text
         }
 
@@ -274,20 +274,20 @@ final class SkillDetailViewController: UIViewController {
                 filesStack.addArrangedSubview(fileRow(file, palette: palette))
             }
         }
-        filesHeader.textColor = UIColor(palette.fg)
+        filesHeader.textColor = palette.ui.fg
     }
 
     private func fileRow(_ file: String, palette: ThemePalette) -> UIButton {
         var configuration = UIButton.Configuration.plain()
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0)
         configuration.image = Self.centered(UIImage.scaledSymbol(
-            Self.fileIcon(for: file), style: .caption1, color: UIColor(palette.comment)
+            Self.fileIcon(for: file), style: .caption1, color: palette.ui.comment
         ))
         configuration.imagePadding = 6
         configuration.titleAlignment = .leading
         var title = AttributedString(file)
         title.font = UIFont.scaledMonospaced(.caption1)
-        title.foregroundColor = UIColor(palette.fg)
+        title.foregroundColor = palette.ui.fg
         configuration.attributedTitle = title
         let button = UIButton(configuration: configuration)
         button.contentHorizontalAlignment = .leading

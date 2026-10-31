@@ -401,7 +401,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
-        let fg = UIColor(palette.fg)
+        let fg = palette.ui.fg
         switch item {
         case .manualHost:
             cell.configure(
@@ -516,14 +516,14 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     }
 
     private func setupRow(_ item: Item) -> SetupRow? {
-        let fg = UIColor(palette.fg)
-        let comment = UIColor(palette.comment)
-        let red = UIColor(palette.red)
+        let fg = palette.ui.fg
+        let comment = palette.ui.comment
+        let red = palette.ui.red
         switch item {
         case .checking:
             return SetupRow(
                 leading: .spinner, title: String(localized: "Checking\u{2026}"), titleColor: comment,
-                button: .init(title: String(localized: "Cancel"), identifier: "sshPreflight.cancel", color: UIColor(palette.blue)) { [weak self] in
+                button: .init(title: String(localized: "Cancel"), identifier: "sshPreflight.cancel", color: palette.ui.blue) { [weak self] in
                     self?.cancel()
                 }
             )
@@ -539,8 +539,8 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         case .result(let title):
             guard let check = currentReport?.0.checks.first(where: { $0.title == title }) else { return nil }
             let symbol: (String, UIColor, String) = switch check.status {
-            case .ok: ("checkmark.circle.fill", UIColor(palette.green), String(localized: "OK"))
-            case .installs: ("arrow.down.circle", UIColor(palette.blue), String(localized: "Install & Start adds it"))
+            case .ok: ("checkmark.circle.fill", palette.ui.green, String(localized: "OK"))
+            case .installs: ("arrow.down.circle", palette.ui.blue, String(localized: "Install & Start adds it"))
             case .missing: ("xmark.circle.fill", red, String(localized: "Missing"))
             case .info: ("info.circle", comment, String(localized: "Note"))
             }
@@ -607,8 +607,8 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     }
 
     private func presentation(of step: SSHInstallStep, _ state: SSHInstallProgress.StepState) -> StepPresentation {
-        let comment = UIColor(palette.comment)
-        let orange = UIColor(palette.orange)
+        let comment = palette.ui.comment
+        let orange = palette.ui.orange
         let title: String
         let about: String
         switch step {
@@ -632,7 +632,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         case .running(let text):
             return .init(title: title, leading: .spinner, detail: or(text, about), word: String(localized: "In progress"))
         case .finished(let text):
-            return .init(title: title, leading: .symbol("checkmark.circle.fill", UIColor(palette.green)), detail: or(text, about), word: String(localized: "Done"))
+            return .init(title: title, leading: .symbol("checkmark.circle.fill", palette.ui.green), detail: or(text, about), word: String(localized: "Done"))
         case .skipped(let text) where step == .service:
             // Linux without a systemd user manager: Oppi runs in the
             // background but will not come back after a restart. Setup goes
@@ -643,21 +643,21 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 word: String(localized: "Needs attention")
             )
         case .skipped(let text):
-            return .init(title: title, leading: .symbol("checkmark.circle", UIColor(palette.green)), detail: or(text, about), word: String(localized: "Already done"))
+            return .init(title: title, leading: .symbol("checkmark.circle", palette.ui.green), detail: or(text, about), word: String(localized: "Already done"))
         case .warning(let text):
             // Done, with something to fix later; the installer's detail says
             // what. Setup goes on to pairing.
             return .init(title: title, leading: .symbol("exclamationmark.triangle.fill", orange), detail: or(text, about), word: String(localized: "Needs attention"))
         case .failed(let text):
-            return .init(title: title, leading: .symbol("xmark.circle.fill", UIColor(palette.red)), detail: or(text, about), word: String(localized: "Failed"))
+            return .init(title: title, leading: .symbol("xmark.circle.fill", palette.ui.red), detail: or(text, about), word: String(localized: "Failed"))
         }
     }
 
     private func installStepRow(_ step: SSHInstallStep) -> SetupRow {
         let shown = presentation(of: step, install.progress?.state(of: step) ?? .pending)
         return SetupRow(
-            leading: shown.leading, title: shown.title, titleColor: UIColor(palette.fg),
-            lines: [.init(text: shown.detail, color: UIColor(palette.comment))],
+            leading: shown.leading, title: shown.title, titleColor: palette.ui.fg,
+            lines: [.init(text: shown.detail, color: palette.ui.comment)],
             identifier: "sshPreflight.install.step.\(step.rawValue)",
             accessibilityLabel: "\(shown.title), \(shown.word), \(shown.detail)"
         )

@@ -979,7 +979,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
         }
         let foreground = lastTerminalColors?.foreground.map(UIColor.init)
-        let tint = foreground ?? UIColor(themeID.palette.fg)
+        let tint = foreground ?? themeID.palette.ui.fg
         let openTerminals = session?.openTerminals().count ?? 0
         barFit = SSHTerminalBarFit(view)
         // The Rex pane switcher's pill holds the room at the trailing end only
@@ -1010,7 +1010,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             waiting: overviewsWaiting,
             openTerminals: openTerminals,
             tint: tint,
-            background: lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg),
+            background: lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg,
             selected: selectedInput,
             keysEnabled: canSendKeys
         )
@@ -1040,10 +1040,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let rex = channel.rex?.state
         let swipes = channel.rex != nil
         if let rex {
-            let background = lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg)
+            let background = lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg
             rexMinimap.apply(
-                state: rex, shownTint: UIColor(themeID.palette.blue),
-                otherTint: UIColor(themeID.palette.fgDim).withAlphaComponent(0.5),
+                state: rex, shownTint: themeID.palette.ui.blue,
+                otherTint: themeID.palette.ui.fgDim.withAlphaComponent(0.5),
                 backdropColor: background.withAlphaComponent(0.75)
             )
         }
@@ -1246,17 +1246,17 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let input = channel.inputNotice
         inputBanner.isHidden = input.isEmpty
         if !input.isEmpty {
-            inputBanner.apply(text: input, color: UIColor(themeID.palette.orange))
+            inputBanner.apply(text: input, color: themeID.palette.ui.orange)
         }
         pasteBanner.isHidden = pasteNotice == nil
         if let pasteNotice {
-            pasteBanner.apply(text: pasteNotice, color: UIColor(themeID.palette.orange))
+            pasteBanner.apply(text: pasteNotice, color: themeID.palette.ui.orange)
         }
         openBanner.isHidden = openNotice == nil
         if let openNotice {
             openBanner.apply(
                 text: openNotice,
-                color: UIColor(themeID.palette.fg),
+                color: themeID.palette.ui.fg,
                 action: openNoticeRetry.map { handler in
                     SSHTerminalTextBannerView.Action(title: String(localized: "Retry"), handler: handler)
                 }
@@ -1329,7 +1329,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if backToLiveThemeID != themeID {
             backToLiveThemeID = themeID
             // The terminal never shows the button busy; the tint is unused.
-            backToLive.apply(palette: themeID.palette, busyTint: UIColor(themeID.palette.blue))
+            backToLive.apply(palette: themeID.palette, busyTint: themeID.palette.ui.blue)
         }
         backToLive.setVisible(detached)
     }

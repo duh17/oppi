@@ -257,8 +257,8 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         guard let node = nodes[id] else { return }
         var content = UIListContentConfiguration.cell()
         content.text = node.name
-        content.textProperties.color = UIColor(palette.fg)
-        content.imageProperties.tintColor = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
+        content.imageProperties.tintColor = palette.ui.fg
         switch node.kind {
         case .directory:
             let isOpen = dataSource?.snapshot(for: 0).isExpanded(id) ?? false

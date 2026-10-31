@@ -71,10 +71,10 @@ final class ServerCatalogServerRowCell: UICollectionViewListCell {
     ) {
         badge.apply(icon: server.resolvedBadgeIcon, tint: state.uiColor(ComposerThemeColors(palette: palette)))
         nameLabel.text = server.name
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         stateLabel.text = state.title
-        stateLabel.textColor = UIColor(palette.comment)
-        chevron.tintColor = UIColor(palette.comment)
+        stateLabel.textColor = palette.ui.comment
+        chevron.tintColor = palette.ui.comment
         chevron.isHidden = menu == nil
         button.accessibilityLabel = "Current server: \(server.name)"
         button.accessibilityValue = state.title

@@ -279,7 +279,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         }
 
         let keys = preferences.keyBarKeys.filter { $0 != .escape || keybindings == .vim }
-        keyBar.apply(keys: keys, foreground: UIColor(appliedThemeID.palette.fg), background: UIColor(appliedThemeID.palette.bg))
+        keyBar.apply(keys: keys, foreground: appliedThemeID.palette.ui.fg, background: appliedThemeID.palette.ui.bg)
         let accessory: UIView? = preferences.showsKeyBar ? keyBar : nil
         if textView.inputAccessoryView !== accessory {
             textView.inputAccessoryView = accessory
@@ -451,7 +451,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         // floating caret shows where the cursor goes.
         let block = vimEnabled && vim.mode == .normal
         textView.usesBlockCaret = block
-        textView.tintColor = block && !textView.isFloatingCursorActive ? .clear : UIColor(appliedThemeID.palette.blue)
+        textView.tintColor = block && !textView.isFloatingCursorActive ? .clear : appliedThemeID.palette.ui.blue
         if keyCommandCache?.key != keyCommandKey { keyCommandCache = nil }
         if scrolls {
             textView.scrollRangeToVisible(textView.selectedRange)
@@ -769,9 +769,9 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     private func applyColors() {
         let palette = appliedThemeID.palette
         overrideUserInterfaceStyle = appliedThemeID.preferredColorScheme == .light ? .light : .dark
-        let background = UIColor(palette.bgDark)
-        let foreground = UIColor(palette.fg)
-        let dim = UIColor(palette.comment)
+        let background = palette.ui.bgDark
+        let foreground = palette.ui.fg
+        let dim = palette.ui.comment
         let divider = foreground.withAlphaComponent(0.08)
         view.backgroundColor = background
         textView.backgroundColor = background
@@ -783,19 +783,19 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             currentNumber: foreground,
             currentLine: foreground.withAlphaComponent(0.05),
             divider: divider,
-            blockCursor: UIColor(palette.blue).withAlphaComponent(0.5)
+            blockCursor: palette.ui.blue.withAlphaComponent(0.5)
         )
         statusBar.applyColors(
-            background: UIColor(palette.bg),
+            background: palette.ui.bg,
             foreground: foreground,
             dim: dim,
-            accent: UIColor(palette.blue),
+            accent: palette.ui.blue,
             divider: divider
         )
         keyBar.apply(
             keys: preferences.keyBarKeys.filter { $0 != .escape || vimEnabled },
             foreground: foreground,
-            background: UIColor(palette.bg)
+            background: palette.ui.bg
         )
         restyleBuffer()
         vimStateDidChange(scrolls: false)

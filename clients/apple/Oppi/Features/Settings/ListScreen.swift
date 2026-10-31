@@ -152,7 +152,7 @@ enum ListScreen {
                 ? (settingsCard ? SettingsStyle.cardBackground(for: state) : UIBackgroundConfiguration.listCell().updated(for: state))
                 : UIBackgroundConfiguration.clear()
             if !cell.element.isHidden, cell.element.isHighlighted {
-                background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.1)
+                background.backgroundColor = palette.ui.fg.withAlphaComponent(0.1)
             }
             cell.backgroundConfiguration = background
         }

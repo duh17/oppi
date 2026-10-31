@@ -370,7 +370,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         reconcileContent()
         updateMountedContent(themeID: themeID)
         adjacentButtons.update(
@@ -598,7 +598,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private func updateMountedContent(themeID: ThemeID) {
         let palette = themeID.palette
         updateSummary(themeID: themeID)
-        divider?.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        divider?.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
         tabs?.superview?.isHidden = isEditingCurrentFile
         if let tabs, tabs.selectedSegmentIndex != selectedTab.rawValue {
             tabs.selectedSegmentIndex = selectedTab.rawValue

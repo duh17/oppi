@@ -372,11 +372,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func applyTheme(_ palette: ThemePalette) {
-        let background = UIColor(palette.bg)
+        let background = palette.ui.bg
         view.backgroundColor = background
         collectionView.backgroundColor = .clear
         divider.backgroundColor = .separator
-        dividerTint.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.18)
+        dividerTint.backgroundColor = palette.ui.comment.withAlphaComponent(0.18)
         columnSearch.apply(palette)
         paneEmpty.configuration = UIContentUnavailableConfiguration.loadState(Self.paneEmptyState, palette: palette, background: background)
         paneViewer?.view.backgroundColor = background
@@ -1171,11 +1171,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         var content = UIListContentConfiguration.header()
         content.text = compactSearchHeader
         content.textProperties.font = UIFont.scaled(.caption2, monospacedDigits: true)
-        content.textProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.comment
         content.textProperties.transform = .none
         view.contentConfiguration = content
         var background = UIBackgroundConfiguration.listHeader()
-        background.backgroundColor = UIColor(palette.bg)
+        background.backgroundColor = palette.ui.bg
         view.backgroundConfiguration = background
     }
 
@@ -1362,7 +1362,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         case .empty:
             state = Self.emptyDirectoryState
         }
-        stateView.configuration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: UIColor(palette.bg))
+        stateView.configuration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: palette.ui.bg)
         stateView.isHidden = false
     }
 
@@ -1382,8 +1382,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func configure(_ cell: UICollectionViewListCell, row: Row, path: String?) {
         let palette = palette
-        let comment = UIColor(palette.comment)
-        let fg = UIColor(palette.fg)
+        let comment = palette.ui.comment
+        let fg = palette.ui.fg
         cell.accessories = []
         // The tappable rows set this; state rows read as their text.
         var element: (label: String, isSelected: Bool)?
@@ -1430,7 +1430,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 configureTreeRow(
                     cell,
                     image: Self.treeSymbol("folder.fill"),
-                    tint: UIColor(palette.blue),
+                    tint: palette.ui.blue,
                     title: NSAttributedString(string: name, attributes: [.font: Self.font(.callout, .regular), .foregroundColor: fg]),
                     subtitle: nil,
                     trailingText: nil,
@@ -1442,7 +1442,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             } else {
                 var content = UIListContentConfiguration.cell()
                 content.image = UIImage(systemName: "folder.fill")
-                content.imageProperties.tintColor = UIColor(palette.blue)
+                content.imageProperties.tintColor = palette.ui.blue
                 content.imageProperties.reservedLayoutSize = CGSize(width: 24, height: 24)
                 content.text = name
                 content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
@@ -1460,7 +1460,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             element = ([name, changes].compactMap { $0 }.joined(separator: ", "), false)
         case .file(let file):
             let icon = FileIcon.forPath(file.name)
-            let trailingColor = file.isRecent ? UIColor(palette.green) : comment
+            let trailingColor = file.isRecent ? palette.ui.green : comment
             let dot = file.mark.map { Self.changeDot(Self.markColor($0.kind, palette: palette), diameter: 7) }
             let detail = Self.detailLine(size: file.size, mark: file.mark, palette: palette, font: file.column
                 ? UIFont.scaledMonospaced(.caption2) : UIFont.preferredFont(forTextStyle: .caption2))
@@ -1586,8 +1586,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         isSelected: Bool
     ) {
         let palette = palette
-        let blue = UIColor(palette.blue)
-        let comment = UIColor(palette.comment)
+        let blue = palette.ui.blue
+        let comment = palette.ui.comment
         var content = UIListContentConfiguration.subtitleCell()
         content.image = image
         content.imageProperties.tintColor = isSelected ? blue : tint
@@ -1620,7 +1620,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         cell.accessories = accessories
         let fill = blue.withAlphaComponent(0.16)
         let stroke = blue.withAlphaComponent(0.36)
-        let pressed = UIColor(palette.fg).withAlphaComponent(0.06)
+        let pressed = palette.ui.fg.withAlphaComponent(0.06)
         cell.configurationUpdateHandler = { cell, cellState in
             var background = UIBackgroundConfiguration.clear()
             background.cornerRadius = 14
@@ -1637,7 +1637,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// The list's theme page; a touched row shows the system highlight.
     private func applyListBackground(to cell: UICollectionViewListCell) {
-        let page = UIColor(palette.bg)
+        let page = palette.ui.bg
         cell.configurationUpdateHandler = { cell, cellState in
             var background = UIBackgroundConfiguration.listCell().updated(for: cellState)
             if !cellState.isHighlighted, !cellState.isSelected {
@@ -1657,11 +1657,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let text = NSMutableAttributedString()
         let plain: [NSAttributedString.Key: Any] = [
             .font: UIFont.preferredFont(forTextStyle: .body),
-            .foregroundColor: UIColor(palette.fg),
+            .foregroundColor: palette.ui.fg,
         ]
         let matched: [NSAttributedString.Key: Any] = [
             .font: font(.body, .bold),
-            .foregroundColor: UIColor(palette.yellow),
+            .foregroundColor: palette.ui.yellow,
         ]
         for run in result.highlights {
             text.append(NSAttributedString(string: run.text, attributes: run.isMatch ? matched : plain))
@@ -1710,10 +1710,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private static func markColor(_ kind: FileBrowserChangeMark.Kind, palette: ThemePalette) -> UIColor {
         switch kind {
-        case .added: UIColor(palette.toolDiffAdded)
-        case .modified: UIColor(palette.orange)
-        case .deleted, .conflicted: UIColor(palette.toolDiffRemoved)
-        case .renamed: UIColor(palette.purple)
+        case .added: palette.ui.diffAdded
+        case .modified: palette.ui.orange
+        case .deleted, .conflicted: palette.ui.diffRemoved
+        case .renamed: palette.ui.purple
         }
     }
 
@@ -1724,7 +1724,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         palette: ThemePalette,
         font: UIFont
     ) -> NSAttributedString? {
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         let text = NSMutableAttributedString(string: size, attributes: [.font: font, .foregroundColor: comment])
         func append(_ string: String, _ color: UIColor) {
             if text.length > 0 { text.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
@@ -1733,8 +1733,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 .foregroundColor: color,
             ]))
         }
-        if let added = mark?.addedLines, added > 0 { append("+\(added)", UIColor(palette.toolDiffAdded)) }
-        if let removed = mark?.removedLines, removed > 0 { append("\u{2212}\(removed)", UIColor(palette.toolDiffRemoved)) }
+        if let added = mark?.addedLines, added > 0 { append("+\(added)", palette.ui.diffAdded) }
+        if let removed = mark?.removedLines, removed > 0 { append("\u{2212}\(removed)", palette.ui.diffRemoved) }
         return text.length > 0 ? text : nil
     }
 
@@ -1811,7 +1811,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             onSelectionChange: { [weak self] selection in self?.selectFile(selection) },
             onBack: { [weak self] in self?.selectFile(nil) }
         )
-        viewer.view.backgroundColor = UIColor(palette.bg)
+        viewer.view.backgroundColor = palette.ui.bg
         embed(viewer, in: paneContainer)
         paneViewer = viewer
     }

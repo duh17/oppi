@@ -42,14 +42,14 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
         title = source.title
         navigationItem.largeTitleDisplayMode = .inline
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(themeID.palette.bg)
+        view.backgroundColor = themeID.palette.ui.bg
         if isSheet {
             navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(close))
         }
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.delegate = self
-        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        collectionView.backgroundColor = themeID.palette.ui.bg
         let refresh = UIRefreshControl()
         refresh.addAction(UIAction { [weak self] _ in
             Task { await self?.refresh() }
@@ -91,8 +91,8 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
     override func updateProperties() {
         super.updateProperties()
         applySnapshot()
-        view.backgroundColor = UIColor(themeID.palette.bg)
-        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        view.backgroundColor = themeID.palette.ui.bg
+        collectionView.backgroundColor = themeID.palette.ui.bg
     }
 
     @objc private func close() {
@@ -118,8 +118,8 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
         switch row.kind {
         case .header(let note, let failed):
             content.image = UIImage(systemName: "desktopcomputer")
-            content.imageProperties.tintColor = UIColor(palette.comment)
-            content.textProperties.color = UIColor(palette.fg)
+            content.imageProperties.tintColor = palette.ui.comment
+            content.textProperties.color = palette.ui.fg
             content.textProperties.font = .preferredFont(forTextStyle: .headline)
             content.secondaryText = note
             content.secondaryTextProperties.color = UIColor(failed ? palette.red : palette.comment)
@@ -127,24 +127,24 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
             cell.accessibilityIdentifier = "\(prefix).header"
             cell.accessibilityTraits = .header
         case .failure:
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             cell.accessibilityIdentifier = "\(prefix).failure"
         case .placeholder:
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .group(let focused):
             content.image = UIImage(systemName: "square.stack")
-            content.imageProperties.tintColor = UIColor(palette.comment)
-            content.textProperties.color = UIColor(palette.fg)
+            content.imageProperties.tintColor = palette.ui.comment
+            content.textProperties.color = palette.ui.fg
             content.textProperties.font = Self.font(focused: focused)
             cell.accessibilityIdentifier = "\(prefix).group"
             cell.accessibilityValue = focused ? "Focused" : ""
             cell.accessibilityTraits = row.focus == nil ? .header : .button
         case .item(let subtitle, let focused, let status):
             content.secondaryText = subtitle?.isEmpty == false ? subtitle : nil
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.textProperties.font = Self.font(focused: focused)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.accessories = cell.statusAccessories(for: status, themeID: themeID)
             cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).item"
             cell.accessibilityTraits = row.focus == nil ? [] : .button
@@ -152,16 +152,16 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
             cell.indentationLevel = 1
         case .section(let symbol):
             content.image = UIImage(systemName: symbol)
-            content.imageProperties.tintColor = UIColor(palette.comment)
-            content.textProperties.color = UIColor(palette.comment)
+            content.imageProperties.tintColor = palette.ui.comment
+            content.textProperties.color = palette.ui.comment
             content.textProperties.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: .systemFont(ofSize: 13, weight: .semibold))
             content.textProperties.transform = .uppercase
             cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).section"
             cell.accessibilityTraits = .header
         case .action(let symbol):
             content.image = UIImage(systemName: symbol)
-            content.imageProperties.tintColor = UIColor(palette.blue)
-            content.textProperties.color = UIColor(palette.blue)
+            content.imageProperties.tintColor = palette.ui.blue
+            content.textProperties.color = palette.ui.blue
             cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).action"
             cell.accessibilityTraits = .button
             cell.indentationLevel = 1
@@ -239,7 +239,7 @@ class SSHTerminalOverviewCell: UICollectionViewListCell {
         return [
             slot,
             .label(text: label, options: .init(
-                tintColor: kind?.tint(themeID.appTheme) ?? UIColor(themeID.palette.comment),
+                tintColor: kind?.tint(themeID.appTheme) ?? themeID.palette.ui.comment,
                 font: .preferredFont(forTextStyle: .caption1)
             )),
         ]

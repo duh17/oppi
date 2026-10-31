@@ -773,9 +773,9 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
         let palette = ThemeRuntimeState.currentPalette()
         badge.apply(icon: icon, tint: state.uiColor(ComposerThemeColors(palette: palette)))
         nameLabel.text = name
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         statusLabel.text = status
-        statusLabel.textColor = UIColor(palette.comment)
+        statusLabel.textColor = palette.ui.comment
         var value = status
         switch lock {
         case .none:
@@ -787,7 +787,7 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
             lockView.image = UIImage(systemName: "lock.open.fill")
             value += ", " + String(localized: "Unlocked")
         }
-        lockView.tintColor = UIColor(palette.comment)
+        lockView.tintColor = palette.ui.comment
         if isLoading { spinner.startAnimating() } else { spinner.stopAnimating() }
         accessibilityIdentifier = identifier
         accessibilityLabel = name

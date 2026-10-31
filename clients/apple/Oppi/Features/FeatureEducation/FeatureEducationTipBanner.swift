@@ -167,18 +167,18 @@ final class FeatureEducationTipBannerView: UIView {
 
     private func applyThemeColors() {
         let palette = ThemeRuntimeState.currentPalette()
-        let accent = UIColor(palette.cyan)
+        let accent = palette.ui.cyan
 
         // The banner fill sits on a UIVisualEffectView blur, satisfying the
         // floating-control role's blur pairing.
         blurView.contentView.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
         )
-        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.22).cgColor
-        titleLabel.textColor = UIColor(palette.fg)
-        messageLabel.textColor = UIColor(palette.fgDim)
-        closeButton.tintColor = UIColor(palette.fgDim)
-        iconContainer.backgroundColor = UIColor(palette.cyan).withAlphaComponent(0.16)
+        layer.borderColor = palette.ui.comment.withAlphaComponent(0.22).cgColor
+        titleLabel.textColor = palette.ui.fg
+        messageLabel.textColor = palette.ui.fgDim
+        closeButton.tintColor = palette.ui.fgDim
+        iconContainer.backgroundColor = palette.ui.cyan.withAlphaComponent(0.16)
         iconView.tintColor = accent
     }
 

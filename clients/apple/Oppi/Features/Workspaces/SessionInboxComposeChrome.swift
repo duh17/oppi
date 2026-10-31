@@ -158,8 +158,8 @@ final class SessionInboxMessageCapsule: UIControl {
             },
         ] : nil
         if let palette {
-            placeholderLabel.textColor = UIColor(palette.fgDim)
-            micButton.tintColor = UIColor(palette.fg)
+            placeholderLabel.textColor = palette.ui.fgDim
+            micButton.tintColor = palette.ui.fg
         }
         if changed {
             invalidateIntrinsicContentSize()

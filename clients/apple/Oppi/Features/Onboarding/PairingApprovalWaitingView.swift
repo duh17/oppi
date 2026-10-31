@@ -130,7 +130,7 @@ final class PairingWaitCoverViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         let palette = ThemeRuntimeState.currentPalette()
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         let waiting = PairingApprovalWaitingView()
         waiting.translatesAutoresizingMaskIntoConstraints = false
         waiting.apply(colors: ComposerThemeColors(palette: palette))

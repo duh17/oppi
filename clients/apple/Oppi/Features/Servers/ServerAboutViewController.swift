@@ -429,7 +429,7 @@ final class ServerAboutVoiceCell: UICollectionViewListCell {
         let palette = ThemeRuntimeState.currentPalette()
         let presentation = VoiceBackendPresentation(backend.health)
         let tint = presentation.isAvailable
-            ? UIColor(palette.green)
+            ? palette.ui.green
             : presentation.needsAttention ? style.warning : style.value
         titleLabel.text = backend.label
         titleLabel.textColor = style.title

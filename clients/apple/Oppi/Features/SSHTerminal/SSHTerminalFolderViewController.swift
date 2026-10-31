@@ -92,7 +92,7 @@ final class SSHTerminalFolderViewController: UIViewController {
         _ = session.passwordPrompt
         _ = session.showsTerminal
         let palette = sshTerminalThemeID.palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         let folder = target.folderLabel
         let state: LoadState
         if let failure = session.failure {
@@ -112,7 +112,7 @@ final class SSHTerminalFolderViewController: UIViewController {
         stateView.configuration = UIContentUnavailableConfiguration.loadState(
             state,
             palette: palette,
-            background: UIColor(palette.bg)
+            background: palette.ui.bg
         )
         if session.showsTerminal { hasShownTerminal = true }
         chrome?.sync()

@@ -339,7 +339,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                 icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
                 icon.heightAnchor.constraint(equalToConstant: 32).isActive = true
                 let row = ControlRowViews.stack([
-                    ControlRowViews.label("Icon", style: .body, color: UIColor(palette.comment), lines: 1),
+                    ControlRowViews.label("Icon", style: .body, color: palette.ui.comment, lines: 1),
                     ControlRowViews.spacer(),
                     icon,
                 ], axis: .horizontal, spacing: 12, alignment: .center)
@@ -356,8 +356,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 let block = ControlRowViews.stack([
-                    ControlRowViews.label(title, style: .subheadline, color: UIColor(palette.comment)),
-                    ControlRowViews.selectableText(value, style: .body, color: UIColor(palette.fg)),
+                    ControlRowViews.label(title, style: .subheadline, color: palette.ui.comment),
+                    ControlRowViews.selectableText(value, style: .body, color: palette.ui.fg),
                 ], spacing: 6)
                 block.isAccessibilityElement = true
                 block.accessibilityLabel = title
@@ -368,8 +368,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 let block = ControlRowViews.stack([
-                    ControlRowViews.label(title, style: .subheadline, weight: .medium, color: UIColor(palette.fg)),
-                    ControlRowViews.selectableText(value, style: .caption1, color: UIColor(palette.comment)),
+                    ControlRowViews.label(title, style: .subheadline, weight: .medium, color: palette.ui.fg),
+                    ControlRowViews.selectableText(value, style: .caption1, color: palette.ui.comment),
                 ], spacing: 4)
                 block.isAccessibilityElement = true
                 block.accessibilityLabel = title
@@ -387,13 +387,13 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             }
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.stack([
-                    ControlRowViews.label(instructions.text, style: .body, color: UIColor(palette.fg)),
+                    ControlRowViews.label(instructions.text, style: .body, color: palette.ui.fg),
                     ControlRowViews.symbolLabel(
                         "Read and comment",
                         systemImage: "arrow.up.left.and.arrow.down.right",
                         style: .caption1,
                         weight: .medium,
-                        color: UIColor(palette.blue)
+                        color: palette.ui.blue
                     ),
                 ], spacing: 10, alignment: .leading)
             }
@@ -420,7 +420,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             var content = UIListContentConfiguration.cell()
             content.text = "Schedule Recurring Run"
             content.image = UIImage(systemName: "calendar.badge.clock")
-            let tint = UIColor(palette.blue).withAlphaComponent(enabled ? 1 : 0.4)
+            let tint = palette.ui.blue.withAlphaComponent(enabled ? 1 : 0.4)
             content.textProperties.color = tint
             content.imageProperties.tintColor = tint
             cell.contentConfiguration = content
@@ -437,14 +437,14 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             var content = UIListContentConfiguration.cell()
             content.text = "Start Session"
             content.image = UIImage(systemName: "plus.bubble")
-            let tint = UIColor(palette.blue).withAlphaComponent(enabled ? 1 : 0.4)
+            let tint = palette.ui.blue.withAlphaComponent(enabled ? 1 : 0.4)
             content.textProperties.color = tint
             content.imageProperties.tintColor = tint
             cell.contentConfiguration = content
         case .caption(let text):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(text, style: .caption1, color: UIColor(palette.comment))
+                ControlRowViews.label(text, style: .caption1, color: palette.ui.comment)
             }
         }
     }

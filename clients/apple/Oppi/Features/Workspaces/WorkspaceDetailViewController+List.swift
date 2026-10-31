@@ -290,7 +290,7 @@ extension WorkspaceDetailViewController {
         case .archiveLoading:
             var content = UIListContentConfiguration.cell()
             content.text = String(localized: "Loading older sessions…")
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             cell.contentConfiguration = content

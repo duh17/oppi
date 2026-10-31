@@ -149,7 +149,7 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
             placeholder: "Paste full callback URL",
             identifier: "mcp.auth.callback",
             keyboard: .URL,
-            textColor: UIColor(palette.fg),
+            textColor: palette.ui.fg,
             returnKey: .go,
             onReturn: { [weak self] in self?.submit() },
             onChange: { attempt.input = $0 }
@@ -178,7 +178,7 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
             ListScreen.buttonRow(cell, identifier: "mcp.auth.open", label: "Open Sign-In Page") { [weak self] in
                 self?.openSignInPage()
             }
-            cell.contentConfiguration = Self.actionContent("Open Sign-In Page", color: UIColor(palette.blue))
+            cell.contentConfiguration = Self.actionContent("Open Sign-In Page", color: palette.ui.blue)
         case .callback:
             break
         case .submit:
@@ -192,19 +192,19 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
                 "Submit Callback", color: UIColor(enabled ? palette.blue : palette.comment)
             )
         case .flowError:
-            notice(cell, attempt.flow.error, style: .body, color: UIColor(palette.red))
+            notice(cell, attempt.flow.error, style: .body, color: palette.ui.red)
         case .actionError:
-            notice(cell, attempt.actionError, style: .body, color: UIColor(palette.red))
+            notice(cell, attempt.actionError, style: .body, color: palette.ui.red)
         case .refreshError:
-            notice(cell, attempt.refreshError, style: .body, color: UIColor(palette.orange))
+            notice(cell, attempt.refreshError, style: .body, color: palette.ui.orange)
         case .gone:
-            notice(cell, "The host no longer has this flow. Start a new sign-in.", style: .body, color: UIColor(palette.fg))
+            notice(cell, "The host no longer has this flow. Start a new sign-in.", style: .body, color: palette.ui.fg)
         case .finish:
             if attempt.isSettled {
                 ListScreen.buttonRow(cell, identifier: "mcp.auth.sheet.done", label: "Done") { [weak self] in
                     self?.owner.showingSheet = false
                 }
-                cell.contentConfiguration = Self.actionContent("Done", color: UIColor(palette.blue))
+                cell.contentConfiguration = Self.actionContent("Done", color: palette.ui.blue)
             } else {
                 let cancelling = attempt.isCancelling
                 ListScreen.buttonRow(

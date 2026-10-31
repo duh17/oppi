@@ -393,39 +393,39 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             let guidedPick = model.step == .pickProject
             content.text = guidedPick ? "Create your first workspace" : "Almost there"
             content.textProperties.font = .scaled(.headline)
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = guidedPick
                 ? "A workspace tells Oppi which folder to work in. Pick a project on \(model.server.name), enter a folder path manually, or leave the folder empty and Oppi creates one if you just want to explore the app."
                 : "Review the workspace settings, then create it. Oppi will open the workspace next so you can start your first session."
             content.secondaryTextProperties.font = .scaled(.subheadline)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
         case .sandbox:
             content.text = "Sandbox"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.accessories = [.settingsToggle(model.sandboxMode, identifier: "workspace.create.sandbox", label: "Sandbox", reusing: cell) { [weak self] in
                 self?.model.sandboxMode = $0
             }]
         case .scanning:
             content.text = "Scanning projects on server…"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .leading()))]
         case .scanError:
             content.text = model.directoriesError
-            content.textProperties.color = UIColor(palette.orange)
+            content.textProperties.color = palette.ui.orange
             content.image = UIImage(systemName: "exclamationmark.triangle")
-            content.imageProperties.tintColor = UIColor(palette.orange)
+            content.imageProperties.tintColor = palette.ui.orange
         case .noProjects:
             content.text = "No projects found in default locations."
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .folderFixed:
             content = .valueCell()
             content.text = "Folder"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = model.hostMount
             content.secondaryTextProperties.font = .scaledMonospaced(.body)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             content.secondaryTextProperties.numberOfLines = 0
             let change = UIButton(type: .system)
             var config = UIButton.Configuration.plain()
@@ -443,29 +443,29 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .suggestionsLabel:
             content.text = "Suggestions"
             content.textProperties.font = .scaled(.caption1, .semibold)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .noSkills:
             content.text = "No Pi skills discovered for this folder yet."
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         case .skill(let id):
             guard let skill = model.skills.first(where: { $0.id == id }) else { break }
             content = .subtitleCell()
             content.text = skill.name
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = skill.description
             content.secondaryTextProperties.font = .scaled(.caption1)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             content.secondaryTextProperties.numberOfLines = 2
         case .gitStatus:
             content.text = "Show Changes in Chat"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.accessories = [.settingsToggle(model.gitStatusEnabled, identifier: "workspace.create.gitStatus", label: "Show Changes in Chat", reusing: cell) { [weak self] in
                 self?.model.gitStatusEnabled = $0
             }]
         case .error:
             content.text = model.error
             content.textProperties.font = .scaled(.caption1)
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             cell.accessibilityIdentifier = "workspace.create.error"
         case .createWithOppi, .manual, .blank, .project, .name, .folderField, .folderCheck, .suggestion,
              .icon, .showAdvanced, .description, .submit:
@@ -490,12 +490,12 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .createWithOppi:
             content = .subtitleCell()
             content.image = UIImage(systemName: "text.bubble")
-            content.imageProperties.tintColor = UIColor(palette.blue)
+            content.imageProperties.tintColor = palette.ui.blue
             content.text = "Create with Oppi"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = "Describe it and Oppi sets it up."
             content.secondaryTextProperties.font = .scaled(.subheadline)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             identifier = "workspace.create.createWithOppi"
             label = "Create with Oppi"
             hint = "Describe it and Oppi sets it up."
@@ -503,15 +503,15 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .manual:
             content.image = UIImage(systemName: "keyboard")
             content.text = "Enter Folder Path"
-            content.textProperties.color = UIColor(palette.blue)
+            content.textProperties.color = palette.ui.blue
             identifier = "workspace.create.manual"
             label = "Enter Folder Path"
             action = { [weak self] in self?.model.selectManual() }
         case .blank:
             content.image = UIImage(systemName: "folder.badge.plus")
             content.text = "Let Oppi Create a Folder"
-            content.textProperties.color = UIColor(palette.comment)
-            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
+            content.imageProperties.tintColor = palette.ui.comment
             identifier = "workspace.create.blank"
             label = "Let Oppi Create a Folder"
             action = { [weak self] in self?.model.selectBlank() }
@@ -525,10 +525,10 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .suggestion(let path):
             guard let completion = model.hostMountCompletions.first(where: { $0.id == path }) else { break }
             content.image = UIImage(systemName: "folder")
-            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.imageProperties.tintColor = palette.ui.comment
             content.text = completion.path
             content.textProperties.font = .scaledMonospaced(.caption1)
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             identifier = "workspace.create.suggestion.\(completion.path)"
             label = completion.path
             hint = "Use this folder"
@@ -540,7 +540,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             }
         case .icon:
             content.text = "Icon"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             // The picker opens as a sheet, so the row carries no disclosure chevron.
             let icon = IconChoiceUIView(size: 22, frameSize: 32)
             icon.apply(
@@ -556,7 +556,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .showAdvanced:
             content.text = "Show Advanced Options"
             content.textProperties.font = .scaled(.subheadline)
-            content.textProperties.color = UIColor(palette.blue)
+            content.textProperties.color = palette.ui.blue
             identifier = "workspace.create.showAdvanced"
             label = "Show Advanced Options"
             action = { [weak self] in self?.model.showAdvancedOptions() }
@@ -603,21 +603,21 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         let palette = palette
         content = .subtitleCell()
         content.image = UIImage(systemName: directory.projectTypeIcon)
-        content.imageProperties.tintColor = UIColor(palette.blue)
+        content.imageProperties.tintColor = palette.ui.blue
         content.text = directory.name
         content.textProperties.font = .scaled(.body, .medium)
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         content.secondaryText = [directory.path, directory.language].compactMap { $0 }.joined(separator: " · ")
         content.secondaryTextProperties.font = .scaled(.caption1)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.secondaryTextProperties.color = palette.ui.comment
         func badge(_ symbol: String, _ color: UIColor) -> UICellAccessory {
             let image = UIImageView(image: UIImage(systemName: symbol))
             image.tintColor = color
             image.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption2)
             return .customView(configuration: .init(customView: image, placement: .trailing()))
         }
-        if directory.isGitRepo { accessories.append(badge("arrow.triangle.branch", UIColor(palette.green))) }
-        if directory.hasAgentsMd { accessories.append(badge("doc.text", UIColor(palette.orange))) }
+        if directory.isGitRepo { accessories.append(badge("arrow.triangle.branch", palette.ui.green)) }
+        if directory.hasAgentsMd { accessories.append(badge("doc.text", palette.ui.orange)) }
     }
 
     static func accessibilityLabel(for directory: HostDirectory) -> String {
@@ -636,7 +636,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
-        let fg = UIColor(palette.fg)
+        let fg = palette.ui.fg
         switch item {
         case .name:
             let goesToFolder = !model.isHostMountFromProjectPicker
@@ -866,14 +866,14 @@ final class WorkspaceFolderCheckCell: UICollectionViewListCell {
         onConfirm: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         let status: (symbol: String, text: String, color: UIColor)?
         switch check {
         case .none: status = nil
         case .checking: status = ("clock", "Checking folder\u{2026}", comment)
         case .missing: status = ("folder.badge.plus", "Folder doesn\u{2019}t exist", comment)
-        case .invalid(let message): status = ("exclamationmark.triangle.fill", message, UIColor(palette.red))
-        case .valid: status = ("checkmark.circle", "Folder exists", UIColor(palette.green))
+        case .invalid(let message): status = ("exclamationmark.triangle.fill", message, palette.ui.red)
+        case .valid: status = ("checkmark.circle", "Folder exists", palette.ui.green)
         }
         statusRow.isHidden = status == nil
         statusImage.image = status.flatMap { UIImage(systemName: $0.symbol) }

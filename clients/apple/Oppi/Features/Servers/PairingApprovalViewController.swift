@@ -261,11 +261,11 @@ final class PairingApprovalHeaderCell: UICollectionViewListCell {
         // The old prompt's tokens: themeBlue, themeFg, themeFgDim.
         let palette = ThemeRuntimeState.currentPalette()
         symbolView.image = UIImage(systemName: symbol)
-        symbolView.tintColor = UIColor(palette.blue)
+        symbolView.tintColor = palette.ui.blue
         nameLabel.text = deviceName
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         serverLabel.text = String(localized: "wants to pair with \(serverName)")
-        serverLabel.textColor = UIColor(palette.fgDim)
+        serverLabel.textColor = palette.ui.fgDim
     }
 }
 
@@ -331,18 +331,18 @@ final class PairingApprovalActionBar: UIView {
     }
 
     func configure(isBusy: Bool, canApprove: Bool, errorMessage: String?, palette: ThemePalette) {
-        backgroundColor = UIColor(palette.bg)
-        hairline.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.25)
+        backgroundColor = palette.ui.bg
+        hairline.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
         let message = errorMessage.flatMap { $0.isEmpty ? nil : $0 }
         errorLabel.text = message
-        errorLabel.textColor = UIColor(palette.red)
+        errorLabel.textColor = palette.ui.red
         errorLabel.superview?.isHidden = message == nil
 
         var approve = UIButton.Configuration.filled()
         approve.title = String(localized: "Approve")
         approve.buttonSize = .large
         approve.cornerStyle = .capsule
-        approve.baseBackgroundColor = UIColor(palette.blue)
+        approve.baseBackgroundColor = palette.ui.blue
         approve.showsActivityIndicator = isBusy
         approveButton.configuration = approve
         approveButton.isEnabled = canApprove
@@ -351,8 +351,8 @@ final class PairingApprovalActionBar: UIView {
         deny.title = String(localized: "Deny")
         deny.buttonSize = .large
         deny.cornerStyle = .capsule
-        deny.baseForegroundColor = UIColor(palette.red)
-        deny.baseBackgroundColor = UIColor(palette.red)
+        deny.baseForegroundColor = palette.ui.red
+        deny.baseBackgroundColor = palette.ui.red
         denyButton.configuration = deny
         denyButton.isEnabled = !isBusy
     }

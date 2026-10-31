@@ -28,13 +28,13 @@ struct SettingsStyle {
     static let minimumCardContrast: CGFloat = 1.08
 
     init(palette: ThemePalette, isDark: Bool) {
-        title = UIColor(palette.fg)
-        value = UIColor(palette.comment)
-        accent = UIColor(palette.blue)
-        destructive = UIColor(palette.red)
-        warning = UIColor(palette.orange)
-        page = UIColor(palette.bg)
-        let highlight = UIColor(palette.bgHighlight)
+        title = palette.ui.fg
+        value = palette.ui.comment
+        accent = palette.ui.blue
+        destructive = palette.ui.red
+        warning = palette.ui.orange
+        page = palette.ui.bg
+        let highlight = palette.ui.bgHighlight
         let system = UIColor.secondarySystemGroupedBackground
         let highlightContrast = Self.contrast(highlight, page, isDark: isDark)
         let systemContrast = Self.contrast(system, page, isDark: isDark)
@@ -139,7 +139,7 @@ enum SettingsListStyle {
 
     static func applyTheme(to view: UIView, collectionView: UICollectionView, themeID: ThemeID) {
         view.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        let bg = UIColor(themeID.palette.bg)
+        let bg = themeID.palette.ui.bg
         view.backgroundColor = bg
         collectionView.backgroundColor = bg
     }

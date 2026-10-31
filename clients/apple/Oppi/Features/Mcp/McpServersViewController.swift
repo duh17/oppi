@@ -355,13 +355,13 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = state.liveAttempt?.providerName
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.contentConfiguration = content
         case .signInContinue:
             ListScreen.buttonRow(cell, identifier: "mcp.auth.continue", label: "Continue Sign-In") { [weak self] in
                 self?.signIn.resume()
             }
-            cell.contentConfiguration = Self.actionContent("Continue Sign-In", color: UIColor(palette.blue))
+            cell.contentConfiguration = Self.actionContent("Continue Sign-In", color: palette.ui.blue)
         case .signInCancel:
             let cancelling = state.liveAttempt?.isCancelling == true
             ListScreen.buttonRow(
@@ -377,19 +377,19 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             ListScreen.staticRow(cell)
             let message = state.liveAttempt?.actionError
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         case .scopeError(let index):
             ListScreen.staticRow(cell)
             let message = scopeError(at: index)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         case .noServers:
             ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = String(localized: "No MCP servers configured")
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.contentConfiguration = content
         case .server(let name):
             guard let scope = state.snapshot?.scope,
@@ -415,7 +415,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                 ControlRowViews.label(
                     "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload.",
                     style: .footnote,
-                    color: UIColor(palette.comment)
+                    color: palette.ui.comment
                 )
             }
             ListScreen.background(cell, grouped: false, palette: palette)
@@ -432,11 +432,11 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     /// The status word's color on a server row.
     private static func statusColor(_ state: String, palette: ThemePalette) -> UIColor {
         switch state {
-        case "connected": UIColor(palette.green)
+        case "connected": palette.ui.green
         case "disabled", "replaced": .secondaryLabel
-        case "failed", "disconnected": UIColor(palette.red)
-        case "needs-auth", "untrusted": UIColor(palette.orange)
-        default: UIColor(palette.comment)
+        case "failed", "disconnected": palette.ui.red
+        case "needs-auth", "untrusted": palette.ui.orange
+        default: palette.ui.comment
         }
     }
 
@@ -446,11 +446,11 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
 
     private static func serverContent(_ entry: McpServerSummary, palette: ThemePalette) -> ControlViewContent {
         ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
-            let title = ControlRowViews.label(entry.name, style: .headline, color: UIColor(palette.fg))
+            let title = ControlRowViews.label(entry.name, style: .headline, color: palette.ui.fg)
             let detail = ControlRowViews.label(
                 "\(entry.transportLabel) · \(entry.tools.count) tools · \(entry.exposure.title)",
                 style: .subheadline,
-                color: UIColor(palette.comment)
+                color: palette.ui.comment
             )
             let status = ControlRowViews.symbolLabel(
                 entry.stateLabel,

@@ -291,7 +291,7 @@ class ServerResourceDetailScreenController<
         ListScreen.staticRow(cell)
         var content = UIListContentConfiguration.cell()
         content.text = "Enabled"
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         cell.contentConfiguration = content
         let toggle = UISwitch()
         toggle.isOn = state.summary.isServerDefaultOn

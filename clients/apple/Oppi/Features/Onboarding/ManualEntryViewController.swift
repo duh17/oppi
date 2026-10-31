@@ -122,7 +122,7 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
             guard let self else { return }
             var content = UIListContentConfiguration.cell()
             content.text = linkProblem
-            content.textProperties.color = UIColor(root.themeStore.activeThemeID.palette.red)
+            content.textProperties.color = root.themeStore.activeThemeID.palette.ui.red
             content.textProperties.font = .scaled(.footnote)
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
@@ -170,7 +170,7 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
             placeholder: "oppi://connect?…",
             identifier: "onboarding.manual.link",
             keyboard: .URL,
-            textColor: UIColor(palette.fg),
+            textColor: palette.ui.fg,
             returnKey: .go,
             onReturn: { [weak self] in self?.connect() }
         ) { [weak self] in

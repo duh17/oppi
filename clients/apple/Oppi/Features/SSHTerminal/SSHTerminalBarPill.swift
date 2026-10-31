@@ -219,7 +219,7 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
             guard let button = overviews[action] else { continue }
             let count = waiting[action]
             let waitingCount = count ?? 0
-            button.apply(tint: waitingCount > 0 ? UIColor(themeID.palette.orange) : tint)
+            button.apply(tint: waitingCount > 0 ? themeID.palette.ui.orange : tint)
             button.accessibilityValue = count.map { "\($0) need you" } ?? ""
             button.largeContentTitle = waitingCount > 0
                 ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel

@@ -189,7 +189,7 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
                 : "Paste authorization code or redirect URL",
             identifier: "server.modelProviders.signIn.input",
             keyboard: isPrompt ? .default : .URL,
-            textColor: UIColor(palette.fg),
+            textColor: palette.ui.fg,
             enabled: !isBusy,
             returnKey: .go,
             onReturn: { [weak self] in self?.submit() },
@@ -215,19 +215,19 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
             ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.open", label: "Open sign-in page on iPhone") { [weak self] in
                 self?.openSignInPage()
             }
-            cell.contentConfiguration = Self.actionContent("Open sign-in page on iPhone", systemImage: "safari", color: UIColor(palette.blue))
+            cell.contentConfiguration = Self.actionContent("Open sign-in page on iPhone", systemImage: "safari", color: palette.ui.blue)
         case .input:
             // The text field row (`configureInput`).
             break
         case .linkUnavailable:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label("This sign-in link cannot be opened on iPhone.", style: .footnote, color: UIColor(palette.comment))
+                ControlRowViews.label("This sign-in link cannot be opened on iPhone.", style: .footnote, color: palette.ui.comment)
             }
         case .instructions:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.selectableText(flow.auth?.instructions ?? "", style: .footnote, color: UIColor(palette.fg))
+                ControlRowViews.selectableText(flow.auth?.instructions ?? "", style: .footnote, color: palette.ui.fg)
             }
         case .option(let id):
             let label = flow.prompt?.options?.first { $0.id == id }?.label ?? id
@@ -245,12 +245,12 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
         case .progress:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.selectableText(flow.lastProgress ?? "", style: .footnote, color: UIColor(palette.fg))
+                ControlRowViews.selectableText(flow.lastProgress ?? "", style: .footnote, color: palette.ui.fg)
             }
         case .error:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.error")
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.selectableText(flow.error ?? "", style: .body, color: UIColor(palette.red))
+                ControlRowViews.selectableText(flow.error ?? "", style: .body, color: palette.ui.red)
             }
         case .gone:
             ListScreen.staticRow(cell)
@@ -258,25 +258,25 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
                 ControlRowViews.label(
                     "The server no longer has this sign-in attempt. It may have expired or the server restarted.",
                     style: .footnote,
-                    color: UIColor(palette.fg)
+                    color: palette.ui.fg
                 )
             }
         case .refreshError:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(self.attempt.refreshError, style: .footnote, color: UIColor(palette.orange))
+                ControlRowViews.label(self.attempt.refreshError, style: .footnote, color: palette.ui.orange)
             }
         case .actionError:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.actionError")
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(self.attempt.actionError, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(self.attempt.actionError, style: .body, color: palette.ui.red)
             }
         case .finish:
             if attempt.isSettled {
                 ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.done", label: "Done") { [weak self] in
                     self?.onDone()
                 }
-                cell.contentConfiguration = Self.actionContent("Done", color: UIColor(palette.blue))
+                cell.contentConfiguration = Self.actionContent("Done", color: palette.ui.blue)
             } else {
                 let cancelling = attempt.isCancelling
                 let title = cancelling ? "Cancelling…" : "Cancel Sign-In"
@@ -442,7 +442,7 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
             placeholder: "Paste API key",
             identifier: "server.modelProviders.apiKey.field",
             isSecure: true,
-            textColor: UIColor(palette.fg),
+            textColor: palette.ui.fg,
             returnKey: .done,
             onReturn: { [weak self] in self?.save() },
             onChange: { [weak self] text in self?.draft = text }
@@ -466,7 +466,7 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
         if item == .provider {
             var content = UIListContentConfiguration.cell()
             content.text = provider.name
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.image = EntityIcon.image(.provider(provider.id), size: 18)
             content.imageProperties.maximumSize = CGSize(width: 18, height: 18)
             cell.contentConfiguration = content
@@ -478,7 +478,7 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
                     message ?? "",
                     systemImage: "exclamationmark.triangle.fill",
                     style: .footnote,
-                    color: UIColor(palette.red)
+                    color: palette.ui.red
                 )
             }
         }

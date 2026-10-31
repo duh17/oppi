@@ -337,13 +337,13 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         conf.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
             var out = $0
             out.font = .preferredFont(forTextStyle: .body)
-            out.foregroundColor = UIColor(palette.fg)
+            out.foregroundColor = palette.ui.fg
             return out
         }
         conf.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
             var out = $0
             out.font = .preferredFont(forTextStyle: .footnote)
-            out.foregroundColor = UIColor(palette.comment)
+            out.foregroundColor = palette.ui.comment
             return out
         }
         conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
@@ -365,7 +365,7 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
             var chevron = UIButton.Configuration.plain()
             chevron.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small))
             chevron.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8)
-            chevron.baseForegroundColor = UIColor(palette.comment)
+            chevron.baseForegroundColor = palette.ui.comment
             disclosure.configuration = chevron
             disclosure.transform = session.isExpanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
             disclosure.accessibilityIdentifier = identifier + ".disclosure"

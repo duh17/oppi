@@ -77,13 +77,13 @@ final class SettingsTypographyPreviewView: UIView {
     /// Draws the samples in the current fonts and theme.
     func refresh() {
         let palette = ThemeRuntimeState.currentPalette()
-        codeCaption.textColor = UIColor(palette.comment)
-        messageCaption.textColor = UIColor(palette.comment)
-        codeSample.textColor = UIColor(palette.fg)
-        messageSample.textColor = UIColor(palette.fg)
+        codeCaption.textColor = palette.ui.comment
+        messageCaption.textColor = palette.ui.comment
+        codeSample.textColor = palette.ui.fg
+        messageSample.textColor = palette.ui.fg
         codeSample.font = AppFont.monoMedium
         messageSample.font = AppFont.messageBody
-        codeCard.backgroundColor = UIColor(palette.bgDark)
-        messageCard.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.55)
+        codeCard.backgroundColor = palette.ui.bgDark
+        messageCard.backgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.55)
     }
 }

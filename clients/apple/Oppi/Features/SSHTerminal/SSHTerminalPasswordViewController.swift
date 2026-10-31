@@ -169,7 +169,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     private func applyTheme() {
         let themeID = sshTerminalThemeID
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(themeID.palette.bg)
-        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        view.backgroundColor = themeID.palette.ui.bg
+        collectionView.backgroundColor = themeID.palette.ui.bg
     }
 }

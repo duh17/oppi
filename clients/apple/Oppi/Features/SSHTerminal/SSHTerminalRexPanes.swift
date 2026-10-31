@@ -426,14 +426,14 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
             let blocked = kind.isBlocked
             statusDot.isHidden = false
             statusDot.backgroundColor = tint
-            statusDot.layer.borderColor = UIColor(palette.bg).cgColor
+            statusDot.layer.borderColor = palette.ui.bg.cgColor
             let side: CGFloat = blocked || kind == .error ? 14 : 9
             dotWidth.constant = side
             dotHeight.constant = side
             statusDot.layer.cornerRadius = side / 2
             statusMark.isHidden = !(blocked || kind == .error)
             statusMark.image = UIImage(systemName: blocked ? "exclamationmark" : "xmark")
-            statusMark.tintColor = UIColor(palette.bg)
+            statusMark.tintColor = palette.ui.bg
             statusMark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 8, weight: .heavy)
             if blocked, !reduceMotion, statusDot.layer.animation(forKey: "attention") == nil {
                 let pulse = CABasicAnimation(keyPath: "transform.scale")
@@ -453,8 +453,8 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
         if status.needsYou > 0 {
             badge.isHidden = false
             badge.text = status.needsYou > 9 ? "9+" : "\(status.needsYou)"
-            badge.backgroundColor = UIColor(palette.orange)
-            badge.textColor = UIColor(palette.bg)
+            badge.backgroundColor = palette.ui.orange
+            badge.textColor = palette.ui.bg
         } else {
             badge.isHidden = true
             badge.text = nil

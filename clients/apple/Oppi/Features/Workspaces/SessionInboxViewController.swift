@@ -247,7 +247,7 @@ final class SessionInboxViewController: UIViewController {
             lastThemeID = themeID
             view.backgroundColor = themeStore.backgroundColor
             list.collectionView.backgroundColor = themeStore.backgroundColor
-            titleLabel.textColor = UIColor(themeID.palette.fg)
+            titleLabel.textColor = themeID.palette.ui.fg
         }
 
         let state = readState()
@@ -771,10 +771,10 @@ final class SessionInboxViewController: UIViewController {
         case .cachedWarning(let serverName):
             var content = UIListContentConfiguration.cell()
             content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-            content.imageProperties.tintColor = UIColor(palette.orange)
+            content.imageProperties.tintColor = palette.ui.orange
             content.text = String(localized: "Showing cached server data for \(serverName). Pull to retry.")
             content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
-            content.textProperties.color = UIColor(palette.orange)
+            content.textProperties.color = palette.ui.orange
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "workspace.sessionList.cachedWarning"
         case .searching:
@@ -1049,7 +1049,7 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func installBarItems(_ bars: BarState, palette: ThemePalette, showsDictation: Bool) {
-        let tint = UIColor(palette.fg)
+        let tint = palette.ui.fg
         let railTint = SessionListBarItems.railTint(palette)
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []

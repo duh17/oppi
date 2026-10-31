@@ -388,13 +388,13 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
     }
 
     private func peerRow(_ peer: TailnetPeer) -> SetupRow {
-        let fg = UIColor(palette.fg)
-        let comment = UIColor(palette.comment)
+        let fg = palette.ui.fg
+        let comment = palette.ui.comment
         let address = SetupRow.Line(text: peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? "" : peer.dnsName, color: comment)
         var row = SetupRow(title: peer.displayName, titleColor: fg, lines: [address])
         switch status(of: peer) {
         case .paired:
-            row.trailing = .badge(String(localized: "Paired"), symbol: "checkmark.circle.fill", color: UIColor(palette.green))
+            row.trailing = .badge(String(localized: "Paired"), symbol: "checkmark.circle.fill", color: palette.ui.green)
             row.accessibilityLabel = "\(peer.displayName), \(String(localized: "Paired"))"
             // In a sheet (Add Server → Set Up a Computer) the row only says the computer is paired:
             // opening that server's settings would switch the active server behind the sheets and
@@ -415,17 +415,17 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
                 row.button = .init(
                     title: String(localized: "Pair with Oppi"),
                     identifier: "tailnet.pair.\(peer.id)",
-                    color: UIColor(palette.blue),
+                    color: palette.ui.blue,
                     enabled: pairingPeerID == nil && tailnet.state == .running
                 ) { [weak self] in self?.startPairing(with: peer) }
             }
         case .needsCertificate:
-            row.lines.append(.init(text: String(localized: "Oppi needs Tailscale HTTPS"), color: UIColor(palette.orange), symbol: "lock.trianglebadge.exclamationmark"))
-            row.lines.append(.init(text: peer.setupCheckTitle, color: UIColor(palette.blue), font: .preferredFont(forTextStyle: .footnote).withWeight(.medium)))
+            row.lines.append(.init(text: String(localized: "Oppi needs Tailscale HTTPS"), color: palette.ui.orange, symbol: "lock.trianglebadge.exclamationmark"))
+            row.lines.append(.init(text: peer.setupCheckTitle, color: palette.ui.blue, font: .preferredFont(forTextStyle: .footnote).withWeight(.medium)))
             row.rowAction = ("tailnet.check.\(peer.id)", { [weak self] in self?.openSetup(peer: peer) })
         case .notReachable:
             row.lines.append(.init(text: String(localized: "Oppi isn\u{2019}t running here"), color: comment, symbol: "exclamationmark.circle"))
-            row.lines.append(.init(text: peer.setupCheckTitle, color: UIColor(palette.blue), font: .preferredFont(forTextStyle: .footnote).withWeight(.medium)))
+            row.lines.append(.init(text: peer.setupCheckTitle, color: palette.ui.blue, font: .preferredFont(forTextStyle: .footnote).withWeight(.medium)))
             row.rowAction = ("tailnet.check.\(peer.id)", { [weak self] in self?.openSetup(peer: peer) })
         case .unchecked:
             row.lines.append(.init(text: String(localized: "Not checked yet. Pull to refresh."), color: comment))

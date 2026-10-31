@@ -265,8 +265,8 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
         content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
         content.textProperties.adjustsFontForContentSizeCategory = true
-        content.textProperties.color = UIColor(palette.orange)
-        content.imageProperties.tintColor = UIColor(palette.orange)
+        content.textProperties.color = palette.ui.orange
+        content.imageProperties.tintColor = palette.ui.orange
         cell.contentConfiguration = content
         cell.accessibilityIdentifier = "skills.cachedWarning"
     }
@@ -324,11 +324,11 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     private static func rowContent(_ skill: ServerSkillSummary, palette: ThemePalette) -> UIListContentConfiguration {
         var content = UIListContentConfiguration.subtitleCell()
         content.text = skill.name
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         content.image = UIImage(systemName: "sparkles.rectangle.stack")
-        content.imageProperties.tintColor = UIColor(palette.blue)
+        content.imageProperties.tintColor = palette.ui.blue
 
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         let secondary = NSMutableAttributedString()
         func addLine(_ text: String, color: UIColor) {
             if secondary.length > 0 { secondary.append(NSAttributedString(string: "\n")) }

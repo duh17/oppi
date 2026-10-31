@@ -196,11 +196,11 @@ final class WorkspaceFileEditBannerView: UIView {
         )
         isHidden = lines.isEmpty
         label.text = lines.joined(separator: "\n")
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         actions.isHidden = !WorkspaceFileEditStatusPresentation.offersConflictActions(session.status)
-        backgroundColor = UIColor(palette.bgHighlight)
+        backgroundColor = palette.ui.bgHighlight
         // Hosted SwiftUI buttons took the root's `.themeBlue` tint.
-        tintColor = UIColor(palette.blue)
+        tintColor = palette.ui.blue
     }
 }
 
@@ -335,11 +335,11 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         // The hosted screen's page background, under the bar.
-        view.backgroundColor = UIColor(themeID.palette.bg)
-        actionsBar.backgroundColor = UIColor(themeID.palette.bgHighlight)
+        view.backgroundColor = themeID.palette.ui.bg
+        actionsBar.backgroundColor = themeID.palette.ui.bgHighlight
         // Hosted SwiftUI buttons and bar items took the root's `.themeBlue` tint.
-        view.tintColor = UIColor(themeID.palette.blue)
-        navigationItem.leftBarButtonItem?.tintColor = UIColor(themeID.palette.blue)
+        view.tintColor = themeID.palette.ui.blue
+        navigationItem.leftBarButtonItem?.tintColor = themeID.palette.ui.blue
         reader?.applyThemeIfNeeded(themeID)
         replaceButton?.isHidden = !(session.status == .conflict && session.reviewedDisk?.etag != nil)
     }

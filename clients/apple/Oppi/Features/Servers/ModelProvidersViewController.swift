@@ -356,12 +356,12 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                         "Connect a model provider",
                         systemImage: "key.fill",
                         style: .headline,
-                        color: UIColor(palette.fg)
+                        color: palette.ui.fg
                     ),
                     ControlRowViews.label(
                         "Finish setup by signing in or adding an API key. This unlocks model selection for sessions on this server.",
                         style: .footnote,
-                        color: UIColor(palette.comment)
+                        color: palette.ui.comment
                     ),
                 ], spacing: 8)
             }
@@ -379,13 +379,13 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "All providers are currently connected"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.contentConfiguration = content
         case .error:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.error")
             let message = errorMessage
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         }
     }
@@ -415,10 +415,10 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 icon.heightAnchor.constraint(equalToConstant: 18),
             ])
             let text = ControlRowViews.stack([
-                ControlRowViews.label(title, style: .body, color: UIColor(palette.fg)),
-                ControlRowViews.label(summary, style: .caption1, color: UIColor(palette.comment)),
+                ControlRowViews.label(title, style: .body, color: palette.ui.fg),
+                ControlRowViews.label(summary, style: .caption1, color: palette.ui.comment),
             ], spacing: 2)
-            let action = ControlRowViews.label(trailing, style: .subheadline, color: UIColor(palette.blue), lines: 1)
+            let action = ControlRowViews.label(trailing, style: .subheadline, color: palette.ui.blue, lines: 1)
             action.setContentCompressionResistancePriority(.required, for: .horizontal)
             action.setContentHuggingPriority(.required, for: .horizontal)
             return ControlRowViews.stack([icon, text, ControlRowViews.spacer(), action], axis: .horizontal, spacing: 12, alignment: .center)

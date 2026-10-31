@@ -278,11 +278,11 @@ final class ServerMetricsViewController: UIViewController {
 
     private func applyTheme() {
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         for header in [hostHeader, processHeader] {
-            header.textColor = UIColor(palette.fg)
+            header.textColor = palette.ui.fg
         }
-        footerLabel.textColor = UIColor(palette.comment)
+        footerLabel.textColor = palette.ui.comment
         statusView.apply(palette)
         for card in [hostCPUCard, hostMemoryCard, hostDiskCard, processCPUCard, processMemoryCard, activityCard] {
             card.apply(palette)
@@ -540,7 +540,7 @@ struct ServerMetricsPageModel {
             value: host?.cpu.map(ServerMetricsFormat.percent) ?? "—",
             detail: detail.joined(separator: " · "),
             chart: chart(
-                [.init(values: avg(.hostCpu), color: UIColor(palette.blue), filled: true)],
+                [.init(values: avg(.hostCpu), color: palette.ui.blue, filled: true)],
                 yMax: 100,
                 yLabel: "100%",
                 format: ServerMetricsFormat.percent
@@ -563,7 +563,7 @@ struct ServerMetricsPageModel {
             value: value,
             detail: detail,
             chart: chart(
-                [.init(values: avg(.memUsed), color: UIColor(palette.purple), filled: true)],
+                [.init(values: avg(.memUsed), color: palette.ui.purple, filled: true)],
                 yMax: total ?? plottedTop(.memUsed) ?? 1,
                 yLabel: total.map(ServerMetricsFormat.megabytes) ?? "",
                 format: ServerMetricsFormat.megabytes
@@ -584,7 +584,7 @@ struct ServerMetricsPageModel {
             value: value,
             detail: detail,
             chart: chart(
-                [.init(values: avg(.diskUsed), color: UIColor(palette.orange), filled: true)],
+                [.init(values: avg(.diskUsed), color: palette.ui.orange, filled: true)],
                 yMax: total ?? plottedTop(.diskUsed) ?? 1,
                 yLabel: total.map(ServerMetricsFormat.megabytes) ?? "",
                 format: ServerMetricsFormat.megabytes
@@ -601,7 +601,7 @@ struct ServerMetricsPageModel {
             value: latest.map { ServerMetricsFormat.percent($0.cpu.total) } ?? "—",
             detail: detail,
             chart: chart(
-                [.init(values: avg(.cpu), color: UIColor(palette.green), filled: true)],
+                [.init(values: avg(.cpu), color: palette.ui.green, filled: true)],
                 yMax: yMax,
                 yLabel: ServerMetricsFormat.percent(yMax),
                 format: ServerMetricsFormat.percent
@@ -620,10 +620,10 @@ struct ServerMetricsPageModel {
             detail: detail,
             chart: chart(
                 [
-                    .init(values: avg(.rss), color: UIColor(palette.cyan), filled: true),
+                    .init(values: avg(.rss), color: palette.ui.cyan, filled: true),
                     .init(
                         values: avg(.heapUsed),
-                        color: UIColor(palette.comment),
+                        color: palette.ui.comment,
                         filled: false,
                         readout: { "\(ServerMetricsFormat.megabytes($0)) heap" }
                     ),
@@ -650,10 +650,10 @@ struct ServerMetricsPageModel {
             detail: detail.joined(separator: " · "),
             chart: chart(
                 [
-                    .init(values: max(.sessions), color: UIColor(palette.red), filled: true),
+                    .init(values: max(.sessions), color: palette.ui.red, filled: true),
                     .init(
                         values: max(.wsConnections),
-                        color: UIColor(palette.comment),
+                        color: palette.ui.comment,
                         filled: false,
                         readout: { "\(Int($0.rounded())) connections" }
                     ),
@@ -769,7 +769,7 @@ final class ServerMetricsStatusView: UIView {
 
     func apply(_ palette: ThemePalette) {
         self.palette = palette
-        backgroundColor = UIColor(palette.bgHighlight)
+        backgroundColor = palette.ui.bgHighlight
         render()
     }
 
@@ -884,12 +884,12 @@ final class ServerMetricCardView: UIView {
     }
 
     func apply(_ palette: ThemePalette) {
-        backgroundColor = UIColor(palette.bgHighlight)
-        titleLabel.textColor = UIColor(palette.comment)
-        valueLabel.textColor = UIColor(palette.fg)
-        detailLabel.textColor = UIColor(palette.comment)
-        startLabel.textColor = UIColor(palette.comment)
-        endLabel.textColor = UIColor(palette.comment)
+        backgroundColor = palette.ui.bgHighlight
+        titleLabel.textColor = palette.ui.comment
+        valueLabel.textColor = palette.ui.fg
+        detailLabel.textColor = palette.ui.comment
+        startLabel.textColor = palette.ui.comment
+        endLabel.textColor = palette.ui.comment
         chartView.apply(palette)
     }
 
@@ -978,8 +978,8 @@ final class ServerMetricChartView: UIView {
     }
 
     func apply(_ palette: ThemePalette) {
-        gridColor = UIColor(palette.comment).withAlphaComponent(0.25)
-        labelColor = UIColor(palette.comment)
+        gridColor = palette.ui.comment.withAlphaComponent(0.25)
+        labelColor = palette.ui.comment
         setNeedsDisplay()
     }
 

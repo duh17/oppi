@@ -303,7 +303,7 @@ final class WorkspaceDetailViewController: UIViewController {
     }
 
     private func applyTheme(_ palette: ThemePalette) {
-        let background = UIColor(palette.bg)
+        let background = palette.ui.bg
         view.backgroundColor = background
         list.collectionView.backgroundColor = background
         progressPanel.apply(palette)

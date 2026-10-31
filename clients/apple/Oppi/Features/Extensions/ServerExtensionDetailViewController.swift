@@ -179,10 +179,10 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             let description = summary.description.flatMap { $0.isEmpty ? nil : $0 }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
                 var views = [ControlRowViews.label(
-                    summary.name, style: .title2, weight: .bold, color: UIColor(palette.fg)
+                    summary.name, style: .title2, weight: .bold, color: palette.ui.fg
                 )]
                 if let description {
-                    views.append(ControlRowViews.label(description, style: .body, color: UIColor(palette.comment)))
+                    views.append(ControlRowViews.label(description, style: .body, color: palette.ui.comment))
                 }
                 return ControlRowViews.stack(views, spacing: 6)
             }
@@ -198,7 +198,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     message,
                     systemImage: "exclamationmark.triangle.fill",
                     style: .footnote,
-                    color: UIColor(palette.orange)
+                    color: palette.ui.orange
                 )
             }
         case .detail(let title):
@@ -218,14 +218,14 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             let icon = isIssue ? "exclamationmark.triangle.fill" : (summary.state == .on ? "checkmark.circle" : "minus.circle")
             let label = ServerExtensionListPresentation.stateLabel(for: summary.state)
             cell.contentConfiguration = ControlViewContent {
-                let row = ControlRowViews.symbolLabel(label, systemImage: icon, style: .body, color: UIColor(palette.fg))
+                let row = ControlRowViews.symbolLabel(label, systemImage: icon, style: .body, color: palette.ui.fg)
                 row.accessibilityLabel = label
                 return row
             }
         case .loadError(let reason):
             ListScreen.staticRow(cell, identifier: "server.extension.loadError")
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(reason, style: .footnote, color: UIColor(palette.orange))
+                ControlRowViews.label(reason, style: .footnote, color: palette.ui.orange)
             }
         case .warning(let warning):
             ListScreen.staticRow(cell)
@@ -234,13 +234,13 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     warning,
                     systemImage: "exclamationmark.circle",
                     style: .footnote,
-                    color: UIColor(palette.fg)
+                    color: palette.ui.fg
                 )
             }
         case .tool(let name), .command(let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.selectableText(name, style: .body, color: UIColor(palette.fg))
+                ControlRowViews.selectableText(name, style: .body, color: palette.ui.fg)
             }
         }
     }

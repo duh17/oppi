@@ -516,7 +516,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private func configureToggle(_ cell: UICollectionViewListCell, item: Item) {
         let palette = ThemeRuntimeState.currentPalette()
         var content = UIListContentConfiguration.cell()
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         cell.accessories = []
         switch item {
         case .gitStatus:
@@ -581,8 +581,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             var content = UIListContentConfiguration.valueCell()
             content.text = String(localized: "Project Trust")
             content.secondaryText = model.projectTrust?.title
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.fg
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "workspace.edit.projectTrust"
             cell.accessibilityLabel = content.text
@@ -591,7 +591,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             var content = UIListContentConfiguration.cell()
             content.text = model.error
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "workspace.edit.error"

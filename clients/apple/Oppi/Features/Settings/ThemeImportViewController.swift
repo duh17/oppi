@@ -199,7 +199,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
                 cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
             } else if isImported {
                 let check = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
-                check.tintColor = UIColor(palette.green)
+                check.tintColor = palette.ui.green
                 cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
             }
         }
@@ -222,7 +222,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
             done(true)
         }
         edit.image = UIImage(systemName: "text.bubble")
-        edit.backgroundColor = UIColor(palette.blue)
+        edit.backgroundColor = palette.ui.blue
         actions.append(edit)
         let config = UISwipeActionsConfiguration(actions: actions)
         config.performsFirstActionWithFullSwipe = false

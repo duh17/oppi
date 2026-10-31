@@ -167,11 +167,11 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         conf.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
             outgoing.font = .preferredFont(forTextStyle: .body)
-            outgoing.foregroundColor = UIColor(palette.fg)
+            outgoing.foregroundColor = palette.ui.fg
             return outgoing
         }
         let subheadline = UIFont.preferredFont(forTextStyle: .subheadline)
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         let subtitle = NSMutableAttributedString()
         func appendLine(_ text: String, color: UIColor) {
             if subtitle.length > 0 { subtitle.append(NSAttributedString(string: "\n")) }
@@ -182,13 +182,13 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         }
         if let port = profile.portLabel { appendLine(port, color: comment) }
         appendLine(profile.startupLabel, color: comment)
-        if live { appendLine("Connected", color: UIColor(palette.green)) }
+        if live { appendLine("Connected", color: palette.ui.green) }
         // One line per open folder terminal, so a host with both its own
         // terminal and a workspace shell says which folders are open.
         for folder in folderTerminals {
             // The remote path as the server stores it: this device's home would
             // name a different folder.
-            appendLine(String(localized: "Connected in \(folder)"), color: UIColor(palette.green))
+            appendLine(String(localized: "Connected in \(folder)"), color: palette.ui.green)
         }
         conf.attributedSubtitle = AttributedString(subtitle)
         conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)

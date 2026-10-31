@@ -177,7 +177,7 @@ final class CommitDetailViewController: UIViewController {
         let root = AppRootEnvironment.near(self)
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         reconcileContent()
         loadedContent?.apply(themeID: themeID)
         progressPanel.apply(palette)
@@ -185,7 +185,7 @@ final class CommitDetailViewController: UIViewController {
         progressPanel.isHidden = launchActionInFlightTitle == nil
         view.bringSubviewToFront(progressPanel)
         // Hosted SwiftUI bars tint their items with the root's `.themeBlue`.
-        closeItem.tintColor = UIColor(palette.blue)
+        closeItem.tintColor = palette.ui.blue
         let leading = onClose == nil ? nil : closeItem
         if navigationItem.leftBarButtonItem !== leading {
             navigationItem.leftBarButtonItem = leading
@@ -472,19 +472,19 @@ private final class CommitDetailContentView: UIScrollView {
         guard themeID != appliedThemeID else { return }
         appliedThemeID = themeID
         let palette = themeID.palette
-        shaLabel.textColor = UIColor(palette.comment)
-        messageLabel.textColor = UIColor(palette.fg)
-        authorLabel.textColor = UIColor(palette.fgDim)
-        dateLabel.textColor = UIColor(palette.comment)
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        shaLabel.textColor = palette.ui.comment
+        messageLabel.textColor = palette.ui.fg
+        authorLabel.textColor = palette.ui.fgDim
+        dateLabel.textColor = palette.ui.comment
+        addedLabel.textColor = palette.ui.diffAdded
+        removedLabel.textColor = palette.ui.diffRemoved
         let count = detail.files.count
         filesHeaderLabel.attributedText = NSAttributedString(
             string: "\(count) file\(count == 1 ? "" : "s") changed",
-            attributes: [.kern: 0.4, .foregroundColor: UIColor(palette.comment)]
+            attributes: [.kern: 0.4, .foregroundColor: palette.ui.comment]
         )
-        dividers[0].backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        dividers[1].backgroundColor = UIColor(palette.comment).withAlphaComponent(0.15)
+        dividers[0].backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
+        dividers[1].backgroundColor = palette.ui.comment.withAlphaComponent(0.15)
         // The rows draw in the palette they are built with.
         fileList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for file in detail.files {
@@ -535,11 +535,11 @@ private final class CommitDetailContentView: UIScrollView {
 
     private static func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
         switch status {
-        case "M": UIColor(palette.orange)
-        case "A": UIColor(palette.toolDiffAdded)
-        case "D": UIColor(palette.toolDiffRemoved)
-        case "R", "C": UIColor(palette.cyan)
-        default: UIColor(palette.comment)
+        case "M": palette.ui.orange
+        case "A": palette.ui.diffAdded
+        case "D": palette.ui.diffRemoved
+        case "R", "C": palette.ui.cyan
+        default: palette.ui.comment
         }
     }
 
@@ -635,7 +635,7 @@ final class CommitFileDiffViewController: UIViewController {
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         let file = configuration.file
         summary.apply(
             ReviewFileSummaryBarView.Values(
@@ -646,8 +646,8 @@ final class CommitFileDiffViewController: UIViewController {
             ),
             themeID: themeID
         )
-        divider.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        navigationItem.leftBarButtonItem?.tintColor = UIColor(palette.blue)
+        divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
+        navigationItem.leftBarButtonItem?.tintColor = palette.ui.blue
         reconcileBody()
         stashButton.update(
             on: view,

@@ -290,14 +290,14 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         nameLabel.text = skill.name
         nameLabel.textColor = UIColor(isEnabled ? palette.fg : palette.comment)
         descriptionLabel.text = skill.description
-        descriptionLabel.textColor = UIColor(palette.comment)
+        descriptionLabel.textColor = palette.ui.comment
         if isPending { spinner.startAnimating() } else { spinner.stopAnimating() }
         spinner.isHidden = !isPending
         toggle.isOn = isEnabled
         toggle.isEnabled = !isPending && canToggle
         toggle.accessibilityIdentifier = "workspace.edit.skill.\(skill.name)"
         toggle.accessibilityLabel = "\(skill.name), \(skill.description)"
-        infoButton.tintColor = UIColor(palette.comment)
+        infoButton.tintColor = palette.ui.comment
         infoButton.accessibilityLabel = String(localized: "View \(skill.name) details")
         infoButton.accessibilityIdentifier = "workspace.edit.skill.\(skill.name).detail"
     }

@@ -104,7 +104,7 @@ final class ReviewFileSummaryBarView: UIView {
         iconView.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
 
         nameLabel.text = values.path.lastPathComponentForDisplay
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         statusPill.apply(
             text: values.statusLabel,
             tone: Self.statusColor(values.status, palette: palette),
@@ -113,26 +113,26 @@ final class ReviewFileSummaryBarView: UIView {
         )
         parentLabel.text = values.path.parentPathForDisplay
         parentLabel.isHidden = values.path.parentPathForDisplay == nil
-        parentLabel.textColor = UIColor(palette.comment)
+        parentLabel.textColor = palette.ui.comment
 
         let added = values.addedLines ?? 0
         let removed = values.removedLines ?? 0
         addedLabel.text = "+\(added)"
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        addedLabel.textColor = palette.ui.diffAdded
         addedLabel.isHidden = added <= 0
         removedLabel.text = "-\(removed)"
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        removedLabel.textColor = palette.ui.diffRemoved
         removedLabel.isHidden = removed <= 0
     }
 
     /// A Git status code's pill color, from the theme.
     private static func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
         switch status.trimmingCharacters(in: .whitespaces) {
-        case "M": UIColor(palette.orange)
-        case "A": UIColor(palette.green)
-        case "D", "UU", "AA", "DD": UIColor(palette.red)
-        case "R", "C": UIColor(palette.cyan)
-        default: UIColor(palette.comment)
+        case "M": palette.ui.orange
+        case "A": palette.ui.green
+        case "D", "UU", "AA", "DD": palette.ui.red
+        case "R", "C": palette.ui.cyan
+        default: palette.ui.comment
         }
     }
 }

@@ -130,9 +130,9 @@ final class DocumentEditEditorPage: UIViewController {
     ) {
         banner.update(palette: palette)
         checkoutLabel.text = checkoutSubtitle
-        checkoutLabel.textColor = UIColor(palette.comment)
+        checkoutLabel.textColor = palette.ui.comment
         checkoutLabel.superview?.isHidden = (checkoutSubtitle ?? "").isEmpty
-        noticeLabel.textColor = UIColor(palette.comment)
+        noticeLabel.textColor = palette.ui.comment
         noticeLabel.text = notice
         noticeLabel.superview?.isHidden = notice == nil
         if let replacement, appliedReplacementID != replacement.id {

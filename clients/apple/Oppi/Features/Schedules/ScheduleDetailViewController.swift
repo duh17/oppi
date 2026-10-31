@@ -204,7 +204,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     override func decorate(header content: inout UIListContentConfiguration, section: Section) {
         guard section == .history, !runs.isEmpty else { return }
         content.secondaryText = "\(runs.count) recent"
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.secondaryTextProperties.color = palette.ui.comment
         content.prefersSideBySideTextAndSecondaryText = true
     }
 
@@ -310,11 +310,11 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             }
             cell.contentConfiguration = ControlViewContent { [palette] in
                 let heading = ControlRowViews.stack([
-                    ControlRowViews.label("What it does", style: .subheadline, weight: .medium, color: UIColor(palette.fg), lines: 1),
+                    ControlRowViews.label("What it does", style: .subheadline, weight: .medium, color: palette.ui.fg, lines: 1),
                     ControlRowViews.spacer(),
-                    ControlRowViews.label("Show instructions", style: .caption1, weight: .medium, color: UIColor(palette.blue), lines: 1),
+                    ControlRowViews.label("Show instructions", style: .caption1, weight: .medium, color: palette.ui.blue, lines: 1),
                 ], axis: .horizontal, spacing: 8, alignment: .center)
-                let body = ControlRowViews.label(prompt, style: .subheadline, color: UIColor(palette.fg), lines: 5)
+                let body = ControlRowViews.label(prompt, style: .subheadline, color: palette.ui.fg, lines: 5)
                 return ControlRowViews.stack([heading, body], spacing: 8)
             }
         case .detail(let title, let value):
@@ -325,7 +325,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         case .caption(let text):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent { [palette] in
-                ControlRowViews.label(text, style: .caption1, color: UIColor(palette.comment))
+                ControlRowViews.label(text, style: .caption1, color: palette.ui.comment)
             }
         case .runNow:
             let enabled = !isMutating && schedule?.status != .archived
@@ -346,7 +346,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "Enabled"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             cell.contentConfiguration = content
             let toggle = UISwitch()
             toggle.isOn = schedule?.status == .active
@@ -387,7 +387,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         var content = UIListContentConfiguration.cell()
         content.text = title
         content.image = UIImage(systemName: systemImage)
-        let tint = UIColor(palette.blue).withAlphaComponent(enabled ? 1 : 0.4)
+        let tint = palette.ui.blue.withAlphaComponent(enabled ? 1 : 0.4)
         content.textProperties.color = tint
         content.imageProperties.tintColor = tint
         cell.contentConfiguration = content
@@ -424,11 +424,11 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
             icon.heightAnchor.constraint(equalToConstant: 28).isActive = true
             var lines: [UIView] = [
-                ControlRowViews.label(status, style: .subheadline, weight: .semibold, color: UIColor(palette.fg)),
-                ControlRowViews.label(detail, style: .caption1, color: UIColor(palette.comment)),
+                ControlRowViews.label(status, style: .subheadline, weight: .semibold, color: palette.ui.fg),
+                ControlRowViews.label(detail, style: .caption1, color: palette.ui.comment),
             ]
             if let errorSummary {
-                lines.append(ControlRowViews.label(errorSummary, style: .caption1, color: UIColor(palette.red), lines: 3))
+                lines.append(ControlRowViews.label(errorSummary, style: .caption1, color: palette.ui.red, lines: 3))
             }
             var row: [UIView] = [icon, ControlRowViews.stack(lines, spacing: 4)]
             if opensSession {
@@ -436,7 +436,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                     systemName: "chevron.forward",
                     withConfiguration: UIImage.SymbolConfiguration(font: UIFont.scaled(.footnote, .semibold))
                 ))
-                chevron.tintColor = UIColor(palette.comment)
+                chevron.tintColor = palette.ui.comment
                 chevron.setContentHuggingPriority(.required, for: .horizontal)
                 row.append(chevron)
             }
@@ -446,7 +446,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
 
     private static func summaryView(_ schedule: AgentSchedule, palette: ThemePalette) -> UIView {
         var titleRow: [UIView] = [
-            ControlRowViews.selectableText(schedule.name, style: .title3, weight: .semibold, color: UIColor(palette.fg)),
+            ControlRowViews.selectableText(schedule.name, style: .title3, weight: .semibold, color: palette.ui.fg),
         ]
         if schedule.status != .active {
             let pill = ControlStatusPill()
@@ -460,7 +460,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             titleRow.append(pill)
         }
         let timing = schedule.trigger.detailTimingSummary()
-        let when = ControlRowViews.symbolLabel(timing, systemImage: "calendar", style: .subheadline, color: UIColor(palette.comment))
+        let when = ControlRowViews.symbolLabel(timing, systemImage: "calendar", style: .subheadline, color: palette.ui.comment)
         when.accessibilityLabel = timing
         when.accessibilityIdentifier = "schedule.detail.when"
         return ControlRowViews.stack([
@@ -471,9 +471,9 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
 
     private static func runTone(_ status: AgentScheduleRunStatus, palette: ThemePalette) -> UIColor {
         switch status {
-        case .completed: UIColor(palette.green)
-        case .running, .claimed, .pending: UIColor(palette.blue)
-        case .failed: UIColor(palette.red)
+        case .completed: palette.ui.green
+        case .running, .claimed, .pending: palette.ui.blue
+        case .failed: palette.ui.red
         }
     }
 

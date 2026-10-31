@@ -657,16 +657,16 @@ enum SessionListRowMenus {
         // find these by their visible titles after the swipe.
         if isStopped {
             if canResume(session) {
-                buttons.append(swipeButton("Resume", symbol: "play.fill", color: UIColor(palette.green)) {
+                buttons.append(swipeButton("Resume", symbol: "play.fill", color: palette.ui.green) {
                     actions.resume(session)
                 })
             }
             if let delete = actions.delete(session) {
                 // Delete only asks (the confirmation deletes), so it is not destructive here.
-                buttons.append(swipeButton("Delete", symbol: "trash.fill", color: UIColor(palette.red), action: delete))
+                buttons.append(swipeButton("Delete", symbol: "trash.fill", color: palette.ui.red, action: delete))
             }
         } else {
-            buttons.append(swipeButton("Stop", symbol: "stop.fill", color: UIColor(palette.orange)) {
+            buttons.append(swipeButton("Stop", symbol: "stop.fill", color: palette.ui.orange) {
                 actions.stop(session)
             })
         }
@@ -904,11 +904,11 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         apply(title: title, palette: palette)
         self.onToggle = onToggle
         detailLabel.text = detail
-        detailLabel.textColor = UIColor(palette.comment)
+        detailLabel.textColor = palette.ui.comment
         detailLabel.setHiddenIfChanged(detail == nil)
         chevron.setHiddenIfChanged(false)
         chevron.image = UIImage(systemName: isExpanded ? "chevron.down" : "chevron.right")
-        chevron.tintColor = UIColor(palette.comment)
+        chevron.tintColor = palette.ui.comment
         button.setHiddenIfChanged(false)
         button.accessibilityLabel = detail.map { "\(title), \($0)" } ?? title
         button.accessibilityValue = isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
@@ -921,7 +921,7 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         titleLabel.text = title
         // SwiftUI's section header color; the chevron and count keep the theme's.
         titleLabel.textColor = .secondaryLabel
-        backgroundColor = UIColor(palette.bg)
+        backgroundColor = palette.ui.bg
     }
 }
 
@@ -943,7 +943,7 @@ enum SessionListBarItems {
     /// (`.tint(.themeBlue)`); only a menu label or a static label stayed
     /// `themeFg`. Horizontal bars honor the foreground style and keep `fg`.
     static func railTint(_ palette: ThemePalette) -> UIColor {
-        UIColor(palette.blue)
+        palette.ui.blue
     }
 
     /// Navigation outranks the frequent actions, and an accessory leaves first.

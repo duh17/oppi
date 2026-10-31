@@ -176,7 +176,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
         let warning = NSMutableAttributedString(string: Self.secretReferenceFooter + "\n")
         warning.append(NSAttributedString(
             string: "Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.",
-            attributes: [.foregroundColor: UIColor(palette.orange)]
+            attributes: [.foregroundColor: palette.ui.orange]
         ))
         content.attributedText = warning
     }
@@ -269,7 +269,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
             ListScreen.staticRow(cell, identifier: "mcp.add.error")
             let message = error
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         case .saving:
             ListScreen.stateRow(cell, .loading(String(localized: "Adding server…")), palette: palette)
@@ -279,7 +279,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
-        let textColor = UIColor(palette.fg)
+        let textColor = palette.ui.fg
         func field(
             _ text: String,
             _ placeholder: String,
@@ -340,7 +340,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
                 onChange: onChange,
                 onCaretMove: { [weak self] in self?.scrollCaretVisible(in: $0) }
             )
-            cell.textView.textColor = UIColor(palette.fg)
+            cell.textView.textColor = palette.ui.fg
             cell.textView.isEditable = !saving
             cell.textView.autocapitalizationType = .none
             cell.textView.autocorrectionType = .no

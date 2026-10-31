@@ -452,20 +452,20 @@ final class SettingsServerRowCell: UICollectionViewListCell {
         // The state's own color, in UIKit (`ServerBadgeConnectionState.uiColor`).
         badge.apply(icon: icon, tint: state.uiColor(ComposerThemeColors(palette: palette)))
         nameLabel.text = name
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         stateLabel.text = state.title
-        stateLabel.textColor = UIColor(palette.comment)
+        stateLabel.textColor = palette.ui.comment
         switch lock {
         case .none:
             lockView.image = nil
             button.accessibilityValue = state.title
         case .locked:
             lockView.image = UIImage(systemName: "lock.fill")
-            lockView.tintColor = UIColor(palette.comment)
+            lockView.tintColor = palette.ui.comment
             button.accessibilityValue = "\(state.title), \(String(localized: "Locked"))"
         case .unlocked:
             lockView.image = UIImage(systemName: "lock.open.fill")
-            lockView.tintColor = UIColor(palette.comment)
+            lockView.tintColor = palette.ui.comment
             button.accessibilityValue = "\(state.title), \(String(localized: "Unlocked"))"
         }
         lockView.isAccessibilityElement = false

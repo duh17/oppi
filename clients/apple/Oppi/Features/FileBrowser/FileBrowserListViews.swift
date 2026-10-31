@@ -111,8 +111,8 @@ final class FileBrowserBreadcrumbCell: UICollectionViewListCell {
     /// The current folder in the theme's blue, ancestors and chevrons in its
     /// comment color.
     private func applyColors(_ palette: ThemePalette) {
-        let current = UIColor(palette.blue)
-        let ancestor = UIColor(palette.comment)
+        let current = palette.ui.blue
+        let ancestor = palette.ui.comment
         let chevron = ancestor.withAlphaComponent(0.5)
         var segmentIndex = 0
         for piece in pieces {
@@ -250,10 +250,10 @@ final class FileBrowserColumnSearchField: UIView {
     }
 
     func apply(_ palette: ThemePalette) {
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         icon.tintColor = comment
         clearButton.tintColor = comment
-        textField.textColor = UIColor(palette.fg)
+        textField.textColor = palette.ui.fg
         textField.attributedPlaceholder = NSAttributedString(
             string: String(localized: "Search files"),
             attributes: [.foregroundColor: comment]

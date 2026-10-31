@@ -167,7 +167,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
             cell.contentConfiguration = ControlViewContent {
                 let identity = ControlRowViews.stack([
                     AgentListViewController.tile(PiAvatarRenderer.render(size: 44, themeID: nil), size: 44, padding: 6, radius: 14, palette: palette),
-                    ControlRowViews.label("Pi", style: .title2, weight: .bold, color: UIColor(palette.fg), lines: 1),
+                    ControlRowViews.label("Pi", style: .title2, weight: .bold, color: palette.ui.fg, lines: 1),
                 ], axis: .horizontal, spacing: 14, alignment: .center)
                 identity.isAccessibilityElement = true
                 identity.accessibilityLabel = AgentManagementPresentation.piIdentityAccessibilityLabel
@@ -196,13 +196,13 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
             cell.contentConfiguration = ControlViewContent {
                 var views: [UIView] = []
                 if let content, !content.isEmpty {
-                    views.append(ControlRowViews.label(content, style: .body, color: UIColor(palette.fg), lines: 8))
+                    views.append(ControlRowViews.label(content, style: .body, color: palette.ui.fg, lines: 8))
                 } else if isLoading {
                     let spinner = UIActivityIndicatorView(style: .medium)
                     spinner.startAnimating()
                     views.append(ControlRowViews.stack([
                         spinner,
-                        ControlRowViews.label("Loading prompt…", style: .body, color: UIColor(palette.comment)),
+                        ControlRowViews.label("Loading prompt…", style: .body, color: palette.ui.comment),
                     ], axis: .horizontal, spacing: 8, alignment: .center))
                 }
                 if source == .file {
@@ -211,13 +211,13 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                         systemImage: "arrow.up.left.and.arrow.down.right",
                         style: .caption1,
                         weight: .medium,
-                        color: UIColor(palette.blue)
+                        color: palette.ui.blue
                     ))
                 } else {
                     views.append(ControlRowViews.label(
                         AgentManagementPresentation.piDefaultPromptInUseLabel,
                         style: .caption1,
-                        color: UIColor(palette.comment)
+                        color: palette.ui.comment
                     ))
                 }
                 return ControlRowViews.stack(views, spacing: 10, alignment: .leading)
@@ -229,9 +229,9 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
             }
             var content = UIListContentConfiguration.valueCell()
             content.text = "Tools"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = summary
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
         }

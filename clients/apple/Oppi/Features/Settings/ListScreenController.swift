@@ -658,7 +658,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             return
         }
         contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-            state, palette: themeID.palette, background: UIColor(themeID.palette.bg)
+            state, palette: themeID.palette, background: themeID.palette.ui.bg
         )
     }
 

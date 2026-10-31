@@ -84,13 +84,13 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
     required init?(coder: NSCoder) { nil }
 
     func configure(resource: ServerExtensionSummary, palette: ThemePalette, action: @escaping () -> Void) {
-        let fg = UIColor(palette.fg)
-        let comment = UIColor(palette.comment)
+        let fg = palette.ui.fg
+        let comment = palette.ui.comment
         iconView.image = UIImage(
             systemName: resource.kind == .builtIn ? "puzzlepiece.extension.fill" : "puzzlepiece.extension",
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .title3)
         )
-        iconView.tintColor = UIColor(palette.blue)
+        iconView.tintColor = palette.ui.blue
         nameLabel.text = resource.name
         nameLabel.textColor = fg
         descriptionLabel.text = resource.description
@@ -107,9 +107,9 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
             systemName: isIssue ? "exclamationmark.triangle.fill" : (resource.state == .on ? "checkmark.circle" : "minus.circle"),
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .small)
         )
-        stateIcon.tintColor = isIssue ? UIColor(palette.orange) : comment
+        stateIcon.tintColor = isIssue ? palette.ui.orange : comment
         stateLabel.text = ServerExtensionListPresentation.stateLabel(for: resource.state)
-        stateLabel.textColor = isIssue ? UIColor(palette.orange) : comment
+        stateLabel.textColor = isIssue ? palette.ui.orange : comment
         applyDescriptionLineLimit()
 
         button.accessibilityIdentifier = "extensions.row.\(resource.id)"

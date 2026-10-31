@@ -310,28 +310,28 @@ final class ThemeCardCell: UICollectionViewCell {
         // The palette the app paints with: built-ins are contrast-resolved,
         // and a custom theme keeps its JSON colors as written.
         let palette = themeID.palette
-        let bg = UIColor(palette.bg)
-        let accent = UIColor(palette.blue)
+        let bg = palette.ui.bg
+        let accent = palette.ui.blue
 
         card.backgroundColor = bg
         card.layer.borderWidth = selected ? 3 : 1
-        card.layer.borderColor = (selected ? accent : UIColor(palette.comment).withAlphaComponent(0.45)).cgColor
+        card.layer.borderColor = (selected ? accent : palette.ui.comment.withAlphaComponent(0.45)).cgColor
 
-        userBubble.backgroundColor = UIColor(palette.userMessageBg)
-        userBubble.label.textColor = UIColor(palette.userMessageText)
-        reply.textColor = UIColor(palette.fg)
-        codeBlock.backgroundColor = UIColor(palette.bgDark)
-        codeBlock.borderColor = UIColor(palette.mdCodeBlockBorder)
+        userBubble.backgroundColor = palette.ui.userMessageBg
+        userBubble.label.textColor = palette.ui.userMessageText
+        reply.textColor = palette.ui.fg
+        codeBlock.backgroundColor = palette.ui.bgDark
+        codeBlock.borderColor = palette.ui.mdCodeBlockBorder
         codeBlock.label.attributedText = Self.codeLine(palette: palette, font: codeBlock.label.font)
         swatches.configure(
             colors: [palette.blue, palette.cyan, palette.green, palette.orange, palette.purple, palette.red, palette.yellow].map { UIColor($0) },
-            outline: UIColor(palette.fg).withAlphaComponent(0.2)
+            outline: palette.ui.fg.withAlphaComponent(0.2)
         )
 
         nameLabel.text = themeID.displayName
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         detailLabel.text = Self.detail(of: themeID)
-        detailLabel.textColor = UIColor(palette.fgDim)
+        detailLabel.textColor = palette.ui.fgDim
         checkmark.tintColor = accent
         checkmark.alpha = selected ? 1 : 0
 
@@ -366,11 +366,11 @@ final class ThemeCardCell: UICollectionViewCell {
     /// `return render("ok", 42)` in the theme's syntax colors.
     private static func codeLine(palette: ThemePalette, font: UIFont) -> NSAttributedString {
         let tokens: [(String, UIColor)] = [
-            ("return", UIColor(palette.syntaxKeyword)), (" ", UIColor(palette.mdCodeBlock)),
-            ("render", UIColor(palette.syntaxFunction)), ("(", UIColor(palette.syntaxPunctuation)),
-            ("\"ok\"", UIColor(palette.syntaxString)), (",", UIColor(palette.syntaxPunctuation)),
-            (" ", UIColor(palette.mdCodeBlock)), ("42", UIColor(palette.syntaxNumber)),
-            (")", UIColor(palette.syntaxPunctuation)),
+            ("return", palette.ui.syntaxKeyword), (" ", palette.ui.mdCodeBlock),
+            ("render", palette.ui.syntaxFunction), ("(", palette.ui.syntaxPunctuation),
+            ("\"ok\"", palette.ui.syntaxString), (",", palette.ui.syntaxPunctuation),
+            (" ", palette.ui.mdCodeBlock), ("42", palette.ui.syntaxNumber),
+            (")", palette.ui.syntaxPunctuation),
         ]
         let line = NSMutableAttributedString()
         for (text, color) in tokens {

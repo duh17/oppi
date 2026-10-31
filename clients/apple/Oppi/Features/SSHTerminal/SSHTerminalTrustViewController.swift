@@ -53,7 +53,7 @@ final class SSHTerminalTrustViewController: UIViewController {
         switch failure {
         case .unknownHostKey(let key):
             title = "New host"
-            let heading = headline("New host — trust decision", color: UIColor(palette.fg))
+            let heading = headline("New host — trust decision", color: palette.ui.fg)
             heading.accessibilityIdentifier = "sshTerminal.trustPrompt"
             fgLabels.append(heading)
             stack.addArrangedSubview(heading)
@@ -74,15 +74,15 @@ final class SSHTerminalTrustViewController: UIViewController {
             navigationItem.rightBarButtonItem = bar
         case .hostKeyMismatch(let saved, let presented):
             title = "Host key changed"
-            let heading = headline("Host key changed — connection blocked.", color: UIColor(palette.red))
+            let heading = headline("Host key changed — connection blocked.", color: palette.ui.red)
             fgLabels.append(heading)
             stack.addArrangedSubview(heading)
             stack.addArrangedSubview(fingerprint("Trusted", saved, palette: palette))
             stack.addArrangedSubview(fingerprint("Presented", presented, palette: palette))
             var config = UIButton.Configuration.borderedProminent()
             config.title = "Forget Trusted Key"
-            config.baseBackgroundColor = UIColor(palette.red)
-            config.baseForegroundColor = UIColor(palette.bg)
+            config.baseBackgroundColor = palette.ui.red
+            config.baseForegroundColor = palette.ui.bg
             config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
             action.configuration = config
             action.accessibilityIdentifier = "sshTerminal.forgetKey"
@@ -120,12 +120,12 @@ final class SSHTerminalTrustViewController: UIViewController {
         lastThemeID = themeID
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bg)
-        commentLabels.forEach { $0.textColor = UIColor(palette.comment) }
-        fgLabels.forEach { $0.textColor = UIColor(palette.fg) }
-        fgTextViews.forEach { $0.textColor = UIColor(palette.fg) }
+        view.backgroundColor = palette.ui.bg
+        commentLabels.forEach { $0.textColor = palette.ui.comment }
+        fgLabels.forEach { $0.textColor = palette.ui.fg }
+        fgTextViews.forEach { $0.textColor = palette.ui.fg }
         if case .hostKeyMismatch = failure, let heading = fgLabels.first {
-            heading.textColor = UIColor(palette.red)
+            heading.textColor = palette.ui.red
         }
     }
 
@@ -142,7 +142,7 @@ final class SSHTerminalTrustViewController: UIViewController {
         let label = UILabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = UIColor(palette.comment)
+        label.textColor = palette.ui.comment
         label.numberOfLines = 0
         commentLabels.append(label)
         return label
@@ -155,12 +155,12 @@ final class SSHTerminalTrustViewController: UIViewController {
         let caption = UILabel()
         caption.text = "\(label) (\(key.algorithm))"
         caption.font = .preferredFont(forTextStyle: .footnote)
-        caption.textColor = UIColor(palette.comment)
+        caption.textColor = palette.ui.comment
         commentLabels.append(caption)
         let value = UITextView()
         value.text = key.fingerprint
         value.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
-        value.textColor = UIColor(palette.fg)
+        value.textColor = palette.ui.fg
         value.isEditable = false
         value.isScrollEnabled = false
         value.backgroundColor = .clear

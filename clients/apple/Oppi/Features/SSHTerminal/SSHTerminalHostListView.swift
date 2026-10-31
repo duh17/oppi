@@ -282,8 +282,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         cell.accessibilityIdentifier = nil
         cell.accessibilityHint = nil
         var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         switch item {
         case .corrupt:
             content.text = SSHTerminalProfileStoreError.corruptMetadata.localizedDescription
@@ -293,7 +293,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             return
         case .failure(let message):
             content.text = "Disconnected — \(message)"
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.failure"
         case .trustUnknown:
@@ -302,13 +302,13 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             cell.accessibilityIdentifier = "sshTerminal.trustPrompt"
         case .trustMismatch:
             content.text = "Host key changed — connection blocked."
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.secondaryText = "Forget the trusted key only after you verify why it changed."
         case .addHost:
             // With no saved host this row is the whole screen: it leads with
             // the action and says what saving one gives you.
             content.text = "Add Host"
-            content.textProperties.color = UIColor(palette.blue)
+            content.textProperties.color = palette.ui.blue
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
@@ -321,14 +321,14 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             cell.accessibilityIdentifier = "sshTerminal.rexTailnet.title"
         case .tailnetCard(.discovery(let text)):
             content.text = text
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.rexTailnet.discovery"
         case .host, .bottomBar, .rexRow, .tailnetCard(.add):
             break
         case .reset:
             content.text = "Reset Host List"
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             cell.accessibilityIdentifier = "sshTerminal.resetHostList"
         }
         cell.contentConfiguration = content
@@ -337,7 +337,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private func configureConnecting(_ cell: UICollectionViewListCell, palette: ThemePalette) {
         var content = UIListContentConfiguration.cell()
         content.text = session.savingHostOnly ? "Saving Host…" : "Connecting…"
-        content.textProperties.color = UIColor(palette.fg)
+        content.textProperties.color = palette.ui.fg
         cell.contentConfiguration = content
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.startAnimating()
@@ -509,9 +509,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let palette = sshTerminalThemeID.palette
         var content = UIListContentConfiguration.cell()
         content.text = "Add Rex by Tailscale Name\u{2026}"
-        content.textProperties.color = UIColor(palette.blue)
+        content.textProperties.color = palette.ui.blue
         content.image = UIImage(systemName: "plus")
-        content.imageProperties.tintColor = UIColor(palette.blue)
+        content.imageProperties.tintColor = palette.ui.blue
         cell.contentConfiguration = content
         cell.accessories = []
         cell.indentationLevel = 0
@@ -587,8 +587,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let palette = sshTerminalThemeID.palette
         let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
         var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         cell.accessories = []
         cell.accessibilityTraits = []
         switch row.kind {
@@ -596,7 +596,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.text = name
             content.textProperties.font = .preferredFont(forTextStyle: .headline)
             content.image = SSHTerminalBarAction.rex.image()
-            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.imageProperties.tintColor = palette.ui.comment
             content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou) : "Rex"
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
             content.secondaryTextProperties.color = UIColor(needsYou > 0 ? palette.orange : palette.comment)
@@ -604,18 +604,18 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             cell.accessibilityTraits = .header
         case .placeholder(let text):
             content.text = text
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.accessibilityIdentifier = "\(prefix).\(row.id)"
         case .failure(let text):
             content.text = text
-            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.color = palette.ui.red
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "\(prefix).\(row.id)"
         case .window(let windowID, let name):
             content.text = name
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             cell.indentationLevel = 1
             cell.accessibilityIdentifier = "\(prefix).\(windowID)"
             cell.accessibilityTraits = .header
@@ -631,8 +631,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let palette = themeID.palette
         let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
         var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         content.textProperties.font = .preferredFont(forTextStyle: .body)
         switch row.kind {
         case .pane(let pane):
@@ -644,7 +644,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 ? body.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? body : body
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
             content.image = pane.icon.image()
-            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.imageProperties.tintColor = palette.ui.comment
             cell.accessories = cell.statusAccessories(for: pane.status, themeID: themeID)
             cell.indentationLevel = pane.windowName == nil ? 1 : 2
             cell.configureAction(
@@ -668,7 +668,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
         case .tapToConnect:
             content.text = "Tap to connect"
-            content.textProperties.color = UIColor(palette.blue)
+            content.textProperties.color = palette.ui.blue
             cell.accessories = []
             cell.indentationLevel = 0
             cell.configureAction(
@@ -796,7 +796,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             self?.renameRexSession(host: hostID, id: id)
             done(false)
         }
-        rename.backgroundColor = UIColor(sshTerminalThemeID.palette.blue)
+        rename.backgroundColor = sshTerminalThemeID.palette.ui.blue
         let close = UIContextualAction(style: .destructive, title: "Close") { [weak self] _, _, done in
             self?.closeRexSession(host: hostID, id: id)
             done(false)

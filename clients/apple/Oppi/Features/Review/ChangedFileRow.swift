@@ -78,7 +78,7 @@ enum ChangedFileRow {
             iconView.widthAnchor.constraint(equalToConstant: 16),
             iconView.heightAnchor.constraint(equalToConstant: 16),
         ])
-        let pathLabel = label(path.shortenedPath, font: fonts.path, color: UIColor(palette.fg))
+        let pathLabel = label(path.shortenedPath, font: fonts.path, color: palette.ui.fg)
         pathLabel.lineBreakMode = .byTruncatingMiddle
         // The path takes the row's free width; everything else hugs.
         pathLabel.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
@@ -87,11 +87,11 @@ enum ChangedFileRow {
         var items = leading + [iconView, pathLabel]
         var labelParts = [path.shortenedPath]
         if let added, added > 0 {
-            items.append(label("+\(added)", font: fonts.count, color: UIColor(palette.toolDiffAdded)))
+            items.append(label("+\(added)", font: fonts.count, color: palette.ui.diffAdded))
             labelParts.append("+\(added)")
         }
         if let removed, removed > 0 {
-            items.append(label("-\(removed)", font: fonts.count, color: UIColor(palette.toolDiffRemoved)))
+            items.append(label("-\(removed)", font: fonts.count, color: palette.ui.diffRemoved))
             labelParts.append("-\(removed)")
         }
         items += afterCounts
@@ -119,7 +119,7 @@ enum ChangedFileRow {
     static func chevron(font: UIFont, palette: ThemePalette) -> UIImageView {
         let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
         chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font)
-        chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
+        chevron.tintColor = palette.ui.comment.withAlphaComponent(0.5)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         return chevron
     }

@@ -175,11 +175,11 @@ final class WorkspaceInstructionsViewController: UIViewController, UITextViewDel
         view.backgroundColor = style.page
         captionLabel.textColor = style.value
         card.backgroundColor = style.card
-        card.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        card.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
         textView.textColor = style.title
         textView.tintColor = style.accent
         errorLabel.text = error
-        errorLabel.textColor = UIColor(palette.red)
+        errorLabel.textColor = palette.ui.red
         errorLabel.isHidden = error == nil
         countLabel.text = String(localized: "\(text.count) chars")
         countLabel.textColor = style.value

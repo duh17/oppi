@@ -75,7 +75,7 @@ enum SSHTerminalSwitcher {
             switch item.state {
             case .connected:
                 image = UIImage(systemName: "circle.fill")?
-                    .withTintColor(UIColor(themeID.palette.green), renderingMode: .alwaysOriginal)
+                    .withTintColor(themeID.palette.ui.green, renderingMode: .alwaysOriginal)
             case .blocked(let kind):
                 image = UIImage(systemName: kind.terminalSymbol)?
                     .withTintColor(kind.tint(themeID.appTheme), renderingMode: .alwaysOriginal)

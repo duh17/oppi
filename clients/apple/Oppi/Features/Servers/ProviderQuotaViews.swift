@@ -135,21 +135,21 @@ final class ProviderQuotaWindowView: UIView {
         let remaining = "\(Int(window.remainingPercent.rounded()))% left"
         let pace = window.evenPaceRemainingFraction(at: now)
         titleLabel.text = window.title
-        titleLabel.textColor = UIColor(palette.comment)
+        titleLabel.textColor = palette.ui.comment
         remainingLabel.text = remaining
         remainingLabel.textColor = tone
         bar.apply(
             fraction: window.remainingPercent / 100,
             pace: pace,
             color: tone,
-            trackColor: UIColor(palette.comment).withAlphaComponent(0.18),
-            tickColor: UIColor(palette.fg)
+            trackColor: palette.ui.comment.withAlphaComponent(0.18),
+            tickColor: palette.ui.fg
         )
 
         let reset = window.resetDate.map { Self.resetLabel(for: $0, window: window, now: now) }
         let verdict = window.pacing.flatMap { $0.hasVerdict ? $0 : nil }
         detailLabel.text = [verdict?.compactLabel, reset].compactMap(\.self).joined(separator: " · ")
-        detailLabel.textColor = UIColor(palette.comment)
+        detailLabel.textColor = palette.ui.comment
         detailLabel.isHidden = detailLabel.text?.isEmpty ?? true
 
         accessibilityIdentifier = "provider.quota.\(providerId).\(window.key)"
@@ -168,16 +168,16 @@ final class ProviderQuotaWindowView: UIView {
         let byRemaining = ProviderQuota.badgeTone(for: window.remainingPercent)
         switch window.pacing?.status {
         case "plenty":
-            return UIColor(palette.green)
+            return palette.ui.green
         case "on_pace":
-            return UIColor(palette.blue)
+            return palette.ui.blue
         case "conserve":
             return UIColor(byRemaining == .red ? palette.red : palette.orange)
         default:
             switch byRemaining {
-            case .green: return UIColor(palette.green)
-            case .orange: return UIColor(palette.orange)
-            case .red: return UIColor(palette.red)
+            case .green: return palette.ui.green
+            case .orange: return palette.ui.orange
+            case .red: return palette.ui.red
             }
         }
     }
@@ -349,7 +349,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
             icon.image = EntityIcon.image(.provider(provider.id), size: 18)
         }
         nameLabel.text = provider.name
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         statusLabel.text = Self.statusText(provider)
         statusLabel.textColor = UIColor(provider.authenticated ? palette.green : palette.comment)
         applyAction(configuration.action, palette: palette, providerId: provider.id, name: provider.name)
@@ -370,7 +370,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
         case .menu(let menu):
             var config = UIButton.Configuration.plain()
             config.image = .scaledSymbol("ellipsis.circle", style: .title3)
-            config.baseForegroundColor = UIColor(palette.comment)
+            config.baseForegroundColor = palette.ui.comment
             // About 44 pt to tap; the margin stays the row's.
             config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 0)
             actionButton.configuration = config
@@ -384,7 +384,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
             config.title = title
             config.buttonSize = .small
             config.cornerStyle = .capsule
-            config.baseForegroundColor = UIColor(palette.blue)
+            config.baseForegroundColor = palette.ui.blue
             if menu != nil {
                 config.image = .scaledSymbol("chevron.down", style: .caption2, weight: .semibold)
                 config.imagePlacement = .trailing
@@ -407,7 +407,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
         let plan = quota.planLabel
         planPill.superview?.isHidden = plan == nil
         if let plan {
-            planPill.apply(text: plan, tone: UIColor(palette.blue), emphasis: .tinted, palette: palette)
+            planPill.apply(text: plan, tone: palette.ui.blue, emphasis: .tinted, palette: palette)
             planPill.isAccessibilityElement = true
             planPill.accessibilityTraits = .staticText
             planPill.accessibilityLabel = "\(provider.name) plan \(plan)"
@@ -433,10 +433,10 @@ private final class ProviderRowContentView: UIView, UIContentView {
 
         let credit = quota.creditLines
         footnoteLabel.text = credit.joined(separator: "\n")
-        footnoteLabel.textColor = UIColor(palette.comment)
+        footnoteLabel.textColor = palette.ui.comment
         footnoteLabel.isHidden = credit.isEmpty
         errorLabel.text = quota.error
-        errorLabel.textColor = UIColor(palette.comment)
+        errorLabel.textColor = palette.ui.comment
         errorLabel.isHidden = quota.error == nil
         errorLabel.accessibilityLabel = quota.error.map { "\(provider.name) quota error: \($0)" }
     }

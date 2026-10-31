@@ -163,9 +163,9 @@ final class SSHTerminalStatusMarkView: UIView {
 
     static func ringColor(for state: SSHTerminalProgressReport.State, palette: ThemePalette) -> UIColor {
         switch state {
-        case .set, .indeterminate: UIColor(palette.blue)
-        case .error: UIColor(palette.red)
-        case .paused: UIColor(palette.orange)
+        case .set, .indeterminate: palette.ui.blue
+        case .error: palette.ui.red
+        case .paused: palette.ui.orange
         }
     }
 
@@ -315,11 +315,11 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
     override func viewDidLoad() {
         super.viewDidLoad()
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(themeID.palette.bg)
-        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        view.backgroundColor = themeID.palette.ui.bg
+        collectionView.backgroundColor = themeID.palette.ui.bg
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.delegate = self
-        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        collectionView.backgroundColor = themeID.palette.ui.bg
         collectionView.accessibilityIdentifier = "sshTerminal.programStatusDetail"
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -336,10 +336,10 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             var content = UIListContentConfiguration.header()
             content.text = "Program status"
             content.secondaryText = SSHTerminalProgramStatusPresentation.hostCaption(self.hostLabel)
-            content.textProperties.color = UIColor(self.themeID.palette.fg)
-            content.secondaryTextProperties.color = UIColor(self.themeID.palette.comment)
+            content.textProperties.color = self.themeID.palette.ui.fg
+            content.secondaryTextProperties.color = self.themeID.palette.ui.comment
             content.image = UIImage(systemName: "network")
-            content.imageProperties.tintColor = UIColor(self.themeID.palette.comment)
+            content.imageProperties.tintColor = self.themeID.palette.ui.comment
             cell.contentConfiguration = content
         }
         let cell = UICollectionView.CellRegistration<UICollectionViewListCell, SSHTerminalStatusRow> {
@@ -348,7 +348,7 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             var content = UIListContentConfiguration.subtitleCell()
             content.text = row.title
             content.secondaryText = [row.message, row.status.label].filter { !$0.isEmpty }.joined(separator: "\n")
-            content.textProperties.color = UIColor(self.themeID.palette.fg)
+            content.textProperties.color = self.themeID.palette.ui.fg
             content.secondaryTextProperties.color = row.status.tint(self.themeID.appTheme)
             content.image = UIImage(systemName: row.status.terminalSymbol)
             content.imageProperties.tintColor = row.status.tint(self.themeID.appTheme)

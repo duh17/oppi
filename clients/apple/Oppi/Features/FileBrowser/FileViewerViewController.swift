@@ -320,7 +320,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         super.updateProperties()
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         reconcileContent(palette: palette)
         updateMountedContent(palette: palette)
         updateFloatingControls(themeID: themeID)
@@ -937,8 +937,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if let stateView {
             stateView.view.configuration = UIContentUnavailableConfiguration.loadState(stateView.state, palette: palette)
         }
-        videoPage?.backgroundColor = UIColor(palette.bgDark)
-        readerPage?.backgroundColor = UIColor(palette.bgDark)
+        videoPage?.backgroundColor = palette.ui.bgDark
+        readerPage?.backgroundColor = palette.ui.bgDark
         if let reader {
             reader.setEditBarItems(editOwner.barItems)
             reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)

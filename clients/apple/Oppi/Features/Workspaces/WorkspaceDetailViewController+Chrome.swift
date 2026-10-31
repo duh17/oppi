@@ -99,8 +99,8 @@ extension WorkspaceDetailViewController {
         let gitStatus = detail.gitStatus.flatMap { $0.isGitRepo ? $0 : nil }
         let changedFiles = gitStatus?.uncommittedCount ?? 0
         let value = gitStatus.map { ChatBarItems.gitAccessibilityValue(($0.branch, changedFiles)) }
-        gitButton.apply(changedFiles: changedFiles, color: UIColor(palette.fg))
-        gitButton.tintColor = UIColor(palette.fg)
+        gitButton.apply(changedFiles: changedFiles, color: palette.ui.fg)
+        gitButton.tintColor = palette.ui.fg
         gitButton.accessibilityValue = value
         gitRailItem?.accessibilityValue = value
     }
@@ -112,7 +112,7 @@ extension WorkspaceDetailViewController {
     }
 
     private func installBarItems(_ bars: BarState, palette: ThemePalette) {
-        let tint = UIColor(palette.fg)
+        let tint = palette.ui.fg
         let railTint = SessionListBarItems.railTint(palette)
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
@@ -384,9 +384,9 @@ final class WorkspaceTitleButton: UIButton {
     }
 
     func configure(name: String, worktreeName: String, lockSymbol: String?, showsChevron: Bool, palette: ThemePalette) {
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         nameLabel.text = name
-        nameLabel.textColor = UIColor(palette.fg)
+        nameLabel.textColor = palette.ui.fg
         lockImage.image = lockSymbol.flatMap { UIImage(systemName: $0) }
         lockImage.isHidden = lockSymbol == nil
         lockImage.tintColor = comment

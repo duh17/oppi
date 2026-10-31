@@ -178,7 +178,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
             let palette = palette
             // The card a schedule row is, inset the way the list insets them.
             var background = UIBackgroundConfiguration.clear()
-            background.backgroundColor = UIColor(palette.bgHighlight)
+            background.backgroundColor = palette.ui.bgHighlight
             background.cornerRadius = 20
             background.backgroundInsets = Self.cardInsets
             cell.backgroundConfiguration = background
@@ -251,21 +251,21 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
                 done(true)
             }
             action.image = UIImage(systemName: "pause.fill")
-            action.backgroundColor = UIColor(palette.orange)
+            action.backgroundColor = palette.ui.orange
         case .paused:
             action = UIContextualAction(style: .normal, title: "Resume") { [weak self] _, _, done in
                 self?.mutate(schedule, .resume)
                 done(true)
             }
             action.image = UIImage(systemName: "play.fill")
-            action.backgroundColor = UIColor(palette.green)
+            action.backgroundColor = palette.ui.green
         case .archived:
             action = UIContextualAction(style: .normal, title: "Restore") { [weak self] _, _, done in
                 self?.mutate(schedule, .restore)
                 done(true)
             }
             action.image = UIImage(systemName: "arrow.uturn.backward")
-            action.backgroundColor = UIColor(palette.blue)
+            action.backgroundColor = palette.ui.blue
         }
         let config = UISwipeActionsConfiguration(actions: [action])
         config.performsFirstActionWithFullSwipe = true
@@ -347,10 +347,10 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 @MainActor
 enum ScheduleCardView {
     static func card(_ schedule: AgentScheduleSummary, palette: ThemePalette) -> UIView {
-        let cadence = ControlRowViews.label(nil, style: .caption1, weight: .semibold, color: UIColor(palette.blue), lines: 1)
+        let cadence = ControlRowViews.label(nil, style: .caption1, weight: .semibold, color: palette.ui.blue, lines: 1)
         cadence.attributedText = NSAttributedString(
             string: schedule.trigger.scheduleScreenCadence,
-            attributes: [.kern: 0.7, .font: UIFont.scaled(.caption1, .semibold), .foregroundColor: UIColor(palette.blue)]
+            attributes: [.kern: 0.7, .font: UIFont.scaled(.caption1, .semibold), .foregroundColor: palette.ui.blue]
         )
         var top: [UIView] = [cadence, ControlRowViews.spacer()]
         if schedule.status != .active {
@@ -364,12 +364,12 @@ enum ScheduleCardView {
             top.append(pill)
         }
         let header = ControlRowViews.stack(top, axis: .horizontal, spacing: 8, alignment: .center)
-        let name = ControlRowViews.label(schedule.name, style: .title3, weight: .semibold, color: UIColor(palette.fg), lines: 3)
+        let name = ControlRowViews.label(schedule.name, style: .title3, weight: .semibold, color: palette.ui.fg, lines: 3)
         let timing = ControlRowViews.symbolLabel(
             schedule.trigger.scheduleScreenTiming(),
             systemImage: "calendar",
             style: .subheadline,
-            color: UIColor(palette.comment),
+            color: palette.ui.comment,
             lines: 2
         )
         return surface(
@@ -380,7 +380,7 @@ enum ScheduleCardView {
 
     private static func surface(_ content: UIView, palette: ThemePalette) -> UIView {
         let card = UIView()
-        card.backgroundColor = UIColor(palette.bgHighlight)
+        card.backgroundColor = palette.ui.bgHighlight
         card.layer.cornerRadius = 20
         card.layer.cornerCurve = .continuous
         content.translatesAutoresizingMaskIntoConstraints = false

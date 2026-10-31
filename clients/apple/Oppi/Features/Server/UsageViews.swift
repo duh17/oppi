@@ -17,13 +17,13 @@ struct UsageColors {
 
     init(palette: ThemePalette) {
         self.palette = palette
-        bg = UIColor(palette.bg)
-        highlight = UIColor(palette.bgHighlight)
-        fg = UIColor(palette.fg)
-        comment = UIColor(palette.comment)
-        blue = UIColor(palette.blue)
-        green = UIColor(palette.green)
-        orange = UIColor(palette.orange)
+        bg = palette.ui.bg
+        highlight = palette.ui.bgHighlight
+        fg = palette.ui.fg
+        comment = palette.ui.comment
+        blue = palette.ui.blue
+        green = palette.ui.green
+        orange = palette.ui.orange
     }
 }
 

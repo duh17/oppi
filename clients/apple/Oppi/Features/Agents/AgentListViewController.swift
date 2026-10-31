@@ -189,7 +189,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                 let badge = ControlStatusPill()
                 badge.apply(
                     text: "v\(agent.version)",
-                    tone: UIColor(palette.comment),
+                    tone: palette.ui.comment,
                     emphasis: .quiet,
                     palette: palette,
                     monospacedDigit: true
@@ -206,7 +206,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                 updated.text = agent.updatedAt.relativeString()
                 updated.font = UIFont.scaled(.caption2, monospacedDigits: true)
                 updated.adjustsFontForContentSizeCategory = true
-                updated.textColor = UIColor(palette.comment)
+                updated.textColor = palette.ui.comment
                 updated.setContentCompressionResistancePriority(.required, for: .horizontal)
                 return Self.row(
                     icon: icon,
@@ -231,9 +231,9 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         trailing: UIView?,
         palette: ThemePalette
     ) -> UIView {
-        let titleLabel = ControlRowViews.label(title, style: .headline, color: UIColor(palette.fg), lines: 1)
+        let titleLabel = ControlRowViews.label(title, style: .headline, color: palette.ui.fg, lines: 1)
         let titleRow = ControlRowViews.stack([titleLabel] + (badge.map { [$0] } ?? []), axis: .horizontal, spacing: 8, alignment: .center)
-        let caption = ControlRowViews.label(subtitle, style: .caption1, color: UIColor(palette.comment), lines: 2)
+        let caption = ControlRowViews.label(subtitle, style: .caption1, color: palette.ui.comment, lines: 2)
         let text = ControlRowViews.stack([titleRow, caption], spacing: 4, alignment: .leading)
         var views: [UIView] = [icon, text, ControlRowViews.spacer()]
         if let trailing { views.append(trailing) }
@@ -243,7 +243,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// An image on a rounded highlight tile (Pi's avatar).
     static func tile(_ image: UIImage, size: CGFloat, padding: CGFloat, radius: CGFloat, palette: ThemePalette) -> UIView {
         let tile = UIView()
-        tile.backgroundColor = UIColor(palette.bgHighlight)
+        tile.backgroundColor = palette.ui.bgHighlight
         tile.layer.cornerRadius = radius
         tile.layer.cornerCurve = .continuous
         let imageView = UIImageView(image: image)

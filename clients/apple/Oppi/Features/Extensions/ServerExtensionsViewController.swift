@@ -294,8 +294,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
         content.textProperties.font = .scaled(.subheadline)
         content.textProperties.adjustsFontForContentSizeCategory = true
-        content.textProperties.color = UIColor(palette.orange)
-        content.imageProperties.tintColor = UIColor(palette.orange)
+        content.textProperties.color = palette.ui.orange
+        content.imageProperties.tintColor = palette.ui.orange
         cell.contentConfiguration = content
         cell.accessibilityIdentifier = "extensions.cachedWarning"
     }

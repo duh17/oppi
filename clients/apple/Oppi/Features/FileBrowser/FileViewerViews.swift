@@ -128,8 +128,8 @@ final class ReviewCommentStashFloatingButton {
         )
         button.accessibilityValue = FullScreenReviewCommentStashControl.accessibilityValue(for: count)
         badge.text = count > 99 ? "99+" : "\(count)"
-        badge.textColor = UIColor(palette.bgDark)
-        badge.backgroundColor = UIColor(palette.cyan)
+        badge.textColor = palette.ui.bgDark
+        badge.backgroundColor = palette.ui.cyan
         host.bringSubviewToFront(button)
         host.bringSubviewToFront(badge)
         lastCount = count
@@ -266,12 +266,12 @@ final class FileViewerSizeWarningView: UIView {
 
     /// Colors from `palette`; the viewer calls this again when the theme changes.
     func apply(_ palette: ThemePalette) {
-        icon.tintColor = UIColor(palette.comment)
-        name.textColor = UIColor(palette.fg)
-        size.textColor = UIColor(palette.comment)
-        largeFileWarning.setColor(UIColor(palette.yellow))
-        cellularWarning?.setColor(UIColor(palette.orange))
-        button.configuration?.baseBackgroundColor = UIColor(palette.syntaxKeyword)
+        icon.tintColor = palette.ui.comment
+        name.textColor = palette.ui.fg
+        size.textColor = palette.ui.comment
+        largeFileWarning.setColor(palette.ui.yellow)
+        cellularWarning?.setColor(palette.ui.orange)
+        button.configuration?.baseBackgroundColor = palette.ui.syntaxKeyword
     }
 
     /// A warning symbol and its text, read as one element.

@@ -163,11 +163,11 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             let title2 = UIFont.preferredFont(forTextStyle: .title2)
             content.textProperties.font = title2.fontDescriptor.withSymbolicTraits(.traitBold)
                 .map { UIFont(descriptor: $0, size: 0) } ?? title2
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             if !summary.description.isEmpty {
                 content.secondaryText = summary.description
                 content.secondaryTextProperties.font = .preferredFont(forTextStyle: .body)
-                content.secondaryTextProperties.color = UIColor(palette.comment)
+                content.secondaryTextProperties.color = palette.ui.comment
             }
             cell.contentConfiguration = content
         case .enabled:
@@ -176,7 +176,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             ListScreen.staticRow(cell, identifier: "skills.detail.mutationError")
             cell.contentConfiguration = Self.noteContent(
                 mutationFailureMessage, systemImage: "exclamationmark.triangle.fill",
-                color: UIColor(palette.orange), imageColor: UIColor(palette.orange)
+                color: palette.ui.orange, imageColor: palette.ui.orange
             )
         case .detail(let title):
             ListScreen.staticRow(cell, identifier: "skills.detail.source.\(title.lowercased())")
@@ -188,9 +188,9 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             }
             var content = UIListContentConfiguration.valueCell()
             content.text = title
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             content.secondaryText = value
-            content.secondaryTextProperties.color = UIColor(palette.fg)
+            content.secondaryTextProperties.color = palette.ui.fg
             cell.contentConfiguration = content
             // One element, so a path reads as a label and its value.
             cell.isAccessibilityElement = true
@@ -202,22 +202,22 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             let label = hasError ? "Error" : "Loaded"
             var content = UIListContentConfiguration.cell()
             content.text = label
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.image = UIImage(systemName: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle")
-            content.imageProperties.tintColor = UIColor(palette.fg)
+            content.imageProperties.tintColor = palette.ui.fg
             cell.contentConfiguration = content
         case .loadError(let reason):
             ListScreen.staticRow(cell, identifier: "skills.detail.loadError")
             var content = UIListContentConfiguration.cell()
             content.text = reason
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.orange)
+            content.textProperties.color = palette.ui.orange
             cell.contentConfiguration = content
         case .warning(let warning):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = Self.noteContent(
                 warning, systemImage: "exclamationmark.circle",
-                color: UIColor(palette.fg), imageColor: UIColor(palette.fg)
+                color: palette.ui.fg, imageColor: palette.ui.fg
             )
         case .browse:
             let count = state.detail?.files.count ?? 0
@@ -232,11 +232,11 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             }
             var content = UIListContentConfiguration.valueCell()
             content.text = "Browse Files"
-            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.color = palette.ui.fg
             content.secondaryText = "\(count)"
-            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.secondaryTextProperties.color = palette.ui.comment
             content.image = UIImage(systemName: "folder")
-            content.imageProperties.tintColor = UIColor(palette.blue)
+            content.imageProperties.tintColor = palette.ui.blue
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
         }

@@ -259,12 +259,12 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         case .url:
             let url = entry.config.url ?? ""
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.selectableText(url, style: .body, color: UIColor(palette.fg))
+                ControlRowViews.selectableText(url, style: .body, color: palette.ui.fg)
             }
         case .command:
             let command = ([entry.config.command ?? ""] + (entry.config.args ?? [])).joined(separator: " ")
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                let text = ControlRowViews.selectableText(command, style: .body, color: UIColor(palette.fg))
+                let text = ControlRowViews.selectableText(command, style: .body, color: palette.ui.fg)
                 text.font = UIFont.scaledMonospaced(.body)
                 return text
             }
@@ -273,7 +273,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         case .trustNote:
             let note = trustNote
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.label(note, style: .footnote, color: UIColor(palette.orange))
+                ControlRowViews.label(note, style: .footnote, color: palette.ui.orange)
             }
         case .enabled:
             cell.contentConfiguration = Self.rowText("Enabled")
@@ -295,23 +295,23 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         case .connectionError:
             let message = entry.error ?? ""
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.selectableText(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.selectableText(message, style: .body, color: palette.ui.red)
             }
         case .scopeError(let index):
             let message = scope.errors.indices.contains(index) ? scope.errors[index] : nil
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         case .noTools:
-            cell.contentConfiguration = Self.rowText("No tools available", color: UIColor(palette.comment))
+            cell.contentConfiguration = Self.rowText("No tools available", color: palette.ui.comment)
         case .tool(let name):
             let exposure = entry.toolExposure?[name]
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                let tool = ControlRowViews.selectableText(name, style: .body, color: UIColor(palette.fg))
+                let tool = ControlRowViews.selectableText(name, style: .body, color: palette.ui.fg)
                 tool.font = UIFont.scaledMonospaced(.body)
                 var views: [UIView] = [tool]
                 if let exposure {
-                    views.append(ControlRowViews.label(exposure.title, style: .caption1, color: UIColor(palette.comment)))
+                    views.append(ControlRowViews.label(exposure.title, style: .caption1, color: palette.ui.comment))
                 }
                 return ControlRowViews.stack(views, spacing: 2)
             }
@@ -324,7 +324,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
             cell.accessibilityIdentifier = "mcp.detail.error"
             let message = error
             cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
+                ControlRowViews.label(message, style: .body, color: palette.ui.red)
             }
         case .continueSignIn, .signIn, .signOut, .remove:
             break
@@ -342,7 +342,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
             ListScreen.buttonRow(cell, identifier: "mcp.detail.auth.continue", label: "Continue Sign-In") { [weak self] in
                 self?.signIn.resume()
             }
-            cell.contentConfiguration = Self.rowText("Continue Sign-In", color: UIColor(palette.blue))
+            cell.contentConfiguration = Self.rowText("Continue Sign-In", color: palette.ui.blue)
         case .signIn:
             let enabled = !(locked || needsRememberedTrust)
             let title = entry.state == "needs-auth" ? "Sign In" : "Sign In Again"
@@ -378,11 +378,11 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         let palette = palette
         let shown = value ?? "[redacted]"
         cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-            let name = ControlRowViews.label(key, style: .subheadline, color: UIColor(palette.comment), lines: 1)
+            let name = ControlRowViews.label(key, style: .subheadline, color: palette.ui.comment, lines: 1)
             name.font = UIFont.scaledMonospaced(.subheadline)
             name.setContentCompressionResistancePriority(.required, for: .horizontal)
             name.setContentHuggingPriority(.required, for: .horizontal)
-            let content = ControlRowViews.selectableText(shown, style: .subheadline, color: UIColor(palette.fg))
+            let content = ControlRowViews.selectableText(shown, style: .subheadline, color: palette.ui.fg)
             content.font = UIFont.scaledMonospaced(.subheadline)
             content.textAlignment = .right
             let row = ControlRowViews.stack([name, content], axis: .horizontal, spacing: 12, alignment: .top)

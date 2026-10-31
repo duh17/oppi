@@ -204,9 +204,9 @@ final class SSHTerminalBackPill: UIView {
 
     /// `foreground` is the terminal's own text color when its theme sets one.
     func apply(themeID: ThemeID, attentionPending: Bool, foreground: UIColor? = nil) {
-        button.apply(tint: foreground ?? UIColor(themeID.palette.fg))
-        attentionDot.backgroundColor = UIColor(themeID.palette.orange)
-        attentionDot.layer.borderColor = UIColor(themeID.palette.bg).cgColor
+        button.apply(tint: foreground ?? themeID.palette.ui.fg)
+        attentionDot.backgroundColor = themeID.palette.ui.orange
+        attentionDot.layer.borderColor = themeID.palette.ui.bg.cgColor
         attentionDot.isHidden = !attentionPending
         button.accessibilityValue = attentionPending ? "Attention pending" : nil
     }
@@ -279,14 +279,14 @@ final class SSHTerminalConnectionBannerView: UIView {
 
     func apply(text: String, showsProgress: Bool, showsReconnect: Bool, themeID: ThemeID) {
         label.text = text
-        label.textColor = UIColor(themeID.palette.fg)
-        icon.tintColor = UIColor(themeID.palette.red)
-        spinner.color = UIColor(themeID.palette.fg)
+        label.textColor = themeID.palette.ui.fg
+        icon.tintColor = themeID.palette.ui.red
+        spinner.color = themeID.palette.ui.fg
         spinner.isHidden = !showsProgress
         if showsProgress { spinner.startAnimating() } else { spinner.stopAnimating() }
         icon.isHidden = showsProgress
         reconnect.isHidden = !showsReconnect
-        reconnect.configuration?.baseForegroundColor = UIColor(themeID.palette.blue)
+        reconnect.configuration?.baseForegroundColor = themeID.palette.ui.blue
     }
 }
 
@@ -426,8 +426,8 @@ final class SSHTerminalCopyNoticeView: UIView {
 
     func apply(text: String, themeID: ThemeID) {
         label.text = text
-        label.textColor = UIColor(themeID.palette.fg)
-        icon.tintColor = UIColor(themeID.palette.fg)
+        label.textColor = themeID.palette.ui.fg
+        icon.tintColor = themeID.palette.ui.fg
         accessibilityLabel = text
     }
 }

@@ -371,7 +371,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             ) { [weak self] in self?.draft = .standard }
             var content = UIListContentConfiguration.cell()
             content.text = String(localized: "Restore Defaults")
-            content.textProperties.color = enabled ? UIColor(root.themeStore.activeThemeID.palette.blue) : .tertiaryLabel
+            content.textProperties.color = enabled ? root.themeStore.activeThemeID.palette.ui.blue : .tertiaryLabel
             cell.contentConfiguration = content
         }
         let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
@@ -477,11 +477,11 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     private func configure(_ cell: UICollectionViewListCell, toggle: Toggle) {
         var content = UIListContentConfiguration.cell()
         content.text = toggle.title
-        content.textProperties.color = UIColor(root.themeStore.activeThemeID.palette.fg)
+        content.textProperties.color = root.themeStore.activeThemeID.palette.ui.fg
         cell.contentConfiguration = content
         let control = toggleSwitch(toggle)
         // The app tint SwiftUI toggles drew in, following the theme.
-        control.onTintColor = UIColor(root.themeStore.activeThemeID.palette.blue)
+        control.onTintColor = root.themeStore.activeThemeID.palette.ui.blue
         if control.isOn != draft[keyPath: toggle.keyPath] {
             control.setOn(draft[keyPath: toggle.keyPath], animated: control.window != nil)
         }

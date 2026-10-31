@@ -125,8 +125,8 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
     private func configure(_ cell: UICollectionViewListCell, item: Item) {
         let palette = sshTerminalThemeID.palette
         var content = UIListContentConfiguration.valueCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.color = palette.ui.fg
+        content.secondaryTextProperties.color = palette.ui.comment
         cell.accessories = []
         cell.accessibilityIdentifier = nil
         switch item {
@@ -142,18 +142,18 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
             cell.accessibilityIdentifier = "sshTerminal.colors.theme.\(name)"
         case .loading:
             content.text = "Loading themes…"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
         case .unavailable:
             content.text = "Couldn’t read the host’s themes"
-            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.color = palette.ui.comment
         }
         if let value = choice(for: item) {
             let isSelected = value == selected
             cell.accessories = isSelected
-                ? [.checkmark(options: .init(tintColor: UIColor(palette.blue)))] : []
+                ? [.checkmark(options: .init(tintColor: palette.ui.blue))] : []
             cell.accessibilityTraits.insert(.button)
             if isSelected { cell.accessibilityTraits.insert(.selected) } else { cell.accessibilityTraits.remove(.selected) }
         }

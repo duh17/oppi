@@ -178,8 +178,8 @@ final class WorkspaceSidebarViewController: UIViewController {
         let themeChanged = themeID != appliedThemeID
         if themeChanged {
             appliedThemeID = themeID
-            view.backgroundColor = UIColor(themeID.palette.bg)
-            headerLabel.textColor = UIColor(themeID.palette.fg)
+            view.backgroundColor = themeID.palette.ui.bg
+            headerLabel.textColor = themeID.palette.ui.fg
         }
         let previous = model
         model = makeModel()
@@ -409,20 +409,20 @@ final class WorkspaceSidebarViewController: UIViewController {
         case .loading:
             configureNotice(
                 cell, text: "Loading workspaces…", symbol: "arrow.triangle.2.circlepath",
-                color: UIColor(palette.comment), margins: 12
+                color: palette.ui.comment, margins: 12
             )
         case .unavailable:
             configureUnavailable(cell, palette: palette)
         case .empty:
-            configureNotice(cell, text: "No workspaces", symbol: nil, color: UIColor(palette.comment), margins: 12)
+            configureNotice(cell, text: "No workspaces", symbol: nil, color: palette.ui.comment, margins: 12)
         case .stale:
             configureNotice(
                 cell, text: "Saved workspaces may be out of date",
                 symbol: "exclamationmark.arrow.triangle.2.circlepath",
-                color: UIColor(palette.orange), margins: 8
+                color: palette.ui.orange, margins: 8
             )
         case .noServer:
-            configureNotice(cell, text: "No server selected", symbol: nil, color: UIColor(palette.comment), margins: 12)
+            configureNotice(cell, text: "No server selected", symbol: nil, color: palette.ui.comment, margins: 12)
         case .newWorkspace:
             configureNewWorkspace(cell, palette: palette)
         }
@@ -455,7 +455,7 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     private func configureDisclosure(_ cell: SidebarListCell, palette: ThemePalette) {
         let expanded = model.workspacesExpanded
-        let comment = UIColor(palette.comment)
+        let comment = palette.ui.comment
         var content = UIListContentConfiguration.cell()
         content.text = "Workspaces"
         content.textProperties.font = Self.font(.caption1, .semibold)
@@ -501,12 +501,12 @@ final class WorkspaceSidebarViewController: UIViewController {
     private func configureUnavailable(_ cell: SidebarListCell, palette: ThemePalette) {
         configureNotice(
             cell, text: "Workspaces unavailable", symbol: "exclamationmark.triangle.fill",
-            color: UIColor(palette.orange), margins: 12
+            color: palette.ui.orange, margins: 12
         )
         var configuration = UIButton.Configuration.tinted()
         configuration.title = "Retry"
-        configuration.baseForegroundColor = UIColor(palette.blue)
-        configuration.baseBackgroundColor = UIColor(palette.blue)
+        configuration.baseForegroundColor = palette.ui.blue
+        configuration.baseBackgroundColor = palette.ui.blue
         let retry = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in
             self?.retryServer()
         })
@@ -514,7 +514,7 @@ final class WorkspaceSidebarViewController: UIViewController {
     }
 
     private func configureNewWorkspace(_ cell: SidebarListCell, palette: ThemePalette) {
-        let tint = UIColor(palette.fg)
+        let tint = palette.ui.fg
         var content = UIListContentConfiguration.cell()
         content.image = UIImage(systemName: "folder.badge.plus")
         content.imageProperties.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: Self.font(.body, .semibold))
@@ -538,7 +538,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         isSelected: Bool,
         palette: ThemePalette
     ) {
-        let wash = UIColor(palette.fg)
+        let wash = palette.ui.fg
         cell.configurationUpdateHandler = { cell, _ in
             var background = UIBackgroundConfiguration.clear()
             if paintsSelection && isSelected {

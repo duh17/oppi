@@ -157,7 +157,7 @@ final class SSHTerminalNoticeCardView: UIView {
             symbolView.apply(status: blocked.kind, themeID: themeID, reduceMotion: reduceMotion)
             accessibilityIdentifier = "sshTerminal.programStatusBanner"
         case .alert(let alert):
-            tint = UIColor(palette.blue)
+            tint = palette.ui.blue
             headline = "Notification"
             remote = [alert.title, alert.body].filter { !$0.isEmpty }.joined(separator: ": ")
             symbolView.isHidden = true
@@ -169,12 +169,12 @@ final class SSHTerminalNoticeCardView: UIView {
         headlineLabel.text = headline
         headlineLabel.textColor = tint
         hostLabel.text = host
-        hostLabel.textColor = UIColor(palette.comment)
-        hostIcon.tintColor = UIColor(palette.comment)
+        hostLabel.textColor = palette.ui.comment
+        hostIcon.tintColor = palette.ui.comment
         remoteLabel.text = remote
         remoteLabel.isHidden = remote.isEmpty
-        remoteLabel.textColor = UIColor(palette.fg)
-        fill.backgroundColor = UIColor(palette.bg).withAlphaComponent(0.72)
+        remoteLabel.textColor = palette.ui.fg
+        fill.backgroundColor = palette.ui.bg.withAlphaComponent(0.72)
         stroke.layer.borderColor = tint.cgColor
         accessibilityLabel = "\(headline), \(host)"
         accessibilityValue = remote
