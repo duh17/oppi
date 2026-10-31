@@ -495,6 +495,23 @@ async function unlinkCapturedTemp(temp: CapturedTemp): Promise<void> {
 }
 
 /**
+ * The directory a new name landed in, fsynced so the entry survives a power
+ * loss the way the file's own bytes do. Best-effort: the create already landed,
+ * and not every platform or filesystem allows a directory sync.
+ */
+async function syncDirectory(dir: string): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await fs.open(dir, constants.O_RDONLY | constants.O_DIRECTORY);
+    await handle.sync();
+  } catch {
+    // Nothing to tell the editor: the file is there either way.
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/**
  * Last temp recheck before rename: the directory entry must still be the
  * inode we wrote and the bytes we submitted. Path containment is not enough.
  */
@@ -663,11 +680,15 @@ async function writeEditedFileAtomic(
 }
 
 /**
- * The file the editor creates: `O_CREAT|O_EXCL` in a parent that was proven
- * real, so a file another writer put there first is a 412 and never an
- * overwrite. The created file then has to pass the same eligibility an
- * existing one does (the target's own allowlist again, on the canonical path);
- * a file that fails it is removed again, because this request made it.
+ * The file the editor creates. The bytes land in a temp beside the target,
+ * fsynced, and the temp is then `link`ed onto the target name: the link is the
+ * exclusive create (`EEXIST` when someone put a file there first, which is the
+ * editor's 412), and the target name never exists holding a partial document.
+ * The parent is a proven-real directory, so the link cannot follow a symlink
+ * out of the target's root. The created file then has to pass the same
+ * eligibility an existing one does (the target's own allowlist again, on the
+ * canonical path); a file that fails it is removed again, because this request
+ * made it.
  */
 async function createEditedFile(
   input: FileEditTarget & {
@@ -724,7 +745,14 @@ async function createEditedFile(
         return { kind: "error", status: 500, message: "Failed to write file" };
       }
       try {
-        const opened = await handle.stat();
+        // The temp's own inode is what the outer cleanup proves before it
+        // unlinks; without a stat there is no inode to prove, and the name is
+        // ours (O_EXCL), so remove it here rather than leak it.
+        const opened = await handle.stat().catch(() => undefined);
+        if (!opened) {
+          await fs.unlink(candidate).catch(() => {});
+          return { kind: "error", status: 500, message: "Failed to write file" };
+        }
         temp = { path: candidate, dev: opened.dev, ino: opened.ino };
         const proven = await proveHandleInRoot(handle, candidate, creatable.realRoot);
         if (!proven) return { kind: "error", status: 404, message: "File not found" };
@@ -758,6 +786,9 @@ async function createEditedFile(
       if (code === "ENOENT") return { kind: "error", status: 404, message: "File not found" };
       return { kind: "error", status: 500, message: "Failed to write file" };
     }
+    // The new name has to survive a power loss too, not only its bytes: the
+    // directory entry is what makes the file exist.
+    await syncDirectory(parentReal);
   } catch {
     if (created) await unlinkCreatedFile(createPath, created);
     return { kind: "error", status: 500, message: "Failed to write file" };
