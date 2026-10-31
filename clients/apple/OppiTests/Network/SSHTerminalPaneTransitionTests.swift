@@ -95,7 +95,7 @@ struct SSHTerminalPaneTransitionTests {
 
         rig.transition.frameDrawn()
         #expect(rig.transition.phase == .covering, "a frame of the old pane does not lift it")
-        rig.transition.snapshotRestored()
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
         #expect(rig.transition.phase == .covering, "the snapshot alone is not on the screen yet")
         rig.transition.frameDrawn()
         #expect(rig.transition.phase == .idle && !rig.transition.isPlaceholderShown)
@@ -109,7 +109,7 @@ struct SSHTerminalPaneTransitionTests {
         defer { rig.dismiss() }
         rig.commit()
         #expect(rig.transition.phase == .settling)
-        rig.transition.snapshotRestored()
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
         rig.transition.frameDrawn()
         #expect(await settle(rig, to: .idle))
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.layers.isEmpty })
@@ -133,24 +133,64 @@ struct SSHTerminalPaneTransitionTests {
     @Test func aSnapshotWithNoSwitchBehindItChangesNothing() throws {
         let rig = try Rig()
         defer { rig.dismiss() }
-        rig.transition.snapshotRestored()
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
         rig.transition.frameDrawn()
         #expect(rig.transition.phase == .idle && rig.layers.isEmpty)
     }
 
     /// A second switch while the cover is up waits for the newest pane's
-    /// snapshot, not the one before it.
-    @Test func aSecondSwitchWhileCoveredWaitsForTheNewestSnapshot() async throws {
+    /// snapshot, not the one before it: B's snapshot can still land after C was
+    /// asked for, and it is not the screen the cover stands in for.
+    @Test func aSecondSwitchWhileCoveredWaitsForTheNewestPanesSnapshot() async throws {
         let rig = try Rig()
         defer { rig.dismiss() }
         rig.transition.slide(toward: 1, neighbour: "b")
         #expect(await settle(rig, to: .covering))
-        rig.transition.snapshotRestored()
         rig.transition.slide(toward: 1, neighbour: "c")
         #expect(rig.transition.placeholderTitle == "c")
+
+        // B's snapshot lands after C was asked for.
+        rig.transition.snapshotRestored(of: "b", expecting: "c")
         rig.transition.frameDrawn()
-        #expect(rig.transition.phase == .covering, "b's snapshot is not c's")
-        rig.transition.snapshotRestored()
+        #expect(rig.transition.phase == .covering, "b's screen is not c's")
+        rig.transition.snapshotRestored(of: "c", expecting: "c")
+        rig.transition.frameDrawn()
+        #expect(rig.transition.phase == .idle)
+    }
+
+    /// The same overtaking while the first slide is still running.
+    @Test func anOvertakenSwitchsSnapshotDoesNotLiftTheCoverWhileSliding() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        rig.transition.slide(toward: 1, neighbour: "b")
+        #expect(rig.transition.phase == .settling)
+        rig.transition.slide(toward: 1, neighbour: "c")
+        rig.transition.snapshotRestored(of: "b", expecting: "c")
+        rig.transition.frameDrawn()
+        #expect(await settle(rig, to: .covering), "the slide ends, and the cover stays")
+        rig.transition.frameDrawn()
+        #expect(rig.transition.phase == .covering)
+        rig.transition.snapshotRestored(of: "c", expecting: "c")
+        rig.transition.frameDrawn()
+        #expect(rig.transition.phase == .idle)
+    }
+
+    /// A switch that comes while the screen is springing back is still a
+    /// covered switch: the spring-back's views are dropped, not left to tear
+    /// the cover down when they finish.
+    @Test func aSwitchDuringASpringBackStillSlidesAndCovers() async throws {
+        let rig = try Rig()
+        defer { rig.dismiss() }
+        #expect(rig.transition.beginDrag())
+        rig.transition.drag(translationX: -30, neighbour: "b")
+        rig.transition.endDrag(committing: nil, velocityX: 0)
+        #expect(rig.transition.phase == .settling)
+
+        rig.transition.slide(toward: 1, neighbour: "b")
+        #expect(rig.transition.phase == .settling && rig.transition.placeholderTitle == "b")
+        #expect(await settle(rig, to: .covering), "the switch is covered, not torn down with the spring-back")
+        #expect(rig.layers.count == 1 && rig.transition.isPlaceholderShown)
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
         rig.transition.frameDrawn()
         #expect(rig.transition.phase == .idle)
     }
@@ -163,7 +203,7 @@ struct SSHTerminalPaneTransitionTests {
         #expect(rig.transition.phase == .settling && rig.layers.count == 2)
         #expect(rig.transition.placeholderTitle == "prev")
         #expect(await settle(rig, to: .covering))
-        rig.transition.snapshotRestored()
+        rig.transition.snapshotRestored(of: "b", expecting: "b")
         rig.transition.frameDrawn()
         #expect(await settle(rig, to: .idle))
     }

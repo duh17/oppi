@@ -786,7 +786,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                     Task { [weak self] in
                         do { try await stream?.send(frame) } catch { self?.end(error.localizedDescription) }
                     }
-                case .snapshot(let snapshot): queue.pushSnapshot(snapshot)
+                case .snapshot(let snapshot): queue.pushSnapshot(snapshot, block: block)
                 case .output(let bytes): queue.push(.data(bytes))
                 case .exited(let code):
                     if let block { core.withLock { $0.exitCodes[block] = code } }

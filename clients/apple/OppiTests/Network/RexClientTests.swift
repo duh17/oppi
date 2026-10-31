@@ -548,30 +548,34 @@ struct RexSessionLayoutTests {
         #expect(Icon(program: "e\u{0301}cho") == .monogram("\u{00C9}"), "a whole grapheme, not a scalar")
         #expect(Icon(program: "\u{00F1}and\u{00FA}") == .monogram("\u{00D1}"))
         #expect(Icon(program: "\u{1F469}\u{200D}\u{1F4BB} dev") == .monogram("\u{1F469}\u{200D}\u{1F4BB}"), "an emoji sequence is one grapheme")
+        #expect(Icon(program: "\u{00DF}tack") == .monogram("\u{00DF}"), "a capital of more than one character is not an initial: ß stays")
+        #expect(Icon(program: "\u{FB01}x") == .monogram("\u{FB01}"), "a ligature whose capital is two letters stays")
+        // What is drawn as a picture: an emoji by default, or one that asked for it with U+FE0F.
+        #expect(Icon.monogram("\u{1F680}").isPicture && Icon(program: "\u{26A0}\u{FE0F} warn").isPicture)
+        #expect(Icon(program: "\u{26A1}\u{FE0F}").isPicture)
+        #expect(!Icon.monogram("\u{2733}").isPicture && !Icon.monogram("\u{03C0}").isPicture && !Icon.monogram("C").isPicture)
     }
 
-    /// Every icon is the terminal glyph's size, so the bar does not shift; a
-    /// monogram is a tinted template, and an emoji (already a picture) keeps its colors.
-    @Test @MainActor func everyPaneIconIsTheTerminalGlyphsSize() {
-        let terminal = SSHTerminalPaneIcon.terminal.image()
-        for icon in [SSHTerminalPaneIcon.monogram("P"), .monogram("\u{03C0}"), .monogram("\u{2733}"), .monogram("\u{1F469}\u{200D}\u{1F4BB}")] {
-            #expect(icon.image().size == terminal.size)
+    /// Every monogram is drawn where the terminal glyph is drawn (its symbol
+    /// canvas has padding, so the whole canvas is not the measure), so the bar
+    /// does not change size or weight with the pane. A monogram is a tinted
+    /// template, and a picture keeps its colors.
+    @Test @MainActor func everyPaneIconIsDrawnWhereTheTerminalGlyphIs() {
+        typealias Icon = SSHTerminalPaneIcon
+        let terminal = Icon.drawnBounds(of: Icon.terminal.image())
+        #expect(terminal.width > 10 && terminal.height > 8)
+        for icon in [Icon.monogram("P"), .monogram("\u{03C0}"), .monogram("\u{2733}"), .monogram("W"), .monogram("\u{00DF}")] {
+            let drawn = Icon.drawnBounds(of: icon.image())
+            #expect(abs(drawn.width - terminal.width) <= 1 && abs(drawn.height - terminal.height) <= 1, "\(icon) is as big as the glyph: \(drawn) vs \(terminal)")
+            #expect(abs(drawn.midX - terminal.midX) <= 1 && abs(drawn.midY - terminal.midY) <= 1, "\(icon) sits where the glyph does")
+            #expect(icon.image().renderingMode == .alwaysTemplate)
         }
-        #expect(terminal.renderingMode == .alwaysTemplate && SSHTerminalPaneIcon.monogram("\u{2733}").image().renderingMode == .alwaysTemplate)
-        #expect(SSHTerminalPaneIcon.monogram("\u{1F680}").image().renderingMode == .alwaysOriginal)
-    }
-
-    /// A reporting pane's icon starts from its title (a program puts its own
-    /// mark first there), else its app, else Rex's label; blank ones do not count.
-    @Test func aReportingPanesNameIsItsTitleThenItsAppThenItsLabel() {
-        func name(_ title: String?, _ app: String?, _ label: String?) -> String? {
-            RexSessionState.programName(title: title, app: app, label: label)
+        for picture in [Icon.monogram("\u{1F680}"), .monogram("\u{26A0}\u{FE0F}")] {
+            let drawn = Icon.drawnBounds(of: picture.image())
+            #expect(drawn.width <= terminal.width + 2 && drawn.height <= terminal.height + 2 && !drawn.isEmpty)
+            #expect(picture.image().renderingMode == .alwaysOriginal)
         }
-        #expect(name("\u{03C0} - x", "pi", "shell") == "\u{03C0} - x", "the title wins over the app")
-        #expect(name(nil, "pi", "shell") == "pi" && name("", "pi", "shell") == "pi" && name("  ", "pi", nil) == "pi")
-        #expect(SSHTerminalPaneIcon(program: name(nil, "pi", "shell")) == .monogram("P"))
-        #expect(name("", nil, "shell") == "shell" && name(nil, "", "shell") == "shell")
-        #expect(name(nil, nil, nil) == nil && name(" ", "", "\n") == nil)
+        #expect(Icon.terminal.image().renderingMode == .alwaysTemplate)
     }
 
     @Test func aClosedPanesNeighbourIsTheNextThenThePrevious() {

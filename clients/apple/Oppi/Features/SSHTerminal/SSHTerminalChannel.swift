@@ -50,8 +50,9 @@ final class SSHTerminalEventQueue: Sendable {
     enum Item: Sendable, Equatable {
         case event(SSHPTYEvent)
         case overflow
-        /// A Ghostty snapshot to restore before the output after it (a Rex pane).
-        case snapshot(Data)
+        /// A Ghostty snapshot to restore before the output after it (a Rex
+        /// pane), with the block it is of.
+        case snapshot(Data, block: String?)
         /// The connection ended for a reason its transport names (a Rex pane).
         case ended(String)
     }
@@ -109,10 +110,10 @@ final class SSHTerminalEventQueue: Sendable {
     }
 
     /// Called from the NIO event loop, in order with `push`.
-    func pushSnapshot(_ snapshot: Data) {
+    func pushSnapshot(_ snapshot: Data, block: String? = nil) {
         let accepted = state.withLock { state in
             guard !state.finished else { return false }
-            state.items.append(.snapshot(snapshot))
+            state.items.append(.snapshot(snapshot, block: block))
             return true
         }
         if accepted { continuation.yield() }
@@ -228,9 +229,10 @@ final class SSHTerminalChannel {
     /// panes, minimap, and the switch between them. Set before `opened`; stays
     /// after the terminal ends, so a reconnect knows the pane shown last.
     @ObservationIgnored var rex: RexSessionModel?
-    /// Runs after a pane's snapshot replaced the engine's terminal, so the
-    /// grid knows the screen it holds is the pane's own (`SSHTerminalPaneTransition`).
-    @ObservationIgnored var snapshotRestored: (() -> Void)?
+    /// Runs after a pane's snapshot replaced the engine's terminal, with the
+    /// block it is of, so the grid knows the screen it holds is that pane's
+    /// own (`SSHTerminalPaneTransition`).
+    @ObservationIgnored var snapshotRestored: ((String?) -> Void)?
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a
@@ -441,10 +443,10 @@ final class SSHTerminalChannel {
                 interpret(run)
                 run.removeAll()
                 self.event(event)
-            case .snapshot(let snapshot):
+            case .snapshot(let snapshot, let block):
                 interpret(run)
                 run.removeAll()
-                restore(snapshot)
+                restore(snapshot, block: block)
             case .ended(let reason):
                 interpret(run)
                 run.removeAll()
@@ -484,7 +486,7 @@ final class SSHTerminalChannel {
     }
 
     /// Starts the grid from a pane's snapshot: its screen, modes, and history.
-    private func restore(_ snapshot: Data) {
+    private func restore(_ snapshot: Data, block: String?) {
         guard connected else { return }
         let after: Data
         do {
@@ -497,7 +499,7 @@ final class SSHTerminalChannel {
         refreshWorkingDirectory()
         // Output that arrived with the snapshot, before Rex's first message.
         interpret(after)
-        snapshotRestored?()
+        snapshotRestored?(block)
     }
 
     private func interpret(_ bytes: Data) {

@@ -956,7 +956,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         guard rexPanesShown else { return nil }
         return SSHTerminalPaneStepping(
             neighbour: { [weak self] delta in self?.channel.rex?.latest.neighbour(offsetBy: delta)?.name },
-            step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false }
+            step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false },
+            shown: { [weak self] in self?.channel.rex?.latest.shown }
         )
     }
 

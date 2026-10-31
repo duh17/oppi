@@ -38,7 +38,8 @@ final class SSHTerminalPaneTransition {
     private weak var grid: SSHTerminalGridView?
     private var cover: UIView?
     private var placeholder: SSHTerminalPanePlaceholderView?
-    private var haptic: UISelectionFeedbackGenerator?
+    /// The settle in progress is the spring back, not a switch.
+    private var returning = false
     /// Bumped by every presentation and teardown, so a late animation
     /// completion or timeout cannot act on a newer one.
     private var generation = 0
@@ -58,9 +59,7 @@ final class SSHTerminalPaneTransition {
     /// width) or a transition is still running; the swipe then does nothing.
     @discardableResult
     func beginDrag() -> Bool {
-        guard phase == .idle, present(), let grid else { return false }
-        haptic = UISelectionFeedbackGenerator(view: grid)
-        haptic?.prepare()
+        guard phase == .idle, present() else { return false }
         phase = .dragging
         return true
     }
@@ -83,12 +82,12 @@ final class SSHTerminalPaneTransition {
     func endDrag(committing step: Int?, velocityX: CGFloat) {
         guard phase == .dragging else { return }
         if let step {
-            haptic?.selectionChanged()
+            // Oppi's own switch for haptics: off in Settings, no tick.
+            AppHaptics.selectionChanged()
             commit(step: step, velocityX: velocityX)
         } else {
             springBack(velocityX: velocityX)
         }
-        haptic = nil
     }
 
     // MARK: - Without a finger
@@ -102,6 +101,10 @@ final class SSHTerminalPaneTransition {
         case .dragging:
             // A finger owns the screen; its release decides.
             return
+        case .settling where returning:
+            // The screen was springing back and a switch came: drop that
+            // cover and slide as from rest, so the new pane is still covered.
+            cancel()
         case .settling, .covering:
             // Another switch while one runs: the screen waits for the newest
             // pane's snapshot instead.
@@ -119,9 +122,13 @@ final class SSHTerminalPaneTransition {
 
     // MARK: - What the grid reports
 
-    /// Rex's snapshot of a pane replaced the grid's terminal.
-    func snapshotRestored() {
+    /// Rex's snapshot of the pane `block` replaced the grid's terminal. Only
+    /// the pane last asked for (`shown`) lifts the cover: a switch that was
+    /// overtaken (A to B, then C asked for) can still land B's snapshot, and
+    /// that is not the screen the cover stands in for.
+    func snapshotRestored(of block: String?, expecting shown: String?) {
         guard phase == .settling || phase == .covering else { return }
+        if let block, let shown, block != shown { return }
         snapshotApplied = true
     }
 
@@ -148,7 +155,7 @@ final class SSHTerminalPaneTransition {
         placeholder?.removeFromSuperview()
         cover = nil
         placeholder = nil
-        haptic = nil
+        returning = false
         phase = .idle
     }
 
@@ -157,6 +164,7 @@ final class SSHTerminalPaneTransition {
     private func present() -> Bool {
         guard let grid, let container = grid.superview, grid.bounds.width > 0 else { return false }
         generation += 1
+        returning = false
         let placeholder = SSHTerminalPanePlaceholderView()
         placeholder.frame = grid.frame
         placeholder.apply(background: grid.backgroundColor ?? .black, foreground: grid.foreground)
@@ -181,6 +189,7 @@ final class SSHTerminalPaneTransition {
     private func commit(step: Int, velocityX: CGFloat) {
         guard let grid, let cover, let placeholder else { return cancel() }
         phase = .settling
+        returning = false
         slideFinished = false
         armReveal()
         let token = generation
@@ -215,6 +224,7 @@ final class SSHTerminalPaneTransition {
     private func springBack(velocityX: CGFloat) {
         guard let grid, let cover, let placeholder else { return cancel() }
         phase = .settling
+        returning = true
         let token = generation
         let side: CGFloat = placeholder.transform.tx < 0 ? -grid.bounds.width : grid.bounds.width
         let remaining = -cover.transform.tx

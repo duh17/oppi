@@ -253,7 +253,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             self.needsPaint = true
             self.requestDisplayLink()
         }
-        channel.snapshotRestored = { [weak self] in self?.paneTransition.snapshotRestored() }
+        channel.snapshotRestored = { [weak self] block in
+            guard let self else { return }
+            self.paneTransition.snapshotRestored(of: block, expecting: self.paneStepping?.shown())
+            self.needsPaint = true
+            self.requestDisplayLink()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
                                                name: AppFont.didRebuildNotification, object: nil)
     }
@@ -1770,10 +1775,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             if presentIfNeeded() {
                 needsPaint = false
                 paintedChangeCount = changes
+                // Only a frame that was drawn can be the new pane's screen.
+                paneTransition.frameDrawn()
             }
         }
         updateSecureEntry()
-        paneTransition.frameDrawn()
         didDrawFrame()
     }
 

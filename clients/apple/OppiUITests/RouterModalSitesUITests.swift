@@ -368,8 +368,8 @@ final class RouterModalSitesUITests: XCTestCase {
         launch(screen: "ssh-terminal-rex-panes")
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
-        XCTAssertEqual(switcher.value as? String, "1 of 3", "The session opens on its first pane")
-        XCTAssertEqual(switcher.label, "\u{03C0} - oppi")
+        XCTAssertEqual(switcher.label, "Pane")
+        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "The session opens on its first pane")
         let firstCell = app.buttons["sshTerminal.rexMinimap.0"]
         let secondCell = app.buttons["sshTerminal.rexMinimap.1"]
         XCTAssertTrue(firstCell.waitForExistence(timeout: 5) && firstCell.isSelected && !secondCell.isSelected)
@@ -384,18 +384,17 @@ final class RouterModalSitesUITests: XCTestCase {
         let bottom = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
         top.press(forDuration: 0.05, thenDragTo: bottom, withVelocity: .default, thenHoldForDuration: 0)
         XCTAssertTrue(backToLive.waitForExistence(timeout: 5), "A vertical drag must scroll the history")
-        XCTAssertEqual(switcher.value as? String, "1 of 3", "A vertical drag must not change pane")
+        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "A vertical drag must not change pane")
         attachScreenshot("rex-panes-scrolled")
         backToLive.tap()
 
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()
-        XCTAssertTrue(waitFor(switcher.value as? String == "2 of 3"), "A swipe left must show the next pane")
-        XCTAssertEqual(switcher.label, "tail -f server.log")
+        XCTAssertTrue(waitFor(switcher.value as? String == "tail -f server.log, 2 of 3"), "A swipe left must show the next pane")
         XCTAssertTrue(waitFor(secondCell.isSelected && !firstCell.isSelected), "The minimap follows the swipe")
         attachScreenshot("rex-panes-second")
         grid.swipeRight()
-        XCTAssertTrue(waitFor(switcher.value as? String == "1 of 3"), "A swipe right must show the previous pane")
+        XCTAssertTrue(waitFor(switcher.value as? String == "\u{03C0} - oppi, 1 of 3"), "A swipe right must show the previous pane")
         XCTAssertTrue(waitFor(firstCell.isSelected))
 
         // The switcher's menu lists the panes in strip order and shows the one chosen.
@@ -405,8 +404,7 @@ final class RouterModalSitesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["sshTerminal.rexPanes.0"].exists && app.buttons["sshTerminal.rexPanes.1"].exists)
         attachScreenshot("rex-panes-menu")
         third.tap()
-        XCTAssertTrue(waitFor(switcher.value as? String == "3 of 3"), "A menu choice must show that pane")
-        XCTAssertEqual(switcher.label, "\u{2733} Fixing the build")
+        XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
         XCTAssertTrue(waitFor(app.buttons["sshTerminal.rexMinimap.2"].isSelected))
         assertRunning()
     }

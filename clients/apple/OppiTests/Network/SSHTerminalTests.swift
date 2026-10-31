@@ -2038,10 +2038,10 @@ struct SSHTerminalTests {
         let switcher = try #require(control("sshTerminal.bar.rexPanes") as? UIButton)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             mounted.host.view.layoutIfNeeded()
-            return switcher.accessibilityLabel == "title a"
+            return switcher.accessibilityValue == "title a, 1 of 3"
         })
         #expect((0...2).allSatisfy { shown("sshTerminal.rexMinimap.\($0)") })
-        #expect(switcher.accessibilityValue == "1 of 3")
+        #expect(switcher.accessibilityLabel == "Pane", "the label is the purpose; the value is the pane")
         #expect(switcher.showsMenuAsPrimaryAction && switcher.menu != nil)
         #expect(selected("sshTerminal.rexMinimap.0") && control("sshTerminal.rexMinimap.2")?.accessibilityLabel == "title c")
         // The minimap sits at the grid's top right, the switcher in the trailing pill beside ….
@@ -2062,7 +2062,7 @@ struct SSHTerminalTests {
         #expect(grid.paneTransition.placeholderTitle == "title c")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            switcher.accessibilityLabel == "title c" && switcher.accessibilityValue == "3 of 3" && selected("sshTerminal.rexMinimap.2")
+            switcher.accessibilityValue == "title c, 3 of 3" && selected("sshTerminal.rexMinimap.2")
         })
         let target = try #require(control("sshTerminal.rexMinimap.2")).frame
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { minimap.highlightFrame == target }, "the highlight moves to the new cell")
@@ -2079,7 +2079,7 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
         #expect(grid.stepPane(-1) == true && grid.stepPane(-1) == true && grid.stepPane(-1) == false)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") && grid.paneTransition.phase == .idle })
-        #expect(switcher.accessibilityLabel == "title a" && switcher.accessibilityValue == "1 of 3")
+        #expect(switcher.accessibilityValue == "title a, 1 of 3")
         await rig.stop()
     }
 
@@ -2107,17 +2107,17 @@ struct SSHTerminalTests {
 
         button.apply(state: state(shown: "a"), tint: .white)
         #expect(button.icon == .terminal && !button.isHidden)
-        #expect(button.accessibilityLabel == "shell" && button.accessibilityValue == "1 of 3")
+        #expect(button.accessibilityLabel == "Pane" && button.accessibilityValue == "shell, 1 of 3")
         #expect(iconViews() == 1, "the first draw does not roll")
 
         button.apply(state: state(shown: "b"), tint: .white)
         #expect(button.icon == .monogram("\u{03C0}"))
-        #expect(button.accessibilityLabel == "\u{03C0} - oppi" && button.accessibilityValue == "2 of 3")
+        #expect(button.accessibilityLabel == "Pane" && button.accessibilityValue == "\u{03C0} - oppi, 2 of 3")
         #expect(iconViews() == 2, "the old icon leaves while the new one arrives")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { iconViews() == 1 })
 
         button.apply(state: state(shown: "c"), tint: .white)
-        #expect(button.icon == .monogram("\u{2733}") && button.accessibilityLabel == "\u{2733} Fixing the build")
+        #expect(button.icon == .monogram("\u{2733}") && button.accessibilityValue == "\u{2733} Fixing the build, 3 of 3")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { iconViews() == 1 })
 
         // A program that starts reporting in the pane on screen changes its icon in place.

@@ -79,6 +79,8 @@ struct SSHTerminalPaneStepping {
     var neighbour: (Int) -> String?
     /// Shows the pane `delta` places along; false past either end.
     var step: (Int) -> Bool
+    /// The pane last asked for: the one whose snapshot ends a switch.
+    var shown: () -> String?
 }
 
 /// The bar's pane switcher menu: the session's panes in strip order, the
@@ -119,8 +121,9 @@ enum SSHTerminalPaneIcon: Equatable {
 
     /// `program` is `RexSessionState.Pane.program`. The monogram is its first
     /// character that is not white space, uppercased when it is a lowercase
-    /// Latin letter. Other scripts and symbols keep what they are: `π` is a
-    /// mark (the pi agent's), not an initial.
+    /// Latin letter and its capital is one character (`ß` stays `ß`). Other
+    /// scripts and symbols keep what they are: `π` is a mark (the pi agent's),
+    /// not an initial.
     init(program: String?) {
         guard let first = program?.trimmingCharacters(in: .whitespacesAndNewlines).first else {
             self = .terminal
@@ -129,40 +132,111 @@ enum SSHTerminalPaneIcon: Equatable {
         let latinLowercase = first.unicodeScalars.first.map {
             $0.value < 0x250 && $0.properties.generalCategory == .lowercaseLetter
         } ?? false
-        self = .monogram(latinLowercase ? first.uppercased() : String(first))
+        let capital = first.uppercased()
+        self = .monogram(latinLowercase && capital.count == 1 ? capital : String(first))
     }
 
-    /// The icon as a template image the size of the terminal glyph, so a
-    /// monogram and the glyph weigh the same in the pill. The monogram is
-    /// cut out of a rounded tile, the way the glyph's prompt is.
+    /// An emoji already is a picture: a character that is an emoji by default,
+    /// or one that asked for it (`⚠️`, with U+FE0F). It is drawn in its own
+    /// colors, with no tile to cut it from.
+    var isPicture: Bool {
+        guard case .monogram(let letter) = self else { return false }
+        return letter.unicodeScalars.first?.properties.isEmojiPresentation == true
+            || letter.unicodeScalars.contains { $0.value == 0xFE0F }
+    }
+
+    /// The terminal symbol's canvas, and the part of it that is drawn. A
+    /// monogram is drawn in the same part, so the two weigh the same in the
+    /// pill (the symbol's canvas has padding around its glyph).
+    @MainActor
+    private static let terminalMetrics: (canvas: CGSize, drawn: CGRect) = {
+        let glyph = UIImage(systemName: terminalSymbol, withConfiguration: SSHTerminalPillButton.symbolConfiguration)
+        guard let glyph, glyph.size != .zero else {
+            let canvas = CGSize(width: 20, height: 16)
+            return (canvas, CGRect(origin: .zero, size: canvas))
+        }
+        return (glyph.size, drawnBounds(of: glyph))
+    }()
+
+    /// Where `image` has pixels (alpha above a hair), in points, in its own
+    /// coordinates. An image with none gives a zero rect.
+    @MainActor
+    static func drawnBounds(of image: UIImage) -> CGRect {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.preferredRange = .standard
+        let raster = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+            image.withTintColor(.black, renderingMode: .alwaysOriginal).draw(at: .zero)
+        }
+        guard let cg = raster.cgImage else { return .zero }
+        // Redrawn into RGBA of our own, whose layout is known: a renderer's varies.
+        let (width, height) = (cg.width, cg.height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drew = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drew else { return .zero }
+        var (minX, minY, maxX, maxY) = (width, height, -1, -1)
+        for y in 0..<height {
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= 0 else { return .zero }
+        let scale = raster.scale
+        return CGRect(
+            x: CGFloat(minX) / scale, y: CGFloat(minY) / scale,
+            width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale
+        )
+    }
+
+    /// The icon as an image on the terminal symbol's canvas, drawn where the
+    /// symbol's glyph is. A monogram is a template, cut out of a rounded tile
+    /// the way the glyph's prompt is; a picture keeps its colors.
     @MainActor
     func image() -> UIImage {
         let glyph = UIImage(systemName: Self.terminalSymbol, withConfiguration: SSHTerminalPillButton.symbolConfiguration)
             ?? UIImage()
         guard case .monogram(let letter) = self else { return glyph.withRenderingMode(.alwaysTemplate) }
-        let size = glyph.size == .zero ? CGSize(width: 20, height: 16) : glyph.size
-        let renderer = UIGraphicsImageRenderer(size: size)
-        let scalar = letter.unicodeScalars.first?.properties
+        let (canvas, tile) = Self.terminalMetrics
+        let renderer = UIGraphicsImageRenderer(size: canvas)
         func draw(_ text: NSAttributedString) {
             let box = text.size()
-            text.draw(at: CGPoint(x: (size.width - box.width) / 2, y: (size.height - box.height) / 2))
+            text.draw(at: CGPoint(x: tile.midX - box.width / 2, y: tile.midY - box.height / 2))
         }
-        // A character that is an emoji by default is already a picture: it is
-        // drawn as it is, in its own colors, with no tile to cut it from.
-        if scalar?.isEmojiPresentation == true {
-            let font = UIFont.systemFont(ofSize: size.height * 0.95)
-            return renderer.image { _ in draw(NSAttributedString(string: letter, attributes: [.font: font])) }
-                .withRenderingMode(.alwaysOriginal)
+        if isPicture {
+            // Drawn big, measured, and fitted into the glyph's place: an emoji's
+            // own box is not the picture's.
+            let side: CGFloat = 64
+            let big = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+                let text = NSAttributedString(string: letter, attributes: [.font: UIFont.systemFont(ofSize: side * 0.6)])
+                let box = text.size()
+                text.draw(at: CGPoint(x: (side - box.width) / 2, y: (side - box.height) / 2))
+            }
+            let found = Self.drawnBounds(of: big)
+            guard !found.isEmpty else { return glyph.withRenderingMode(.alwaysTemplate) }
+            let scale = min(tile.width / found.width, tile.height / found.height)
+            return renderer.image { _ in
+                big.draw(in: CGRect(
+                    x: tile.midX - found.midX * scale, y: tile.midY - found.midY * scale,
+                    width: side * scale, height: side * scale
+                ))
+            }.withRenderingMode(.alwaysOriginal)
         }
         return renderer.image { context in
             UIColor.black.setFill()
-            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: size.height * 0.28).fill()
-            let font = UIFont.systemFont(ofSize: size.height * 0.68, weight: .bold)
+            UIBezierPath(roundedRect: tile, cornerRadius: tile.height * 0.28).fill()
+            let font = UIFont.systemFont(ofSize: tile.height * 0.68, weight: .bold)
             // A mark that can also be an emoji (`✳`) is asked for in its text form,
             // so it is cut out as a mark, not as the emoji's silhouette.
-            let shown = scalar?.isEmoji == true ? letter + "\u{FE0E}" : letter
+            let scalars = letter.unicodeScalars
+            let canBeEmoji = scalars.first?.properties.isEmoji == true && !scalars.contains { $0.value == 0xFE0E }
             context.cgContext.setBlendMode(.destinationOut)
-            draw(NSAttributedString(string: shown, attributes: [.font: font, .foregroundColor: UIColor.black]))
+            draw(NSAttributedString(string: canBeEmoji ? letter + "\u{FE0E}" : letter, attributes: [.font: font, .foregroundColor: UIColor.black]))
         }.withRenderingMode(.alwaysTemplate)
     }
 }
@@ -176,13 +250,14 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
     private let glyph = SSHTerminalRexPaneGlyphView()
     private var shownBlock: String?
     private var shownIndex: Int?
+    /// The icon the Large Content Viewer shows, so it is made when the icon changes.
+    private var largeIcon: SSHTerminalPaneIcon?
 
     /// The icon on show, for a test.
     var icon: SSHTerminalPaneIcon { glyph.icon }
 
     init() {
-        super.init(image: nil, label: "Panes", identifier: "sshTerminal.bar.rexPanes")
-        largeContentImage = SSHTerminalPaneIcon.terminal.image()
+        super.init(image: nil, label: "Pane", identifier: "sshTerminal.bar.rexPanes")
         glyph.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glyph)
         NSLayoutConstraint.activate([
@@ -215,10 +290,13 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
         let wasShown = !isHidden
         isHidden = false
         let icon = SSHTerminalPaneIcon(program: state.panes[index].program)
-        accessibilityLabel = state.shownName
-        accessibilityValue = "\(index + 1) of \(state.panes.count)"
+        // The label is the button's purpose; the value is the pane and where it is.
+        accessibilityValue = "\(state.shownName), \(index + 1) of \(state.panes.count)"
         largeContentTitle = state.shownName
-        largeContentImage = icon.image()
+        if icon != largeIcon {
+            largeIcon = icon
+            largeContentImage = icon.image()
+        }
         if wasShown, let shownBlock, shownBlock != state.shown, window != nil {
             glyph.roll(toward: index > (shownIndex ?? index) ? 1 : -1, to: icon)
         } else {
