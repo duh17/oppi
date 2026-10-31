@@ -181,10 +181,11 @@ final class RexRoutePlan: Sendable {
         }
     }
 
-    /// `body`'s control connection if it comes within `limit`. The deadline,
-    /// or the caller's cancellation, returns at once (cancelling `body`
-    /// without waiting for it), and a connection that comes after either is
-    /// closed: the fallback never waits on a stalled attempt.
+    /// `body`'s control connection if it comes within `limit`. The deadline
+    /// returns at once, cancelling `body` without waiting for it, so the
+    /// fallback never waits on a stalled attempt. The caller's cancellation
+    /// cancels `body` and returns when `body` gives up, or at the deadline at
+    /// the latest. A connection that comes after either is closed.
     static func within(
         _ limit: Duration, _ body: @escaping @Sendable () async throws -> RexControl
     ) async throws -> RexControl {
@@ -302,6 +303,9 @@ final class RexTLSStream: Sendable {
         var openResult: Result<Void, any Error>?
         var reading = false
         var closed = false
+        /// The owner closed the stream: its end is `.closed`, not the
+        /// cancellation error the connection reports for it.
+        var closing = false
     }
 
     private let connection: NWConnection
@@ -380,8 +384,10 @@ final class RexTLSStream: Sendable {
         }
     }
 
-    /// Closes without waiting; the sink then hears `.closed`.
+    /// Closes without waiting; the sink then hears `.closed`, which
+    /// `RexPipeSocket` reads as `RexClientError.connectionClosed`.
     private func close() {
+        state.withLock { $0.closing = true }
         connection.cancel()
     }
 
@@ -437,14 +443,14 @@ final class RexTLSStream: Sendable {
     /// The stream is over: the sink hears it once, with the network error
     /// that ended it, if one did.
     private func finish(_ error: NWError? = nil) {
-        let first = state.withLock { state -> Bool in
-            guard !state.closed else { return false }
+        let (first, closing) = state.withLock { state -> (Bool, Bool) in
+            guard !state.closed else { return (false, state.closing) }
             state.closed = true
-            return true
+            return (true, state.closing)
         }
         guard first else { return }
         sink(.eof)
-        if let error { sink(.exitSignal(error.localizedDescription)) }
+        if let error, !closing { sink(.exitSignal(error.localizedDescription)) }
         sink(.closed)
     }
 
