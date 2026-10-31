@@ -7,82 +7,112 @@ import UIKit
 import AppKit
 #endif
 
+/// Identifies one palette build, so a value derived from a palette can be
+/// cached by identity rather than by comparing all 51 colors.
+///
+/// Every palette built gets its own, and a palette's colors never change after it
+/// is built (`ThemePalette`'s tokens are `let`), so nothing keyed on a palette's
+/// identity can go stale. A copy of a palette is the same build and shares its
+/// identity, which is what lets `palette.ui` cache one set of colours per build.
+struct PaletteIdentity: Hashable, Sendable {
+    private let value: UInt64
+
+    init() {
+        value = PaletteIdentity.next()
+    }
+
+    private static func next() -> UInt64 {
+        counter.withLock { value in
+            defer { value += 1 }
+            return value
+        }
+    }
+
+    private static let counter = OSAllocatedUnfairLock(initialState: UInt64(1))
+}
+
 /// Color palette for the entire app — 51 tokens (49 required, 2 optional on import).
 ///
 /// 13 base colors (used by `Color.theme*` static accessors) plus 38 semantic
 /// tokens for UI surfaces, syntax highlighting, markdown, diffs, and thinking.
 ///
-/// Fields are `var` so `ThemeContrast` can adjust a built-in seed in place.
+/// A palette does not change after it is built: `ThemeContrast` reads a seed and
+/// builds the adjusted palette.
 struct ThemePalette: Sendable, ProviderIconTintPalette {
+    /// Which palette build this value is: one per construction, never written
+    /// again, so nothing derived from a palette can go stale. See
+    /// `PaletteIdentity`.
+    let identity = PaletteIdentity()
+
     // ── Base (13) ──
-    var bg: Color
-    var bgDark: Color
-    var bgHighlight: Color
-    var fg: Color
-    var fgDim: Color
-    var comment: Color
-    var blue: Color
-    var cyan: Color
-    var green: Color
-    var orange: Color
-    var purple: Color
-    var red: Color
-    var yellow: Color
+    let bg: Color
+    let bgDark: Color
+    let bgHighlight: Color
+    let fg: Color
+    let fgDim: Color
+    let comment: Color
+    let blue: Color
+    let cyan: Color
+    let green: Color
+    let orange: Color
+    let purple: Color
+    let red: Color
+    let yellow: Color
 
     // ── Thinking text (1) ──
-    var thinkingText: Color
+    let thinkingText: Color
 
     // ── User / assistant message (4) ──
-    var userMessageBg: Color
-    var userMessageText: Color
+    let userMessageBg: Color
+    let userMessageText: Color
     /// Assistant row fill. Built-ins use `Color.clear` (no wash).
-    var assistantMessageBg: Color
+    let assistantMessageBg: Color
     /// Optional leading strip on the user card. Built-ins use `nil` (no
     /// strip); a custom theme opts in with `userMessageAccent`.
-    var userMessageAccent: Color?
+    let userMessageAccent: Color?
 
     // ── Tool state (5) ──
-    var toolPendingBg: Color
-    var toolSuccessBg: Color
-    var toolErrorBg: Color
-    var toolTitle: Color
-    var toolOutput: Color
+    let toolPendingBg: Color
+    let toolSuccessBg: Color
+    let toolErrorBg: Color
+    let toolTitle: Color
+    let toolOutput: Color
 
     // ── Markdown (10) ──
-    var mdHeading: Color
-    var mdLink: Color
-    var mdLinkUrl: Color
-    var mdCode: Color
-    var mdCodeBlock: Color
-    var mdCodeBlockBorder: Color
-    var mdQuote: Color
-    var mdQuoteBorder: Color
-    var mdHr: Color
-    var mdListBullet: Color
+    let mdHeading: Color
+    let mdLink: Color
+    let mdLinkUrl: Color
+    let mdCode: Color
+    let mdCodeBlock: Color
+    let mdCodeBlockBorder: Color
+    let mdQuote: Color
+    let mdQuoteBorder: Color
+    let mdHr: Color
+    let mdListBullet: Color
 
     // ── Diffs (3) ──
-    var toolDiffAdded: Color
-    var toolDiffRemoved: Color
-    var toolDiffContext: Color
+    let toolDiffAdded: Color
+    let toolDiffRemoved: Color
+    let toolDiffContext: Color
 
     // ── Syntax (9) ──
-    var syntaxComment: Color
-    var syntaxKeyword: Color
-    var syntaxFunction: Color
-    var syntaxVariable: Color
-    var syntaxString: Color
-    var syntaxNumber: Color
-    var syntaxType: Color
-    var syntaxOperator: Color
-    var syntaxPunctuation: Color
+    let syntaxComment: Color
+    let syntaxKeyword: Color
+    let syntaxFunction: Color
+    let syntaxVariable: Color
+    let syntaxString: Color
+    let syntaxNumber: Color
+    let syntaxType: Color
+    let syntaxOperator: Color
+    let syntaxPunctuation: Color
 
     // ── Thinking levels (6) ──
-    var thinkingOff: Color
-    var thinkingMinimal: Color
-    var thinkingLow: Color
-    var thinkingMedium: Color
-    var thinkingHigh: Color
-    var thinkingXhigh: Color
+    let thinkingOff: Color
+    let thinkingMinimal: Color
+    let thinkingLow: Color
+    let thinkingMedium: Color
+    let thinkingHigh: Color
+    let thinkingXhigh: Color
 }
 
 // MARK: - Theme IDs
@@ -651,6 +681,130 @@ struct ThemeUIKitSurface: @unchecked Sendable {
     let fill: UIColor
     let stroke: UIColor?
 }
+
+/// UIKit view of a `ThemePalette`, for view controllers.
+///
+/// `ThemeUIKitPalette` carries the tokens the SwiftUI surfaces share; this adds
+/// the rest, so a UIKit call site reads a `UIColor` instead of bridging
+/// `UIColor(Color)` (`palette.ui` in ThemePalette+UIKit.swift). Every palette
+/// token has a color here: a new UIKit surface needs no bridge, and the UIKit
+/// structure guard fails one.
+///
+/// A class, so handing it to a call site is one retain: it holds a `UIColor` per
+/// token, and `palette.ui` is on cell configure and draw paths.
+final class ThemeUIKitTokens: @unchecked Sendable {
+    /// The tokens `ThemeUIKitPalette` already carries.
+    private let shared: ThemeUIKitPalette
+
+    // Tokens `ThemeUIKitPalette` leaves to SwiftUI. Add one here when a UIKit
+    // call site needs it; `ThemeUIKitTokensTests` fails when a palette token has
+    // no color here.
+    let thinkingText: UIColor
+    let userMessageBg: UIColor
+    let userMessageText: UIColor
+    let assistantMessageBg: UIColor
+    let toolPendingBg: UIColor
+    let toolErrorBg: UIColor
+    let mdHeading: UIColor
+    let mdLink: UIColor
+    let mdLinkUrl: UIColor
+    let mdCode: UIColor
+    let mdCodeBlock: UIColor
+    let mdCodeBlockBorder: UIColor
+    let mdQuote: UIColor
+    let mdQuoteBorder: UIColor
+    let mdHr: UIColor
+    let mdListBullet: UIColor
+    let syntaxVariable: UIColor
+    let syntaxOperator: UIColor
+    let thinkingOff: UIColor
+    let thinkingMinimal: UIColor
+    let thinkingLow: UIColor
+    let thinkingMedium: UIColor
+    let thinkingHigh: UIColor
+    let thinkingXhigh: UIColor
+    /// Optional leading strip on the user card; built-ins have none.
+    let userMessageAccent: UIColor?
+
+    /// Converts the palette's tokens. Called with the palette a theme change
+    /// built (`ThemeRuntimeState`) and for a palette no window paints (an SSH
+    /// terminal's own theme, a gallery card), so it reads nothing but `palette`.
+    init(shared: ThemeUIKitPalette, palette: ThemePalette) {
+        self.shared = shared
+        thinkingText = UIColor(palette.thinkingText)
+        userMessageBg = UIColor(palette.userMessageBg)
+        userMessageText = UIColor(palette.userMessageText)
+        assistantMessageBg = UIColor(palette.assistantMessageBg)
+        toolPendingBg = UIColor(palette.toolPendingBg)
+        toolErrorBg = UIColor(palette.toolErrorBg)
+        mdHeading = UIColor(palette.mdHeading)
+        mdLink = UIColor(palette.mdLink)
+        mdLinkUrl = UIColor(palette.mdLinkUrl)
+        mdCode = UIColor(palette.mdCode)
+        mdCodeBlock = UIColor(palette.mdCodeBlock)
+        mdCodeBlockBorder = UIColor(palette.mdCodeBlockBorder)
+        mdQuote = UIColor(palette.mdQuote)
+        mdQuoteBorder = UIColor(palette.mdQuoteBorder)
+        mdHr = UIColor(palette.mdHr)
+        mdListBullet = UIColor(palette.mdListBullet)
+        syntaxVariable = UIColor(palette.syntaxVariable)
+        syntaxOperator = UIColor(palette.syntaxOperator)
+        thinkingOff = UIColor(palette.thinkingOff)
+        thinkingMinimal = UIColor(palette.thinkingMinimal)
+        thinkingLow = UIColor(palette.thinkingLow)
+        thinkingMedium = UIColor(palette.thinkingMedium)
+        thinkingHigh = UIColor(palette.thinkingHigh)
+        thinkingXhigh = UIColor(palette.thinkingXhigh)
+        userMessageAccent = palette.userMessageAccent.map { UIColor($0) }
+    }
+
+    // MARK: - Shared tokens
+
+    var bg: UIColor { shared.bg }
+    var bgDark: UIColor { shared.bgDark }
+    var bgHighlight: UIColor { shared.bgHighlight }
+    var fg: UIColor { shared.fg }
+    var fgDim: UIColor { shared.fgDim }
+    var comment: UIColor { shared.comment }
+    var blue: UIColor { shared.blue }
+    var cyan: UIColor { shared.cyan }
+    var green: UIColor { shared.green }
+    var orange: UIColor { shared.orange }
+    var purple: UIColor { shared.purple }
+    var red: UIColor { shared.red }
+    var yellow: UIColor { shared.yellow }
+    var toolSuccessBg: UIColor { shared.toolSuccessBg }
+    var toolTitle: UIColor { shared.toolTitle }
+    var toolOutput: UIColor { shared.toolOutput }
+    var scrim: UIColor { shared.scrim }
+    var dimScrim: UIColor { shared.dimScrim }
+    var recessedInset: UIColor { shared.recessedInset }
+    var onBlue: UIColor { shared.onBlue }
+    var onGreen: UIColor { shared.onGreen }
+    var syntaxComment: UIColor { shared.syntaxComment }
+    var syntaxKeyword: UIColor { shared.syntaxKeyword }
+    var syntaxFunction: UIColor { shared.syntaxFunction }
+    var syntaxString: UIColor { shared.syntaxString }
+    var syntaxNumber: UIColor { shared.syntaxNumber }
+    var syntaxType: UIColor { shared.syntaxType }
+    var syntaxPunctuation: UIColor { shared.syntaxPunctuation }
+    var diffAdded: UIColor { shared.diffAdded }
+    var diffRemoved: UIColor { shared.diffRemoved }
+    var diffContext: UIColor { shared.diffContext }
+
+    // MARK: - Surfaces
+
+    /// Role fill for a themed surface, with the role's opacity math already
+    /// applied by `ThemeSurfaceStyle.resolve`.
+    func surfaceFill(_ role: ThemeSurfaceRole) -> UIColor {
+        shared.surfaceFill(role)
+    }
+
+    /// The role's hairline stroke, when it has one.
+    func surfaceStroke(_ role: ThemeSurfaceRole) -> UIColor? {
+        shared.surfaceStroke(role)
+    }
+}
 #endif
 
 // MARK: - Runtime State
@@ -661,6 +815,7 @@ enum ThemeRuntimeState {
         var palette: ThemePalette
         #if canImport(UIKit)
         var uiPalette: ThemeUIKitPalette
+        var uiTokens: ThemeUIKitTokens
         #endif
 
         init(themeID: ThemeID) {
@@ -668,7 +823,12 @@ enum ThemeRuntimeState {
             self.themeID = themeID
             self.palette = palette
             #if canImport(UIKit)
-            self.uiPalette = ThemeUIKitPalette(palette: palette)
+            // Built here, under this state's lock, so a reader always gets the
+            // colors of the palette it is being handed. Neither initializer may
+            // read `ThemeRuntimeState` back (see `bee815ece`).
+            let uiPalette = ThemeUIKitPalette(palette: palette)
+            self.uiPalette = uiPalette
+            self.uiTokens = ThemeUIKitTokens(shared: uiPalette, palette: palette)
             #endif
         }
     }
@@ -694,6 +854,17 @@ enum ThemeRuntimeState {
     /// Cached UIKit palette — resolved with `currentPalette()`, never separately.
     static func currentUIKitPalette() -> ThemeUIKitPalette {
         state.withLock { $0.uiPalette }
+    }
+
+    /// The palette's UIKit tokens when `identity` is the palette the window
+    /// paints, nil for any other palette (an SSH terminal's own theme, a theme
+    /// gallery card, a preview).
+    ///
+    /// An identity compare, not a color compare: this is the path every UIKit
+    /// call site takes through `palette.ui`, and the tokens were built with the
+    /// palette on the last theme change.
+    static func currentUIKitTokens(for identity: PaletteIdentity) -> ThemeUIKitTokens? {
+        state.withLock { $0.palette.identity == identity ? $0.uiTokens : nil }
     }
     #endif
 

@@ -189,20 +189,16 @@ struct SettingsKitTests {
 
         // A dark bg near #1C1C1E is the system card's own color: any highlight that
         // differs more wins, and one that does not leaves the system card.
-        var nearSystem = dark
-        nearSystem.bg = color(0x1C1C1E)
-        nearSystem.bgHighlight = color(0x2C2C30)
+        let nearSystem = palette(dark, bg: color(0x1C1C1E), bgHighlight: color(0x2C2C30))
         #expect(SettingsStyle(palette: nearSystem, isDark: true).card == UIColor(nearSystem.bgHighlight))
-        nearSystem.bgHighlight = color(0x1C1C1E)
-        #expect(SettingsStyle(palette: nearSystem, isDark: true).card == system)
+        let systemCardBg = palette(dark, bg: color(0x1C1C1E), bgHighlight: color(0x1C1C1E))
+        #expect(SettingsStyle(palette: systemCardBg, isDark: true).card == system)
 
         // A light theme keeps the system (white) card when it reads against bg...
         #expect(SettingsStyle(palette: ThemeID.light.palette, isDark: false).card == system)
 
         // ...and takes bgHighlight when bg is white itself and the highlight reads better.
-        var white = ThemeID.light.palette
-        white.bg = color(0xFFFFFF)
-        white.bgHighlight = color(0xE8E8EC)
+        let white = palette(ThemeID.light.palette, bg: color(0xFFFFFF), bgHighlight: color(0xE8E8EC))
         #expect(SettingsStyle(palette: white, isDark: false).card == UIColor(white.bgHighlight))
     }
 
@@ -336,6 +332,65 @@ struct SettingsKitTests {
             let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell
             return (view?.contentConfiguration as? UIListContentConfiguration)?.text
         }
+    }
+
+    /// A palette like `base` with a different page and highlight: checking the
+    /// card's fallback needs colours no built-in theme has, and a palette's
+    /// colours are `let`.
+    private func palette(_ base: ThemePalette, bg: Color, bgHighlight: Color) -> ThemePalette {
+        ThemePalette(
+            bg: bg,
+            bgDark: base.bgDark,
+            bgHighlight: bgHighlight,
+            fg: base.fg,
+            fgDim: base.fgDim,
+            comment: base.comment,
+            blue: base.blue,
+            cyan: base.cyan,
+            green: base.green,
+            orange: base.orange,
+            purple: base.purple,
+            red: base.red,
+            yellow: base.yellow,
+            thinkingText: base.thinkingText,
+            userMessageBg: base.userMessageBg,
+            userMessageText: base.userMessageText,
+            assistantMessageBg: base.assistantMessageBg,
+            userMessageAccent: base.userMessageAccent,
+            toolPendingBg: base.toolPendingBg,
+            toolSuccessBg: base.toolSuccessBg,
+            toolErrorBg: base.toolErrorBg,
+            toolTitle: base.toolTitle,
+            toolOutput: base.toolOutput,
+            mdHeading: base.mdHeading,
+            mdLink: base.mdLink,
+            mdLinkUrl: base.mdLinkUrl,
+            mdCode: base.mdCode,
+            mdCodeBlock: base.mdCodeBlock,
+            mdCodeBlockBorder: base.mdCodeBlockBorder,
+            mdQuote: base.mdQuote,
+            mdQuoteBorder: base.mdQuoteBorder,
+            mdHr: base.mdHr,
+            mdListBullet: base.mdListBullet,
+            toolDiffAdded: base.toolDiffAdded,
+            toolDiffRemoved: base.toolDiffRemoved,
+            toolDiffContext: base.toolDiffContext,
+            syntaxComment: base.syntaxComment,
+            syntaxKeyword: base.syntaxKeyword,
+            syntaxFunction: base.syntaxFunction,
+            syntaxVariable: base.syntaxVariable,
+            syntaxString: base.syntaxString,
+            syntaxNumber: base.syntaxNumber,
+            syntaxType: base.syntaxType,
+            syntaxOperator: base.syntaxOperator,
+            syntaxPunctuation: base.syntaxPunctuation,
+            thinkingOff: base.thinkingOff,
+            thinkingMinimal: base.thinkingMinimal,
+            thinkingLow: base.thinkingLow,
+            thinkingMedium: base.thinkingMedium,
+            thinkingHigh: base.thinkingHigh,
+            thinkingXhigh: base.thinkingXhigh,
+        )
     }
 }
 
@@ -711,4 +766,6 @@ private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRo
             cell.contentConfiguration = content
         }
     }
+
+
 }

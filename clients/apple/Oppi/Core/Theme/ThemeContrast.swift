@@ -55,53 +55,117 @@ enum ThemeContrast {
 
     /// `isDark` sets which way ink goes: lighter than its surface in dark
     /// themes, darker in light ones. Elevated surfaces go lighter in both.
+    ///
+    /// Reads the seed and builds the adjusted palette: a palette's colors have no
+    /// setter, so a palette that has been handed out cannot change underneath
+    /// anything caching it (see `PaletteIdentity`).
     static func resolve(isDark: Bool, seed: ThemePalette) -> Resolved {
-        var palette = seed
         let ink: Direction = isDark ? .lighter : .darker
         let bg = SRGB(seed.bg)
 
         let card = solve(SRGB(seed.bgHighlight), on: [bg], level: Level.cardLift, toward: .lighter)
-        palette.bgHighlight = adjust(seed.bgHighlight, on: [bg, card], level: Level.embedded, toward: ink)
+        let bgHighlight = adjust(seed.bgHighlight, on: [bg, card], level: Level.embedded, toward: ink)
         let userBubble = solve(SRGB(seed.userMessageBg), on: [bg, card], level: Level.bubble, toward: ink)
         let strongBubble = solve(SRGB(seed.userMessageBg), on: [bg, card], level: Level.strongBubble, toward: ink)
-        palette.userMessageBg = userBubble.color
 
-        let highlight = SRGB(palette.bgHighlight)
-        let codeBlock = SRGB(palette.bgDark)
-        let toolPanels = [palette.toolPendingBg, palette.toolSuccessBg, palette.toolErrorBg].map {
+        let highlight = SRGB(bgHighlight)
+        let codeBlock = SRGB(seed.bgDark)
+        let toolPanels = [seed.toolPendingBg, seed.toolSuccessBg, seed.toolErrorBg].map {
             SRGB($0).composited(over: bg)
         }
         let prose = [bg, card, highlight] + toolPanels
 
-        func enforce(_ tokens: [WritableKeyPath<ThemePalette, Color>], on surfaces: [SRGB], level: Double) {
-            for token in tokens {
-                palette[keyPath: token] = adjust(palette[keyPath: token], on: surfaces, level: level, toward: ink)
-            }
-        }
-        enforce([\.fg], on: prose + [codeBlock], level: Level.text)
-        enforce([\.fgDim, \.comment, \.thinkingText, \.toolTitle, \.toolOutput], on: prose, level: Level.text)
-        enforce(
-            [
-                \.blue, \.cyan, \.green, \.orange, \.purple, \.red, \.yellow,
-                \.mdHeading, \.mdLink, \.mdLinkUrl, \.mdCodeBlock, \.mdQuote, \.mdListBullet,
-            ],
-            on: [bg, card],
-            level: Level.text
-        )
-        enforce([\.mdCode], on: [bg, card, highlight], level: Level.text)
-        enforce(
-            [
-                \.syntaxComment, \.syntaxKeyword, \.syntaxFunction, \.syntaxVariable, \.syntaxString,
-                \.syntaxNumber, \.syntaxType, \.syntaxOperator, \.syntaxPunctuation,
-            ],
-            on: [codeBlock],
-            level: Level.text
-        )
-        enforce([\.toolDiffAdded, \.toolDiffRemoved, \.toolDiffContext], on: [codeBlock], level: Level.glyph)
-        enforce([\.userMessageText], on: [userBubble, strongBubble], level: Level.text)
+        // Text and accents move only as far as their rule needs on every surface
+        // they are drawn on, so hand-tuned colors that already pass keep their
+        // exact value.
+        let fgDim = adjust(seed.fgDim, on: prose, level: Level.text, toward: ink)
+        let comment = adjust(seed.comment, on: prose, level: Level.text, toward: ink)
+        let thinkingText = adjust(seed.thinkingText, on: prose, level: Level.text, toward: ink)
+        let toolTitle = adjust(seed.toolTitle, on: prose, level: Level.text, toward: ink)
+        let toolOutput = adjust(seed.toolOutput, on: prose, level: Level.text, toward: ink)
+        let fg = adjust(seed.fg, on: prose + [codeBlock], level: Level.text, toward: ink)
+        let blue = adjust(seed.blue, on: [bg, card], level: Level.text, toward: ink)
+        let cyan = adjust(seed.cyan, on: [bg, card], level: Level.text, toward: ink)
+        let green = adjust(seed.green, on: [bg, card], level: Level.text, toward: ink)
+        let orange = adjust(seed.orange, on: [bg, card], level: Level.text, toward: ink)
+        let purple = adjust(seed.purple, on: [bg, card], level: Level.text, toward: ink)
+        let red = adjust(seed.red, on: [bg, card], level: Level.text, toward: ink)
+        let yellow = adjust(seed.yellow, on: [bg, card], level: Level.text, toward: ink)
+        let mdHeading = adjust(seed.mdHeading, on: [bg, card], level: Level.text, toward: ink)
+        let mdLink = adjust(seed.mdLink, on: [bg, card], level: Level.text, toward: ink)
+        let mdLinkUrl = adjust(seed.mdLinkUrl, on: [bg, card], level: Level.text, toward: ink)
+        let mdCodeBlock = adjust(seed.mdCodeBlock, on: [bg, card], level: Level.text, toward: ink)
+        let mdQuote = adjust(seed.mdQuote, on: [bg, card], level: Level.text, toward: ink)
+        let mdListBullet = adjust(seed.mdListBullet, on: [bg, card], level: Level.text, toward: ink)
+        let mdCode = adjust(seed.mdCode, on: [bg, card, highlight], level: Level.text, toward: ink)
+        let syntaxComment = adjust(seed.syntaxComment, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxKeyword = adjust(seed.syntaxKeyword, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxFunction = adjust(seed.syntaxFunction, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxVariable = adjust(seed.syntaxVariable, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxString = adjust(seed.syntaxString, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxNumber = adjust(seed.syntaxNumber, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxType = adjust(seed.syntaxType, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxOperator = adjust(seed.syntaxOperator, on: [codeBlock], level: Level.text, toward: ink)
+        let syntaxPunctuation = adjust(seed.syntaxPunctuation, on: [codeBlock], level: Level.text, toward: ink)
+        let toolDiffAdded = adjust(seed.toolDiffAdded, on: [codeBlock], level: Level.glyph, toward: ink)
+        let toolDiffRemoved = adjust(seed.toolDiffRemoved, on: [codeBlock], level: Level.glyph, toward: ink)
+        let toolDiffContext = adjust(seed.toolDiffContext, on: [codeBlock], level: Level.glyph, toward: ink)
+        let userMessageText = adjust(seed.userMessageText, on: [userBubble, strongBubble], level: Level.text, toward: ink)
 
         return Resolved(
-            palette: palette,
+            palette: ThemePalette(
+                bg: seed.bg,
+                bgDark: seed.bgDark,
+                bgHighlight: bgHighlight,
+                fg: fg,
+                fgDim: fgDim,
+                comment: comment,
+                blue: blue,
+                cyan: cyan,
+                green: green,
+                orange: orange,
+                purple: purple,
+                red: red,
+                yellow: yellow,
+                thinkingText: thinkingText,
+                userMessageBg: userBubble.color,
+                userMessageText: userMessageText,
+                assistantMessageBg: seed.assistantMessageBg,
+                userMessageAccent: seed.userMessageAccent,
+                toolPendingBg: seed.toolPendingBg,
+                toolSuccessBg: seed.toolSuccessBg,
+                toolErrorBg: seed.toolErrorBg,
+                toolTitle: toolTitle,
+                toolOutput: toolOutput,
+                mdHeading: mdHeading,
+                mdLink: mdLink,
+                mdLinkUrl: mdLinkUrl,
+                mdCode: mdCode,
+                mdCodeBlock: mdCodeBlock,
+                mdCodeBlockBorder: seed.mdCodeBlockBorder,
+                mdQuote: mdQuote,
+                mdQuoteBorder: seed.mdQuoteBorder,
+                mdHr: seed.mdHr,
+                mdListBullet: mdListBullet,
+                toolDiffAdded: toolDiffAdded,
+                toolDiffRemoved: toolDiffRemoved,
+                toolDiffContext: toolDiffContext,
+                syntaxComment: syntaxComment,
+                syntaxKeyword: syntaxKeyword,
+                syntaxFunction: syntaxFunction,
+                syntaxVariable: syntaxVariable,
+                syntaxString: syntaxString,
+                syntaxNumber: syntaxNumber,
+                syntaxType: syntaxType,
+                syntaxOperator: syntaxOperator,
+                syntaxPunctuation: syntaxPunctuation,
+                thinkingOff: seed.thinkingOff,
+                thinkingMinimal: seed.thinkingMinimal,
+                thinkingLow: seed.thinkingLow,
+                thinkingMedium: seed.thinkingMedium,
+                thinkingHigh: seed.thinkingHigh,
+                thinkingXhigh: seed.thinkingXhigh,
+            ),
             surfaces: ThemeChatSurfaces(assistantCard: card.color, strongUserBubble: strongBubble.color)
         )
     }
