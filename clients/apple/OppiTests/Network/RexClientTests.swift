@@ -1161,6 +1161,9 @@ struct RexSessionTerminalTests {
         // session makes, so this is what makes `rows` follow it.
         channel.present(Self.block(opening))
         model.onShown = { [channel] block in channel.present(block) }
+        // The page shows the session, so a switch takes the pane it shows; its
+        // neighbours are not kept live (`isWarming`), so one pane streams at a time.
+        connection.setOnScreen(true)
         let consumer = Task { await channel.consume(queue) }
         fake.hold(dataConnectFor: Set(holding.map(Self.block)))
         channel.resize(.init(columns: 40, rows: 10))

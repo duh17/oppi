@@ -119,29 +119,33 @@ struct RexLivePanesTests {
         return rig
     }
 
-    /// The shown pane's neighbours stream while the screen shows the session:
-    /// one data connection each, each taken and sized for this phone.
-    @Test func theNeighboursStreamBesideTheShownPane() async throws {
+    /// The shown pane's neighbours stream while the screen shows the session,
+    /// one data connection each, without being taken: Rex streams a pane to a
+    /// client that does not own it, and a neighbour keeps the size its owner
+    /// gave it until the phone shows it. Only the shown pane is taken and
+    /// sized for this phone.
+    @Test func theNeighboursStreamBesideTheShownPaneWithoutBeingTaken() async throws {
         let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
         #expect(rig.fake.dataHosts.count == 3)
         #expect(rig.fake.dataHosts.allSatisfy { $0.isWelcomed }, "every lane said HELLO")
         #expect(Set(rig.fake.dataHosts.compactMap(\.block)) == Set(["a", "b", "c"].map(Self.block)))
-        for block in ["a", "b", "c"].map(Self.block) {
-            #expect(rig.fake.requests("session.own_block").contains { $0.payload.contains(block) }, "\(block) is taken")
-            #expect(
-                rig.fake.requests("com.superlogical.terminal.resize").contains {
-                    $0.string("block_id") == block && $0.payload.contains(#""columns":40"#)
-                },
-                "\(block) is sized for this screen"
-            )
+        #expect(takes(of: a, in: rig) > 0, "the shown pane is taken")
+        #expect(await sized(rig, [a]), "and sized for this screen")
+        for block in ["b", "c"].map(Self.block) {
+            #expect(takes(of: block, in: rig) == 0, "\(block) streams untaken")
+            #expect(!rig.fake.requests("com.superlogical.terminal.resize").contains { $0.string("block_id") == block },
+                    "\(block) keeps its owner's size")
+            #expect(rig.channel.readyEngine(for: block) != nil, "\(block)'s screen is up for a swipe")
         }
         #expect(rig.fake.dataHosts.count == 3, "the cap: three panes, no more")
         await rig.stop()
     }
 
     /// A switch shows a pane that is already streaming: no new data connection,
-    /// no second take, and its screen is in its own engine.
-    @Test func aSwitchOpensNoStreamAndNoSnapshot() async throws {
+    /// one take (the pane it shows, now this phone's size), and its screen is
+    /// in its own engine.
+    @Test func aSwitchOpensNoStreamAndTakesOnlyThePaneItShows() async throws {
         let rig = try await open(["a", "b", "c"])
         let (b, c) = (Self.block("b"), Self.block("c"))
         #expect(rig.channel.readyEngine(for: b) != nil, "b's screen is already up")
@@ -151,7 +155,9 @@ struct RexLivePanesTests {
         rig.model.show(b)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.channel.presented == b || rig.model.latest.shown == b })
         #expect(rig.fake.requests("data.connect").count == connects, "a switch opens no data connection")
-        #expect(rig.fake.requests("session.own_block").count == owns, "a switch takes no pane")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: b) == Self.phone }, "b is this screen's size")
+        let taken = rig.fake.requests("session.own_block").dropFirst(owns)
+        #expect(taken.count == 1 && taken.first?.payload.contains(b) == true, "a switch takes the pane it shows, and no other")
         // The grid presents it when the slide ends; the engine it shows is b's.
         rig.channel.present(b)
         #expect(rig.shows("screen of b"))
@@ -239,15 +245,17 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
-    /// Rotation and keyboard sizes reach every live pane, not just the one on
-    /// screen: a swipe must not find its neighbour laid out for another width.
-    @Test func aResizeReachesEveryLivePane() async throws {
+    /// Rotation and keyboard sizes reach the pane on screen, and never a
+    /// neighbour this phone has not taken: its owner's size is its own.
+    @Test func aResizeReachesThePaneOnScreenAndNoUntakenNeighbour() async throws {
         let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
         rig.channel.resize(.init(columns: 50, rows: 12))
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            let resizes = rig.fake.requests("com.superlogical.terminal.resize").filter { $0.payload.contains(#""columns":50"#) }
-            return Set(resizes.compactMap { $0.string("block_id") }) == Set(["a", "b", "c"].map(Self.block))
-        }, "every live pane is 50 columns")
+            rig.fake.size(of: a) == RexFakeSession.Size(columns: 50, rows: 12)
+        }, "the shown pane is 50 columns")
+        let resized = Set(rig.fake.requests("com.superlogical.terminal.resize").compactMap { $0.string("block_id") })
+        #expect(resized == [a], "resized: \(resized)")
         await rig.stop()
     }
 
@@ -292,7 +300,7 @@ struct RexLivePanesTests {
     @Test func aNeighbourAnotherClientTakesComesBackWhenItIsShown() async throws {
         let rig = try await open(["a", "b", "c"])
         let b = Self.block("b")
-        #expect(await sized(rig, [b]))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.channel.readyEngine(for: b) != nil })
         let before = takes(of: b, in: rig)
 
         rig.fake.takeAsAnotherClient(b, columns: 90, rows: 30)
@@ -329,6 +337,32 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
+    /// The shown pane closes in Rex while the page is away: the session moves
+    /// to its neighbour, whose stream opens, but nothing is taken off the page.
+    /// The page coming back takes it, once.
+    @Test func aPaneShownWhileThePageIsAwayIsTakenWhenThePageReturns() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        rig.model.isWarming = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.host(b)?.isClosed == true }, "off the page, b's lane closes")
+        let before = takes(of: b, in: rig)
+
+        rig.fake.blockClosed(a)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.latest.shown == b })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.dataHosts.contains { $0.block == b && $0.isWelcomed && !$0.isClosed }
+        }, "b streams")
+        _ = await waitForMainActorCondition(timeout: .milliseconds(400)) { false }
+        #expect(takes(of: b, in: rig) == before, "no take while the page is away")
+
+        rig.model.isWarming = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { takes(of: b, in: rig) == before + 1 }, "the page returning takes it")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: b) == Self.phone })
+        _ = await waitForMainActorCondition(timeout: .milliseconds(300)) { false }
+        #expect(takes(of: b, in: rig) == before + 1, "once")
+        await rig.stop()
+    }
+
     /// A takeover at this screen's own size changes nothing on screen, but
     /// the pane is no longer the phone's: the keyboard's next resize would
     /// wait on Rex for good. The phone takes it back, so the resize lands.
@@ -345,6 +379,21 @@ struct RexLivePanesTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             rig.fake.size(of: a) == RexFakeSession.Size(columns: 50, rows: 12)
         }, "a: \(String(describing: rig.fake.size(of: a)))")
+        await rig.stop()
+    }
+
+    /// Another client takes the pane the phone just took before Rex answers
+    /// that take: both owner changes arrive while the take is still out. The
+    /// phone must not count the answer as owning the pane, so it takes it back.
+    @Test func aTakeOverThatBeatsTheAnswerToATakeIsTakenBack() async throws {
+        let rig = try await open(["a", "b", "c", "d"])
+        let d = Self.block("d")
+        rig.fake.snatch(d, columns: 120, rows: 40)
+
+        rig.model.show(d)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: d) == Self.phone },
+                "d: \(String(describing: rig.fake.size(of: d)))")
+        #expect(takes(of: d, in: rig) == 2, "the switch's take, then one take back")
         await rig.stop()
     }
 

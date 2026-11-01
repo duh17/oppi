@@ -62,12 +62,6 @@ final class RexFakeDataHost: Sendable {
         deliver(Self.frame(0x02, snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
     }
 
-    /// The pane's terminal changed size: Rex's `resize` message, as it sends
-    /// one on each change, whoever made it.
-    func emitResize(columns: Int, rows: Int) {
-        deliver(Self.frame(0x02, message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
-    }
-
     /// The program's output.
     func emit(_ text: String) {
         deliver(Self.frame(0x02, Data(text.utf8)))
@@ -207,15 +201,18 @@ final class RexFakeSession: Sendable {
         var directURLs: [URL] = []
         /// Each pane's terminal size, in cells, once something sized it.
         var sizes: [String: Size] = [:]
-        /// Panes another client has taken: the terminal's resize waits until
-        /// it takes the pane back, as on Rex.
-        var takenByOthers: Set<String> = []
+        /// Each pane's owner, the client whose size it uses: a resize from the
+        /// terminal waits while another client owns the pane, as on Rex.
+        var owners: [String: String] = [:]
         /// The size the terminal last asked for, per pane: Rex keeps it, and
         /// applies it when the terminal owns the pane again.
         var desired: [String: Size] = [:]
         /// Panes another client takes again, at this size, each time the
         /// terminal takes them (`fight`).
         var fighting: [String: Size] = [:]
+        /// Panes another client takes once, at this size, the moment the
+        /// terminal takes them, before Rex answers the take (`snatch`).
+        var snatching: [String: Size] = [:]
     }
 
     struct Size: Equatable, Sendable {
@@ -309,9 +306,16 @@ final class RexFakeSession: Sendable {
     /// and sizes it for its window, as the Mac app can when the session's
     /// layout changes. Rex announces the new owner (`block_owner_changed`).
     func takeAsAnotherClient(_ block: String, columns: Int, rows: Int) {
-        state.withLock { _ = $0.takenByOthers.insert(block) }
-        ownerChanged(block, owner: Self.otherClient, previous: Self.terminalClient)
+        let previous = state.withLock { $0.owners.updateValue(Self.otherClient, forKey: block) }
+        ownerChanged(block, owner: Self.otherClient, previous: previous)
         apply(Size(columns: columns, rows: rows), to: block)
+    }
+
+    /// The next time the terminal takes `block`, another client takes it
+    /// straight back, so both owner changes reach the terminal before the
+    /// answer to its take does.
+    func snatch(_ block: String, columns: Int, rows: Int) {
+        state.withLock { $0.snatching[block] = Size(columns: columns, rows: rows) }
     }
 
     /// Another client takes `block` now, and again each time the terminal
@@ -321,22 +325,14 @@ final class RexFakeSession: Sendable {
         takeAsAnotherClient(block, columns: columns, rows: rows)
     }
 
-    private func ownerChanged(_ block: String, owner: String, previous: String) {
-        sessionEvent("block_owner_changed", #"{"block_id":"\#(block)","owner":"\#(owner)","previous":"\#(previous)","reason":"take"}"#)
+    private func ownerChanged(_ block: String, owner: String, previous: String?) {
+        let before = previous.map { #","previous":"\#($0)""# } ?? ""
+        sessionEvent("block_owner_changed", #"{"block_id":"\#(block)","owner":"\#(owner)"\#(before),"reason":"take"}"#)
     }
 
-    /// Sizes `block`'s terminal, and on a change tells each of its open
-    /// streams, as Rex does.
+    /// Sizes `block`'s terminal.
     private func apply(_ size: Size, to block: String) {
-        let changed = state.withLock { state -> Bool in
-            guard state.sizes[block] != size else { return false }
-            state.sizes[block] = size
-            return true
-        }
-        guard changed else { return }
-        for data in dataHosts where data.block == block && !data.isClosed {
-            data.emitResize(columns: size.columns, rows: size.rows)
-        }
+        state.withLock { $0.sizes[block] = size }
     }
 
     /// `com.superlogical.terminal.resize`: at once for a pane no other client
@@ -349,24 +345,27 @@ final class RexFakeSession: Sendable {
         let size = Size(columns: columns, rows: rows)
         let waits = state.withLock { state -> Bool in
             state.desired[block] = size
-            return state.takenByOthers.contains(block)
+            return state.owners[block] == Self.otherClient
         }
         if !waits { apply(size, to: block) }
     }
 
-    /// `session.own_block` with `take`: the panes are the terminal's again, Rex
-    /// announces it, and the size the terminal last asked for applies. A pane
-    /// another client fights for is taken again by that client.
+    /// `session.own_block` with `take`: the panes are the terminal's, Rex
+    /// announces each new owner, and the size the terminal last asked for
+    /// applies. A pane another client fights for is taken again by that
+    /// client; one it snatches, before Rex answers.
     private func take(_ request: RexFakeHost.Request) {
         guard let object = try? JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any],
               let blocks = object["block_ids"] as? [String] else { return }
         for block in blocks {
-            let (wasOthers, desired, fought) = state.withLock { state in
-                (state.takenByOthers.remove(block) != nil, state.desired[block], state.fighting[block])
+            let (previous, desired, fought, snatched) = state.withLock { state in
+                (state.owners.updateValue(Self.terminalClient, forKey: block), state.desired[block],
+                 state.fighting[block], state.snatching.removeValue(forKey: block))
             }
-            guard wasOthers else { continue }
-            ownerChanged(block, owner: Self.terminalClient, previous: Self.otherClient)
+            guard previous != Self.terminalClient else { continue }
+            ownerChanged(block, owner: Self.terminalClient, previous: previous)
             if let desired { apply(desired, to: block) }
+            if let snatched { takeAsAnotherClient(block, columns: snatched.columns, rows: snatched.rows) }
             if let fought {
                 Task { [weak self] in self?.takeAsAnotherClient(block, columns: fought.columns, rows: fought.rows) }
             }

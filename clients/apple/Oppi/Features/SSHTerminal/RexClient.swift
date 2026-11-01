@@ -517,9 +517,11 @@ final class RexHostTransport: RexTransport {
 /// pane the screen keeps live.
 ///
 /// A pane's data connection first opens on the first resize, so the snapshot
-/// Rex starts it with is already at this screen's size. This client owns a pane
-/// while its stream does (`session.own_block`, take), so the pane follows the
-/// phone's size; a pane whose lane closes is handed back
+/// Rex starts the shown pane with is already at this screen's size. This client
+/// takes the pane it shows (`session.own_block`, take), so that pane follows
+/// the phone's size; a neighbour streams untaken, at the size its owner gave
+/// it, until it is shown (Rex streams a pane to a client that does not own
+/// it). A pane whose lane closes is handed back
 /// (`session.disown_block`), and when the connection drops Rex hands the rest
 /// back to the client in line, such as the Mac app. That client can take a
 /// pane back meanwhile (the Mac app has taken the panes of a session whose
@@ -531,7 +533,8 @@ final class RexHostTransport: RexTransport {
 /// (`reclaim`). Neighbours wait until they are shown; nothing is taken back off
 /// the page. It never focuses anything: the host's own focus stays where it is.
 ///
-/// Showing another pane (`show`) only moves what typing and sizing go to: the
+/// Showing another pane (`show`) moves what typing and sizing go to, and takes
+/// that pane (on a page that shows, `paneToReclaim`): the
 /// pane's stream is already open when the screen keeps it live
 /// (`keepLive` — the shown pane and its neighbours, `maximumLivePanes`), so its
 /// engine already has its screen and nothing is reloaded. Lanes open and close
@@ -598,7 +601,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// `maximumLivePanes`). Each has a lane; nothing else does.
         var live: Set<String> = []
         /// Panes this client has taken for size and not handed back. A live
-        /// pane missing here was taken by another client (`block_owner_changed`).
+        /// pane missing here is a neighbour it never took, or one another
+        /// client took from it (`block_owner_changed`).
         var owned: Set<String> = []
         /// This client, as `session.attach` names it: the owner Rex announces
         /// when a take is this client's own.
@@ -687,10 +691,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             return lanes.keys.filter { !wanted.contains($0) }
         }
 
-        /// The shown pane, when another client took it and this one should
-        /// take it back: the page shows the session, the pane has a lane (so
-        /// this client took it once), and the takes since the user last acted
-        /// are under the cap. A neighbour waits until it is shown.
+        /// The shown pane, when this client does not own it and should take
+        /// it: another client took it, or it streamed untaken as a neighbour
+        /// until it was shown. The page shows the session, the pane has a lane
+        /// (one without takes it as it opens), and the takes since the user
+        /// last acted are under the cap. A neighbour waits until it is shown.
         var paneToReclaim: String? {
             guard onScreen, lanes[requested] != nil, !owned.contains(requested), wantedLanes.contains(requested),
                   reclaims[requested, default: 0] < RexSessionConnection.maximumReclaims else { return nil }
@@ -769,19 +774,20 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 if let event = RexEvent(frame: frame) { connection?.receive(event) }
             }
             let attached = try await control.call("session.attach", ["session_id": target.sessionID])
-            struct Attached: Decodable {
-                let client_id: String?
-                let view: RexView?
-            }
-            let answer = try? JSONDecoder().decode(Attached.self, from: attached)
-            connection.core.withLock { $0.me = answer?.client_id }
-            if let view = answer?.view {
+            // Read apart: a view this client cannot read must not lose who it is.
+            struct Attached: Decodable { let client_id: String? }
+            struct Viewed: Decodable { let view: RexView? }
+            let me = (try? JSONDecoder().decode(Attached.self, from: attached))?.client_id
+            connection.core.withLock { $0.me = me }
+            if let view = (try? JSONDecoder().decode(Viewed.self, from: attached))?.view {
                 connection.core.withLock { _ = connection.apply(view: view, to: &$0) }
             }
+            // Owned before the take is answered: another client's take Rex
+            // announces meanwhile must find it (`ownerChanged`).
+            connection.core.withLock { _ = $0.owned.insert(target.blockID) }
             _ = try await control.call("session.own_block", [
                 "session_id": target.sessionID, "block_ids": [target.blockID], "mode": "take",
             ])
-            connection.core.withLock { _ = $0.owned.insert(target.blockID) }
             try Task.checkCancellation()
             control.onEnd { [weak connection] error in connection?.end(error.localizedDescription) }
             Task { [weak connection] in
@@ -960,19 +966,22 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             cellWidth: pixelWidth >= columns && pixelHeight >= rows ? pixelWidth / columns : nil,
             cellHeight: pixelWidth >= columns && pixelHeight >= rows ? pixelHeight / rows : nil
         )
-        // Every pane the screen keeps live is this screen's size: a swipe to a
-        // neighbour must not reflow it, and Rex lays out a pane at the size its
-        // owner asks for.
-        userActed()
+        // The shown pane and the panes this phone still owns are this
+        // screen's size; a neighbour it never took keeps its owner's. Rex lays
+        // out a pane at the size its owner asks for, and holds this one's for
+        // a pane it does not own until it does.
         let (targets, shown) = core.withLock { state -> ([String], String) in
             state.geometry = geometry
             return ([state.requested] + state.owned.subtracting([state.requested]).sorted(), state.requested)
         }
+        // After the size is set, so a take back it starts sends this one.
+        userActed()
         for target in targets {
             do {
                 _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: target))
                 core.withLock { state in
-                    if state.owned.contains(target) { state.sized[target] = geometry }
+                    // A newer size went out meanwhile: this one is not the pane's.
+                    if state.owned.contains(target), state.geometry == geometry { state.sized[target] = geometry }
                 }
             } catch RexClientError.refused {
                 // A pane that closed meanwhile, as for a write.
@@ -1165,25 +1174,50 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
     }
 
-    /// Takes `block` for size (if this client has not), sizes it to the screen
-    /// (unless it already has this size), and opens a data connection for it.
-    /// The connection's channel, its bridge, and its WebSocket upgrade need no
-    /// ticket, so they open while `data.connect` issues one; HELLO waits for it.
-    /// Another pane's lane is untouched: a switch shows a pane that is already
+    /// Takes `block` for size if it is the shown pane on a page that shows
+    /// (and this client has not taken it), sizes a pane this client owns to the screen (unless it
+    /// already has this size), and opens a data connection for it. A
+    /// neighbour streams untaken, at its owner's size, until it is shown: Rex
+    /// streams a pane to a client that does not own it. The connection's
+    /// channel, its bridge, and its WebSocket upgrade need no ticket, so they
+    /// open while `data.connect` issues one; HELLO waits for it. Another
+    /// pane's lane is untouched: a switch shows a pane that is already
     /// streaming. A request overtaken while this waits on Rex closes the new
     /// connection before it says HELLO.
     private func openLane(_ block: String) async throws {
         func wanted() -> Bool { core.withLock { !$0.ended && $0.wantedLanes.contains(block) } }
-        if core.withLock({ !$0.owned.contains(block) }) {
-            _ = try await control.call("session.own_block", [
-                "session_id": sessionID, "block_ids": [block], "mode": "take",
-            ])
-            core.withLock { _ = $0.owned.insert(block) }
+        /// This screen's size, for a pane this client owns that does not have it yet.
+        func unsized() -> Geometry? {
+            core.withLock { state in
+                guard state.owned.contains(block), let geometry = state.geometry, state.sized[block] != geometry else { return nil }
+                return geometry
+            }
+        }
+        // Off the page nothing is taken, not even the shown pane (one a pane
+        // closing in Rex moved to): `paneToReclaim` takes it when the page returns.
+        let take = core.withLock { state -> Bool in
+            guard state.onScreen, state.requested == block, !state.owned.contains(block) else { return false }
+            // Owned before the take is answered: another client's take Rex
+            // announces meanwhile must find it (`ownerChanged`).
+            state.owned.insert(block)
+            return true
+        }
+        if take {
+            do {
+                _ = try await control.call("session.own_block", [
+                    "session_id": sessionID, "block_ids": [block], "mode": "take",
+                ])
+            } catch {
+                core.withLock { _ = $0.owned.remove(block) }
+                throw error
+            }
         }
         // The pane takes this screen's size before its snapshot is made.
-        if let geometry = core.withLock({ state in state.sized[block] == state.geometry ? nil : state.geometry }) {
+        if let geometry = unsized() {
             _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: block))
-            core.withLock { $0.sized[block] = geometry }
+            core.withLock { state in
+                if state.owned.contains(block), state.geometry == geometry { state.sized[block] = geometry }
+            }
         }
         guard wanted() else { return }
         core.withLock { state in
@@ -1264,9 +1298,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         try await stream.send(RexDataStream.hello(ticket: bytes))
         // A rotation or keyboard resize that landed while this lane opened was
         // not for a lane yet: give the pane the size the screen has now.
-        if let geometry = core.withLock({ state in state.sized[block] == state.geometry ? nil : state.geometry }) {
+        if let geometry = unsized() {
             _ = try? await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: block))
-            core.withLock { $0.sized[block] = geometry }
+            core.withLock { state in
+                if state.owned.contains(block), state.geometry == geometry { state.sized[block] = geometry }
+            }
         }
     }
 
@@ -1290,10 +1326,17 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// this one owned means its resizes wait and the program draws for that
     /// client's window: the pane is no longer `owned`, and the lane loop takes
     /// it back if it is the shown pane on a page that shows (`paneToReclaim`).
-    /// This client's own takes are announced too; they change nothing.
+    /// This client's own takes are announced too: the pane is its own again
+    /// (a take another client made in between may have been announced first),
+    /// unless it has been handed back since.
     private func ownerChanged(_ block: String, owner: String?) {
         let start = core.withLock { state -> Bool in
-            guard !state.ended, let me = state.me, owner != me, state.owned.remove(block) != nil else { return false }
+            guard !state.ended, let me = state.me else { return false }
+            if owner == me {
+                if state.wantedLanes.contains(block) { state.owned.insert(block) }
+                return false
+            }
+            guard state.owned.remove(block) != nil else { return false }
             state.sized[block] = nil
             return startSwitching(&state)
         }
