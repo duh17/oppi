@@ -27,6 +27,7 @@ import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./t
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import { durableNestedCalls } from "./tool-nested-calls.js";
+import { clientToolResult } from "./durable-tool-result-content.js";
 
 import { readDurableInputCards } from "./durable-input-cards.js";
 
@@ -138,7 +139,7 @@ async function projectEntries(
         : await isRecoveredPartial(entry, harness, records)
     )
       continue;
-    const message = withNestedCalls(entry.model?.[0]);
+    const message = withNestedCalls(clientToolResult(entry.model?.[0], entry.data));
     const timestamp = new Date(message?.timestamp ?? 0).toISOString();
     const data = entry.data;
     const card =

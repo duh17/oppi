@@ -22,6 +22,7 @@ import type { JsonValue } from "@earendil-works/chord";
 import { DurableUIClientDoc, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import { agentMessageOrigin } from "../extensions/durable/sessions/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
+import { clientToolResult } from "./durable-tool-result-content.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { storeUserMessageImages } from "./session-attachments.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
@@ -380,7 +381,8 @@ export function projectEntry(
   if (entry.model) {
     const model: ConversationMessageView[] = [];
     for (const message of entry.model) {
-      const projected = projectMessage(message, images);
+      // The stored tool result ends with the diagnostics block pi-durable adds for the model.
+      const projected = projectMessage(clientToolResult(message, entry.data), images);
       model.push(projected);
       if (message.role !== "toolResult") continue;
       // Trace history normalizes audio and strips server-private paths at the client

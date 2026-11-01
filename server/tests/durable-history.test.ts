@@ -30,6 +30,17 @@ afterEach(async () => {
 
 const IMAGE_BASE64 = Buffer.from("durable-history-image-bytes").toString("base64");
 
+/** A tool result's diagnostics as pi-durable stores them, and the block it renders into the content. */
+const TOOL_DIAGNOSTICS = [
+  { severity: "info" as const, message: "full output saved" },
+  {
+    severity: "warn" as const,
+    message: "Output truncated to its end: 12 lines, 900 bytes dropped",
+  },
+];
+const RENDERED_DIAGNOSTICS =
+  "<harness>\n[info] full output saved\n[warn] Output truncated to its end: 12 lines, 900 bytes dropped\n</harness>";
+
 function assistant(
   text: string,
   stopReason: AssistantMessage["stopReason"],
@@ -69,6 +80,8 @@ function assistant(
 async function history(options: {
   stopped: boolean;
   tool?: boolean;
+  /** Store the tool result the way pi-durable does: its diagnostics rendered into the content. */
+  diagnostics?: boolean;
   prefix?: number;
   card?: boolean;
   image?: boolean;
@@ -78,29 +91,37 @@ async function history(options: {
   const id = await storage.mintId<ConversationId>();
   const taskId = await storage.mintId<TaskId>();
   const records: EntryRecord[] = [];
-  async function append(model: Message[], byTaskId?: TaskId) {
+  async function append(model: Message[], byTaskId?: TaskId, data?: unknown) {
     records.push({
       id: await storage.mintId<EntryId>(),
       conversationId: id,
       kind: `pi.${model[0]!.role}`,
       model,
       ...(byTaskId ? { byTaskId } : {}),
+      ...(data === undefined ? {} : { data }),
     });
   }
   for (let index = 0; index < (options.prefix ?? 0); index++)
     await append([{ role: "user", content: `older ${index}`, timestamp: index }]);
   await append([assistant("crash stub", "aborted", options.tool)], taskId);
   if (options.tool)
-    await append([
-      {
-        role: "toolResult",
-        toolCallId: "stub-tool",
-        toolName: "bash",
-        content: [{ type: "text", text: "retained result" }],
-        isError: false,
-        timestamp: 2,
-      },
-    ]);
+    await append(
+      [
+        {
+          role: "toolResult",
+          toolCallId: "stub-tool",
+          toolName: "bash",
+          content: [
+            { type: "text", text: "retained result" },
+            ...(options.diagnostics ? [{ type: "text" as const, text: RENDERED_DIAGNOSTICS }] : []),
+          ],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+      undefined,
+      options.diagnostics ? { diagnostics: TOOL_DIAGNOSTICS } : undefined,
+    );
   if (options.image)
     await append([
       {
@@ -229,6 +250,24 @@ it("retains a hidden stub's tool result without scanning the whole newest histor
   const result = full.find((event) => event.type === "toolResult");
   expect(result).toMatchObject({ toolCallId: "stub-tool", output: "retained result" });
   expect(await pages(f)).toEqual(full);
+  expect(f.resume).not.toHaveBeenCalled();
+});
+
+it("never replays a tool result's model-only diagnostics, and keeps its warn note", async () => {
+  const f = await history({ stopped: false, tool: true, diagnostics: true });
+  const output = `retained result\n${TOOL_DIAGNOSTICS[1]!.message}`;
+  const full = await readDurableTrace(f.harness, f.id, "full");
+  expect(full.find((event) => event.type === "toolResult")).toMatchObject({
+    toolCallId: "stub-tool",
+    output,
+  });
+  // Paging reads the same entries through the same projection, so a page carries no block either.
+  const paged = await pages(f);
+  expect(paged.filter((event) => event.type === "toolResult").map((event) => event.output)).toEqual(
+    [output],
+  );
+  expect(JSON.stringify([...full, ...paged])).not.toContain("<harness>");
+  expect(JSON.stringify(full)).not.toContain("full output saved");
   expect(f.resume).not.toHaveBeenCalled();
 });
 

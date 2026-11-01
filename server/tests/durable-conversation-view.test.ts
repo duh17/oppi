@@ -249,6 +249,53 @@ describe("conversation entry view: tool call arguments", () => {
   });
 });
 
+describe("conversation entry view: tool result diagnostics", () => {
+  const toolsForView: ToolPresenter = {
+    call: () => ({}),
+    committedCall: () => undefined,
+  };
+  const truncated = "Output truncated to its end: 12 lines, 900 bytes dropped";
+
+  function toolResultEntry(content: unknown[], diagnostics: unknown[]): EntryRecord {
+    return {
+      id: 11,
+      conversationId: 3,
+      kind: "pi.tool-result",
+      model: [
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "bash",
+          content,
+          isError: false,
+          timestamp: 1_791_650_000_000,
+        } as never,
+      ],
+      data: { diagnostics },
+    } as EntryRecord;
+  }
+
+  it("sends the tool's output without the block pi-durable adds for the model", () => {
+    const view = projectEntry(
+      toolResultEntry(
+        [
+          { type: "text", text: "kept lines" },
+          { type: "text", text: `<harness>\n[info] read\n[warn] ${truncated}\n</harness>` },
+        ],
+        [
+          { severity: "info", message: "read" },
+          { severity: "warn", message: truncated },
+        ],
+      ),
+      new MobileRendererRegistry(),
+      toolsForView,
+    );
+
+    expect(view.model?.[0]?.content).toEqual([{ type: "text", text: `kept lines\n${truncated}` }]);
+    expect(JSON.stringify(view)).not.toContain("<harness>");
+  });
+});
+
 describe("conversation live view", () => {
   const live = CONVERSATION_CLIENT_DOCS.find((spec) => spec.kind === "pi.live");
   if (!live) throw new Error("pi.live has no client projection");

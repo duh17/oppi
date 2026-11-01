@@ -14,6 +14,7 @@ import {
   AGENT_MESSAGE_ENTRY_KIND,
   agentMessageOrigin,
 } from "../extensions/durable/sessions/agent-message.js";
+import { clientToolResult } from "./durable-tool-result-content.js";
 
 const ZERO_USAGE: Usage = {
   input: 0,
@@ -278,13 +279,15 @@ function adaptToolEnd(
   state.toolArgs.delete(event.toolCallId);
   state.toolDetails.delete(event.toolCallId);
   if (message?.role === "toolResult") {
+    // The stored message ends with the diagnostics block pi-durable adds for the model.
+    const shown = clientToolResult(message, event.entry?.data);
     return [
       asPi({
         type: "tool_execution_end",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         args,
-        result: { content: message.content, details: message.details },
+        result: { content: shown.content, details: message.details },
         isError: message.isError === true,
         ...parentOf(event),
       }),

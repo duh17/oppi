@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { adaptDurableEvent, createAdapterState } from "../src/durable-event-adapter.js";
 import { DurableEventProjection } from "../src/durable-event-projection.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { SessionEventProcessor } from "../src/session-events.js";
 import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 
@@ -154,5 +156,120 @@ describe("durable turn error", () => {
       attached: [user(1), assistant(2, "error", "overloaded"), user(3)],
     });
     expect(errors).toEqual([]);
+  });
+});
+
+const PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+type Severity = "info" | "warn" | "error";
+
+/** A `pi.tool-result` entry as pi-durable commits one: the diagnostics block ends the content. */
+function toolResult(
+  content: Array<Record<string, unknown>>,
+  diagnostics: Array<{ severity: Severity; message: string }>,
+  options: { toolName?: string; isError?: boolean } = {},
+) {
+  const toolName = options.toolName ?? "read";
+  return {
+    id: 9,
+    conversationId: 1,
+    kind: "pi.tool-result",
+    model: [
+      {
+        role: "toolResult",
+        toolCallId: "tc",
+        toolName,
+        content,
+        isError: options.isError ?? false,
+        timestamp: 1,
+      },
+    ],
+    data: { diagnostics },
+  };
+}
+
+/** What a client is sent for one committed tool result: the Durable adapter, then Pi's protocol. */
+function liveToolMessages(result: unknown, toolName = "read"): Array<Record<string, unknown>> {
+  const state = createAdapterState();
+  const ctx: TranslationContext = {
+    sessionId: "sess-1",
+    toolOutputSnapshots: new ToolOutputSnapshots(),
+    streamedAssistantText: "",
+    mobileRenderers: new MobileRendererRegistry(),
+    toolNames: new Map(),
+    streamingToolUpdatesSeen: new Map(),
+  };
+  const events = [
+    ...adaptDurableEvent(
+      { type: "tool_execution_start", toolCallId: "tc", toolName, args: {} } as never,
+      state,
+    ),
+    ...adaptDurableEvent(
+      { type: "tool_execution_end", toolCallId: "tc", toolName, entry: result } as never,
+      state,
+    ),
+  ];
+  const messages: Array<Record<string, unknown>> = [];
+  for (const event of events) messages.push(...translatePiEvent(event, ctx));
+  return messages;
+}
+
+/** The tool output text a client accumulates from its `tool_output` messages. */
+function liveToolOutput(messages: Array<Record<string, unknown>>): string {
+  return messages
+    .filter((message) => message.type === "tool_output")
+    .map((message) => String(message.output ?? ""))
+    .join("");
+}
+
+describe("durable tool result diagnostics", () => {
+  it("hides the model-only block a read image leaves under its output", () => {
+    const messages = liveToolMessages(
+      toolResult(
+        [
+          { type: "image", data: PNG, mimeType: "image/png" },
+          { type: "text", text: "<harness>\n[info] Read image file [image/png].\n</harness>" },
+        ],
+        [{ severity: "info", message: "Read image file [image/png]." }],
+      ),
+    );
+    expect(liveToolOutput(messages)).toBe("");
+    expect(JSON.stringify(messages)).not.toContain("<harness>");
+    expect(JSON.stringify(messages)).not.toContain("Read image file");
+  });
+
+  it("shows a warn diagnostic as the note the client keeps", () => {
+    const truncated = "Output truncated to its end: 12 lines, 900 bytes dropped";
+    const messages = liveToolMessages(
+      toolResult(
+        [
+          { type: "text", text: "kept lines" },
+          { type: "text", text: `<harness>\n[info] read\n[warn] ${truncated}\n</harness>` },
+        ],
+        [
+          { severity: "info", message: "read" },
+          { severity: "warn", message: truncated },
+        ],
+      ),
+    );
+    const output = liveToolOutput(messages);
+    expect(output).toBe(`kept lines\n${truncated}`);
+    expect(JSON.stringify(messages)).not.toContain("<harness>");
+    expect(output).not.toContain("[info]");
+  });
+
+  it("keeps <harness> text a tool printed itself", () => {
+    const own = "<harness>\n[info] echoed by the tool\n</harness>";
+    const messages = liveToolMessages(
+      toolResult(
+        [
+          { type: "text", text: `output:\n${own}` },
+          { type: "text", text: "<harness>\n[info] a model note\n</harness>" },
+        ],
+        [{ severity: "info", message: "a model note" }],
+      ),
+    );
+    expect(liveToolOutput(messages)).toBe(`output:\n${own}`);
   });
 });
