@@ -575,6 +575,29 @@ enum DictationAudioEngineHelper {
     /// 50ms buckets sat on the 350ms warm dictation setup SLO.
     static let firstAudioPollInterval: Duration = .milliseconds(10)
     static let firstAudioPollAttempts = 100
+    /// Upper bound on waiting for a requested Bluetooth route to become current
+    /// before the first engine start: 150 polls of `firstAudioPollInterval`, about
+    /// 1.5 s. Device logs show the switch landing 0.6-1.1 s after activation.
+    static let routeSettlePollAttempts = 150
+
+    /// Whether activation asked for a Bluetooth headset microphone, and whether
+    /// the OS route has followed. `setPreferredInput` returns before the switch.
+    enum PreferredHFPRoute: Equatable {
+        case notPreferred
+        case pending
+        case active
+    }
+
+    @MainActor
+    static func preferredHFPRoute() -> PreferredHFPRoute {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        guard session.preferredInput?.portType == .bluetoothHFP else { return .notPreferred }
+        return session.currentRoute.inputs.contains { $0.portType == .bluetoothHFP } ? .active : .pending
+        #else
+        return .notPreferred
+        #endif
+    }
 
     @MainActor
     static func startWithFirstAudio(
@@ -584,8 +607,27 @@ enum DictationAudioEngineHelper {
         isRunning: () -> Bool,
         stop: () -> Void,
         isCancelled: () -> Bool,
+        hfpRoute: () -> PreferredHFPRoute = { preferredHFPRoute() },
         sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async throws {
+        // A headset route switches after activation returns. An engine started
+        // before the switch captures the built-in mic, gets no audio, and is
+        // stopped by the route change. Wait (bounded) so the first start is the
+        // only start. A route that never arrives falls through to the old path.
+        if hfpRoute() == .pending {
+            var polls = 0
+            while polls < routeSettlePollAttempts {
+                try Task.checkCancellation()
+                guard !isCancelled() else { throw CancellationError() }
+                try await sleep(firstAudioPollInterval)
+                polls += 1
+                if hfpRoute() != .pending { break }
+            }
+            ClientLog.info("VoiceInput", "Waited for preferred Bluetooth route", metadata: [
+                "settled": String(hfpRoute() != .pending),
+                "polls": String(polls),
+            ])
+        }
         // A hardware format change can stop AVAudioEngine during start(),
         // without start() throwing. Require a running engine AND real tap audio.
         // Rebuild once on the same route, outside any configuration-change
@@ -593,6 +635,9 @@ enum DictationAudioEngineHelper {
         for attempt in 0..<2 {
             try Task.checkCancellation()
             guard !isCancelled() else { throw CancellationError() }
+            // Only an attempt that began on the headset can lose it; one that
+            // began elsewhere keeps the engine-state and timeout checks alone.
+            let startedOnHeadset = hfpRoute() == .active
             do {
                 try start()
                 didStartEngine()
@@ -606,6 +651,9 @@ enum DictationAudioEngineHelper {
                     guard !isCancelled() else { throw CancellationError() }
                     guard isRunning() else { break }
                     if hasAudio() { return }
+                    // Route left the headset: no audio will arrive, so end the
+                    // attempt now instead of polling out the full window.
+                    if startedOnHeadset, hfpRoute() != .active { break }
                     try await sleep(firstAudioPollInterval)
                 }
                 throw VoiceInputError.audioCaptureUnavailable

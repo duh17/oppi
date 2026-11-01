@@ -1281,6 +1281,208 @@ struct DictationCaptureStartupTests {
             )
         }
     }
+
+    // MARK: Preferred Bluetooth route settling
+
+    @Test func pendingHeadsetRouteSettlesBeforeTheOnlyEngineStart() async throws {
+        var log: [String] = []
+        var polls = 0
+        var route = DictationAudioEngineHelper.PreferredHFPRoute.pending
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: { log.append("start") },
+            hasAudio: { true }, isRunning: { true },
+            stop: { Issue.record("A settled route must not need a rebuild") },
+            isCancelled: { false },
+            hfpRoute: { route },
+            sleep: { _ in
+                polls += 1
+                log.append("wait")
+                if polls == 5 { route = .active }
+            }
+        )
+        #expect(log == ["wait", "wait", "wait", "wait", "wait", "start"])
+    }
+
+    @Test func headsetRouteThatNeverArrivesWaitsOnlyTheBoundThenStartsAsBefore() async throws {
+        var waits = 0
+        var starts = 0
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: { starts += 1 },
+            hasAudio: { starts > 0 }, isRunning: { true },
+            stop: { Issue.record("Healthy capture must not stop") },
+            isCancelled: { false },
+            hfpRoute: { .pending },
+            sleep: { interval in
+                #expect(starts == 0, "No engine may start while the route is still pending")
+                #expect(interval == DictationAudioEngineHelper.firstAudioPollInterval)
+                waits += 1
+            }
+        )
+        #expect(waits == DictationAudioEngineHelper.routeSettlePollAttempts)
+        #expect(starts == 1)
+    }
+
+    @Test func nonHeadsetRoutesStartWithoutAnyRouteWait() async throws {
+        for route in [DictationAudioEngineHelper.PreferredHFPRoute.notPreferred, .active] {
+            var log: [String] = []
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { log.append("start") },
+                hasAudio: { true }, isRunning: { true },
+                stop: { Issue.record("Healthy capture must not stop") },
+                isCancelled: { false },
+                hfpRoute: { route },
+                sleep: { _ in log.append("wait") }
+            )
+            #expect(log == ["start"], "\(route)")
+        }
+    }
+
+    @Test func cancellationDuringRouteWaitNeverStartsTheEngine() async {
+        var cancelled = false
+        await #expect(throws: CancellationError.self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { Issue.record("Cancelled capture must not start") },
+                hasAudio: { false }, isRunning: { false },
+                stop: { Issue.record("No engine was started") },
+                isCancelled: { cancelled },
+                hfpRoute: { .pending },
+                sleep: { _ in cancelled = true }
+            )
+        }
+    }
+
+    @Test func leavingTheHeadsetEndsTheAttemptInsteadOfPollingOutTheWindow() async throws {
+        var log: [String] = []
+        var route = DictationAudioEngineHelper.PreferredHFPRoute.active
+        var polls = 0
+        var starts = 0
+        await #expect(throws: (any Error).self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { starts += 1; log.append("start\(starts)") },
+                hasAudio: { false }, isRunning: { true },
+                stop: { log.append("stop") },
+                isCancelled: { false },
+                hfpRoute: { route },
+                sleep: { interval in
+                    if interval == .milliseconds(250) {
+                        log.append("backoff")
+                    } else {
+                        polls += 1
+                        log.append("poll")
+                        if polls == 3 { route = .notPreferred }
+                    }
+                }
+            )
+        }
+        // Attempt 1 starts off the headset, so it keeps the unchanged full window.
+        let firstAttempt = ["start1", "poll", "poll", "poll", "stop", "backoff", "start2"]
+        #expect(Array(log.prefix(firstAttempt.count)) == firstAttempt)
+        #expect(polls == 3 + DictationAudioEngineHelper.firstAudioPollAttempts)
+    }
+
+    @Test func attemptThatLosesTheHeadsetAfterAudioHasStartedStillSucceeds() async throws {
+        var route = DictationAudioEngineHelper.PreferredHFPRoute.active
+        var polls = 0
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: {},
+            hasAudio: { polls == 2 }, isRunning: { true },
+            stop: { Issue.record("Audio arrived; nothing to abort") },
+            isCancelled: { false },
+            hfpRoute: { route },
+            sleep: { _ in
+                polls += 1
+                if polls == 2 { route = .notPreferred }
+            }
+        )
+    }
+
+    /// Virtual-clock model of one dictation setup on a headset whose route becomes
+    /// current `routeSettlesAt` after activation, and may drop out at `routeLeavesAt`.
+    /// It stands in for the `app.dictation_setup.total_ms` HFP tail (setup through
+    /// first audio); real AirPods timing is measured on device, not here.
+    private struct HeadsetSetupModel {
+        static let engineStartCost = Duration.milliseconds(450)
+        /// First PCM arrives this long after an engine started on the headset.
+        static let headsetFirstAudio = Duration.milliseconds(600)
+        let routeSettlesAt: Duration
+        let routeLeavesAt: Duration?
+        private(set) var now = Duration.zero
+        private(set) var starts = 0
+        private var attemptStartedAt = Duration.zero
+        private var attemptOnHeadset = false
+
+        var routeIsHeadset: Bool { Self.isHeadset(at: now, settles: routeSettlesAt, leaves: routeLeavesAt) }
+
+        private static func isHeadset(at time: Duration, settles: Duration, leaves: Duration?) -> Bool {
+            time >= settles && !(leaves.map { time >= $0 } ?? false)
+        }
+
+        /// What activation reports: the headset stays preferred until it drops out.
+        var requestedRoute: DictationAudioEngineHelper.PreferredHFPRoute {
+            if routeIsHeadset { return .active }
+            if let routeLeavesAt, now >= routeLeavesAt { return .notPreferred }
+            return .pending
+        }
+
+        /// An engine started before the switch captures nothing, then the switch
+        /// stops it. Once the headset is gone the built-in mic delivers quickly.
+        var hasAudio: Bool {
+            if attemptOnHeadset {
+                return routeIsHeadset && now >= attemptStartedAt + Self.headsetFirstAudio
+            }
+            let routeAlreadyGone = routeLeavesAt.map { attemptStartedAt >= $0 } ?? false
+            return routeAlreadyGone && now >= attemptStartedAt + .milliseconds(100)
+        }
+
+        var isRunning: Bool { attemptOnHeadset || routeAlreadyGoneAtStart || now < routeSettlesAt }
+        private var routeAlreadyGoneAtStart: Bool { routeLeavesAt.map { attemptStartedAt >= $0 } ?? false }
+
+        mutating func startEngine() {
+            starts += 1
+            attemptStartedAt = now
+            attemptOnHeadset = routeIsHeadset
+            now += Self.engineStartCost
+        }
+        mutating func sleep(_ interval: Duration) { now += interval }
+
+        /// `legacy` ignores the requested route, like the code before the wait existed.
+        static func run(
+            routeSettlesAt: Duration, routeLeavesAt: Duration? = nil, legacy: Bool
+        ) async -> Self {
+            var model = Self(routeSettlesAt: routeSettlesAt, routeLeavesAt: routeLeavesAt)
+            try? await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { model.startEngine() },
+                hasAudio: { model.hasAudio }, isRunning: { model.isRunning },
+                stop: {}, isCancelled: { false },
+                hfpRoute: { legacy ? .notPreferred : model.requestedRoute },
+                sleep: { model.sleep($0) }
+            )
+            return model
+        }
+    }
+
+    @Test func waitingForTheRouteFinishesSetupAheadOfTheWastedFirstAttempt() async {
+        // Route lands 800 ms after activation, within the observed 0.6-1.1 s.
+        let settle = Duration.milliseconds(800)
+        let before = await HeadsetSetupModel.run(routeSettlesAt: settle, legacy: true)
+        let after = await HeadsetSetupModel.run(routeSettlesAt: settle, legacy: false)
+
+        #expect(before.starts == 2, "Legacy flow wastes its first start")
+        #expect(after.starts == 1)
+        // Gain is at least the fixed rebuild delay the wasted attempt forced.
+        #expect(before.now - after.now >= .milliseconds(250))
+        // Done one route settle plus one headset first-audio wait after activation.
+        #expect(after.now <= settle + HeadsetSetupModel.headsetFirstAudio + .milliseconds(20))
+    }
+
+    @Test func routeLossEndsTheNoAudioWaitAtTheLossNotAtTheWindowEnd() async {
+        // Headset is current at activation, then drops 500 ms in: before first audio.
+        let leaves = Duration.milliseconds(500)
+        let before = await HeadsetSetupModel.run(routeSettlesAt: .zero, routeLeavesAt: leaves, legacy: true)
+        let after = await HeadsetSetupModel.run(routeSettlesAt: .zero, routeLeavesAt: leaves, legacy: false)
+        #expect(before.starts == 2 && after.starts == 2)
+        #expect(before.now - after.now >= .milliseconds(900))
+    }
 }
 
 @Suite("OppiDictationSession audio drain")
