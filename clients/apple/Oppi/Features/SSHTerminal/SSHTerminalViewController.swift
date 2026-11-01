@@ -280,6 +280,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         backSwipe = SSHTerminalBackSwipe(navigation: navigationController)
         // Remote clipboard writes apply only while this screen is in front.
         channel.isViewed = AppScenePhase.shared.phase == .active
+        // The panes beside the shown one stream while the screen shows them, so
+        // a swipe slides in a pane that is already live.
+        channel.rex?.isWarming = true
         attentionFeedback.prepare()
         if presentsStatusDetailOnAppear, !presentingStatusDetail, programRollup != nil {
             presentsStatusDetailOnAppear = false
@@ -324,6 +327,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if presentedViewController != nil, !leaving, !coveredByPush { return }
         isOnScreen = false
         channel.isViewed = false
+        // Off screen the terminal keeps its shown pane only: the neighbours'
+        // streams go back to the host.
+        channel.rex?.isWarming = false
         passwordFillTask?.cancel()
         pasteNoticeTask?.cancel()
         copyNoticeTask?.cancel()
@@ -688,6 +694,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // A terminal switched away from stays open in the registry; it is no
         // longer in front, so its remote clipboard writes are dropped.
         channel.isViewed = false
+        channel.rex?.isWarming = false
         channel.cancelPendingResize()
         stopOverviewPolls()
         keymapTask?.cancel()
@@ -1046,12 +1053,27 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
     }
 
+    /// Puts the pane the session shows on the grid, unless a slide is running
+    /// (it presents its own end). Idempotent.
+    private func reconcileShownPane() {
+        guard gridView?.paneTransition.phase == .idle else { return }
+        gridView?.presentShownPane()
+    }
+
     /// A Rex terminal's minimap and swipe. The swipe works for every session
     /// (past the last pane it opens a new one); the minimap is available only
     /// for a window with more than one pane, and shows only while a switch runs.
     private func updateRexPanes(themeID: ThemeID) {
         let rex = channel.rex?.state
         let swipes = channel.rex != nil
+        // A session that arrives (or reconnects) while this screen is up warms
+        // its neighbours too; idempotent, so every pass may ask.
+        channel.rex?.isWarming = isOnScreen && AppScenePhase.shared.phase == .active
+        // One owner of "the pane on screen is the pane typing reaches": a switch
+        // with no slide of its own (a pane closed in Rex, a refusal recovered, a
+        // new pane) lands here. A slide owns the pixels until it ends.
+        channel.rex?.onShown = { [weak self] _ in self?.reconcileShownPane() }
+        reconcileShownPane()
         if let rex {
             let background = lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg
             rexMinimap.apply(
@@ -1075,7 +1097,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false },
             shown: { [weak self] in self?.channel.rex?.latest.shown },
             newPane: { [weak self] in self?.openNewPane() ?? false },
-            canCreatePane: { [weak self] in self?.newPaneTask == nil }
+            canCreatePane: { [weak self] in self?.newPaneTask == nil },
+            // The pane beside it is already streaming and has its screen: a
+            // swipe slides that in instead of a card.
+            livePane: { [weak self] delta in
+                guard let self, let block = self.channel.rex?.latest.pane(offsetBy: delta),
+                      self.channel.readyEngine(for: block) != nil else { return nil }
+                return block
+            },
+            target: { [weak self] delta in self?.channel.rex?.latest.pane(offsetBy: delta) }
         )
     }
 
@@ -1111,9 +1141,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func showPane(_ blockID: String) {
         guard let rex = channel.rex, gridView?.paneTransition.isAwaitingCreation != true else { return }
         let before = rex.latest
-        guard let from = before.shownIndex, let to = before.panes.firstIndex(where: { $0.blockID == blockID }),
-              rex.show(blockID) else { return }
-        gridView?.paneTransition.slide(toward: to > from ? 1 : -1, neighbour: before.panes[to].name)
+        guard let from = before.shownIndex, let to = before.panes.firstIndex(where: { $0.blockID == blockID }) else { return }
+        // The slide goes first, naming the pane it heads for: the session's move
+        // then lands at the slide's end, not under it.
+        gridView?.paneTransition.slide(toward: to > from ? 1 : -1, neighbour: before.panes[to].name, target: blockID)
+        guard rex.show(blockID) else { return }
     }
 
     /// Fades the bar with the keyboard. A hidden bar takes no touches, leaves

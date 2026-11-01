@@ -586,6 +586,16 @@ final class SSHTerminalEngine {
         flushReplies()
     }
 
+    /// One set of default colors, so a channel can hold them for panes whose
+    /// terminals it opens later (`SSHTerminalChannel.setColors`).
+    struct Colors: Sendable {
+        var foreground: GhosttyColorRgb
+        var background: GhosttyColorRgb
+        var dark: Bool
+        var palette: [UInt8: GhosttyColorRgb] = [:]
+        var cursor: GhosttyColorRgb?
+    }
+
     /// The default colors. `palette` entries replace the built-in 256-color
     /// palette's, `cursor` the cursor's default; nil keeps libghostty's own.
     /// A program's OSC 4, 10 and 11 still change colors on top of these; the renderer does not read OSC 12.
@@ -596,17 +606,22 @@ final class SSHTerminalEngine {
         palette: [UInt8: GhosttyColorRgb] = [:],
         cursor: GhosttyColorRgb? = nil
     ) {
-        self.dark = dark
-        defaultColors = (foreground, background, dark, palette, cursor)
+        setColors(Colors(foreground: foreground, background: background, dark: dark, palette: palette, cursor: cursor))
+    }
+
+    func setColors(_ colors: Colors) {
+        self.dark = colors.dark
+        let palette = colors.palette
+        defaultColors = (colors.foreground, colors.background, colors.dark, palette, colors.cursor)
         defer {
             notePictureChange()
             forceFullRebuild = true
         }
-        var foreground = foreground
-        var background = background
+        var foreground = colors.foreground
+        var background = colors.background
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background)
-        if var cursor {
+        if var cursor = colors.cursor {
             ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor)
         } else {
             ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, nil)

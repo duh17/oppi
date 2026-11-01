@@ -56,9 +56,8 @@ struct SSHTerminalPaneTransitionTests {
         defer { rig.dismiss() }
         #expect(rig.transition.beginDrag())
         #expect(!rig.transition.beginDrag(), "one transition at a time")
-        let (placeholder, cover) = (rig.layers[0], rig.layers[1])
-
         rig.transition.drag(translationX: -120, neighbour: "logs", offersNewPane: false)
+        let (placeholder, cover) = (rig.layers[0], rig.layers[1])
         #expect(cover.transform.tx == -120)
         #expect(placeholder.transform.tx == -120 + rig.grid.bounds.width, "the incoming pane waits on the right")
         #expect(rig.transition.placeholderTitle == "logs")
@@ -77,9 +76,8 @@ struct SSHTerminalPaneTransitionTests {
         let rig = try Rig()
         defer { rig.dismiss() }
         #expect(rig.transition.beginDrag())
-        let (placeholder, cover) = (rig.layers[0], rig.layers[1])
-
         rig.transition.drag(translationX: -30, neighbour: nil, offersNewPane: true)
+        let (placeholder, cover) = (rig.layers[0], rig.layers[1])
         #expect(cover.transform.tx == -30, "no resistance: the card comes with the finger")
         #expect(placeholder.transform.tx == -30 + rig.grid.bounds.width)
         #expect(rig.transition.isShowingNewPaneCard && rig.transition.placeholderTitle == "New Pane")

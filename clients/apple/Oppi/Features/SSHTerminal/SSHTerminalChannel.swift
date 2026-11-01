@@ -64,6 +64,9 @@ extension SSHPTYSession: SSHTerminalConnection {
 final class SSHTerminalEventQueue: Sendable {
     enum Item: Sendable, Equatable {
         case event(SSHPTYEvent)
+        /// A Rex pane's output, with the pane it came from: one session has a
+        /// stream per live pane, and each pane's terminal gets its own.
+        case data(Data, block: String)
         case overflow
         /// The renderable part of a Ghostty snapshot to restore before the
         /// output after it (a Rex pane), with the block it is of: every record
@@ -75,7 +78,6 @@ final class SSHTerminalEventQueue: Sendable {
         /// The connection ended for a reason its transport names (a Rex pane).
         case ended(String)
     }
-
     static let defaultLimit = 4 * 1024 * 1024
     static let defaultResumeBelow = 256 * 1024
     /// Pass in `SSHPTYConfiguration.inboundFlow` so the session obeys this queue.
@@ -92,6 +94,10 @@ final class SSHTerminalEventQueue: Sendable {
         var queuedBytes = 0
         var peakQueuedBytes = 0
         var finished = false
+        /// One per stream beside `flow`: each Rex pane's data connection owns
+        /// its reader, so they cannot share one (`SSHPTYInboundFlow.attach`
+        /// holds a single wake). Their byte budget is still this queue's.
+        var flows: [SSHPTYInboundFlow] = []
     }
 
     init(limit: Int = SSHTerminalEventQueue.defaultLimit, resumeBelow: Int = SSHTerminalEventQueue.defaultResumeBelow) {
@@ -102,6 +108,19 @@ final class SSHTerminalEventQueue: Sendable {
 
     /// Most bytes ever waiting for the main actor.
     var peakQueuedBytes: Int { state.withLock { $0.peakQueuedBytes } }
+
+    /// A stream of this queue's own, for a pane whose bytes it holds: it is
+    /// paused and resumed with the queue, until `retire`.
+    func makeFlow() -> SSHPTYInboundFlow {
+        let flow = SSHPTYInboundFlow()
+        state.withLock { $0.flows.append(flow) }
+        return flow
+    }
+
+    /// That pane's lane is gone: nothing will pause or resume its reader again.
+    func retire(_ flow: SSHPTYInboundFlow) {
+        state.withLock { $0.flows.removeAll { $0 === flow } }
+    }
 
     /// Called from the NIO event loop.
     func push(_ event: SSHPTYEvent) {
@@ -117,7 +136,7 @@ final class SSHTerminalEventQueue: Sendable {
                 state.peakQueuedBytes = max(state.peakQueuedBytes, state.queuedBytes)
                 // Under the lock so a concurrent release cannot be overtaken by
                 // a stale pause.
-                if state.queuedBytes >= resumeBelow { flow.pause() }
+                if state.queuedBytes >= resumeBelow { pauseFlows(&state) }
             }
             if event == .closed { state.finished = true }
             state.items.append(.event(event))
@@ -126,6 +145,27 @@ final class SSHTerminalEventQueue: Sendable {
         guard let ended else { return }
         continuation.yield()
         if ended { continuation.finish() }
+    }
+
+    /// One pane's output, in order with the rest. Called from the NIO event
+    /// loop, in order with `push`.
+    func pushData(_ bytes: Data, block: String) {
+        let overflow: Bool? = state.withLock { state in
+            guard !state.finished else { return nil }
+            guard state.queuedBytes + bytes.count <= limit else {
+                state.finished = true
+                state.items.append(.overflow)
+                return true
+            }
+            state.queuedBytes += bytes.count
+            state.peakQueuedBytes = max(state.peakQueuedBytes, state.queuedBytes)
+            if state.queuedBytes >= resumeBelow { pauseFlows(&state) }
+            state.items.append(.data(bytes, block: block))
+            return false
+        }
+        guard let overflow else { return }
+        continuation.yield()
+        if overflow { continuation.finish() }
     }
 
     /// Called from the NIO event loop, in order with `push`.
@@ -177,8 +217,20 @@ final class SSHTerminalEventQueue: Sendable {
     func release(bytes: Int) {
         state.withLock { state in
             state.queuedBytes -= bytes
-            if state.queuedBytes < resumeBelow { flow.resume() }
+            if state.queuedBytes < resumeBelow { resumeFlows(&state) }
         }
+    }
+
+    // Paused and resumed under the lock, so a release cannot be overtaken by a
+    // stale pause from a push that read the old byte count.
+    private func pauseFlows(_ state: inout State) {
+        flow.pause()
+        for flow in state.flows { flow.pause() }
+    }
+
+    private func resumeFlows(_ state: inout State) {
+        flow.resume()
+        for flow in state.flows { flow.resume() }
     }
 }
 
@@ -245,7 +297,9 @@ enum SSHTerminalUpload {
 /// queued input nor delayed replies/resize can migrate to another connection.
 @MainActor @Observable
 final class SSHTerminalChannel {
-    let engine: SSHTerminalEngine
+    /// The terminal the grid paints: the Rex pane `presented`, else this
+    /// terminal's own (a shell, or a Rex session before its first pane).
+    var engine: SSHTerminalEngine { presented.map { engine(for: $0) } ?? own }
     /// OSC 7501 program status records reported in this terminal.
     var programStatus: SSHTerminalProgramStatusStore { engine.programStatus }
     /// OSC 9;4 progress in this terminal.
@@ -256,14 +310,20 @@ final class SSHTerminalChannel {
     /// The Rex session this terminal shows, when it is a Rex terminal: its
     /// panes, minimap, and the switch between them. Set before `opened`; stays
     /// after the terminal ends, so a reconnect knows the pane shown last.
+    /// `@ObservationIgnored`, so anything that attaches a session to a live
+    /// terminal (after `updateProperties()` already ran) must ask for a new
+    /// property pass: `setNeedsUpdateProperties()`. Every connect and reconnect
+    /// path in the app sets it before the screen that shows it exists, so none
+    /// of them needs that call.
     @ObservationIgnored var rex: RexSessionModel?
     /// Runs after a pane's snapshot replaced the engine's terminal, with the
     /// block it is of, so the grid knows the screen it holds is that pane's
     /// own (`SSHTerminalPaneTransition`). It runs at READY, when the screen
     /// can draw, not when the pane's older history has all arrived.
     @ObservationIgnored var snapshotRestored: ((String?) -> Void)?
-    /// The pane whose snapshot history is arriving.
-    @ObservationIgnored private var restoringBlock: String?
+    /// Any terminal's picture changed, with the pane it belongs to (nil for a
+    /// shell): the grid repaints only when it is the pane it shows.
+    @ObservationIgnored var pictureChanged: ((String?) -> Void)?
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a
@@ -368,12 +428,105 @@ final class SSHTerminalChannel {
     /// second answer would reach it as typed input.
     init(herdrFolderGrace: Duration = .seconds(25), answersTerminalQueries: Bool = true) throws {
         self.herdrFolderGrace = herdrFolderGrace
+        self.answersTerminalQueries = answersTerminalQueries
         weak var target: SSHTerminalChannel?
-        engine = try SSHTerminalEngine { reply in
+        // A shell's engine, and the one a Rex session shows before its first
+        // pane's snapshot names it (`presented`).
+        own = try SSHTerminalEngine { reply in
             if answersTerminalQueries { target?.send(reply) }
         }
-        engine.copied = { text in target?.copyToClipboard(text) }
+        own.copied = { text in target?.copyToClipboard(text) }
+        own.onPictureChange = { target?.pictureChanged?(nil) }
         target = self
+    }
+
+    // MARK: - A Rex session's panes
+
+    /// The pane whose terminal the screen paints: a Rex session's, nil for a
+    /// shell. One owner moves it — the grid, from the pane the session says it
+    /// shows (`SSHTerminalGridView.presentShownPane`) — so what the screen shows
+    /// and what typing reaches cannot drift apart. Observed, because the title,
+    /// the working directory, and the status the chrome reads follow it.
+    private(set) var presented: String?
+    /// Each Rex pane's own terminal: its screen, modes, cursor, status, and
+    /// history. A pane keeps its engine while the session is open, so a swipe
+    /// back to it costs no snapshot and no reload.
+    @ObservationIgnored private var engines: [String: SSHTerminalEngine] = [:]
+    /// Panes whose snapshot's screen has arrived (READY) and whose lane is
+    /// still open: their screen can be shown, and a swipe to one needs no wait.
+    @ObservationIgnored private var readyPanes: Set<String> = []
+    private let own: SSHTerminalEngine
+    private let answersTerminalQueries: Bool
+    /// What every engine draws with: a Rex session's panes share the theme and
+    /// the host's colours, applied here so a pane opened later has them.
+    @ObservationIgnored private var colors: SSHTerminalEngine.Colors?
+
+    /// `block`'s terminal, created on first use (a pane the session has not
+    /// shown yet) with this terminal's colours and size.
+    func engine(for block: String) -> SSHTerminalEngine {
+        if let engine = engines[block] { return engine }
+        guard let made = try? SSHTerminalEngine(sink: { [weak self] reply in
+            guard let self, self.answersTerminalQueries else { return }
+            _ = self.send(reply)
+        }) else { return own }
+        made.copied = { [weak self] text in
+            // A pane off screen must not put text on this device's clipboard:
+            // nobody is looking at what it would copy.
+            guard let self, self.presented == block else { return }
+            self.copyToClipboard(text)
+        }
+        made.onPictureChange = { [weak self] in self?.pictureChanged?(block) }
+        if let colors { made.setColors(colors) }
+        if let geometry = appliedGeometry { made.resize(geometry) }
+        engines[block] = made
+        return made
+    }
+
+    /// `block`'s terminal when its screen is up and its lane is still open,
+    /// else nil: a swipe to that pane shows its own screen instead of waiting
+    /// for a snapshot. A pane whose lane closed shows a frozen screen, which is
+    /// not what a swipe should land on.
+    func readyEngine(for block: String) -> SSHTerminalEngine? {
+        guard readyPanes.contains(block) else { return nil }
+        if let live = rex?.latest.live, !live.contains(block) { return nil }
+        return engines[block]
+    }
+
+    /// Paints `block` from now on (nil for this terminal's own), and shows what
+    /// that pane's program says about itself: its title and folder. A pane's
+    /// screen is its own, so the chrome over the grid has to follow the pane the
+    /// grid paints, not the one asked for last.
+    func present(_ block: String?) {
+        guard block != presented else { return }
+        presented = block
+        let engine = block.map { engine(for: $0) } ?? own
+        title = engine.title
+        refreshWorkingDirectory()
+        evictEngines(keeping: block)
+    }
+
+    /// Panes are cheap to keep only while their lane is open: an engine holds up
+    /// to 32 MiB of history. Everything the session no longer streams goes,
+    /// except the pane on screen (whose screen is still what the person reads).
+    private func evictEngines(keeping block: String?) {
+        guard let rex else { return }
+        let live = rex.latest.live
+        for pane in engines.keys where pane != block && !live.contains(pane) {
+            readyPanes.remove(pane)
+            engines[pane]?.close()
+            engines[pane] = nil
+        }
+    }
+
+    /// The pane whose screen is up and whose lane is open, or nil: a switch to
+    /// it slides its own screen in instead of waiting for a snapshot.
+    func isReady(_ block: String) -> Bool { readyEngine(for: block) != nil }
+
+    /// Every engine draws with these colours, including the ones created later.
+    func setColors(_ colors: SSHTerminalEngine.Colors) {
+        self.colors = colors
+        own.setColors(colors)
+        for engine in engines.values { engine.setColors(colors) }
     }
 
     func opened(_ connection: any SSHTerminalConnection, command: String? = nil) {
@@ -457,15 +610,25 @@ final class SSHTerminalChannel {
         let clock = ContinuousClock()
         var sliceStart = clock.now
         var run = Data()
+        var runBlock: String?
         var unreleased = 0
+        /// Hands the joined output on: a run belongs to one pane, so a pane
+        /// change ends it.
+        func flush() {
+            interpret(run, block: runBlock)
+            run.removeAll(keepingCapacity: true)
+        }
         for item in items {
             switch item {
             case .event(.data(let bytes)):
                 unreleased += bytes.count
+                if runBlock != nil {
+                    flush()
+                    runBlock = nil
+                }
                 run.append(bytes)
                 guard run.count >= Self.ingestWriteBytes else { continue }
-                interpret(run)
-                run.removeAll(keepingCapacity: true)
+                flush()
                 guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
                 queue.release(bytes: unreleased)
                 unreleased = 0
@@ -474,30 +637,41 @@ final class SSHTerminalChannel {
                 // A close while yielded (user, background, registry) ends the burst.
                 guard connected else { return }
                 continue
+            case .data(let bytes, let block):
+                unreleased += bytes.count
+                if runBlock != block {
+                    flush()
+                    runBlock = block
+                }
+                run.append(bytes)
+                guard run.count >= Self.ingestWriteBytes else { continue }
+                flush()
+                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
+                queue.release(bytes: unreleased)
+                unreleased = 0
+                await Task.yield()
+                sliceStart = clock.now
+                guard connected else { return }
+                continue
             case .event(let event):
-                interpret(run)
-                run.removeAll()
+                flush()
                 self.event(event)
             case .snapshot(let snapshot, let block):
-                interpret(run)
-                run.removeAll()
+                flush()
                 restore(snapshot, block: block)
             case .snapshotRecords(let records, let block):
-                interpret(run)
-                run.removeAll()
+                flush()
                 restoreHistory(records, block: block)
             case .ended(let reason):
-                interpret(run)
-                run.removeAll()
+                flush()
                 close(reason: reason)
             case .overflow:
-                interpret(run)
-                run.removeAll()
+                flush()
                 close(reason: "The terminal stopped consuming remote output. The connection was closed.")
             }
             if !connected { break }
         }
-        interpret(run)
+        flush()
         queue.release(bytes: unreleased)
     }
 
@@ -530,34 +704,64 @@ final class SSHTerminalChannel {
     /// draw. Its older history follows (`restoreHistory`).
     private func restore(_ snapshot: Data, block: String?) {
         guard connected else { return }
+        let engine = block.map { engine(for: $0) } ?? own
         do {
             try engine.beginRestore(snapshot)
         } catch {
-            close(reason: SSHTerminalSnapshotFormat.unreadable)
+            unreadable(block, reason: SSHTerminalSnapshotFormat.unreadable)
             return
         }
-        restoringBlock = block
-        if engine.title != title { title = engine.title }
-        refreshWorkingDirectory()
+        if let block { readyPanes.insert(block) }
+        if isPresented(block) {
+            if engine.title != title { title = engine.title }
+            refreshWorkingDirectory()
+        }
         snapshotRestored?(block)
     }
 
-    /// The snapshot's older history and image pixels. Records of a pane that
-    /// is no longer the one restoring (a switch overtook it) are dropped.
+    /// The snapshot's older history and image pixels. A pane that has no
+    /// terminal here (never opened the lane) has nothing to restore into.
     private func restoreHistory(_ records: Data, block: String?) {
-        guard connected, block == restoringBlock else { return }
+        guard connected else { return }
+        let engine: SSHTerminalEngine? = if let block { engines[block] } else { own }
+        guard let engine else { return }
         do {
             try engine.continueRestore(records)
         } catch {
             // The screen drew; a damaged history record still ends the pane,
             // and says the history was the part that failed.
-            close(reason: SSHTerminalSnapshotFormat.unreadableHistory)
+            unreadable(block, reason: SSHTerminalSnapshotFormat.unreadableHistory)
         }
     }
 
-    private func interpret(_ bytes: Data) {
+    /// A snapshot or history that cannot be read: a pane off screen loses its
+    /// stream (its owner closes the lane) and the screen goes on, a pane on
+    /// screen ends the terminal as it always has.
+    private func unreadable(_ block: String?, reason: String) {
+        // The pane being switched to is the pane the session shows, even while
+        // the slide has not presented it yet: a screen that cannot be read there
+        // ends the terminal, as it always has. A pane off screen only loses its
+        // stream.
+        let shown = rex?.latest.shown ?? presented
+        if let block, block != shown {
+            readyPanes.remove(block)
+            rex?.paneFailed(block)
+            return
+        }
+        close(reason: reason)
+    }
+
+    /// Whether `block` is the pane whose terminal the grid shows (a shell's own
+    /// terminal counts as presented while `presented` is nil).
+    private func isPresented(_ block: String?) -> Bool {
+        block == presented
+    }
+
+    private func interpret(_ bytes: Data, block: String? = nil) {
         guard connected, !bytes.isEmpty else { return }
+        let engine = block.map { engine(for: $0) } ?? own
         engine.receive(bytes)
+        guard isPresented(block) else { return }
         if engine.title != title { title = engine.title }
         refreshWorkingDirectory()
     }
@@ -600,7 +804,7 @@ final class SSHTerminalChannel {
         inputClosed = true
         pending.removeAll()
         queuedBytes = 0
-        engine.close()
+        closeEngines()
         pump?.cancel()
         pump = nil
         reason = "The remote shell ended. Waiting for its exit status…"
@@ -696,7 +900,10 @@ final class SSHTerminalChannel {
             // transition releases its held resize and reports the settled size again.
             if geometry != self.appliedGeometry {
                 self.appliedGeometry = geometry
-                self.engine.resize(geometry)
+                // Every pane the session keeps live is this screen's size, so a
+                // swipe to one shows it laid out, not reflowed.
+                self.own.resize(geometry)
+                for pane in self.engines.values { pane.resize(geometry) }
             }
             // The remote shell already has this size: a repeat would only
             // send another window-change request.
@@ -734,7 +941,7 @@ final class SSHTerminalChannel {
         herdrFolderExpiry = nil
         pending.removeAll()
         queuedBytes = 0
-        engine.close()
+        closeEngines()
         pump?.cancel()
         pump = nil
         resizeTask?.cancel()
@@ -745,6 +952,12 @@ final class SSHTerminalChannel {
             teardown = Task { await connection.cancel() }
         }
         connection = nil
+    }
+
+    /// Stops every pane's terminal: the shown one, the others, and a shell's own.
+    private func closeEngines() {
+        own.close()
+        for engine in engines.values { engine.close() }
     }
 
     private func startPump() {

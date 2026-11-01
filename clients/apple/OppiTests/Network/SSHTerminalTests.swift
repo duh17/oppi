@@ -2076,9 +2076,19 @@ struct SSHTerminalTests {
         #expect(minimap.hitTest(minimap.convert(cell.center, from: cell.superview), with: nil) === cell, "a visible map takes taps")
         grid.paneTransition.endDrag(committing: nil, velocityX: 0)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        // A screen on the phone warms the panes either side of the one it shows:
+        // the view controller does it, and the rig only mounts it.
+        let targetBlock = RexSessionTerminalTests.block("c")
+        try #require(await waitForMainActorCondition(timeout: .seconds(10)) { rig.channel.isReady(targetBlock) },
+                     "c's screen is up before the tap")
+        let connects = rig.fake.requests("data.connect").filter { $0.string("block_id") == targetBlock }.count
         cell.sendActions(for: .touchUpInside)
-        #expect(grid.paneTransition.phase != .idle && grid.paneTransition.isPlaceholderShown)
-        #expect(grid.paneTransition.placeholderTitle == "title c")
+        #expect(grid.paneTransition.phase != .idle, "the grid is covered while the pane arrives")
+        #expect(!grid.paneTransition.isPlaceholderShown, "a live pane needs no card")
+        let incoming = try #require(mounted.find { $0 is SSHTerminalPanePreview } as? SSHTerminalPanePreview)
+        #expect(incoming.block == targetBlock, "its own screen slides in")
+        #expect(rig.fake.requests("data.connect").filter { $0.string("block_id") == targetBlock }.count == connects,
+                "and nothing was reopened")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             switcher.accessibilityValue == "title c, 3 of 3" && selected("sshTerminal.rexMinimap.2")
@@ -2100,6 +2110,61 @@ struct SSHTerminalTests {
         #expect(grid.stepPane(-1) == true && grid.stepPane(-1) == true && grid.stepPane(-1) == false)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") && grid.paneTransition.phase == .idle })
         #expect(switcher.accessibilityValue == "title a, 1 of 3")
+        await rig.stop()
+    }
+
+
+    /// A screen follows the pane its session moves to with no slide of its own: a
+    /// pane closed in Rex puts the neighbour on the grid, through the view
+    /// controller's own wiring (`RexSessionModel.onShown` -> `presentShownPane`),
+    /// not only through a test rig's.
+    @Test func aRexTerminalFollowsThePaneItsSessionMovesTo() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        let grid = try #require(mounted.controller.gridView)
+        try #require(await waitForMainActorCondition(timeout: .seconds(10)) {
+            rig.channel.isReady(RexSessionTerminalTests.block("b"))
+        }, "the mounted screen warms the pane beside it")
+        #expect(grid.paintedPaneName == "title a")
+        rig.fake.blockClosed(RexSessionTerminalTests.block("a"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.latest.shown == RexSessionTerminalTests.block("b") })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paintedPaneName == "title b" },
+                "the screen paints the pane the session shows: \(grid.paintedPaneName ?? "none")")
+        #expect(grid.accessibilityValue == "title b", "and says so to VoiceOver")
+        await rig.stop()
+    }
+
+    /// The card is still what a pane that is not ready waits behind: a minimap
+    /// cell for a pane whose lane never answered shows its name, and its screen
+    /// replaces it when the stream arrives.
+    @Test func aMinimapCellForAPaneWithoutAScreenShowsItsCard() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
+        rig.fake.hold(dataConnectFor: [RexSessionTerminalTests.block("c")])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        func control(_ id: String) -> UIView? { mounted.find { $0.accessibilityIdentifier == id } }
+        let grid = try #require(mounted.controller.gridView)
+        try #require(await waitForMainActorCondition(timeout: .seconds(10)) {
+            rig.channel.isReady(RexSessionTerminalTests.block("b"))
+        })
+        #expect(!rig.channel.isReady(RexSessionTerminalTests.block("c")), "c never answered")
+        #expect(grid.paneTransition.beginDrag())
+        let cell = try #require(control("sshTerminal.rexMinimap.2") as? UIControl)
+        grid.paneTransition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { grid.paneTransition.phase == .idle })
+        cell.sendActions(for: .touchUpInside)
+        #expect(grid.paneTransition.phase != .idle && grid.paneTransition.isPlaceholderShown,
+                "a pane with no screen waits behind its card")
+        #expect(grid.paneTransition.placeholderTitle == "title c")
+        rig.fake.release(dataConnectFor: RexSessionTerminalTests.block("c"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
+            !grid.paneTransition.isPlaceholderShown && rig.shows("screen of c")
+        }, "its own screen replaces the card")
         await rig.stop()
     }
 

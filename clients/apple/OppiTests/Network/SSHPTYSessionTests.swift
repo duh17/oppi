@@ -335,7 +335,7 @@ struct SSHPTYSessionTests {
                     if case .exitStatus = event { receivedWhenExitReported = received }
                 case .overflow:
                     Issue.record("Queue overflowed: remote output was not slowed by backpressure")
-                case .snapshot, .snapshotRecords, .ended:
+                case .snapshot, .snapshotRecords, .ended, .data:
                     Issue.record("A PTY session queued an item only a Rex pane sends: \(item)")
                 }
             }

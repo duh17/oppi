@@ -800,11 +800,11 @@ struct RexPaneEngineTests {
         #expect(Self.text(engine).first == "line 0", "no history page was dropped")
     }
 
-    /// Records keep their order with what follows them: output after the
-    /// snapshot lands on its finished history. A switch that overtakes a pane
-    /// mid-history drops the records it still sends: they never reach the
-    /// pane swapped in.
-    @Test func aSwitchMidHistoryDropsThePaneLeftBehindsRecords() async throws {
+    /// Records keep their order with what follows them: a pane's output after its
+    /// snapshot lands on that pane's finished history. Each pane has an engine of
+    /// its own, so records that arrive for the pane a switch left behind go into
+    /// that pane, never into the one on screen.
+    @Test func aSwitchMidHistoryKeepsEachPanesRecordsInItsOwnEngine() async throws {
         let (screenA, recordsA) = try snapshotParts(try ghosttySnapshot(of: numberedLines(4000, name: "a")))
         let (screenB, recordsB) = try snapshotParts(try ghosttySnapshot(of: numberedLines(3000, name: "b")))
         let channel = try SSHTerminalChannel(answersTerminalQueries: false)
@@ -818,15 +818,22 @@ struct RexPaneEngineTests {
         queue.pushSnapshot(screenB, block: "b")
         for record in recordsA.dropFirst() { queue.pushSnapshotRecords(record, block: "a") }
         for record in recordsB { queue.pushSnapshotRecords(record, block: "b") }
-        queue.push(.data(Data("after".utf8)))
+        // A pane's output carries its pane, as a lane's does.
+        queue.pushData(Data("after".utf8), block: "b")
         queue.end("stream over")
         await channel.consume(queue)
 
         #expect(channel.reason == "stream over", "nothing failed: \(channel.reason)")
         #expect(restored == ["a", "b"])
-        #expect(Self.text(channel.engine).contains { $0.hasSuffix("$ after") }, "output after the snapshot")
+        // Both panes have an engine of their own, so the pane a switch leaves
+        // behind keeps its history (a swipe back to it costs no snapshot). A
+        // channel with no session says which pane is on screen itself.
+        channel.present("b")
+        #expect(Self.text(channel.engine).contains { $0.hasSuffix("$ after") }, "b's output after its snapshot")
         channel.engine.scrollToRow(0)
         #expect(Self.text(channel.engine).first == "b line 0", "b's whole history, and none of a's")
+        #expect(Self.text(channel.engine(for: "a")).contains { $0.contains("a line") }, "a kept its own")
+        #expect(!Self.text(channel.engine).contains { $0.contains("a line") }, "and none of a's is on b")
     }
 
     private static func text(_ engine: SSHTerminalEngine) -> [String] {
@@ -1138,6 +1145,11 @@ struct RexSessionTerminalTests {
         let model = RexSessionModel(connection: connection)
         channel.rex = model
         channel.opened(connection)
+        // The screen's job, in one line: the session says which pane it shows,
+        // and the grid paints that pane. Every switch in these tests is one the
+        // session makes, so this is what makes `rows` follow it.
+        channel.present(Self.block(opening))
+        model.onShown = { [channel] block in channel.present(block) }
         let consumer = Task { await channel.consume(queue) }
         fake.hold(dataConnectFor: Set(holding.map(Self.block)))
         channel.resize(.init(columns: 40, rows: 10))
@@ -1364,9 +1376,17 @@ struct RexSessionTerminalTests {
             rig.fake.requests("data.connect").contains { $0.string("block_id") == c }
         })
         rig.fake.refuse(dataConnectFor: c)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            rig.model.state.shown == a && rig.fake.requests("data.connect").filter { $0.string("block_id") == a }.count == 2
-        }, "back to a, reopened")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.shown == a }, "back to a")
+        // The window at each step, in this rig: it does not warm (a screen does,
+        // while it shows the session), so `show` sets the window to the pane it
+        // asks for. a -> {a}; show(b) -> {b}, so a leaves and its lane closes;
+        // show(c) -> {c}, so b leaves and goes back to Rex; the refusal then
+        // recovers to a, whose stream comes back. With the screen's three-pane
+        // window a would have stayed and this count would be 1.
+        #expect(rig.fake.requests("data.connect").filter { $0.string("block_id") == a }.count == 2,
+                "a's stream came back after the window let it go")
+        #expect(rig.fake.requests("session.disown_block").contains { $0.payload.contains(b) },
+                "and b, which left the window, went back to Rex")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
         #expect(rig.channel.connected, "\(rig.channel.reason)")
         #expect(rig.fake.requests("data.connect").filter { $0.string("block_id") == b }.count == 1, "b was never asked for again")

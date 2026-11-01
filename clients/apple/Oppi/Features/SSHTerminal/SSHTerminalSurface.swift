@@ -170,6 +170,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var paneStepping: SSHTerminalPaneStepping? { didSet { updatePaneStepping() } }
     /// The slide between panes: what covers the grid while it changes.
     private(set) lazy var paneTransition = SSHTerminalPaneTransition(grid: self)
+    /// The name of the pane on the grid, as the bar and VoiceOver say it. Set by
+    /// `present`, nil for a shell.
+    private(set) var paintedPaneName: String?
+    /// The incoming side of a pane swipe: the neighbour pane's own screen while
+    /// it is live, painted on this grid's display-link tick.
+    private let panePreview = SSHTerminalPanePreview()
     private var tapIgnore = SSHTerminalTapIgnore()
     private var tapSequence = SSHTerminalTapSequence()
     private var pendingHide: Task<Void, Never>?
@@ -221,6 +227,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private(set) var foreground = UIColor.label
     /// The cursor's color: the theme's, or the foreground.
     private var cursorColor: UIColor?
+    /// What the incoming side of a swipe paints its cursor with.
+    var cursorColorForPreview: UIColor? { cursorColor }
 
     private var metalLayer: CAMetalLayer? { metalHost.metalLayer }
 
@@ -248,17 +256,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         installGestures()
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
-        channel.engine.onPictureChange = { [weak self] in
-            guard let self else { return }
-            self.needsPaint = true
-            self.requestDisplayLink()
-        }
+        // Every pane's picture change arrives with its block: this grid repaints
+        // for the pane it paints, and for the incoming side of a swipe.
+        channel.pictureChanged = { [weak self] block in self?.engineChanged(block) }
         channel.snapshotRestored = { [weak self] block in
             guard let self else { return }
             self.paneTransition.snapshotRestored(of: block, expecting: self.paneStepping?.shown())
+            guard block == self.channel.presented else { return }
             self.needsPaint = true
             self.requestDisplayLink()
         }
+        if let shown = channel.rex?.latest.shown { present(shown) }
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
                                                name: AppFont.didRebuildNotification, object: nil)
     }
@@ -269,6 +277,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     @objc private func fontPreferencesChanged() {
         metrics = SSHTerminalCellMetrics.codeFont()
         renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))
+        panePreview.fontPreferencesChanged()
         needsFullPaint = true
         needsPaint = true
         requestDisplayLink()
@@ -366,7 +375,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         displayLinkGeneration &+= 1
         startDisplayLinkIfNeeded()
         displayLink?.isPaused = false
-        publishDisplayLinkDebug()
     }
 
     private func startDisplayLinkIfNeeded() {
@@ -383,13 +391,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     private func pauseDisplayLink() {
         displayLink?.isPaused = true
-        publishDisplayLinkDebug()
     }
 
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
-        publishDisplayLinkDebug()
     }
 
     /// A finger is on local history, or it is still coasting.
@@ -402,14 +408,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             ? SSHTerminalDisplayLinkPolicy.scrollingRate
             : SSHTerminalDisplayLinkPolicy.normalRate
         displayLink?.preferredFrameRateRange = desired
-    }
-
-    private func publishDisplayLinkDebug() {
-        #if DEBUG
-        accessibilityValue = isDisplayLinkRunning
-            ? "display-link running ticks \(displayLinkTickCount)"
-            : "display-link stopped ticks \(displayLinkTickCount)"
-        #endif
     }
 
     override func willMove(toSuperview newSuperview: UIView?) {
@@ -498,11 +496,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         bar?.tintColor = foreground
         applyKeyStripTheme(background: background)
         let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
-        channel.engine.setColors(
+        channel.setColors(SSHTerminalEngine.Colors(
             foreground: foreground.terminalRGB, background: background.terminalRGB, dark: dark,
             palette: (colors?.palette ?? [:]).mapValues { GhosttyColorRgb(r: $0.r, g: $0.g, b: $0.b) },
             cursor: colors?.cursor.map { GhosttyColorRgb(r: $0.r, g: $0.g, b: $0.b) }
-        )
+        ))
         historyScroll.indicatorStyle = dark ? .white : .black
         needsFullPaint = true
         needsPaint = true
@@ -1242,10 +1240,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// False past either end.
     @discardableResult
     func stepPane(_ delta: Int) -> Bool {
-        guard !paneTransition.isAwaitingCreation, let stepping = paneStepping, let name = stepping.neighbour(delta),
-              stepping.step(delta) else { return false }
-        paneTransition.slide(toward: delta, neighbour: name)
-        return true
+        guard !paneTransition.isAwaitingCreation, let stepping = paneStepping, let name = stepping.neighbour(delta)
+        else { return false }
+        // The slide names the pane first, so the screen keeps the old one until
+        // the slide ends; then the session moves, and the slide presents it.
+        paneTransition.slide(toward: delta, neighbour: name, target: stepping.target(delta))
+        return stepping.step(delta)
     }
 
     /// Opens a new pane after the shown one with VoiceOver's action or the
@@ -1258,6 +1258,75 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         guard paneTransition.phase == .idle, let stepping = paneStepping, stepping.newPane() else { return false }
         paneTransition.slideToNewPane()
         return true
+    }
+
+    /// Paints `block`'s terminal from now on: the pane a slide ended on, or the
+    /// pane the session says it shows. The keyboard's document, the hold, the
+    /// highlight, and what the password-prompt check last saw belong to the pane
+    /// left, so they start over.
+    func present(_ block: String?) {
+        let changed = block != channel.presented
+        if changed { channel.present(block) }
+        // What VoiceOver reads under the terminal, and what a driven run checks
+        // against the switcher: the name of the pane actually on the grid. It is
+        // set even when the channel already paints that pane (a grid built over a
+        // screen that has been on a pane all along).
+        paintedPaneName = block.flatMap { block in
+            channel.rex?.latest.panes.first { $0.blockID == block }?.name
+        }
+        accessibilityValue = paintedPaneName
+        guard changed else { return }
+        dragTarget = nil
+        clearHighlight()
+        resetTextInput()
+        resetSecureEntryGate()
+        needsFullPaint = true
+        needsPaint = true
+        syncHistoryScrollFromEngine()
+        requestDisplayLink()
+    }
+
+    /// Paints the pane the session shows, when it is not the one on screen. The
+    /// one owner of "the pane on screen is the pane typing reaches", for every
+    /// switch that has no slide of its own (a pane closed in Rex, a refusal
+    /// recovered) and for the end of every slide.
+    func presentShownPane() {
+        guard let shown = channel.rex?.latest.shown else { return }
+        present(shown)
+    }
+
+    /// The incoming side for `block`, when its screen is already up: the
+    /// transition slides it in place of the pane card. Nil (and no incoming
+    /// side) when that pane is not live yet.
+    func incomingPane(for block: String?) -> SSHTerminalPanePreview? {
+        guard let block, channel.isReady(block) else {
+            panePreview.detach()
+            return nil
+        }
+        panePreview.adopt(self)
+        panePreview.show(block: block, channel: channel)
+        return panePreview
+    }
+
+    /// The incoming side is in the view hierarchy now: it paints on the next
+    /// tick, which is the first it can (a view outside a window cannot draw).
+    func incomingPaneDidInstall() {
+        needsPaint = true
+        requestDisplayLink()
+    }
+
+    /// The swipe is over: the incoming side is neither needed nor drawn, and the
+    /// renderer it built goes with it.
+    func dropIncomingPane() {
+        panePreview.detach()
+    }
+
+    /// A terminal's picture changed. Repaint for the pane this grid paints and
+    /// for the one it is sliding in; a pane it never shows costs nothing.
+    private func engineChanged(_ block: String?) {
+        guard block == channel.presented || (block != nil && block == panePreview.block) else { return }
+        needsPaint = true
+        requestDisplayLink()
     }
 
     private func updatePaneStepping() {
@@ -1798,8 +1867,27 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 paneTransition.frameDrawn()
             }
         }
+        // The incoming side of a swipe is a pane of its own, on its own engine:
+        // it draws on this grid's tick so the screen keeps one display link. A
+        // layer that was just attached has no drawable yet, so a tick that could
+        // not draw it keeps the link alive until one can.
+        if panePreview.presentIfNeeded(scale: max(traitCollection.displayScale, 1)) == .waiting {
+            needsPaint = true
+            requestDisplayLink()
+        }
         updateSecureEntry()
         didDrawFrame()
+    }
+
+    /// Another pane's picture is not this one's: the check that last saw a
+    /// password prompt compares a change count and a cursor row, and those can
+    /// collide across two engines, so a present starts it over.
+    private func resetSecureEntryGate() {
+        securePrompt = nil
+        secureOffChanges = nil
+        secureCheckedChanges = -1
+        secureCheckedRow = -1
+        applySecureEntry(false)
     }
 
     /// Turns the keyboard's secure entry on while the live screen asks for a
@@ -1943,7 +2031,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             } else if view.displayLinkGeneration == generation {
                 view.pauseDisplayLink()
             }
-            view.publishDisplayLinkDebug()
         }
     }
 }
@@ -2010,7 +2097,7 @@ private final class SSHTerminalHistoryScrollView: UIScrollView {
 
 /// Metal drawable host. Kept as a child so history rubber-band can translate
 /// the grid without moving the native scroll view on top of it.
-private final class SSHTerminalMetalHostView: UIView {
+final class SSHTerminalMetalHostView: UIView {
     let metalLayer = CAMetalLayer()
 
     override init(frame: CGRect) {

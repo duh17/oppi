@@ -124,6 +124,10 @@ struct RexSessionState: Equatable, Sendable {
     var panes: [Pane]
     /// The pane on screen, or the one just asked for.
     var shown: String
+    /// The panes whose data connection is open: the ones a swipe can slide in
+    /// with their own screen. A pane whose lane closed is not here, and its
+    /// screen is frozen where it stopped.
+    var live: Set<String> = []
     /// The shown pane's window, one cell per pane.
     var minimap: [RexSessionLayout.Cell]
 
@@ -165,7 +169,12 @@ final class RexSessionModel {
         reader = Task { [weak self] in
             for await next in updates {
                 guard let self else { return }
-                if next != state { state = next }
+                let changed = next != state
+                if changed { state = next }
+                // A pane list that moved (a pane opened, one closed, a window
+                // reordered) moves the live window with it.
+                if isWarming { keepLivePanes() }
+                if changed { onShown?(next.shown) }
             }
         }
     }
@@ -175,6 +184,49 @@ final class RexSessionModel {
     /// The session as of this moment. `state` follows it a main-actor turn
     /// later, so two swipes in a row read this to go two panes.
     var latest: RexSessionState { connection.state }
+
+    /// The screen shows this session: its shown pane and the panes beside it in
+    /// strip order stay live, so a swipe slides in a pane that already has its
+    /// screen. Off screen, only the shown pane stays live — the terminal is
+    /// still running, and nothing else may hold a stream.
+    var isWarming = false {
+        didSet {
+            guard isWarming != oldValue else { return }
+            keepLivePanes()
+        }
+    }
+
+    /// The panes to keep streaming: the shown one and its neighbours, at most
+    /// `RexSessionConnection.maximumLivePanes` (the strip's order, nearest
+    /// first).
+    func keepLivePanes() {
+        var blocks = Set([latest.shown])
+        if isWarming {
+            var delta = 1
+            while blocks.count < RexSessionConnection.maximumLivePanes, delta <= 2 {
+                for step in [delta, -delta] {
+                    if let pane = latest.neighbour(offsetBy: step) { blocks.insert(pane.blockID) }
+                }
+                delta += 1
+            }
+        }
+        connection.keepLive(blocks)
+    }
+
+    /// A pane off screen whose stream cannot be read: its lane is dropped and
+    /// the screen falls back to that pane's card if a swipe reaches it.
+    func paneFailed(_ block: String) {
+        connection.dropLane(block)
+    }
+
+    /// The session's state changed, with the pane it shows: the screen that shows
+    /// this session puts that pane on the grid (`SSHTerminalGridView
+    /// .presentShownPane`), so the pane that gets input is always the pane that is
+    /// drawn. Every way of changing pane ends here — a swipe, a menu choice, a
+    /// minimap cell, VoiceOver, a pane closing in Rex, a refusal recovering, a new
+    /// pane — and so does a change that leaves the pane alone (a title, a status),
+    /// which the grid ignores because the pane is already the one it paints.
+    @ObservationIgnored var onShown: ((String) -> Void)?
 
     /// Which way Rex is reached: over Tailscale or the SSH bridge.
     var route: RexRoute { connection.route }
@@ -189,12 +241,20 @@ final class RexSessionModel {
     /// request was not taken: the pane is the one already asked for, or the
     /// session does not have it.
     @discardableResult
-    func show(_ blockID: String) -> Bool { connection.show(blockID) }
+    func show(_ blockID: String) -> Bool {
+        let accepted = connection.show(blockID)
+        if accepted { keepLivePanes() }
+        return accepted
+    }
 
     /// Moves `delta` panes along the strip from the pane last asked for (so
     /// two quick swipes go two panes); false past either end.
     @discardableResult
-    func step(_ delta: Int) -> Bool { connection.step(delta) }
+    func step(_ delta: Int) -> Bool {
+        let stepped = connection.step(delta)
+        if stepped { keepLivePanes() }
+        return stepped
+    }
 
     /// Opens a new pane after the one last asked for and shows it, through
     /// the same `show` as any switch. Returns the new pane's name. The session

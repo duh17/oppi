@@ -511,25 +511,26 @@ final class RexHostTransport: RexTransport {
 }
 
 /// One Rex session shown as a terminal, over the connection to its host:
-/// one control connection, attached to the session, and one data connection
-/// for the pane on screen.
+/// one control connection attached to the session, and one data connection per
+/// pane the screen keeps live.
 ///
-/// The shown pane's output comes on the data connection, which first opens on
-/// the first resize so the snapshot Rex starts it with is already at this
-/// screen's size. This client owns the pane while it shows it
-/// (`session.own_block`, take), so the pane follows the phone's size; a pane
-/// left behind is handed back (`session.disown_block`), and when the
-/// connection drops Rex hands the rest back to the client in line, such as the
-/// Mac app. It never focuses anything: the host's own focus stays where it is.
+/// A pane's data connection first opens on the first resize, so the snapshot
+/// Rex starts it with is already at this screen's size. This client owns a pane
+/// while its stream does (`session.own_block`, take), so the pane follows the
+/// phone's size; a pane whose lane closes is handed back
+/// (`session.disown_block`), and when the connection drops Rex hands the rest
+/// back to the client in line, such as the Mac app. It never focuses anything:
+/// the host's own focus stays where it is.
 ///
-/// Showing another pane (`show`) takes it, sizes it, closes the data
-/// connection of the one before and opens one for the new pane, whose snapshot
-/// replaces the grid (`SSHTerminalEventQueue.pushSnapshot`). Switches run one
-/// at a time, so a fast double swipe ends on the last pane asked for, and the
-/// stream of a pane left behind is dropped by generation: it is never fed to
-/// the grid and never ends the terminal. The pane switcher and minimap follow
-/// `session.view`, read again at each `session_view_changed` (at most one read
-/// at a time, again if another came meanwhile, an older answer dropped).
+/// Showing another pane (`show`) only moves what typing and sizing go to: the
+/// pane's stream is already open when the screen keeps it live
+/// (`keepLive` — the shown pane and its neighbours, `maximumLivePanes`), so its
+/// engine already has its screen and nothing is reloaded. Lanes open and close
+/// one at a time, so a fast double swipe ends on the last pane asked for, and
+/// the stream of a pane whose lane closed is dropped by generation: it is never
+/// fed to the grid and never ends the terminal. The pane switcher and minimap
+/// follow `session.view`, read again at each `session_view_changed` (at most one
+/// read at a time, again if another came meanwhile, an older answer dropped).
 ///
 /// Typing goes to the pane as `com.superlogical.terminal.write`, one call at a
 /// time (the channel waits for each), so keys keep their order. Side commands
@@ -538,6 +539,11 @@ final class RexHostTransport: RexTransport {
 final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// A screen that never sizes the terminal still gets its pane.
     static let firstResizeWait: Duration = .milliseconds(1500)
+    /// The most panes one Rex screen keeps streaming: the pane it shows and its
+    /// two neighbours in strip order. Each has an engine, a renderer's worth of
+    /// screen, and its own data stream, so the number is the memory and battery
+    /// budget of a swipe (`SSHTerminalPanePreview` draws the incoming one).
+    static let maximumLivePanes = 3
 
     /// The last size the screen asked for, which each pane taken is given
     /// before its snapshot is made.
@@ -557,21 +563,42 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
     }
 
+    /// One pane's data connection: its socket, the parser that splits its
+    /// snapshot from its output, and the generation its events carry so a
+    /// replaced stream's bytes are dropped.
+    private struct Lane: Sendable {
+        var stream: (any RexSocket)?
+        /// The parser that splits this pane's snapshot from its output. Set when
+        /// the lane is made, so a lane always has one.
+        var parser: RexDataStream
+        var generation: Int
+        /// Its reader, pooled with the terminal's queue's backpressure.
+        var flow: SSHPTYInboundFlow?
+    }
+
     private struct State: Sendable {
         /// The pane asked for last: typing and sizing go here.
         var requested: String
-        /// The pane the current data connection carries.
-        var streamBlock: String?
+        /// The panes the screen keeps streaming: the shown one and, while the
+        /// screen shows this session, its neighbours (at most
+        /// `maximumLivePanes`). Each has a lane; nothing else does.
+        var live: Set<String> = []
         /// Panes this client has taken for size and not handed back.
         var owned: Set<String> = []
         /// The size each owned pane was last given, so a switch does not
         /// size again a pane the screen just sized (the first pane, on the
         /// first layout).
         var sized: [String: Geometry] = [:]
-        /// The pane the data connection carried before the switch now under
-        /// way, to go back to if Rex refuses the new one.
-        var fallback: String?
-        var generation = 0
+        /// One lane per live pane, by block.
+        var lanes: [String: Lane] = [:]
+        /// Panes whose lane could not open (Rex refused it, its stream failed,
+        /// or its snapshot was unreadable). A pane that leaves the window is
+        /// forgotten here, so a way back tries again.
+        var deadLanes: Set<String> = []
+        /// How many times a pane's lane was opened since it was last shown,
+        /// so a pane that keeps failing cannot spin.
+        var attempts: [String: Int] = [:]
+        var nextGeneration = 0
         /// Generations whose pane Rex closed. The socket's end follows the
         /// close frame (over the bridge, `nc` exits when Rex closes its
         /// socket): that end is the pane leaving, not the connection failing.
@@ -580,19 +607,23 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// the view). The layout held here is stale until the next view is
         /// read, so a pane in it is not a pane that is still there.
         var closedBlocks: Set<String> = []
-        var stream: (any RexSocket)?
-        var parser: RexDataStream?
+        /// Sockets and readers whose lane is gone, released outside the lock.
+        var graveyard: [(any RexSocket)?] = []
+        var retiredFlows: [SSHPTYInboundFlow] = []
         /// The first resize came (or its wait ran out): data may open.
         var armed = false
-        /// The switch loop is running.
+        /// The lane loop is running.
         var switching = false
         var ended = false
         var geometry: Geometry?
+        /// The pane whose stream last said HELLO: the one that was on screen
+        /// before the switch now under way, which recovery goes back to.
+        var lastServed: String?
         /// Panes whose program exited, with its exit status. Rex closes such a
         /// pane by default; until it does, the pane stays where it is.
         var exitCodes: [String: Int] = [:]
-        /// When the shown pane's stream was asked for, until its snapshot came.
-        var snapshotAsked: ContinuousClock.Instant?
+        /// When a pane's stream was asked for, until its snapshot came.
+        var snapshotAsked: [String: ContinuousClock.Instant] = [:]
 
         var layout: RexSessionLayout?
         var revision: Int?
@@ -606,6 +637,66 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         var records: [String: [SSHTerminalPaneRecord]] = [:]
         /// Panes whose records an event already set: an older read does not overwrite them.
         var recordsTouched: Set<String> = []
+
+        /// The panes whose lanes should exist: the window, minus the panes Rex
+        /// closed and the ones whose lane failed, never more than
+        /// `RexSessionConnection.maximumLivePanes`, always including the pane
+        /// on screen.
+        var wantedLanes: Set<String> {
+            var wanted = live.subtracting(closedBlocks).subtracting(deadLanes)
+            if !closedBlocks.contains(requested) { wanted.insert(requested) }
+            if let layout { wanted = wanted.filter { layout.contains($0) } }
+            return capped(wanted)
+        }
+
+        /// Panes to open a lane for, the pane on screen first. A pane whose
+        /// lane failed twice while it was in the window waits for the window to
+        /// leave it and come back.
+        var lanesToOpen: [String] {
+            let wanted = wantedLanes
+            return ordered(wanted).filter { lanes[$0] == nil && !deadLanes.contains($0) && (attempts[$0] ?? 0) < 2 }
+        }
+
+        /// Lanes to close: panes the window no longer keeps.
+        var lanesToClose: [String] {
+            let wanted = wantedLanes
+            return lanes.keys.filter { !wanted.contains($0) }
+        }
+
+        var laneWork: Bool {
+            !lanesToOpen.isEmpty || !lanesToClose.isEmpty || !owned.subtracting(wantedLanes).isEmpty
+        }
+
+        /// Forgets `block`'s lane, queuing its socket and its reader for release
+        /// outside the lock (`reap`).
+        mutating func dropLane(_ block: String) {
+            graveyard.append(lanes[block]?.stream)
+            lanes[block]?.flow.map { retiredFlows.append($0) }
+            lanes[block] = nil
+        }
+
+        /// `blocks` in strip order, nearest the pane on screen first.
+        func ordered(_ blocks: Set<String>) -> [String] {
+            let order = layout?.panes.map(\.blockID) ?? []
+            let start = order.firstIndex(of: requested)
+            func distance(_ block: String) -> Int {
+                guard let start, let at = order.firstIndex(of: block) else { return Int.max }
+                return abs(at - start)
+            }
+            func position(_ block: String) -> Int { order.firstIndex(of: block) ?? Int.max }
+            return blocks.sorted { left, right in
+                (distance(left), position(left)) < (distance(right), position(right))
+            }
+        }
+
+        /// `blocks` kept to `RexSessionConnection.maximumLivePanes`, the pane on
+        /// screen and the ones nearest it.
+        func capped(_ blocks: Set<String>) -> Set<String> {
+            guard blocks.count > RexSessionConnection.maximumLivePanes else { return blocks }
+            var kept: Set<String> = [requested]
+            for block in ordered(blocks) where kept.count < RexSessionConnection.maximumLivePanes { kept.insert(block) }
+            return kept
+        }
     }
 
     let sessionID: String
@@ -679,11 +770,51 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             guard !state.ended, blockID != state.requested, !state.closedBlocks.contains(blockID) else { return (false, false) }
             if let layout = state.layout, !layout.contains(blockID) { return (false, false) }
             state.requested = blockID
+            state.live.insert(blockID)
+            // A pane asked for gets its stream again, even if one failed before.
+            state.deadLanes.remove(blockID)
+            state.attempts[blockID] = nil
+            state.live = state.capped(state.live)
             publish(state)
             return (true, startSwitching(&state))
         }
-        if start { Task { await runSwitches() } }
+        if start { Task { await runLanes() } }
         return accepted
+    }
+
+    /// The screen says which panes to keep streaming: the shown one and its
+    /// neighbours (`RexSessionModel.keepLivePanes`), or the shown one alone when
+    /// the screen goes away. Idempotent, so the screen can call it as often as
+    /// its state changes.
+    func keepLive(_ blocks: Set<String>) {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended else { return false }
+            var next = state.capped(blocks.union([state.requested]))
+            if let layout = state.layout { next = next.filter { layout.contains($0) } }
+            guard next != state.live else { return false }
+            // A pane that leaves the window is forgotten, so a way back to it
+            // tries its stream again.
+            for block in state.live.subtracting(next) {
+                state.deadLanes.remove(block)
+                state.attempts[block] = nil
+            }
+            state.live = next
+            return startSwitching(&state)
+        }
+        if start { Task { await runLanes() } }
+    }
+
+    /// A pane's lane has failed: drop it and let the screen fall back to that
+    /// pane's card if a swipe reaches it.
+    func dropLane(_ block: String) {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended else { return false }
+            state.dropLane(block)
+            state.deadLanes.insert(block)
+            return startSwitching(&state)
+        }
+        reap()
+        if start { Task { await runLanes() } }
     }
 
     /// Shows the pane `delta` places along the strip from the one last asked
@@ -760,17 +891,27 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             cellWidth: pixelWidth >= columns && pixelHeight >= rows ? pixelWidth / columns : nil,
             cellHeight: pixelWidth >= columns && pixelHeight >= rows ? pixelHeight / rows : nil
         )
-        let target = core.withLock { state -> String in
+        // Every pane the screen keeps live is this screen's size: a swipe to a
+        // neighbour must not reflow it, and Rex lays out a pane at the size its
+        // owner asks for.
+        let (targets, shown) = core.withLock { state -> ([String], String) in
             state.geometry = geometry
-            return state.requested
+            return ([state.requested] + state.owned.subtracting([state.requested]).sorted(), state.requested)
         }
-        do {
-            _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: target))
-            core.withLock { state in
-                if state.owned.contains(target) { state.sized[target] = geometry }
+        for target in targets {
+            do {
+                _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: target))
+                core.withLock { state in
+                    if state.owned.contains(target) { state.sized[target] = geometry }
+                }
+            } catch RexClientError.refused {
+                // A pane that closed meanwhile, as for a write.
+            } catch {
+                // The pane on screen failing is this terminal failing, as it
+                // always was; a neighbour only loses its lane.
+                guard target == shown else { dropLane(target); continue }
+                throw error
             }
-        } catch RexClientError.refused {
-            // A pane that closed meanwhile, as for a write.
         }
         arm()
     }
@@ -788,25 +929,31 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     var sideCommandsUnavailable: String? { transport.sideCommandsUnavailable }
 
     func close() {
-        let stream = core.withLock { state -> (any RexSocket)? in
-            state.ended = true
-            state.generation += 1
-            defer { state.stream = nil }
-            return state.stream
-        }
+        let streams = endLanes()
         updateSink.finish()
-        stream?.close()
+        streams.forEach { $0?.close() }
         transport.close()
     }
 
     func cancel() async {
-        let stream = core.withLock { state -> (any RexSocket)? in
-            state.ended = true
-            return state.stream
-        }
+        let streams = endLanes()
         updateSink.finish()
-        stream?.close()
+        streams.forEach { $0?.close() }
         await transport.cancel()
+    }
+
+    /// The connection is over: every pane's stream ends with it. Nothing opens
+    /// another (the loop's `ended` check), and a stream that ends anyway is not
+    /// the pane's.
+    private func endLanes() -> [(any RexSocket)?] {
+        core.withLock { state in
+            state.ended = true
+            state.nextGeneration += 1
+            for block in Array(state.lanes.keys) { state.dropLane(block) }
+            state.deadLanes = []
+            defer { state.graveyard = [] }
+            return state.graveyard
+        }
     }
 
     // MARK: - Switching panes
@@ -816,115 +963,137 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         return ["session_id": sessionID, "block_id": target, "args": args]
     }
 
-    /// Data may open: the first time, for the pane asked for; after that,
-    /// again for any pane asked for since.
+    /// Data may open: the first time, for the panes the screen keeps live;
+    /// after that, again for whatever changed since.
     private func arm() {
         let start = core.withLock { state -> Bool in
             guard !state.ended else { return false }
             state.armed = true
             return startSwitching(&state)
         }
-        if start { Task { await runSwitches() } }
+        if start { Task { await runLanes() } }
     }
 
-    /// Decides, under the lock, whether the caller starts the switch loop:
-    /// data is allowed, the pane on screen is not the one asked for, and no
+    /// Decides, under the lock, whether the caller starts the lane loop: data
+    /// is allowed, the set of lanes it wants is not the set it has, and no
     /// loop is running.
     private func startSwitching(_ state: inout State) -> Bool {
-        guard state.armed, !state.ended, !state.switching, state.streamBlock != state.requested else { return false }
+        guard state.armed, !state.ended, !state.switching, state.laneWork else { return false }
         state.switching = true
         return true
     }
 
-    /// Switches until the data connection carries the pane asked for last,
-    /// then hands back every pane taken and not shown (a switch overtaken
-    /// after its pane was taken would otherwise leave it at this screen's
-    /// size). Both run in this loop, so no switch starts while a hand-back
-    /// is in flight.
-    private func runSwitches() async {
-        enum Work { case done, show(String), handBack([String]) }
+    /// Opens and closes lanes until they are exactly the panes the screen keeps
+    /// live: one open at a time, then the panes that dropped out of the window
+    /// handed back. A pane taken for a lane that then goes quiet is handed back
+    /// here too, so nothing stays owned at this screen's size.
+    private func runLanes() async {
         while true {
+            enum Work {
+                case done
+                case open(String)
+                case close([String])
+                case handBack([String])
+            }
             let work = core.withLock { state -> Work in
                 guard !state.ended, state.armed else {
                     state.switching = false
                     return .done
                 }
-                if state.streamBlock != state.requested { return .show(state.requested) }
-                if let shown = state.streamBlock {
-                    let behind = state.owned.subtracting([shown])
-                    if !behind.isEmpty {
-                        state.owned = [shown]
-                        for block in behind { state.sized[block] = nil }
-                        return .handBack(Array(behind))
-                    }
+                let extra = state.lanesToClose
+                if !extra.isEmpty { return .close(extra) }
+                if let next = state.lanesToOpen.first { return .open(next) }
+                // A pane taken for size that no lane carries goes back.
+                let behind = state.owned.subtracting(state.wantedLanes)
+                if !behind.isEmpty {
+                    state.owned = behind.isEmpty ? state.owned : state.owned.subtracting(behind)
+                    for block in behind { state.sized[block] = nil }
+                    return .handBack(Array(behind))
                 }
                 state.switching = false
                 return .done
             }
-            let block: String
             switch work {
             case .done:
+                reap()
                 return
             case .handBack(let behind):
+                reap()
                 // Best effort: a pane that closed has nothing to give back.
                 _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": behind])
-                continue
-            case .show(let next):
-                block = next
-            }
-            do {
-                try await switchData(to: block)
-            } catch {
-                // Rex refused the pane: it closed before this terminal heard.
-                // Anything else is the connection failing.
-                enum Recovery { case carryOn, ended, failed }
-                let recovery = core.withLock { state -> Recovery in
-                    guard case RexClientError.refused = error, !state.ended else { return .failed }
-                    // A newer request replaced this one while it waited; it stands.
-                    guard state.requested == block else { return .carryOn }
-                    state.closedBlocks.insert(block)
-                    // Back to the pane on screen if it is still there (the one
-                    // before this switch, if its stream already gave way), else
-                    // the first pane that is; with none left there is nothing to show.
-                    let streaming: String? = if state.streamBlock == block {
-                        state.fallback.flatMap { state.closedBlocks.contains($0) ? nil : $0 }
-                    } else {
-                        state.streamBlock.flatMap { shown in
-                            !state.closedBlocks.contains(shown) && !state.retired.contains(state.generation) ? shown : nil
-                        }
-                    }
-                    let live = state.layout?.panes.map(\.blockID).first { !state.closedBlocks.contains($0) }
-                    guard let next = streaming ?? live else { return .ended }
-                    state.requested = next
-                    publish(state)
-                    return .carryOn
+            case .close(let blocks):
+                core.withLock { state in
+                    for block in blocks { state.dropLane(block) }
                 }
-                switch recovery {
-                case .carryOn:
-                    break
-                case .ended:
-                    core.withLock { $0.switching = false }
-                    end("The pane closed in Rex.")
-                    return
-                case .failed:
-                    core.withLock { $0.switching = false }
-                    end(error.localizedDescription)
-                    return
+                reap()
+                // Best effort, as a hand-back: the pane may be gone already.
+                _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": blocks])
+                core.withLock { state in for block in blocks { state.owned.remove(block); state.sized[block] = nil } }
+            case .open(let block):
+                do {
+                    try await openLane(block)
+                } catch {
+                    guard recover(from: error, opening: block) else { return }
                 }
+                reap()
             }
         }
     }
 
-    /// Takes `block` for size (if this client has not), sizes it to the
-    /// screen (unless it already has this size), then swaps the data
-    /// connection. The new connection's channel, its bridge, and its
-    /// WebSocket upgrade need no ticket, so they open while `data.connect`
-    /// issues one; HELLO waits for it. The pane before stops reaching the grid
-    /// once the swap starts (it is under the transition's cover by then). A
-    /// request overtaken while this waits on Rex closes the new connection
-    /// before it says HELLO.
-    private func switchData(to block: String) async throws {
-        func wanted() -> Bool { core.withLock { !$0.ended && $0.requested == block } }
+    /// `block`'s lane could not open. Rex refusing it means the pane closed
+    /// before this terminal heard; for the pane on screen that moves to its
+    /// neighbour, as it always has, and anything else is the connection
+    /// failing. A pane off screen only loses its lane.
+    private func recover(from error: any Error, opening block: String) -> Bool {
+        enum Recovery { case carryOn, ended, failed }
+        let recovery = core.withLock { state -> Recovery in
+            state.dropLane(block)
+            state.deadLanes.insert(block)
+            // A pane off screen only loses its lane, whatever went wrong: the
+            // terminal goes on showing the pane it has.
+            guard state.requested == block else { return .carryOn }
+            guard case RexClientError.refused = error, !state.ended else { return .failed }
+            state.closedBlocks.insert(block)
+            // Back to the pane that was on screen if it is still there, else the
+            // nearest one by strip order, preferring a pane whose lane is open
+            // (the best evidence Rex still has it); with none left there is
+            // nothing to show. Lanes and ownership are about streams: a lane that
+            // closed because the window moved on is not a pane that went away.
+            let order = state.layout?.panes.map(\.blockID) ?? []
+            let alive = Set(order).subtracting(state.closedBlocks)
+            let streaming = alive.intersection(state.lanes.keys)
+            let before = state.lastServed.flatMap { alive.contains($0) ? $0 : nil }
+            let next = before ?? state.ordered(streaming).first ?? state.ordered(alive).first
+            guard let next else { return .ended }
+            state.requested = next
+            state.live.insert(next)
+            state.live = state.capped(state.live)
+            publish(state)
+            return .carryOn
+        }
+        switch recovery {
+        case .carryOn:
+            return true
+        case .ended:
+            core.withLock { $0.switching = false }
+            end("The pane closed in Rex.")
+            return false
+        case .failed:
+            core.withLock { $0.switching = false }
+            end(error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Takes `block` for size (if this client has not), sizes it to the screen
+    /// (unless it already has this size), and opens a data connection for it.
+    /// The connection's channel, its bridge, and its WebSocket upgrade need no
+    /// ticket, so they open while `data.connect` issues one; HELLO waits for it.
+    /// Another pane's lane is untouched: a switch shows a pane that is already
+    /// streaming. A request overtaken while this waits on Rex closes the new
+    /// connection before it says HELLO.
+    private func openLane(_ block: String) async throws {
+        func wanted() -> Bool { core.withLock { !$0.ended && $0.wantedLanes.contains(block) } }
         if core.withLock({ !$0.owned.contains(block) }) {
             _ = try await control.call("session.own_block", [
                 "session_id": sessionID, "block_ids": [block], "mode": "take",
@@ -937,7 +1106,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             core.withLock { $0.sized[block] = geometry }
         }
         guard wanted() else { return }
-        core.withLock { $0.snapshotAsked = .now }
+        core.withLock { state in
+            state.snapshotAsked[block] = .now
+            state.attempts[block, default: 0] += 1
+        }
         let ticketAnswer = Task { [control, sessionID] in
             try await control.call("data.connect", [
                 "session_id": sessionID, "block_id": block,
@@ -945,42 +1117,39 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             ])
         }
         let parser = RexDataStream()
-        // From here the old pane's stream is dead to the grid: its events
-        // carry the generation they were opened under.
-        let (old, generation) = core.withLock { state -> ((any RexSocket)?, Int) in
-            state.generation += 1
-            let old = state.stream
-            // The pane on screen before the first of switches that overtake
-            // each other: a pane overtaken before HELLO never drew.
-            if state.fallback == nil { state.fallback = state.streamBlock }
-            state.stream = nil
-            state.parser = parser
-            state.streamBlock = block
-            return (old, state.generation)
+        let flow = queue.makeFlow()
+        let generation = core.withLock { state -> Int in
+            state.nextGeneration += 1
+            state.lanes[block] = Lane(stream: nil, parser: parser, generation: state.nextGeneration, flow: flow)
+            return state.nextGeneration
         }
-        old?.close()
         /// This connection will never say HELLO: its end is not the pane's.
         func abandon(_ stream: (any RexSocket)?) {
             core.withLock { state in
-                guard state.generation == generation else { return }
+                guard state.lanes[block]?.generation == generation else { return }
                 state.retired.insert(generation)
-                state.stream = nil
+                state.dropLane(block)
             }
             stream?.close()
         }
         // The socket opens and upgrades while the ticket is issued.
         let stream: any RexSocket
         do {
-            stream = try await transport.openData(inboundFlow: queue.flow) { [weak self] event in
-                self?.receiveData(event, generation: generation)
+            stream = try await transport.openData(inboundFlow: flow) { [weak self] event in
+                self?.receiveData(event, block: block, generation: generation)
             }
         } catch {
             ticketAnswer.cancel()
+            core.withLock { state in
+                guard state.lanes[block]?.generation == generation else { return }
+                state.dropLane(block)
+            }
+            reap()
             throw error
         }
         let kept = core.withLock { state -> Bool in
-            guard !state.ended, state.generation == generation else { return false }
-            state.stream = stream
+            guard !state.ended, state.lanes[block]?.generation == generation else { return false }
+            state.lanes[block]?.stream = stream
             return true
         }
         guard kept else {
@@ -1007,52 +1176,94 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             return
         }
         let current = core.withLock { state -> Bool in
-            guard !state.ended, state.generation == generation else { return false }
-            state.fallback = nil
+            guard !state.ended, state.lanes[block]?.generation == generation else { return false }
+            state.deadLanes.remove(block)
             return true
         }
         guard current else { return }
         try await stream.send(RexDataStream.hello(ticket: bytes))
+        // A rotation or keyboard resize that landed while this lane opened was
+        // not for a lane yet: give the pane the size the screen has now.
+        if let geometry = core.withLock({ state in state.sized[block] == state.geometry ? nil : state.geometry }) {
+            _ = try? await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: block))
+            core.withLock { $0.sized[block] = geometry }
+        }
     }
 
-    /// The data connection's events, on the socket's thread and in order, so
-    /// the snapshot and output reach the queue in the order Rex sent them.
-    /// Events of a connection that was replaced (`generation`) are dropped.
-    private func receiveData(_ event: RexSocketEvent, generation mine: Int) {
+    /// Closes the sockets of lanes that are gone, outside the lock: a socket's
+    /// close can call back into this connection.
+    private func reap() {
+        let (sockets, flows) = core.withLock { state -> ([(any RexSocket)?], [SSHPTYInboundFlow]) in
+            defer {
+                state.graveyard = []
+                state.retiredFlows = []
+            }
+            return (state.graveyard, state.retiredFlows)
+        }
+        for socket in sockets { socket?.close() }
+        for flow in flows { queue.retire(flow) }
+    }
+
+    /// A lane's events, on the socket's thread and in order, so a pane's
+    /// snapshot and output reach the queue in the order Rex sent them. Events
+    /// of a stream that was replaced (`generation`) are dropped.
+    private func receiveData(_ event: RexSocketEvent, block: String, generation mine: Int) {
         switch event {
         case .message(let message):
-            let (outputs, block) = core.withLock { state -> ([RexDataStream.Output], String?) in
-                guard !state.ended, state.generation == mine, var parser = state.parser else { return ([], nil) }
+            let outputs = core.withLock { state -> [RexDataStream.Output] in
+                guard !state.ended, var lane = state.lanes[block], lane.generation == mine else { return [] }
+                var parser = lane.parser
                 let outputs = parser.receive(message)
-                state.parser = parser
-                return (outputs, state.streamBlock)
+                lane.parser = parser
+                state.lanes[block] = lane
+                return outputs
             }
             for output in outputs {
                 switch output {
                 case .snapshot(let snapshot):
                     // The screen is up (READY); its history follows.
-                    if let asked = core.withLock({ state in defer { state.snapshotAsked = nil }; return state.snapshotAsked }) {
+                    if let asked = core.withLock({ $0.snapshotAsked.removeValue(forKey: block) }) {
                         let elapsed = ContinuousClock.now - asked
                         RexRouteLog.snapshot(route, milliseconds: Int(elapsed / .milliseconds(1)), bytes: snapshot.count)
                     }
+                    core.withLock { state in
+                        // It drew on screen: this is the pane a recovery goes back
+                        // to. A neighbour's snapshot is not.
+                        if block == state.requested, !state.closedBlocks.contains(block) { state.lastServed = block }
+                    }
                     queue.pushSnapshot(snapshot, block: block)
                 case .snapshotRecords(let records): queue.pushSnapshotRecords(records, block: block)
-                case .output(let bytes): queue.push(.data(bytes))
-                case .exited(let code):
-                    if let block { core.withLock { $0.exitCodes[block] = code } }
+                case .output(let bytes): queue.pushData(bytes, block: block)
+                case .exited(let code): core.withLock { $0.exitCodes[block] = code }
                 case .paneClosed:
                     // The socket's end follows this frame; it is not a failure.
                     core.withLock { _ = $0.retired.insert(mine) }
-                    if let block { closed(block, reason: "The pane closed in Rex.") }
-                case .ended(let reason): end(reason)
+                    closed(block, reason: "The pane closed in Rex.")
+                case .ended(let reason):
+                    laneEnded(block, generation: mine, reason: reason)
                 }
             }
         case .ended(let error):
-            let current = core.withLock { !$0.ended && $0.generation == mine && !$0.retired.contains(mine) }
-            if current { end(error.localizedDescription) }
+            let current = core.withLock { !$0.ended && $0.lanes[block]?.generation == mine && !$0.retired.contains(mine) }
+            if current { laneEnded(block, generation: mine, reason: error.localizedDescription) }
         case .writable:
             break
         }
+    }
+
+    /// One lane's stream is over. The pane on screen ends the terminal with the
+    /// reason, as it always has; a pane off screen only loses its lane, and the
+    /// screen falls back to that pane's card if a swipe reaches it.
+    private func laneEnded(_ block: String, generation mine: Int, reason: String) {
+        let onScreen = core.withLock { state -> Bool in
+            guard !state.ended, state.lanes[block]?.generation == mine else { return false }
+            state.dropLane(block)
+            state.deadLanes.insert(block)
+            return state.requested == block
+        }
+        reap()
+        guard onScreen else { return }
+        end(reason)
     }
 
     private func end(_ reason: String) {
@@ -1081,8 +1292,15 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         // `surviving` comes from a view that may be stale: what Rex has closed since is not in it.
         let (onScreen, alive) = core.withLock { state -> (Bool, Set<String>) in
             state.closedBlocks.insert(block)
+            // Its lane goes with it; the socket closes outside the lock.
+            state.dropLane(block)
+            state.deadLanes.insert(block)
+            state.live.remove(block)
+            state.owned.remove(block)
+            state.sized[block] = nil
             return (!state.ended && state.requested == block, surviving.subtracting(state.closedBlocks))
         }
+        reap()
         guard onScreen else { return }
         if let next = RexSessionLayout.neighbour(of: block, in: order, surviving: alive) {
             show(next)
@@ -1238,6 +1456,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         return RexSessionState(
             panes: panes,
             shown: state.requested,
+            live: Set(state.lanes.keys),
             minimap: state.layout?.minimap(around: state.requested) ?? []
         )
     }
