@@ -223,12 +223,6 @@ private enum RouterModalSitesFixtures {
     /// `SCREENSHOT_THREAD_STOPPED_COUNT` adds that many day-old stopped workers to the tree, the
     /// shape of a big thread whose live members sit among stopped ones. `SCREENSHOT_LIST_FILLER`
     /// adds that many plain idle sessions, which list above the thread.
-    /// `SCREENSHOT_THREAD_WORKING_COUNT` and `SCREENSHOT_THREAD_BLOCKED_COUNT` add that many more working
-    /// children and children waiting on a question, so the strip's status dots have a crowd to draw.
-    /// `SCREENSHOT_THREAD_AGENT_GROUPS` (up to 3) launches those added children from that many saved Agents in turn.
-    /// `SCREENSHOT_THREAD_SETTLED=1` stops every child, so the thread has no live member at all: the strip
-    /// draws its settled one line, and opening the thread lists its stopped children directly instead of
-    /// a second Stopped card.
     /// `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
     private static var threadSessions: [Session] {
         let now = Date()
@@ -253,49 +247,25 @@ private enum RouterModalSitesFixtures {
             )
         }
         let extraStopped = (Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_STOPPED_COUNT"] ?? "") ?? 0)
-        let settledChild = ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_SETTLED"] == "1"
         let oldWorkers = (0..<extraStopped).map { index in
             session(
                 "old-worker-\(index)", "Stopped worker \(index + 1)", parent: "thread-root",
                 status: .stopped, minutesAgo: 1_600 + Double(index), cost: 0.05
             )
         }
-        let extraWorking = (0..<(Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_WORKING_COUNT"] ?? "") ?? 0)).map { index in
-            session(
-                "extra-working-\(index)", "Working agent \(index + 1)", parent: "thread-root",
-                status: .busy, minutesAgo: 20 + Double(index), cost: 0.1
-            )
-        }
-        let extraBlocked = (0..<(Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_BLOCKED_COUNT"] ?? "") ?? 0)).map { index -> Session in
-            var blocked = session(
-                "extra-blocked-\(index)", "Waiting agent \(index + 1)", parent: "thread-root",
-                status: .ready, minutesAgo: 22 + Double(index), cost: 0.1
-            )
-            blocked.programStatus = ProgramStatus(state: .blocked, kind: .question, since: Date().addingTimeInterval(-120))
-            return blocked
-        }
         let fillerCount = Int(ProcessInfo.processInfo.environment["SCREENSHOT_LIST_FILLER"] ?? "") ?? 0
         let filler = (0..<fillerCount).map { index in
             session("filler-\(index)", "Filler session \(index + 1)", status: .ready, minutesAgo: 5 + Double(index), cost: 0.01)
         }
-        let agents = [("worker", "\u{1F6E0}\u{FE0F}"), ("reviewer", "\u{1F52C}"), ("scout", "\u{1F9ED}")]
-            .prefix(Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_AGENT_GROUPS"] ?? "") ?? 0)
-        let added = (oldWorkers + extraWorking + extraBlocked).enumerated().map { index, child -> Session in
-            guard !agents.isEmpty else { return child }
-            var launched = child
-            let agent = agents[agents.startIndex + index % agents.count]
-            launched.launch = SessionLaunchMetadata(agentId: agent.0, agentIcon: .emoji(agent.1))
-            return launched
-        }
-        return filler + added + [
+        return filler + oldWorkers + [
             session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
             session(
                 "child-working", "Migrate the chat routes", parent: "thread-root",
-                status: settledChild ? .stopped : .busy, minutesAgo: 40, cost: 0.61
+                status: .busy, minutesAgo: 40, cost: 0.61
             ),
             session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),
             session("grandchild", "Write the route table", parent: "child-done", status: .stopped, minutesAgo: 30, cost: 0.12),
-            session("child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: settledChild ? .stopped : .ready, minutesAgo: 25, cost: 0.2),
+            session("child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: .ready, minutesAgo: 25, cost: 0.2),
             session("plain", "Fix the flaky upload test", status: .ready, minutesAgo: 10, cost: 0.18),
         ]
     }

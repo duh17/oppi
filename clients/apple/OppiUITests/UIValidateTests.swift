@@ -49,9 +49,6 @@ final class UIValidateTests: XCTestCase {
         if let size = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_CONTENT_SIZE"], !size.isEmpty {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
         }
-        if let fixture = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"] {
-            app.launchEnvironment["OPPI_UI_VALIDATE_FIXTURE"] = fixture
-        }
         app.launch()
 
         let ready = app.descendants(matching: .any)[resolvedReady]

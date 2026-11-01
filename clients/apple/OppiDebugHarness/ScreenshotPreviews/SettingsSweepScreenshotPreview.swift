@@ -5,20 +5,16 @@ import UIKit
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `ssh-hosts`, `mcp`, `theme-import` (`theme-import-failed`: the themes request
-/// answers 404; `theme-import` with `SCREENSHOT_SWEEP_READ_DELAY` holds the
-/// page's load so a capture sees its loading row),
+/// answers 404),
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
 /// `mcp-detail` (`mcp-detail-failed`: the scope request answers 404), `mcp-failed`,
 /// `model-providers` (the connected and available groups over fixture usage),
-/// `model-providers-failed` (the status request answers 404) and
-/// `model-providers-loading` (with `SCREENSHOT_SWEEP_READ_DELAY`, which holds
-/// every read so a capture can see the load); `schedules-failed` and
-/// `schedules-loading` do the same for the schedules list. Server Settings and
-/// its pages: `server-settings` (its first open, held by
-/// `SCREENSHOT_SWEEP_READ_DELAY`), `paired-devices` (`paired-devices-offline`:
+/// `model-providers-failed` (the status request answers 404); `schedules-failed`
+/// does the same for the schedules list. Server Settings and
+/// its pages: `server-settings`, `paired-devices` (`paired-devices-offline`:
 /// the devices request answers 404) and `about` (`about-failed`: the server info
 /// request answers 404).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
@@ -164,7 +160,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? ""
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
-        SettingsSweepFixtureURLProtocol.readDelay = environment["SCREENSHOT_SWEEP_READ_DELAY"].flatMap(Double.init) ?? 0
 
         let credentials = ServerCredentials(
             host: "mac-studio.tail1234.ts.net",
@@ -207,7 +202,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed", "model-providers-loading",
+        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed",
             "server-settings", "paired-devices", "paired-devices-offline", "about", "about-failed"]
             .contains(page) {
             // The MCP and provider screens wait for `apiClientReady`, so their
@@ -235,11 +230,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         case "onboarding-tailscale":
             Self.applyTailnetFixture()
         case "ssh-hosts":
-            // Live SSH drive writes real catalog entries; a volatile fixture
-            // catalog would shadow them so the new host never appears.
-            if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] != "1" {
-                Self.seedSSHHosts()
-            }
+            Self.seedSSHHosts()
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
@@ -355,13 +346,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // `mcp-failed`: the host's probe answers 404, so the list shows its
             // one failed row.
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
-        case "model-providers", "model-providers-failed", "model-providers-loading":
-            // The status request answers 404 (`-failed`), or is held by
-            // `SCREENSHOT_SWEEP_READ_DELAY` (`-loading`).
+        case "model-providers", "model-providers-failed":
+            // The status request answers 404 (`-failed`).
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
         case "server-settings":
-            // The first open: with `SCREENSHOT_SWEEP_READ_DELAY` the page is still
-            // loading its facts, which is when it shows one row saying so.
             return stack { ServerSettingsViewController(server: server, root: root) }
         case "paired-devices", "paired-devices-offline":
             // `-offline`: the devices request answers 404, so the page says why once.
@@ -421,9 +409,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // `-failed`: the themes request answers 404, so the list shows its
             // failed row.
             return stack { ThemeImportViewController(root: root) }
-        case "schedules", "schedules-failed", "schedules-loading":
-            // `-failed`: the schedules request answers 404; `-loading` is held by
-            // `SCREENSHOT_SWEEP_READ_DELAY`.
+        case "schedules", "schedules-failed":
+            // `-failed`: the schedules request answers 404.
             return stack { ScheduleListViewController(root: root) }
         case "agents":
             return stack { AgentListViewController(root: root) }
@@ -773,20 +760,11 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     /// base a first save would write, not a tagged document.
     nonisolated(unsafe) static var piSystemPromptIsAbsent = false
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
-    /// How long a read's answer is held, so a capture can see the page loading.
-    nonisolated(unsafe) static var readDelay: TimeInterval = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        if request.httpMethod == "GET", Self.readDelay > 0 {
-            nonisolated(unsafe) let fixture = self
-            DispatchQueue.global().asyncAfter(deadline: .now() + Self.readDelay) {
-                fixture.answer()
-            }
-            return
-        }
         guard let method = request.httpMethod, method != "GET" else {
             answer()
             return
