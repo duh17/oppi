@@ -453,10 +453,17 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
         XCTAssertTrue(row.waitUntilExists(timeout: 3))
         XCTAssertTrue(thumbnail.waitUntilExists(timeout: 3))
+        // The drags can still be decelerating: let them come to rest before reaching the
+        // thumbnail, or a fling still slowing down can carry it back out of reach.
+        hold(for: 2)
+        // XCUITest scrolls a thumbnail that is not hittable into view before it taps it,
+        // which would move the timeline between the measurement and the tap. On iPad's
+        // taller timeline the detached drags can stop with the thumbnail out of reach, so
+        // reach it first; the row is then measured at the offset the user taps from.
+        scrollTimelineUntilHittable(thumbnail, in: timeline)
+        XCTAssertTrue(row.waitUntilExists(timeout: 3), "Stable image row left the timeline while revealing its thumbnail")
         // Measured inside the timeline: the router shows its navigation bar again
         // when the reader pops, which moves the harness chrome but not the viewport.
-        // The drags can still be decelerating: read where the row comes to rest.
-        hold(for: 2)
         let rowYBefore = settledMinY(of: row, in: timeline)
 
         // A user photo opens the pushed chat reader; Back must land on the same viewport.
@@ -488,6 +495,22 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         attachment.name = "image-preview-detached-row-preserved"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    /// Drags the timeline a short, held-finger step at a time until `element` is hittable,
+    /// so no later tap makes XCUITest scroll the timeline on its own.
+    private func scrollTimelineUntilHittable(_ element: XCUIElement, in timeline: XCUIElement) {
+        for _ in 0..<6 where !element.isHittable {
+            let below = element.frame.midY > timeline.frame.midY
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: below ? 0.62 : 0.46),
+                to: CGVector(dx: 0.5, dy: below ? 0.46 : 0.62),
+                settling: true
+            )
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        XCTAssertTrue(element.isHittable, "Thumbnail could not be made hittable by scrolling the timeline")
     }
 
     /// Re-reads the timeline offset until two fresh readings agree and at least the
