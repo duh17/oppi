@@ -264,14 +264,14 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 
 ### Swift Testing filters
 
-`xcodebuild` strips one trailing `()` from Swift Testing identifiers. Use double parentheses for function-level filters.
+With Xcode 27, a Swift Testing function filter takes the function's own single `()`. The doubled `()()` that older Xcode needed now matches nothing.
 
 ```bash
 # Suite
 -only-testing:OppiTests/MySuiteStruct
 
 # Function
--only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'
+-only-testing:'OppiTests/MySuiteStruct/myTestFunc()'
 ```
 
 ### Swift Testing conventions
@@ -287,7 +287,7 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 
 Each of these has cost a worker a false red or a false green.
 
-- **A filter that matches nothing passes in raw xcodebuild.** `-only-testing:` with a misspelled suite, or a Swift Testing function without its doubled `()()`, runs zero tests and reports success ("0 tests passed"). sim-pool and every gate lane now fail such a run and name the selector (`zero tests ran for ...`; see [Gate reports](README.md#gate-reports) for that and the other gate reports: reruns, the flake and red-lane ledgers, quarantine, lane budgets). A run with several selectors still passes when only some of them match, so name declared types in land-queue `--tests`.
+- **A filter that matches nothing passes in raw xcodebuild.** `-only-testing:` with a misspelled suite, or a Swift Testing function written with the old doubled `()()`, runs zero tests and reports success ("0 tests passed"). sim-pool and every gate lane now fail such a run and name the selector (`zero tests ran for ...`; see [Gate reports](README.md#gate-reports) for that and the other gate reports: reruns, the flake and red-lane ledgers, quarantine, lane budgets). A run with several selectors still passes when only some of them match, so name declared types in land-queue `--tests`.
 - **A removed cell lingers.** On iOS 27 a collection view keeps a deleted row's cell in the view tree for at least one more run-loop turn after the snapshot drops it. After a delete, assert on the data source (`numberOfItems(inSection:)`, the snapshot's identifiers) plus the rows that should remain, not on walking `subviews` for the gone row.
 - **An anchored confirmation has no Cancel.** Since iOS 26 an action sheet presented from a source (a bar button, a `⋯`) shows as a popover and the system omits its `.cancel` action. Dismiss it in a UI test by tapping outside, then assert nothing changed.
 - **Sheet and alert buttons can appear twice.** iOS 27 exposes some alert and sheet buttons as two accessibility elements. Query by identifier and take `firstMatch` rather than expecting one match.
