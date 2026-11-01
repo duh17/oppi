@@ -27,12 +27,24 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
         try super.tearDownWithError()
     }
 
-    func testEditingFromChatFilesAllKeepsTheEditorControls() throws {
+    func testEditingFromChatFilesKeepsTheEditorControls() throws {
         dismissExtensionSheetIfNeeded(timeout: 3)
         tap(app.buttons.matching(identifier: "chat.toolbar.files").firstMatch, named: "chat Files", timeout: 10)
-        tap(app.buttons["All"], named: "All tab", timeout: 5)
-        tap(app.staticTexts[directoryName], named: "fixture directory row", timeout: 15)
-        tap(app.staticTexts[Self.filename], named: "fixture file row", timeout: 15)
+        // The panel is the checkout's file browser, and this harness mounts the
+        // workspace at /tmp: one listing of it is truncated and lists entries in
+        // filesystem order, so the browser's search — fed by the whole file index
+        // — is what finds the fixture whatever else the mount holds. The fixture
+        // directory's name is unique, so its file is the only result.
+        let search = app.searchFields["Search files"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10), "the chat Files panel has no file search")
+        search.tap()
+        search.typeText(directoryName)
+        let fixtureRow = app.buttons["fileBrowser.row.\(directoryName)/\(Self.filename)"]
+        XCTAssertTrue(
+            fixtureRow.waitForExistence(timeout: 15),
+            "the browser did not find the fixture file in the checkout"
+        )
+        tap(fixtureRow, named: "fixture file row", timeout: 5)
         tap(app.buttons["workspace-file-editor.edit"], named: "Edit", timeout: 15)
         XCTAssertTrue(app.textViews["workspace-file-editor.text"].waitForExistence(timeout: 10), "editor did not open")
 
