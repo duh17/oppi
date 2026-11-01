@@ -61,6 +61,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-lifecycle.fake-xcrun.sh
 !clients/apple/scripts/sim-pool-lifecycle.fake-oppi.sh
 !clients/apple/scripts/sim-pool-lock.test.ts
+!clients/apple/scripts/sim-pool-lock.stale-slot-20261029.json
+!clients/apple/scripts/sim-pool-stale-slot.test.ts
 !clients/apple/scripts/sim-pool-supervise.ts
 !clients/apple/scripts/sim-pool-supervise.test.ts
 !clients/apple/scripts/sim-pool-simctl.ts

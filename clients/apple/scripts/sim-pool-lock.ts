@@ -11,6 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { queryProcessGroup } from "./sim-pool-supervise";
 
@@ -252,6 +253,7 @@ export function tryAcquireSlot(input: {
   }
 
   const state = readSlotState(lockDir, slot);
+  const writtenAtMs = state && state !== "unreadable" ? statSync(owned.statePath).mtimeMs : undefined;
   if (state === "unreadable") {
     closeSync(fd);
     owned.fd = -1;
@@ -263,8 +265,12 @@ export function tryAcquireSlot(input: {
     return { ok: false, reason: `slot ${slot} claimed by ${state.claim.owner}` };
   }
   if (state && state.status !== "reusable" && state.status !== "claimed") {
-    if (!canReclaimAbandoned(state)) {
-      const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}`;
+    const abandoned = abandonedRun(state, writtenAtMs);
+    if (abandoned.reaped.length > 0) {
+      process.stderr.write(`[sim-pool] slot ${slot}: reaped ${abandoned.reaped.map((p) => `pid ${p.pid} (${p.command})`).join(", ")} left by dead run pid ${state.pid}\n`);
+    }
+    if (!abandoned.reclaim) {
+      const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}${abandoned.detail ? ` (${abandoned.detail})` : ""}`;
       closeSync(fd);
       owned.fd = -1;
       return { ok: false, reason };
@@ -307,21 +313,134 @@ export function recordedGroupsIdle(state: SlotState): boolean {
   return true;
 }
 
-export function canReclaimAbandoned(state: SlotState): boolean {
+/** One process of the table `ps` prints. */
+export type ProcessInfo = { pid: number; ppid: number; pgid: number; startedMs: number; command: string };
+
+/** Seconds in a `ps` elapsed time, `[[dd-]hh:]mm:ss`. */
+export function elapsedSeconds(etime: string): number {
+  const [days, clock] = etime.includes("-") ? etime.split("-") : ["0", etime];
+  return Number(days) * 86_400 + clock.split(":").reduce((sum, part) => sum * 60 + Number(part), 0);
+}
+
+/** Every process, from `ps -A`; starts come from elapsed time, so no time zone is involved. Undefined when ps fails. */
+export function processTable(): ProcessInfo[] | undefined {
+  const now = Date.now();
+  const ps = spawnSync("/bin/ps", ["-A", "-ww", "-o", "pid=,ppid=,pgid=,etime=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (ps.status !== 0) return undefined;
+  return ps.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+((?:[0-9]+-)?(?:[0-9]+:)?[0-9]+:[0-9]+)\s+(.*)$/.exec(line);
+    if (!match) return [];
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), startedMs: now - elapsedSeconds(match[4]) * 1000, command: match[5] }];
+  });
+}
+
+/** `ps` starts are whole seconds; a process this close to a timestamp counts as before it. */
+const START_SLACK_MS = 1_000;
+
+/** The lease's owner is gone: no process has its pid, or the one that has it started after the lease did (pid reuse). */
+export function ownerGone(state: SlotState, processes: ProcessInfo[]): boolean {
+  const owner = processes.find((proc) => proc.pid === state.pid);
+  const leased = Date.parse(state.started_at);
+  return !owner || (Number.isFinite(leased) && owner.startedMs > leased + START_SLACK_MS);
+}
+
+/**
+ * What still runs in a dead lease's recorded process groups, split into the dead run's own orphans
+ * and unrelated processes that merely carry one of its pgid numbers.
+ *
+ * A pgid is handed out again once its group is empty, and a lease never forgets a pgid, so a number
+ * can belong to anyone by now: on 10-29 slot 0's pgid 19599 went to a simulator's NPKCompanionAgent,
+ * and an early group of a run can be reused by another live run's recorder before the lease's last
+ * write. A process is the dead run's orphan only when all of these hold:
+ * - it started after the lease did;
+ * - its parent is launchd (pid 1: the dead owner's children are reparented there) or another orphan;
+ * - its group's leader, if alive, started before the state was last written (a later leader is a
+ *   new group that got the number).
+ * Everything else is unrelated: it neither keeps the slot nor gets reaped.
+ */
+export function deadRunSurvivors(state: SlotState, writtenAtMs: number, processes: ProcessInfo[]): { orphans: ProcessInfo[]; unrelated: ProcessInfo[] } {
+  const leased = Date.parse(state.started_at);
+  const members = state.pgids.flatMap((pgid) => {
+    const group = processes.filter((proc) => proc.pgid === pgid);
+    const leader = group.find((proc) => proc.pid === pgid);
+    return leader && leader.startedMs > writtenAtMs + START_SLACK_MS ? [] : group;
+  });
+  const candidates = members.filter((proc) => Number.isFinite(leased) && proc.startedMs + START_SLACK_MS >= leased);
+  const orphans = new Set<number>();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const proc of candidates) {
+      if (!orphans.has(proc.pid) && (proc.ppid === 1 || orphans.has(proc.ppid))) {
+        orphans.add(proc.pid);
+        grew = true;
+      }
+    }
+  }
+  const recorded = processes.filter((proc) => state.pgids.includes(proc.pgid));
+  return { orphans: recorded.filter((proc) => orphans.has(proc.pid)), unrelated: recorded.filter((proc) => !orphans.has(proc.pid)) };
+}
+
+/** A `simctl io` (recordVideo, screenshot) left by a dead run: it holds nothing the next run needs, so it is reaped. */
+const REAPABLE_ORPHAN = /\bsimctl\b.*\bio\b/;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Whether an `in-flight` or `uncertain` lease may be taken over, why not, and the orphans reaped to
+ * free it. A gated lease with recorded groups is free when the groups are empty, or when its owner
+ * is gone and nothing of its run is left (deadRunSurvivors) but `simctl io` orphans, which are killed
+ * here. Any other orphan (an orphaned xcodebuild may still drive the simulator) keeps the slot.
+ * Unrelated processes that carry one of its pgids are never touched.
+ */
+export function abandonedRun(state: SlotState, writtenAtMs?: number): { reclaim: boolean; detail?: string; reaped: ProcessInfo[] } {
+  const no = (detail?: string) => ({ reclaim: false, reaped: [], ...(detail ? { detail } : {}) });
   if (state.status !== "in-flight" && state.status !== "uncertain") {
-    return false;
+    return no();
   }
   const gated = state.format === "flock-v2" && state.protocol === "gated-v1";
   if (!gated) {
-    return state.status === "uncertain" && recordedGroupsIdle(state);
+    return { reclaim: state.status === "uncertain" && recordedGroupsIdle(state), reaped: [] };
   }
   if (state.publishing) {
-    return false;
+    return no();
   }
-  if (state.pgids.length > 0) {
-    return recordedGroupsIdle(state);
+  if (state.pgids.length === 0) {
+    return { reclaim: state.publishedCount === 0, reaped: [] };
   }
-  return state.publishedCount === 0;
+  if (recordedGroupsIdle(state)) {
+    return { reclaim: true, reaped: [] };
+  }
+  const processes = writtenAtMs === undefined ? undefined : processTable();
+  if (!processes || writtenAtMs === undefined) return no();
+  if (!ownerGone(state, processes)) return no(`owner pid ${state.pid} alive`);
+  const { orphans } = deadRunSurvivors(state, writtenAtMs, processes);
+  const kept = orphans.filter((proc) => !REAPABLE_ORPHAN.test(proc.command));
+  if (kept.length > 0) {
+    return no(`owner pid ${state.pid} is gone but its run left ${kept.map((proc) => `pid ${proc.pid} (${proc.command.slice(0, 80)})`).join(", ")}`);
+  }
+  const reaped = orphans.filter((proc) => alive(proc.pid));
+  for (const proc of reaped) {
+    try {
+      process.kill(proc.pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+  for (let waited = 0; waited < 2_000 && reaped.some((proc) => alive(proc.pid)); waited += 50) sleepSync(50);
+  const stuck = reaped.filter((proc) => alive(proc.pid));
+  if (stuck.length > 0) return { reclaim: false, detail: `could not reap ${stuck.map((proc) => `pid ${proc.pid}`).join(", ")}`, reaped };
+  return { reclaim: true, reaped };
 }
 
 export function beginPublishing(owned: OwnedSlot): void {

@@ -21,6 +21,7 @@ function selfTest(): number {
   const repoRoot = join(scriptDir, "..", "..", "..");
   const files = [
     "./clients/apple/scripts/sim-pool-lock.test.ts",
+    "./clients/apple/scripts/sim-pool-stale-slot.test.ts",
     "./clients/apple/scripts/sim-pool-supervise.test.ts",
     "./clients/apple/scripts/sim-pool-simctl.test.ts",
     "./clients/apple/scripts/sim-pool-ops.test.ts",
