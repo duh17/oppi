@@ -263,19 +263,35 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
         .map { "let fixtureValue\($0) = \($0)" }
         .joined(separator: "\n")
 
-    private static let fixtureMarkdown = """
-    # Intro
+    // Sized for a tall viewport (13-inch iPad): the anchored block has to start below a
+    // third of the viewport to scroll into the upper third, and needs content after it
+    // to scroll past. Leading and trailing paragraphs provide both. Each is one short
+    // line on every device, so the anchor sits at about the same depth (roughly 800 pt)
+    // on an iPhone and an iPad. Keep it that shallow: with 22 two-line paragraphs (about
+    // 1,500 pt) the iPhone viewer opened at the top, unscrolled, with no highlight.
+    private static let markdownLeadingParagraphs = 24
+    private static let markdownTrailingParagraphs = 30
+    /// Line of "## Focused heading": four intro lines, then two lines per leading paragraph.
+    private static let markdownHeadingLine = 5 + 2 * markdownLeadingParagraphs
+    /// From the blank line after the heading through "After the focused blocks."
+    private static let markdownAnchorFragment = "L\(markdownHeadingLine + 1)-L\(markdownHeadingLine + 6)"
 
-    Before the focused blocks.
-
-    ## Focused heading
-
-    First focused block.
-
-    Second focused block.
-
-    After the focused blocks.
-    """
+    private static let fixtureMarkdown: String = {
+        var lines = ["# Intro", "", "Before the focused blocks.", ""]
+        for n in 1...markdownLeadingParagraphs {
+            lines += ["Leading paragraph \(n).", ""]
+        }
+        lines += [
+            "## Focused heading", "",
+            "First focused block.", "",
+            "Second focused block.", "",
+            "After the focused blocks.",
+        ]
+        for n in 1...markdownTrailingParagraphs {
+            lines += ["", "Trailing paragraph \(n)."]
+        }
+        return lines.joined(separator: "\n")
+    }()
 
     private let markdownView = AssistantMarkdownContentView()
     private let diagnosticsStack = UIStackView()
@@ -446,7 +462,7 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.accessibilityIdentifier = "wiki-line-anchor.markdown"
         markdownView.apply(configuration: .make(
-            content: "Code: [[fixtures/anchor.swift#L32-L35|Open code lines]]\n\nMarkdown: [[fixtures/anchor.md#L6-L11|Open markdown lines]]",
+            content: "Code: [[fixtures/anchor.swift#L32-L35|Open code lines]]\n\nMarkdown: [[fixtures/anchor.md#\(Self.markdownAnchorFragment)|Open markdown lines]]",
             isStreaming: false,
             themeID: .dark,
             textSelectionEnabled: true,
