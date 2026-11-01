@@ -330,6 +330,68 @@ struct ServerSettingsRouteTests {
         #expect(modelB.updateStartError != nil || modelB.loadError != nil, "B settled on its own answer")
     }
 
+    @Test("A load the page left while it waited asks nothing when the answer lands")
+    func leavingStopsALoadThatIsWaiting() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let page = try #require(h.route.page)
+        let model = page.model
+        // The page's load asked for the server's facts, and that request is waiting.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.isShowing })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            HeldRequestProtocol.heldHosts.contains("server-a.held.test")
+        })
+        let asked = HeldRequestProtocol.startedPaths
+
+        // The page leaves while the load waits, then the server answers what it waited on.
+        h.navigation.setViewControllers([UIViewController()], animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+        HeldRequestProtocol.answer(host: "server-a.held.test")
+
+        // A load whose page is gone asks nothing more, and writes nothing: the answer it was
+        // given after the page left is nobody's, and the facts it would have asked for next
+        // (the providers, the devices) are not asked for.
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
+            HeldRequestProtocol.startedPaths == asked
+        }, "a load the page left asked the server for more")
+        #expect(!HeldRequestProtocol.startedPaths.contains("/provider-auth/status"))
+        #expect(!HeldRequestProtocol.startedPaths.contains("/auth/devices"))
+        #expect(model.info == nil, "a load the page left kept the info it was answered with")
+        #expect(model.providerSetupState == .unknown)
+        #expect(model.pairedDevices == nil)
+        #expect(model.loadError == nil, "a cancelled load is not a failure")
+    }
+
+    @Test("A load the page cancelled before it asked starts no request and writes nothing")
+    func cancelledLoadBeforeItAsksStartsNothing() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let page = try #require(h.route.page)
+        let model = page.model
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.isShowing })
+        // The page's own load is out and held, so what this test cancels is a load of its own.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            HeldRequestProtocol.heldHosts.contains("server-a.held.test")
+        })
+        h.navigation.setViewControllers([UIViewController()], animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+
+        // A load cancelled while it waits for its client (the page left during a connection
+        // preparation, say) asks for nothing when that wait ends: there is no page to answer.
+        let asked = HeldRequestProtocol.startedPaths
+        let load = Task { await model.load() }
+        load.cancel()
+        await load.value
+
+        #expect(HeldRequestProtocol.startedPaths == asked, "a cancelled load asked the server")
+        #expect(model.info == nil, "a cancelled load kept the info it was answered with")
+        #expect(model.providerSetupState == .unknown)
+        #expect(model.pairedDevices == nil)
+        #expect(model.loadError == nil, "a cancelled load is not a failure")
+    }
+
     @Test("A load the page cancels on its way out leaves the model's facts alone")
     func cancelledLoadLeavesTheModelsOwnFactsAlone() async throws {
         let h = try makeHarness()
@@ -366,6 +428,7 @@ private final class HeldRequestProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var held: [HeldRequestProtocol] = []
     nonisolated(unsafe) private static var answered: Set<String> = []
+    nonisolated(unsafe) private static var started: [String] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host?.hasSuffix(".held.test") == true
@@ -375,7 +438,9 @@ private final class HeldRequestProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         let host = request.url?.host ?? ""
+        let path = request.url?.path ?? ""
         let answerNow = Self.lock.withLock {
+            Self.started.append(path)
             if Self.answered.contains(host) { return true }
             Self.held.append(self)
             return false
@@ -385,6 +450,12 @@ private final class HeldRequestProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {
         Self.lock.withLock { Self.held.removeAll { $0 === self } }
+    }
+
+    /// Every path a request started for since `reset()`, in order, held or not: a test that
+    /// cancels a load can tell one it stopped from one that asked anyway.
+    static var startedPaths: [String] {
+        lock.withLock { started }
     }
 
     private func fail() {
@@ -417,6 +488,7 @@ private final class HeldRequestProtocol: URLProtocol, @unchecked Sendable {
         lock.withLock {
             held = []
             answered = []
+            started = []
         }
     }
 }

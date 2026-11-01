@@ -98,10 +98,15 @@ final class ServerSettingsModel {
             pairedDevicesError = Self.offlineReason
             return
         }
+        // A load cancelled while it waited for its client still has one: it must not ask.
+        guard !Task.isCancelled else { return }
 
         do {
             let previousVersion = info?.version
             let next = try await client.api.serverInfo()
+            // The answer is this load's only while it still has a page: a cancelled load writes
+            // nothing and asks for nothing more.
+            guard !Task.isCancelled else { return }
             info = next
             updateStartError = nil
             loadError = nil
@@ -123,6 +128,7 @@ final class ServerSettingsModel {
             loadError = error.localizedDescription
         }
 
+        guard !Task.isCancelled else { return }
         async let providers: () = loadProviderSummary(client)
         async let devices: () = loadPairedDevices(client)
         _ = await (providers, devices)
@@ -131,6 +137,7 @@ final class ServerSettingsModel {
     private func loadProviderSummary(_ client: Client) async {
         do {
             let statuses = try await client.api.listProviderAuthStatus()
+            guard !Task.isCancelled else { return }
             providerSetupState = ProviderSetupState(providerStatuses: statuses)
             connectedProviderCount = statuses.filter(\.authenticated).count
         } catch {
@@ -160,6 +167,7 @@ final class ServerSettingsModel {
 
         do {
             let devices = try await client.api.listAuthDevices()
+            guard !Task.isCancelled else { return }
             pairedDevices = devices
             pairedDevicesError = nil
         } catch {
