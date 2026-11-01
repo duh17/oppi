@@ -338,6 +338,47 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
+    /// A new pane is the shown pane as soon as the session lists it, so its
+    /// stream opens as the shown pane's: taken and sized before `data.connect`,
+    /// never first as an untaken neighbour of the pane it was split from.
+    @Test func aNewPaneOpensAsTheShownPaneTakenBeforeItStreams() async throws {
+        let rig = try await open(["a", "b"])
+        let created = try await rig.connection.newPane()
+        #expect(rig.connection.state.shown == created, "shown once the view lists it")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == created }
+        })
+        let methods = rig.fake.requests.filter { $0.string("block_id") == created || $0.method == "session.own_block" }
+        let own = try #require(methods.firstIndex { $0.method == "session.own_block" && $0.payload.contains(created) })
+        let resize = try #require(methods.firstIndex { $0.method == "com.superlogical.terminal.resize" && $0.string("block_id") == created })
+        let connect = try #require(methods.firstIndex { $0.method == "data.connect" && $0.string("block_id") == created })
+        #expect(own < resize && resize < connect)
+        await rig.stop()
+    }
+
+    /// A finger that has barely moved names no pane: a touch, or a wobble
+    /// either way, takes nothing. Only travel past a few points does.
+    @Test func aWobbleTakesNoNeighbour() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        let screen = try Screen(rig: rig, shown: a)
+        let transition = screen.transition
+
+        #expect(transition.beginDrag())
+        transition.drag(translationX: 0, neighbour: nil, offersNewPane: false)
+        transition.drag(translationX: -3, neighbour: "title b", offersNewPane: false)
+        transition.drag(translationX: 2, neighbour: nil, offersNewPane: false)
+        _ = await waitForMainActorCondition(timeout: .milliseconds(400)) { false }
+        #expect(takes(of: b, in: rig) == 0, "a wobble takes nothing")
+
+        transition.drag(translationX: -40, neighbour: "title b", offersNewPane: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { takes(of: b, in: rig) == 1 }, "real travel does")
+        transition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
+        screen.dismiss()
+        await rig.stop()
+    }
+
     /// A drag toward a live neighbour takes it and sizes it for this screen
     /// while the finger is still down, so the screen sliding in is already laid
     /// out for the phone. A finger going back and forth takes it once.

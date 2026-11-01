@@ -2572,13 +2572,10 @@ struct SSHTerminalTests {
         let created = "block:created-1"
         #expect(rig.model.state.shown == created && rig.model.state.panes.map(\.blockID) == ["block:a", "block:b", created])
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { switcher()?.accessibilityValue == "new shell, 3 of 3" })
-        // Shown, it is taken and then sized for this screen. Its stream may have
-        // opened first: the page keeps the panes beside the shown one live, and
-        // a neighbour streams untaken.
         let methods = rig.fake.requests.filter { $0.string("block_id") == created || $0.method == "session.own_block" }
         let own = try #require(methods.firstIndex { $0.method == "session.own_block" && $0.payload.contains(created) })
-        #expect(methods.contains { $0.method == "data.connect" && $0.string("block_id") == created })
-        #expect(methods[(own + 1)...].contains { $0.method == "com.superlogical.terminal.resize" && $0.string("block_id") == created })
+        let connect = try #require(methods.firstIndex { $0.method == "data.connect" && $0.string("block_id") == created })
+        #expect(own < connect)
         #expect(!rig.fake.requests.contains { $0.method.contains("focus") })
         rig.channel.send(Data("ls\r".utf8))
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {

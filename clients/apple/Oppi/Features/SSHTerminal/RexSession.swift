@@ -265,15 +265,18 @@ final class RexSessionModel {
         return stepped
     }
 
-    /// Opens a new pane after the one last asked for and shows it, through
-    /// the same `show` as any switch. Returns the new pane's name. The session
-    /// knows the pane (its view was read) before it is shown; it throws when
-    /// Rex refuses or does not answer, and then the shown pane is unchanged.
+    /// Opens a new pane after the one last asked for and shows it: the
+    /// connection makes it the shown pane in the lock that applies the view
+    /// listing it, as a switch would. Returns the new pane's name. It throws
+    /// when Rex refuses or does not answer, and then the shown pane is unchanged.
     func newPane() async throws -> String {
+        // The connection shows it as the view lists it, so its stream opens
+        // as the shown pane's; the window moves with it.
         let block = try await connection.newPane()
-        guard show(block) else {
+        guard latest.shown == block else {
             throw RexClientError.unreadable("a view without the new pane")
         }
+        keepLivePanes()
         return latest.panes.first { $0.blockID == block }?.name ?? "Terminal"
     }
 }

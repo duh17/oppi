@@ -26,6 +26,9 @@ final class SSHTerminalPaneTransition {
     /// Rex answers a request within 15 s (`RexControl.requestTimeout`), and
     /// opening a pane makes up to three in a row.
     static let defaultCreationTimeout: Duration = .seconds(30)
+    /// Sideways travel, in points, before a drag names the pane that way for
+    /// `SSHTerminalPaneStepping.takeAhead`: a touch or a wobble names none.
+    static let takeAheadTravel: CGFloat = 8
 
     enum Phase: Equatable {
         case idle
@@ -119,7 +122,9 @@ final class SSHTerminalPaneTransition {
         installIncoming(target: live)
         // The finger names this neighbour: it is taken and sized for this
         // screen now, so its program has redrawn for the phone by the release.
-        if let live, takenAhead.insert(live).inserted { grid.paneStepping?.takeAhead(live) }
+        if let live, abs(translationX) >= Self.takeAheadTravel, takenAhead.insert(live).inserted {
+            grid.paneStepping?.takeAhead(live)
+        }
         guard newPane else {
             tickedForNewPane = false
             placeholder?.title = neighbour

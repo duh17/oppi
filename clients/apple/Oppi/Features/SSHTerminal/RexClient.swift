@@ -613,9 +613,18 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// Takes back per pane since this phone's user last acted
         /// (`userActed`), at most `maximumReclaims`.
         var reclaims: [String: Int] = [:]
-        /// The neighbour a drag toward it named (`takeAhead`): taken once, by
-        /// the next pass of the lane loop, then forgotten.
-        var ahead: String?
+        /// Neighbours a drag named (`takeAhead`): each taken once, by the lane
+        /// loop's next passes, and forgotten when the loop is done.
+        var ahead: Set<String> = []
+        /// The pane `newPane` made, until a view lists it: the view that does
+        /// makes it the shown pane in the same lock (`apply(view:to:)`), so its
+        /// stream opens as the shown pane's, never as an untaken neighbour's.
+        var created: String?
+        /// The panes before `newPane` asked for a split, while it is out: a
+        /// pane a view lists that is not among them is that split's, and gets
+        /// no lane as a neighbour before it is shown (a view event's read can
+        /// list it before `newPane` knows its block).
+        var splitBaseline: Set<String>?
         /// The size each owned pane was last given, so a switch does not
         /// size again a pane the screen just sized (the first pane, on the
         /// first layout).
@@ -675,6 +684,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// on screen.
         var wantedLanes: Set<String> {
             var wanted = live.subtracting(closedBlocks).subtracting(deadLanes)
+            if let splitBaseline { wanted.formIntersection(splitBaseline) }
             if !closedBlocks.contains(requested) { wanted.insert(requested) }
             if let layout { wanted = wanted.filter { layout.contains($0) } }
             return capped(wanted)
@@ -702,7 +712,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// Before it, the neighbour a drag named (`ahead`), on the same terms.
         var paneToReclaim: String? {
             if takeable(requested) { return requested }
-            if let ahead, takeable(ahead) { return ahead }
+            if let next = ordered(ahead).first(where: takeable) { return next }
             return nil
         }
 
@@ -827,19 +837,34 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let (accepted, start) = core.withLock { state -> (Bool, Bool) in
             guard !state.ended, blockID != state.requested, !state.closedBlocks.contains(blockID) else { return (false, false) }
             if let layout = state.layout, !layout.contains(blockID) { return (false, false) }
-            state.requested = blockID
-            state.live.insert(blockID)
-            // A pane asked for gets its stream again, even if one failed before.
-            state.deadLanes.remove(blockID)
-            state.attempts[blockID] = nil
-            // The user chose it: another client's take is taken back again.
-            state.reclaims[blockID] = nil
-            state.live = state.capped(state.live)
+            Self.select(blockID, in: &state)
             publish(state)
             return (true, startSwitching(&state))
         }
         if start { Task { await runLanes() } }
         return accepted
+    }
+
+    /// `newPane`'s pane, once the layout lists it: the pane asked for from
+    /// now on, unless it closed already. The caller publishes and starts the
+    /// lane loop.
+    private static func showCreated(in state: inout State) {
+        guard let block = state.created, state.layout?.contains(block) == true else { return }
+        state.created = nil
+        guard block != state.requested, !state.closedBlocks.contains(block) else { return }
+        select(block, in: &state)
+    }
+
+    /// Makes `block` the pane asked for: a switch, or a new pane its view lists.
+    private static func select(_ block: String, in state: inout State) {
+        state.requested = block
+        state.live.insert(block)
+        // A pane asked for gets its stream again, even if one failed before.
+        state.deadLanes.remove(block)
+        state.attempts[block] = nil
+        // The user chose it: another client's take is taken back again.
+        state.reclaims[block] = nil
+        state.live = state.capped(state.live)
     }
 
     /// The screen says which panes to keep streaming: the shown one and its
@@ -880,13 +905,16 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
 
     /// A drag toward `block`, a neighbour, named it: take it now and size it
     /// for this screen, through the same take as the shown pane's, so its
-    /// program redraws for the phone while the finger is still down. On a
-    /// page that shows and under the cap only; a pane this client owns is
-    /// left as it is. A swipe that springs back keeps the pane.
+    /// program has redrawn for the phone by the release. The drag is the
+    /// user's action, so the pane's take count starts again. On a page that
+    /// shows and under the cap only; a pane this client owns is left as it
+    /// is. A swipe that springs back keeps the pane.
     func takeAhead(_ block: String) {
         let start = core.withLock { state -> Bool in
-            guard !state.ended, state.armed, block != state.requested, state.takeable(block) else { return false }
-            state.ahead = block
+            guard !state.ended, state.armed, block != state.requested else { return false }
+            state.reclaims[block] = nil
+            guard state.takeable(block) else { return false }
+            state.ahead.insert(block)
             return startSwitching(&state)
         }
         if start { Task { await runLanes() } }
@@ -925,13 +953,26 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     }
 
     /// Opens a shell in a new split after the pane last asked for and returns
-    /// its block id, once the session's view lists it (so `show` takes it). It
+    /// its block id, once the session's view lists it. The view that first
+    /// lists it makes it the shown pane (`State.created`), so its lane opens as
+    /// the shown pane's: taken and sized before `data.connect`. It
     /// starts in the anchor's folder when Rex has one (`pwd`, which a shell
     /// reports with OSC 7), else Rex's default. Display only: `focus` is false,
     /// so the host's own focus stays where it is. Rex creates all of it or none
     /// of it; a refusal (the anchor closed, the session full) throws.
     func newPane() async throws -> String {
-        let anchor = core.withLock { $0.requested }
+        let anchor = core.withLock { state in
+            state.splitBaseline = Set(state.layout?.panes.map(\.blockID) ?? [state.requested])
+            return state.requested
+        }
+        defer {
+            // Done, shown or not: the panes the split added open as any other.
+            let start = core.withLock { state -> Bool in
+                state.splitBaseline = nil
+                return startSwitching(&state)
+            }
+            if start { Task { await runLanes() } }
+        }
         var shell: [String: Any] = ["flavor": Self.shellFlavor]
         let pwd = try? await control.call("com.superlogical.terminal.pwd", blockCall([:], block: anchor))
         if let folder = pwd.flatMap({ try? JSONDecoder().decode(Pwd.self, from: $0).pwd }).flatMap(Self.folder(fromPwd:)) {
@@ -945,12 +986,32 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         guard let block = (try? JSONDecoder().decode(Created.self, from: answer))?.block_ids?.compactMap({ $0 }).first else {
             throw RexClientError.unreadable("the new pane's block")
         }
+        // The first view that lists it shows it; one applied already did not
+        // know it yet, so it is shown here.
+        let early = core.withLock { state -> Bool in
+            state.created = block
+            guard state.layout?.contains(block) == true else { return false }
+            Self.showCreated(in: &state)
+            publish(state)
+            return startSwitching(&state)
+        }
+        if early { Task { await runLanes() } }
         // The view event that lists it may not have arrived yet: read it now.
-        let view = try await control.call("session.view", ["session_id": sessionID])
-        let decoded = try JSONDecoder().decode(RexView.self, from: view)
-        let gone = core.withLock { apply(view: decoded, to: &$0) }
+        let decoded: RexView
+        do {
+            let view = try await control.call("session.view", ["session_id": sessionID])
+            decoded = try JSONDecoder().decode(RexView.self, from: view)
+        } catch {
+            core.withLock { if $0.created == block { $0.created = nil } }
+            throw error
+        }
+        let (gone, start) = core.withLock { state in (apply(view: decoded, to: &state), startSwitching(&state)) }
+        if start { Task { await runLanes() } }
         if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
-        guard core.withLock({ $0.layout?.contains(block) == true }) else {
+        guard core.withLock({ state in
+            if state.created == block { state.created = nil }
+            return state.layout?.contains(block) == true
+        }) else {
             throw RexClientError.unreadable("a view without the new pane")
         }
         return block
@@ -1112,7 +1173,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                     state.owned.insert(taken)
                     state.sized[taken] = nil
                     state.reclaims[taken, default: 0] += 1
-                    if taken == state.ahead { state.ahead = nil }
+                    state.ahead.remove(taken)
                     return .reclaim(taken)
                 }
                 if let next = state.lanesToOpen.first { return .open(next) }
@@ -1125,7 +1186,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 }
                 // A drag's neighbour not taken by now (owned, or no longer
                 // takeable) is not taken later, by a fight or a page return.
-                state.ahead = nil
+                state.ahead = []
                 state.switching = false
                 return .done
             }
@@ -1555,14 +1616,16 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             while let self {
                 let answer = try? await control.call("session.view", ["session_id": sessionID])
                 let decoded = answer.flatMap { try? JSONDecoder().decode(RexView.self, from: $0) }
-                let (again, gone) = core.withLock { state -> (Bool, (String, [String], Set<String>)?) in
+                let (again, gone, start) = core.withLock { state -> (Bool, (String, [String], Set<String>)?, Bool) in
                     var gone: (String, [String], Set<String>)?
                     if let decoded { gone = apply(view: decoded, to: &state) }
                     // A read that failed waits for the next event.
                     let again = decoded != nil && !state.ended && state.wanted > (state.revision ?? -1)
                     if !again { state.reading = false }
-                    return (again, gone)
+                    // A new pane this view lists is shown now: its lane opens.
+                    return (again, gone, startSwitching(&state))
                 }
+                if start { Task { await runLanes() } }
                 if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
                 if !again { return }
             }
@@ -1586,6 +1649,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         for pane in layout.panes {
             if let label = pane.label { state.labels[pane.blockID] = label }
         }
+        Self.showCreated(in: &state)
         publish(state)
         for pane in layout.panes where state.titlesAsked.insert(pane.blockID).inserted {
             readDetails(of: pane.blockID)
