@@ -31,6 +31,9 @@ const gatePolicyPaths = new Set([
 const harnessTestedPaths = new Set([
   "scripts/batch-gate.ts",
   "scripts/batch-gate.test.ts",
+  "scripts/batch-gate-health.test.ts",
+  "scripts/gate-report.ts",
+  "scripts/gate-report.test.ts",
 ]);
 
 function strongerServer(lhs: ServerGateMode, rhs: ServerGateMode): ServerGateMode {

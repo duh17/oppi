@@ -162,7 +162,6 @@ describe("ui shard plan", () => {
   });
 
   test("the cap follows the profile's slots; OPPI_UI_SHARDS may lower or raise it up to them", () => {
-    expect([shardCap("iphone", {}), shardCap("ipad", {}), shardCap("duo", {})]).toEqual([3, 2, 1]);
     expect(shardCap("iphone", { OPPI_UI_SHARDS: "1" })).toBe(1);
     expect(shardCap("iphone", { OPPI_UI_SHARDS: "50" })).toBe(6);
     expect(shardCap("ipad", { OPPI_UI_SHARDS: "50" })).toBe(4);

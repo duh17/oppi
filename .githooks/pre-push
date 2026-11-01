@@ -34,7 +34,8 @@ ensure_server_deps() {
 run_self_test() {
   bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
   bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
-    "$REPO_ROOT/scripts/batch-gate.test.ts"
+    "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
+    "$REPO_ROOT/scripts/gate-report.test.ts"
   (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
     --reporter=dot --silent=passed-only)
   "$SIM_POOL" self-test
@@ -311,6 +312,12 @@ while read -r local_ref local_oid remote_ref remote_oid; do
 
   local_commit="$(git rev-parse "${local_oid}^{commit}" 2>/dev/null || true)"
   [[ -n "$local_commit" ]] || continue
+  # A land queue gates its batch as refs/heads/land-queue/<batch>. The lanes that record a red lane
+  # (unit-shards, the server lane; scripts/gate-report.ts) need that batch id, which the queue only
+  # passes to batch-gate.
+  if [[ -z "${LAND_QUEUE_BATCH:-}" && "$local_ref" == refs/heads/land-queue/* ]]; then
+    export LAND_QUEUE_BATCH="${local_ref#refs/heads/land-queue/}"
+  fi
   if [[ "$local_commit" != "$HEAD_SHA" ]]; then
     echo "pre-push: refusing to test non-HEAD ref $local_ref ($local_commit)." >&2
     echo "Push it from a worktree where that commit is checked out." >&2
@@ -513,6 +520,7 @@ run_server_gate() {
   test_log="$(mktemp "$log_dir/server-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
   echo "[server] test log: $test_log"
 
+  local started="$SECONDS"
   set +e
   if [[ "$SERVER_MODE" == "full" ]]; then
     # One full suite machine-wide. The log redirect lives inside the slot so heavy.sh's
@@ -527,8 +535,14 @@ run_server_gate() {
   fi
   local status=$?
   set -e
+  local seconds=$((SECONDS - started))
+  # Wall time against dev/testing/lane-budgets.json; over budget is a warning, never a failure.
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/gate-report.ts budget server "$seconds") || true
 
   if [[ "$status" -ne 0 ]]; then
+    # In a land-queue batch, one row in the red-lane ledger with a cause guessed from the log.
+    (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/gate-report.ts red-lane \
+      --lane server --exit "$status" --seconds "$seconds" --log "$test_log") || true
     # Name the failures in the gate output itself: the log path may not be readable by whoever
     # reads the gate log. Capped so a flood of failures cannot bury it; the full log has the rest.
     local fail_lines="" max_fail_lines=40

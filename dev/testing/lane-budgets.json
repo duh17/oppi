@@ -1,0 +1,6 @@
+{
+  "unit-full": { "measure": "longest-shard", "seconds": 240 },
+  "ui-iphone": { "measure": "median-test", "seconds": 45 },
+  "ui-ipad": { "measure": "median-test", "seconds": 45 },
+  "server": { "measure": "wall", "seconds": 180 }
+}

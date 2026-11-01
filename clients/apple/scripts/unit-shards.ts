@@ -14,12 +14,16 @@
 // 4. Run every shard in its own pool slot with `test-without-building -xctestrun` at once.
 // Fails when any shard fails or runs zero tests; a shard that ran none is reported as an
 // infrastructure failure, apart from test failures. Default N: OPPI_UNIT_SHARDS or 3.
+// A failed shard reruns its failed tests once; every rerun outcome goes to the rerun ledger, a red
+// run in a land-queue batch to the red-lane ledger, and the summary prints the hidden flakes and the
+// longest shard against its budget (scripts/gate-report.ts).
 // A shard whose pool slots are all busy waits for one: the gate (pre-push) sets OPPI_SIM_POOL_GATE=1,
 // which gives sim-pool its gate wait (see GATE_POOL_WAIT_SECONDS in sim-pool-ops.ts).
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { budgetVerdict, headOf, hiddenFlakesLine, loadBudgets, recordRedLane, recordRerun, redLaneLine, zeroTestLine } from "../../../scripts/gate-report";
 import { findXctestrun, runDirectory } from "./sim-pool-build";
 
 const SCHEME = "OppiUnitTests";
@@ -104,8 +108,59 @@ function loadTypes(): TestType[] {
   return scanTestTypes(swiftFiles(join(appleDir, BUNDLE)).map((path) => ({ path, text: readFileSync(path, "utf8") })));
 }
 
-/** A known-flaky test the gate runs without blocking until its owner decides by `expires`. */
-export type QuarantineEntry = { id: string; owner: string; reason: string; addedAt: string; expires: string };
+/**
+ * A known-flaky test the gate runs without blocking until its owner decides by `expires`. `backlog`
+ * is the factory backlog key of the work that fixes or deletes it.
+ */
+export type QuarantineEntry = { id: string; owner: string; reason: string; addedAt: string; expires: string; backlog: string };
+
+const QUARANTINE_FIELDS = ["id", "owner", "reason", "addedAt", "expires", "backlog"] as const;
+/** Quarantine buys time for a decision: an `expires` further ahead than this is refused, so an entry cannot park a test indefinitely. */
+export const QUARANTINE_MAX_DAYS = 30;
+const QUARANTINE_BUNDLES = ["OppiTests/", "OppiUITests/", "OppiE2ETests/"];
+
+/**
+ * Why entries of dev/testing/quarantine.json cannot stand: a missing field, an id outside the test
+ * bundles, a date that is not YYYY-MM-DD, an `expires` before `today`, or one more than
+ * QUARANTINE_MAX_DAYS after it. Any problem fails every lane that reads the file, so a quarantine
+ * cannot outlive its decision date unnoticed.
+ */
+export function quarantineProblems(entries: unknown, today: string): string[] {
+  if (!Array.isArray(entries)) return ["dev/testing/quarantine.json must be a JSON array of entries"];
+  const latest = new Date(Date.parse(`${today}T00:00:00Z`) + QUARANTINE_MAX_DAYS * 86_400_000).toISOString().slice(0, 10);
+  return entries.flatMap((raw, index) => {
+    const entry = (raw ?? {}) as Record<string, unknown>;
+    const name = typeof entry.id === "string" && entry.id !== "" ? entry.id : `#${index + 1}`;
+    const missing = QUARANTINE_FIELDS.filter((key) => typeof entry[key] !== "string" || (entry[key] as string).trim() === "");
+    if (missing.length > 0) return [`quarantine entry ${name} lacks ${missing.join(", ")} (dev/testing/quarantine.json)`];
+    const problems: string[] = [];
+    if (!QUARANTINE_BUNDLES.some((bundle) => name.startsWith(bundle))) problems.push(`quarantine entry ${name}: the id must start with ${QUARANTINE_BUNDLES.join(", ")}`);
+    for (const key of ["addedAt", "expires"] as const) {
+      if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(entry[key] as string)) problems.push(`quarantine entry ${name}: ${key} '${entry[key]}' is not YYYY-MM-DD`);
+    }
+    if (problems.length === 0 && (entry.expires as string) < today) {
+      problems.push(`quarantine expired ${entry.expires}: ${name} (owner ${entry.owner}, backlog ${entry.backlog}); fix it, extend it, or delete it in dev/testing/quarantine.json`);
+    }
+    if (problems.length === 0 && (entry.expires as string) > latest) {
+      problems.push(`quarantine entry ${name}: expires ${entry.expires}, more than ${QUARANTINE_MAX_DAYS} days after ${today}; set a decision date by ${latest}`);
+    }
+    return problems;
+  });
+}
+
+/** The entries in force for one test bundle, and every problem in the file (a missing file is an empty quarantine). */
+export function loadQuarantine(path: string, bundle: string, today = new Date().toISOString().slice(0, 10)): { active: QuarantineEntry[]; problems: string[] } {
+  if (!existsSync(path)) return { active: [], problems: [] };
+  let entries: unknown;
+  try {
+    entries = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    return { active: [], problems: [`quarantine entry file ${path} is not JSON: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+  const problems = quarantineProblems(entries, today);
+  if (problems.length > 0) return { active: [], problems };
+  return { active: splitQuarantine(entries as QuarantineEntry[], today).active.filter((entry) => entry.id.startsWith(`${bundle}/`)), problems };
+}
 
 /** Entries still in force on `today` (YYYY-MM-DD), and the ones whose decision is overdue. */
 export function splitQuarantine(entries: QuarantineEntry[], today: string): { active: QuarantineEntry[]; expired: QuarantineEntry[] } {
@@ -115,20 +170,33 @@ export function splitQuarantine(entries: QuarantineEntry[], today: string): { ac
   };
 }
 
-/** Failed test identifiers (`Suite/test()`) in an xcresult, or undefined when it cannot be read. */
-export function failedTestIds(xcresultTestsJson: string): string[] | undefined {
+/** Identifiers (`Suite/test()`) of the test cases in an xcresult whose result is one of `results`, or undefined when it cannot be read. */
+function testIdsWith(xcresultTestsJson: string, results: Set<string>): string[] | undefined {
   try {
-    const failed: string[] = [];
+    const ids: string[] = [];
     const walk = (node: { nodeType?: string; result?: string; nodeIdentifier?: string; children?: unknown[] }) => {
-      if (node.nodeType === "Test Case" && node.result === "Failed" && node.nodeIdentifier) failed.push(node.nodeIdentifier);
+      if (node.nodeType === "Test Case" && results.has(node.result ?? "") && node.nodeIdentifier) ids.push(node.nodeIdentifier);
       for (const child of node.children ?? []) walk(child as typeof node);
     };
     for (const node of JSON.parse(xcresultTestsJson).testNodes ?? []) walk(node);
-    return failed;
+    return ids;
   } catch {
     return undefined;
   }
 }
+
+/** Failed test identifiers (`Suite/test()`) in an xcresult, or undefined when it cannot be read. */
+export const failedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson, new Set(["Failed"]));
+
+/** Identifiers of the tests that ran (passed or failed; not skipped or disabled), or undefined when unreadable. */
+export const ranTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson, new Set(["Passed", "Failed", "Expected Failure"]));
+
+/**
+ * The record of the last full unit run in this checkout, under clients/apple/.build: its HEAD and
+ * the sim-pool summaries of its shards (the quarantine watch run included). batch-gate reads it to
+ * check that each named unit selector matched a test of that run.
+ */
+export const UNIT_RUN_RECORD = "unit-shards-last.json";
 
 const RERUN_LIMIT = 20;
 
@@ -195,41 +263,51 @@ const XCRESULT_MAX_BYTES = 256 * 1024 * 1024;
 
 /** Run an xcresulttool-style command that prints the tests JSON and extract its failed test ids. */
 export function readFailures(command: string, args: string[]): Failures {
+  return readTestIds(command, args, failedTestIds);
+}
+
+/** Run an xcresulttool-style command that prints the tests JSON and pick test ids out of it with `pick`. */
+function readTestIds(command: string, args: string[], pick: (json: string) => string[] | undefined): Failures {
   const tool = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: XCRESULT_MAX_BYTES });
   if (tool.error) return { reason: `xcresulttool did not finish: ${tool.error.message}` };
   if (tool.status !== 0) {
     const stderr = tool.stderr.trim().split("\n").slice(-3).join(" | ");
     return { reason: `xcresulttool ${tool.signal ? `killed by ${tool.signal}` : `exit ${tool.status}`}${stderr ? `: ${stderr}` : ""}` };
   }
-  const ids = failedTestIds(tool.stdout);
+  const ids = pick(tool.stdout);
   return ids ? { ids } : { reason: `xcresulttool output (${tool.stdout.length} chars) is not test-results JSON` };
 }
 
-/** Failed tests of a finished run, read from the xcresult in its run directory. */
-function runFailures(summary: string | undefined): Failures {
+/** The xcresult in a finished run's directory, or why there is none. */
+function xcresultOf(summary: string | undefined): { path: string } | { reason: string } {
   if (!summary || !existsSync(summary)) return { reason: "no sim-pool summary" };
   const derivedData = JSON.parse(readFileSync(summary, "utf8")).derived_data_path as string | undefined;
   const testLogs = derivedData ? join(derivedData, "Logs", "Test") : "";
   if (!testLogs || !existsSync(testLogs)) return { reason: `no test logs directory (${testLogs || "no derived data path"})` };
   const bundle = readdirSync(testLogs).filter((name) => name.endsWith(".xcresult")).sort().at(-1);
-  if (!bundle) return { reason: `no .xcresult in ${testLogs}` };
-  return readFailures("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", join(testLogs, bundle)]);
+  return bundle ? { path: join(testLogs, bundle) } : { reason: `no .xcresult in ${testLogs}` };
 }
 
-/** Append a pass-on-rerun to the repository's flake log; returns how many gates saw this test flake. */
-function recordFlake(id: string): number {
-  const commonDir = spawnSync("git", ["rev-parse", "--git-common-dir"], { cwd: appleDir, encoding: "utf8" }).stdout.trim();
-  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: appleDir, encoding: "utf8" }).stdout.trim();
-  const dir = join(resolve(appleDir, commonDir), "oppi");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, "test-flakes.jsonl");
-  appendFileSync(path, `${JSON.stringify({ id, head, at: new Date().toISOString() })}\n`);
-  const heads = new Set(
-    readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { id: string; head: string })
-      .filter((entry) => entry.id === id).map((entry) => entry.head),
-  );
-  return heads.size;
+/** Failed tests of a finished run, read from the xcresult in its run directory. */
+export function runFailures(summary: string | undefined): Failures {
+  const xcresult = xcresultOf(summary);
+  if ("reason" in xcresult) return xcresult;
+  return readFailures("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path]);
 }
+
+/** Tests a finished run ran, read from the xcresult in its run directory. */
+export function runTestIds(summary: string | undefined): Failures {
+  const xcresult = xcresultOf(summary);
+  if ("reason" in xcresult) return xcresult;
+  return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path], ranTestIds);
+}
+
+/** The gate lane the full unit run is, in the rerun and red-lane ledgers and dev/testing/lane-budgets.json. */
+const LANE = "unit-full";
+const profile = () => process.env.OPPI_SIM_DEVICE_PROFILE ?? "iphone";
+
+/** The `-only-testing` values of a shard's flags: the selectors it was given. */
+const selectorsOf = (flags: string[]) => flags.filter((flag) => flag.startsWith("-only-testing:")).map((flag) => flag.slice("-only-testing:".length));
 
 /**
  * Tests the shard's xcodebuild ran, from its log: the Swift Testing result line (unit tests), or
@@ -258,6 +336,22 @@ async function main(argv: string[]): Promise<number> {
   const shardsArg = argv.indexOf("--shards");
   const shards = Number(shardsArg >= 0 ? argv[shardsArg + 1] : process.env.OPPI_UNIT_SHARDS ?? "3");
   if (!Number.isInteger(shards) || shards < 1) throw new Error(`invalid shard count ${shards}`);
+  const started = Date.now();
+  const wall = () => Math.round((Date.now() - started) / 1000);
+  /** A red run of a land-queue batch goes to the red-lane ledger with a cause guessed from `output`. */
+  const red = (tests: string[], output: string) => {
+    console.log(`[unit-shards] ${redLaneLine(LANE, recordRedLane(appleDir, { lane: LANE, profile: profile(), exit: 1, seconds: wall(), tests, output }))}`);
+    return 1;
+  };
+
+  // --strict (release): every test blocks; no quarantine, no pass-on-rerun.
+  const strict = argv.includes("--strict");
+  const quarantine = strict ? { active: [], problems: [] } : loadQuarantine(quarantinePath, BUNDLE);
+  if (quarantine.problems.length > 0) {
+    for (const problem of quarantine.problems) console.error(`[unit-shards] ${problem}`);
+    return red([], quarantine.problems.join("\n"));
+  }
+  const skipQuarantined = quarantine.active.map((entry) => `-skip-testing:${entry.id}`);
 
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const runDir = runDirectory(join(appleDir, ".build"), `shards-${stamp}`);
@@ -269,23 +363,12 @@ async function main(argv: string[]): Promise<number> {
     env: { ...process.env, OPPI_SIM_POOL_PRODUCTS_DIR: runDir },
   });
   if (build.status !== 0) {
-    console.error(`[unit-shards] build failed (exit ${build.status ?? build.signal})`);
+    const line = `[unit-shards] build failed (exit ${build.status ?? build.signal})`;
+    console.error(line);
+    red([], line);
     return build.status || 1;
   }
   const xctestrun = findXctestrun(join(runDir, "Build", "Products"), SCHEME);
-
-  // --strict (release): every test blocks; no quarantine, no pass-on-rerun.
-  const strict = argv.includes("--strict");
-  const quarantine = !strict && existsSync(quarantinePath)
-    ? splitQuarantine(JSON.parse(readFileSync(quarantinePath, "utf8")) as QuarantineEntry[], new Date().toISOString().slice(0, 10))
-    : { active: [], expired: [] };
-  if (quarantine.expired.length > 0) {
-    for (const entry of quarantine.expired) {
-      console.error(`[unit-shards] quarantine expired ${entry.expires}: ${entry.id} (owner ${entry.owner}); fix it, extend it, or delete it in dev/testing/quarantine.json`);
-    }
-    return 1;
-  }
-  const skipQuarantined = quarantine.active.map((entry) => `-skip-testing:${entry.id}`);
 
   const weights: Record<string, number> = existsSync(weightsPath) ? JSON.parse(readFileSync(weightsPath, "utf8")) : {};
   const parts = partition(loadTypes(), weights, shards);
@@ -295,58 +378,100 @@ async function main(argv: string[]): Promise<number> {
   const results = await Promise.all(parts.map((_, index) => runShard(index, xctestrun, [...shardFlags(parts, index), ...skipQuarantined], outDir)));
   const testFailures: string[] = [];
   const infraFailures: string[] = [];
+  /** Tests still red after the rerun, and the ones that passed only on it. */
+  const failing: string[] = [];
+  const flaky: string[] = [];
+  const redOutput: string[] = [];
   for (const result of results) {
     const output = readFileSync(result.output, "utf8");
     const infra = infrastructureFailure(result, output);
     let ok = result.code === 0 && !infra;
     console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
+    if (result.tests === 0) console.log(`[unit-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(parts, result.index)), result.code === 0)}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
-      process.stdout.write(`${output.trimEnd().split("\n").slice(-40).join("\n")}\n`);
+      const tail = output.trimEnd().split("\n").slice(-40).join("\n");
+      process.stdout.write(`${tail}\n`);
+      redOutput.push(tail);
       if (infra) {
         console.log(`[unit-shards] ${result.label}: ${infra}; no test failed, so there is nothing to rerun`);
+        redOutput.push(`INFRASTRUCTURE failure: ${infra}`);
       } else if (!strict) {
-        ok = await rerunFailures(result, xctestrun, outDir);
+        const rerun = await rerunFailures(result, xctestrun, outDir);
+        ok = rerun.ok;
+        failing.push(...rerun.failing);
+        flaky.push(...rerun.flaky);
+      } else {
+        const failures = runFailures(result.summary);
+        if ("ids" in failures) failing.push(...failures.ids.map((id) => `${BUNDLE}/${id}`));
       }
     }
     if (!ok) (infra ? infraFailures : testFailures).push(result.label);
   }
+  const summaries = results.map((result) => result.summary).filter((summary): summary is string => summary !== undefined);
   if (quarantine.active.length > 0) {
     // Quarantined tests still run, on the same products, but never block.
     const watch = await runShard(shards, xctestrun, quarantine.active.map((entry) => `-only-testing:${entry.id}`), outDir, "quarantined");
     console.log(`[unit-shards] quarantined (non-blocking): ${watch.code === 0 ? "passed" : "failed"} ${quarantine.active.map((entry) => entry.id).join(", ")} output=${watch.output}`);
+    if (watch.summary) summaries.push(watch.summary);
   }
+  // What this run ran, for batch-gate's check that a named unit selector matched a test (paths only: it reads the xcresults when it needs them).
+  writeFileSync(join(appleDir, ".build", UNIT_RUN_RECORD), `${JSON.stringify({ head: headOf(appleDir), at: new Date().toISOString(), summaries }, null, 1)}\n`);
+  for (const id of failing) console.log(`[unit-shards] FAILED ${id}`);
   const total = results.reduce((sum, result) => sum + result.tests, 0);
-  console.log(`[unit-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${shards} shards, longest ${Math.max(...results.map((r) => r.seconds))}s`);
-  return testFailures.length + infraFailures.length > 0 ? 1 : 0;
+  const longest = Math.max(...results.map((r) => r.seconds));
+  const outcome = `${verdict(testFailures, infraFailures)}: ${total} tests in ${shards} shards, longest ${longest}s`;
+  console.log(`[unit-shards] ${outcome}`);
+  const { budgets, warnings } = loadBudgets();
+  const budget = budgetVerdict(LANE, { wall: wall(), longestShard: longest }, budgets);
+  for (const warning of warnings) console.log(`[unit-shards] ${warning}`);
+  console.log(`[unit-shards] ${budget.line}`);
+  if (budget.warning) console.log(`[unit-shards] ${budget.warning}`);
+  // A red run hides nothing: its failures are printed above.
+  if (testFailures.length + infraFailures.length === 0) {
+    console.log(`[unit-shards] ${hiddenFlakesLine(flaky.map((id) => ({ id, lane: LANE })))}`);
+    return 0;
+  }
+  return red(failing, [...redOutput, outcome].join("\n"));
 }
 
 /**
  * Rerun a failed shard's failing tests once on the same products. A test that passes on the
- * rerun is a flake: it does not block, and the flake log counts the gates it flaked in. Crashes,
- * unreadable results, or more than RERUN_LIMIT failures stay red.
+ * rerun is a flake: it does not block, and the rerun ledger counts the gates it flaked in. Crashes,
+ * unreadable results, or more than RERUN_LIMIT failures stay red. `failing` and `flaky` are full
+ * `OppiTests/...` ids.
  */
-async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<boolean> {
+async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<{ ok: boolean; failing: string[]; flaky: string[] }> {
   const failures = runFailures(result.summary);
   if ("reason" in failures) {
     console.log(`[unit-shards] ${result.label}: no rerun (failures unreadable: ${failures.reason})`);
-    return false;
+    return { ok: false, failing: [], flaky: [] };
   }
   const ids = failures.ids;
   if (ids.length === 0 || ids.length > RERUN_LIMIT) {
     console.log(`[unit-shards] ${result.label}: no rerun (${ids.length} failed tests)`);
-    return false;
+    return { ok: false, failing: ids.map((id) => `${BUNDLE}/${id}`), flaky: [] };
   }
   const rerun = await runShard(result.index, xctestrun, ids.map((id) => `-only-testing:${BUNDLE}/${id}`), outDir, `${result.label}-rerun`);
   const ok = rerun.code === 0 && rerun.tests >= ids.length;
   console.log(`[unit-shards] ${result.label} rerun of ${ids.length} failed tests: ${ok ? "PASS" : "FAIL"} output=${rerun.output}`);
-  if (ok) {
-    for (const id of ids) {
-      const gates = recordFlake(`${BUNDLE}/${id}`);
-      console.log(`[unit-shards] FLAKY ${BUNDLE}/${id}: failed, then passed on rerun (flaked in ${gates} gate${gates === 1 ? "" : "s"})${gates >= 2 ? "; quarantine it in dev/testing/quarantine.json with an owner and an expiry" : ""}`);
+  // A red rerun names what failed again; when it names nothing (unreadable, or it died), every rerun test failed.
+  const again = ok ? undefined : runFailures(rerun.summary);
+  const stillRed = new Set(again === undefined ? [] : "ids" in again && again.ids.length > 0 ? again.ids : ids);
+  const failing: string[] = [];
+  const flaky: string[] = [];
+  for (const id of ids) {
+    const full = `${BUNDLE}/${id}`;
+    const outcome = stillRed.has(id) ? "failed" : "flaky";
+    const gates = recordRerun(appleDir, { id: full, lane: LANE, profile: profile(), outcome });
+    if (outcome === "failed") {
+      failing.push(full);
+      continue;
     }
+    flaky.push(full);
+    console.log(`[unit-shards] FLAKY ${full}: failed, then passed on rerun (flaked in ${gates} gate${gates === 1 ? "" : "s"})${gates >= 2 ? "; quarantine it in dev/testing/quarantine.json with an owner, an expiry, and a backlog key" : ""}`);
   }
-  return ok;
+  return { ok, failing, flaky };
 }
 
 if (import.meta.main) {

@@ -40,6 +40,9 @@ scripts/*
 !scripts/heavy.test.ts
 !scripts/batch-gate.ts
 !scripts/batch-gate.test.ts
+!scripts/batch-gate-health.test.ts
+!scripts/gate-report.ts
+!scripts/gate-report.test.ts
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
@@ -63,6 +66,7 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-lock.test.ts
 !clients/apple/scripts/sim-pool-lock.stale-slot-20261029.json
 !clients/apple/scripts/sim-pool-stale-slot.test.ts
+!clients/apple/scripts/sim-pool-unit-runs.test.ts
 !clients/apple/scripts/sim-pool-supervise.ts
 !clients/apple/scripts/sim-pool-supervise.test.ts
 !clients/apple/scripts/sim-pool-simctl.ts
@@ -76,6 +80,7 @@ clients/apple/scripts/*
 !clients/apple/scripts/unit-shard-seconds.json
 !clients/apple/scripts/ui-shards.ts
 !clients/apple/scripts/ui-shards.test.ts
+!clients/apple/scripts/ui-shards-rerun.test.ts
 !clients/apple/scripts/ui-shard-seconds.json
 !clients/apple/scripts/sim-pool-lifecycle.ts
 !clients/apple/scripts/sim-pool-lifecycle.test.ts

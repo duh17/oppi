@@ -1340,6 +1340,47 @@ export function failedSwiftTestingRun(logText: string): string | undefined {
     .at(-1)?.[0].trim();
 }
 
+/**
+ * A Swift Testing run summary is final (one start, one end, nothing test-related after it; see
+ * finishedSwiftTesting) and unit runs collect no diagnostics, so its xcodebuild has nothing left to
+ * do: every passing unit run exits within about a second of it. XCTest (UI, E2E) runs keep failure
+ * diagnostics, which xcodebuild collects after the summary, so they keep the full wait, and so does a
+ * unit run whose caller asked for diagnostics (`-collect-test-diagnostics` other than `never`).
+ */
+export const SWIFT_TESTING_COMPLETION_WAIT_SECONDS = 5;
+
+export function completionWaitSeconds(config: Pick<PoolConfig, "completionTimeout">, completion: Pick<TestCompletion, "summary">, argv: string[]): number {
+  const diagnostics = extractFlagValue("-collect-test-diagnostics", argv);
+  return /^[\u2714\u2718] Test run with /.test(completion.summary) && (diagnostics === undefined || diagnostics === "never")
+    ? Math.min(SWIFT_TESTING_COMPLETION_WAIT_SECONDS, config.completionTimeout)
+    : config.completionTimeout;
+}
+
+/**
+ * A unit (`-scheme OppiUnitTests`) test run with no `-collect-test-diagnostics` of its own collects
+ * none: xcodebuild's default, on-failure, spends 15-35 s after a failing run's summary collecting
+ * diagnostics nobody reads, and unit failures are read from the log and the xcresult.
+ */
+export function withUnitDiagnosticsOff(callerArgv: string[], testArgv: string[]): string[] {
+  if (extractFlagValue("-scheme", callerArgv) !== "OppiUnitTests" || !isTestAction(callerArgv)) return testArgv;
+  if ([...callerArgv, ...testArgv].some((arg) => arg === "-collect-test-diagnostics")) return testArgv;
+  return [...testArgv, "-collect-test-diagnostics", "never"];
+}
+
+/**
+ * The summary of a run that finished having executed zero tests, or undefined when it ran some or
+ * printed no summary at all (a run that stopped early is not proof that a filter matched nothing).
+ * A Swift Testing run prints XCTest's zero-test prelude first, so the prelude counts as zero only
+ * when no Swift Testing result with tests follows it.
+ */
+export function zeroTestSummary(logText: string): string | undefined {
+  const xctest = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+(Executed ([0-9]+) tests?.*?)\r?$/gm)];
+  const swift = [...logText.matchAll(/^[✔✘] Test run with ([0-9]+) tests?\b.*?\r?$/gm)];
+  if (xctest.length === 0 && swift.length === 0) return undefined;
+  if (xctest.some((match) => Number(match[2]) > 0) || swift.some((match) => Number(match[1]) > 0)) return undefined;
+  return (swift.at(-1)?.[0] ?? xctest.at(-1)![1]).trim();
+}
+
 function logTestFailureLines(logText: string): string[] {
   return [
     ...new Set(
@@ -1579,8 +1620,9 @@ async function runXcodebuildAttempt(input: {
       }
       completion = next;
     }
-    if (completion && nowMs - completionSince >= input.config.completionTimeout * 1000) {
-      log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${input.config.completionTimeout}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
+    const completionWait = completion ? completionWaitSeconds(input.config, completion, input.completionArgv ?? input.argv) : 0;
+    if (completion && nowMs - completionSince >= completionWait * 1000) {
+      log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${completionWait}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
       hung = true;
       break;
     }
@@ -1658,9 +1700,17 @@ async function runXcodebuildAttempt(input: {
   }
   // A run whose own summary says it failed never passes, whatever xcodebuild's status says.
   if (recovered === undefined && code === 0 && !input.session.canceled) {
-    const failedRun = failedSwiftTestingRun(existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "");
+    const logText = existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "";
+    const failedRun = failedSwiftTestingRun(logText);
     if (failedRun) {
       log(`[sim-pool] the run failed with xcodebuild's exit 0: ${failedRun}`);
+      code = 65;
+    }
+    // A misspelled -only-testing filter runs nothing and xcodebuild calls that a success.
+    const selectors = (input.completionArgv ?? input.argv).filter((arg) => arg.startsWith("-only-testing:")).map((arg) => arg.slice("-only-testing:".length));
+    const zero = selectors.length > 0 ? zeroTestSummary(logText) : undefined;
+    if (code === 0 && zero) {
+      log(`error: zero tests ran for ${selectors.join(", ")}: no test matches the selector (${zero})`);
       code = 65;
     }
   }
@@ -2075,7 +2125,7 @@ export async function commandRun(
           exitCode,
         });
       }
-      testArgv = ["test-without-building", "-xctestrun", build.xctestrun, ...plan.testFlags];
+      testArgv = withUnitDiagnosticsOff(split.argv, ["test-without-building", "-xctestrun", build.xctestrun, ...plan.testFlags]);
       completionArgv = split.argv;
       derivedData = runDir;
     } else if (plan.readsDerivedData) {

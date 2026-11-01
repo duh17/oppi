@@ -18,20 +18,29 @@
 // 3. Run every shard in its own pool slot of the profile with `test-without-building -xctestrun`
 //    at once. Shard count: enough that each shard has MIN_SHARD_SECONDS of tests (a shard costs
 //    about 30 s of install and runner start), at most OPPI_UI_SHARDS (default per profile:
-//    iphone 3, ipad 2, duo 1) and never more than the profile's slots. sim-pool still enforces the
+//    iphone 3, ipad 3, duo 1) and never more than the profile's slots. sim-pool still enforces the
 //    machine-wide limits: a shard waits for a slot (OPPI_SIM_POOL_WAIT, or the gate wait under
 //    OPPI_SIM_POOL_GATE=1), for booted-simulator capacity, and for the first-boot slot.
 //
-// There is no rerun: a failed test fails the run, as it does unsharded. Every shard prints its
-// own output file, sim-pool summary, and xcresult. A shard that ran no tests is reported as an
-// infrastructure failure (pool full, broken build or simulator), apart from test failures.
+// A shard whose finished run failed reruns its failed tests once (at most XCTEST_RERUN_LIMIT), on the
+// same products and profile, like unit-shards: a test that passes on the rerun is FLAKY and does not
+// block, every rerun outcome goes to the rerun ledger, and the summary names the flakes the rerun hid
+// (scripts/gate-report.ts). Quarantined UI tests (dev/testing/quarantine.json) are taken out of the
+// shards and run in one non-blocking shard; an expired or incomplete entry fails the run before it
+// builds. Every shard prints its own output file, sim-pool summary, and xcresult. A shard that ran no
+// tests is reported as an infrastructure failure (pool full, broken build or simulator), apart from
+// test failures, with the selectors it was given. The summary prints the median test against the
+// profile's budget (dev/testing/lane-budgets.json).
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findXctestrun, runDirectory } from "./sim-pool-build";
+import {
+  budgetVerdict, failedXCTestCases, hiddenFlakesLine, loadBudgets, logOfSummary, median, passedXCTestCases, recordRerun, xctestCaseSeconds, xctestRerun, zeroTestLine,
+} from "../../../scripts/gate-report";
 import { DEVICE_PROFILES } from "./sim-pool-ops";
-import { executedTests, infrastructureFailure, runShard, verdict } from "./unit-shards";
+import { executedTests, infrastructureFailure, loadQuarantine, runShard, verdict, type ShardResult } from "./unit-shards";
 
 const SCHEME = "Oppi";
 const BUNDLE = "OppiUITests";
@@ -40,10 +49,13 @@ const SOURCE_DIRS = ["OppiUITests", "QAVerificationSupport"];
 /** A shard needs at least this many seconds of tests to pay for its own install and runner start. */
 export const MIN_SHARD_SECONDS = 120;
 const FALLBACK_TEST_SECONDS = 30;
-const DEFAULT_SHARDS: Record<string, number> = { iphone: 3, ipad: 2, duo: 1 };
+// iPad was the critical lane in 8 of 11 measured UI gates and its 4 slots never queued, so it takes 3,
+// leaving one for workers (.internal/reports/gate-speed-2026-11-01, recommendation 1).
+const DEFAULT_SHARDS: Record<string, number> = { iphone: 3, ipad: 3, duo: 1 };
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appleDir = dirname(scriptDir);
 const weightsPath = join(scriptDir, "ui-shard-seconds.json");
+const quarantinePath = join(appleDir, "..", "..", "dev", "testing", "quarantine.json");
 
 /** A UI test class: the `test…()` methods it declares, in its body and extensions. */
 export type UIClass = { name: string; superclass?: string; tests: Set<string>; complete: boolean };
@@ -159,7 +171,7 @@ export type Unit = {
 };
 export type ShardPlan = { units: Unit[]; seconds: number; tests: number | undefined; ids: string[] };
 
-function median(values: number[]): number {
+function medianSeconds(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted.length > 0 ? sorted[Math.floor((sorted.length - 1) / 2)] : FALLBACK_TEST_SECONDS;
 }
@@ -198,8 +210,33 @@ export function shardCap(profile: string, env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
+ * `filters` with the quarantined UI tests (`OppiUITests/<Class>[/<test>]`) taken out: a filter an
+ * entry covers is dropped, and an entry inside a named class is returned in `skip` (as `Class/test`)
+ * for planShards to skip. `watched`: the quarantined tests this selection names, for the non-blocking run.
+ */
+export function applyQuarantine(filters: string[], quarantined: string[]): { filters: string[]; skip: string[]; watched: string[] } {
+  const ids = quarantined.map((id) => id.replace(/\(\)$/, ""));
+  const kept: string[] = [];
+  const skip = new Set<string>();
+  const watched = new Set<string>();
+  for (const filter of normalizeFilters(filters)) {
+    if (ids.some((id) => filter === id || filter.startsWith(`${id}/`))) {
+      watched.add(filter);
+      continue;
+    }
+    kept.push(filter);
+    for (const id of ids.filter((id) => id.startsWith(`${filter}/`))) {
+      skip.add(id.slice(`${BUNDLE}/`.length));
+      watched.add(id);
+    }
+  }
+  return { filters: kept, skip: [...skip], watched: [...watched] };
+}
+
+/**
  * Split `filters` (`OppiUITests/<Class>[/<test>]`) into at most `cap` shards. Greedy longest-first:
  * each unit goes to the currently lightest shard. `shards` forces the count (clamped to the units).
+ * `skip`: `Class/test` ids (quarantined) that no shard runs or expects.
  */
 export function planShards(
   filters: string[],
@@ -207,12 +244,16 @@ export function planShards(
   weights: Record<string, number>,
   cap: number,
   shards?: number,
+  skip: string[] = [],
 ): ShardPlan[] {
-  const fallback = median(Object.values(weights));
+  const fallback = medianSeconds(Object.values(weights));
   const secondsOf = (cls: string, test: string) => weights[`${cls}/${test}`] ?? fallback;
+  const skipped = new Set(skip);
+  const skipFlags = (cls: string) => skip.filter((id) => id.startsWith(`${cls}/`)).map((id) => `-skip-testing:${BUNDLE}/${id}`);
+  const runnable = (cls: string) => testsOf(cls, classes)?.filter((test) => !skipped.has(`${cls}/${test}`));
   const classUnit = (target: string, cls: string, tests: string[]): Unit => ({
     label: cls,
-    flags: [`-only-testing:${target}/${cls}`],
+    flags: [`-only-testing:${target}/${cls}`, ...skipFlags(cls)],
     seconds: tests.reduce((sum, test) => sum + secondsOf(cls, test), 0),
     tests: tests.length,
     ids: tests.map((test) => `${cls}/${test}`),
@@ -220,11 +261,11 @@ export function planShards(
   let units: Unit[] = normalizeFilters(filters).map((filter) => {
     const [target, cls, test, ...rest] = filter.split("/");
     if (!test) {
-      const tests = testsOf(cls, classes);
+      const tests = runnable(cls);
       if (tests && tests.length > 0) return classUnit(target, cls, tests);
       // A class the scan cannot list: xcodebuild decides what it holds; weigh it by what was recorded.
       const recorded = Object.entries(weights).filter(([id]) => id.startsWith(`${cls}/`));
-      return { label: cls, flags: [`-only-testing:${filter}`], seconds: recorded.length > 0 ? recorded.reduce((sum, [, s]) => sum + s, 0) : fallback, tests: undefined, ids: [] };
+      return { label: cls, flags: [`-only-testing:${filter}`, ...skipFlags(cls)], seconds: recorded.length > 0 ? recorded.reduce((sum, [, s]) => sum + s, 0) : fallback, tests: undefined, ids: [] };
     }
     // A named test, or a nested type the scan does not model: one unit as named.
     return { label: filter.slice(target.length + 1), flags: [`-only-testing:${filter}`], seconds: rest.length === 0 ? secondsOf(cls, test) : fallback, tests: rest.length === 0 ? 1 : undefined, ids: rest.length === 0 ? [`${cls}/${test}`] : [] };
@@ -235,8 +276,9 @@ export function planShards(
     // A class over half of a shard's share would be the critical path alone: run its methods apart.
     const share = total / count;
     units = units.flatMap((unit) => {
-      const cls = unit.flags.length === 1 && unit.tests !== undefined && unit.tests > 1 ? unit.label : undefined;
-      const tests = cls ? testsOf(cls, classes) : undefined;
+      // A listed class unit: its label is the class (a named test's label has a `/`).
+      const cls = !unit.label.includes("/") && unit.tests !== undefined && unit.tests > 1 ? unit.label : undefined;
+      const tests = cls ? runnable(cls) : undefined;
       if (!cls || !tests || unit.seconds <= share / 2) return [unit];
       return tests.map((test) => ({ label: `${cls}/${test}`, flags: [`-only-testing:${BUNDLE}/${cls}/${test}`], seconds: secondsOf(cls, test), tests: 1, ids: [`${cls}/${test}`], splitOf: cls }));
     });
@@ -248,7 +290,7 @@ export function planShards(
     bin.seconds += unit.seconds;
     bin.tests = bin.tests === undefined || unit.tests === undefined ? undefined : bin.tests + unit.tests;
   }
-  addCatchAlls(bins);
+  addCatchAlls(bins, skipFlags);
   for (const bin of bins) bin.ids = bin.units.flatMap((unit) => unit.ids);
   return bins;
 }
@@ -259,7 +301,7 @@ export function planShards(
  * class takes a catch-all: the whole class, skipping the methods other shards run. Every method the
  * scan did find still runs exactly once, and an unlisted one runs in the catch-all shard.
  */
-function addCatchAlls(bins: ShardPlan[]): void {
+function addCatchAlls(bins: ShardPlan[], skipFlags: (cls: string) => string[]): void {
   const classes = new Set(bins.flatMap((bin) => bin.units.flatMap((unit) => (unit.splitOf ? [unit.splitOf] : []))));
   for (const cls of classes) {
     const holders = bins.filter((bin) => bin.units.some((unit) => unit.splitOf === cls));
@@ -270,7 +312,7 @@ function addCatchAlls(bins: ShardPlan[]): void {
       ...keeper.units.filter((unit) => unit.splitOf !== cls),
       {
         label: cls,
-        flags: [`-only-testing:${BUNDLE}/${cls}`, ...elsewhere.flatMap((unit) => unit.ids.map((id) => `-skip-testing:${BUNDLE}/${id}`))],
+        flags: [`-only-testing:${BUNDLE}/${cls}`, ...elsewhere.flatMap((unit) => unit.ids.map((id) => `-skip-testing:${BUNDLE}/${id}`)), ...skipFlags(cls)],
         seconds: mine.reduce((sum, unit) => sum + unit.seconds, 0),
         tests: mine.length,
         ids: mine.flatMap((unit) => unit.ids),
@@ -371,7 +413,19 @@ async function main(argv: string[]): Promise<number> {
   if (forced !== undefined && (!Number.isInteger(Number(forced)) || Number(forced) < 1)) throw new Error(`invalid shard count ${forced}`);
   // --shards N forces the count past OPPI_UI_SHARDS and the time rule; only the profile's slots and the test count limit it.
   const cap = forced === undefined ? shardCap(profile) : profileSlots(profile);
-  const plans = planShards(filters, loadClasses(), loadWeights(), cap, forced === undefined ? undefined : Number(forced));
+  const laneStarted = Date.now();
+  const lane = `ui-${profile}`;
+  const quarantine = loadQuarantine(quarantinePath, BUNDLE);
+  if (quarantine.problems.length > 0) {
+    for (const problem of quarantine.problems) console.error(`[ui-shards] ${problem}`);
+    return 1;
+  }
+  const quarantined = applyQuarantine(filters, quarantine.active.map((entry) => entry.id));
+  if (quarantined.watched.length > 0) {
+    const owners = quarantine.active.filter((entry) => quarantined.watched.some((id) => id === entry.id.replace(/\(\)$/, "") || id.startsWith(`${entry.id}/`)));
+    console.log(`[ui-shards] quarantined, run without blocking: ${quarantined.watched.join(", ")} (${owners.map((entry) => `${entry.id}: owner ${entry.owner}, expires ${entry.expires}, backlog ${entry.backlog}`).join("; ")})`);
+  }
+  const plans = quarantined.filters.length === 0 ? [] : planShards(quarantined.filters, loadClasses(), loadWeights(), cap, forced === undefined ? undefined : Number(forced), quarantined.skip);
   const estimate = Math.round(plans.reduce((sum, plan) => sum + plan.seconds, 0));
   console.log(`[ui-shards] ${profile}: ${plans.length} shard${plans.length === 1 ? "" : "s"} (cap ${cap}), ${estimate}s of recorded tests`);
   for (const [index, plan] of plans.entries()) {
@@ -402,6 +456,10 @@ async function main(argv: string[]): Promise<number> {
   const results = await Promise.all(plans.map((plan, index) => runShard(index, xctestrun, shardFlags(plan), outDir, `shard-${index + 1}`, env, true)));
   const testFailures: string[] = [];
   const infraFailures: string[] = [];
+  /** Tests still red after the rerun (or with no rerun), and the ones that passed only on it. */
+  const failing: string[] = [];
+  const flaky: string[] = [];
+  const caseSeconds: number[] = [];
   for (const result of results) {
     const output = readFileSync(result.output, "utf8");
     const infra = infrastructureFailure(result, output);
@@ -409,28 +467,100 @@ async function main(argv: string[]): Promise<number> {
     const missing = result.code === 0 && !infra ? missingTests(plans[result.index], ran) : [];
     const mismatch = missing.length > 0 ? `planned tests that did not run: ${missing.join(", ")}` : undefined;
     const unplanned = unplannedTests(plans, result.index, ran);
-    const ok = result.code === 0 && !infra && !mismatch;
+    let ok = result.code === 0 && !infra && !mismatch;
     const xcresult = xcresultOf(result.summary);
+    caseSeconds.push(...xctestCaseSeconds(logOfSummary(result.summary)));
     console.log(`[ui-shards] shard ${result.index + 1}/${plans.length}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}${xcresult ? ` xcresult=${xcresult}` : ""}`);
+    if (result.tests === 0) console.log(`[ui-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(plans[result.index])), result.code === 0)}`);
     if (unplanned.length > 0) console.log(`[ui-shards] ${result.label}: ran ${unplanned.length} test(s) the source scan did not list (the class's catch-all): ${unplanned.join(", ")}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
       process.stdout.write(`${output.trimEnd().split("\n").slice(-40).join("\n")}\n`);
       if (infra) console.log(`[ui-shards] ${result.label}: ${infra}; no test failed, so there is nothing to rerun`);
-      if (mismatch) console.log(`[ui-shards] ${result.label}: ${mismatch}`);
-      (infra ? infraFailures : testFailures).push(result.label);
+      if (mismatch) {
+        console.log(`[ui-shards] ${result.label}: ${mismatch}`);
+        failing.push(...missing.map((id) => `${BUNDLE}/${id}`));
+      }
+      if (!infra && !mismatch) {
+        const rerun = await rerunShard(result, xctestrun, outDir, env, lane, profile);
+        ok = rerun.ok;
+        failing.push(...rerun.failing);
+        flaky.push(...rerun.flaky);
+      }
+      if (!ok) (infra ? infraFailures : testFailures).push(result.label);
     }
   }
+  if (quarantined.watched.length > 0) {
+    // Quarantined tests still run, on the same products and profile, but never block.
+    const watch = await runShard(plans.length, xctestrun, quarantined.watched.map((id) => `-only-testing:${id}`), outDir, "quarantined", env, true);
+    console.log(`[ui-shards] quarantined (non-blocking): ${watch.code === 0 ? "passed" : "failed"} ${quarantined.watched.join(", ")} output=${watch.output}`);
+  }
+  for (const id of failing) console.log(`[ui-shards] FAILED ${id}`);
   // sim-pool stops xcodebuild once the test run completes, which can leave an xcresult unreadable.
   console.log("[ui-shards] xcresult paths are best effort: sim-pool stops xcodebuild when the tests finish, so a bundle may be unreadable; the shard output and the sim-pool log are the record");
   const total = results.reduce((sum, result) => sum + result.tests, 0);
   const wall = Math.round((Date.now() - started) / 1000);
-  console.log(`[ui-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${plans.length} shards, longest ${Math.max(...results.map((r) => r.seconds))}s, ${wall}s wall after the build`);
-  if (total === 0) {
-    console.log("[ui-shards] no shard executed a test");
+  console.log(`[ui-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${plans.length} shards, longest ${Math.max(0, ...results.map((r) => r.seconds))}s, ${wall}s wall after the build`);
+  const { budgets, warnings } = loadBudgets();
+  const budget = budgetVerdict(lane, { wall: Math.round((Date.now() - laneStarted) / 1000), medianTest: median(caseSeconds), tests: caseSeconds.length }, budgets);
+  for (const warning of warnings) console.log(`[ui-shards] ${warning}`);
+  console.log(`[ui-shards] ${budget.line}`);
+  if (budget.warning) console.log(`[ui-shards] ${budget.warning}`);
+  // No plans: every named test is quarantined, so nothing blocking had to run.
+  if (total === 0 && plans.length > 0) {
+    console.log(`[ui-shards] ${zeroTestLine(quarantined.filters, results.every((result) => result.code === 0))}`);
     return 1;
   }
-  return testFailures.length + infraFailures.length > 0 ? 1 : 0;
+  if (testFailures.length + infraFailures.length > 0) return 1;
+  // A red run hides nothing: its failures are printed above.
+  console.log(`[ui-shards] ${hiddenFlakesLine(flaky.map((id) => ({ id, lane })))}`);
+  return 0;
+}
+
+/** The `-only-testing` values of a shard's flags: the selectors it was given. */
+const selectorsOf = (flags: string[]) => flags.filter((flag) => flag.startsWith("-only-testing:")).map((flag) => flag.slice("-only-testing:".length));
+
+/**
+ * Rerun a finished shard's failed tests once, on the same products and profile. A test that passes
+ * is FLAKY: it does not block, and the rerun ledger counts the gates it flaked in. A run that did not
+ * finish (some tests may never have started), a failure outside any test, or more than
+ * XCTEST_RERUN_LIMIT failures stays red without a rerun. Ids are full `OppiUITests/<Class>/<test>`.
+ */
+async function rerunShard(
+  result: ShardResult,
+  xctestrun: string,
+  outDir: string,
+  env: NodeJS.ProcessEnv,
+  lane: string,
+  profile: string,
+): Promise<{ ok: boolean; failing: string[]; flaky: string[] }> {
+  const log = logOfSummary(result.summary);
+  const candidates = xctestRerun(log);
+  if ("reason" in candidates) {
+    console.log(`[ui-shards] ${result.label}: no rerun (${candidates.reason})`);
+    return { ok: false, failing: failedXCTestCases(log), flaky: [] };
+  }
+  const ids = candidates.ids;
+  const rerun = await runShard(result.index, xctestrun, ids.map((id) => `-only-testing:${id}`), outDir, `${result.label}-rerun`, env, true);
+  const passed = passedXCTestCases(logOfSummary(rerun.summary));
+  const ok = rerun.code === 0 && ids.every((id) => passed.has(id));
+  console.log(`[ui-shards] ${result.label} rerun of ${ids.length} failed test${ids.length === 1 ? "" : "s"}: ${ok ? "PASS" : "FAIL"} output=${rerun.output}`);
+  // A red rerun in which every test passed failed outside them: none of them is cleared.
+  const stillRed = ok ? [] : ids.filter((id) => !passed.has(id));
+  const red = new Set(!ok && stillRed.length === 0 ? ids : stillRed);
+  const failing: string[] = [];
+  const flaky: string[] = [];
+  for (const id of ids) {
+    const outcome = red.has(id) ? "failed" : "flaky";
+    const gates = recordRerun(appleDir, { id, lane, profile, outcome });
+    if (outcome === "failed") {
+      failing.push(id);
+      continue;
+    }
+    flaky.push(id);
+    console.log(`[ui-shards] FLAKY ${id}: failed, then passed on rerun (flaked in ${gates} gate${gates === 1 ? "" : "s"})${gates >= 2 ? "; quarantine it in dev/testing/quarantine.json with an owner, an expiry, and a backlog key" : ""}`);
+  }
+  return { ok, failing, flaky };
 }
 
 if (import.meta.main) {
