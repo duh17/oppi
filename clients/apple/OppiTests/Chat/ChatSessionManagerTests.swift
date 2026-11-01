@@ -787,6 +787,10 @@ struct ChatSessionManagerTests {
         connection.sessionStore.upsert(makeTestSession(id: staleId, workspaceId: "w1", status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: targetId, workspaceId: "w1", status: .busy))
         connection._connectStreamForTesting = { AsyncStream { _ in } }
+        // The claim, not its expiry: the production window (5 s) is a deadline a
+        // loaded host can pass before the stale connect reads the claim.
+        // `externalOpenClaimExpiresSoUnboundTargetCannotPinFocus` covers expiry.
+        connection._externalSessionOpenClaimWindowForTesting = .seconds(3_600)
 
         await connection.prepareExternalSessionOpen(sessionId: targetId)
 
