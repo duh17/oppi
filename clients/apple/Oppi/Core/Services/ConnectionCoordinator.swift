@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import OSLog
+import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
 
@@ -41,6 +42,96 @@ enum NetworkPathRecoveryDecision {
               let previousSignature,
               let previousWasSatisfied else { return false }
         return !previousWasSatisfied || previousSignature != nextSignature
+    }
+}
+
+/// Saves refreshed device credentials once data protection lets the Keychain
+/// and its lock file open. A refresh that arrives while the phone is locked
+/// (a background wake overnight) cannot be saved: the connection keeps the new
+/// token in memory and the stored copy would go stale. Such a result is held,
+/// the latest one per server, and saved when protected data becomes available.
+@MainActor
+final class DeviceCredentialRefreshSaver {
+    struct Refresh {
+        let serverId: String
+        let expectedDeviceId: String
+        let result: DeviceAuthRefreshResult
+        /// Whether the server and connection this refresh came from are still
+        /// the ones in use. Checked again when a held refresh is saved.
+        let isCurrent: @MainActor () -> Bool
+        /// Runs after a successful save with the merged credential.
+        let didSave: @MainActor (DeviceCredential) -> Void
+    }
+
+    private let isProtectedDataAvailable: @MainActor () -> Bool
+    private let save: @MainActor (_ serverId: String, _ expectedDeviceId: String, DeviceAuthRefreshResult) throws -> DeviceCredential
+    private let didFail: @MainActor (_ serverId: String, Error) -> Void
+    private var held: [String: Refresh] = [:]
+    private let observers = NotificationObservers()
+
+    /// Removes its notification observers when the saver is released.
+    private final class NotificationObservers: @unchecked Sendable {
+        var center: NotificationCenter?
+        var tokens: [NSObjectProtocol] = []
+        deinit { tokens.forEach { center?.removeObserver($0) } }
+    }
+
+    init(
+        notificationCenter: NotificationCenter = .default,
+        isProtectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable },
+        save: @escaping @MainActor (String, String, DeviceAuthRefreshResult) throws -> DeviceCredential,
+        didFail: @escaping @MainActor (String, Error) -> Void
+    ) {
+        self.isProtectedDataAvailable = isProtectedDataAvailable
+        self.save = save
+        self.didFail = didFail
+        observers.center = notificationCenter
+        // A suspended app misses the unlock notification, so the next time it
+        // becomes active checks again.
+        observers.tokens = [
+            UIApplication.protectedDataDidBecomeAvailableNotification,
+            UIApplication.didBecomeActiveNotification,
+        ].map { name in
+            notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.saveHeldRefreshes() }
+            }
+        }
+    }
+
+    /// Saves now, or holds the refresh while protected data is unavailable.
+    /// Either way it supersedes any older refresh held for the same server.
+    func submit(_ refresh: Refresh) {
+        held[refresh.serverId] = nil
+        guard isProtectedDataAvailable() else {
+            held[refresh.serverId] = refresh
+            return
+        }
+        persist(refresh)
+    }
+
+    /// Drops the refresh held for a server that is no longer paired.
+    func discard(serverId: String) {
+        held[serverId] = nil
+    }
+
+    /// Saves every held refresh whose server and connection are still in use.
+    /// Does nothing while protected data is still unavailable.
+    func saveHeldRefreshes() {
+        guard !held.isEmpty, isProtectedDataAvailable() else { return }
+        let refreshes = held.values
+        held = [:]
+        for refresh in refreshes where refresh.isCurrent() {
+            persist(refresh)
+        }
+    }
+
+    private func persist(_ refresh: Refresh) {
+        do {
+            let merged = try save(refresh.serverId, refresh.expectedDeviceId, refresh.result)
+            refresh.didSave(merged)
+        } catch {
+            didFail(refresh.serverId, error)
+        }
     }
 }
 
@@ -143,6 +234,7 @@ final class ConnectionCoordinator {
     #endif
 
     private let lanDiscovery: LANDiscovery
+    private let deviceCredentialRefreshSaver: DeviceCredentialRefreshSaver
     /// Waits between automatic retries of a first setup that failed retryably.
     /// Tests replace it to run the backoff on their own clock.
     var initialSetupRetrySleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -184,6 +276,21 @@ final class ConnectionCoordinator {
         self.fileBrowserCache = fileBrowserCache
         self.seenStorage = seenStorage
         self.lanDiscovery = lanDiscovery
+        deviceCredentialRefreshSaver = DeviceCredentialRefreshSaver(
+            save: { [serverStore] serverId, expectedDeviceId, result in
+                try serverStore.persistDeviceCredentialRefresh(
+                    id: serverId,
+                    expectedDeviceId: expectedDeviceId,
+                    result: result
+                )
+            },
+            didFail: { serverId, error in
+                ClientLog.error("DeviceCredential", "Failed to persist device-credential refresh", metadata: [
+                    "serverId": serverId,
+                    "error": error.localizedDescription,
+                ])
+            }
+        )
         lanDiscovery.onUpdate = { [weak self] endpoints in
             self?.applyLANDiscovery(endpoints)
         }
@@ -534,6 +641,17 @@ final class ConnectionCoordinator {
         connection.applyPersistedSameRouteCredentials(latest)
     }
 
+    /// A refresh belongs to a paired server and to the connection being
+    /// prepared for it or already stored for it.
+    private func isCurrentDeviceCredentialTarget(
+        _ connection: ServerConnection,
+        serverId: String,
+        preparationID: UUID
+    ) -> Bool {
+        serverStore.server(for: serverId) != nil
+            && (isCurrentPreparation(preparationID, serverId: serverId) || connections[serverId] === connection)
+    }
+
     private func configureConnection(
         _ connection: ServerConnection,
         credentials: ServerCredentials,
@@ -545,22 +663,18 @@ final class ConnectionCoordinator {
             guard let self, let connection,
                   let serverId = credentials.normalizedServerFingerprint,
                   let expectedDeviceId = credentials.deviceCredential?.deviceId,
-                  self.serverStore.server(for: serverId) != nil,
-                  self.isCurrentPreparation(preparationID, serverId: serverId)
-                    || self.connections[serverId] === connection else { return }
-            do {
-                let merged = try self.serverStore.persistDeviceCredentialRefresh(
-                    id: serverId,
-                    expectedDeviceId: expectedDeviceId,
-                    result: result
-                )
-                connection.applyPersistedDeviceCredential(merged)
-            } catch {
-                ClientLog.error("DeviceCredential", "Failed to persist device-credential refresh", metadata: [
-                    "serverId": serverId,
-                    "error": error.localizedDescription,
-                ])
-            }
+                  self.isCurrentDeviceCredentialTarget(connection, serverId: serverId, preparationID: preparationID)
+            else { return }
+            self.deviceCredentialRefreshSaver.submit(.init(
+                serverId: serverId,
+                expectedDeviceId: expectedDeviceId,
+                result: result,
+                isCurrent: { [weak self, weak connection] in
+                    guard let self, let connection else { return false }
+                    return self.isCurrentDeviceCredentialTarget(connection, serverId: serverId, preparationID: preparationID)
+                },
+                didSave: { [weak connection] merged in connection?.applyPersistedDeviceCredential(merged) }
+            ))
         }
         #if DEBUG
         let bootstrap = _serverInfoBootstrapForTesting ?? { client, deadline in
@@ -1095,6 +1209,7 @@ final class ConnectionCoordinator {
                     )
                 } else {
                     serverStore.remove(id: server.id)
+                    deviceCredentialRefreshSaver.discard(serverId: server.id)
                     // This attempt may have started while a removal was
                     // shutting down, so that removal skipped its purge.
                     // Nothing for this id is paired now: purge and close.
@@ -1148,6 +1263,7 @@ final class ConnectionCoordinator {
         // Revoke pending activation even when an inactive pairing is removed.
         selectionRevision += 1
         serverStore.remove(id: id)
+        deviceCredentialRefreshSaver.discard(serverId: id)
         serverSettings[id] = nil
         let removedLifetime = UUID()
         serverLifetimes[id] = removedLifetime

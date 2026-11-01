@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 private actor CoordinatorPreparationGate {
@@ -2250,5 +2251,165 @@ private final class CoordinatorRequestGate: @unchecked Sendable {
 
     func releaseFirstWorkspaceRequest() {
         releaseSemaphore.signal()
+    }
+}
+
+/// A refresh that arrives while the phone is locked cannot open the Keychain
+/// or its lock file. The saver holds the latest result per server and saves it
+/// once protected data is available. The harness's `save` throws while locked,
+/// like the real store, so a save attempted too early shows up as a failure.
+@MainActor
+@Suite("Device credential refresh saver")
+struct DeviceCredentialRefreshSaverTests {
+    private struct Locked: Error {}
+
+    @MainActor
+    private final class Harness {
+        var isUnlocked: Bool
+        var saves: [(serverId: String, expectedDeviceId: String, result: DeviceAuthRefreshResult)] = []
+        var failures: [String] = []
+        var applied: [DeviceCredential] = []
+        var current = true
+        let center = NotificationCenter()
+        private(set) var saver: DeviceCredentialRefreshSaver!
+
+        init(unlocked: Bool) {
+            isUnlocked = unlocked
+            saver = DeviceCredentialRefreshSaver(
+                notificationCenter: center,
+                isProtectedDataAvailable: { [unowned self] in isUnlocked },
+                save: { [unowned self] serverId, expectedDeviceId, result in
+                    guard isUnlocked else { throw Locked() }
+                    saves.append((serverId, expectedDeviceId, result))
+                    return DeviceCredential(
+                        deviceId: expectedDeviceId,
+                        accessToken: result.accessToken,
+                        expiresAt: Int64(result.expiresAt),
+                        refreshChallenge: nil
+                    )
+                },
+                didFail: { [unowned self] serverId, _ in failures.append(serverId) }
+            )
+        }
+
+        func refresh(_ serverId: String, _ n: Int, deviceId: String = "dev_1") -> DeviceCredentialRefreshSaver.Refresh {
+            .init(
+                serverId: serverId,
+                expectedDeviceId: deviceId,
+                result: DeviceAuthRefreshResult(accessToken: "at_\(n)", expiresAt: 1_000 + n, refreshChallenge: nil),
+                isCurrent: { [unowned self] in current },
+                didSave: { [unowned self] merged in applied.append(merged) }
+            )
+        }
+    }
+
+    @Test func unlockedRefreshSavesAndAppliesTheMergedCredentialAtOnce() {
+        let h = Harness(unlocked: true)
+        h.saver.submit(h.refresh("srv", 1))
+
+        #expect(h.saves.map(\.result.accessToken) == ["at_1"])
+        #expect(h.applied.map(\.accessToken) == ["at_1"])
+        #expect(h.failures.isEmpty)
+    }
+
+    @Test func unlockedSaveFailureIsLoggedOnceAndNotApplied() {
+        let h = Harness(unlocked: true)
+        // The store refuses the refresh for a reason other than a locked phone.
+        let failing = DeviceCredentialRefreshSaver(
+            notificationCenter: h.center,
+            isProtectedDataAvailable: { true },
+            save: { _, _, _ in throw KeychainCredentialMergeError.itemNotFound },
+            didFail: { serverId, _ in h.failures.append(serverId) }
+        )
+        failing.submit(h.refresh("srv", 1))
+        failing.saveHeldRefreshes()
+
+        #expect(h.failures == ["srv"])
+        #expect(h.applied.isEmpty)
+    }
+
+    /// Stands in for the client-log error "Failed to persist device-credential
+    /// refresh" (category DeviceCredential), logged on every locked overnight wake.
+    @Test func lockedRefreshesLogNoErrorAndUnlockSavesOnlyTheLatestOnce() {
+        let h = Harness(unlocked: false)
+        let overnightWakes = 14
+        for n in 1...overnightWakes {
+            h.saver.submit(h.refresh("srv", n))
+        }
+
+        #expect(h.failures.isEmpty, "A locked save must not be attempted, so it cannot fail")
+        #expect(h.saves.isEmpty)
+        #expect(h.applied.isEmpty)
+
+        h.saver.saveHeldRefreshes()
+        #expect(h.saves.isEmpty, "Still locked: the result stays held")
+
+        h.isUnlocked = true
+        h.saver.saveHeldRefreshes()
+        h.saver.saveHeldRefreshes()
+
+        #expect(h.saves.map(\.result.accessToken) == ["at_\(overnightWakes)"])
+        #expect(h.saves.first?.expectedDeviceId == "dev_1")
+        #expect(h.applied.map(\.accessToken) == ["at_\(overnightWakes)"])
+        #expect(h.failures.isEmpty)
+    }
+
+    @Test func refreshAfterUnlockSupersedesOneStillHeld() {
+        let h = Harness(unlocked: false)
+        h.saver.submit(h.refresh("srv", 1))
+        h.isUnlocked = true
+        h.saver.submit(h.refresh("srv", 2))
+        h.saver.saveHeldRefreshes()
+
+        #expect(h.saves.map(\.result.accessToken) == ["at_2"], "The older held result must not overwrite the newer save")
+        #expect(h.applied.map(\.accessToken) == ["at_2"])
+    }
+
+    @Test func eachServerKeepsItsOwnLatestResult() {
+        let h = Harness(unlocked: false)
+        h.saver.submit(h.refresh("a", 1))
+        h.saver.submit(h.refresh("b", 2))
+        h.saver.submit(h.refresh("a", 3))
+        h.isUnlocked = true
+        h.saver.saveHeldRefreshes()
+
+        #expect(Set(h.saves.map { "\($0.serverId):\($0.result.accessToken)" }) == ["a:at_3", "b:at_2"])
+        #expect(h.saves.count == 2)
+    }
+
+    @Test func removedServersHeldResultIsDropped() {
+        let h = Harness(unlocked: false)
+        h.saver.submit(h.refresh("gone", 1))
+        h.saver.submit(h.refresh("kept", 2))
+        h.saver.discard(serverId: "gone")
+        h.isUnlocked = true
+        h.saver.saveHeldRefreshes()
+
+        #expect(h.saves.map(\.serverId) == ["kept"])
+    }
+
+    @Test func heldResultIsDroppedWhenItsConnectionIsNoLongerCurrent() {
+        let h = Harness(unlocked: false)
+        h.saver.submit(h.refresh("srv", 1))
+        h.current = false
+        h.isUnlocked = true
+        h.saver.saveHeldRefreshes()
+
+        #expect(h.saves.isEmpty)
+        #expect(h.applied.isEmpty)
+        #expect(h.failures.isEmpty)
+    }
+
+    @Test func unlockNotificationSavesTheHeldResult() async {
+        let h = Harness(unlocked: false)
+        h.saver.submit(h.refresh("srv", 1))
+        h.isUnlocked = true
+        h.center.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+
+        for _ in 0..<200 where h.saves.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(h.saves.map(\.result.accessToken) == ["at_1"])
+        #expect(h.applied.map(\.accessToken) == ["at_1"])
     }
 }
