@@ -140,10 +140,12 @@ final class ServerSettingsModel {
         }
     }
 
-    /// Retry for the Paired Devices page.
-    func reloadPairedDevices() async {
-        // A Retry of the list is not about the Revoke it refused: that row goes.
-        revokeError = nil
+    /// Retry for the Paired Devices page, and its read of the list when the page shows: the
+    /// caller says which it is. An ask for the list (a Retry, a pull) is not about the Revoke it
+    /// refused, so that row goes; a read that answers an appearance is not an answer to that
+    /// Revoke either, and a read landing after the refusal must not take it away.
+    func reloadPairedDevices(clearingRevokeError: Bool = true) async {
+        if clearingRevokeError { revokeError = nil }
         guard let client = await prepareClient() else {
             guard !Task.isCancelled else { return }
             pairedDevicesError = Self.offlineReason

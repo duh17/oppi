@@ -167,6 +167,29 @@ struct ServerPairedDevicesPageTests {
         #expect(h.roster.revokes.isEmpty)
     }
 
+    @Test("Showing the page again reads the list; it does not take the Revoke's refusal away")
+    func appearingAgainKeepsTheRefusal() async throws {
+        let h = try await makeHarness(failRevokes: true)
+        defer { hide(h) }
+
+        await h.page.revoke(try row("dev-1", in: h))
+        #expect(h.model.revokeError == "Not allowed.")
+
+        // A page above it and back: the page shows again, so the kit loads the list again.
+        let above = UIViewController()
+        h.page.navigationController?.pushViewController(above, animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.page.viewIfLoaded?.window == nil })
+        h.page.navigationController?.popViewController(animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.page.viewIfLoaded?.window != nil })
+        #expect(await h.routes.settle(), "the read that came back ends with this test")
+
+        // A read is not an ask about the Revoke: only another Revoke, or a Retry of the list,
+        // takes the refusal's row away. A read that landed after the refusal and took it away
+        // would leave the person without the answer they just asked for.
+        #expect(h.model.revokeError == "Not allowed.", "an appearance's read took the refusal away")
+        #expect(h.page.shownItems.contains(.revokeFailure))
+    }
+
     @Test("A refused Revoke keeps the device listed and says why")
     func refusedRevokeSaysWhy() async throws {
         let h = try await makeHarness(failRevokes: true)

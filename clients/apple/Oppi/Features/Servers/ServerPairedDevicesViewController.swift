@@ -57,8 +57,13 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     /// The model keeps the answer and its failure; the base draws the row.
+    ///
+    /// The page shows again for the same server after another page was above it, and another
+    /// device can pair or be revoked meanwhile, so every appearance reads the list. Only an ask
+    /// (`loadTrigger == .ask`: a pull, a Retry) is about the Revoke it refused: a read that lands
+    /// after that refusal leaves its row alone instead of taking it away.
     override func load() async throws {
-        await model.reloadPairedDevices()
+        await model.reloadPairedDevices(clearingRevokeError: loadTrigger == .ask)
     }
 
     override func failureTitle() -> String? { String(localized: "Couldn't Load Devices") }
