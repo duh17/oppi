@@ -342,7 +342,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     // MARK: SSH terminal
 
     func testHerdrSheetClosesByDoneAndBySwipe() {
-        launch(screen: "ssh-terminal")
+        // Herdr is an experiment (Settings → Experiments): this test asks for it.
+        launch(screen: "ssh-terminal", arguments: OppiTestLaunch.experimentArguments([.herdr: true]))
         let herdr = app.buttons["sshTerminal.herdr"]
         XCTAssertTrue(herdr.waitForExistence(timeout: 10), "Herdr toolbar button did not appear")
         let sheet = app.navigationBars["Herdr"]
@@ -367,7 +368,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     /// minimap is hidden at rest and while history scrolls, and shows only
     /// while the pane changes.
     func testRexTerminalSwipesBetweenPanesAndStillScrollsHistory() {
-        launch(screen: "ssh-terminal-rex-panes")
+        // Rex is an experiment (Settings → Experiments): this test asks for it.
+        launch(screen: "ssh-terminal-rex-panes", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(switcher.label, "Pane")
@@ -434,7 +436,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     /// switcher counts it and rolls to it. The switcher menu's New Pane item
     /// opens another, and a swipe right at the first pane opens nothing.
     func testRexTerminalSwipePastTheLastPaneOpensANewPane() {
-        launch(screen: "ssh-terminal-rex-panes")
+        // Rex is an experiment (Settings → Experiments): this test asks for it.
+        launch(screen: "ssh-terminal-rex-panes", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3")
@@ -473,7 +476,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     /// session's panes, grouped by window, and a tap on a pane or on the
     /// session opens it as a Rex terminal.
     func testTerminalTabListsRexSessionsExpandsThemAndATapOpensTheTerminal() {
-        launch(screen: "ssh-terminal-rex-list")
+        // Rex is an experiment (Settings → Experiments): this test asks for it.
+        launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
         let prefix = "sshTerminal.rexList.\(hostID)."
         let oppi = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c63"]
@@ -510,11 +514,29 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Rex and Herdr are experiments, and the app ships with both off: the
+    /// Terminal tab then has no Rex UI at all, though the host saved with Rex is
+    /// still a saved host, opening as its plain shell.
+    func testTerminalTabHasNoRexOrHerdrWhileBothExperimentsAreOff() {
+        // Both off explicitly: the app ships this way, and a value another run left
+        // in the slot's app container must not decide it.
+        launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: false, .herdr: false]))
+        let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
+        let host = app.buttons["sshTerminal.host.row.\(hostID)"]
+        XCTAssertTrue(host.waitForExistence(timeout: 15), "The saved Rex host is still listed with the experiment off")
+        XCTAssertFalse(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "No Rex section with the experiment off")
+        XCTAssertFalse(app.staticTexts["sshTerminal.rexTailnet.title"].exists, "No Rex on your tailnet card with the experiment off")
+        XCTAssertFalse(app.buttons["sshTerminal.rexTailnet.add"].exists)
+        attachScreenshot("terminal-tab-experiments-off")
+        assertRunning()
+    }
+
     /// A session on the Terminal tab is closed only after a confirmation,
     /// renamed from an alert (the list follows Rex's event), and a new one is
     /// made and opened by the row after the sessions.
     func testTerminalTabClosesRenamesAndCreatesRexSessions() {
-        launch(screen: "ssh-terminal-rex-list")
+        // Rex is an experiment (Settings → Experiments): this test asks for it.
+        launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let prefix = "sshTerminal.rexList.5E5E5E5E-0000-4000-8000-000000000001."
         let dotfiles = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
         XCTAssertTrue(dotfiles.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
@@ -713,8 +735,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
 
     /// A preview on fixture services: these sites wait for their own surface,
     /// so the launch does not also wait on the host's `screenshot.ready` marker.
-    private func launch(screen: String, environment: [String: String] = [:]) {
-        launchPreview(screen: screen, environment: environment, colorScheme: "dark", ready: nil)
+    private func launch(screen: String, environment: [String: String] = [:], arguments: [String] = []) {
+        launchPreview(screen: screen, environment: environment, colorScheme: "dark", arguments: arguments, ready: nil)
     }
 
     private func label(_ identifier: String) -> String {

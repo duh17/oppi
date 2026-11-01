@@ -110,8 +110,9 @@ enum SSHTerminalHostMatch {
         return candidates.first
     }
 
+    /// A host whose Run on Connect command starts a multiplexer this device may use.
     private static func startsAMultiplexer(_ profile: SSHTerminalProfile) -> Bool {
-        SSHTerminalMultiplexerKind.detected(in: profile.startupCommand) != nil
+        SSHTerminalMultiplexerKind.detected(in: profile.commandOnConnect()) != nil
     }
 
     private static func hasNoStartupCommand(_ profile: SSHTerminalProfile) -> Bool {
@@ -285,7 +286,7 @@ enum SSHTerminalFolderEntry {
         session.listsRexSessions = false
         guard let target else { return }
         // No multiplexer: the plain login shell in the folder.
-        guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand)?.multiplexer else {
+        guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.commandOnConnect())?.multiplexer else {
             session.folder = target.folder
             return
         }

@@ -42,6 +42,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private var connectingProfile = SSHTerminalProfile()
     private var metadataIsCorrupt = false
     private var editAfterTerminal: UUID?
+    /// The Rex experiment's switch changing while this tab is up.
+    private var experimentObserver: NSObjectProtocol?
 
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
@@ -115,6 +117,26 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             onSaved: { [weak self] _ in self?.reload() }
         )
         reload()
+        // Rex and Herdr are experiments: a switch turned while this tab is up (in
+        // Settings over it) takes effect here without a relaunch.
+        experimentObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.experimentsChanged() }
+        }
+        setNeedsUpdateProperties()
+    }
+
+    isolated deinit {
+        if let experimentObserver { NotificationCenter.default.removeObserver(experimentObserver) }
+    }
+
+    /// The Experiments switch changed: the Rex sections, the tailnet card, and
+    /// the followers follow it now, as they do on the way back to this tab.
+    private func experimentsChanged() {
+        reload()
+        for host in rexHosts.values { host.follower.appeared() }
+        for follower in tailnetRex.listedFollowers { follower.appeared() }
         setNeedsUpdateProperties()
     }
 
@@ -229,10 +251,18 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             let store = SSHTerminalBarStore()
             let layout = store.layout
             let keys = store.customKeys
+            // Only the buttons a plain shell's bar can draw: no Herdr or Rex while
+            // its experiment is off.
+            let hidden = SSHTerminalBarContext.plain.hidden
+            let shown = layout.order.filter { item in
+                guard layout.isShown(item) else { return false }
+                guard case .action(let action) = item else { return true }
+                return !hidden.contains(action)
+            }
             cell.configure(
                 title: String(localized: "Bottom Bar"),
                 image: nil,
-                value: layout.order.filter { layout.isShown($0) }.map { $0.title(customKeys: keys) }.joined(separator: ", "),
+                value: shown.map { $0.title(customKeys: keys) }.joined(separator: ", "),
                 identifier: "settings.sshTerminal.bar"
             ) { [weak self] in
                 guard let self else { return }
@@ -426,12 +456,26 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
     }
 
+    /// The hosts whose Rex this tab follows: one saved with Multiplexer: Rex, or
+    /// one Oppi has seen Rex on (`SSHTerminalRexHostStore`), and none at all while
+    /// the Rex experiment is off. A host in neither group is never dialed from
+    /// here, so with the experiment off nothing on this tab reaches Rex.
+    static func rexFollowedHosts(
+        _ profiles: [SSHTerminalProfile],
+        seen: SSHTerminalRexHostStore,
+        access: SSHTerminalExperimentAccess = .current
+    ) -> [SSHTerminalProfile] {
+        guard access.rex else { return [] }
+        return profiles.filter { $0.listsRexSessions(access) || seen.hasSeenRex(on: $0) }
+    }
+
     /// Makes, updates, and drops a follower per Rex host: one saved with
     /// Multiplexer: Rex, or one Oppi has seen Rex on (`SSHTerminalRexHostStore`).
-    /// A host in neither group is never dialed from here.
+    /// A host in neither group is never dialed from here, and with the Rex
+    /// experiment off every follower closes.
     private func syncRexHosts() {
         let seen = profileStore().rexHosts
-        let wanted = profiles.filter { $0.opensRexSessions || seen.hasSeenRex(on: $0) }
+        let wanted = Self.rexFollowedHosts(profiles, seen: seen)
         for id in rexHosts.keys where !wanted.contains(where: { $0.id == id }) {
             rexHosts[id]?.follower.close()
             rexHosts[id]?.chrome.hostDidDisappear()
@@ -473,6 +517,16 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// each only while the tab is `active`. Reads the node's machine list, so a
     /// machine joining or leaving updates it.
     private func syncTailnetRex(active: Bool) {
+        // The Rex experiment off: the card, its nodes, and discovery all go, so
+        // nothing here asks the tailnet about Rex.
+        guard AppPreferenceStore.Experiments.rexEnabled else {
+            tailnetRex.clear()
+            for id in tailnetChromes.keys {
+                tailnetChromes[id]?.hostDidDisappear()
+                tailnetChromes[id] = nil
+            }
+            return
+        }
         let tailnet = TailnetNodeController.shared
         // Discovery does not outlive the foreground (the followers stop on their own).
         if AppScenePhase.shared.isBackground { tailnetRex.stop() }
@@ -857,8 +911,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     /// A row opens its host: a Rex host's sessions screen, else its own terminal.
+    /// With the Rex experiment off, a Rex host opens its plain shell.
     private func open(_ profile: SSHTerminalProfile) {
-        guard profile.opensRexSessions else { return connect(profile) }
+        guard profile.listsRexSessions() else { return connect(profile) }
         Router.push(SSHTerminalRexSessionsViewController(profile: profile), from: self)
     }
 

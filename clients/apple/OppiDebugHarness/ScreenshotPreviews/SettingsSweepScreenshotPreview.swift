@@ -6,7 +6,7 @@ import UIKit
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `ssh-hosts`, `mcp`, `theme-import` (`theme-import-failed`: the themes request
 /// answers 404),
-/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
+/// `experiments`, `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
@@ -405,6 +405,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     startsTailnet: {}
                 )
             }
+        case "experiments":
+            // Settings → Experiments: Live Voice's own switch and the two declared
+            // ones (Rex, Herdr), all off unless the launch turns one on.
+            return stack { SettingsExperimentsViewController(root: root) }
         case "theme-import", "theme-import-failed":
             // `-failed`: the themes request answers 404, so the list shows its
             // failed row.

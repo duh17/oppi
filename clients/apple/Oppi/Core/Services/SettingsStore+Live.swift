@@ -43,8 +43,10 @@ extension SettingsStore {
     }
 
     /// What a stored write triggers: the screen's idle timer follows Keep Awake
-    /// After Activity the moment it changes, an open editor hears Auto-Save, and
-    /// no other setting has an effect.
+    /// After Activity the moment it changes, an open editor hears Auto-Save, an
+    /// experiment switch is announced to the screens that re-read it (a Rex
+    /// terminal has nothing left to show once its experiment is off), and no other
+    /// setting has an effect.
     static func liveAfterWrite(screenAwake: ScreenAwakeController) -> @MainActor (String) -> Void {
         { id in
             switch id {
@@ -55,6 +57,14 @@ extension SettingsStore {
                 // write changes without telling anyone: the editors that are
                 // open need to hear it to start or stop the save they owe.
                 NotificationCenter.default.post(name: .codeEditorAutoSaveDidChange, object: nil)
+            case SettingsCatalog.experimentRex.id, SettingsCatalog.experimentHerdr.id:
+                // Out of an experiment at once, without a relaunch: a Rex terminal is a
+                // pane of a session Oppi may no longer read, so it ends rather than
+                // keeping a connection the switch just turned off.
+                if !AppPreferenceStore.Experiments.rexEnabled {
+                    SSHTerminalRegistry.shared.closeRexTerminals(reason: String(localized: "The Rex experiment was turned off."))
+                }
+                NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
             default:
                 break
             }

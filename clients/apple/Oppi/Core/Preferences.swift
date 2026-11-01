@@ -44,8 +44,19 @@ enum AppPreferences {
     // MARK: - Experiments
 
     /// Opt-in features, saved on this device. Every flag defaults to off.
+    ///
+    /// Live Voice keeps its flag and getter here. Rex and Herdr live in
+    /// `AppPreferenceStore.Experiments` (both clients read them), declared in
+    /// `SettingsCatalog` so Settings draws them with the kit's rows and writes them
+    /// through `SettingsStore`, whose write posts `didChangeNotification` on the
+    /// main thread. A screen asks a getter, never `UserDefaults` itself.
     enum Experiments {
         static let liveVoiceKey = "\(AppIdentifiers.subsystem).experiments.liveVoice"
+
+        /// A switch was written. Screens that can change with it re-read on their
+        /// next appearance and on this notification; observe it with a block on
+        /// the main queue (never a selector observer on a `@MainActor` type).
+        static let didChangeNotification = Notification.Name("oppi.experiments.didChange")
 
         /// Live Voice: the call entries in chat and Quick Session. It only governs new
         /// starts; a call already running keeps running when this turns off.

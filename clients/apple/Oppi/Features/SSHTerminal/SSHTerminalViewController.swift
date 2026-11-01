@@ -174,6 +174,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
     private var lastThemeID: ThemeID?
     private var defaultsObserver: NSObjectProtocol?
+    /// The Rex and Herdr experiments changing while this terminal is on screen.
+    private var experimentObserver: NSObjectProtocol?
     private var reduceMotionObserver: NSObjectProtocol?
     private var keyboardObserver: NSObjectProtocol?
 
@@ -239,6 +241,13 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             MainActor.assumeIsolated {
                 self?.reduceMotionChanged()
             }
+        }
+        experimentObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.Experiments.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.experimentChanged() }
         }
         keyboardObserver = NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification,
@@ -351,6 +360,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if let barLayoutObserver {
             NotificationCenter.default.removeObserver(barLayoutObserver)
             self.barLayoutObserver = nil
+        }
+        if let experimentObserver {
+            NotificationCenter.default.removeObserver(experimentObserver)
+            self.experimentObserver = nil
         }
     }
 
@@ -1826,7 +1839,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// The multiplexer a trailing bar action opens the overview of.
     private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
-        switch action {
+        // Rex and Herdr are experiments (Settings → Experiments): off, there is
+        // nothing to read, so no button and no poll.
+        guard SSHTerminalExperimentAccess.current.allows(action) else { return nil }
+        return switch action {
         // Herdr is read with side commands, which a terminal without SSH has none of.
         case .herdr: channel.sideCommandsUnavailable == nil ? herdr : nil
         case .rex: rex
@@ -2232,7 +2248,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// then opened without leaving it.
     private func openMultiplexerFolderIfNeeded() {
         guard let session, let target = session.multiplexerFolder, channel.connected,
-              let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.startupCommand),
+              let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.commandOnConnect()),
               case .inHostTerminal(let run)? = kind.multiplexer.opening(target) else { return }
         session.multiplexerFolder = nil
         openFolderInMultiplexer(target, multiplexer: kind.multiplexer, run: run)
@@ -2283,6 +2299,21 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         var reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reason.isEmpty, !".!?".contains(reason.last ?? ".") { reason += "." }
         return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
+    }
+
+    /// The Experiments switch changed: the bar's Rex and Herdr buttons, the
+    /// overview polls, and Customize Bar follow it now. A Rex terminal is a pane
+    /// of a session Oppi may no longer read, and the registry ends it where it
+    /// was the one that turned off.
+    private func experimentChanged() {
+        if !AppPreferenceStore.Experiments.rexEnabled { stopOverview(.rex) }
+        if !AppPreferenceStore.Experiments.herdrEnabled { stopOverview(.herdr) }
+        setNeedsUpdateProperties()
+    }
+
+    /// Stops one multiplexer's overview poll (its read), leaving the other alone.
+    private func stopOverview(_ action: SSHTerminalBarAction) {
+        overviewTasks.removeValue(forKey: action)?.cancel()
     }
 
     /// A terminal's Rex monitor tells the Terminal tab what it found on the

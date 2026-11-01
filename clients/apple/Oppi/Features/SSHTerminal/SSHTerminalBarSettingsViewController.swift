@@ -123,15 +123,16 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
 
     override func sections() -> [ListSection<Section, Item>] {
         let layout = store.layout
+        let offers = offeredMultiplexers
         var sections: [ListSection<Section, Item>] = [
             ListSection(
                 .items,
-                footer: String(localized: "The bar draws the buttons that are on, in this order, centred between Back and the corner. A button turned off moves into the \u{2026} menu, except the built-in keys, Program Shortcuts, and Paste, which the keyboard bars have. A button that doesn't fit the screen moves there too, except Paste, which is left out. Herdr and Rex show when the host runs them, but not in a terminal that is already inside the other, and Switch Terminal when more than one terminal is open. Program Shortcuts shows the keys of the program in front, and a custom key shows only for the program you pick."),
+                footer: Self.barFooter(offers: offers),
                 items: layout.order.filter(isListed).map(Item.bar)
             ),
             ListSection(.add, items: [.addKey]),
         ]
-        if context != .herdr {
+        if offers.rex {
             sections.append(ListSection(
                 .rexPanel,
                 header: String(localized: "Rex Panel"),
@@ -146,6 +147,26 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
     }
 
     override func showsHeader(for section: Section) -> Bool { section == .rexPanel }
+
+    /// The multiplexers this page can offer: the terminal has not ruled one out,
+    /// and its experiment is on.
+    private var offeredMultiplexers: (herdr: Bool, rex: Bool) {
+        let access = SSHTerminalExperimentAccess.current
+        return (access.herdr && context != .rex, access.rex && context != .herdr)
+    }
+
+    /// The list's footer, naming only the multiplexers the bar can draw.
+    private static func barFooter(offers: (herdr: Bool, rex: Bool)) -> String {
+        let base = String(localized: "The bar draws the buttons that are on, in this order, centred between Back and the corner. A button turned off moves into the \u{2026} menu, except the built-in keys, Program Shortcuts, and Paste, which the keyboard bars have. A button that doesn't fit the screen moves there too, except Paste, which is left out.")
+        let multiplexers: String? = switch offers {
+        case (true, true): String(localized: "Herdr and Rex show when the host runs them, but not in a terminal that is already inside the other, and Switch Terminal when more than one terminal is open.")
+        case (true, false): String(localized: "Herdr shows when the host runs it, and Switch Terminal when more than one terminal is open.")
+        case (false, true): String(localized: "Rex shows when the host runs it, and Switch Terminal when more than one terminal is open.")
+        case (false, false): String(localized: "Switch Terminal shows when more than one terminal is open.")
+        }
+        let program = String(localized: "Program Shortcuts shows the keys of the program in front, and a custom key shows only for the program you pick.")
+        return [base, multiplexers, program].compactMap { $0 }.joined(separator: " ")
+    }
 
     /// Whether the page lists `item`: every row, except one this terminal's
     /// multiplexer rules out, and a custom key the store no longer has.

@@ -196,6 +196,36 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Experiments
+
+    /// Rex: the Terminal tab's Rex sections, Rex sessions screens, Rex panes, and the
+    /// Rex on your tailnet list. A device setting on the existing key, so
+    /// `AppPreferenceStore.Experiments.rexEnabled` and this read one value, and a host
+    /// saved with Multiplexer: Rex keeps that choice while it is off.
+    static let experimentRex = SettingDeclaration<Bool>(
+        id: "settings.experiments.rex",
+        key: AppPreferenceStore.Experiments.rexKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Rex"),
+            footer: String(localized: "Rex sessions and panes on the Terminal tab, including Rex on your tailnet. While off, a Rex host opens a plain shell and keeps its setting.")
+        )
+    )
+
+    /// Herdr: its bar button (workspaces and agents) and opening a folder inside it.
+    /// A device setting on the existing key, as Rex's is.
+    static let experimentHerdr = SettingDeclaration<Bool>(
+        id: "settings.experiments.herdr",
+        key: AppPreferenceStore.Experiments.herdrKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Herdr"),
+            footer: String(localized: "The Herdr button in the terminal, and Open Terminal Here inside Herdr. While off, a host that runs herdr opens a plain shell and keeps its command.")
+        )
+    )
+
     // MARK: - Server Metrics
 
     /// Whether the server samples its CPU, memory, and disk, for every device
@@ -263,6 +293,8 @@ enum SettingsCatalog {
         hapticFeedback.descriptor,
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
+        experimentRex.descriptor,
+        experimentHerdr.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,
         durableSessionsEnabled.descriptor,

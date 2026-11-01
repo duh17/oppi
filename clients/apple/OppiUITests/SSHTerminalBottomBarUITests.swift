@@ -19,9 +19,11 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Every screen this class drives is Rex or Herdr: both are experiments
+    /// (Settings → Experiments), off by default, so the launch asks for both.
     private func launch(screen: String) {
         app = OppiTestLaunch.makeApp()
-        app.launchArguments += ["--screenshot-preview"]
+        app.launchArguments += ["--screenshot-preview"] + OppiTestLaunch.experimentArguments([.rex: true, .herdr: true])
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
         app.launch()

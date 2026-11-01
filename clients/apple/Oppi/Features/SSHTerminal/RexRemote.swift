@@ -754,7 +754,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
         connect: @MainActor () async throws -> (RexLink, RexControl)
     ) async {
         var failures = 0
-        while !Task.isCancelled, alive() {
+        while !Task.isCancelled, AppPreferenceStore.Experiments.rexEnabled, alive() {
             var synced = false
             let retry: Retry
             do {

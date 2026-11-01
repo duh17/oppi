@@ -386,7 +386,7 @@ final class HerdrMonitor: SSHTerminalOverviewSource {
                 channel.setHerdrFolder(.unknown)
             }
         }
-        while !Task.isCancelled, channel.connected, !unavailable {
+        while !Task.isCancelled, AppPreferenceStore.Experiments.herdrEnabled, channel.connected, !unavailable {
             await refresh(on: channel)
             try? await Task.sleep(for: watching ? .seconds(2) : .seconds(6))
         }

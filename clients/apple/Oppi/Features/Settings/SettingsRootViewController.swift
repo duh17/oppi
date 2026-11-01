@@ -330,7 +330,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .privacy:
             Router.push(SettingsPrivacyViewController(root: root), from: self)
         case .experiments:
-            Router.push(SettingsExperimentsViewController(), from: self)
+            Router.push(SettingsExperimentsViewController(root: root), from: self)
         case .storage:
             Router.push(SettingsStorageViewController(root: root), from: self)
         case .server:

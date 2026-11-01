@@ -13,13 +13,17 @@ The Terminal tab opens an interactive shell on a host saved on this iPhone or iP
 
 For a Mac with an Ed25519 host key, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints the fingerprint.
 
-The Terminal tab leads with **Add Host** when no host is saved, and with a [Rex section](#rex-sessions-on-the-terminal-tab) when a saved host uses Rex or Oppi has seen Rex on it. A row shows `user@host`, the port when it is not 22, the Run on Connect command, **Login shell**, or **Rex sessions** for a [Rex host](#a-rex-host), and each folder a terminal is open in. Below the hosts' Rex sections, **Rex on your tailnet** lists Rex servers reached over Tailscale with no SSH host ([Rex without SSH](#rex-without-ssh)) when this device is on a tailnet. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
+The Terminal tab leads with **Add Host** when no host is saved, and, with the [Rex experiment](#run-on-connect) on, with a [Rex section](#rex-sessions-on-the-terminal-tab) when a saved host uses Rex or Oppi has seen Rex on it. A row shows `user@host`, the port when it is not 22, the Run on Connect command, **Login shell**, or **Rex sessions** for a [Rex host](#a-rex-host), and each folder a terminal is open in. Below the hosts' Rex sections, **Rex on your tailnet** lists Rex servers reached over Tailscale with no SSH host ([Rex without SSH](#rex-without-ssh)) when this device is on a tailnet. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
 
 ## Run on Connect
 
 **Run on Connect** runs one command instead of a login shell, as `ssh -t host 'command'` does. The connection ends when the command exits, and **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a login shell.
 
 **Multiplexer**, above it, picks one for you: **Herdr** sets Run on Connect to `herdr` and **tmux** to `tmux new -A -s main` (a command that already starts that multiplexer, flags and all, is kept), and **None** clears a multiplexer's command but keeps any other program. Typing a command updates the choice. **Rex** is different: Rex is not run in the host's terminal, so Run on Connect is hidden and cleared, and connecting opens the host's [Rex sessions](#a-rex-host) instead of a terminal.
+
+Herdr and Rex are experiments, off by default: turn each on in **Settings → Experiments**. While one is off, the form offers no such choice, and a host already saved with it opens as its plain login shell (a Herdr command is not run, a Rex host opens its shell instead of its sessions). The saved setting is kept, so turning the experiment on restores it: the host form shows it again, and the next connect runs it. Turning it on does not restart a shell that is already open: disconnect and connect again to run the multiplexer there.
+
+What each needs on the host: Rex running there, with `nc` that can open Unix sockets (`netcat-openbsd`, not Debian's `netcat-traditional` or BusyBox) for the connection over SSH, or Tailscale for [Rex reached without SSH](#rex-without-ssh); and `herdr` on the `PATH` that non-interactive SSH commands see for Herdr.
 
 ## Open Terminal here
 

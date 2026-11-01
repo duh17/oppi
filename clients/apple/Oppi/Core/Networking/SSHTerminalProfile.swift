@@ -132,14 +132,19 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     /// Nil on the default SSH port so the row does not repeat 22.
     var portLabel: String? { port == 22 ? nil : "Port \(port)" }
 
-    var startupLabel: String {
-        if opensRexSessions { return "Rex sessions" }
-        let command = startupCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// What the host row says a terminal runs. The one-line form keeps the
+    /// property its callers already read.
+    var startupLabel: String { startupLabel() }
+
+    func startupLabel(_ access: SSHTerminalExperimentAccess = .current) -> String {
+        if listsRexSessions(access) { return "Rex sessions" }
+        let command = commandOnConnect(access)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return command.isEmpty ? "Login shell" : command
     }
 
     /// The multiplexer the host's form shows: Rex, else the one its Run on
-    /// Connect command starts, else none.
+    /// Connect command starts, else none. The saved choice; the form shows what
+    /// the experiments allow (`available(in:)`).
     var multiplexerChoice: SSHTerminalMultiplexerChoice {
         if opensRexSessions { return .rex }
         switch SSHTerminalMultiplexerKind.detected(in: startupCommand) {
@@ -147,6 +152,23 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         case .tmux: return .tmux
         case nil: return .none
         }
+    }
+
+    // MARK: - Experiments
+
+    /// Whether a tap opens the host's Rex sessions: saved with Multiplexer: Rex,
+    /// while the Rex experiment is on. Off, the host opens its plain shell and
+    /// keeps the saved choice, so turning the experiment on restores the screen.
+    func listsRexSessions(_ access: SSHTerminalExperimentAccess = .current) -> Bool {
+        opensRexSessions && access.rex
+    }
+
+    /// What the host's own terminal runs: its Run on Connect command, unless that
+    /// starts Herdr while Herdr is off (the saved host keeps the command).
+    func commandOnConnect(_ access: SSHTerminalExperimentAccess = .current) -> String? {
+        guard let command = startupCommand, !access.herdr,
+              SSHTerminalMultiplexerKind.detected(in: command) == .herdr else { return startupCommand }
+        return nil
     }
 
     /// Chooses the host's multiplexer. Herdr and tmux are what Run on Connect
@@ -191,6 +213,42 @@ enum SSHTerminalMultiplexerChoice: CaseIterable, Equatable, Sendable {
         case .rex: "Rex"
         }
     }
+
+    /// The choice as the experiments allow it: Rex or Herdr reads as None while
+    /// its experiment is off, and the saved host keeps what it had.
+    func available(in access: SSHTerminalExperimentAccess) -> Self {
+        switch self {
+        case .rex: access.rex ? .rex : .none
+        case .herdr: access.herdr ? .herdr : .none
+        case .none, .tmux: self
+        }
+    }
+
+    /// The choices the host form offers: the ones whose experiment is on, and
+    /// None and tmux, which are not experiments.
+    static func offered(in access: SSHTerminalExperimentAccess = .current) -> [Self] {
+        allCases.filter { $0.available(in: access) == $0 }
+    }
+}
+
+/// Which of the terminal's experiment multiplexers this device may use.
+///
+/// Rex and Herdr are experiments (Settings → Experiments), off by default, and
+/// `AppPreferences.Experiments` is the one answer for whether each is on. A host
+/// saved with one keeps the saved setting while its experiment is off: it opens
+/// as a plain shell, and turning the experiment on restores it, because nothing
+/// here rewrites a saved host.
+struct SSHTerminalExperimentAccess: Equatable, Sendable {
+    var rex: Bool
+    var herdr: Bool
+
+    /// What this device has turned on now.
+    static var current: Self {
+        Self(rex: AppPreferenceStore.Experiments.rexEnabled, herdr: AppPreferenceStore.Experiments.herdrEnabled)
+    }
+
+    /// Both experiments on: what a test or a preview asks for explicitly.
+    static let all = Self(rex: true, herdr: true)
 }
 
 struct SSHTerminalCatalog: Codable, Equatable, Sendable {

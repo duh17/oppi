@@ -91,7 +91,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "terminal",
             accessibilityLabel: "Open Terminal",
             accessibilityIdentifier: "workspace.terminal.open",
-            accessibilityHint: "Opens your saved hosts and Rex sessions"
+            accessibilityHint: "Opens your saved hosts"
         ),
     ]
 

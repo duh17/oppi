@@ -232,6 +232,15 @@ final class SSHTerminalRegistry {
         for identity in Array(terminals.keys) { close(identity, reason: reason) }
     }
 
+    /// Ends every Rex terminal: the panes' terminals a Rex session opened. The
+    /// Rex experiment turning off leaves nothing for them to show, and Rex is
+    /// then not read anywhere, so they do not keep their connection.
+    func closeRexTerminals(reason: String) {
+        for identity in terminals.keys where identity.rexSession != nil {
+            close(identity, reason: reason)
+        }
+    }
+
     /// Ends every terminal of `profileID`: the plain one and every folder.
     func closeAllTerminals(of profileID: UUID, reason: String) {
         for identity in terminals.keys where identity.profileID == profileID {

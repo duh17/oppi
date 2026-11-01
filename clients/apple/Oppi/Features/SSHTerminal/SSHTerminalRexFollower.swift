@@ -50,6 +50,8 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     @ObservationIgnored private let standIn: (any RexStreamHost)?
     /// Whether signing in would ask for nothing (`SSHTerminalProfile.connectsWithoutPrompt`).
     @ObservationIgnored private let signsInSilently: @MainActor (SSHTerminalProfile) -> Bool
+    /// The experiments, read each time: Rex is read only while its switch is on.
+    @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
     /// The last answer, kept until something that can change it: the Keychain is
     /// not read on every pass of the screen. A `true` is only trusted for what
     /// is drawn; a decision to sign in asks again.
@@ -64,8 +66,11 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         session: SSHTerminalConnectSession = SSHTerminalConnectSession(),
         monitor: RexMonitor? = nil,
         standIn: (any RexStreamHost)? = nil,
-        signsInSilently: @escaping @MainActor (SSHTerminalProfile) -> Bool = { $0.connectsWithoutPrompt() }
+        signsInSilently: @escaping @MainActor (SSHTerminalProfile) -> Bool = { $0.connectsWithoutPrompt() },
+        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
+        center: NotificationCenter = .default
     ) {
+        self.access = access
         self.profile = profile.normalized()
         self.suppliedPassword = suppliedPassword
         self.promptsAutomatically = promptsAutomatically
@@ -77,9 +82,18 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         self.signsInSilently = signsInSilently
         monitor.openPane = { [weak session] pane in session?.openRexPane(pane) }
         // Backgrounding closes the connection even while a terminal covers the
-        // screen, whose updates then stop.
-        let center = NotificationCenter.default
+        // screen, whose updates then stop. The experiment going off ends it, so no
+        // screen has to remember to.
         observers = [
+            center.addObserver(forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.access().rex else { return }
+                    // End the sign-in too: a live attempt would block the next one
+                    // when the switch comes back on.
+                    self.session.cancel()
+                    self.close()
+                }
+            },
             center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.enterBackground() }
             },
@@ -161,7 +175,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         _ = needsListConnection
         _ = automaticAttempt
         _ = session.listsRexSessions
-        guard active else { return }
+        guard active, access().rex else { return }
         if isConnected {
             startReading()
         } else if needsListConnection, standIn == nil, !session.connecting, !session.passwordPrompt, !trustPending,

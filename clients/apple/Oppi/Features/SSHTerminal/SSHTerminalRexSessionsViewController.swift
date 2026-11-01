@@ -79,7 +79,9 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         // Back from Edit Host: a deleted host, or one no longer on Rex, has
         // no sessions here; one signed in differently needs a new connection.
         if !isMovingToParent, editAfterTerminal == nil {
-            guard let stored = SSHTerminalProfileStore().profile(id: profile.id), stored.opensRexSessions else {
+            // The Rex experiment off leaves this screen nothing to read: it closes on
+            // the host's plain terminal, which Back returns to.
+            guard let stored = SSHTerminalProfileStore().profile(id: profile.id), stored.listsRexSessions() else {
                 Router.finish(self)
                 return
             }

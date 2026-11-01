@@ -140,7 +140,7 @@ final class SSHTerminalFolderViewController: UIViewController {
     /// The connecting line, naming the multiplexer when the folder opens inside
     /// one, so the wait says where the folder will land.
     private func multiplexerLabel(_ folder: String) -> String {
-        guard let kind = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand) else {
+        guard let kind = SSHTerminalMultiplexerKind.detected(in: profile.commandOnConnect()) else {
             return String(localized: "Connecting to \(profile.endpointLabel)…")
         }
         return String(localized: "Opening \(folder) in \(kind.multiplexer.name) on \(profile.endpointLabel)…")

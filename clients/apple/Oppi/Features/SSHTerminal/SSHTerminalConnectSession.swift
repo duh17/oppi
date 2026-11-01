@@ -76,12 +76,16 @@ final class SSHTerminalConnectSession {
     /// How a Rex reached over Tailscale alone is dialed (`RexTLSStream.open`);
     /// tests pass a stand-in Rex.
     @ObservationIgnored private let openRexDirect: RexLink.OpenDirect
+    /// The experiments: a Rex path asks this before it dials anything.
+    @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
 
     init(
         registry: SSHTerminalRegistry = .shared,
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
-        openRexDirect: @escaping RexLink.OpenDirect = RexTLSStream.open
+        openRexDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
+        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
     ) {
+        self.access = access
         self.registry = registry
         self.profileStore = profileStore
         self.openRexDirect = openRexDirect
@@ -97,6 +101,13 @@ final class SSHTerminalConnectSession {
         sudoPassword: String? = nil,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
+        // Every Rex path needs the experiment: a reconnect of a closed Rex pane, a
+        // Rex sessions screen, or a Rex reached over Tailscale says so instead of
+        // dialing Rex nothing may read.
+        if rexPane != nil || listsRexSessions || profile.rexTailnet != nil, !access().rex {
+            failure = "Rex is off in Settings → Experiments."
+            return
+        }
         if let host = profile.rexTailnet.flatMap({ _ in RexTailnetHost(dnsName: profile.host) }) {
             return connectTailnetRex(host)
         }
@@ -195,7 +206,7 @@ final class SSHTerminalConnectSession {
                 if let folder {
                     command = folderCommand ?? SSHTerminalFolderCommand.command(folder: folder)
                 } else {
-                    command = value.startupCommand
+                    command = value.commandOnConnect()
                 }
                 if let rexPane {
                     // A Rex pane runs no shell: the signed-in connection carries

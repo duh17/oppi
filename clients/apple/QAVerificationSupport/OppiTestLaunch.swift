@@ -14,6 +14,29 @@ enum OppiTestLaunch {
     /// Launch environment for a debug harness or preview whose launch a test
     /// class reuses across tests (`ReusedHarnessLaunch`).
     static let reuseLaunchKey = "OPPI_TEST_REUSE_LAUNCH"
+
+    /// The experiments (Settings → Experiments; `AppPreferences.Experiments`,
+    /// keys repeated here). A launch states each one it depends on: a test that
+    /// drives Rex or Herdr screens turns it on, and a test of the app as it ships
+    /// turns both off, so a value left in the simulator's app container by another
+    /// run cannot decide the answer.
+    enum Experiment: String, Sendable {
+        case rex, herdr
+
+        var key: String {
+            switch self {
+            case .rex: "dev.chenda.Oppi.experiments.rex"
+            case .herdr: "dev.chenda.Oppi.experiments.herdr"
+            }
+        }
+    }
+
+    /// `-key YES` / `-key NO` for each experiment named.
+    static func experimentArguments(_ experiments: [Experiment: Bool]) -> [String] {
+        experiments
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .flatMap { experiment, isOn in ["-\(experiment.key)", isOn ? "YES" : "NO"] }
+    }
     static let resetNotification = "dev.chenda.Oppi.test.reset"
 
     /// One token for the whole test process. The E2E target uses it for every

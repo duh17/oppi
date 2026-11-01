@@ -210,16 +210,20 @@ final class RexTailnetSection {
     @ObservationIgnored private let makeFollower: @MainActor (RexTailnetHost) -> RexTailnetFollower
     /// How this device reaches the tailnet now; previews pin it.
     @ObservationIgnored private let reachNow: @MainActor () -> RexTailnetReach
+    /// The experiments: Rex is discovered and read only while its switch is on.
+    @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
 
     init(
         store: RexDirectStore = RexDirectStore(),
         discovery: RexTailnetDiscovery = .shared,
         reach: @escaping @MainActor () -> RexTailnetReach = { .current },
-        makeFollower: @escaping @MainActor (RexTailnetHost) -> RexTailnetFollower = { RexTailnetFollower(host: $0) }
+        makeFollower: @escaping @MainActor (RexTailnetHost) -> RexTailnetFollower = { RexTailnetFollower(host: $0) },
+        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
     ) {
         self.store = store
         self.discovery = discovery
         self.reachNow = reach
+        self.access = access
         self.makeFollower = makeFollower
         // A host saved, or an SSH host learning or forgetting its Rex's
         // address, changes what is listed.
@@ -298,6 +302,17 @@ final class RexTailnetSection {
         }
     }
 
+    /// The experiment was off when this last looked: nothing is listed, read, or
+    /// offered (the saved nodes stay in the store, so turning it on lists them).
+    func clear() {
+        stop()
+        for follower in followers.values { follower.close() }
+        followers = [:]
+        entries = []
+        reach = .none
+        peers = []
+    }
+
     /// The tab is gone (another screen, or Oppi left the foreground): discovery
     /// stops, and the next visit asks again what did not answer.
     func stop() {
@@ -309,7 +324,7 @@ final class RexTailnetSection {
     /// A pull to refresh: probes every machine again (through `discovering`,
     /// so leaving the tab cancels it and `update` starts no second pass beside it).
     func refresh() async {
-        guard reach == .peers else { return }
+        guard access().rex, reach == .peers else { return }
         startDiscovery(force: true)
         await discovering?.value
     }
@@ -335,6 +350,7 @@ final class RexTailnetSection {
 
     /// One discovery pass at a time; a new one replaces the one running.
     private func startDiscovery(force: Bool) {
+        guard access().rex else { return }
         discovering?.cancel()
         discovering = Task { [weak self, discovery, peers, selfDNSName] in
             await discovery.discover(peers: peers, selfDNSName: selfDNSName, force: force)

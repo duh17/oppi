@@ -196,7 +196,7 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         connectButton.accessibilityIdentifier = "sshTerminal.host.row.\(profile.id.uuidString)"
         // The row opens the host's own terminal either way: a folder terminal is a
         // different terminal, so its folders are the value, not the hint.
-        connectButton.accessibilityHint = profile.opensRexSessions ? "Open Rex sessions"
+        connectButton.accessibilityHint = profile.listsRexSessions() ? "Open Rex sessions"
             : live ? "Open the connected terminal" : "Connect"
         if live {
             connectButton.accessibilityValue = "Connected"

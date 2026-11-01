@@ -122,27 +122,41 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         }
     }
 
-    /// The bar actions this terminal leaves out of the bar, the … menu, and
-    /// Customize Bar: the overviews it rules out, and in a Rex pane Rex Sessions
-    /// too, since the pane switcher's pill opens the one Rex panel that holds it.
-    var hidden: Set<SSHTerminalBarAction> {
-        self == .rex ? overviewsRuledOut.union([.rex]) : overviewsRuledOut
+    /// The actions this terminal leaves out everywhere.
+    var hidden: Set<SSHTerminalBarAction> { hidden() }
+
+    /// The multiplexer it rules out, and any whose experiment is off; the saved
+    /// layout keeps their place.
+    func hidden(_ access: SSHTerminalExperimentAccess = .current) -> Set<SSHTerminalBarAction> {
+        var hidden = self == .rex ? overviewsRuledOut.union([.rex]) : overviewsRuledOut
+        if !access.rex { hidden.insert(.rex) }
+        if !access.herdr { hidden.insert(.herdr) }
+        return hidden
     }
 
-    /// Whether the terminal reads this multiplexer's overview in the
-    /// background. Hiding a button is presentation only, and Rex's read is also
-    /// how Oppi learns Rex is on the host (`SSHTerminalRexHostStore`, which the
-    /// Terminal tab follows), so a terminal still reads Rex though it shows no
-    /// Rex Sessions button (a Rex pane's control is the pane switcher, a Herdr
-    /// terminal has none). Herdr's read feeds nothing else, so a Rex pane does
-    /// not poll the host's Herdr.
-    func polls(_ action: SSHTerminalBarAction) -> Bool {
-        !hidden.contains(action) || action == .rex
+    /// Whether the terminal reads this multiplexer's overview in the background.
+    /// Hiding a button is presentation only: Rex's read is how Oppi learns Rex is on
+    /// the host, so a terminal still reads Rex without showing the button. An
+    /// experiment that is off is read by nothing.
+    func polls(_ action: SSHTerminalBarAction, _ access: SSHTerminalExperimentAccess = .current) -> Bool {
+        guard access.allows(action) else { return false }
+        return !hidden(access).contains(action) || action == .rex
     }
 
     /// Whether the program-status symbol has a place in the bar's pill. A Rex
     /// pane draws the status on the pane switcher's icon instead.
     var showsProgramStatus: Bool { self != .rex }
+}
+
+extension SSHTerminalExperimentAccess {
+    /// Whether a bar button's experiment is on.
+    func allows(_ action: SSHTerminalBarAction) -> Bool {
+        switch action {
+        case .herdr: herdr
+        case .rex: rex
+        default: true
+        }
+    }
 }
 
 /// One button the bar can draw or the … menu can offer: a list item, or one

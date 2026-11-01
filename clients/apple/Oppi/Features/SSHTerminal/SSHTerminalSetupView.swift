@@ -240,16 +240,24 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     /// Herdr and tmux write the Run on Connect command below; Rex hides it.
+    ///
+    /// The menu offers the choices whose experiment is on (`SSHTerminalExperimentAccess`):
+    /// Rex and Herdr are experiments (Settings → Experiments), and a host saved
+    /// with one reads as None while its experiment is off, without rewriting what
+    /// the host saved. Choosing what the row already shows writes nothing, so a
+    /// saved Rex or Herdr choice survives the switch being off.
     private func configureMultiplexer(_ cell: SettingsMenuRowCell) {
-        let current = profile.multiplexerChoice
+        let access = SSHTerminalExperimentAccess.current
+        let current = profile.multiplexerChoice.available(in: access)
         cell.configure(
             title: "Multiplexer",
             identifier: "sshTerminal.multiplexer",
             isEnabled: !session.connecting,
             value: current.label,
             menu: {
-                SSHTerminalMultiplexerChoice.allCases.map { choice in
+                SSHTerminalMultiplexerChoice.offered(in: access).map { choice in
                     SettingsMenuOption(title: choice.label, selected: choice == current) { [weak self] in
+                        guard choice != current else { return }
                         self?.profile.choose(choice)
                         self?.applySnapshot()
                     }
@@ -573,12 +581,24 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             }
             return text
         case .multiplexer:
-            return "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect. With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell."
-        case .startup:
-            if folderTerminal != nil {
-                return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
+            let access = SSHTerminalExperimentAccess.current
+            var parts = [access.herdr
+                ? "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect."
+                : "tmux runs in this host’s terminal: choosing it sets Run on Connect."]
+            if access.rex {
+                parts.append("With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell.")
             }
-            return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
+            return parts.joined(separator: " ")
+        case .startup:
+            // The Herdr note only while the form offers Herdr.
+            let exits = SSHTerminalExperimentAccess.current.herdr
+                ? "The connection ends when the command exits (for Herdr, detach with Ctrl-B Q)."
+                : "The connection ends when the command exits."
+            var text = "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. \(exits) The command must be on the PATH that SSH commands see."
+            if folderTerminal != nil {
+                text += "\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
+            }
+            return text
         case .identity:
             var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
             if deviceKey.identityNeedsReplacement {
@@ -690,8 +710,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         // multiplexer terminal, a folder terminal running its attach command, or
         // the plain login shell in the folder.
         let profile = normalizedProfile()
-        // A Rex host opens its sessions screen, which signs in on its own.
-        if profile.opensRexSessions, folderTerminal == nil {
+        // A Rex host opens its sessions screen, which signs in on its own, while the
+        // Rex experiment is on: off, the host is a plain shell.
+        if profile.listsRexSessions(), folderTerminal == nil {
             session.saveHost(profile: profile, suppliedPassword: password, sudoPassword: suppliedSudoPassword) { [weak self] saved in
                 guard let self else { return }
                 self.applySaved(saved)

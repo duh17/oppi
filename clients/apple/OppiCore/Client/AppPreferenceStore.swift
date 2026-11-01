@@ -226,6 +226,30 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - Experiments
+
+    /// Opt-in features, kept on this device (Settings → Experiments). Every flag
+    /// defaults to off, and this is the one place their keys live, so iOS
+    /// `AppPreferences.Experiments` and `SettingsCatalog` read one value.
+    enum Experiments {
+        static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
+        static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
+        /// What nothing stored means; both declarations use it.
+        static let enabledDefault = false
+
+        /// Rex: the Terminal tab's Rex sections, Rex screens, panes and tailnet list.
+        static var rexEnabled: Bool { flag(rexKey) }
+
+        /// Herdr: its bar button, agents and workspaces, and opening a folder inside it.
+        static var herdrEnabled: Bool { flag(herdrKey) }
+
+        /// Nothing stored means the default; anything stored reads as a bool, so a
+        /// launch argument's `-key YES` (a test's switch) counts too.
+        private static func flag(_ key: String) -> Bool {
+            UserDefaults.standard.object(forKey: key) == nil ? enabledDefault : UserDefaults.standard.bool(forKey: key)
+        }
+    }
+
     // MARK: - Durable Sessions
 
     /// Which engine Quick Session starts a new session on, where its server has Durable
