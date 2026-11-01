@@ -70,9 +70,7 @@ final class BrowserAutomationVideoToolRowE2ETests: E2ETestCase {
         _ = waitForWebSocketConnected(timeout: 20)
         let sessionId = waitForFocusedSessionId(timeout: 20)
         let toolId = "browser-automation-video-e2e-\(UUID().uuidString.prefix(6).lowercased())"
-        let videoURL = try browserAutomationVideoFixtureURL()
-        let videoData = try Data(contentsOf: videoURL)
-        let fileName = videoURL.lastPathComponent
+        let (videoData, fileName) = try browserAutomationVideoFixture()
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
@@ -137,25 +135,19 @@ final class BrowserAutomationVideoToolRowE2ETests: E2ETestCase {
         return (toolId, fileName)
     }
 
-    private func browserAutomationVideoFixtureURL() throws -> URL {
+    /// The recording a run of browser_automation_video left, when
+    /// `OPPI_BROWSER_VIDEO_FIXTURE_PATH` names one; otherwise the bundle's
+    /// H.264 fixture, so the journey runs in every lane instead of skipping.
+    private func browserAutomationVideoFixture() throws -> (data: Data, fileName: String) {
         let env = ProcessInfo.processInfo.environment
         if let path = env["OPPI_BROWSER_VIDEO_FIXTURE_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
             XCTAssertTrue(FileManager.default.fileExists(atPath: path), "Browser automation video fixture missing at \(path)")
-            return URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path)
+            return (try Data(contentsOf: url), url.lastPathComponent)
         }
-
-        // sim-pool passes the checkout as TEST_RUNNER_OPPI_SOURCE_ROOT; #filePath is a mapped path.
-        guard let sourceRoot = env["OPPI_SOURCE_ROOT"], !sourceRoot.isEmpty else {
-            throw XCTSkip("Set OPPI_BROWSER_VIDEO_FIXTURE_PATH, or run through sim-pool so OPPI_SOURCE_ROOT is set")
-        }
-        let fallback = URL(fileURLWithPath: sourceRoot)
-            .appendingPathComponent(".internal/browser-automation-video/google-hn-small/google-hacker-news-small2.mp4")
-        guard FileManager.default.fileExists(atPath: fallback.path) else {
-            throw XCTSkip("Run browser_automation_video first or set OPPI_BROWSER_VIDEO_FIXTURE_PATH")
-        }
-        return fallback
+        return (try E2EFixtures.data("known-good-h264", "mp4"), "known-good-h264.mp4")
     }
 
     private func tapToolRowChrome(_ row: XCUIElement) {
