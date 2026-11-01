@@ -1280,6 +1280,21 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.isActive(sessionId);
   }
 
+  /**
+   * Whether a live session still waits on a background job or supervised child that will start
+   * its next turn. A failed check reads as no wake: a supervisor's wait must settle, not hang.
+   */
+  async hasPendingWake(sessionId: string): Promise<boolean> {
+    const active = this.active.get(this.sessionKey(sessionId));
+    if (!active) return false;
+    try {
+      return await active.sdkBackend.hasPendingWake();
+    } catch (error) {
+      log.warn("sessions.pending_wake_check_failed", { sessionId, error: safeErrorMessage(error) });
+      return false;
+    }
+  }
+
   /** Number of bound session-stream subscribers for the active session. */
   getSubscriberCount(sessionId: string): number {
     return this.active.get(this.sessionKey(sessionId))?.subscribers.size ?? 0;

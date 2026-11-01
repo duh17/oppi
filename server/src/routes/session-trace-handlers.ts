@@ -47,7 +47,11 @@ type SessionTraceRouteHandlers = {
     res: ServerResponse,
   ) => Promise<void>;
   handleGenericGetSessionDialogs: (sessionId: string, res: ServerResponse) => void;
-  handleGenericGetSessionEvents: (sessionId: string, url: URL, res: ServerResponse) => void;
+  handleGenericGetSessionEvents: (
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ) => Promise<void>;
   handleGetFullToolOutputForSession: (
     session: Session,
     toolCallId: string,
@@ -61,7 +65,11 @@ type SessionTraceRouteHandlers = {
     req: IncomingMessage,
     res: ServerResponse,
   ) => Promise<void>;
-  handleGetSessionEventsForSession: (session: Session, url: URL, res: ServerResponse) => void;
+  handleGetSessionEventsForSession: (
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ) => Promise<void>;
   handleGetSessionForSession: (
     req: IncomingMessage,
     session: Session,
@@ -277,7 +285,11 @@ export function createSessionTraceRouteHandlers(
     }
   }
 
-  function writeSessionEvents(session: Session, url: URL, res: ServerResponse): void {
+  async function writeSessionEvents(
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const sinceParam = url.searchParams.get("since");
     const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
     if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
@@ -286,6 +298,9 @@ export function createSessionTraceRouteHandlers(
     }
 
     const catchUp = ctx.sessionRuntimes.getCatchUp(session.id, sinceSeq);
+    // A `ready` session whose background job or child will wake it is not settled; `oppi session
+    // wait` reads this. A stored, not-live session has no wakers.
+    const pendingWake = catchUp ? await ctx.sessionRuntimes.hasPendingWake(session.id) : false;
     // No ring means the session is stored but not live. 404 stays reserved for a
     // session that does not exist; callers already checked that.
     const body: SessionEventsResponse = catchUp
@@ -293,7 +308,10 @@ export function createSessionTraceRouteHandlers(
           events: catchUp.events,
           currentSeq: catchUp.currentSeq,
           ...(catchUp.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
-          session: ctx.ensureSessionContextWindow(catchUp.session),
+          session: {
+            ...ctx.ensureSessionContextWindow(catchUp.session),
+            ...(pendingWake ? { pendingWake } : {}),
+          },
           catchUpComplete: catchUp.catchUpComplete,
           live: true,
         }
@@ -307,8 +325,12 @@ export function createSessionTraceRouteHandlers(
     helpers.json(res, body);
   }
 
-  function handleGetSessionEventsForSession(session: Session, url: URL, res: ServerResponse): void {
-    writeSessionEvents(session, url, res);
+  function handleGetSessionEventsForSession(
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    return writeSessionEvents(session, url, res);
   }
 
   function resolveTraceView(url: URL): SessionTraceViewMode {
@@ -517,10 +539,14 @@ export function createSessionTraceRouteHandlers(
     helpers.json(res, { dialogs, serverNow: Date.now() });
   }
 
-  function handleGenericGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
+  async function handleGenericGetSessionEvents(
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = requireSession(sessionId, res);
     if (!session) return;
-    writeSessionEvents(session, url, res);
+    await writeSessionEvents(session, url, res);
   }
 
   return {

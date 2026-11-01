@@ -246,6 +246,7 @@ export async function cmdSession(
               session_id: session.sessionId,
               status: session.status ?? null,
               ...(session.programStatus ? { program_status: session.programStatus } : {}),
+              ...(session.pendingWake ? { pending_wake: true } : {}),
               tools_this_turn: session.toolsThisTurn,
               ...(session.pendingDialogs !== undefined
                 ? { pending_dialogs: session.pendingDialogs }
@@ -279,6 +280,7 @@ export async function cmdSession(
               session_id: session.sessionId,
               status: session.status ?? null,
               ...(session.programStatus ? { program_status: session.programStatus } : {}),
+              ...(session.pendingWake ? { pending_wake: true } : {}),
               ...(session.pendingDialogs !== undefined
                 ? { pending_dialogs: session.pendingDialogs }
                 : {}),
@@ -313,6 +315,7 @@ export async function cmdSession(
           reason,
           status,
           ...(outcome.programStatus ? { program_status: outcome.programStatus } : {}),
+          ...(outcome.pendingWake ? { pending_wake: true } : {}),
           ...(pendingDialogs !== undefined ? { pending_dialogs: pendingDialogs } : {}),
           ...(outputDelta !== undefined ? { output_delta: outputDelta } : {}),
           ...(outputDeltaKind !== undefined ? { output_delta_kind: outputDeltaKind } : {}),
@@ -845,7 +848,8 @@ function formatWaitProgress(snapshot: WaitProgressSnapshot): string {
   const rows = snapshot.sessions.map((session) => {
     const dialogs =
       session.pendingDialogs !== undefined ? ` dialogs=${session.pendingDialogs}` : "";
-    return `    ${session.sessionId}  ${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}`;
+    const wake = session.pendingWake ? " wake=pending" : "";
+    return `    ${session.sessionId}  ${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}${wake}`;
   });
   return [`  still waiting (${elapsed}s)`, ...rows].join("\n");
 }
@@ -858,6 +862,7 @@ function progressJsonSnapshot(snapshot: WaitProgressSnapshot): Record<string, un
       session_id: session.sessionId,
       status: session.status ?? null,
       ...(session.programStatus ? { program_status: session.programStatus } : {}),
+      ...(session.pendingWake ? { pending_wake: true } : {}),
       tools_this_turn: session.toolsThisTurn,
       ...(session.pendingDialogs !== undefined ? { pending_dialogs: session.pendingDialogs } : {}),
     })),

@@ -1375,6 +1375,7 @@ describe("sessions module", () => {
       },
       sessionRuntimes: {
         getCatchUp: mirrorGetCatchUp,
+        hasPendingWake: vi.fn(async () => false),
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
     } as unknown as RouteContext;
@@ -1395,6 +1396,87 @@ describe("sessions module", () => {
     expect(mirrorGetCatchUp).toHaveBeenCalledWith("mirror-1", 3);
     expect(managedGetCatchUp).not.toHaveBeenCalled();
     expect(JSON.parse(res.body)).toEqual({ ...mirrorCatchUp, live: true });
+  });
+
+  it("marks a live events snapshot with a pending wake on every events route, and only then", async () => {
+    const stored = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "ready",
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 4,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const control = {
+      id: "control-1",
+      status: "ready" as const,
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 4,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      control: { domain: "agents", intent: "create" },
+    };
+    let wake = true;
+    const hasPendingWake = vi.fn(async () => wake);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
+        getSession: vi.fn((id: string) => (id === control.id ? control : stored)),
+      },
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
+      sessionRuntimes: {
+        getCatchUp: vi.fn((id: string) => ({
+          events: [],
+          currentSeq: 3,
+          session: id === control.id ? control : stored,
+          catchUpComplete: true,
+        })),
+        hasPendingWake,
+      },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const paths = [
+      "/workspaces/ws-1/sessions/s1/events",
+      "/sessions/s1/events",
+      "/control-sessions/control-1/events",
+    ];
+
+    for (const path of paths) {
+      const res = makeResponse();
+      await dispatch({
+        method: "GET",
+        path,
+        url: new URL(`http://localhost${path}?since=0`),
+        req: {} as never,
+        res: res as never,
+      });
+      const snapshot = path.includes("control-") ? control : stored;
+      expect(JSON.parse(res.body).session, path).toEqual({ ...snapshot, pendingWake: true });
+    }
+    expect(hasPendingWake).toHaveBeenCalledTimes(paths.length);
+    // The stored session is never marked: the flag is per response.
+    expect(stored).not.toHaveProperty("pendingWake");
+    expect(control).not.toHaveProperty("pendingWake");
+
+    wake = false;
+    const res = makeResponse();
+    await dispatch({
+      method: "GET",
+      path: paths[0]!,
+      url: new URL(`http://localhost${paths[0]}?since=0`),
+      req: {} as never,
+      res: res as never,
+    });
+    expect(JSON.parse(res.body).session).toEqual(stored);
   });
 
   it("returns a not-live snapshot for a stored session with no event ring", async () => {
@@ -1680,6 +1762,7 @@ describe("sessions module", () => {
           session,
           catchUpComplete: true,
         })),
+        hasPendingWake: vi.fn(async () => false),
         isSessionConnected: vi.fn(() => true),
         stopSession: vi.fn(async () => undefined),
       },

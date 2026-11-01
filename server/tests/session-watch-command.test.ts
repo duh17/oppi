@@ -713,6 +713,146 @@ describe("session wait poller contract", () => {
     expect(liveTexts.some((text) => text.includes("· 1s"))).toBe(true);
   });
 
+  describe("pending wake", () => {
+    const done = { state: "done", since: 1 };
+
+    // A background job or supervised child wakes a `ready` session with a new turn that holds
+    // the final report. The session is not settled while that wake is pending.
+    it.each([
+      ["with program status", { status: "ready", programStatus: done }],
+      ["on a server without program status", { status: "ready" }],
+    ])(
+      "keeps wait --for idle open for a ready session with a pending wake, %s",
+      async (_, base) => {
+        vi.useFakeTimers();
+        let polls = 0;
+        const promise = runSessionWatch(
+          ["s"],
+          { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 1_000 },
+          async <T>(): Promise<T> => {
+            polls += 1;
+            const held = polls <= 3;
+            return {
+              session: { ...base, ...(held ? { pendingWake: true } : {}) },
+              events: [],
+              currentSeq: 1,
+            } as T;
+          },
+          vi.fn(),
+        );
+        let settledWhilePending = false;
+        void promise.then(() => {
+          settledWhilePending = polls <= 3;
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(40);
+        expect(polls).toBeGreaterThanOrEqual(2);
+        expect(settledWhilePending).toBe(false);
+        await vi.advanceTimersByTimeAsync(100);
+        const outcome = await promise;
+        expect(outcome).toMatchObject({ kind: "session", reason: "idle", status: "ready" });
+        expect(outcome).not.toHaveProperty("pendingWake");
+        expect(polls).toBeGreaterThan(3);
+      },
+    );
+
+    it("names the pending wake in a timeout outcome and the progress snapshot", async () => {
+      const outcome = await runSessionWatch(
+        ["s"],
+        { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 1 },
+        async <T>(): Promise<T> =>
+          ({
+            session: { status: "ready", programStatus: done, pendingWake: true },
+            events: [],
+            currentSeq: 1,
+          }) as T,
+        vi.fn(),
+      );
+      expect(outcome).toMatchObject({
+        kind: "timeout",
+        pending: ["s"],
+        sessions: [{ sessionId: "s", status: "ready", pendingWake: true }],
+      });
+    });
+
+    it("keeps --all open until every session's wake has cleared", async () => {
+      vi.useFakeTimers();
+      let polls = 0;
+      const promise = runSessionWatch(
+        ["a", "b"],
+        { condition: "idle", requireAll: true, intervalMs: 20, timeoutMs: 1_000 },
+        async <T>(path: string): Promise<T> => {
+          if (path.includes("/b/")) {
+            polls += 1;
+            return {
+              session: {
+                status: "ready",
+                programStatus: done,
+                ...(polls < 3 ? { pendingWake: true } : {}),
+              },
+              events: [],
+              currentSeq: 1,
+            } as T;
+          }
+          return {
+            session: { status: "ready", programStatus: done },
+            events: [],
+            currentSeq: 1,
+          } as T;
+        },
+        vi.fn(),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(polls).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(promise).resolves.toMatchObject({ kind: "all" });
+      expect(polls).toBeGreaterThanOrEqual(3);
+    });
+
+    // A stopped session lost its wakers; an errored one never wakes. Either way the supervisor
+    // must hear about it, whatever the snapshot still says about a wake.
+    it.each([
+      ["stopped", { state: "done", since: 1 }],
+      ["stopped", undefined],
+      ["error", { state: "error", since: 1 }],
+      ["error", undefined],
+    ])(
+      "still resolves a %s session that reports a pending wake (program status %j)",
+      async (status, programStatus) => {
+        const outcome = await runSessionWatch(
+          ["s"],
+          { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+          async <T>(): Promise<T> =>
+            ({
+              session: { status, ...(programStatus ? { programStatus } : {}), pendingWake: true },
+              events: [],
+              currentSeq: 0,
+              live: false,
+            }) as T,
+          vi.fn(),
+        );
+        expect(outcome).toMatchObject({ kind: "session", reason: "idle", status });
+      },
+    );
+
+    it("keeps attention resolving while a wake is pending", async () => {
+      const outcome = await runSessionWatch(
+        ["s"],
+        { condition: "either", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+        async <T>(path: string): Promise<T> =>
+          (path.endsWith("/dialogs")
+            ? { dialogs: [{ method: "confirm" }] }
+            : {
+                session: { status: "ready", pendingWake: true },
+                events: [],
+                currentSeq: 1,
+              }) as T,
+        vi.fn(),
+      );
+      expect(outcome).toMatchObject({ kind: "session", reason: "attention", pendingDialogs: 1 });
+    });
+  });
+
   describe("program status", () => {
     const programStatus = (state: string, extra: Record<string, unknown> = {}) => ({
       state,

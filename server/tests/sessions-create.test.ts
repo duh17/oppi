@@ -88,6 +88,7 @@ interface MockRouteContext {
     getActiveSessionIds: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
+    hasPendingWake: ReturnType<typeof vi.fn>;
     isSessionConnected: ReturnType<typeof vi.fn>;
     getSessionSnapshot: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
@@ -225,6 +226,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
         ? piTuiRuntime.getCatchUp(sessionId, sinceSeq)
         : sessions.getCatchUp(sessionId, sinceSeq);
     }),
+    hasPendingWake: vi.fn(async () => false),
   };
 
   const ctx = {

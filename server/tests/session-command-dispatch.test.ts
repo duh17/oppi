@@ -293,6 +293,35 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
+  it("names the pending wake that holds a ready session open when wait times out", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path.startsWith("/sessions?idPrefix=")) return { sessions: [{ id: "sess-1" }] };
+      if (path.startsWith("/sessions/sess-1/events")) {
+        return { session: { status: "ready", pendingWake: true }, events: [], currentSeq: 1 };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["sess-1"], {
+        for: "idle",
+        json: "true",
+        timeout: "80ms",
+        poll: "20ms",
+        "summary-every": "0",
+      }),
+    );
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        timed_out: true,
+        pending: ["sess-1"],
+        sessions: [{ session_id: "sess-1", status: "ready", pending_wake: true }],
+      },
+    });
+  });
+
   it("rejects removed session watch before making a local API request", async () => {
     const { stdout, exitCode } = await captureCliOutput(() =>
       cmdSession(storage, "watch", ["sess-1"], { json: "true" }),

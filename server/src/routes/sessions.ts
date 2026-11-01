@@ -621,7 +621,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const controlEventsMatch = path.match(/^\/control-sessions\/([^/]+)\/events$/);
     if (controlEventsMatch && method === "GET") {
       const session = requireControlSession(controlEventsMatch[1], res);
-      if (session) handleGetSessionEventsForSession(session, url, res);
+      if (session) await handleGetSessionEventsForSession(session, url, res);
       return true;
     }
 
@@ -726,7 +726,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const sessionEventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
     if (sessionEventsMatch && method === "GET") {
-      handleGenericGetSessionEvents(sessionEventsMatch[1], url, res);
+      await handleGenericGetSessionEvents(sessionEventsMatch[1], url, res);
       return true;
     }
 
@@ -894,7 +894,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         wsSessionEventsMatch[2],
         res,
       );
-      if (admitted) handleGetSessionEventsForSession(admitted.session, url, res);
+      if (admitted) await handleGetSessionEventsForSession(admitted.session, url, res);
       return true;
     }
 

@@ -25,6 +25,8 @@ interface WatchSessionState {
   sinceSeq: number;
   status?: string;
   programStatus?: ProgramStatus;
+  /** A background job or child will start the session's next turn (`Session.pendingWake`). */
+  pendingWake?: boolean;
   messageCount?: number;
   pendingDialogs?: number;
   toolsThisTurn: number;
@@ -57,6 +59,7 @@ export type WatchOutcome =
       reason: SessionWatchReason;
       status?: string;
       programStatus?: ProgramStatus;
+      pendingWake?: boolean;
       pendingDialogs?: number;
       outputDelta?: string;
       outputDeltaKind?: WatchOutputDeltaKind;
@@ -68,6 +71,7 @@ export type WatchOutcome =
         sessionId: string;
         status?: string;
         programStatus?: ProgramStatus;
+        pendingWake?: boolean;
         pendingDialogs?: number;
       }>;
     }
@@ -82,6 +86,7 @@ export type WaitProgressSession = {
   sessionId: string;
   status?: string;
   programStatus?: ProgramStatus;
+  pendingWake?: boolean;
   pendingDialogs?: number;
   toolsThisTurn: number;
   name?: string;
@@ -179,7 +184,8 @@ export function formatWaitLiveSnapshot(
       typeof session.pendingDialogs === "number" && session.pendingDialogs > 0
         ? `  dialogs=${session.pendingDialogs}`
         : "";
-    lines.push(`status=${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}`);
+    const wake = session.pendingWake ? "  wake=pending" : "";
+    lines.push(`status=${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}${wake}`);
     if (session.last) {
       lines.push("", "Last:", escapeLiveMarkdown(truncateLiveLast(session.last)));
     }
@@ -207,6 +213,7 @@ function waitProgressSnapshot(
         toolsThisTurn: state?.toolsThisTurn ?? 0,
         ...(state?.status !== undefined ? { status: state.status } : {}),
         ...(state?.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
+        ...(state?.pendingWake ? { pendingWake: true } : {}),
         ...(state?.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
         ...(state?.name !== undefined ? { name: state.name } : {}),
         ...(state?.last !== undefined ? { last: state.last } : {}),
@@ -220,6 +227,10 @@ function isIdleSession(state: WatchSessionState): boolean {
   // while it is still starting, and `busy` can be set from Pi's state sync without a program
   // status sync, leaving a stale settled status; `create && wait --for idle` must not resolve.
   if (state.status === "starting" || state.status === "busy") return false;
+  // A `ready` session whose background job or supervised child will wake it has not finished:
+  // the wake's turn carries the final report. Only `ready` holds, so a stopped or error session
+  // still resolves below whatever its snapshot says about a wake.
+  if (state.status === "ready" && state.pendingWake) return false;
   // Otherwise a turn has settled once the program is neither working nor blocked. Stopped and
   // error sessions also count as idle so a supervisor wait resolves instead of timing out.
   if (state.programStatus) {
@@ -264,6 +275,7 @@ async function observeSession(
   const inactive = events.live === false;
   const status = events.session?.status;
   const programStatus = events.session?.programStatus;
+  const pendingWake = events.session?.pendingWake === true;
   recordSessionName(state, events.session?.name);
   if (typeof events.session?.messageCount === "number") {
     state.messageCount = events.session.messageCount;
@@ -290,6 +302,7 @@ async function observeSession(
   throwIfAborted(signal);
   state.status = status;
   state.programStatus = programStatus;
+  state.pendingWake = pendingWake;
   if (needDialogs) {
     const list = await call<{ dialogs?: unknown[] }>(
       `/sessions/${encodeURIComponent(id)}/dialogs`,
@@ -316,6 +329,7 @@ async function observeSession(
 interface WatchSessionSnapshot {
   status?: string;
   programStatus?: ProgramStatus;
+  pendingWake?: boolean;
   messageCount?: number;
   lastMessage?: string;
   name?: string;
@@ -464,6 +478,7 @@ export async function runSessionWatch(
           reason,
           ...(state.status !== undefined ? { status: state.status } : {}),
           ...(state.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
+          ...(state.pendingWake ? { pendingWake: true } : {}),
           ...(state.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
           ...(outputDelta
             ? { outputDelta: outputDelta.text, outputDeltaKind: outputDelta.kind }
@@ -489,6 +504,7 @@ export async function runSessionWatch(
             sessionId: id,
             ...(state?.status !== undefined ? { status: state.status } : {}),
             ...(state?.programStatus !== undefined ? { programStatus: state.programStatus } : {}),
+            ...(state?.pendingWake ? { pendingWake: true } : {}),
             ...(state?.pendingDialogs !== undefined
               ? { pendingDialogs: state.pendingDialogs }
               : {}),

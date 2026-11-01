@@ -50,6 +50,12 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return ids;
   }
 
+  /** Oppi-owned sessions only; a terminal mirror has no background job or child to wake it. */
+  hasPendingWake(sessionId: string): Promise<boolean> {
+    if (this.isPiTui(this.storage.getSession(sessionId))) return Promise.resolve(false);
+    return this.oppi.hasPendingWake(sessionId);
+  }
+
   getSessionSnapshot(sessionId: string): Session | undefined {
     const stored = this.storage.getSession(sessionId);
     if (this.isPiTui(stored)) {
