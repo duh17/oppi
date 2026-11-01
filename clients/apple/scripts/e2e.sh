@@ -11,7 +11,7 @@
 #   ./e2e.sh              # Docker mode (default)
 #   ./e2e.sh --native     # Native mode (skips Docker, ~30-60s faster)
 #   ./e2e.sh --only-testing OppiE2ETests/ChatTimelineE2ETests/testSendMessageAndReceiveResponse
-#   ./e2e.sh --skip-testing OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests
+#   ./e2e.sh --skip-testing OppiE2ETests/IPadAdaptiveShellScreenshotE2ETests
 #   ./e2e.sh --record-video=always
 #   ./e2e.sh --native --durable --faux-model --only-testing OppiE2ETests/DurableSessionE2ETests
 set -euo pipefail
@@ -235,7 +235,6 @@ apply_group_defaults() {
                 "OppiE2ETests/ToolRowAudioArtifactE2ETests"
                 "OppiE2ETests/ToolRowImageViewportE2ETests"
                 "OppiE2ETests/ToolRowVideoPlaybackE2ETests"
-                "OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests"
             )
             ;;
         media)
@@ -251,7 +250,6 @@ apply_group_defaults() {
             ONLY_TESTING+=(
                 "OppiE2ETests/ExtensionUISnapshotLabE2ETests"
                 "OppiE2ETests/IPadAdaptiveShellScreenshotE2ETests"
-                "OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests"
             )
             ;;
         *)

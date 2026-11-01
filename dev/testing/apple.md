@@ -406,33 +406,14 @@ The second test queues a follow-up and a steer (`chat.busyMode` picker) while th
 
 ### Paired-server simulator labs
 
-Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `IPhoneSessionsFirstScreenshotE2ETests` for the All Sessions root and workspace drawer. The existing `workspace-home/*` lab scenarios open one workspace's scoped detail. Use `--screenshot-preview` only for isolated mock component visuals.
+Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `IPhoneSessionsFirstScreenshotE2ETests` for the All Sessions root and workspace drawer. Use `--screenshot-preview` only for isolated mock component visuals.
 
 Run a lab scenario as an ordinary E2E filter with `clients/apple/scripts/e2e.sh --native --only-testing OppiE2ETests/<Suite>/<test>`; `--record-video=always` keeps simulator video.
 
-Workspace-scoped lab files:
-
-- Shared lab fixture/API/screenshot helpers: `clients/apple/OppiE2ETests/E2ELabFixtures.swift`
-- Workspace-home scenarios: `clients/apple/OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests.swift`
+- Shared lab fixture/API/screenshot helpers: `clients/apple/OppiE2ETests/E2ELabFixtures.swift`. Prefer `E2ELabWorkspaceFixture` for normal workspace/session-count state; use `e2eLabAPIJSON(...)` only for custom server setup.
 - XCTest screenshots: `/tmp/oppi-screenshots/*.png`
 
-Run the current workspace-home scenarios:
-
-```bash
-clients/apple/scripts/e2e.sh --native \
-  --only-testing OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests/testWorkspaceHomeWrappingScreenshotLab
-
-clients/apple/scripts/e2e.sh --native \
-  --only-testing OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests/testWorkspaceHomeDenseCountsScreenshotLab
-```
-
-To add a scenario:
-
-1. Add a case to `WorkspaceHomeLabScenario`.
-2. Map the XCTest name in `currentScenario`.
-3. Declare `fixtures`, `anchorWorkspaceName`, and `screenshotName`.
-4. Add one focused XCTest method that calls `runWorkspaceHomeLab(...)`.
-5. Prefer `E2ELabWorkspaceFixture` for normal workspace/session-count state; use `e2eLabAPIJSON(...)` only for custom server setup.
+A lab test asserts what the screen must show. Don't add one that only captures a screenshot: nothing runs it, and it rots unseen.
 
 ### Debug harnesses
 

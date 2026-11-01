@@ -291,6 +291,110 @@ final class QuickSessionE2ETests: E2ETestCase {
         )
     }
 
+    /// The Quick Session composer grows with a multi-line draft inside its own
+    /// overlay (no system sheet), keeps the sessions list behind it inert, and
+    /// gives the list back once swiped away.
+    @MainActor
+    func testQuickSessionComposerGrowthFitsMeasuredContent() throws {
+        let sessionsList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
+
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
+        defer { dismissQuickSessionSheetIfNeeded() }
+
+        let chatInput = app.textViews["chat.input"]
+        XCTAssertTrue(chatInput.waitForExistence(timeout: 10), "Quick Session input not visible")
+        let overlay = app.buttons["quickSession.overlay"].firstMatch
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay not visible")
+        XCTAssertFalse(
+            sessionsList.isHittable,
+            "Modal Quick Session must make the background sessions hierarchy inert"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Quick Session should not use a system sheet container")
+        let initialInputHeight = chatInput.frame.height
+
+        focusTextView(chatInput)
+        chatInput.typeText("first quick session line\nsecond quick session line\nthird quick session line")
+
+        let multilineExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let element = object as? XCUIElement else { return false }
+                return element.frame.height > initialInputHeight + 20
+            },
+            object: chatInput
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [multilineExpectation], timeout: 10),
+            .completed,
+            "Quick Session input did not grow for multiline content"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Multiline growth restored the system sheet container")
+
+        dismissQuickSessionSheetIfNeeded()
+        XCTAssertTrue(
+            sessionsList.waitForExistence(timeout: 5),
+            "Swiping down on Quick Session must restore the sessions accessibility hierarchy"
+        )
+        let launchButton = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(
+            launchButton.waitForExistence(timeout: 5) && launchButton.isHittable,
+            "Dismissing Quick Session must restore its launch control to the interactive hierarchy"
+        )
+    }
+
+    /// In compact height (landscape iPhone) with the keyboard up, the composer
+    /// stays above the keyboard and its controls scroll into reach.
+    @MainActor
+    func testQuickSessionComposerScrollsInCompactHeight() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer {
+            dismissQuickSessionSheetIfNeeded()
+            XCUIDevice.shared.orientation = .portrait
+        }
+
+        let sessionsList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
+
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible in compact height")
+        tap(input, named: "quick session input", timeout: 5)
+        input.typeText("one\ntwo\nthree\nfour\nfive\nsix")
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard not visible in compact height")
+        let viewport = app.scrollViews["quickSession.viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Bounded Quick Session viewport not visible")
+        XCTAssertLessThanOrEqual(
+            input.frame.maxY,
+            keyboard.frame.minY + 1,
+            "Compact-height composer input must stay above the keyboard"
+        )
+
+        viewport.swipeUp()
+        let workspacePicker = app.buttons["quickSession.workspacePicker"]
+        XCTAssertTrue(
+            workspacePicker.waitForExistence(timeout: 5) && workspacePicker.isHittable,
+            "Compact-height fallback must allow scrolling to the composer controls"
+        )
+        XCTAssertLessThanOrEqual(
+            workspacePicker.frame.maxY,
+            keyboard.frame.minY + 1,
+            "Scrolled composer controls must remain above the keyboard"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Compact fallback must not restore a system sheet")
+    }
+
+    /// Swipes an open Quick Session away, if one is up.
+    @MainActor
+    private func dismissQuickSessionSheetIfNeeded() {
+        let overlay = app.buttons["quickSession.overlay"].firstMatch
+        guard overlay.waitForExistence(timeout: 1) else { return }
+        let start = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
     @MainActor
     private func dismissQuickSession() {
         let overlay = app.buttons["quickSession.overlay"].firstMatch
