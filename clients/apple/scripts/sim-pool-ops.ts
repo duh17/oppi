@@ -1326,6 +1326,20 @@ function finishedSwiftTesting(logText: string): TestCompletion | undefined {
   return { outcome, tests: Number(end[2]), suites: Number(end[3]), issues, summary: end[0].trim() };
 }
 
+/**
+ * The Swift Testing run summary that reports the run failed, with the line that says so, or
+ * undefined when the log has none.
+ *
+ * The summary is the run's own verdict, and xcodebuild's exit status is not: it follows the
+ * test plan, so a run that records an issue with no test to blame («unknown», e.g. a request
+ * that outlived the test that answered it) fails its summary while every test case passed and
+ * xcodebuild exits 0. Sim-pool never reports such a run as a pass.
+ */
+export function failedSwiftTestingRun(logText: string): string | undefined {
+  return [...logText.matchAll(/^✘ Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? failed after [0-9]+(?:\.[0-9]+)? seconds(?: with [1-9][0-9]* issues?)?\.\r?$/gm)]
+    .at(-1)?.[0].trim();
+}
+
 function logTestFailureLines(logText: string): string[] {
   return [
     ...new Set(
@@ -1641,6 +1655,14 @@ async function runXcodebuildAttempt(input: {
   let code = waitExitStatus(completed.wait);
   if (recovered) {
     code = recovered.outcome === "failed" ? 65 : completed.wait.code ?? 0;
+  }
+  // A run whose own summary says it failed never passes, whatever xcodebuild's status says.
+  if (recovered === undefined && code === 0 && !input.session.canceled) {
+    const failedRun = failedSwiftTestingRun(existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "");
+    if (failedRun) {
+      log(`[sim-pool] the run failed with xcodebuild's exit 0: ${failedRun}`);
+      code = 65;
+    }
   }
   return {
     code, hung, stop: completed.stop,

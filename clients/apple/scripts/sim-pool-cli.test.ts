@@ -1453,6 +1453,19 @@ sleep 30
     expect(result.attempts).toHaveLength(1);
   });
 
+  test("a failed run summary is not masked by xcodebuild's zero exit", () => {
+    // What a land gate missed: issues recorded with no test to blame («unknown», a request
+    // that outlived its test) fail the run's summary, every test case passes, and xcodebuild
+    // exits 0 because its status follows the test plan. The run must not pass the lane.
+    const result = runCompletionFixture(swiftTestPrelude + swiftFailed, { afterLog: "exit 0" });
+    expect(result.run.status).toBe(65);
+    expect(result.summary.exit_code).toBe(65);
+    expect(result.summary.hang_detected).toBe(false);
+    expect(result.run.stderr).toContain(`the run failed with xcodebuild's exit 0: ${swiftFailed.trim()}`);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+  });
+
   test("nonzero exit racing completion-hang cleanup is not masked", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
       afterLog: "trap 'exit 65' TERM; while :; do /bin/sleep 0.1; done",
