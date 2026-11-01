@@ -2679,9 +2679,15 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
+        // The model preload is the connection's own, started by the connected message, and it is the one
+        // request this connect adds beyond history. Wait for it while TestURLProtocol still answers
+        // /models: the double hands a request to its handler only when URLSession starts it, which can
+        // land well after the test's own work. `cleanup()` cancels the preload and drops the handle, so a
+        // wait placed after it covers nothing and leaves the request to reach a handler nobody owns.
+        let modelPrefetch = connection.chatState.modelPrefetchTask
+        #expect(modelPrefetch != nil, "The connected message should start the connection's model preload")
+        await modelPrefetch?.value
         manager.cleanup()
-        // The model preload is the connection's own, started by the connected message.
-        await connection.chatState.modelPrefetchTask?.value
     }
 
     @Test func historyJumpAppliesReducerWhilePresentationPaused() async throws {
