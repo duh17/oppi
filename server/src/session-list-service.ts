@@ -577,17 +577,22 @@ function compareStoppedSessionListRows(a: SessionListRow, b: SessionListRow): nu
   return a.id.localeCompare(b.id);
 }
 
-/** Older history uses day sections for this long, then month sections. */
-const OLDER_HISTORY_DAY_SECTION_SPAN_MS = 30 * 86_400_000;
+/** Older history uses day sections for this many calendar days, then month sections. */
+const OLDER_HISTORY_DAY_SECTION_DAYS = 30;
 
 /**
  * Where day sections give way to month sections: the local midnight that starts the day
- * 30 days before `nowMs`. Snapping to a midnight keeps every day whole on one side of the
- * line, so no session is in both a day section and a month section.
+ * 30 calendar days before `nowMs` (not 720 hours, which is a day off just after midnight
+ * when daylight saving changes inside the window). Snapping to a midnight keeps every day
+ * whole on one side of the line, so no session is in both a day section and a month section.
  */
 function olderHistoryDayCutoffMs(nowMs: number): number {
-  const line = new Date(nowMs - OLDER_HISTORY_DAY_SECTION_SPAN_MS);
-  return new Date(line.getFullYear(), line.getMonth(), line.getDate()).getTime();
+  const now = new Date(nowMs);
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - OLDER_HISTORY_DAY_SECTION_DAYS,
+  ).getTime();
 }
 
 /**

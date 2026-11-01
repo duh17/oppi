@@ -691,6 +691,28 @@ describe("older-history day sections across daylight-saving changes", () => {
       expect(day!.endMs - day!.startMs).toBe(23 * 3_600_000);
     });
 
+    it("counts 30 calendar days in the hour after midnight when clocks sprang forward inside the window", async () => {
+      // 30 x 24 hours before this instant is 2026-03-07 23:30 local; 30 calendar days is 03-08.
+      const nowMs = Date.parse("2026-04-07T00:30:00-07:00");
+      localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+      stopOppiSession("mar-07-evening", Date.parse("2026-03-07T20:00:00-08:00"));
+      stopOppiSession("mar-08-early", Date.parse("2026-03-08T01:30:00-08:00"));
+
+      const buckets = await expectEachSessionInOneSection(
+        nowMs,
+        Date.parse("2026-04-07T00:00:00-07:00"),
+        ["mar-07-evening", "mar-08-early"],
+      );
+
+      expect(buckets.map((bucket) => bucket.bucketId).sort()).toEqual([
+        "day:2026-03-08",
+        "month:2026-03",
+      ]);
+      expect(buckets.find((bucket) => bucket.bucketId === "month:2026-03")?.endMs).toBe(
+        Date.parse("2026-03-08T00:00:00-08:00"),
+      );
+    });
+
     it("leaves the earlier month whole when the line is at a month start", async () => {
       // Now minus 30 days is 2026-11-01 12:00 local, on the 25-hour fall-back day.
       const nowMs = Date.parse("2026-12-01T12:00:00-08:00");
