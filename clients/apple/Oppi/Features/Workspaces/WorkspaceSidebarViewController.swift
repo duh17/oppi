@@ -199,12 +199,10 @@ final class WorkspaceSidebarViewController: UIViewController {
     // MARK: Model
 
     private var selectedServer: PairedServer? {
-        let servers = coordinator.serverStore.servers
-        if let activeServerId = coordinator.activeServerId,
-           let server = servers.first(where: { $0.id == activeServerId }) {
-            return server
-        }
-        return servers.first
+        ServerSelection.resolve(
+            selectedId: coordinator.activeServerId,
+            from: coordinator.serverStore.servers
+        )
     }
 
     private func makeModel() -> Model {

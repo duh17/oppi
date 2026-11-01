@@ -264,8 +264,10 @@ final class SessionInboxViewController: UIViewController {
     private func readState() -> InboxState {
         let activeServerId = coordinator.activeServerId
         let connection = activeServerId.flatMap { coordinator.connection(for: $0) }
-        let servers = coordinator.serverStore.servers
-        let selectedServer = activeServerId.flatMap { id in servers.first { $0.id == id } } ?? servers.first
+        let selectedServer = ServerSelection.resolve(
+            selectedId: activeServerId,
+            from: coordinator.serverStore.servers
+        )
         let searchState = navigation.inboxSessionSearch
         let hasActivePlayback = connection?.audioPlayer.hasActivePlayback == true
         let showsVersionNotice = selectedServer != nil
