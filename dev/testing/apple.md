@@ -283,6 +283,18 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 - Use `Issue.record()` instead of `XCTFail()`.
 - Take a test window down with `hideTestWindow(_:)` (`Support/TestFactories.swift`), not `window.isHidden = true`, whenever the screen inside it can hold a first responder (a composer, an inline comment field, an editor, the terminal grid). Close an inline review-comment composer first with `closeInlineComposer(in:)`, the way its Cancel button does. Hiding a window does not resign its first responder: an input that goes away with its window, or a focus request that lands after it, raises a simulator software keyboard with no responder in any visible window to dismiss it, and it stays up for the rest of the run. Tests that read a keyboard layout guide must therefore measure against it rather than assume it rests (`SSHTerminalTests.theBarTakesItsRowsBackWhenTheKeyboardGoesDownWhileDisconnected` measures the bar against that guide, not against an idle screen).
 
+### Gotchas
+
+Each of these has cost a worker a false red or a false green.
+
+- **A filter that matches nothing passes.** `-only-testing:` with a misspelled suite, or a Swift Testing function without its doubled `()()`, runs zero tests and reports success ("0 tests passed"). Read the count before trusting a green, and name declared types in land-queue `--tests`.
+- **A removed cell lingers.** On iOS 27 a collection view keeps a deleted row's cell in the view tree for at least one more run-loop turn after the snapshot drops it. After a delete, assert on the data source (`numberOfItems(inSection:)`, the snapshot's identifiers) plus the rows that should remain, not on walking `subviews` for the gone row.
+- **An anchored confirmation has no Cancel.** Since iOS 26 an action sheet presented from a source (a bar button, a `⋯`) shows as a popover and the system omits its `.cancel` action. Dismiss it in a UI test by tapping outside, then assert nothing changed.
+- **Sheet and alert buttons can appear twice.** iOS 27 exposes some alert and sheet buttons as two accessibility elements. Query by identifier and take `firstMatch` rather than expecting one match.
+- **A `UIAction` or `UIAlertAction` handler can't be run from a unit test.** Test the owner method the action calls (`confirmDelete`, `deleteHost`), and prove the menu item itself in a UI test. Don't add a test-only property to reach the closure.
+- **Experiments are on in unit tests.** `OppiTests` registers Rex and Herdr as on when the bundle loads (`OppiTestExperimentsAtLoad.m`), so `SSHTerminalExperimentAccess.current` reads on. A test of the off state passes an explicit `SSHTerminalExperimentAccess`. UI tests set experiments per launch with `OppiTestLaunch.experimentArguments`.
+- **Launch arguments are strings.** `-key YES` reaches `UserDefaults` as the string `"YES"`, so `object(forKey:) as? Bool` is nil. Read flags with `bool(forKey:)` once you know something is stored.
+
 ### iOS E2E tests
 
 Use `clients/apple/scripts/e2e.sh`. It starts a paired E2E server (Docker by default, a native local process with `--native`), writes invite/device-token files under `/tmp`, launches XCUITests, and cleans up the server.
