@@ -689,19 +689,39 @@ struct WorkspaceDetailsAndListTests {
         let workspaces = (0..<40).map { makeTestWorkspace(id: "w\($0)", name: "Workspace \($0)") }
         let (list, _, window) = try mountReadyList(workspaces, size: CGSize(width: 1024, height: 700))
         defer { window.isHidden = true; window.rootViewController = nil }
-        // Scroll only once the page's load has settled: a pass that lands while the
-        // load is out reconfigures every row, and its layout puts the list back.
+        // Scroll only once the page's load has settled and the list has stopped
+        // sizing its rows: a pass that lands while the load is out reconfigures
+        // every row, and the rows below the fold are measured only when the list
+        // lays them out.
         try await waitUntil {
             window.layoutIfNeeded()
-            return !list.isLoading && self.find("server.workspace.w0", in: list.view) != nil
+            return !list.isLoading && list.loadFailure != nil
+        }
+        try #require(!list.isLoading && list.loadFailure != nil, "the page's load did not settle")
+        var lastSize = CGSize.zero
+        try await waitUntil {
+            window.layoutIfNeeded()
+            let size = list.collectionView.contentSize
+            defer { lastSize = size }
+            return size == lastSize && self.find("server.workspace.w0", in: list.view) != nil
         }
         let swipe = try #require(list.trailingSwipeActions(for: .workspace("w0")))
-        list.collectionView.setContentOffset(
-            CGPoint(x: 0, y: list.collectionView.contentSize.height - list.collectionView.bounds.height),
-            animated: false
-        )
-        window.layoutIfNeeded()
+        let bottom = list.collectionView.contentSize.height - list.collectionView.bounds.height
+        list.collectionView.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
         let row = try #require(list.indexPath(for: .workspace("w0")))
+        // The scroll itself is done; this waits for the list to lay out at it. A
+        // scrolled list recycles the rows that left the screen on a display pass,
+        // not in the window's own layout, and under load that pass comes later. The
+        // offset is asserted rather than set again: a list that put itself back at
+        // the top fails here, saying so.
+        try await waitUntil {
+            window.layoutIfNeeded()
+            return list.collectionView.cellForItem(at: row) == nil
+        }
+        #expect(
+            list.collectionView.contentOffset.y >= bottom - 1,
+            "the list stayed where it was scrolled instead of going back to the top"
+        )
         try #require(list.collectionView.cellForItem(at: row) == nil, "the first row is offscreen")
 
         try #require(swipe.actions.first).handler(try #require(swipe.actions.first), list.view) { _ in }
