@@ -22,7 +22,6 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
   - `dev/` contributor architecture, leftover transport notes, telemetry, testing docs
 - Keep unrelated changes from other sessions. If overlapping edits cannot be separated safely, stop and ask.
 - Commit and push only with authority. Stage only this session's paths or hunks unless asked for more; never `git add .` or `git add -A`.
-- Don't edit `CHANGELOG.md` in feature or fix work. The release lane writes it from the delta at release time; commit messages and docs carry the story until then.
 
 ## Build and Test Rules
 
