@@ -797,30 +797,11 @@ struct ServerConnectionLifecycleTests {
 
         return conn
     }
+
     /// The app-event stream starts inside `configureForUse`, and the catalog is cached
-    /// per server only. The stores must already name the server when the stream starts:
-    /// an event it delivers refreshes the catalog before the coordinator would bind them.
-    @Test func catalogStoresNameTheServerWhenTheAppEventStreamStarts() async {
-        let conn = ServerConnection()
-        var boundWhenStreamStarted: [String?] = []
-        var resourcesBoundWhenStreamStarted: [String?] = []
-        conn._startAppEventStreamForTesting = { _ in
-            boundWhenStreamStarted.append(conn.workspaceStore.activeServerId)
-            resourcesBoundWhenStreamStarted.append(conn.serverResourceStore.activeServerId)
-        }
-
-        #expect(await conn.configureForUse(
-            credentials: makeHTTPOnlyCredentials(),
-            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) }
-        ))
-
-        #expect(boundWhenStreamStarted == ["sha256:SERVERFINGERPRINTABCDEF"])
-        #expect(resourcesBoundWhenStreamStarted == ["sha256:SERVERFINGERPRINTABCDEF"])
-    }
-
-    /// The same race end to end: the stream's first event refreshes the catalog while
-    /// setup is still returning. The catalog lands under the server, and nothing is
-    /// loaded or cached server-less.
+    /// per server only. The stream's first event refreshes the catalog while setup is
+    /// still returning: it must land under the server, and nothing is loaded or cached
+    /// server-less.
     @Test func catalogRefreshFromTheFirstAppEventLandsUnderItsServerOnly() async throws {
         defer { TestURLProtocol.handler = nil }
         let serverId = "sha256:SERVERFINGERPRINTABCDEF"

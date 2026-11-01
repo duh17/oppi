@@ -1983,6 +1983,8 @@ private final class OpenerHarness {
     var unreachableServers: Set<String> = []
     private var connections: [String: ServerConnection] = [:]
     private let traceRequests = OSAllocatedUnfairLock(initialState: 0)
+    /// The fixture's network: every request fails, and the handler ends with the harness.
+    private let networkRoutes: TestURLProtocol.RouteScope
 
     /// Timeline prefetches (`…/trace-page` requests) the fixture's network saw.
     var traceReads: Int { traceRequests.withLock { $0 } }
@@ -2047,7 +2049,7 @@ private final class OpenerHarness {
         )
         self.opener = opener
         let traceRequests = traceRequests
-        TestURLProtocol.handler = { request in
+        networkRoutes = TestURLProtocol.routeScope { request in
             if request.url?.path.hasSuffix("/trace-page") == true {
                 traceRequests.withLock { $0 += 1 }
             }
@@ -2068,6 +2070,10 @@ private final class OpenerHarness {
         if launch {
             opener.launchDidFinish()
         }
+    }
+
+    deinit {
+        networkRoutes.end()
     }
 
     func connection(_ serverId: String) -> ServerConnection {

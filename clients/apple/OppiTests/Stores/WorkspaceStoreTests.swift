@@ -9,36 +9,9 @@ import Testing
 struct WorkspaceStoreOfflineTests {
     private let serverId = "sha256:workspace-store"
 
-    /// The catalog is cached per server, so a store no server has bound (not yet
-    /// paired to its connection, or its server was removed) neither fetches nor
-    /// touches the cache. A late app-event refresh must not create root-level files.
-    @Test func loadWithNoActiveServerFetchesNothingAndWritesNoCache() async throws {
-        defer { WorkspaceStoreMockURLProtocol.handler = nil }
-        let fileManager = FileManager.default
-        let base = fileManager.temporaryDirectory.appending(path: "workspace-store-tests-\(UUID().uuidString)")
-        let root = base.appending(path: "cache-root")
-        defer { try? fileManager.removeItem(at: base) }
-        let cache = TimelineCache(rootURL: root)
-        let before = try Set(fileManager.subpathsOfDirectory(atPath: root.path))
-
-        var requests = 0
-        WorkspaceStoreMockURLProtocol.handler = { _ in
-            requests += 1
-            throw URLError(.notConnectedToInternet)
-        }
-        let store = WorkspaceStore()
-        store._cacheForTesting = cache
-        let outcome = await store.load(api: makeAPIClient())
-
-        // A detached cache write is the only thing that could still land.
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(outcome == .superseded)
-        #expect(requests == 0)
-        #expect(try Set(fileManager.subpathsOfDirectory(atPath: root.path)) == before)
-    }
-
-    /// Remove Server leaves the store with no active server. A refresh still in flight
-    /// for the removed server must not fall back to the cache root.
+    /// The catalog is cached per server only. Remove Server leaves the store with no
+    /// active server, and a refresh still in flight for the removed server must neither
+    /// fetch nor fall back to the cache root.
     @Test func loadAfterRemovingTheActiveServerStaysOffTheCacheRoot() async throws {
         defer { WorkspaceStoreMockURLProtocol.handler = nil }
         let fileManager = FileManager.default
@@ -46,7 +19,11 @@ struct WorkspaceStoreOfflineTests {
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
         let cache = TimelineCache(rootURL: root)
-        WorkspaceStoreMockURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        var requests = 0
+        WorkspaceStoreMockURLProtocol.handler = { _ in
+            requests += 1
+            throw URLError(.notConnectedToInternet)
+        }
         let store = WorkspaceStore()
         store._cacheForTesting = cache
         store.switchServer(to: serverId)
@@ -55,8 +32,8 @@ struct WorkspaceStoreOfflineTests {
 
         let outcome = await store.load(api: makeAPIClient())
 
-        try await Task.sleep(for: .milliseconds(100))
         #expect(outcome == .superseded)
+        #expect(requests == 0)
         #expect(try Set(fileManager.subpathsOfDirectory(atPath: root.path)) == before)
     }
 

@@ -265,8 +265,8 @@ actor TimelineCache {
     }
 
     /// Delete one server's traces, session list, workspaces, skills, skill
-    /// details, and resource catalog. Other servers stay. Call `markRemoved(_:)` first so a save already in flight cannot
-    /// recreate what this deletes.
+    /// details, and resource catalog. Other servers stay. Call `markRemoved(_:)`
+    /// first so a save already in flight cannot recreate what this deletes.
     func removeServer(_ serverId: String) {
         try? fileManager.removeItem(at: traceServerDir(serverId))
         try? fileManager.removeItem(at: root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory))
