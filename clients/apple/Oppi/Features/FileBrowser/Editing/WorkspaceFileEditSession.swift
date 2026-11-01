@@ -34,7 +34,7 @@ extension WorkspaceFileEditTransport {
 /// is scoped by generation and a request token, so a late response can never
 /// mark newer edits saved or clear their draft.
 ///
-/// Autosave stops on conflict (412), deleted (404), or a server refusal. Typing
+/// Saving stops on conflict (412), deleted (404), or a server refusal. Typing
 /// and draft checkpoints continue. A transport failure after the body may have
 /// been sent re-reads disk before any retry.
 ///
@@ -48,20 +48,21 @@ final class WorkspaceFileEditSession {
     enum Status: Equatable, Sendable {
         /// Buffer equals the last acknowledged disk bytes.
         case saved
-        /// Unsaved edits; autosave will run after idle.
+        /// Unsaved edits; a save runs after idle when Auto-Save is on, and
+        /// otherwise waits for the person.
         case pending
         case saving
         /// Request never reached the server; retrying with the same tag.
         case offline
         /// Outcome unknown; re-reading disk before any retry.
         case verifying
-        /// Disk changed under the buffer. Autosave stopped.
+        /// Disk changed under the buffer. Saving stopped.
         case conflict
-        /// File deleted or no longer editable. Autosave stopped; never recreated.
+        /// File deleted or no longer editable. Saving stopped; never recreated.
         case deleted
         /// Buffer exceeds the server's edit limit. Clears on the next edit.
         case tooLarge
-        /// Server refused the write. Autosave stopped.
+        /// Server refused the write. Saving stopped.
         case failed(String)
 
         var stopsAutosave: Bool {
@@ -102,6 +103,14 @@ final class WorkspaceFileEditSession {
         let origin: WriteOrigin
     }
 
+    /// A person's save that arrived while a write was in flight: one write runs
+    /// at a time, so their bytes wait and go next as `.confirmed`, whatever
+    /// origin the flight had.
+    private struct PendingSave {
+        let generation: Int
+        let bytes: Data
+    }
+
     let identity: WorkspaceFileEditIdentity
     let maxBytes: Int
     private(set) var status: Status = .saved
@@ -122,9 +131,9 @@ final class WorkspaceFileEditSession {
     @ObservationIgnored private var bufferText: String
     @ObservationIgnored private var textProvider: (() -> String)?
     @ObservationIgnored private let transport: WorkspaceFileEditTransport
-    /// Auto-Save, read at every automatic write rather than captured, so the
-    /// setting takes effect in an editor that is already open.
-    @ObservationIgnored private let isAutoSaveOn: @MainActor () -> Bool
+    /// Auto-Save, read at every write rather than captured, so the setting
+    /// takes effect in an editor that is already open.
+    @ObservationIgnored private let autoSaveSetting: @MainActor () -> Bool
     @ObservationIgnored private let draftStore: WorkspaceFileDraftStore
     @ObservationIgnored private let idleDelay: Duration
     @ObservationIgnored private let retryDelay: Duration
@@ -137,6 +146,8 @@ final class WorkspaceFileEditSession {
     /// The generation a person last confirmed a save of: Done asks only for
     /// edits made after it, so `:wq` and Done → Save close without asking twice.
     @ObservationIgnored private var confirmedGeneration = 0
+    /// A person's save waiting for the write in flight; see `saveNow()`.
+    @ObservationIgnored private var pendingConfirmedSave: PendingSave?
     @ObservationIgnored var onSettled: ((WorkspaceFileEditSession) -> Void)?
 
     private init(
@@ -154,7 +165,7 @@ final class WorkspaceFileEditSession {
         self.identity = identity
         self.maxBytes = maxBytes
         self.transport = transport
-        self.isAutoSaveOn = isAutoSaveOn
+        self.autoSaveSetting = isAutoSaveOn
         self.draftStore = draftStore
         self.idleDelay = idleDelay
         self.retryDelay = retryDelay
@@ -167,8 +178,8 @@ final class WorkspaceFileEditSession {
     /// the server offers to create. Returns nil when the server offered neither a
     /// version nor a creation, the bytes are not exact UTF-8, or they exceed
     /// `maxBytes`, or when an unreadable stored draft could not be moved aside.
-    /// A stored draft is recovered: same base resumes autosave; a different base
-    /// opens in conflict with autosave stopped. A draft that cannot be applied is
+    /// A stored draft is recovered: same base resumes saving; a different base
+    /// opens in conflict with saving stopped. A draft that cannot be applied is
     /// quarantined, never deleted.
     convenience init?(
         identity: WorkspaceFileEditIdentity,
@@ -224,7 +235,7 @@ final class WorkspaceFileEditSession {
             status = .pending
             // Recovery is not consent: with Auto-Save off the draft waits for a
             // save, so opening a file never writes it.
-            if isAutoSaveOn() { scheduleIdle() }
+            if autoSaveSetting() { scheduleIdle() }
         } else {
             // Keep the draft's own base so a later recovery still sees conflict.
             baseCondition = WorkspaceFileWriteCondition(storedTag: recovered.draft.baseEtag)
@@ -274,6 +285,11 @@ final class WorkspaceFileEditSession {
     /// "Saved" while this holds. Read when the chrome applies, which a status
     /// change already triggers, so it needs no observation of its own.
     var createsOnFirstSave: Bool { baseCondition == .absent }
+
+    /// Auto-Save as the setting says right now. The editor's page asks this
+    /// rather than holding a copy of the preference, so the one value is the
+    /// session's to report.
+    var isAutoSaveOn: Bool { autoSaveSetting() }
 
     var hasUnsavedChanges: Bool {
         editGeneration != savedGeneration
@@ -347,17 +363,51 @@ final class WorkspaceFileEditSession {
     /// A person saved: Done → Save, ⌘S, or Vim's `:w`/`:wq`. The one save that
     /// runs with Auto-Save off, and the only one that marks their edits
     /// confirmed, so closing straight after it does not ask again.
-    func saveNow() {
+    ///
+    /// - Returns: whether their bytes were sent or queued behind the write in
+    ///   flight. False means nothing was sent — the buffer is over the server's
+    ///   limit, or the session has stopped saving — so the caller keeps the
+    ///   editor open and its banner is what the person reads.
+    @discardableResult
+    func saveNow() -> Bool {
         cancelIdleSave()
         checkpoint()
-        // Only a save that really went (or had nothing to send) is the person's:
-        // a stopped session keeps its edits unconfirmed, so Done still asks.
-        if startSaveIfPossible(origin: .confirmed) { confirmedGeneration = editGeneration }
+        guard !status.stopsAutosave else { return false }
+        let bytes = WorkspaceFileTextCodec.encode(currentText)
+        if inFlight != nil {
+            // One write at a time: their bytes wait for this one and go next.
+            guard bytes.count <= maxBytes else {
+                setStatus(.tooLarge)
+                return false
+            }
+            pendingConfirmedSave = PendingSave(generation: editGeneration, bytes: bytes)
+            confirmedGeneration = editGeneration
+            return true
+        }
+        guard startSaveIfPossible(origin: .confirmed) else { return false }
+        confirmedGeneration = editGeneration
+        return true
     }
 
     /// The person discarded the changes: back to the disk bytes, draft dropped.
-    func discardChanges() {
+    /// The editor's own buffer goes first: while a text view is attached it *is*
+    /// `currentText`, so restoring `bufferText` alone would leave the discarded
+    /// edits on screen and hand them back to the reader.
+    ///
+    /// A write in flight holds the bytes it is writing, so discarding now would
+    /// show disk while the server takes the buffer: it is refused, and the
+    /// notice line says why.
+    /// - Returns: whether the edits were discarded.
+    @discardableResult
+    func discardChanges() -> Bool {
+        guard inFlight == nil else {
+            draftNotice = String(localized: "Saving… Discard Changes again when it finishes.")
+            return false
+        }
+        draftNotice = nil
+        pendingConfirmedSave = nil
         cancelPendingWork()
+        textProvider = nil
         bufferText = WorkspaceFileTextCodec.decode(diskBytes) ?? ""
         reviewedDisk = nil
         recoveredDraft = false
@@ -366,6 +416,7 @@ final class WorkspaceFileEditSession {
         draftStore.remove(identity)
         setStatus(.saved)
         notifySettledIfNeeded()
+        return true
     }
 
     /// Auto-Save was turned on or off while this editor is open: on, an editor
@@ -536,10 +587,6 @@ final class WorkspaceFileEditSession {
 
     private func startSaveIfPossible(origin: WriteOrigin = .automatic) -> Bool {
         guard inFlight == nil, !status.stopsAutosave else { return false }
-        // The one gate every write passes: the session's own writes need
-        // Auto-Save on, and a person's save is the only thing that writes
-        // without it.
-        guard origin == .confirmed || isAutoSaveOn() else { return false }
         guard hasUnsavedChanges else {
             if status != .saved { setStatus(.saved) }
             return true
@@ -548,7 +595,8 @@ final class WorkspaceFileEditSession {
         let bytes = WorkspaceFileTextCodec.encode(currentText)
         if bytes == diskBytes {
             // Nothing to send: an empty document that was never created stays
-            // uncreated, so the base stays the creation it was.
+            // uncreated, so the base stays the creation it was. Bytes that are
+            // the disk's again are clean — Done has nothing left to ask.
             acknowledge(bytes: bytes, condition: baseCondition, generation: generation)
             return true
         }
@@ -556,16 +604,23 @@ final class WorkspaceFileEditSession {
             setStatus(.tooLarge)
             return false
         }
-        send(bytes: bytes, generation: generation, condition: baseCondition, origin: origin)
-        return true
+        return send(bytes: bytes, generation: generation, condition: baseCondition, origin: origin)
     }
 
+    /// The one gate every write passes: the session's own care (the idle timer,
+    /// the flush on the way out, a retry, a lost answer checked again) needs
+    /// Auto-Save on, and a person's save is the only thing that writes without
+    /// it. Nothing reaches the server any other way, so no caller — the conflict
+    /// sheet's Replace included — can write around the setting.
+    /// - Returns: whether the write started.
+    @discardableResult
     private func send(
         bytes: Data,
         generation: Int,
         condition: WorkspaceFileWriteCondition,
         origin: WriteOrigin
-    ) {
+    ) -> Bool {
+        guard origin == .confirmed || autoSaveSetting() else { return false }
         retryTask?.cancel()
         retryTask = nil
         let flight = InFlight(
@@ -583,6 +638,7 @@ final class WorkspaceFileEditSession {
             let outcome = await transport.write(identity, bytes, condition)
             self?.handleWrite(outcome, for: flight)
         }
+        return true
     }
 
     private func handleWrite(_ outcome: WorkspaceFileWriteOutcome, for flight: InFlight) {
@@ -633,14 +689,44 @@ final class WorkspaceFileEditSession {
         } else {
             setStatus(.pending)
             checkpoint()
-            if idleTask == nil { startSaveIfPossible() }
         }
+        // A person's save that waited for this flight goes first: it is the
+        // bytes they asked for, not whatever the session would send next.
+        if !sendPendingConfirmedSave(), editGeneration != generation, idleTask == nil {
+            startSaveIfPossible()
+        }
+    }
+
+    /// Sends the save a person asked for while a write was in flight, as a
+    /// confirmed write of the bytes they had on screen then.
+    /// - Returns: whether it had something to send.
+    @discardableResult
+    private func sendPendingConfirmedSave() -> Bool {
+        guard let pending = pendingConfirmedSave else { return false }
+        pendingConfirmedSave = nil
+        guard !status.stopsAutosave else { return false }
+        guard pending.bytes != diskBytes else {
+            // The flight that just landed wrote their bytes: nothing is left to
+            // send, and the buffer is the disk's again.
+            if editGeneration == pending.generation { setStatus(.saved) }
+            return false
+        }
+        guard pending.bytes.count <= maxBytes else {
+            setStatus(.tooLarge)
+            return false
+        }
+        return send(
+            bytes: pending.bytes,
+            generation: pending.generation,
+            condition: baseCondition,
+            origin: .confirmed
+        )
     }
 
     private func scheduleRetry(after flight: InFlight) {
         // A retry is the session's own write. With Auto-Save off only bytes a
         // person already confirmed go again; the rest stay pending and kept.
-        guard flight.origin == .confirmed || isAutoSaveOn() else {
+        guard flight.origin == .confirmed || autoSaveSetting() else {
             setStatus(.pending)
             checkpoint()
             return
@@ -652,8 +738,26 @@ final class WorkspaceFileEditSession {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, self.epoch == startEpoch, self.status == .offline else { return }
             self.retryTask = nil
-            self.startSaveIfPossible(origin: flight.origin)
+            self.retry(flight)
         }
+    }
+
+    /// The same bytes under the same generation go again. A retry never picks up
+    /// newer edits: a person's confirmed save stays the save they asked for, and
+    /// the session's own retry is the write it started, not whatever the buffer
+    /// holds by now.
+    private func retry(_ flight: InFlight) {
+        guard flight.epoch == epoch, inFlight == nil else { return }
+        guard flight.origin == .confirmed || autoSaveSetting() else {
+            // Auto-Save went off while this retry waited: nothing is owed. The
+            // edits are unsaved, not unreachable — the banner says so, and the
+            // draft keeps them.
+            setStatus(.pending)
+            checkpoint()
+            return
+        }
+        guard !status.stopsAutosave else { return }
+        send(bytes: flight.bytes, generation: flight.generation, condition: baseCondition, origin: flight.origin)
     }
 
     /// Unknown outcome: never re-send until a read says whether the write landed.
@@ -681,7 +785,7 @@ final class WorkspaceFileEditSession {
                 acknowledge(bytes: flight.bytes, condition: .version(tag), generation: flight.generation)
             } else if snapshot.writeCondition == baseCondition {
                 setStatus(.pending)
-                startSaveIfPossible(origin: flight.origin)
+                retry(flight)
             } else {
                 setStatus(.conflict)
                 checkpoint()
@@ -697,7 +801,7 @@ final class WorkspaceFileEditSession {
             if baseCondition == .absent {
                 setStatus(.pending)
                 checkpoint()
-                startSaveIfPossible(origin: flight.origin)
+                retry(flight)
             } else {
                 setStatus(.deleted)
                 checkpoint()
@@ -709,6 +813,8 @@ final class WorkspaceFileEditSession {
 
     private func discardForMissingFile() {
         cancelPendingWork()
+        pendingConfirmedSave = nil
+        textProvider = nil
         draftStore.remove(identity)
         savedGeneration = editGeneration
         confirmedGeneration = editGeneration

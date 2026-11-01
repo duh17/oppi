@@ -151,7 +151,6 @@ enum CodeEditorWrapKind: Sendable {
 @MainActor @Observable
 final class CodeEditorPreferences {
     static let shared = CodeEditorPreferences()
-
     @ObservationIgnored private let defaults: UserDefaults
 
     var keybindings: CodeEditorKeybindings { didSet { defaults.set(keybindings.rawValue, forKey: Key.keybindings) } }
@@ -184,6 +183,9 @@ final class CodeEditorPreferences {
         }
         set {
             withMutation(keyPath: \.autoSaves) { defaults.set(newValue, forKey: Key.autoSave) }
+            // An editor that is already open is not redrawn by a stored write:
+            // it hears this instead, from the menu and from Settings > Editor.
+            NotificationCenter.default.post(name: .codeEditorAutoSaveDidChange, object: nil)
         }
     }
 
@@ -254,4 +256,14 @@ final class CodeEditorPreferences {
     func resetKeyBar() {
         keyBarKeys = CodeEditorBarKey.defaults
     }
+}
+
+extension Notification.Name {
+    /// Auto-Save changed: from the editor's options menu, or from Settings >
+    /// Editor (a device setting the store writes straight to the defaults). An
+    /// open editor hears it and starts or stops the idle save it owes, which
+    /// reading the value at the next write would be too late for.
+    static let codeEditorAutoSaveDidChange = Notification.Name(
+        "\(AppIdentifiers.subsystem).editor.autoSaveDidChange"
+    )
 }

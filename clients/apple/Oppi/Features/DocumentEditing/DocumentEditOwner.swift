@@ -452,6 +452,18 @@ final class DocumentEditOwner {
         }
     }
 
+    /// What Done's confirmation calls the document. A file — a workspace file, a
+    /// Skill's own file, Pi's own — is its own name; a record's prompt has no
+    /// file, so it keeps the subject's word. The editor's title cannot answer
+    /// this: it reads "Edit" for a file, which would ask "Save Edit?".
+    static func saveConfirmationName(subject: DocumentEditSubject, identity: WorkspaceFileEditIdentity) -> String {
+        switch subject {
+        case .agentInstructions: String(localized: "System Prompt")
+        case .schedulePrompt: String(localized: "Prompt")
+        case .file, .piFile, .snapshot: (identity.path as NSString).lastPathComponent
+        }
+    }
+
     /// Hosts the editor page of an open session; nil when nothing is open.
     /// Each open editor is its own page: finishing one detaches the session
     /// for good, so it is never handed back. `checkoutSubtitle` is the screen's
@@ -469,9 +481,11 @@ final class DocumentEditOwner {
                 self?.onChange()
             },
             makePreview: handlers.makePreview,
-            // Pi's own files say what they are used by; a workspace file, a
-            // Skill file, and a prompt keep Done's confirmation to the name.
-            saveConfirmationMessage: subject.isPiOwnedFile ? handlers.saveConfirmationMessage() : nil,
+            saveConfirmationName: Self.saveConfirmationName(subject: subject, identity: session.identity),
+            // A screen that has something to say about the document beyond its
+            // name supplies the sentence; the owner does not decide which
+            // documents get one.
+            saveConfirmationMessage: handlers.saveConfirmationMessage(),
             onUseDisk: { [weak self] in self?.useDiskVersion() }
         )
         editorPage = page

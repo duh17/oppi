@@ -69,7 +69,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         editor.typeText(" Ship it.")
         tapBarButton(app.buttons["workspace-file-editor.done"])
         XCTAssertTrue(
-            app.staticTexts["Create SYSTEM.md?"].waitForExistence(timeout: 5),
+            app.sheets["Create SYSTEM.md?"].waitForExistence(timeout: 5),
             "Done must ask before creating a file Pi reads for every new session"
         )
         XCTAssertTrue(
@@ -79,12 +79,21 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
             "the confirmation must say what else reads SYSTEM.md"
         )
         attachScreenshot("pi-prompt-done-confirmation")
-        tapBarButton(app.buttons["workspaceFileEditor.discard"])
+        tapAlertAction("workspaceFileEditor.discard")
         XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Discard Changes must return to the reader")
         XCTAssertFalse(
             lastWrite.contains("PUT /files/current"),
             "Discard Changes writes nothing: \(lastWrite)"
         )
+        // The discarded edits are gone, not merely unsent: the editor opens on
+        // Pi's default prompt again, with none of what was typed.
+        tapBarButton(pencil)
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        let reopened = (editor.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(reopened, "You are a coding agent.", "Discard Changes must drop the edits")
+        XCTAssertFalse(reopened?.contains("Ship it.") == true, "Discard Changes kept the typed text")
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
 
         // Save writes it, and the reader comes back without a second question.
         tapBarButton(pencil)
@@ -92,7 +101,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         editor.tap()
         editor.typeText(" Ship it.")
         tapBarButton(app.buttons["workspace-file-editor.done"])
-        tapBarButton(app.buttons["workspaceFileEditor.save"])
+        tapAlertAction("workspaceFileEditor.save")
         XCTAssertTrue(
             waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
             "Save must create the file: \(lastWrite)"
@@ -316,9 +325,10 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// An Agent's prompt opens in our editor from the reader's pencil; typing
-    /// saves through the Agent with the mode the record already had, and Done
-    /// returns to the definition reader showing the new text. The "…" keeps
-    /// Edit with Session beside the pencil.
+    /// writes nothing with Auto-Save off, Done asks, and Save writes through the
+    /// Agent with the mode the record already had and returns to the definition
+    /// reader showing the new text. The "…" keeps Edit with Session beside the
+    /// pencil.
     func testAgentPromptReaderEditsInPlace() {
         launch(page: "agents")
         let row = app.buttons["agents.row.agent-design"]
@@ -347,20 +357,31 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
         text.tap()
         text.typeText(" Ship it.")
+        // Auto-Save is off by default: typing writes nothing, so the edit reaches
+        // the Agent through Done's confirmation, not on its own.
+        XCTAssertFalse(
+            lastWrite.contains("PATCH /agents/agent-design"),
+            "Typing must not write with Auto-Save off: \(lastWrite)"
+        )
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(
+            app.sheets["Save System Prompt?"].waitForExistence(timeout: 5),
+            "Done must ask before writing the Agent's prompt"
+        )
+        tapAlertAction("workspaceFileEditor.save")
         XCTAssertTrue(
             waitFor(
                 lastWrite.contains("PATCH /agents/agent-design") && lastWrite.contains("Ship it"),
                 timeout: 15
             ),
-            "The edit must save through the Agent: \(lastWrite)"
+            "Save must write through the Agent: \(lastWrite)"
         )
         XCTAssertTrue(
             lastWrite.contains("\"mode\":\"append\""),
             "The save keeps the Agent's own mode: \(lastWrite)"
         )
 
-        tapBarButton(app.buttons["workspace-file-editor.done"])
-        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Save must return to the reader")
         // The reader shows the whole definition again, not the prompt alone.
         let definitionField = app.descendants(matching: .any)
             .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Pi Session Defaults", "Pi Session Defaults"))
@@ -448,12 +469,25 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(text.waitForExistence(timeout: 10), "The pencil did not open the editor")
         text.tap()
         text.typeText("Ship it.")
-        XCTAssertTrue(
-            waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
-            "The edit must autosave through the Skill: \(lastWrite)"
+        // Auto-Save is off by default, so typing writes nothing: the edit is the
+        // person's to save, and Done asks first. The one write this makes is the
+        // PUT, after Save.
+        XCTAssertFalse(
+            lastWrite.contains("PUT /files/current"),
+            "Typing must not write with Auto-Save off: \(lastWrite)"
         )
         tapBarButton(app.buttons["workspace-file-editor.done"])
-        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done did not return to the reader")
+        XCTAssertTrue(
+            app.sheets["Save SKILL.md?"].waitForExistence(timeout: 5),
+            "Done must ask before writing the Skill's own file"
+        )
+        attachScreenshot("skill-file-done-confirmation")
+        tapAlertAction("workspaceFileEditor.save")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
+            "Save must write the edit through the Skill: \(lastWrite)"
+        )
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Save did not return to the reader")
         assertRunning()
 
         assertGuidedSheet(
@@ -718,6 +752,17 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     private func tapBarButton(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 5), "\(element) is missing")
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    /// One action of the confirmation Done opens, by the identifier the app set
+    /// on it. UIKit's alert action carries that identifier on two elements — the
+    /// action's button and the element inside it — so a plain subscript is
+    /// ambiguous and the query takes the first. An alert action is hittable, so
+    /// this taps it directly rather than through `tapBarButton`.
+    private func tapAlertAction(_ identifier: String) {
+        let action = app.buttons.matching(identifier: identifier).firstMatch
+        XCTAssertTrue(action.waitForExistence(timeout: 5), "The confirmation has no \(identifier)")
+        action.tap()
     }
 
     private func launch(page: String, writeDelay: Int = 0) {

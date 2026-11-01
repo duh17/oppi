@@ -65,6 +65,8 @@ enum VimHostRequest: Equatable, Sendable {
     case save
     case quit
     case saveAndQuit
+    /// `:q!`: close and throw the edits away, as Discard Changes does.
+    case discardAndQuit
     /// Open the command line with this prompt: `:`, `/`, or `?`.
     case commandLine(Character)
     case scrollCaret(VimScrollPosition)
@@ -235,10 +237,7 @@ final class VimEngine {
         switch command {
         case "w", "write", "w!": return [.save]
         case "q", "quit": return [.quit]
-        case "q!", "quit!":
-            // Nothing to abandon: edits are already autosaving.
-            message = "Edits autosave; use u to undo, or :q to close"
-            return []
+        case "q!", "quit!": return [.discardAndQuit]
         case "wq", "wq!", "x", "x!", "xit", "exit": return [.saveAndQuit]
         case "noh", "nohlsearch", "": return []
         case "$":

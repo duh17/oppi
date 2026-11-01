@@ -43,11 +43,20 @@ extension SettingsStore {
     }
 
     /// What a stored write triggers: the screen's idle timer follows Keep Awake
-    /// After Activity the moment it changes, and no other setting has an effect.
+    /// After Activity the moment it changes, an open editor hears Auto-Save, and
+    /// no other setting has an effect.
     static func liveAfterWrite(screenAwake: ScreenAwakeController) -> @MainActor (String) -> Void {
         { id in
-            if id == SettingsCatalog.keepAwakeAfterActivity.id {
+            switch id {
+            case SettingsCatalog.keepAwakeAfterActivity.id:
                 screenAwake.refreshFromPreferences()
+            case SettingsCatalog.autoSave.id:
+                // The editor reads the value from the defaults, which a stored
+                // write changes without telling anyone: the editors that are
+                // open need to hear it to start or stop the save they owe.
+                NotificationCenter.default.post(name: .codeEditorAutoSaveDidChange, object: nil)
+            default:
+                break
             }
         }
     }

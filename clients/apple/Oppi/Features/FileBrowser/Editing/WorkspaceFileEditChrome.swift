@@ -50,7 +50,7 @@ enum WorkspaceFileEditStatusPresentation {
         var lines: [String] = []
         switch status {
         case .conflict:
-            lines.append(String(localized: "This file changed on the server. Autosave is paused.") + kept)
+            lines.append(String(localized: "This file changed on the server. Saving is paused.") + kept)
         case .deleted:
             lines.append(String(localized: "This file is gone from the server and will not be recreated.") + kept)
         case .tooLarge:
@@ -483,6 +483,9 @@ final class WorkspaceFileEditBarItems {
     var items: [UIBarButtonItem] {
         [doneItem, previewItem, optionsItem, spacer, statusItem]
     }
+
+    /// The bar's Done, for a sheet that points at it on iPad.
+    var done: UIBarButtonItem { doneItem }
 
     /// The same controls for a `UINavigationItem`, where the status is a symbol
     /// rather than the live status view.

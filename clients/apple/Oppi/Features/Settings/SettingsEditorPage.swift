@@ -17,8 +17,9 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
     private let preferences: CodeEditorPreferences
 
     /// Auto-Save is declared in `SettingsCatalog` and stored on the key the
-    /// editor's "…" menu writes, so this row and that menu are one setting.
-    init(preferences: CodeEditorPreferences = .shared, settings: SettingsStore? = nil) {
+    /// editor's "…" menu writes, so this row and that menu are one setting. The
+    /// store is required: a declared row cannot be drawn without one.
+    init(preferences: CodeEditorPreferences = .shared, settings: SettingsStore) {
         self.preferences = preferences
         super.init(
             title: String(localized: "Editor"),

@@ -207,10 +207,6 @@ enum AppPreferenceStore {
         static let autoSaveKey = "\(AppIdentifiers.subsystem).editor.autoSave"
         /// Off: nothing is written until a person saves. `SettingsCatalog.autoSave` uses this constant.
         static let autoSaveDefault = false
-
-        static var autoSaves: Bool {
-            UserDefaults.standard.object(forKey: autoSaveKey) as? Bool ?? autoSaveDefault
-        }
     }
 
     // MARK: - Interaction

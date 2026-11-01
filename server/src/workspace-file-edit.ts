@@ -484,14 +484,19 @@ export async function readBoundedRequestBody(
 }
 
 async function unlinkCapturedTemp(temp: CapturedTemp): Promise<void> {
+  let removed = false;
   try {
     const lst = await fs.lstat(temp.path);
     if (lst.dev !== temp.dev || lst.ino !== temp.ino) return;
     if (lst.isSymbolicLink()) return;
     await fs.unlink(temp.path);
+    removed = true;
   } catch {
     // Replaced or already gone. Never follow a substituted entry.
   }
+  // The removal is an entry in the directory too: sync it so a cleanup that
+  // reported success is not undone by a power loss, leaving the temp behind.
+  if (removed) await syncDirectory(dirname(temp.path));
 }
 
 /**
@@ -698,9 +703,11 @@ async function createEditedFile(
 ): Promise<PutEditedFileResult> {
   const { creatable, bytes } = input;
   const parentReal = creatable.parentReal;
+  let madeDirectory = false;
   if (creatable.createDirectory) {
     try {
       await fs.mkdir(parentReal, { mode: NEW_DIRECTORY_MODE });
+      madeDirectory = true;
     } catch (error: unknown) {
       // Someone else made it meanwhile: it still has to be the real directory.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -718,6 +725,10 @@ async function createEditedFile(
     } catch {
       return { kind: "error", status: 404, message: "File not found" };
     }
+    // The new directory is itself an entry in its parent, and needs the same
+    // sync the file's name gets: without it a power loss can keep the file and
+    // lose the directory that holds it.
+    if (madeDirectory) await syncDirectory(dirname(parentReal));
   }
 
   // The temp is written and fsynced beside the target, then linked into place:

@@ -10,8 +10,20 @@ enum AlertAnchor {
     /// row that was never built) it is centered on the front-most view without an arrow,
     /// so the sheet always has a source. An alert, or a sheet on iPhone, has
     /// no popover and is left alone.
-    static func apply(to alert: UIAlertController, screen: UIViewController, anchor: UIView?) {
+    ///
+    /// `barItem` points it at a bar control instead — the editor's Done — the way
+    /// a menu points at its own button; it wins over `anchor`.
+    static func apply(
+        to alert: UIAlertController,
+        screen: UIViewController,
+        anchor: UIView?,
+        barItem: UIBarButtonItem? = nil
+    ) {
         guard let popover = alert.popoverPresentationController else { return }
+        if let barItem {
+            popover.sourceItem = barItem
+            return
+        }
         if let anchor, anchor.window != nil {
             popover.sourceView = anchor
             popover.sourceRect = anchor.bounds
@@ -24,8 +36,13 @@ enum AlertAnchor {
     }
 
     /// Presents `alert` from the front-most controller over `screen`.
-    static func present(_ alert: UIAlertController, from screen: UIViewController, anchor: UIView?) {
-        apply(to: alert, screen: screen, anchor: anchor)
+    static func present(
+        _ alert: UIAlertController,
+        from screen: UIViewController,
+        anchor: UIView?,
+        barItem: UIBarButtonItem? = nil
+    ) {
+        apply(to: alert, screen: screen, anchor: anchor, barItem: barItem)
         Router.topPresenter(from: screen).present(alert, animated: true)
     }
 }
@@ -76,6 +93,7 @@ struct Confirmation {
     func present(
         from screen: UIViewController,
         anchor: UIView?,
+        barItem: UIBarButtonItem? = nil,
         onConfirm: @escaping () -> Void,
         onCancel: (() -> Void)? = nil
     ) -> UIAlertController {
@@ -98,7 +116,7 @@ struct Confirmation {
         }
         alert.addAction(UIAlertAction(title: cancelTitle, style: .cancel) { _ in onCancel?() })
         if prefersAction { alert.preferredAction = confirm }
-        AlertAnchor.present(alert, from: screen, anchor: anchor)
+        AlertAnchor.present(alert, from: screen, anchor: anchor, barItem: barItem)
         return alert
     }
 }

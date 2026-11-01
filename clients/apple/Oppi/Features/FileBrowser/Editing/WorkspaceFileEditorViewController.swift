@@ -255,6 +255,21 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             name: AppFont.didRebuildNotification,
             object: nil
         )
+        // Auto-Save is a stored setting: Settings > Editor writes it without a
+        // redraw here, so the editor hears the change instead (see
+        // `updateProperties`, which starts or stops the idle save it owes).
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(autoSaveSettingDidChange),
+            name: .codeEditorAutoSaveDidChange,
+            object: nil
+        )
+        setNeedsUpdateProperties()
+    }
+
+    /// Auto-Save changed while this editor is open (Settings > Editor, or the
+    /// options menu): redraw, which hands the change to the session.
+    @objc private func autoSaveSettingDidChange() {
         setNeedsUpdateProperties()
     }
 
@@ -455,6 +470,10 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
                 // counts the save as the person's own.
                 session.saveNow()
                 onDone()
+            case .discardAndQuit:
+                // Vim's quit-without-saving: the edits go, as Discard Changes
+                // does. A write in flight refuses it, and the notice says why.
+                if session.discardChanges() { onDone() }
             case .commandLine(let prompt):
                 statusBar.beginCommand(prompt)
             case .scrollCaret(let position):

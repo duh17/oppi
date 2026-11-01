@@ -1,11 +1,5 @@
 import UIKit
 
-/// Holds the editor's and the bar's Done so they can call this page before `self`
-/// exists: their closures are made before `super.init`, which may not capture it.
-private final class DocumentEditDoneForwarder {
-    var handler: (() -> Void)?
-}
-
 /// The open editor under its header: the checkout the file writes to, the
 /// conflict banner, a notice line, and `WorkspaceFileEditorViewController`.
 ///
@@ -15,12 +9,12 @@ private final class DocumentEditDoneForwarder {
 /// itself. Whoever shows the page only hosts it.
 @MainActor
 final class DocumentEditEditorPage: UIViewController {
-    let editor: WorkspaceFileEditorViewController
-    let barItems: WorkspaceFileEditBarItems
     private let session: WorkspaceFileEditSession
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     /// Applies Use Disk Version to the owner's state, whichever sheet asked.
     private let onUseDisk: @MainActor () -> Void
+    private let onTogglePreview: @MainActor () -> Void
+    private let makePreview: (String) -> UIViewController
     private let checkoutLabel = UILabel()
     /// The banner's two controls are the page's own sheets.
     private lazy var banner = WorkspaceFileEditBannerView(
@@ -29,18 +23,33 @@ final class DocumentEditEditorPage: UIViewController {
         onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
     )
     private let noticeLabel = UILabel()
+    /// What Done's confirmation calls the document: a file by its own name, a
+    /// record's prompt by the subject's word (the page's own title is "Edit"
+    /// for a file, which would ask "Save Edit?").
+    private let saveConfirmationName: String
     /// The sentence Done's confirmation adds for one of Pi's own files (Pi reads
     /// it for every new session); nil keeps the confirmation to the name.
     private let saveConfirmationMessage: String?
-    /// Auto-Save, read when Done is pressed: on, the editor closes and the
-    /// session's own save runs; off, Done asks first.
-    private let preferences: CodeEditorPreferences
     private weak var saveConfirmation: UIAlertController?
     /// The owner's Done, once this page has asked whatever it must.
     private let onDone: @MainActor () -> Void
     private var appliedReplacementID: UUID?
     private weak var conflictReview: WorkspaceFileConflictReviewViewController?
     private(set) var isShowingPreview = false
+
+    /// Built on first use, so both Done closures can reach this page (`self`)
+    /// without a forwarder standing in for it before `super.init`.
+    private(set) lazy var editor = WorkspaceFileEditorViewController(
+        session: session,
+        onDone: { [weak self] in self?.donePressed() },
+        makePreview: makePreview
+    )
+    /// The bar's controls; a DEBUG test seam in the file viewer reads them.
+    private(set) lazy var barItems = WorkspaceFileEditBarItems(
+        wrapKind: { [session] in CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(forPath: session.identity.path)) },
+        onTogglePreview: { [weak self] in self?.onTogglePreview() },
+        onDone: { [weak self] in self?.donePressed() }
+    )
 
     init(
         session: WorkspaceFileEditSession,
@@ -49,33 +58,19 @@ final class DocumentEditEditorPage: UIViewController {
         onDone: @escaping @MainActor () -> Void,
         onTogglePreview: @escaping @MainActor () -> Void,
         makePreview: @escaping (String) -> UIViewController,
+        saveConfirmationName: String,
         saveConfirmationMessage: String? = nil,
-        preferences: CodeEditorPreferences = .shared,
         onUseDisk: @escaping @MainActor () -> Void
     ) {
         self.session = session
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
         self.onUseDisk = onUseDisk
+        self.onTogglePreview = onTogglePreview
+        self.makePreview = makePreview
+        self.saveConfirmationName = saveConfirmationName
         self.saveConfirmationMessage = saveConfirmationMessage
-        self.preferences = preferences
         self.onDone = onDone
-        // Done asks this page before it closes (Auto-Save off), and the closure
-        // that reaches it cannot hold `self` yet.
-        let done = DocumentEditDoneForwarder()
-        editor = WorkspaceFileEditorViewController(
-            session: session,
-            preferences: preferences,
-            onDone: { done.handler?() },
-            makePreview: makePreview
-        )
-        let grammar: CodeEditorHighlightEngine.Grammar = CodeEditorHighlightEngine.grammar(forPath: session.identity.path)
-        barItems = WorkspaceFileEditBarItems(
-            wrapKind: { CodeEditorWrapKind(grammar: grammar) },
-            onTogglePreview: onTogglePreview,
-            onDone: { done.handler?() }
-        )
         super.init(nibName: nil, bundle: nil)
-        done.handler = { [weak self] in self?.donePressed() }
         checkoutLabel.text = checkoutSubtitle
     }
 
@@ -88,7 +83,7 @@ final class DocumentEditEditorPage: UIViewController {
     /// refusal) never asks: its banner and Review are the way out, and a Save
     /// button there would do nothing.
     private func donePressed() {
-        guard !preferences.autoSaves, session.hasUnconfirmedChanges, !session.status.stopsAutosave else {
+        guard !session.isAutoSaveOn, session.hasUnconfirmedChanges, !session.status.stopsAutosave else {
             onDone()
             return
         }
@@ -96,10 +91,11 @@ final class DocumentEditEditorPage: UIViewController {
     }
 
     /// Save, Discard Changes, or Keep Editing. Save writes exactly the buffer on
-    /// screen; the sheet points at the bar Done lives in on iPad.
+    /// screen; the sheet points at the bar's Done on iPad (a tap outside it is
+    /// Keep Editing, which `onCancel` already handles).
     private func presentSaveConfirmation() {
         guard saveConfirmation == nil else { return }
-        let name = title ?? (session.identity.path as NSString).lastPathComponent
+        let name = saveConfirmationName
         let confirmation = Confirmation(
             title: session.createsOnFirstSave
                 ? String(localized: "Create \(name)?")
@@ -117,8 +113,10 @@ final class DocumentEditEditorPage: UIViewController {
                     identifier: "workspaceFileEditor.discard",
                     style: .destructive,
                     handler: { [weak self] in
-                        self?.session.discardChanges()
-                        self?.onDone()
+                        guard let self else { return }
+                        // Refused while a write is in flight: the editor stays
+                        // open and its notice says why.
+                        if session.discardChanges() { onDone() } else { saveConfirmation = nil }
                     }
                 )
             ]
@@ -126,9 +124,13 @@ final class DocumentEditEditorPage: UIViewController {
         saveConfirmation = confirmation.present(
             from: self,
             anchor: navigationController?.navigationBar,
+            barItem: barItems.done,
             onConfirm: { [weak self] in
-                self?.session.saveNow()
-                self?.onDone()
+                guard let self else { return }
+                // Nothing was sent (over the limit, or the session stopped
+                // saving): the editor stays open, and its banner is what the
+                // person reads.
+                if session.saveNow() { onDone() } else { saveConfirmation = nil }
             },
             onCancel: { [weak self] in self?.saveConfirmation = nil }
         )

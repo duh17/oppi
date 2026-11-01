@@ -93,14 +93,6 @@ extension DocumentEditSubject {
         }
     }
 
-    /// Whether this is one of Pi's own agent files, read by every new session on
-    /// the server. Display metadata for the editor's Done: Pi's files say what
-    /// else uses them. It never decides whether or how a document saves.
-    var isPiOwnedFile: Bool {
-        if case .piFile = self { return true }
-        return false
-    }
-
     /// The text an editor starts from when the document does not exist yet. Only
     /// Pi's own `SYSTEM.md` has one: it replaces Pi's built-in prompt, so the
     /// editor starts from that prompt and a save that changes nothing writes

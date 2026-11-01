@@ -794,6 +794,149 @@ struct WorkspaceFileEditSessionTests {
         #expect(session.status == .saved)
     }
 
+    /// The editor's text view is `currentText` while it is attached, so
+    /// discarding has to drop that buffer too: restoring the disk bytes alone
+    /// left the discarded edits on screen and handed them back to the reader.
+    @Test func discardingDropsTheEditorsOwnBuffer() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" thrown away", into: session)
+        #expect(session.currentText == "hello thrown away")
+
+        #expect(session.discardChanges())
+        // What the page does next: the editor goes away, and the reader reads
+        // the session's text.
+        session.detachEditor()
+
+        #expect(session.currentText == "hello", "the discarded edits are gone, not just unsent")
+        #expect(session.hasUnsavedChanges == false)
+        #expect(session.hasUnconfirmedChanges == false, "Done has nothing left to ask")
+    }
+
+    /// A write in flight holds the bytes it is writing, so a discard now would
+    /// show disk while the server takes the buffer: it is refused, and the
+    /// notice says why.
+    @Test func discardingIsRefusedWhileAWriteIsInFlight() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        session.saveNow()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        #expect(session.discardChanges() == false, "a write in flight refuses the discard")
+        #expect(session.status == .saving)
+        #expect(session.currentText == "hello one", "the edits stay")
+        #expect(session.draftNotice != nil, "the notice line says why")
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+        #expect(session.discardChanges(), "and it goes once the write landed")
+    }
+
+    /// A person's save that arrives during a write waits for it and goes next,
+    /// as their own: exactly two writes, and the second one carries the newer
+    /// bytes.
+    @Test func aSaveDuringAWriteIsSentAfterIt() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog[0].bytes == Data("hello one".utf8))
+
+        // ⌘S again, with newer edits, while the first write is still out.
+        harness.type(" two", into: session)
+        #expect(session.saveNow(), "their save is queued, not dropped")
+        #expect(harness.scripted.writeLog.count == 1, "one write at a time")
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { harness.scripted.writeLog.count == 2 })
+        #expect(harness.scripted.writeLog[1].bytes == Data("hello one two".utf8))
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("b")), "against the tag it just got")
+        harness.scripted.resolveNext(.saved(etag: tag("c")))
+        #expect(await eventually { session.status == .saved })
+        #expect(session.hasUnconfirmedChanges == false)
+        #expect(harness.scripted.writeLog.count == 2, "and nothing more")
+    }
+
+    /// A save that cannot go says so instead of closing: Done keeps the editor
+    /// open and its banner is what the person reads.
+    @Test func saveNowReportsWhenNothingWasSent() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(String(repeating: "x", count: 80), into: session)
+
+        #expect(session.saveNow() == false, "over the server's limit")
+        #expect(session.status == .tooLarge)
+        #expect(harness.scripted.writeLog.isEmpty)
+    }
+
+    /// A retry resends the bytes it started with, never the buffer: a person's
+    /// save stays the save they asked for.
+    @Test func aConfirmedRetryResendsItsOwnBytes() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        session.saveNow()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        harness.scripted.resolveNext(.notSent)
+        #expect(await eventually { session.status == .offline })
+        // Typed while the retry waits: the retry still sends what was confirmed.
+        harness.type(" two", into: session)
+
+        #expect(await eventually { harness.scripted.writeLog.count == 2 })
+        #expect(harness.scripted.writeLog[1].bytes == Data("hello one".utf8))
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .pending }, "the newer edits are still unsaved")
+        #expect(session.currentText == "hello one two")
+    }
+
+    /// A retry that Auto-Save no longer allows is not owed: the edits are
+    /// unsaved, not unreachable, and the banner stops saying Offline.
+    @Test func aGatedRetryLeavesTheEditsPending() async {
+        let harness = Harness()
+        var isOn = true
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: tag("a")),
+            maxBytes: 64,
+            transport: harness.scripted.transport,
+            draftStore: harness.store,
+            idleDelay: .milliseconds(20),
+            retryDelay: .milliseconds(120),
+            isAutoSaveOn: { isOn }
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+        harness.type(" one", into: session)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        harness.scripted.resolveNext(.notSent)
+        #expect(await eventually { session.status == .offline })
+
+        isOn = false
+        #expect(await eventually { session.status == .pending }, "the retry is not owed with Auto-Save off")
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.count == 1, "nothing was retried")
+        #expect(harness.store.load(harness.identity)?.bytes == Data("hello one".utf8))
+    }
+
+    /// Editing back to the disk bytes is clean: the save has nothing to send,
+    /// and Done does not ask.
+    @Test func revertingToTheDiskBytesIsClean() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" x", into: session)
+        harness.buffer = "hello"
+        session.noteEdit()
+
+        #expect(session.saveNow())
+        #expect(harness.scripted.writeLog.isEmpty, "nothing to send")
+        #expect(session.status == .saved)
+        #expect(session.hasUnsavedChanges == false)
+        #expect(session.hasUnconfirmedChanges == false, "Done has nothing left to ask")
+    }
+
     /// ⌘S and Vim's `:w` are the person's save: one write, and Done then closes
     /// without asking again.
     @Test func aConfirmedSaveWritesOnceAndIsNotAskedForTwice() async {

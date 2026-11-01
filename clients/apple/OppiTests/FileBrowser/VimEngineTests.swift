@@ -472,10 +472,11 @@ struct VimEngineTests {
         #expect(VimHarness("|Foo foo").command(":", "s/FOO/x/gi").rendered == "|x x")
     }
 
-    @Test func forceQuitExplainsAutosaveInsteadOfClosing() {
-        let harness = VimHarness("|a").command(":", "q!")
-        #expect(harness.requests.isEmpty)
-        #expect(harness.engine.message?.contains("autosave") == true)
+    @Test func forceQuitDiscardsAndCloses() {
+        // `:q!` is Vim's quit-without-saving: the editor throws the edits away
+        // and closes, the way Done → Discard Changes does.
+        #expect(VimHarness("|a").command(":", "q!").requests == [.discardAndQuit])
+        #expect(VimHarness("|a").command(":", "quit!").requests == [.discardAndQuit])
     }
 
     @Test func scrollAndPagingRequests() {

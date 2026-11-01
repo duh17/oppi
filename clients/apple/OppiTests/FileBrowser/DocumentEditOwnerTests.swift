@@ -667,6 +667,36 @@ struct DocumentEditOwnerTests {
         #expect(schedule.identity == WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-1"))
     }
 
+    /// Done's confirmation names the document: a file by its own name, a
+    /// record's prompt by the subject's word. The editor's own title cannot
+    /// answer it — it reads "Edit" for a file, which asked "Save Edit?".
+    @Test func theConfirmationNamesTheDocument() {
+        func name(_ subject: DocumentEditSubject, _ identity: WorkspaceFileEditIdentity) -> String {
+            DocumentEditOwner.saveConfirmationName(subject: subject, identity: identity)
+        }
+
+        #expect(name(
+            workspaceSubject(path: "dir/notes.md"),
+            WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "dir/notes.md")
+        ) == "notes.md")
+        #expect(name(
+            skillSubject(path: "SKILL.md"),
+            WorkspaceFileEditIdentity(serverId: "srv", skillId: "release", path: "SKILL.md")
+        ) == "SKILL.md")
+        #expect(name(
+            .piFile(path: "SYSTEM.md", seedText: nil),
+            WorkspaceFileEditIdentity(serverId: "srv", piPath: "SYSTEM.md")
+        ) == "SYSTEM.md")
+        #expect(name(
+            .agentInstructions(agentId: "agent-1"),
+            WorkspaceFileEditIdentity(serverId: "srv", agentId: "agent-1")
+        ) == "System Prompt")
+        #expect(name(
+            .schedulePrompt(scheduleId: "schedule-1"),
+            WorkspaceFileEditIdentity(serverId: "srv", scheduleId: "schedule-1")
+        ) == "Prompt")
+    }
+
     /// A prompt subject with no server has nothing to write, so no pencil.
     @Test func promptWithoutAServerHasNoPencil() async {
         let owner = owner(

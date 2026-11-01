@@ -16,7 +16,31 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/// The create path writes a temp beside the target and then stats the handle it
+/// opened. `failTempStat` makes that stat throw, so the cleanup that removes the
+/// name it opened is exercised: without it a failed create would leave a temp
+/// file in Pi's agent directory.
+const fsControl = vi.hoisted(() => ({ failTempStat: false }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const target = String(args[0]);
+      if (!fsControl.failTempStat || !target.includes(".oppi-edit-")) return handle;
+      return {
+        stat: async () => {
+          throw Object.assign(new Error("EIO"), { code: "EIO" });
+        },
+        close: () => handle.close(),
+      } as unknown as typeof handle;
+    },
+  };
+});
 
 import { createHostFileRoutes } from "../src/routes/host-files.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -172,6 +196,26 @@ describe("/files/current?origin=pi", () => {
     expect(read.headers["X-Oppi-Creatable"]).toBeUndefined();
     expect(read.headers.ETag).toBe(createdTag);
     expect(read.body.equals(created)).toBe(true);
+  });
+
+  it("removes a create's temp when its own stat fails", async () => {
+    const fixture = seed();
+    rmSync(join(fixture.agentDir, "SYSTEM.md"));
+
+    fsControl.failTempStat = true;
+    try {
+      const res = await call(fixture, "PUT", "SYSTEM.md", Buffer.from("mine\n"), {
+        "if-none-match": "*",
+      });
+      expect(res.statusCode).toBe(500);
+    } finally {
+      fsControl.failTempStat = false;
+    }
+
+    // The name it opened was ours (O_EXCL) and nothing else can prove it: it is
+    // removed here rather than left in Pi's agent directory.
+    expect(existsSync(join(fixture.agentDir, "SYSTEM.md"))).toBe(false);
+    expect(readdirSync(fixture.agentDir).filter((name) => name.startsWith(".oppi-edit-"))).toEqual([]);
   });
 
   it("creates a prompt template and its prompts directory", async () => {
