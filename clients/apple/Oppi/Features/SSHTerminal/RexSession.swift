@@ -188,10 +188,13 @@ final class RexSessionModel {
     /// The screen shows this session: its shown pane and the panes beside it in
     /// strip order stay live, so a swipe slides in a pane that already has its
     /// screen. Off screen, only the shown pane stays live — the terminal is
-    /// still running, and nothing else may hold a stream.
+    /// still running, and nothing else may hold a stream. Only while it is set
+    /// does the session take back a shown pane another client took
+    /// (`RexSessionConnection.setOnScreen`).
     var isWarming = false {
         didSet {
             guard isWarming != oldValue else { return }
+            connection.setOnScreen(isWarming)
             keepLivePanes()
         }
     }

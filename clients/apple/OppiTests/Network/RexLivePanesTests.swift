@@ -251,6 +251,127 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
+    static let phone = RexFakeSession.Size(columns: 40, rows: 10)
+
+    /// The terminal's takes of `block` so far (`session.own_block`, take).
+    private func takes(of block: String, in rig: Rig) -> Int {
+        rig.fake.requests("session.own_block").filter {
+            $0.payload.contains(block) && $0.payload.contains(#""mode":"take""#)
+        }.count
+    }
+
+    /// A live pane opened at this screen's size; the test starts from there.
+    private func sized(_ rig: Rig, _ blocks: [String]) async -> Bool {
+        await waitForMainActorCondition(timeout: .seconds(5)) {
+            blocks.allSatisfy { rig.fake.size(of: $0) == Self.phone }
+        }
+    }
+
+    /// The host's Rex app can take the panes of a session whose layout changes
+    /// and size them for its window, so a program started next (pi) draws for
+    /// that window, cut at the phone's edge. While the page shows the session,
+    /// the phone takes its shown pane back, at this screen's size.
+    @Test func theShownPaneAnotherClientTakesComesBackWhileThePageShows() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
+        #expect(await sized(rig, [a]))
+        let before = takes(of: a, in: rig)
+
+        rig.fake.takeAsAnotherClient(a, columns: 120, rows: 40)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: a) == Self.phone },
+                "a: \(String(describing: rig.fake.size(of: a)))")
+        #expect(takes(of: a, in: rig) > before, "the shown pane is taken back")
+        #expect(rig.channel.connected)
+        await rig.stop()
+    }
+
+    /// A neighbour another client takes keeps that client's size until it is
+    /// the pane shown: the swipe may preview it at the other width, and the
+    /// switch takes it back.
+    @Test func aNeighbourAnotherClientTakesComesBackWhenItIsShown() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let b = Self.block("b")
+        #expect(await sized(rig, [b]))
+        let before = takes(of: b, in: rig)
+
+        rig.fake.takeAsAnotherClient(b, columns: 90, rows: 30)
+        _ = await waitForMainActorCondition(timeout: .milliseconds(400)) { false }
+        #expect(takes(of: b, in: rig) == before, "a neighbour is not taken back while it is off screen")
+        #expect(rig.fake.size(of: b) == RexFakeSession.Size(columns: 90, rows: 30))
+
+        rig.model.show(b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: b) == Self.phone },
+                "b: \(String(describing: rig.fake.size(of: b)))")
+        #expect(takes(of: b, in: rig) > before, "the switch takes it back")
+        await rig.stop()
+    }
+
+    /// Off the page (another tab, the background grace), the phone leaves a
+    /// pane another client took alone, and takes it back when the page shows
+    /// the session again.
+    @Test func aPaneTakenWhileThePageIsAwayComesBackWhenThePageReturns() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
+        #expect(await sized(rig, [a]))
+        rig.model.isWarming = false
+        let before = takes(of: a, in: rig)
+
+        rig.fake.takeAsAnotherClient(a, columns: 120, rows: 40)
+        _ = await waitForMainActorCondition(timeout: .milliseconds(400)) { false }
+        #expect(takes(of: a, in: rig) == before, "no take while the page is away")
+        #expect(rig.fake.size(of: a) == RexFakeSession.Size(columns: 120, rows: 40))
+
+        rig.model.isWarming = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: a) == Self.phone },
+                "a: \(String(describing: rig.fake.size(of: a)))")
+        #expect(takes(of: a, in: rig) > before)
+        await rig.stop()
+    }
+
+    /// A takeover at this screen's own size changes nothing on screen, but
+    /// the pane is no longer the phone's: the keyboard's next resize would
+    /// wait on Rex for good. The phone takes it back, so the resize lands.
+    @Test func aSameSizeTakeoverStillLetsTheNextResizeLand() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
+        #expect(await sized(rig, [a]))
+        let before = takes(of: a, in: rig)
+
+        rig.fake.takeAsAnotherClient(a, columns: Self.phone.columns, rows: Self.phone.rows)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { takes(of: a, in: rig) > before }, "taken back")
+        rig.channel.resize(.init(columns: 50, rows: 12))
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.size(of: a) == RexFakeSession.Size(columns: 50, rows: 12)
+        }, "a: \(String(describing: rig.fake.size(of: a)))")
+        await rig.stop()
+    }
+
+    /// Two clients that each insist on their own size would trade the pane
+    /// forever, redrawing the program on both. The phone takes it back at most
+    /// `maximumReclaims` times, then leaves it until its user acts (here,
+    /// typing), which earns the same number again.
+    @Test func aClientThatAlwaysTakesThePaneBackIsLeftAloneUntilTheUserActs() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let a = Self.block("a")
+        #expect(await sized(rig, [a]))
+        let before = takes(of: a, in: rig)
+        let cap = RexSessionConnection.maximumReclaims
+
+        rig.fake.fight(for: a, columns: 120, rows: 40)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { takes(of: a, in: rig) - before >= cap })
+        _ = await waitForMainActorCondition(timeout: .milliseconds(500)) { false }
+        #expect(takes(of: a, in: rig) - before == cap, "the phone stops: \(takes(of: a, in: rig) - before) takes")
+
+        rig.channel.send(Data("x".utf8))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { takes(of: a, in: rig) - before > cap },
+                "typing takes it again")
+        _ = await waitForMainActorCondition(timeout: .milliseconds(500)) { false }
+        #expect(takes(of: a, in: rig) - before == 2 * cap, "and stops again: \(takes(of: a, in: rig) - before) takes")
+        await rig.stop()
+    }
+
     /// A neighbour's copy-on-select must not reach this device's clipboard: it
     /// is not the screen anyone is looking at.
     @Test func aHiddenPanesCopyDoesNotReachTheClipboard() async throws {

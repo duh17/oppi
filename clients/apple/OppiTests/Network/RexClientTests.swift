@@ -551,8 +551,9 @@ struct RexEventTests {
     /// Frames a Rex server sent to a client that called `session.attach_all`
     /// with `event_scope: all`, captured from one (`rex server run`) and cut
     /// only for length. The events the overview follows parse into the
-    /// session and block they name; the rest of what Rex sends (clients,
-    /// owners, processes) is not parsed.
+    /// session and block they name, and so do owner changes, which the
+    /// terminal follows; the rest of what Rex sends (clients, processes) is
+    /// not parsed.
     @Test func theEventsTheOverviewFollowsParseAndTheRestDoNot() throws {
         let session = Self.session, block = Self.block
         let nested = { (inner: String) in
@@ -587,7 +588,12 @@ struct RexEventTests {
         ))
 
         #expect(try parse(terminal("process_changed", #"{"generation":2,"foreground":null}"#)) == nil)
-        #expect(try parse(nested(#"{"type":"block_owner_changed","payload":{"block_id":"\#(block)","reason":"create"}}"#)) == nil)
+        // Who owns a pane, whose size its terminal uses: the terminal takes back
+        // a shown pane another client took. Rex leaves `owner` out when there is none.
+        #expect(try parse(nested(#"{"type":"block_owner_changed","payload":{"block_id":"\#(block)","owner":"client:01a198b9-10f1","reason":"create"}}"#))
+            == .ownerChanged(session: session, block: block, owner: "client:01a198b9-10f1"))
+        #expect(try parse(nested(#"{"type":"block_owner_changed","payload":{"block_id":"\#(block)","previous":"client:01a198b9-10f1","reason":"disconnect"}}"#))
+            == .ownerChanged(session: session, block: block, owner: nil))
         #expect(try parse(#"{"type":"event","seq":1,"payload":{"type":"client_joined","payload":{"client":{"client_id":"client:1"}}}}"#) == nil)
         // A block that is not a terminal reports nothing the overview reads.
         #expect(try parse(nested(#"{"type":"block_event","payload":{"block_id":"\#(block)","creator_name":"com.superlogical.onboarding","name":"title_changed","payload":{"title":"x"}}}"#)) == nil)

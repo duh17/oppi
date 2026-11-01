@@ -62,6 +62,12 @@ final class RexFakeDataHost: Sendable {
         deliver(Self.frame(0x02, snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
     }
 
+    /// The pane's terminal changed size: Rex's `resize` message, as it sends
+    /// one on each change, whoever made it.
+    func emitResize(columns: Int, rows: Int) {
+        deliver(Self.frame(0x02, message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
+    }
+
     /// The program's output.
     func emit(_ text: String) {
         deliver(Self.frame(0x02, Data(text.utf8)))
@@ -199,6 +205,22 @@ final class RexFakeSession: Sendable {
         /// Limits `refusing` to requests that name one of these panes.
         var refusingBlocks: Set<String>?
         var directURLs: [URL] = []
+        /// Each pane's terminal size, in cells, once something sized it.
+        var sizes: [String: Size] = [:]
+        /// Panes another client has taken: the terminal's resize waits until
+        /// it takes the pane back, as on Rex.
+        var takenByOthers: Set<String> = []
+        /// The size the terminal last asked for, per pane: Rex keeps it, and
+        /// applies it when the terminal owns the pane again.
+        var desired: [String: Size] = [:]
+        /// Panes another client takes again, at this size, each time the
+        /// terminal takes them (`fight`).
+        var fighting: [String: Size] = [:]
+    }
+
+    struct Size: Equatable, Sendable {
+        let columns: Int
+        let rows: Int
     }
 
     let sessionID: String
@@ -273,6 +295,82 @@ final class RexFakeSession: Sendable {
               let request = host.requests.last(where: { $0.method == "data.connect" && $0.string("block_id") == block }) else { return }
         state.withLock { _ = $0.held.remove(block) }
         host.refuse(request, code: "not_found", message: "no such block")
+    }
+
+    /// `block`'s terminal size now, or nil before anything sized it.
+    func size(of block: String) -> Size? { state.withLock { $0.sizes[block] } }
+
+    /// The client id `session.attach` gives the terminal; it owns what it takes.
+    static let terminalClient = "client:preview"
+    /// The other client of the session, such as the host's own Rex app.
+    static let otherClient = "client:other"
+
+    /// Another client of the session (the host's own Rex app) takes `block`
+    /// and sizes it for its window, as the Mac app can when the session's
+    /// layout changes. Rex announces the new owner (`block_owner_changed`).
+    func takeAsAnotherClient(_ block: String, columns: Int, rows: Int) {
+        state.withLock { _ = $0.takenByOthers.insert(block) }
+        ownerChanged(block, owner: Self.otherClient, previous: Self.terminalClient)
+        apply(Size(columns: columns, rows: rows), to: block)
+    }
+
+    /// Another client takes `block` now, and again each time the terminal
+    /// takes it back: two clients that each insist on their own size.
+    func fight(for block: String, columns: Int, rows: Int) {
+        state.withLock { $0.fighting[block] = Size(columns: columns, rows: rows) }
+        takeAsAnotherClient(block, columns: columns, rows: rows)
+    }
+
+    private func ownerChanged(_ block: String, owner: String, previous: String) {
+        sessionEvent("block_owner_changed", #"{"block_id":"\#(block)","owner":"\#(owner)","previous":"\#(previous)","reason":"take"}"#)
+    }
+
+    /// Sizes `block`'s terminal, and on a change tells each of its open
+    /// streams, as Rex does.
+    private func apply(_ size: Size, to block: String) {
+        let changed = state.withLock { state -> Bool in
+            guard state.sizes[block] != size else { return false }
+            state.sizes[block] = size
+            return true
+        }
+        guard changed else { return }
+        for data in dataHosts where data.block == block && !data.isClosed {
+            data.emitResize(columns: size.columns, rows: size.rows)
+        }
+    }
+
+    /// `com.superlogical.terminal.resize`: at once for a pane no other client
+    /// has taken, else when the terminal takes it back.
+    private func resize(_ request: RexFakeHost.Request) {
+        guard let block = request.string("block_id"),
+              let object = try? JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any],
+              let args = object["args"] as? [String: Any],
+              let columns = args["columns"] as? Int, let rows = args["rows"] as? Int else { return }
+        let size = Size(columns: columns, rows: rows)
+        let waits = state.withLock { state -> Bool in
+            state.desired[block] = size
+            return state.takenByOthers.contains(block)
+        }
+        if !waits { apply(size, to: block) }
+    }
+
+    /// `session.own_block` with `take`: the panes are the terminal's again, Rex
+    /// announces it, and the size the terminal last asked for applies. A pane
+    /// another client fights for is taken again by that client.
+    private func take(_ request: RexFakeHost.Request) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any],
+              let blocks = object["block_ids"] as? [String] else { return }
+        for block in blocks {
+            let (wasOthers, desired, fought) = state.withLock { state in
+                (state.takenByOthers.remove(block) != nil, state.desired[block], state.fighting[block])
+            }
+            guard wasOthers else { continue }
+            ownerChanged(block, owner: Self.terminalClient, previous: Self.otherClient)
+            if let desired { apply(desired, to: block) }
+            if let fought {
+                Task { [weak self] in self?.takeAsAnotherClient(block, columns: fought.columns, rows: fought.rows) }
+            }
+        }
     }
 
     /// Every request the terminal made, in order.
@@ -392,7 +490,9 @@ final class RexFakeSession: Sendable {
             guard let self, let data, let block = data.block,
                   let pane = panes.first(where: { $0.block == block }),
                   let snapshot = try? Self.snapshot(of: pane.screen) else { return }
-            data.emitSnapshot(snapshot)
+            // The `resize` after the snapshot is the pane's size now.
+            let size = self.size(of: block) ?? Size(columns: 80, rows: 24)
+            data.emitSnapshot(snapshot, columns: size.columns, rows: size.rows)
         }
     }
 
@@ -458,10 +558,13 @@ final class RexFakeSession: Sendable {
         }
         switch request.method {
         case "session.attach":
-            return .result(#"{"client_id":"client:preview","view":\#(state.withLock { $0.view })}"#)
+            return .result(#"{"client_id":"\#(Self.terminalClient)","view":\#(state.withLock { $0.view })}"#)
         case "session.view":
             return .result(state.withLock { $0.view })
-        case "session.own_block", "session.disown_block":
+        case "session.own_block":
+            take(request)
+            return .result(#"{"blocks":[]}"#)
+        case "session.disown_block":
             return .result(#"{"blocks":[]}"#)
         case "data.connect":
             return state.withLock({ $0.held.contains(block) }) ? .hold : .result(issueTicket(for: block))
@@ -474,7 +577,10 @@ final class RexFakeSession: Sendable {
             return .result(#"{"pwd":"\#(pwd)"}"#)
         case "session.new_split":
             return newSplit(request)
-        case "com.superlogical.terminal.resize", "com.superlogical.terminal.write":
+        case "com.superlogical.terminal.resize":
+            resize(request)
+            return .result("{}")
+        case "com.superlogical.terminal.write":
             return .result("{}")
         default:
             return .refuse(code: "bad_request", message: "unexpected \(request.method)")

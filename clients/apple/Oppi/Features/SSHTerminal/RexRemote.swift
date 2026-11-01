@@ -80,6 +80,9 @@ enum RexEvent: Sendable, Equatable {
     case status(session: String, block: String, SSHTerminalPaneRecord)
     case statusRemoved(session: String, block: String, ids: [String])
     case childExited(session: String, block: String)
+    /// A block's owner, the client whose size its terminal uses, changed:
+    /// `owner` is the new one, nil when the block has none.
+    case ownerChanged(session: String, block: String, owner: String?)
 
     static let terminalCreator = "com.superlogical.terminal"
 
@@ -89,7 +92,7 @@ enum RexEvent: Sendable, Equatable {
         case .sessionCreated(let session), .sessionDestroyed(let session), .viewChanged(let session, _),
              .blockCreated(let session, _), .blockClosed(let session, _), .title(let session, _, _),
              .pwd(let session, _, _), .status(let session, _, _), .statusRemoved(let session, _, _),
-             .childExited(let session, _):
+             .childExited(let session, _), .ownerChanged(let session, _, _):
             session
         }
     }
@@ -125,6 +128,9 @@ enum RexEvent: Sendable, Equatable {
         case "block_closed":
             guard let block = payload["block_id"] as? String else { return nil }
             self = .blockClosed(session: session, block: block)
+        case "block_owner_changed":
+            guard let block = payload["block_id"] as? String else { return nil }
+            self = .ownerChanged(session: session, block: block, owner: payload["owner"] as? String)
         case "block_event":
             guard payload["creator_name"] as? String == Self.terminalCreator,
                   let block = payload["block_id"] as? String, let kind = payload["name"] as? String,
@@ -259,6 +265,9 @@ struct RexMirror {
         case .childExited(let id, let block):
             // The program is gone; so is whatever it reported.
             update(id, block, .records) { $0.records = [] }
+        case .ownerChanged:
+            // Who sizes a pane is the terminal's business, not the overview's.
+            break
         }
     }
 

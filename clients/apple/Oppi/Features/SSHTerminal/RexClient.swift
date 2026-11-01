@@ -311,7 +311,9 @@ struct RexDataStream {
                 case .snapshotRecords(let records): .snapshotRecords(records)
                 case .output(let output): .output(output)
                 case .message(.childExited(let code)): .exited(code: code)
-                case .message: nil // Resize and theme: this client owns the size and its colors.
+                // Resize and theme: who sizes the pane is followed by its owner
+                // (`block_owner_changed`), and this client keeps its own colors.
+                case .message: nil
                 }
             }
         case .close(let code, let reason):
@@ -519,8 +521,15 @@ final class RexHostTransport: RexTransport {
 /// while its stream does (`session.own_block`, take), so the pane follows the
 /// phone's size; a pane whose lane closes is handed back
 /// (`session.disown_block`), and when the connection drops Rex hands the rest
-/// back to the client in line, such as the Mac app. It never focuses anything:
-/// the host's own focus stays where it is.
+/// back to the client in line, such as the Mac app. That client can take a
+/// pane back meanwhile (the Mac app has taken the panes of a session whose
+/// layout changed, after a new split) and size it for its own window, which the
+/// program then draws for, while a resize from this client waits until it owns
+/// the pane again. Rex announces each new owner (`block_owner_changed`): a pane
+/// another client took is no longer `owned`, and while the page shows the
+/// session (`setOnScreen`) the shown pane is taken back and sized again
+/// (`reclaim`). Neighbours wait until they are shown; nothing is taken back off
+/// the page. It never focuses anything: the host's own focus stays where it is.
 ///
 /// Showing another pane (`show`) only moves what typing and sizing go to: the
 /// pane's stream is already open when the screen keeps it live
@@ -544,6 +553,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// screen, and its own data stream, so the number is the memory and battery
     /// budget of a swipe (`SSHTerminalPanePreview` draws the incoming one).
     static let maximumLivePanes = 3
+    /// Takes back of one pane between two actions of this phone's user (a
+    /// switch, the page showing, typing, a resize): a client that takes the
+    /// pane again each time would otherwise trade it with this one forever,
+    /// redrawing the program on both.
+    static let maximumReclaims = 2
 
     /// The last size the screen asked for, which each pane taken is given
     /// before its snapshot is made.
@@ -583,8 +597,18 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// screen shows this session, its neighbours (at most
         /// `maximumLivePanes`). Each has a lane; nothing else does.
         var live: Set<String> = []
-        /// Panes this client has taken for size and not handed back.
+        /// Panes this client has taken for size and not handed back. A live
+        /// pane missing here was taken by another client (`block_owner_changed`).
         var owned: Set<String> = []
+        /// This client, as `session.attach` names it: the owner Rex announces
+        /// when a take is this client's own.
+        var me: String?
+        /// The page shows this session and the app is active: only then is a
+        /// pane another client took taken back (`paneToReclaim`).
+        var onScreen = false
+        /// Takes back per pane since this phone's user last acted
+        /// (`userActed`), at most `maximumReclaims`.
+        var reclaims: [String: Int] = [:]
         /// The size each owned pane was last given, so a switch does not
         /// size again a pane the screen just sized (the first pane, on the
         /// first layout).
@@ -663,8 +687,19 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             return lanes.keys.filter { !wanted.contains($0) }
         }
 
+        /// The shown pane, when another client took it and this one should
+        /// take it back: the page shows the session, the pane has a lane (so
+        /// this client took it once), and the takes since the user last acted
+        /// are under the cap. A neighbour waits until it is shown.
+        var paneToReclaim: String? {
+            guard onScreen, lanes[requested] != nil, !owned.contains(requested), wantedLanes.contains(requested),
+                  reclaims[requested, default: 0] < RexSessionConnection.maximumReclaims else { return nil }
+            return requested
+        }
+
         var laneWork: Bool {
-            !lanesToOpen.isEmpty || !lanesToClose.isEmpty || !owned.subtracting(wantedLanes).isEmpty
+            !lanesToOpen.isEmpty || !lanesToClose.isEmpty || paneToReclaim != nil
+                || !owned.subtracting(wantedLanes).isEmpty
         }
 
         /// Forgets `block`'s lane, queuing its socket and its reader for release
@@ -673,6 +708,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             graveyard.append(lanes[block]?.stream)
             lanes[block]?.flow.map { retiredFlows.append($0) }
             lanes[block] = nil
+            reclaims[block] = nil
         }
 
         /// `blocks` in strip order, nearest the pane on screen first.
@@ -733,8 +769,13 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 if let event = RexEvent(frame: frame) { connection?.receive(event) }
             }
             let attached = try await control.call("session.attach", ["session_id": target.sessionID])
-            struct Attached: Decodable { let view: RexView? }
-            if let view = try? JSONDecoder().decode(Attached.self, from: attached).view {
+            struct Attached: Decodable {
+                let client_id: String?
+                let view: RexView?
+            }
+            let answer = try? JSONDecoder().decode(Attached.self, from: attached)
+            connection.core.withLock { $0.me = answer?.client_id }
+            if let view = answer?.view {
                 connection.core.withLock { _ = connection.apply(view: view, to: &$0) }
             }
             _ = try await control.call("session.own_block", [
@@ -774,6 +815,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             // A pane asked for gets its stream again, even if one failed before.
             state.deadLanes.remove(blockID)
             state.attempts[blockID] = nil
+            // The user chose it: another client's take is taken back again.
+            state.reclaims[blockID] = nil
             state.live = state.capped(state.live)
             publish(state)
             return (true, startSwitching(&state))
@@ -799,6 +842,31 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 state.attempts[block] = nil
             }
             state.live = next
+            return startSwitching(&state)
+        }
+        if start { Task { await runLanes() } }
+    }
+
+    /// The page shows this session with the app active, or stops doing so.
+    /// Showing it again is the user's action: the shown pane, if another
+    /// client took it meanwhile, is taken back.
+    func setOnScreen(_ onScreen: Bool) {
+        let start = core.withLock { state -> Bool in
+            guard state.onScreen != onScreen else { return false }
+            state.onScreen = onScreen
+            guard onScreen else { return false }
+            state.reclaims[state.requested] = nil
+            return startSwitching(&state)
+        }
+        if start { Task { await runLanes() } }
+    }
+
+    /// The user typed or the screen resized: the shown pane may be taken back
+    /// again (`maximumReclaims`).
+    private func userActed() {
+        let start = core.withLock { state -> Bool in
+            guard state.reclaims[state.requested] != nil else { return false }
+            state.reclaims[state.requested] = nil
             return startSwitching(&state)
         }
         if start { Task { await runLanes() } }
@@ -872,6 +940,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     // MARK: - SSHTerminalConnection
 
     func send(_ bytes: Data) async throws {
+        userActed()
         do {
             _ = try await control.call("com.superlogical.terminal.write", blockCall([
                 // Keys, pastes, and SGR mouse reports are UTF-8; only legacy X10
@@ -894,6 +963,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         // Every pane the screen keeps live is this screen's size: a swipe to a
         // neighbour must not reflow it, and Rex lays out a pane at the size its
         // owner asks for.
+        userActed()
         let (targets, shown) = core.withLock { state -> ([String], String) in
             state.geometry = geometry
             return ([state.requested] + state.owned.subtracting([state.requested]).sorted(), state.requested)
@@ -993,6 +1063,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 case done
                 case open(String)
                 case close([String])
+                case reclaim(String)
                 case handBack([String])
             }
             let work = core.withLock { state -> Work in
@@ -1002,6 +1073,13 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 }
                 let extra = state.lanesToClose
                 if !extra.isEmpty { return .close(extra) }
+                if let taken = state.paneToReclaim {
+                    // Marked before the call, so this pass cannot pick it again.
+                    state.owned.insert(taken)
+                    state.sized[taken] = nil
+                    state.reclaims[taken, default: 0] += 1
+                    return .reclaim(taken)
+                }
                 if let next = state.lanesToOpen.first { return .open(next) }
                 // A pane taken for size that no lane carries goes back.
                 let behind = state.owned.subtracting(state.wantedLanes)
@@ -1029,6 +1107,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 // Best effort, as a hand-back: the pane may be gone already.
                 _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": blocks])
                 core.withLock { state in for block in blocks { state.owned.remove(block); state.sized[block] = nil } }
+            case .reclaim(let block):
+                await reclaim(block)
             case .open(let block):
                 do {
                     try await openLane(block)
@@ -1190,6 +1270,36 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
     }
 
+    /// Another client took `block` and sized it for its own window: take it
+    /// again and give it this screen's size. Best effort, as a hand-back: a
+    /// pane that closed meanwhile has nothing to take, and its lane hears so.
+    private func reclaim(_ block: String) async {
+        _ = try? await control.call("session.own_block", [
+            "session_id": sessionID, "block_ids": [block], "mode": "take",
+        ])
+        // A resize that landed since the pane was marked owned sized it already.
+        guard let geometry = core.withLock({ state in state.sized[block] == state.geometry ? nil : state.geometry }) else { return }
+        _ = try? await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: block))
+        core.withLock { state in
+            // A newer size went out meanwhile: this one is not the pane's.
+            if state.owned.contains(block), state.geometry == geometry { state.sized[block] = geometry }
+        }
+    }
+
+    /// Rex announced `block`'s owner. Another client (or none) owning a pane
+    /// this one owned means its resizes wait and the program draws for that
+    /// client's window: the pane is no longer `owned`, and the lane loop takes
+    /// it back if it is the shown pane on a page that shows (`paneToReclaim`).
+    /// This client's own takes are announced too; they change nothing.
+    private func ownerChanged(_ block: String, owner: String?) {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended, let me = state.me, owner != me, state.owned.remove(block) != nil else { return false }
+            state.sized[block] = nil
+            return startSwitching(&state)
+        }
+        if start { Task { await runLanes() } }
+    }
+
     /// Closes the sockets of lanes that are gone, outside the lock: a socket's
     /// close can call back into this connection.
     private func reap() {
@@ -1341,6 +1451,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             changeRecords(of: block) { $0 = [] }
         case .blockClosed(_, let block):
             closed(block, reason: "The pane closed in Rex.")
+        case .ownerChanged(_, let block, let owner):
+            ownerChanged(block, owner: owner)
         case .sessionDestroyed:
             end("The Rex session was closed.")
         default:
