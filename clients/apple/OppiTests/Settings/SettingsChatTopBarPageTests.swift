@@ -70,7 +70,7 @@ struct SettingsChatTopBarPageTests {
 
     @Test("A stored order is the rows' order; the page is always editing, so every row can be dragged")
     func theRowsFollowTheStoredOrder() async throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         AppPreferences.ChatTopBar.setLayout(
             ChatTopBarLayout(order: [.outline, .files, .context, .git, .terminal], shown: Set(ChatTopBarAction.allCases)),
             in: defaults
@@ -96,7 +96,7 @@ struct SettingsChatTopBarPageTests {
 
     @Test("A switch pins its button: the layout keeps the order and shows it, and the page reads it back")
     func aSwitchWritesTheLayout() async throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let h = try await show(on: defaults)
         defer { hide(h) }
 
@@ -117,7 +117,7 @@ struct SettingsChatTopBarPageTests {
 
     @Test("A drag writes the order: Terminal moved to the top is the bar's order, switches untouched, and the page reads it back")
     func aDragWritesTheOrder() async throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let h = try await show(on: defaults)
         defer { hide(h) }
         let dataSource = try #require(h.page.dataSource)

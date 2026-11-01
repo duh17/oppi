@@ -20,7 +20,7 @@ struct SettingsStoreTests {
 
     /// The device store, on a suite of its own.
     private func makeDeviceStore(
-        defaults: UserDefaults = makeSettingsDefaults(),
+        defaults: UserDefaults,
         afterWrite: @escaping @MainActor (String) -> Void = { _ in }
     ) -> SettingsStore {
         SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil }, afterWrite: afterWrite)
@@ -42,8 +42,8 @@ struct SettingsStoreTests {
     // MARK: - Device
 
     @Test("The device store reads and writes through the adapter, and set returns the settled value")
-    func deviceStoreWritesThroughTheAdapter() async {
-        let defaults = makeSettingsDefaults()
+    func deviceStoreWritesThroughTheAdapter() async throws {
+        let defaults = try makeSettingsDefaults()
         let store = makeDeviceStore(defaults: defaults)
 
         #expect(store.read(haptics) == .value(true, revision: nil))
@@ -54,9 +54,9 @@ struct SettingsStoreTests {
     }
 
     @Test("A stored write runs the store's hook with the setting's id, and a refused one does not")
-    func afterWriteRunsForStoredWrites() async {
+    func afterWriteRunsForStoredWrites() async throws {
         var written: [String] = []
-        let device = makeDeviceStore(afterWrite: { written.append($0) })
+        let device = makeDeviceStore(defaults: try makeSettingsDefaults(), afterWrite: { written.append($0) })
         let transport = FakeSettingsTransport()
         let server = makeServerStore(transport, afterWrite: { written.append($0) })
 

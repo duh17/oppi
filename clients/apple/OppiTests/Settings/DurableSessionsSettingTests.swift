@@ -32,7 +32,7 @@ struct DurableSessionsSettingTests {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: 4)
         let client = makeTestURLProtocolClient(host: "ready-server.test")
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let deviceStore = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: deviceStore)
         let coordinator = root.coordinator

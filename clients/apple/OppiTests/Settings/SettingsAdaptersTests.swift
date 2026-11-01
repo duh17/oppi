@@ -8,7 +8,7 @@ struct SettingsAdaptersTests {
 
     @Test("A device setting reads its default until something is stored, then the stored value")
     func deviceReadsDefaultThenStored() throws {
-        let adapter = DeviceAdapter(defaults: makeSettingsDefaults())
+        let adapter = DeviceAdapter(defaults: try makeSettingsDefaults())
         let links = SettingsCatalog.openLinks
         #expect(try adapter.read(links) == .inApp)
 
@@ -18,7 +18,7 @@ struct SettingsAdaptersTests {
 
     @Test("A device value is stored in the form the preference stores: a boolean, an integer, a raw string")
     func deviceStoresThePreferencesForm() throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let adapter = DeviceAdapter(defaults: defaults)
 
         try adapter.write(SettingsCatalog.hapticFeedback, false)
@@ -33,7 +33,7 @@ struct SettingsAdaptersTests {
 
     @Test("A stored value that no longer decodes reads as the default")
     func deviceUnreadableValueReadsDefault() throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         defaults.set("someday-a-third-browser", forKey: AppPreferenceStore.Browser.linkOpeningModeKey)
         defaults.set(7, forKey: AppPreferenceStore.ScreenAwake.timeoutPresetKey)
         let adapter = DeviceAdapter(defaults: defaults)
@@ -43,7 +43,7 @@ struct SettingsAdaptersTests {
 
     @Test("The adapter and each preference share one key and one stored form, in a suite of their own")
     func deviceSharesTheKeyAndFormWithThePreference() throws {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let adapter = DeviceAdapter(defaults: defaults)
 
         // What the adapter stores, the preference decodes.
@@ -57,12 +57,12 @@ struct SettingsAdaptersTests {
     }
 
     @Test("A per-server device value has no adapter yet and says so")
-    func devicePerServerIsUnsupported() {
+    func devicePerServerIsUnsupported() throws {
         let perServer = SettingDeclaration<Bool>(
             id: "test.perServer", key: "test.perServer", storage: .device(perServer: true), default: false,
             copy: SettingCopy(title: "Per server")
         )
-        let adapter = DeviceAdapter(defaults: makeSettingsDefaults())
+        let adapter = DeviceAdapter(defaults: try makeSettingsDefaults())
         #expect(throws: SettingsError.self) { try adapter.read(perServer) }
         #expect(throws: SettingsError.self) { try adapter.write(perServer, true) }
     }

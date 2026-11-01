@@ -2,23 +2,24 @@ import Testing
 import Foundation
 @testable import Oppi
 
-@Suite("AppPreferences.Browser")
+/// On a defaults suite of its own: the app's link preference is never touched.
+@Suite("AppPreferenceStore.Browser")
 struct BrowserPreferencesTests {
-    private let linkOpeningModeKey = "\(AppIdentifiers.subsystem).browser.linkOpeningMode"
+    private typealias Store = AppPreferenceStore.Browser
 
-    @Test func defaultsToInAppBrowser() {
-        UserDefaults.standard.removeObject(forKey: linkOpeningModeKey)
-        defer { UserDefaults.standard.removeObject(forKey: linkOpeningModeKey) }
-
-        #expect(AppPreferences.Browser.linkOpeningMode == .inApp)
+    private func makeDefaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "BrowserPreferencesTests.\(UUID().uuidString)"))
     }
 
-    @Test func persistsExternalBrowserChoice() {
-        UserDefaults.standard.removeObject(forKey: linkOpeningModeKey)
-        defer { UserDefaults.standard.removeObject(forKey: linkOpeningModeKey) }
+    @Test func defaultsToInAppBrowser() throws {
+        #expect(Store.linkOpeningMode(in: try makeDefaults()) == .inApp)
+    }
 
-        AppPreferences.Browser.setLinkOpeningMode(.external)
+    @Test func persistsExternalBrowserChoice() throws {
+        let defaults = try makeDefaults()
+        Store.setLinkOpeningMode(.external, in: defaults)
 
-        #expect(AppPreferences.Browser.linkOpeningMode == .external)
+        #expect(Store.linkOpeningMode(in: defaults) == .external)
+        #expect(defaults.string(forKey: "\(AppIdentifiers.subsystem).browser.linkOpeningMode") == "external")
     }
 }

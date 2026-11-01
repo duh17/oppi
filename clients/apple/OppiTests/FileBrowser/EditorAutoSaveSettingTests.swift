@@ -26,7 +26,7 @@ struct EditorAutoSaveSettingTests {
     /// The real Settings > Editor page, on a suite of its own, with the editor
     /// preference the "…" menu uses pointed at the same defaults.
     private func makeHarness() throws -> Harness {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let preferences = CodeEditorPreferences(defaults: defaults)
         let written = Written()
         let store = SettingsStore(
@@ -85,8 +85,8 @@ struct EditorAutoSaveSettingTests {
     // MARK: The one value
 
     @Test("Auto-Save is off until a person turns it on")
-    func offByDefault() {
-        let preferences = CodeEditorPreferences(defaults: makeSettingsDefaults())
+    func offByDefault() throws {
+        let preferences = CodeEditorPreferences(defaults: try makeSettingsDefaults())
         #expect(preferences.autoSaves == false, "nothing stored means off")
         #expect(SettingsCatalog.autoSave.default == false)
         #expect(SettingsCatalog.autoSave.key == AppPreferenceStore.Editor.autoSaveKey)

@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 @testable import Oppi
 
 /// Holds an async call until the test lets it through.
@@ -112,9 +113,9 @@ struct SettingsTestError: LocalizedError {
 }
 
 /// A `UserDefaults` that cannot leak into the app's own.
-func makeSettingsDefaults() -> UserDefaults {
+func makeSettingsDefaults() throws -> UserDefaults {
     let name = "settings-tests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: name) ?? .standard
+    let defaults = try #require(UserDefaults(suiteName: name))
     defaults.removePersistentDomain(forName: name)
     return defaults
 }

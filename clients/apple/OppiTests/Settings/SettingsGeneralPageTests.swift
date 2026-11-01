@@ -23,7 +23,7 @@ struct SettingsGeneralPageTests {
     private typealias Item = SettingsGeneralViewController.Item
 
     private func makeHarness() throws -> Harness {
-        let defaults = makeSettingsDefaults()
+        let defaults = try makeSettingsDefaults()
         let written = Written()
         let store = SettingsStore(
             device: DeviceAdapter(defaults: defaults),

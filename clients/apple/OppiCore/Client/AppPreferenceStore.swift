@@ -217,12 +217,14 @@ enum AppPreferenceStore {
         /// What nothing stored means; `SettingsCatalog.hapticFeedback` uses this same constant.
         static let hapticFeedbackEnabledDefault = true
 
-        static var isHapticFeedbackEnabled: Bool {
-            UserDefaults.standard.object(forKey: hapticFeedbackEnabledKey) as? Bool ?? hapticFeedbackEnabledDefault
+        static var isHapticFeedbackEnabled: Bool { isHapticFeedbackEnabled(in: .standard) }
+
+        static func isHapticFeedbackEnabled(in defaults: UserDefaults) -> Bool {
+            defaults.object(forKey: hapticFeedbackEnabledKey) as? Bool ?? hapticFeedbackEnabledDefault
         }
 
-        static func setHapticFeedbackEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: hapticFeedbackEnabledKey)
+        static func setHapticFeedbackEnabled(_ enabled: Bool, in defaults: UserDefaults = .standard) {
+            defaults.set(enabled, forKey: hapticFeedbackEnabledKey)
         }
     }
 
@@ -314,8 +316,10 @@ enum AppPreferenceStore {
         /// What nothing stored means; `SettingsCatalog.openLinks` uses this same constant.
         static let linkOpeningModeDefault = LinkOpeningMode.inApp
 
-        static var linkOpeningMode: LinkOpeningMode {
-            guard let raw = UserDefaults.standard.string(forKey: linkOpeningModeKey),
+        static var linkOpeningMode: LinkOpeningMode { linkOpeningMode(in: .standard) }
+
+        static func linkOpeningMode(in defaults: UserDefaults) -> LinkOpeningMode {
+            guard let raw = defaults.string(forKey: linkOpeningModeKey),
                   let mode = LinkOpeningMode(rawValue: raw)
             else {
                 return linkOpeningModeDefault
@@ -323,8 +327,8 @@ enum AppPreferenceStore {
             return mode
         }
 
-        static func setLinkOpeningMode(_ mode: LinkOpeningMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: linkOpeningModeKey)
+        static func setLinkOpeningMode(_ mode: LinkOpeningMode, in defaults: UserDefaults = .standard) {
+            defaults.set(mode.rawValue, forKey: linkOpeningModeKey)
         }
     }
 
@@ -343,8 +347,10 @@ enum AppPreferenceStore {
             "\(AppIdentifiers.subsystem).appearance.dictationIndicatorStyleDidChange"
         )
 
-        static var spinnerStyle: SpinnerStyle {
-            guard let raw = UserDefaults.standard.string(forKey: spinnerStyleKey),
+        static var spinnerStyle: SpinnerStyle { spinnerStyle(in: .standard) }
+
+        static func spinnerStyle(in defaults: UserDefaults) -> SpinnerStyle {
+            guard let raw = defaults.string(forKey: spinnerStyleKey),
                   let style = SpinnerStyle(rawValue: raw)
             else {
                 return .working
@@ -352,14 +358,16 @@ enum AppPreferenceStore {
             return style
         }
 
-        static func setSpinnerStyle(_ style: SpinnerStyle) {
-            guard style != spinnerStyle else { return }
-            UserDefaults.standard.set(style.rawValue, forKey: spinnerStyleKey)
+        static func setSpinnerStyle(_ style: SpinnerStyle, in defaults: UserDefaults = .standard) {
+            guard style != spinnerStyle(in: defaults) else { return }
+            defaults.set(style.rawValue, forKey: spinnerStyleKey)
             NotificationCenter.default.post(name: spinnerDidChangeNotification, object: nil)
         }
 
-        static var dictationIndicatorStyle: DictationIndicatorStyle {
-            guard let raw = UserDefaults.standard.string(forKey: dictationIndicatorStyleKey),
+        static var dictationIndicatorStyle: DictationIndicatorStyle { dictationIndicatorStyle(in: .standard) }
+
+        static func dictationIndicatorStyle(in defaults: UserDefaults) -> DictationIndicatorStyle {
+            guard let raw = defaults.string(forKey: dictationIndicatorStyleKey),
                   let style = DictationIndicatorStyle(rawValue: raw)
             else {
                 return .ring
@@ -367,9 +375,9 @@ enum AppPreferenceStore {
             return style
         }
 
-        static func setDictationIndicatorStyle(_ style: DictationIndicatorStyle) {
-            guard style != dictationIndicatorStyle else { return }
-            UserDefaults.standard.set(style.rawValue, forKey: dictationIndicatorStyleKey)
+        static func setDictationIndicatorStyle(_ style: DictationIndicatorStyle, in defaults: UserDefaults = .standard) {
+            guard style != dictationIndicatorStyle(in: defaults) else { return }
+            defaults.set(style.rawValue, forKey: dictationIndicatorStyleKey)
             NotificationCenter.default.post(name: dictationIndicatorDidChangeNotification, object: nil)
         }
     }

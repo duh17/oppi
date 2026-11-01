@@ -54,73 +54,53 @@ struct DictationIndicatorStyleTests {
     }
 }
 
-@Suite("AppPreferenceStore.Appearance styles", .serialized)
+/// The style preferences read and write a defaults suite of their own, never the
+/// app's: other suites draw spinners from the shared store while these run.
+@Suite("AppPreferenceStore.Appearance styles")
 struct AppearanceStylePreferenceTests {
-    @Test func unsetSpinnerDefaultsToWorking() {
-        withClearedKey(AppPreferenceStore.Appearance.spinnerStyleKey) {
-            #expect(AppPreferenceStore.Appearance.spinnerStyle == .working)
-            #expect(SpinnerStyle.current == .working)
-        }
+    private typealias Store = AppPreferenceStore.Appearance
+
+    private func makeDefaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "AppearanceStylePreferenceTests.\(UUID().uuidString)"))
     }
 
-    @Test func invalidSpinnerDefaultsToWorking() {
-        withRestoredKey(AppPreferenceStore.Appearance.spinnerStyleKey) { key in
-            UserDefaults.standard.set("not-a-spinner", forKey: key)
-            #expect(AppPreferenceStore.Appearance.spinnerStyle == .working)
-        }
+    @Test func unsetSpinnerDefaultsToWorking() throws {
+        #expect(Store.spinnerStyle(in: try makeDefaults()) == .working)
     }
 
-    @Test func preservedSpinnerChoiceStaysSelectable() {
-        withRestoredKey(AppPreferenceStore.Appearance.spinnerStyleKey) { _ in
-            AppPreferenceStore.Appearance.setSpinnerStyle(.brailleDots)
-            #expect(AppPreferenceStore.Appearance.spinnerStyle == .brailleDots)
-            AppPreferenceStore.Appearance.setSpinnerStyle(.gameOfLife)
-            #expect(SpinnerStyle.current == .gameOfLife)
-            AppPreferenceStore.Appearance.setSpinnerStyle(.searching)
-            #expect(SpinnerStyle.current == .searching)
-        }
+    @Test func invalidSpinnerDefaultsToWorking() throws {
+        let defaults = try makeDefaults()
+        defaults.set("not-a-spinner", forKey: Store.spinnerStyleKey)
+        #expect(Store.spinnerStyle(in: defaults) == .working)
     }
 
-    @Test func unsetDictationDefaultsToRing() {
-        withClearedKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) {
-            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
-            #expect(DictationIndicatorStyle.current == .ring)
-        }
+    @Test func preservedSpinnerChoiceStaysSelectable() throws {
+        let defaults = try makeDefaults()
+        Store.setSpinnerStyle(.brailleDots, in: defaults)
+        #expect(Store.spinnerStyle(in: defaults) == .brailleDots)
+        Store.setSpinnerStyle(.gameOfLife, in: defaults)
+        #expect(Store.spinnerStyle(in: defaults) == .gameOfLife)
+        Store.setSpinnerStyle(.searching, in: defaults)
+        #expect(Store.spinnerStyle(in: defaults) == .searching)
+        #expect(defaults.string(forKey: Store.spinnerStyleKey) == "searching")
     }
 
-    @Test func invalidDictationDefaultsToRing() {
-        withRestoredKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) { key in
-            UserDefaults.standard.set("not-a-dictation-style", forKey: key)
-            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
-        }
+    @Test func unsetDictationDefaultsToRing() throws {
+        #expect(Store.dictationIndicatorStyle(in: try makeDefaults()) == .ring)
     }
 
-    @Test func preservedRingChoiceStaysSelectable() {
-        withRestoredKey(AppPreferenceStore.Appearance.dictationIndicatorStyleKey) { key in
-            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
-            #expect(DictationIndicatorStyle.current == .breathing)
-            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.ring)
-            #expect(AppPreferenceStore.Appearance.dictationIndicatorStyle == .ring)
-            #expect(UserDefaults.standard.string(forKey: key) == "ring")
-        }
+    @Test func invalidDictationDefaultsToRing() throws {
+        let defaults = try makeDefaults()
+        defaults.set("not-a-dictation-style", forKey: Store.dictationIndicatorStyleKey)
+        #expect(Store.dictationIndicatorStyle(in: defaults) == .ring)
     }
-}
 
-private func withClearedKey(_ key: String, _ body: () -> Void) {
-    withRestoredKey(key) { restoredKey in
-        UserDefaults.standard.removeObject(forKey: restoredKey)
-        body()
+    @Test func preservedRingChoiceStaysSelectable() throws {
+        let defaults = try makeDefaults()
+        Store.setDictationIndicatorStyle(.breathing, in: defaults)
+        #expect(Store.dictationIndicatorStyle(in: defaults) == .breathing)
+        Store.setDictationIndicatorStyle(.ring, in: defaults)
+        #expect(Store.dictationIndicatorStyle(in: defaults) == .ring)
+        #expect(defaults.string(forKey: Store.dictationIndicatorStyleKey) == "ring")
     }
-}
-
-private func withRestoredKey(_ key: String, _ body: (String) -> Void) {
-    let original = UserDefaults.standard.object(forKey: key)
-    defer {
-        if let original {
-            UserDefaults.standard.set(original, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-    body(key)
 }

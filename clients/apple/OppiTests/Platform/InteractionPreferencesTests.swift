@@ -2,25 +2,26 @@ import Testing
 import Foundation
 @testable import Oppi
 
-@Suite("AppPreferences.Interaction", .serialized)
+/// On a defaults suite of its own: the app's haptics preference is never touched.
+@Suite("AppPreferenceStore.Interaction")
 struct InteractionPreferencesTests {
-    private let hapticFeedbackEnabledKey = "\(AppIdentifiers.subsystem).interaction.hapticFeedback.enabled"
+    private typealias Store = AppPreferenceStore.Interaction
 
-    @Test func hapticFeedbackDefaultsToEnabled() {
-        UserDefaults.standard.removeObject(forKey: hapticFeedbackEnabledKey)
-        defer { UserDefaults.standard.removeObject(forKey: hapticFeedbackEnabledKey) }
-
-        #expect(AppPreferences.Interaction.isHapticFeedbackEnabled)
+    private func makeDefaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "InteractionPreferencesTests.\(UUID().uuidString)"))
     }
 
-    @Test func persistsHapticFeedbackChoice() {
-        UserDefaults.standard.removeObject(forKey: hapticFeedbackEnabledKey)
-        defer { UserDefaults.standard.removeObject(forKey: hapticFeedbackEnabledKey) }
+    @Test func hapticFeedbackDefaultsToEnabled() throws {
+        #expect(Store.isHapticFeedbackEnabled(in: try makeDefaults()))
+    }
 
-        AppPreferences.Interaction.setHapticFeedbackEnabled(false)
-        #expect(!AppPreferences.Interaction.isHapticFeedbackEnabled)
+    @Test func persistsHapticFeedbackChoice() throws {
+        let defaults = try makeDefaults()
+        Store.setHapticFeedbackEnabled(false, in: defaults)
+        #expect(!Store.isHapticFeedbackEnabled(in: defaults))
+        #expect(defaults.object(forKey: "\(AppIdentifiers.subsystem).interaction.hapticFeedback.enabled") as? Bool == false)
 
-        AppPreferences.Interaction.setHapticFeedbackEnabled(true)
-        #expect(AppPreferences.Interaction.isHapticFeedbackEnabled)
+        Store.setHapticFeedbackEnabled(true, in: defaults)
+        #expect(Store.isHapticFeedbackEnabled(in: defaults))
     }
 }
