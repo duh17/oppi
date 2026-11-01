@@ -16,7 +16,6 @@ struct ChatSessionLoadTelemetryTests {
     ) async -> TelemetryCapture {
         let gate = FetchGate()
         let sessionId = "load-telemetry-\(UUID().uuidString)"
-        await TimelineCache.shared.removeTrace(sessionId)
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
         manager._streamSessionForTesting = { _ in streams.makeStream() }
@@ -60,7 +59,6 @@ struct ChatSessionLoadTelemetryTests {
             streams.finish(index: 0)
             await connectTask.value
         }
-        await TimelineCache.shared.removeTrace(sessionId)
         return capture
     }
 

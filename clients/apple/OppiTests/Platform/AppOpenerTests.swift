@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import os
 import Testing
 @testable import Oppi
 
@@ -637,12 +638,7 @@ struct AppOpenerTests {
             await withCheckedContinuation { release = $0 }
             return makeTestSession(id: id, workspaceId: "w1", status: .stopped)
         }
-        var traceReads = 0
         var dialogReads = 0
-        connection._getSessionTraceForTesting = { id in
-            traceReads += 1
-            return (makeTestSession(id: id, workspaceId: "w1", status: .busy), [])
-        }
         connection._getSessionDialogsForTesting = { _ in
             dialogReads += 1
             return APIClient.SessionDialogsResponse(dialogs: [], serverNow: 1)
@@ -664,7 +660,7 @@ struct AppOpenerTests {
         await harness.settle()
         #expect(connection.sessionStore.session(id: "child")?.status == .stopped, "The refresh still lands")
         #expect(dialogReads == 1, "Pending dialogs still hydrate behind the route")
-        #expect(traceReads == 0, "The chat loads its own timeline; a late prefetch could overwrite its cache")
+        #expect(harness.traceReads == 0, "The chat loads its own timeline; a late prefetch could overwrite its cache")
     }
 
     /// Only a record that names its workspace gives the lock scope; any other session still waits for
@@ -1789,7 +1785,6 @@ struct AppOpenerTests {
     private func stubLockedWorkspaceOnlyInDialogs(on connection: ServerConnection, harness: OpenerHarness) {
         connection._connectStreamForTesting = { AsyncStream { _ in } }
         connection._getSessionRecordForTesting = { _ in throw URLError(.timedOut) }
-        connection._getSessionTraceForTesting = { _ in throw URLError(.timedOut) }
         connection._getSessionDialogsForTesting = { _ in
             APIClient.SessionDialogsResponse(
                 dialogs: [
@@ -1867,7 +1862,6 @@ struct AppOpenerTests {
         ), for: "child")
         // The session record cannot load (refresh fails); only the ask names
         // its workspace.
-        connection._getSessionTraceForTesting = { _ in throw URLError(.timedOut) }
         harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
             harness?.connection(serverId).sessionStore.session(id: sessionId)
         }
@@ -1988,6 +1982,10 @@ private final class OpenerHarness {
     let authenticator: StubAuthenticator
     var unreachableServers: Set<String> = []
     private var connections: [String: ServerConnection] = [:]
+    private let traceRequests = OSAllocatedUnfairLock(initialState: 0)
+
+    /// Timeline prefetches (`…/trace-page` requests) the fixture's network saw.
+    var traceReads: Int { traceRequests.withLock { $0 } }
 
     init(
         servers: [PairedServer],
@@ -2048,6 +2046,13 @@ private final class OpenerHarness {
             systemOpen: { recorder.systemURLs.append($0) }
         )
         self.opener = opener
+        let traceRequests = traceRequests
+        TestURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/trace-page") == true {
+                traceRequests.withLock { $0 += 1 }
+            }
+            throw URLError(.notConnectedToInternet)
+        }
         opener._serverReadyForTesting = { [weak self] serverId in
             guard let self else { return false }
             guard !self.unreachableServers.contains(serverId) else { return false }
@@ -2147,12 +2152,11 @@ private final class OpenerHarness {
                 connection.configure(credentials: server.credentials)
             }
             connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-            // Prefetch must not overwrite the row a test seeded with its own
-            // workspace; it re-upserts whatever the store already holds.
-            connection._getSessionTraceForTesting = { [weak connection] id in
-                let stored = connection?.sessionStore.session(id: id)
-                return (stored ?? makeTestSession(id: id, workspaceId: "w1", status: .busy), [])
-            }
+            // The network is down for every fixture, so the timeline prefetch
+            // fails without touching the session row a test seeded.
+            connection.setAPIClientForTesting(
+                makeTestURLProtocolClient(host: "\(serverId).test", scheme: "https")
+            )
             connections[serverId] = connection
         }
         // Every fixture is reachable to lookups; seeding never changes which

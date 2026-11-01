@@ -333,13 +333,8 @@ final class SkillDetailViewController: UIViewController {
         loadTask = Task { [weak self] in
             // Stale-while-revalidate for global skill details. Project-local
             // details are scoped by cwd and fetched directly to avoid stale matches.
-            if cwd == nil {
-                let cached: SkillDetail?
-                if let cacheServerId = connection.currentServerId {
-                    cached = await TimelineCache.shared.loadSkillDetail(skillName, serverId: cacheServerId)
-                } else {
-                    cached = await TimelineCache.shared.loadSkillDetail(skillName)
-                }
+            if cwd == nil, let cacheServerId = connection.currentServerId {
+                let cached = await TimelineCache.shared.loadSkillDetail(skillName, serverId: cacheServerId)
                 guard !Task.isCancelled, let self else { return }
                 if let cached {
                     detail = cached
@@ -358,12 +353,8 @@ final class SkillDetailViewController: UIViewController {
                 let fresh = try await api.getSkillDetail(name: skillName, cwd: cwd)
                 guard !Task.isCancelled, let self else { return }
                 detail = fresh
-                if cwd == nil {
-                    if let cacheServerId = connection.currentServerId {
-                        await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh, serverId: cacheServerId)
-                    } else {
-                        await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh)
-                    }
+                if cwd == nil, let cacheServerId = connection.currentServerId {
+                    await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh, serverId: cacheServerId)
                 }
                 logger.debug("Loaded skill detail: \(skillName) (\(fresh.files.count) files)")
             } catch {

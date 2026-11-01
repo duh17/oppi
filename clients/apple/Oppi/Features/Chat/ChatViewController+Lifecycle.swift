@@ -827,8 +827,6 @@ struct IncognitoSessionEnd: Sendable {
     func deleteSession() async {
         if let serverId {
             await TimelineCache.shared.removeTrace(sessionId, serverId: serverId)
-        } else {
-            await TimelineCache.shared.removeTrace(sessionId)
         }
         guard let apiClient, let scope else {
             ClientLog.warning("Navigation", "Incognito session not deleted: no server route", metadata: ["sessionId": sessionId])

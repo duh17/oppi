@@ -1066,8 +1066,10 @@ struct AskRequestTests {
     }
 
     @Test @MainActor func externalSessionOpenPrefetchesTimelineForChatViewCache() async throws {
+        defer { TestURLProtocol.handler = nil }
         let sessionId = "child-trace"
-        let (conn, _) = makeTestConnection(sessionId: "parent")
+        let (conn, _) = makeTestConnection(sessionId: "parent", fingerprint: testTraceCacheServerId)
+        conn.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
         conn._connectStreamForTesting = { AsyncStream { _ in } }
@@ -1077,39 +1079,29 @@ struct AskRequestTests {
         conn._getSessionDialogsForTesting = { _ in
             APIClient.SessionDialogsResponse(dialogs: [], serverNow: 1)
         }
-        conn._getSessionTraceForTesting = { id in
-            (
-                makeTestSession(id: id, workspaceId: "w1", status: .busy),
-                [
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/\(sessionId)/trace-page")
+            return try mockTracePageResponse(
+                session: makeTestSession(id: sessionId, workspaceId: "w1", status: .busy),
+                trace: [
                     TraceEvent(
                         id: "user-1",
                         type: .user,
                         timestamp: "2026-08-18T00:00:00Z",
                         text: "Stay in this session."
                     ),
-                ]
+                ],
+                for: request
             )
         }
 
         await conn.refreshSessionRecordIfPossible(sessionId: sessionId)
         await conn.prepareExternalSessionOpen(sessionId: sessionId)
 
-        let cached: CachedTrace?
-        if let serverId = conn.currentServerId ?? conn.sessionStore.activeServerId {
-            if let scoped = await TimelineCache.shared.loadTrace(sessionId, serverId: serverId) {
-                cached = scoped
-            } else {
-                cached = await TimelineCache.shared.loadTrace(sessionId)
-            }
-        } else {
-            cached = await TimelineCache.shared.loadTrace(sessionId)
-        }
+        let cached = await TimelineCache.shared.loadTrace(sessionId, serverId: testTraceCacheServerId)
         #expect(cached?.events.contains(where: { $0.text == "Stay in this session." }) == true)
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/\(sessionId)/stream")
         conn.disconnectStream()
-        if let serverId = conn.currentServerId {
-            await TimelineCache.shared.removeTrace(sessionId, serverId: serverId)
-        }
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 }

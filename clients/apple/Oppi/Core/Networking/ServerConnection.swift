@@ -450,9 +450,6 @@ final class ServerConnection {
     /// Test seam: replace generic `GET /sessions/:id` during external open.
     var _getSessionRecordForTesting: ((String) async throws -> Session)?
 
-    /// Test seam: replace workspace trace prefetch during external open.
-    var _getSessionTraceForTesting: ((String) async throws -> (session: Session, trace: [TraceEvent]))?
-
 #if DEBUG
     var _focusedStreamReadinessPollForTesting: Duration?
     var _onFocusedStreamReadinessWaitForTesting: (() -> Void)?
@@ -1047,7 +1044,10 @@ final class ServerConnection {
 
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
+        // Bind the catalog stores before the app-event stream starts: its
+        // events refresh the catalog, which is cached per server only.
         if let serverId = credentials.normalizedServerFingerprint {
+            self.workspaceStore.switchServer(to: serverId)
             self.serverResourceStore.switchServer(to: serverId)
         }
         self.endpointSelection = endpointSelection
@@ -2795,48 +2795,41 @@ final class ServerConnection {
     /// Warm the timeline cache so ChatViewController's normal connect path is not blank
     /// while the focused session WebSocket is opening.
     func prefetchSessionTimelineIfPossible(sessionId: String) async {
+        // A trace is cached under its server so Remove Server can delete it.
+        guard let serverId = currentServerId,
+              let apiClient,
+              let routeScope = sessionStore.routeScope(for: sessionId) else { return }
         do {
             let session: Session
             let trace: [TraceEvent]
             var page: TracePageMetadata?
-            if let fetchHook = _getSessionTraceForTesting {
-                (session, trace) = try await fetchHook(sessionId)
-            } else if let apiClient,
-                      let routeScope = sessionStore.routeScope(for: sessionId) {
-                do {
-                    let response = try await apiClient.getSessionTracePage(
-                        scope: routeScope,
-                        sessionId: sessionId,
-                        previewBytes: 4_096
-                    )
-                    session = response.session
-                    trace = response.trace
-                    page = response.page
-                } catch {
-                    guard IOSChatSessionRuntimeAdapter.shouldFallbackToFullTrace(error) else { throw error }
-                    let fallback = try await apiClient.getSession(
-                        scope: routeScope,
-                        sessionId: sessionId,
-                        traceView: .full
-                    )
-                    session = fallback.session
-                    trace = fallback.trace
-                    page = nil
-                }
-            } else {
-                return
+            do {
+                let response = try await apiClient.getSessionTracePage(
+                    scope: routeScope,
+                    sessionId: sessionId,
+                    previewBytes: 4_096
+                )
+                session = response.session
+                trace = response.trace
+                page = response.page
+            } catch {
+                guard IOSChatSessionRuntimeAdapter.shouldFallbackToFullTrace(error) else { throw error }
+                let fallback = try await apiClient.getSession(
+                    scope: routeScope,
+                    sessionId: sessionId,
+                    traceView: .full
+                )
+                session = fallback.session
+                trace = fallback.trace
+                page = nil
             }
             sessionStore.upsert(session)
-            if let serverId = currentServerId {
-                await TimelineCache.shared.saveTrace(
-                    sessionId,
-                    serverId: serverId,
-                    events: trace,
-                    page: page
-                )
-            } else {
-                await TimelineCache.shared.saveTrace(sessionId, events: trace, page: page)
-            }
+            await TimelineCache.shared.saveTrace(
+                sessionId,
+                serverId: serverId,
+                events: trace,
+                page: page
+            )
         } catch {
             recordRefreshEvent(
                 "session_trace.prefetch_failed",

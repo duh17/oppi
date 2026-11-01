@@ -163,10 +163,17 @@ extension ExtensionSurfaceStore {
     }
 }
 
+/// The server a test caches chat history under: traces are cached per server,
+/// so a connection (or session store) that reads or writes one needs a server id.
+let testTraceCacheServerId = "sha256:test-trace-cache"
+
 @MainActor
-func makeTestConnection(sessionId: String = "s1") -> (conn: ServerConnection, pipe: TestEventPipeline) {
+func makeTestConnection(
+    sessionId: String = "s1",
+    fingerprint: String? = nil
+) -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()
-    connection.configure(credentials: makeTestCredentials())
+    connection.configure(credentials: makeTestCredentials(fingerprint: fingerprint))
     connection._setActiveSessionIdForTesting(sessionId)
     let pipeline = TestEventPipeline(sessionId: sessionId, connection: connection)
     return (connection, pipeline)

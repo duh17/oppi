@@ -203,6 +203,50 @@ private func mockJSONResponse(
     return (data, response)
 }
 
+/// The answer to `GET …/trace-page`: `trace` as the only page of `session`'s history.
+func mockTracePageResponse(
+    session: Session,
+    trace: [TraceEvent],
+    for request: URLRequest
+) throws -> (Data, HTTPURLResponse) {
+    struct Payload: Encodable {
+        let session: Session
+        let trace: [TraceEvent]
+        let page: TracePageMetadata
+        let metrics: TracePageMetrics
+    }
+    return try mockJSONResponse(
+        encoding: Payload(
+            session: session,
+            trace: trace,
+            page: TracePageMetadata(
+                hasOlder: false,
+                olderCursor: nil,
+                traceVersion: "v1",
+                previewBytes: 4_096,
+                staleCursor: false
+            ),
+            metrics: TracePageMetrics(
+                rawEntryCount: trace.count,
+                traceEventCount: trace.count,
+                selectedRawEntryCount: trace.count,
+                jsonlBytes: 1,
+                scannedBytes: 1,
+                readMs: 0,
+                parseMs: 0,
+                selectMs: 0,
+                formatMs: 0,
+                previewMs: 0,
+                jsonBytes: nil,
+                gzipBytes: nil,
+                stringifyMs: nil,
+                gzipMs: nil
+            )
+        ),
+        for: request
+    )
+}
+
 /// `body` with `status` and `contentType`, the answer to one request: for a route that
 /// serves bytes rather than JSON.
 func mockBinaryResponse(

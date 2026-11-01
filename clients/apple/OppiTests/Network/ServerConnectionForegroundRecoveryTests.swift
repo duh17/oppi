@@ -281,7 +281,8 @@ struct ServerConnectionForegroundRecoveryTests {
     private func makeForegroundRecoveryConnection() -> ServerConnection {
         let conn = ServerConnection()
         conn.configure(credentials: ServerCredentials(
-            host: "test.local", port: 7749, token: "sk_test", name: "Test"
+            host: "test.local", port: 7749, token: "sk_test", name: "Test",
+            serverFingerprint: "sha256:foreground-recovery"
         ))
         conn.setAPIClientForTesting(makeForegroundRecoveryFailingAPIClient())
         return conn

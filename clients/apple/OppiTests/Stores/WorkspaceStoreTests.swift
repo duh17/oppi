@@ -7,6 +7,89 @@ import Testing
 @Suite("WorkspaceStore Offline", .serialized)
 @MainActor
 struct WorkspaceStoreOfflineTests {
+    private let serverId = "sha256:workspace-store"
+
+    /// The catalog is cached per server, so a store no server has bound (not yet
+    /// paired to its connection, or its server was removed) neither fetches nor
+    /// touches the cache. A late app-event refresh must not create root-level files.
+    @Test func loadWithNoActiveServerFetchesNothingAndWritesNoCache() async throws {
+        defer { WorkspaceStoreMockURLProtocol.handler = nil }
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "workspace-store-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "cache-root")
+        defer { try? fileManager.removeItem(at: base) }
+        let cache = TimelineCache(rootURL: root)
+        let before = try Set(fileManager.subpathsOfDirectory(atPath: root.path))
+
+        var requests = 0
+        WorkspaceStoreMockURLProtocol.handler = { _ in
+            requests += 1
+            throw URLError(.notConnectedToInternet)
+        }
+        let store = WorkspaceStore()
+        store._cacheForTesting = cache
+        let outcome = await store.load(api: makeAPIClient())
+
+        // A detached cache write is the only thing that could still land.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(outcome == .superseded)
+        #expect(requests == 0)
+        #expect(try Set(fileManager.subpathsOfDirectory(atPath: root.path)) == before)
+    }
+
+    /// Remove Server leaves the store with no active server. A refresh still in flight
+    /// for the removed server must not fall back to the cache root.
+    @Test func loadAfterRemovingTheActiveServerStaysOffTheCacheRoot() async throws {
+        defer { WorkspaceStoreMockURLProtocol.handler = nil }
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "workspace-store-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "cache-root")
+        defer { try? fileManager.removeItem(at: base) }
+        let cache = TimelineCache(rootURL: root)
+        WorkspaceStoreMockURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        let store = WorkspaceStore()
+        store._cacheForTesting = cache
+        store.switchServer(to: serverId)
+        store.removeServer(serverId)
+        let before = try Set(fileManager.subpathsOfDirectory(atPath: root.path))
+
+        let outcome = await store.load(api: makeAPIClient())
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(outcome == .superseded)
+        #expect(try Set(fileManager.subpathsOfDirectory(atPath: root.path)) == before)
+    }
+
+    /// A successful load lands only in that server's directory.
+    @Test func loadCachesCatalogUnderItsServerOnly() async throws {
+        defer { WorkspaceStoreMockURLProtocol.handler = nil }
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "workspace-store-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "cache-root")
+        defer { try? fileManager.removeItem(at: base) }
+        let cache = TimelineCache(rootURL: root)
+        WorkspaceStoreMockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if request.url?.path == "/workspaces" {
+                return (Data(#"{"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}"#.utf8), response)
+            }
+            return (Data(#"{"skills":[]}"#.utf8), response)
+        }
+        let store = WorkspaceStore()
+        store.switchServer(to: serverId)
+        store._cacheForTesting = cache
+        await store.load(api: makeAPIClient())
+
+        var cached: [Workspace]?
+        for _ in 0..<200 where cached == nil {
+            cached = await cache.loadWorkspaces(serverId: serverId)
+            if cached == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        #expect(cached?.map(\.id) == ["w1"])
+        #expect(!fileManager.fileExists(atPath: root.appending(path: "workspaces.json").path))
+        #expect(!fileManager.fileExists(atPath: root.appending(path: "skills.json").path))
+    }
+
     @Test func loadUsesCachedDataWhenOffline() async throws {
         defer { WorkspaceStoreMockURLProtocol.handler = nil }
 
@@ -18,14 +101,15 @@ struct WorkspaceStoreOfflineTests {
         let cache = TimelineCache(rootURL: root)
         let cachedWorkspaces = [makeTestWorkspace(id: "w-cached", name: "Cached Workspace")]
         let cachedSkills = [makeSkill(name: "cached-skill")]
-        await cache.saveWorkspaces(cachedWorkspaces)
-        await cache.saveSkills(cachedSkills)
+        await cache.saveWorkspaces(cachedWorkspaces, serverId: serverId)
+        await cache.saveSkills(cachedSkills, serverId: serverId)
 
         WorkspaceStoreMockURLProtocol.handler = { _ in
             throw URLError(.notConnectedToInternet)
         }
 
         let store = WorkspaceStore()
+        store.switchServer(to: serverId)
         store._cacheForTesting = cache
 
         let api = makeAPIClient()
@@ -44,6 +128,7 @@ struct WorkspaceStoreOfflineTests {
         }
 
         let store = WorkspaceStore()
+        store.switchServer(to: serverId)
         let existingWorkspaces = [makeTestWorkspace(id: "w-existing", name: "Existing Workspace")]
         let existingSkills = [makeSkill(name: "existing-skill")]
 
@@ -70,8 +155,8 @@ struct WorkspaceStoreOfflineTests {
         let cache = TimelineCache(rootURL: root)
         let cachedWorkspaces = [makeTestWorkspace(id: "w-cached", name: "Cached Workspace")]
         let cachedSkills = [makeSkill(name: "cached-skill")]
-        await cache.saveWorkspaces(cachedWorkspaces)
-        await cache.saveSkills(cachedSkills)
+        await cache.saveWorkspaces(cachedWorkspaces, serverId: serverId)
+        await cache.saveSkills(cachedSkills, serverId: serverId)
 
         WorkspaceStoreMockURLProtocol.handler = { request in
             let url = request.url!.absoluteString
@@ -91,6 +176,7 @@ struct WorkspaceStoreOfflineTests {
         }
 
         let store = WorkspaceStore()
+        store.switchServer(to: serverId)
         store._cacheForTesting = cache
 
         let api = makeAPIClient()
@@ -131,6 +217,7 @@ struct WorkspaceStoreOfflineTests {
         }
 
         let store = WorkspaceStore()
+        store.switchServer(to: serverId)
         let api = makeAPIClient()
         await store.load(api: api)
 

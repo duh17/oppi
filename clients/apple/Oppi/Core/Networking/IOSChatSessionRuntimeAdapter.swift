@@ -24,12 +24,8 @@ final class IOSChatSessionRuntimeAdapter:
     var canFetchCatchUp: Bool { connection?.apiClient != nil }
 
     func loadCachedTrace(sessionId: String) async -> ChatSessionCachedTrace? {
-        let cached: CachedTrace?
-        if let serverId = connection?.currentServerId ?? sessionStore?.activeServerId {
-            cached = await TimelineCache.shared.loadTrace(sessionId, serverId: serverId)
-        } else {
-            cached = await TimelineCache.shared.loadTrace(sessionId)
-        }
+        guard let serverId = connection?.currentServerId ?? sessionStore?.activeServerId else { return nil }
+        let cached = await TimelineCache.shared.loadTrace(sessionId, serverId: serverId)
         return cached.map {
             ChatSessionCachedTrace(
                 eventCount: $0.eventCount,
@@ -45,7 +41,7 @@ final class IOSChatSessionRuntimeAdapter:
         events: [TraceEvent],
         page: TracePageMetadata?
     ) async {
-        // Never write an unscoped trace: it could not be deleted with its server.
+        // Traces are cached per server so Remove Server can delete them.
         guard let serverId = connection?.currentServerId ?? sessionStore?.activeServerId else { return }
         await TimelineCache.shared.saveTrace(
             sessionId,

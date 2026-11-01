@@ -41,7 +41,7 @@ struct ChatSessionReentryTests {
         let streams = ScriptedStreamFactory()
 
         // Seed cache so the manager has cached history
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-1", text: "old cached content"),
         ])
 
@@ -80,7 +80,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
@@ -104,7 +104,7 @@ struct ChatSessionReentryTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     // MARK: - Edge 2: Live events during trace fetch are not lost
@@ -118,7 +118,7 @@ struct ChatSessionReentryTests {
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-1", text: "old content"),
         ])
 
@@ -154,7 +154,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
@@ -195,7 +195,7 @@ struct ChatSessionReentryTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     // MARK: - Edge 3: Server restart (seq regression to 0)
@@ -331,7 +331,7 @@ struct ChatSessionReentryTests {
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-1", text: "cached"),
         ])
 
@@ -355,7 +355,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))
 
@@ -388,7 +388,7 @@ struct ChatSessionReentryTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     // MARK: - Edge 6: No cache, no prior seq — fresh install re-entry
@@ -528,7 +528,7 @@ struct ChatSessionReentryTests {
         let streams = ScriptedStreamFactory()
 
         // Cache has content
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-1", text: "cached content survives"),
         ])
 
@@ -548,7 +548,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
@@ -578,7 +578,7 @@ struct ChatSessionReentryTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     // MARK: - Edge 9: Stopped session re-entry loads trace without WSS
@@ -683,7 +683,7 @@ struct ChatSessionReentryTests {
         let streams = ScriptedStreamFactory()
 
         // Stale cache: only has old content
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-old", text: "stale cached content"),
         ])
 
@@ -712,7 +712,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
@@ -744,7 +744,7 @@ struct ChatSessionReentryTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func sameEpochFirstConnectWithCacheCatchesUpFromLastSeen() async {
@@ -755,7 +755,7 @@ struct ChatSessionReentryTests {
 
         UserDefaults.standard.set(10, forKey: "chat.lastSeenSeq.\(sessionId)")
         UserDefaults.standard.set("epoch-a", forKey: "chat.runtimeEpoch.\(sessionId)")
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-1", text: "cached"),
         ])
 
@@ -786,7 +786,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
 
@@ -803,7 +803,7 @@ struct ChatSessionReentryTests {
         await connectTask.value
         UserDefaults.standard.removeObject(forKey: "chat.lastSeenSeq.\(sessionId)")
         UserDefaults.standard.removeObject(forKey: "chat.runtimeEpoch.\(sessionId)")
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func firstVisitWithServerEpochCatchesUpFromZero() async {

@@ -28,8 +28,9 @@ struct TimelineCacheMetrics: Sendable {
 
 /// Local disk cache for server responses.
 ///
-/// Stores session traces, server-scoped session lists, workspaces, skills, and
-/// skill details under `Library/Caches/`. Session traces are plaintext JSON
+/// Stores session traces, session lists, workspaces, skills, and skill details
+/// under `Library/Caches/`, always inside one server's directory so removing a
+/// server deletes everything cached for it. Session traces are plaintext JSON
 /// copies of server history, so this cache is sandbox-private but intentionally
 /// disposable.
 ///
@@ -100,6 +101,7 @@ actor TimelineCache {
             schemaMarkerURL: schemaMarkerURL,
             schemaMarker: Self.currentSchemaMarker
         )
+        Self.removeUnscopedFiles(fileManager: fileManager, root: resolvedRoot, tracesDir: resolvedTracesDir)
         Self.pruneIfNeeded(
             fileManager: fileManager,
             root: resolvedRoot,
@@ -113,27 +115,6 @@ actor TimelineCache {
     }
 
     // MARK: - Trace (per session)
-
-    /// Legacy unscoped trace cache.
-    func loadTrace(_ sessionId: String) -> CachedTrace? {
-        let startedAt = Date()
-        var hit = false
-        defer { recordLoad(startedAt: startedAt, hit: hit) }
-
-        let url = legacyTraceURL(sessionId)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        do {
-            let cached = try decoder.decode(CachedTrace.self, from: data)
-            hit = true
-            logger.debug("Cache hit: legacy trace for \(sessionId)")
-            return cached
-        } catch {
-            decodeFailureCount += 1
-            logger.warning("Cache decode failed for legacy trace \(sessionId): \(error.localizedDescription)")
-            try? fileManager.removeItem(at: url)
-            return nil
-        }
-    }
 
     func loadTrace(_ sessionId: String, serverId: String) -> CachedTrace? {
         guard !isRemoved(serverId) else { return nil }
@@ -157,11 +138,6 @@ actor TimelineCache {
         }
     }
 
-    /// Legacy unscoped trace cache.
-    func saveTrace(_ sessionId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
-        saveTrace(to: legacyTraceURL(sessionId), sessionId: sessionId, scopeDescription: "legacy", events: events, page: page)
-    }
-
     func saveTrace(_ sessionId: String, serverId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
         guard !isRemoved(serverId) else { return }
         ensureTraceServerDir(serverId)
@@ -174,23 +150,12 @@ actor TimelineCache {
         )
     }
 
-    /// Legacy unscoped trace cache.
-    func removeTrace(_ sessionId: String) {
-        try? fileManager.removeItem(at: legacyTraceURL(sessionId))
-        logger.debug("Cache removed: legacy trace for \(sessionId)")
-    }
-
     func removeTrace(_ sessionId: String, serverId: String) {
         try? fileManager.removeItem(at: traceURL(sessionId, serverId: serverId))
         logger.debug("Cache removed: trace for \(sessionId) on \(serverId, privacy: .public)")
     }
 
     // MARK: - Session List
-
-    /// Legacy single-server session-list cache.
-    func loadSessionList() -> [Session]? {
-        load([Session].self, from: "session-list.json")
-    }
 
     /// Load the recent session projection for a specific server.
     func loadSessionList(serverId: String) -> [Session]? {
@@ -208,14 +173,6 @@ actor TimelineCache {
 
     // MARK: - Workspaces
 
-    func loadWorkspaces() -> [Workspace]? {
-        load([Workspace].self, from: "workspaces.json")
-    }
-
-    func saveWorkspaces(_ workspaces: [Workspace]) {
-        save(workspaces, to: "workspaces.json")
-    }
-
     /// Load workspaces for a specific server (multi-server).
     func loadWorkspaces(serverId: String) -> [Workspace]? {
         guard !isRemoved(serverId) else { return nil }
@@ -231,14 +188,6 @@ actor TimelineCache {
     }
 
     // MARK: - Skills
-
-    func loadSkills() -> [SkillInfo]? {
-        load([SkillInfo].self, from: "skills.json")
-    }
-
-    func saveSkills(_ skills: [SkillInfo]) {
-        save(skills, to: "skills.json")
-    }
 
     /// Load skills for a specific server (multi-server).
     func loadSkills(serverId: String) -> [SkillInfo]? {
@@ -271,18 +220,6 @@ actor TimelineCache {
     }
 
     // MARK: - Skill Detail
-
-    /// Legacy unscoped skill-detail cache.
-    func loadSkillDetail(_ name: String) -> SkillDetail? {
-        load(SkillDetail.self, from: "skills/\(name).json")
-    }
-
-    /// Legacy unscoped skill-detail cache.
-    func saveSkillDetail(_ name: String, detail: SkillDetail) {
-        let dir = root.appending(path: "skills", directoryHint: .isDirectory)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        save(detail, to: "skills/\(name).json")
-    }
 
     func loadSkillDetail(_ name: String, serverId: String) -> SkillDetail? {
         guard !isRemoved(serverId) else { return nil }
@@ -328,8 +265,7 @@ actor TimelineCache {
     }
 
     /// Delete one server's traces, session list, workspaces, skills, skill
-    /// details, and resource catalog. Other servers and legacy unscoped data
-    /// stay. Call `markRemoved(_:)` first so a save already in flight cannot
+    /// details, and resource catalog. Other servers stay. Call `markRemoved(_:)` first so a save already in flight cannot
     /// recreate what this deletes.
     func removeServer(_ serverId: String) {
         try? fileManager.removeItem(at: traceServerDir(serverId))
@@ -380,15 +316,37 @@ actor TimelineCache {
         return appRoot.appending(path: "cache", directoryHint: .isDirectory)
     }
 
+    /// Server-less files an earlier build wrote straight under the cache root.
+    /// No server directory holds them, so Remove Server could never delete them.
+    /// Runs on every launch: it names exactly these files, lists only the
+    /// top level of `traces/`, and does nothing once they are gone.
+    private static func removeUnscopedFiles(fileManager: FileManager, root: URL, tracesDir: URL) {
+        var removed = 0
+        for name in ["workspaces.json", "skills.json", "session-list.json", "skills"] {
+            let url = root.appending(path: name)
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            if (try? fileManager.removeItem(at: url)) != nil { removed += 1 }
+        }
+        // Scoped traces live in per-server subdirectories; a regular file
+        // directly in `traces/` is an unscoped trace.
+        let topLevel = (try? fileManager.contentsOfDirectory(
+            at: tracesDir,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for url in topLevel where (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+            if (try? fileManager.removeItem(at: url)) != nil { removed += 1 }
+        }
+        if removed > 0 {
+            logger.notice("Removed \(removed, privacy: .public) unscoped cache entries")
+        }
+    }
+
     private static func removeApplicationSupportCacheRoot(fileManager: FileManager) {
         let oldRoot = applicationSupportCacheRootURL(fileManager: fileManager)
         guard fileManager.fileExists(atPath: oldRoot.path) else { return }
         try? fileManager.removeItem(at: oldRoot)
         logger.notice("Removed previous Application Support timeline cache")
-    }
-
-    private func legacyTraceURL(_ sessionId: String) -> URL {
-        tracesDir.appending(path: "\(sessionId).json")
     }
 
     private func traceURL(_ sessionId: String, serverId: String) -> URL {

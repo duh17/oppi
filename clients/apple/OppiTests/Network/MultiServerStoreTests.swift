@@ -268,31 +268,6 @@ struct MultiServerStoreTests {
         #expect(loadedWs2?.first?.name == "Server B")
         #expect(loadedSk1?.first?.name == "fetch")
         #expect(loadedSk2?.first?.name == "search")
-
-        // Non-namespaced cache is independent
-        let globalWs = await cache.loadWorkspaces()
-        #expect(globalWs == nil)
-    }
-
-    @Test func cacheNamespacingDoesNotCollideWithGlobal() async throws {
-        let fileManager = FileManager.default
-        let base = fileManager.temporaryDirectory.appending(path: "cache-ns-test-\(UUID().uuidString)")
-        let root = base.appending(path: "cache-root")
-        defer { try? fileManager.removeItem(at: base) }
-
-        let cache = TimelineCache(rootURL: root)
-
-        let globalWs = [makeTestWorkspace(id: "w-global", name: "Global")]
-        let serverWs = [makeTestWorkspace(id: "w-server", name: "Namespaced")]
-
-        await cache.saveWorkspaces(globalWs)
-        await cache.saveWorkspaces(serverWs, serverId: "sha256:xxx")
-
-        let loadedGlobal = await cache.loadWorkspaces()
-        let loadedServer = await cache.loadWorkspaces(serverId: "sha256:xxx")
-
-        #expect(loadedGlobal?.first?.name == "Global")
-        #expect(loadedServer?.first?.name == "Namespaced")
     }
 
     // MARK: - Helpers

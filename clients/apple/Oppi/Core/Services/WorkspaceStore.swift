@@ -376,7 +376,7 @@ final class WorkspaceStore {
         let cache = _cacheForTesting ?? TimelineCache.shared
         guard serverLoaded[serverId] != true else { return false }
 
-        if !serverId.isEmpty && !serverOrder.contains(serverId) {
+        if !serverOrder.contains(serverId) {
             serverOrder.append(serverId)
         }
         ensureFreshness(for: serverId)
@@ -402,12 +402,15 @@ final class WorkspaceStore {
     ///
     /// Uses cache immediately when first loading this server, then refreshes
     /// from network. Single- and multi-server paths share `loadServer`.
+    /// The catalog is cached per server only, so a store with no active server
+    /// (not yet bound, or its server was removed) loads nothing.
     @discardableResult
     func load(
         api: APIClient,
         isCurrent: @escaping @MainActor () -> Bool = { true }
     ) async -> WorkspaceCatalogLoadOutcome {
-        await loadServer(serverId: activeKey, api: api, isCurrent: isCurrent)
+        guard let serverId = activeServerId else { return .superseded }
+        return await loadServer(serverId: serverId, api: api, isCurrent: isCurrent)
     }
 
     /// Load workspaces + skills for a specific server.
@@ -419,7 +422,7 @@ final class WorkspaceStore {
     ) async -> WorkspaceCatalogLoadOutcome {
         let cache = _cacheForTesting ?? TimelineCache.shared
 
-        if !serverId.isEmpty && !serverOrder.contains(serverId) {
+        if !serverOrder.contains(serverId) {
             serverOrder.append(serverId)
         }
         if serverLoaded[serverId] == nil {
@@ -498,21 +501,11 @@ final class WorkspaceStore {
             serverLoaded[serverId] = true
             markSyncSucceeded(forServer: serverId)
 
-            if serverId.isEmpty {
-                logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills")
-            } else {
-                logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills from server \(serverId.prefix(16), privacy: .public)")
-            }
+            logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills from server \(serverId.prefix(16), privacy: .public)")
 
-            let capturedServerId = serverId
             Task.detached {
-                if capturedServerId.isEmpty {
-                    await cache.saveWorkspaces(ws)
-                    await cache.saveSkills(sk)
-                } else {
-                    await cache.saveWorkspaces(ws, serverId: capturedServerId)
-                    await cache.saveSkills(sk, serverId: capturedServerId)
-                }
+                await cache.saveWorkspaces(ws, serverId: serverId)
+                await cache.saveSkills(sk, serverId: serverId)
             }
             return .success(workspaceCount: ws.count, skillCount: sk.count)
         } catch {
@@ -591,12 +584,6 @@ final class WorkspaceStore {
         serverId: String,
         cache: TimelineCache
     ) async -> CachedCatalog {
-        if serverId.isEmpty {
-            async let ws = cache.loadWorkspaces()
-            async let sk = cache.loadSkills()
-            return await CachedCatalog(workspaces: ws, skills: sk)
-        }
-
         async let ws = cache.loadWorkspaces(serverId: serverId)
         async let sk = cache.loadSkills(serverId: serverId)
         return await CachedCatalog(workspaces: ws, skills: sk)

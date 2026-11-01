@@ -817,10 +817,10 @@ struct ChatSessionManagerTests {
             return nil
         }
 
-        await TimelineCache.shared.saveTrace(sessionId, events: [makeTraceEvent(id: "cached-1")])
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [makeTraceEvent(id: "cached-1")])
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
 
@@ -842,7 +842,7 @@ struct ChatSessionManagerTests {
         await connectTask.value
         #expect(manager.entryState == .disconnected(reason: .streamEnded))
 
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func unchangedStoppedFreshTraceInterruptsOldOpenTool() async {
@@ -866,10 +866,10 @@ struct ChatSessionManagerTests {
             (makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped), openToolTrace)
         }
 
-        await TimelineCache.shared.saveTrace(sessionId, events: openToolTrace)
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: openToolTrace)
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -896,7 +896,7 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     /// With per-session reducers, each connect() resets the reducer and
@@ -910,13 +910,14 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         // Cache with 2 events (user + assistant).
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "u1", type: .user, text: "first message"),
             makeTraceEvent(id: "a1", type: .assistant, text: "first response"),
         ])
 
         let connection = ServerConnection()
         let sessionStore = SessionStore()
+        sessionStore.switchServer(to: testTraceCacheServerId)
         sessionStore.activeSessionId = sessionId
 
         let connectTask = Task { @MainActor in
@@ -931,7 +932,7 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func connectWithoutCacheTransitionsToAwaitingConnectedWithoutCachedHistory() async {
@@ -1778,7 +1779,7 @@ struct ChatSessionManagerTests {
         // Seed cache so replay buffering activates — the buffer captures live
         // events while the trace fetch is in flight, then replays them on top
         // of the freshly loaded trace.
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(
                 id: "cached-old",
                 text: "cached content",
@@ -1798,7 +1799,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -1846,7 +1847,7 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func busyHistoryReloadWithoutCachePreservesLiveRows() async {
@@ -1867,7 +1868,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -1910,7 +1911,7 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }
 
     @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
@@ -2613,11 +2614,11 @@ struct ChatSessionManagerTests {
             )
         }
 
-        await TimelineCache.shared.saveTrace(sessionId, events: [
+        await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [
             makeTraceEvent(id: "cached-assistant", text: cachedText),
         ])
         defer {
-            Task { await TimelineCache.shared.removeTrace(sessionId) }
+            Task { await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId) }
         }
 
         let connection = ServerConnection()
@@ -2633,6 +2634,7 @@ struct ChatSessionManagerTests {
         }
         defer { TestURLProtocol.handler = nil }
         let sessionStore = SessionStore()
+        sessionStore.switchServer(to: testTraceCacheServerId)
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         let connectTask = Task { @MainActor in

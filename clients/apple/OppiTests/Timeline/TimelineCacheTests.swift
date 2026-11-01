@@ -16,7 +16,7 @@ struct TimelineCacheTests {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
         let root = base.appending(path: "root")
-        let traces = root.appending(path: "traces", directoryHint: .isDirectory)
+        let traces = root.appending(path: "traces/\(traceServer)", directoryHint: .isDirectory)
         let staleTrace = traces.appending(path: "session-old.json")
 
         defer { try? fileManager.removeItem(at: base) }
@@ -44,7 +44,7 @@ struct TimelineCacheTests {
         }
 
         let first = TimelineCache(rootURL: root)
-        await first.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
+        await first.saveTrace("session-1", serverId: traceServer, events: [makeTraceEvent(id: "evt-1")])
         let markerBytes = try Data(contentsOf: marker)
         try fileManager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: marker.path)
         #expect((try? Data(contentsOf: marker)) == nil)
@@ -58,7 +58,7 @@ struct TimelineCacheTests {
         #expect(try Data(contentsOf: marker) == markerBytes)
 
         let unlocked = TimelineCache(rootURL: root)
-        let loaded = await unlocked.loadTrace("session-1")
+        let loaded = await unlocked.loadTrace("session-1", serverId: traceServer)
         #expect(loaded?.events.map(\.id) == ["evt-1"])
     }
 
@@ -66,7 +66,7 @@ struct TimelineCacheTests {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
         let root = base.appending(path: "root")
-        let traces = root.appending(path: "traces", directoryHint: .isDirectory)
+        let traces = root.appending(path: "traces/\(traceServer)", directoryHint: .isDirectory)
         let staleTrace = traces.appending(path: "old-short-id.json")
 
         defer { try? fileManager.removeItem(at: base) }
@@ -88,10 +88,10 @@ struct TimelineCacheTests {
         defer { try? fileManager.removeItem(at: base) }
 
         let first = TimelineCache(rootURL: root)
-        await first.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
+        await first.saveTrace("session-1", serverId: traceServer, events: [makeTraceEvent(id: "evt-1")])
 
         let second = TimelineCache(rootURL: root)
-        let loaded = await second.loadTrace("session-1")
+        let loaded = await second.loadTrace("session-1", serverId: traceServer)
 
         #expect(loaded?.events.map(\.id) == ["evt-1"])
     }
@@ -109,8 +109,8 @@ struct TimelineCacheTests {
         #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
 
         let relaunched = TimelineCache(rootURL: root)
-        await relaunched.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
-        let loaded = await relaunched.loadTrace("session-1")
+        await relaunched.saveTrace("session-1", serverId: traceServer, events: [makeTraceEvent(id: "evt-1")])
+        let loaded = await relaunched.loadTrace("session-1", serverId: traceServer)
         #expect(loaded?.events.map(\.id) == ["evt-1"])
     }
 
@@ -118,7 +118,7 @@ struct TimelineCacheTests {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
         let root = base.appending(path: "root")
-        let traces = root.appending(path: "traces", directoryHint: .isDirectory)
+        let traces = root.appending(path: "traces/\(traceServer)", directoryHint: .isDirectory)
         let expiredTrace = traces.appending(path: "session-old.json")
 
         defer { try? fileManager.removeItem(at: base) }
@@ -140,6 +140,59 @@ struct TimelineCacheTests {
         #expect(!fileManager.fileExists(atPath: expiredTrace.path))
     }
 
+    /// Earlier builds wrote server-less files straight under the cache root, where
+    /// Remove Server could not reach them. Launch deletes exactly those files.
+    @Test func launchDeletesUnscopedFilesAndKeepsEverythingElse() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        let catalog = ServerResourceCatalogSnapshot(
+            skills: [], extensions: [], builtInTools: [],
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            skillsLoaded: true, extensionsLoaded: true,
+            skillsSavedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            extensionsSavedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        await cache.saveTrace("session-1", serverId: traceServer, events: [makeTraceEvent(id: "evt-1")])
+        await cache.saveSessionList([makeTestSession(id: "s1", workspaceId: "w")], serverId: traceServer)
+        await cache.saveWorkspaces([makeTestWorkspace(id: "w1", name: "Scoped")], serverId: traceServer)
+        await cache.saveSkills([SkillInfo(name: "scoped", description: "d", path: "/p", builtIn: true)], serverId: traceServer)
+        await cache.saveServerResourceCatalog(catalog, serverId: traceServer)
+
+        let unscoped = [
+            root.appending(path: "workspaces.json"),
+            root.appending(path: "skills.json"),
+            root.appending(path: "session-list.json"),
+            root.appending(path: "skills/fetch.json"),
+            root.appending(path: "traces/legacy-session.json"),
+        ]
+        let unrelated = root.appending(path: "unrelated-note.txt")
+        try fileManager.createDirectory(at: root.appending(path: "skills"), withIntermediateDirectories: true)
+        for url in unscoped + [unrelated] {
+            try Data("x".utf8).write(to: url)
+        }
+
+        let relaunched = TimelineCache(rootURL: root)
+        // A second launch finds nothing to delete and changes nothing.
+        let again = TimelineCache(rootURL: root)
+
+        for url in unscoped {
+            #expect(!fileManager.fileExists(atPath: url.path), "\(url.lastPathComponent) survived")
+        }
+        #expect(fileManager.fileExists(atPath: unrelated.path))
+        #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
+        for cache in [relaunched, again] {
+            #expect(await cache.loadTrace("session-1", serverId: traceServer)?.events.map(\.id) == ["evt-1"])
+            #expect(await cache.loadSessionList(serverId: traceServer)?.map(\.id) == ["s1"])
+            #expect(await cache.loadWorkspaces(serverId: traceServer)?.map(\.id) == ["w1"])
+            #expect(await cache.loadSkills(serverId: traceServer)?.map(\.name) == ["scoped"])
+            #expect(await cache.loadServerResourceCatalog(serverId: traceServer) == catalog)
+        }
+    }
+
     @Test func decodeFailureReturnsMissAndRemovesCorruptFile() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
@@ -148,12 +201,12 @@ struct TimelineCacheTests {
         defer { try? fileManager.removeItem(at: base) }
 
         let cache = TimelineCache(rootURL: root)
-        let corruptURL = root.appending(path: "session-list.json")
+        let corruptURL = root.appending(path: "servers/\(traceServer)/session-list.json")
 
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: corruptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not-json".utf8).write(to: corruptURL, options: .atomic)
 
-        let loaded = await cache.loadSessionList()
+        let loaded = await cache.loadSessionList(serverId: traceServer)
 
         #expect(loaded == nil)
         #expect(!fileManager.fileExists(atPath: corruptURL.path))
@@ -175,11 +228,9 @@ struct TimelineCacheTests {
 
         let loadedStudio = await cache.loadSessionList(serverId: "sha256:studio")
         let loadedMini = await cache.loadSessionList(serverId: "sha256:mini")
-        let loadedGlobal = await cache.loadSessionList()
 
         #expect(loadedStudio?.map(\.id) == ["studio-session"])
         #expect(loadedMini?.map(\.id) == ["mini-session"])
-        #expect(loadedGlobal == nil)
     }
 
     @Test func removeServerDeletesOnlyThatServersCache() async throws {
@@ -282,11 +333,9 @@ struct TimelineCacheTests {
 
         let studio = await cache.loadTrace("shared-session", serverId: "sha256:studio")
         let mini = await cache.loadTrace("shared-session", serverId: "sha256:mini")
-        let legacy = await cache.loadTrace("shared-session")
 
         #expect(studio?.events.map(\.id) == ["studio"])
         #expect(mini?.events.map(\.id) == ["mini"])
-        #expect(legacy == nil)
     }
 
     @Test func saveTraceSkipsIdenticalRewrite() async throws {
@@ -299,11 +348,11 @@ struct TimelineCacheTests {
         let cache = TimelineCache(rootURL: root)
         let events = [makeTraceEvent(id: "evt-1"), makeTraceEvent(id: "evt-2")]
 
-        await cache.saveTrace("session-1", events: events)
+        await cache.saveTrace("session-1", serverId: traceServer, events: events)
         let firstMetrics = await cache.metrics()
-        await cache.saveTrace("session-1", events: events)
+        await cache.saveTrace("session-1", serverId: traceServer, events: events)
         let secondMetrics = await cache.metrics()
-        let loaded = await cache.loadTrace("session-1")
+        let loaded = await cache.loadTrace("session-1", serverId: traceServer)
 
         #expect(firstMetrics.writes == 1)
         #expect(secondMetrics.writes == 1)
@@ -321,10 +370,10 @@ struct TimelineCacheTests {
         let firstEvents = [makeTraceEvent(id: "evt-1", text: "old"), makeTraceEvent(id: "evt-2", text: "old")]
         let changedEvents = [makeTraceEvent(id: "evt-1", text: "old"), makeTraceEvent(id: "evt-2", text: "new")]
 
-        await cache.saveTrace("session-1", events: firstEvents)
-        await cache.saveTrace("session-1", events: changedEvents)
+        await cache.saveTrace("session-1", serverId: traceServer, events: firstEvents)
+        await cache.saveTrace("session-1", serverId: traceServer, events: changedEvents)
         let metrics = await cache.metrics()
-        let loaded = await cache.loadTrace("session-1")
+        let loaded = await cache.loadTrace("session-1", serverId: traceServer)
 
         #expect(metrics.writes == 2)
         #expect(loaded?.events.map(\.text) == ["old", "new"])
@@ -346,8 +395,8 @@ struct TimelineCacheTests {
             staleCursor: false
         )
 
-        await cache.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")], page: page)
-        let loaded = await cache.loadTrace("session-1")
+        await cache.saveTrace("session-1", serverId: traceServer, events: [makeTraceEvent(id: "evt-1")], page: page)
+        let loaded = await cache.loadTrace("session-1", serverId: traceServer)
 
         #expect(loaded?.page == page)
         #expect(loaded?.isPartial == true)
@@ -364,14 +413,14 @@ struct TimelineCacheTests {
         let existingEvents = [makeTraceEvent(id: "evt-1", text: "small")]
         let largeText = String(repeating: "x", count: 9 * 1024 * 1024)
         let largeEvents = [makeTraceEvent(id: "evt-2", text: largeText)]
-        let traceURL = root.appending(path: "traces/session-1.json")
+        let traceURL = root.appending(path: "traces/\(traceServer)/session-1.json")
 
-        await cache.saveTrace("session-1", events: existingEvents)
+        await cache.saveTrace("session-1", serverId: traceServer, events: existingEvents)
         #expect(fileManager.fileExists(atPath: traceURL.path))
 
-        await cache.saveTrace("session-1", events: largeEvents)
+        await cache.saveTrace("session-1", serverId: traceServer, events: largeEvents)
         let metrics = await cache.metrics()
-        let loaded = await cache.loadTrace("session-1")
+        let loaded = await cache.loadTrace("session-1", serverId: traceServer)
 
         #expect(metrics.writes == 2)
         #expect(loaded?.events.map(\.id) == ["evt-2"])
@@ -389,13 +438,13 @@ struct TimelineCacheTests {
         let cache = TimelineCache(rootURL: root, maxDiskBytes: 5_500, maxTraceAge: nil)
         let payload = String(repeating: "x", count: 2_000)
 
-        await cache.saveTrace("a-old", events: [makeTraceEvent(id: "old", text: payload)])
-        await cache.saveTrace("b-mid", events: [makeTraceEvent(id: "mid", text: payload)])
-        await cache.saveTrace("c-new", events: [makeTraceEvent(id: "new", text: payload)])
+        await cache.saveTrace("a-old", serverId: traceServer, events: [makeTraceEvent(id: "old", text: payload)])
+        await cache.saveTrace("b-mid", serverId: traceServer, events: [makeTraceEvent(id: "mid", text: payload)])
+        await cache.saveTrace("c-new", serverId: traceServer, events: [makeTraceEvent(id: "new", text: payload)])
 
-        let old = await cache.loadTrace("a-old")
-        let mid = await cache.loadTrace("b-mid")
-        let new = await cache.loadTrace("c-new")
+        let old = await cache.loadTrace("a-old", serverId: traceServer)
+        let mid = await cache.loadTrace("b-mid", serverId: traceServer)
+        let new = await cache.loadTrace("c-new", serverId: traceServer)
         let bytes = await cache.diskSize()
 
         #expect(old == nil)
@@ -417,21 +466,23 @@ struct TimelineCacheTests {
             maxTraceAge: 60,
             now: { Date(timeIntervalSince1970: 120) }
         )
-        let oldTraceURL = root.appending(path: "traces/session-old.json")
+        let oldTraceURL = root.appending(path: "traces/\(traceServer)/session-old.json")
 
-        await cache.saveTrace("session-old", events: [makeTraceEvent(id: "old")])
+        await cache.saveTrace("session-old", serverId: traceServer, events: [makeTraceEvent(id: "old")])
         try fileManager.setAttributes(
             [.modificationDate: Date(timeIntervalSince1970: 0)],
             ofItemAtPath: oldTraceURL.path
         )
-        await cache.saveTrace("session-new", events: [makeTraceEvent(id: "new")])
+        await cache.saveTrace("session-new", serverId: traceServer, events: [makeTraceEvent(id: "new")])
 
-        let old = await cache.loadTrace("session-old")
-        let new = await cache.loadTrace("session-new")
+        let old = await cache.loadTrace("session-old", serverId: traceServer)
+        let new = await cache.loadTrace("session-new", serverId: traceServer)
 
         #expect(old == nil)
         #expect(new?.events.map(\.id) == ["new"])
     }
+
+    private let traceServer = "sha256:trace-server"
 
     private func schemaMarkerURL(_ root: URL) -> URL {
         root.appending(path: "timeline-cache-schema.json")

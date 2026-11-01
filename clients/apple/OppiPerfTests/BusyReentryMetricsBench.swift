@@ -336,6 +336,7 @@ final class BusyReentryBench {
     static func run(scenario: BusyReentryScenario) async -> BusyReentryMetrics {
         let sessionId = "bench-\(UUID().uuidString)"
         let workspaceId = "w-bench"
+        let serverId = "sha256:bench-trace-cache"
 
         // Virtual clock for deterministic timing
         var virtualClockMs: Int64 = 0
@@ -351,7 +352,7 @@ final class BusyReentryBench {
 
         // 2. Seed cache
         if !cacheTrace.isEmpty {
-            await TimelineCache.shared.saveTrace(sessionId, events: cacheTrace)
+            await TimelineCache.shared.saveTrace(sessionId, serverId: serverId, events: cacheTrace)
         }
 
         // 3. Set up manager with scripted stream
@@ -392,7 +393,7 @@ final class BusyReentryBench {
 
         // 4. Connect
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: serverId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
         let scrollController = ChatScrollController()
@@ -457,7 +458,7 @@ final class BusyReentryBench {
         // Cleanup
         streams.finish(index: 0)
         await connectTask.value
-        await TimelineCache.shared.removeTrace(sessionId)
+        await TimelineCache.shared.removeTrace(sessionId, serverId: serverId)
 
         return metrics
     }

@@ -1475,7 +1475,8 @@ struct ForegroundRecoveryTests {
 private func makeLegacyForegroundRecoveryConnection() -> ServerConnection {
     let conn = ServerConnection()
     conn.configure(credentials: ServerCredentials(
-        host: "test.local", port: 7749, token: "sk_test", name: "Test"
+        host: "test.local", port: 7749, token: "sk_test", name: "Test",
+        serverFingerprint: "sha256:legacy-foreground-recovery"
     ))
     conn.setAPIClientForTesting(makeLegacyForegroundRecoveryFailingAPIClient())
     return conn

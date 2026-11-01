@@ -797,6 +797,82 @@ struct ServerConnectionLifecycleTests {
 
         return conn
     }
+    /// The app-event stream starts inside `configureForUse`, and the catalog is cached
+    /// per server only. The stores must already name the server when the stream starts:
+    /// an event it delivers refreshes the catalog before the coordinator would bind them.
+    @Test func catalogStoresNameTheServerWhenTheAppEventStreamStarts() async {
+        let conn = ServerConnection()
+        var boundWhenStreamStarted: [String?] = []
+        var resourcesBoundWhenStreamStarted: [String?] = []
+        conn._startAppEventStreamForTesting = { _ in
+            boundWhenStreamStarted.append(conn.workspaceStore.activeServerId)
+            resourcesBoundWhenStreamStarted.append(conn.serverResourceStore.activeServerId)
+        }
+
+        #expect(await conn.configureForUse(
+            credentials: makeHTTPOnlyCredentials(),
+            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) }
+        ))
+
+        #expect(boundWhenStreamStarted == ["sha256:SERVERFINGERPRINTABCDEF"])
+        #expect(resourcesBoundWhenStreamStarted == ["sha256:SERVERFINGERPRINTABCDEF"])
+    }
+
+    /// The same race end to end: the stream's first event refreshes the catalog while
+    /// setup is still returning. The catalog lands under the server, and nothing is
+    /// loaded or cached server-less.
+    @Test func catalogRefreshFromTheFirstAppEventLandsUnderItsServerOnly() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let serverId = "sha256:SERVERFINGERPRINTABCDEF"
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "catalog-race-\(UUID().uuidString)")
+        let root = base.appending(path: "cache-root")
+        defer { try? fileManager.removeItem(at: base) }
+        let cache = TimelineCache(rootURL: root)
+
+        TestURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/workspaces":
+                return try mockJSONResponse(
+                    json: #"{"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}"#,
+                    for: request
+                )
+            case "/skills":
+                return try mockJSONResponse(json: #"{"skills":[]}"#, for: request)
+            default:
+                return try mockJSONResponse(status: 404, json: "{}", for: request)
+            }
+        }
+        let conn = ServerConnection()
+        conn.workspaceStore._cacheForTesting = cache
+        conn._startAppEventStreamForTesting = { _ in
+            Task { @MainActor in await conn.refreshWorkspaceCatalog(force: true) }
+        }
+
+        #expect(await conn.configureForUse(
+            credentials: makeHTTPOnlyCredentials(),
+            apiClientFactory: { environment, observer in
+                let configuration = URLSessionConfiguration.ephemeral
+                TestURLProtocol.install(in: configuration)
+                return APIClient(environment: environment, configuration: configuration, availabilityObserver: observer)
+            },
+            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) }
+        ))
+        #expect(await waitForTestCondition(timeoutMs: 2_000) {
+            await MainActor.run { conn.workspaceStore.workspacesByServer[serverId]?.map(\.id) == ["w1"] }
+        })
+        var cached: [Workspace]?
+        for _ in 0..<200 where cached == nil {
+            cached = await cache.loadWorkspaces(serverId: serverId)
+            if cached == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+
+        #expect(cached?.map(\.id) == ["w1"])
+        #expect(conn.workspaceStore.workspacesByServer[""] == nil)
+        #expect(!fileManager.fileExists(atPath: root.appending(path: "workspaces.json").path))
+        #expect(!fileManager.fileExists(atPath: root.appending(path: "skills.json").path))
+    }
+
     private func makeHTTPOnlyCredentials() -> ServerCredentials {
         ServerCredentials(
             host: "my-server.tail00000.ts.net",
