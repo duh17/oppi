@@ -95,17 +95,22 @@ final class AudioScriptReaderUITests: XCTestCase {
     }
 
     /// Script mode keeps the current paragraph about a third of the way down the transcript.
+    /// A transcript too short to scroll that far (a tall iPad pane) clamps at the top instead:
+    /// the row then sits above the anchor with line 0 flush at the pane's top edge. A row
+    /// above the anchor with line 0 scrolled out of view is still a failure.
     private func assertAnchored(_ row: XCUIElement, in transcript: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let firstLine = app.cells["audioLyrics.line.0"]
         var position: CGFloat = -1
         let settled = waitUntil {
             let pane = transcript.frame
             guard pane.height > 0 else { return false }
             position = (row.frame.midY - pane.minY) / pane.height
-            return abs(position - 0.35) < 0.06
+            if abs(position - 0.35) < 0.06 { return true }
+            return position < 0.35 && firstLine.exists && firstLine.frame.minY >= pane.minY - 1
         }
         XCTAssertTrue(
             settled,
-            "Current row center sits at \(position) of the transcript height, expected about 0.35",
+            "Current row center sits at \(position) of the transcript height, expected about 0.35 (or clamped with line 0 at the top)",
             file: file,
             line: line
         )
