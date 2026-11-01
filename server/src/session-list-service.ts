@@ -581,11 +581,22 @@ function compareStoppedSessionListRows(a: SessionListRow, b: SessionListRow): nu
 const OLDER_HISTORY_DAY_SECTION_SPAN_MS = 30 * 86_400_000;
 
 /**
+ * Where day sections give way to month sections: the local midnight that starts the day
+ * 30 days before `nowMs`. Snapping to a midnight keeps every day whole on one side of the
+ * line, so no session is in both a day section and a month section.
+ */
+function olderHistoryDayCutoffMs(nowMs: number): number {
+  const line = new Date(nowMs - OLDER_HISTORY_DAY_SECTION_SPAN_MS);
+  return new Date(line.getFullYear(), line.getMonth(), line.getDate()).getTime();
+}
+
+/**
  * The older-history section an activity time belongs to, in the server's local time zone:
- * its calendar day when at or after `dayCutoffMs`, else its calendar month. Each range runs
- * to the next local midnight, so a daylight-saving day spans 23 or 25 hours. This is the
- * only owner of section ids and ranges; Oppi and local Pi sessions both go through it, and
- * the client opens a section by asking for exactly `[startMs, endMs)`.
+ * its calendar day when at or after `dayCutoffMs`, else its calendar month, which ends at
+ * `dayCutoffMs` when the line falls inside it. Each day range runs to the next local
+ * midnight, so a daylight-saving day spans 23 or 25 hours. This is the only owner of
+ * section ids and ranges; Oppi and local Pi sessions both go through it, and the client
+ * opens a section by asking for exactly `[startMs, endMs)`.
  */
 function olderHistorySection(
   timestampMs: number,
@@ -608,7 +619,7 @@ function olderHistorySection(
     bucketId: `month:${y}-${mm}`,
     bucketKind: "month",
     startMs: new Date(y, month, 1).getTime(),
-    endMs: new Date(y, month + 1, 1).getTime(),
+    endMs: Math.min(new Date(y, month + 1, 1).getTime(), dayCutoffMs),
   };
 }
 
@@ -624,7 +635,7 @@ function buildOlderHistorySections(
   beforeMs: number,
   nowMs: number,
 ): SessionListArchiveBucket[] {
-  const dayCutoffMs = nowMs - OLDER_HISTORY_DAY_SECTION_SPAN_MS;
+  const dayCutoffMs = olderHistoryDayCutoffMs(nowMs);
   const sections = new Map<string, SessionListArchiveBucket>();
 
   function add(activityMs: number, source: "managed" | "importable"): void {

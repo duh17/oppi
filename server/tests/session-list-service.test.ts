@@ -619,4 +619,104 @@ describe("older-history day sections across daylight-saving changes", () => {
     expect(buckets.map((bucket) => bucket.itemCount)).toEqual(opened.map((ids) => ids.length));
     expect(buckets.find((bucket) => bucket.bucketId === "day:2026-11-03")?.endMs).toBe(beforeMs);
   });
+
+  // Day sections give way to month sections 30 days back. That line sits at local midnight
+  // and the month section it cuts ends there, so a session on the line's day is in exactly
+  // one section and every section's count is what opening it loads.
+  describe("the 30-day line between day and month sections", () => {
+    async function expectEachSessionInOneSection(
+      nowMs: number,
+      beforeMs: number,
+      sessionIds: string[],
+    ) {
+      const { buckets } = await service.listWorkspaceStoppedSessionBuckets({
+        workspace,
+        beforeMs,
+        nowMs,
+      });
+      const opened = await Promise.all(buckets.map((bucket) => openSection(bucket, nowMs)));
+      expect(opened.flat().sort()).toEqual([...sessionIds].sort());
+      expect(buckets.map((bucket) => bucket.itemCount)).toEqual(opened.map((ids) => ids.length));
+      return buckets;
+    }
+
+    it("puts a session on the line's day in its day section only, mid-month", async () => {
+      // Now minus 30 days is 2026-05-21 12:00 local.
+      const nowMs = Date.parse("2026-06-20T12:00:00-07:00");
+      localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+      stopOppiSession("may-10", Date.parse("2026-05-10T09:00:00-07:00"));
+      stopOppiSession("may-21-morning", Date.parse("2026-05-21T09:00:00-07:00"));
+      addLocalPiSession("/tmp/may-21-evening.jsonl", Date.parse("2026-05-21T18:00:00-07:00"));
+      stopOppiSession("may-22", Date.parse("2026-05-22T09:00:00-07:00"));
+
+      const buckets = await expectEachSessionInOneSection(
+        nowMs,
+        Date.parse("2026-06-19T00:00:00-07:00"),
+        ["may-10", "may-21-morning", "/tmp/may-21-evening.jsonl", "may-22"],
+      );
+
+      const line = Date.parse("2026-05-21T00:00:00-07:00");
+      const month = buckets.find((bucket) => bucket.bucketId === "month:2026-05");
+      expect(month).toMatchObject({
+        bucketKind: "month",
+        startMs: Date.parse("2026-05-01T00:00:00-07:00"),
+        endMs: line,
+        itemCount: 1,
+      });
+      expect(buckets.find((bucket) => bucket.bucketId === "day:2026-05-21")).toMatchObject({
+        bucketKind: "day",
+        startMs: line,
+        itemCount: 2,
+      });
+    });
+
+    it("keeps the line on the 23-hour spring-forward day", async () => {
+      // Now minus 30 days is 2026-03-08 12:00 local, on the day clocks spring forward.
+      const nowMs = Date.parse("2026-04-07T12:00:00-07:00");
+      localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+      stopOppiSession("mar-03", Date.parse("2026-03-03T09:00:00-08:00"));
+      stopOppiSession("mar-08-early", Date.parse("2026-03-08T01:30:00-08:00"));
+      stopOppiSession("mar-08-late", Date.parse("2026-03-08T23:30:00-07:00"));
+
+      const buckets = await expectEachSessionInOneSection(
+        nowMs,
+        Date.parse("2026-04-06T00:00:00-07:00"),
+        ["mar-03", "mar-08-early", "mar-08-late"],
+      );
+
+      const line = Date.parse("2026-03-08T00:00:00-08:00");
+      expect(buckets.find((bucket) => bucket.bucketId === "month:2026-03")?.endMs).toBe(line);
+      const day = buckets.find((bucket) => bucket.bucketId === "day:2026-03-08");
+      expect(day).toMatchObject({ startMs: line, itemCount: 2 });
+      expect(day!.endMs - day!.startMs).toBe(23 * 3_600_000);
+    });
+
+    it("leaves the earlier month whole when the line is at a month start", async () => {
+      // Now minus 30 days is 2026-11-01 12:00 local, on the 25-hour fall-back day.
+      const nowMs = Date.parse("2026-12-01T12:00:00-08:00");
+      localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+      stopOppiSession("oct-05", Date.parse("2026-10-05T09:00:00-07:00"));
+      stopOppiSession("oct-31-late", Date.parse("2026-10-31T23:30:00-07:00"));
+      stopOppiSession("nov-01-early", Date.parse("2026-11-01T00:30:00-07:00"));
+      stopOppiSession("nov-01-late", Date.parse("2026-11-01T23:30:00-08:00"));
+
+      const buckets = await expectEachSessionInOneSection(
+        nowMs,
+        Date.parse("2026-11-30T00:00:00-08:00"),
+        ["oct-05", "oct-31-late", "nov-01-early", "nov-01-late"],
+      );
+
+      const line = Date.parse("2026-11-01T00:00:00-07:00");
+      expect(buckets.find((bucket) => bucket.bucketId === "month:2026-10")).toMatchObject({
+        startMs: Date.parse("2026-10-01T00:00:00-07:00"),
+        endMs: line,
+        itemCount: 2,
+      });
+      expect(buckets.find((bucket) => bucket.bucketId === "day:2026-11-01")).toMatchObject({
+        startMs: line,
+        itemCount: 2,
+      });
+      expect(buckets.some((bucket) => bucket.bucketId === "month:2026-11")).toBe(false);
+    });
+  });
 });
