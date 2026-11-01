@@ -19,6 +19,10 @@ struct RexSnapshot: Equatable, Sendable {
 
         var status: SessionStatusKind? { SSHTerminalPaneRecord.headline(of: records) }
 
+        /// The newest time any of its records reports: when the pane's program last
+        /// changed something Rex passed on. Nil for a pane that reports nothing.
+        var lastActivity: Date? { records.compactMap(\.updatedAt).max() }
+
         /// The program that reported, else the terminal's title, else Rex's label.
         var displayName: String {
             let app = records.first { $0.id.isEmpty }?.app ?? records.first?.app
@@ -1046,6 +1050,33 @@ final class RexMonitor: SSHTerminalOverviewSource {
         // pane takes it for itself, so this one gives its claim back.
         _ = try? await control.call("session.disown_block", ["session_id": created.sessionID, "block_ids": [block]])
         return RexPaneTarget(sessionID: created.sessionID, blockID: block, label: "Shell")
+    }
+
+    /// A new pane in an existing session: a shell split after the pane Rex types
+    /// into (else the session's first), focused on the host no further than Rex
+    /// requires, and returned for the caller to open. The session's own view event
+    /// lists it, as for a session made here.
+    func createPane(in sessionID: String) async throws -> RexPaneTarget {
+        let control = try openControl()
+        guard let session = snapshot?.sessions.first(where: { $0.sessionID == sessionID }),
+              let anchor = session.openingPane else {
+            throw RexClientError.unreadable("the session to add a pane to")
+        }
+        let shell = ["flavor": RexSessionConnection.shellFlavor]
+        let answer = try await control.call("session.new_split", [
+            "session_id": sessionID, "anchor_id": anchor.blockID, "direction": "horizontal", "side": "after",
+            "focus": false, "layout": ["block": shell],
+        ])
+        struct Created: Decodable {
+            let blockIDs: [String?]?
+            enum CodingKeys: String, CodingKey { case blockIDs = "block_ids" }
+        }
+        guard let block = (try? JSONDecoder().decode(Created.self, from: answer))?.blockIDs?.compactMap({ $0 }).first else {
+            throw RexClientError.unreadable("the new pane")
+        }
+        // The caller takes the pane it made; Rex holds it for its creator until then.
+        _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": [block]])
+        return RexPaneTarget(sessionID: sessionID, blockID: block, label: "Shell")
     }
 
     /// Names a session. An empty label (or only white space) restores the name

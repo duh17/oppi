@@ -74,8 +74,11 @@ struct SSHTerminalRexListPane: Hashable, Sendable {
     let isFocused: Bool
     /// The window it is in, for a session that groups its panes by window.
     let windowName: String?
+    /// How long ago the pane's program last moved, from its newest record's own time;
+    /// nil for a pane that reports nothing, which draws no time at all.
+    let activity: String?
 
-    init(_ pane: RexSnapshot.Pane, session: RexSnapshot.Session, window: RexSnapshot.Window, windowName: String? = nil) {
+    init(_ pane: RexSnapshot.Pane, session: RexSnapshot.Session, window: RexSnapshot.Window, windowName: String? = nil, now: Date = Date()) {
         self.windowName = windowName
         sessionID = session.sessionID
         blockID = pane.blockID
@@ -86,10 +89,12 @@ struct SSHTerminalRexListPane: Hashable, Sendable {
         status = pane.status.map { .known($0) } ?? .none
         needsYou = pane.status?.isBlocked == true
         isFocused = session.isFocused(pane, in: window)
+        activity = pane.lastActivity.map { $0.relativeString(relativeTo: now) }
     }
 
     var accessibilityLabel: String {
-        [name, windowName.map { "in window \($0)" }, detail, needsYou ? "needs you" : nil].compactMap { $0 }.joined(separator: ", ")
+        [name, windowName.map { "in window \($0)" }, detail, activity, needsYou ? "needs you" : nil]
+            .compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -131,11 +136,14 @@ struct SSHTerminalRexListRow: Hashable, Sendable {
         case tapToConnect
         /// Makes a session with a shell and opens it; `busy` while a change to Rex runs.
         case newSession(busy: Bool)
+        /// Rex could not be read here: the row that asks again, the same owner as a
+        /// pull to refresh.
+        case retry(String)
 
         /// A session, a pane, and the connect and new rows take a tap; the rest only read.
         var isAction: Bool {
             switch self {
-            case .session, .pane, .tapToConnect, .newSession: true
+            case .session, .pane, .tapToConnect, .newSession, .retry: true
             case .header, .window, .placeholder, .failure: false
             }
         }
@@ -188,10 +196,17 @@ extension SSHTerminalRexListRow {
         }
         if state.needsTap { connection.append(.init(id: "tap", kind: .tapToConnect)) }
         // Why Rex cannot be read, with what to do about it; any other failure
-        // shows as it came.
+        // shows as it came. A host with no Rex on it is not a failure: the page lists
+        // every saved host, so it keeps one muted line and nothing to open.
         var reasons: [Self] = []
-        if let reason = state.absence?.advice ?? state.failure {
+        if state.absence == .notInstalled {
+            reasons.append(.init(id: "reason", kind: .placeholder(String(localized: "No Rex on this host."))))
+            // Asking again is how it comes back: the same owner as a pull to refresh.
+            reasons.append(.init(id: "retry", kind: .retry(String(localized: "Retry"))))
+        } else if let reason = state.absence?.advice ?? state.failure {
             reasons.append(.init(id: "reason", kind: .failure(reason)))
+            // The same owner as a pull to refresh: one row asks again.
+            if !state.connecting { reasons.append(.init(id: "retry", kind: .retry(String(localized: "Retry")))) }
         }
         if let failure = state.manageFailure {
             reasons.append(.init(id: "action", kind: .failure(failure)))
@@ -202,8 +217,14 @@ extension SSHTerminalRexListRow {
             if connection.isEmpty, reasons.isEmpty { rows.append(.init(id: "loading", kind: .placeholder("Loading\u{2026}"))) }
             return rows
         }
+        // No sessions is the one place a section offers to make one: everywhere else
+        // New Session is the heading's ⋯ and the page's ＋.
         if snapshot.sessions.isEmpty {
-            rows.append(.init(id: "empty", kind: .placeholder("No Rex sessions.")))
+            if state.canManage || state.managing {
+                rows.append(.init(id: "new", kind: .newSession(busy: state.managing)))
+            } else {
+                rows.append(.init(id: "empty", kind: .placeholder("No Rex sessions.")))
+            }
         }
         for session in snapshot.sessions {
             let expanded = state.expanded.contains(session.sessionID)
@@ -224,7 +245,11 @@ extension SSHTerminalRexListRow {
                 }
             }
         }
-        if state.canManage || state.managing { rows.append(.init(id: "new", kind: .newSession(busy: state.managing))) }
+        // A change in flight is a progress line, not an action: the row is only the
+        // "Working…" note beside the sessions it is changing.
+        if !snapshot.sessions.isEmpty, state.managing {
+            rows.append(.init(id: "new", kind: .newSession(busy: true)))
+        }
         return rows
     }
 }
@@ -298,8 +323,10 @@ final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
 final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
     private let rowButton = UIButton(type: .system)
     private let disclosure = UIButton(type: .system)
+    private let newPaneButton = UIButton(type: .system)
     private var performAction: UIAction?
     private var toggleAction: UIAction?
+    private var newPaneAction: UIAction?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -319,15 +346,18 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The row's two buttons, in reading order: for a test, and VoiceOver.
+    /// The row's buttons, in reading order: for a test, and VoiceOver.
     var rowElement: UIView { rowButton }
     var disclosureElement: UIView { disclosure }
+    /// The session's ⊕ New Pane, when the list offers one.
+    var newPaneElement: UIView { newPaneButton }
 
     /// Resets what a reused cell carried, then sets the row's. `actions` are
     /// the row's custom actions (rename, close); the disclosure's is added here.
     func configureSession(
         _ session: SSHTerminalRexListSession, identifier: String, themeID: ThemeID,
-        actions: [UIAccessibilityCustomAction], perform: @escaping () -> Void, toggle: @escaping () -> Void
+        actions: [UIAccessibilityCustomAction], perform: @escaping () -> Void, toggle: @escaping () -> Void,
+        newPane: (() -> Void)? = nil
     ) {
         let palette = themeID.palette
         var conf = UIButton.Configuration.plain()
@@ -359,6 +389,32 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
 
         var accessories = statusAccessories(for: session.status, themeID: themeID)
         var custom = actions
+        // The session's own ⊕: a new pane in it, opened in a terminal of its own.
+        if let newPane {
+            var plus = UIButton.Configuration.plain()
+            plus.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote))
+            plus.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 6)
+            plus.baseForegroundColor = palette.ui.blue
+            newPaneButton.configuration = plus
+            newPaneButton.accessibilityIdentifier = identifier + ".newPane"
+            newPaneButton.accessibilityLabel = String(localized: "New Pane")
+            newPaneButton.accessibilityHint = String(localized: "Adds a pane to this session and opens it")
+            if let newPaneAction { newPaneButton.removeAction(newPaneAction, for: .touchUpInside) }
+            let add = UIAction { _ in newPane() }
+            newPaneAction = add
+            newPaneButton.addAction(add, for: .touchUpInside)
+            accessories.append(.customView(configuration: .init(customView: newPaneButton, placement: .trailing())))
+            custom.append(UIAccessibilityCustomAction(name: String(localized: "New Pane")) { _ in
+                newPane()
+                return true
+            })
+        } else {
+            // A reused cell must not keep a ⊕ from its last row: no identifier, no
+            // action, and out of the accessibility order.
+            if let newPaneAction { newPaneButton.removeAction(newPaneAction, for: .touchUpInside) }
+            newPaneAction = nil
+            newPaneButton.accessibilityIdentifier = nil
+        }
         if let toggleAction { disclosure.removeAction(toggleAction, for: .touchUpInside) }
         toggleAction = nil
         if session.hasPanes {
@@ -378,9 +434,11 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
                 toggle()
                 return true
             })
-            accessibilityElements = [rowButton, disclosure]
+            // On screen the ⊕ sits before the chevron, and VoiceOver follows the
+            // screen. A session with no panes still offers its ⊕.
+            accessibilityElements = newPane == nil ? [rowButton, disclosure] : [rowButton, newPaneButton, disclosure]
         } else {
-            accessibilityElements = [rowButton]
+            accessibilityElements = newPane == nil ? [rowButton] : [rowButton, newPaneButton]
         }
         rowButton.accessibilityCustomActions = custom
         self.accessories = accessories
@@ -390,8 +448,11 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         super.prepareForReuse()
         if let performAction { rowButton.removeAction(performAction, for: .touchUpInside) }
         if let toggleAction { disclosure.removeAction(toggleAction, for: .touchUpInside) }
+        if let newPaneAction { newPaneButton.removeAction(newPaneAction, for: .touchUpInside) }
         performAction = nil
         toggleAction = nil
+        newPaneAction = nil
+        newPaneButton.accessibilityIdentifier = nil
         rowButton.accessibilityIdentifier = nil
         rowButton.accessibilityCustomActions = nil
         disclosure.accessibilityIdentifier = nil

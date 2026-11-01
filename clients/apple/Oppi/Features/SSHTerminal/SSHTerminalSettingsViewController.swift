@@ -36,7 +36,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
 
     /// The experiments: Rex on Your Tailnet exists, and the Bottom Bar summary names
     /// Rex and Herdr, only while each switch is on (Settings → Experiments).
-    @ObservationIgnored private let experiments: @MainActor () -> SSHTerminalExperimentAccess
+    private let experiments: @MainActor () -> SSHTerminalExperimentAccess
     /// The experiments' switch changing while this page is up.
     private var experimentObserver: NSObjectProtocol?
 
@@ -73,8 +73,8 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     }
 
     override func sections() -> [ListSection<Section, Item>] {
-        // A section with no rows and no heading of its own is dropped, so the Rex row
-        // is simply not there while its experiment is off.
+        // The Rex row is left out of the page while its experiment is off, rather
+        // than listed and disabled: there is nothing to open.
         [hostsSection()] + (experiments().rex ? [rexTailnetSection()] : []) + [barSection()]
     }
 
@@ -129,11 +129,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
 
     private var tailnetSummary: String {
         let count = rexStore.tailnetHosts().count
-        return switch count {
-        case 0: String(localized: "None added")
-        case 1: String(localized: "1 Rex")
-        default: String(localized: "\(count) Rex")
-        }
+        return count == 0 ? String(localized: "None added") : String(localized: "\(count) Rex")
     }
 
     // MARK: - Rows
@@ -146,16 +142,13 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             let profile = profileStore().profile(id: id)
             return AnyHashable([profile?.endpointLabel ?? "", profile?.portLabel ?? ""])
         case .unreadableHosts:
-            return AnyHashable(Self.hostIDs(profileStore()))
+            // The row is one fixed sentence: nothing about it changes.
+            return AnyHashable(0)
         case .rexTailnet:
             return AnyHashable(tailnetSummary)
         case .bottomBar:
             return AnyHashable(barSummary)
         }
-    }
-
-    private static func hostIDs(_ store: SSHTerminalProfileStore) -> [UUID] {
-        store.metadataIsCorrupt ? [] : store.load().map(\.id)
     }
 
     /// Every row that opens something runs `select(_:)`, the same owner action a tap

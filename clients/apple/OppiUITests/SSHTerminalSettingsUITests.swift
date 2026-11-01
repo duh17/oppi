@@ -145,7 +145,8 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
     /// It cannot go on to assert the row leaving: the sweep seeds the saved hosts in
     /// the argument domain, which outranks the persistent one a delete writes to, so
     /// the host is still read back after the deletion. What the confirmation runs is
-    /// the same `delete(_:)` the row's swipe uses.
+    /// the same `deleteHost(_:)` the row's swipe uses, which `SSHTerminalHostRowActionTests`
+    /// covers.
     func testTheHostMenuAsksBeforeDeletingAHost() {
         launch(page: "ssh-hosts")
         let menus = hostMenus
@@ -164,7 +165,6 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
         // and the system omits the `.cancel` action: a tap outside dismisses it.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 5), "Tapping outside must close the confirmation")
-        XCTAssertEqual(menus.count, 2, "Dismissing keeps both hosts")
         assertRunning()
     }
 }

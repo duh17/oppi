@@ -11,6 +11,9 @@ private struct IsolatedHosts {
     private let suite = "SSHTerminalRexListTests.\(UUID().uuidString)"
     private let keychain = MemoryKeychain()
 
+    /// The same defaults, for the device settings the page reads (its mode).
+    var defaults: UserDefaults { UserDefaults(suiteName: suite)! }
+
     var store: @Sendable () -> SSHTerminalProfileStore {
         { [suite, keychain] in SSHTerminalProfileStore(defaults: UserDefaults(suiteName: suite)!, keychain: keychain) }
     }
@@ -178,20 +181,29 @@ struct SSHTerminalRexListRowTests {
     }
 
     @Test func rexThatCannotBeReadShowsItsAdviceAndStopsThere() {
-        for absence in [RexAbsence.noNc, .notInstalled] {
-            let listed = rows(.init(snapshot: RexSnapshot(sessions: [session("s", "s", [[pane("a")]])]), absence: absence))
-            #expect(listed.map(\.kind) == [.header(name: "chen@studio", needsYou: 0), .failure(absence.advice)], "a host that gave up lists nothing")
-        }
+        let noNc = rows(.init(snapshot: RexSnapshot(sessions: [session("s", "s", [[pane("a")]])]), absence: .noNc))
+        // A host that gave up lists nothing, says why, and offers to ask again.
+        #expect(noNc.map(\.id) == ["header", "reason", "retry"])
+        #expect(noNc[1].kind == .failure(RexAbsence.noNc.advice))
+        #expect(noNc[2].kind == .retry("Retry"))
+        // No Rex on the host is not a failure: the page lists every saved host, so it
+        // keeps one muted line and nothing to open.
+        let notInstalled = rows(.init(snapshot: RexSnapshot(sessions: [session("s", "s", [[pane("a")]])]), absence: .notInstalled))
+        #expect(notInstalled.map(\.id) == ["header", "reason", "retry"])
+        #expect(notInstalled[1].kind == .placeholder("No Rex on this host."))
+        #expect(notInstalled[2].kind == .retry("Retry"), "the muted line comes with the way to ask again")
         // Not running may be started: the advice shows and the list fills in later.
         let notRunning = rows(.init(absence: .notRunning))
-        #expect(notRunning.map(\.kind) == [.header(name: "chen@studio", needsYou: 0), .failure(RexAbsence.notRunning.advice)])
+        #expect(notRunning.map(\.id) == ["header", "reason", "retry"])
+        #expect(notRunning[1].kind == .failure(RexAbsence.notRunning.advice))
     }
 
     @Test func aFailedStreamKeepsTheLastSessionsUnderTheReason() {
         let snapshot = RexSnapshot(sessions: [session("s", "s", [[pane("a")]])])
         let listed = rows(.init(snapshot: snapshot, failure: "The connection to Rex closed."))
-        #expect(listed.map(\.id) == ["header", "reason", "session|s"])
+        #expect(listed.map(\.id) == ["header", "reason", "retry", "session|s"])
         #expect(listed[1].kind == .failure("The connection to Rex closed."))
+        #expect(listed[2].kind == .retry("Retry"), "the reason comes with the way to ask again")
     }
 }
 
@@ -522,6 +534,7 @@ struct SSHTerminalRexSectionTests {
 
     private func mount(
         _ profiles: [SSHTerminalProfile], built: Built,
+        tailnetStore: RexDirectStore? = nil,
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
     ) throws -> Rig {
         try hosts.save(profiles)
@@ -529,14 +542,16 @@ struct SSHTerminalRexSectionTests {
         // these tests are about the saved hosts' Rex sections alone.
         let tailnetRex = RexTailnetSection(
             // A suite of its own, never the app's: another test reads that.
-            store: RexDirectStore(
-                defaults: try #require(UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)"))
+            store: try tailnetStore ?? RexDirectStore(
+                defaults: #require(UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)"))
             ),
             discovery: RexTailnetDiscovery { _ in .unreachable },
             reach: { .none }
         )
         let list = SSHTerminalHostListViewController(
-            profileStore: hosts.store, makeFollower: makeFollower, tailnetRex: tailnetRex, startsTailnet: {}
+            profileStore: hosts.store, makeFollower: makeFollower, tailnetRex: tailnetRex, startsTailnet: {},
+            // These tests are about Rex mode, whatever the slot's app container holds.
+            settings: terminalTestSettings(mode: .rex, defaults: hosts.defaults)
         )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -583,8 +598,13 @@ struct SSHTerminalRexSectionTests {
         rig.list.collectionView(collection, didSelectItemAt: indexPath)
     }
 
+    /// The headings on screen, in the page's order: the rows top to bottom, which is
+    /// the saved hosts' order (`profiles`), not an identifier sort.
     private func headers(in rig: Rig) -> [String] {
-        collectionCells(rig.list).compactMap(\.accessibilityIdentifier).filter { $0.hasSuffix(".header") }.sorted()
+        collectionCells(rig.list)
+            .sorted { $0.frame.minY < $1.frame.minY }
+            .compactMap(\.accessibilityIdentifier)
+            .filter { $0.hasSuffix(".header") }
     }
 
     // MARK: Hosts Rex was seen on
@@ -594,20 +614,82 @@ struct SSHTerminalRexSectionTests {
     /// A host saved with no Multiplexer that Oppi has seen Rex on leads with the
     /// section too; one it has never seen Rex on gets no follower, so nothing
     /// dials it from the tab.
-    @Test func aHostRexWasSeenOnGetsTheSectionAndAHostNeverSeenIsNotDialed() async throws {
+    @Test func rexModeListsEverySavedHost() async throws {
         let seen = seenHost
         try hosts.save([seen, plainHost])
         hosts.store().rexHosts.markSeen(seen)
 
         let rig = try mountTab([seen, plainHost])
         defer { rig.tearDown() }
-        #expect(Array(rig.built.followers.keys) == [seen.id], "a follower for the host Rex was seen on, none for the other")
-        #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"])
-        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.sessionCells(in: rig).isEmpty })
+        // Rex mode is every saved host, not only the ones Rex was seen on: the page is
+        // the panes, and a host with none says so in one muted line.
+        #expect(Set(rig.built.followers.keys) == Set([seen.id, plainHost.id]))
+        // The headings follow the saved order, as Shell mode's rows do.
+        #expect(headers(in: rig) == [
+            "sshTerminal.rexList.\(seen.id.uuidString).header",
+            "sshTerminal.rexList.\(plainHost.id.uuidString).header",
+        ])
+        // Both hosts' sections, not just the first read to land: the page makes one
+        // follower per host and they answer independently.
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { self.sessionCells(in: rig).count == 4 })
         #expect(sessionCells(in: rig).compactMap { self.rowElement($0)?.accessibilityLabel } == [
             "oppi, in oppi, 2 windows \u{00B7} 3 panes \u{00B7} 1 needs you", "dotfiles, in dotfiles, 1 pane",
-        ])
-        #expect(rig.built.streams[plainHost.id] == nil)
+            "oppi, in oppi, 2 windows \u{00B7} 3 panes \u{00B7} 1 needs you", "dotfiles, in dotfiles, 1 pane",
+        ], "both hosts' sections are read, and each lists its own sessions")
+    }
+
+    private var connectingCount: (Rig) -> Int {
+        { rig in rig.built.followers.values.filter { $0.session.connecting }.count }
+    }
+
+    /// The page signs in to every saved host, two at a time: a blackholed host stays
+    /// `connecting`, and no settling pass starts a third.
+    @Test func thePageDialsTwoHostsAtOnceAndNoMore() async throws {
+        // A dial to a blackholed address never answers, so a started sign-in stays
+        // `connecting` for the length of the test.
+        let hosts = (0..<4).map {
+            SSHTerminalProfile(host: "10.255.255.1", port: UInt16(22 + $0), username: "chen", authentication: .deviceKey)
+        }
+        let rig = try mountDialingTab(hosts, silent: Silent(true))
+        defer { rig.tearDown() }
+        // A running maximum over the whole window, not a sample at one moment: a page
+        // that started four at once and settled at two would pass a single reading.
+        var most = 0
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline {
+            most = max(most, connectingCount(rig))
+            if most > SSHTerminalConnectBudget.inFlight { break }
+            await Task.yield()
+        }
+        #expect(most > 0, "the page dials the hosts it lists")
+        #expect(most == SSHTerminalConnectBudget.inFlight, "two start at once, and no pass grants more: \(most)")
+    }
+
+    /// A host that cannot sign in without a tap does not take a grant from one that can:
+    /// two password hosts ahead of a key host, and the key host still signs in.
+    @Test func aHostWaitingForATapDoesNotBlockAKeyHost() async throws {
+        let passwords = (0..<2).map {
+            SSHTerminalProfile(host: "10.255.255.2", port: UInt16(30 + $0), username: "chen", authentication: .password)
+        }
+        let key = SSHTerminalProfile(host: "10.255.255.3", port: 40, username: "chen", authentication: .deviceKey)
+        let built = Built()
+        let store = hosts.store
+        let rig = try mount(passwords + [key], built: built) { profile in
+            let follower = SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: store),
+                // Only the key host would ask nothing; the password hosts wait for a tap.
+                signsInSilently: { $0.authentication == .deviceKey }
+            )
+            built.followers[profile.id] = follower
+            return follower
+        }
+        defer { rig.tearDown() }
+        try #require(await waitForMainActorCondition(timeout: .seconds(10)) {
+            built.followers[key.id]?.session.connecting == true
+        })
+        #expect(built.followers[passwords[0].id]?.session.connecting == false, "a password host waits for its tap")
+        #expect(built.followers[passwords[1].id]?.session.connecting == false)
     }
 
     /// What a seen host does not get is a prompt: the tab dials it only when
@@ -636,10 +718,10 @@ struct SSHTerminalRexSectionTests {
         #expect(hosts.store().rexHosts.hasSeenRex(on: rexHost))
     }
 
-    /// Rex reported not installed (exit 5) on a host that was in the section
-    /// only because Rex had been seen there: the memory is dropped and the
-    /// section goes. The host stays saved.
-    @Test func rexNotInstalledOnASeenHostForgetsItAndLeavesTheSection() async throws {
+    /// Rex reported not installed (exit 5) on a host: the memory of where Rex is is
+    /// replaced by where it is not, and the host keeps its heading with one muted line,
+    /// because the page lists every saved host. The host stays saved either way.
+    @Test func rexNotInstalledOnASeenHostIsRememberedAndKeepsOneMutedLine() async throws {
         let seen = seenHost
         try hosts.save([seen])
         hosts.store().rexHosts.markSeen(seen)
@@ -648,12 +730,155 @@ struct SSHTerminalRexSectionTests {
         defer { rig.tearDown() }
 
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.hosts.store().rexHosts.hasSeenRex(on: seen) })
+        #expect(self.hosts.store().rexHosts.hasNoRex(on: seen), "and the tab remembers there is none")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             rig.list.view.layoutIfNeeded()
-            return self.headers(in: rig).isEmpty
-        }, "the section is gone")
+            return self.collectionCells(rig.list).contains {
+                $0.accessibilityIdentifier == "sshTerminal.rexList.\(seen.id.uuidString).noRex"
+            }
+        }, "the heading says there is no Rex on it")
+        #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"], "the host keeps its heading")
         #expect(hosts.store().load().map(\.id) == [seen.id], "the host is still saved")
         #expect(exiting.opened == 1, "and asked once, not again")
+    }
+
+    /// The bar's ＋, which names the hosts it would start a session on.
+    private func plusItem(_ rig: Rig) -> UIBarButtonItem? {
+        rig.list.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier?.hasPrefix("sshTerminal.page.") == true }
+    }
+
+    /// ＋ offers a host menu the moment the hosts it can start a session on change, and a
+    /// Rex added by its Tailscale name is one of them: that is found in the pass, after the
+    /// page appeared, so the comparison has to run there too.
+    @Test func plusOffersAHostMenuWhenATailnetRexIsAdded() async throws {
+        let saved = SSHTerminalProfile(host: "mac-studio", username: "chen", authentication: .deviceKey)
+        let tailnetStore = RexDirectStore(
+            defaults: try #require(UserDefaults(suiteName: "rex-plus-tests-\(UUID().uuidString)"))
+        )
+        let rig = try mount([saved], built: Built(), tailnetStore: tailnetStore) { profile in
+            SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
+                standIn: RexPreviewStreamHost()
+            )
+        }
+        defer { rig.tearDown() }
+        // One saved host and no node: ＋ starts a session on it, with nothing to choose.
+        #expect(plusItem(rig)?.menu == nil, "one host: a tap starts its session")
+        #expect(plusItem(rig)?.accessibilityIdentifier == "sshTerminal.page.newSession")
+
+        // A Rex by its Tailscale name, added while the page is up.
+        let node = try #require(RexTailnetHost(dnsName: "rex.tail1234.ts.net", name: "studio"))
+        tailnetStore.saveTailnetHost(node)
+        rig.list.updateProperties()
+
+        let menu = try #require(plusItem(rig)?.menu, "two hosts to choose from: ＋ asks which")
+        #expect(menu.children.count == 2, "the saved host and the node")
+        #expect(menu.children.map(\.title).contains(node.dnsName), "the node is one of the choices")
+    }
+
+    /// A pull asks the hosts whose last read found no Rex, and it asks them the way any
+    /// other pass does: two sign-ins at once, the rest as those answer.
+    @Test func aPullAsksRememberedHostsTwoAtATime() async throws {
+        let four = (0..<4).map {
+            SSHTerminalProfile(host: "127.0.0.1", port: UInt16(1 + $0), username: "chen", authentication: .deviceKey)
+        }
+        // Remembered as having no Rex: the page makes no follower for any of them, so only
+        // the pull can start one.
+        let store = hosts.store()
+        for profile in four { store.rexHosts.markNoRex(profile) }
+        let rig = try mountDialingTab(four, silent: Silent(true))
+        defer { rig.tearDown() }
+        #expect(rig.built.followers.isEmpty, "a remembered host is not dialled by a visit")
+        let control = try #require(collectionView(rig.list)?.refreshControl, "a page of remembered hosts still offers the pull")
+
+        control.sendActions(for: .valueChanged)
+
+        // A running maximum over the window: the pull remakes all four followers, and the
+        // pass behind it must still start only two sign-ins at a time.
+        var most = 0
+        var asked: Set<UUID> = []
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            let followers = rig.built.followers
+            most = max(most, followers.values.filter { $0.session.connecting }.count)
+            asked = Set(four.filter { profile in
+                followers[profile.id]?.session.attemptedPort == profile.port
+            }.map(\.id))
+            if asked.count == four.count { break }
+            await Task.yield()
+        }
+        #expect(!asked.isEmpty, "the pull asks the hosts it remembered")
+        #expect(most <= SSHTerminalConnectBudget.inFlight, "two at once, not four: \(most)")
+        #expect(asked.count == four.count, "and every one of them is asked: \(asked.count)")
+    }
+
+    /// A tab whose one host reads Rex through `outgoing`, which answers "no Rex here"
+    /// and counts how many times it was asked, so a test can see a dial.
+    private func mountNoRexTab(_ profiles: [SSHTerminalProfile], outgoing: ExitingStreamHost) throws -> Rig {
+        let built = Built()
+        let store = hosts.store
+        return try mount(profiles, built: built) { profile in
+            let follower = SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: store),
+                monitor: RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .milliseconds(10) }),
+                standIn: outgoing,
+                // Nothing would ask: what the page decides to do with the host is the
+                // subject, not the sign-in.
+                signsInSilently: { _ in true }
+            )
+            built.followers[profile.id] = follower
+            return follower
+        }
+    }
+
+    private func showsNoRexLine(_ rig: Rig, _ id: UUID) -> Bool {
+        rig.list.view.layoutIfNeeded()
+        let cells = collectionCells(rig.list)
+        return cells.contains { $0.accessibilityIdentifier == "sshTerminal.rexList.\(id.uuidString).noRex" || $0.accessibilityIdentifier == "sshTerminal.rexList.\(id.uuidString).retry" }
+    }
+
+    /// A host the page found no Rex on is remembered: its idle sign-in is dropped
+    /// without owing another, the next page draws the muted line from the store and
+    /// dials nobody, and only Retry (the same owner as a pull) asks once more.
+    @Test func aHostWithNoRexIsNotDialledAgainUntilSomeoneAsks() async throws {
+        let seen = seenHost
+        let outgoing = ExitingStreamHost(status: 5)
+        let rig = try mountNoRexTab([seen], outgoing: outgoing)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.hosts.store().rexHosts.hasNoRex(on: seen)
+        })
+        let follower = try #require(rig.built.followers[seen.id])
+        #expect(outgoing.opened == 1, "the host was read once")
+        #expect(follower.session.rexSessions == nil, "no Rex to read: the idle connection goes")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { !follower.needsListConnection },
+                "and the page does not owe it another sign-in")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.showsNoRexLine(rig, seen.id) },
+                "the section keeps the muted line and the way to ask again")
+        rig.tearDown()
+
+        // A new page reads the store: nothing dials, and there is no follower at all.
+        let again = ExitingStreamHost(status: 5)
+        let second = try mountNoRexTab([seen], outgoing: again)
+        defer { second.tearDown() }
+        #expect(second.built.followers[seen.id] == nil, "a remembered host has no follower")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.showsNoRexLine(second, seen.id) },
+                "the muted line comes from the store, not from a read")
+        #expect(collectionView(second.list)?.refreshControl != nil, "a page of remembered hosts still offers the pull")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { again.opened == 0 },
+                "and nothing was read")
+
+        // Retry: the memory is dropped, a follower is made again, and this host is asked
+        // once — which is the whole observable of the drop, since the answer it gets is
+        // the same "no Rex" and is remembered again straight away.
+        let retry = try #require(collectionCells(second.list).first { $0.accessibilityIdentifier == "sshTerminal.rexList.\(seen.id.uuidString).retry" })
+        try tap(retry, in: second)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { again.opened == 1 })
+        #expect(second.built.followers[seen.id] != nil, "asking again gave the host a follower back")
+        #expect(self.hosts.store().rexHosts.hasNoRex(on: seen), "the same answer is remembered again")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { again.opened == 1 },
+                "one ask, not a burst")
     }
 
     /// Not installed on a host saved with Multiplexer: Rex keeps its section,
@@ -661,7 +886,7 @@ struct SSHTerminalRexSectionTests {
     @Test func rexNotInstalledOnAHostSavedWithRexKeepsItsSectionAndSaysSo() async throws {
         let rig = try mountTab([rexHost], standIn: { _ in ExitingStreamHost(status: 5) })
         defer { rig.tearDown() }
-        let reason = "sshTerminal.rexList.\(rexHost.id.uuidString).reason"
+        let reason = "sshTerminal.rexList.\(rexHost.id.uuidString).noRex"
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             rig.list.view.layoutIfNeeded()
             return self.collectionCells(rig.list).contains { $0.accessibilityIdentifier == reason }
@@ -688,16 +913,23 @@ struct SSHTerminalRexSectionTests {
         #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"])
     }
 
-    @Test func theSectionAppearsOnlyForSavedRexHosts() async throws {
-        let withoutRex = try mountTab([plainHost])
-        defer { withoutRex.tearDown() }
-        #expect(headers(in: withoutRex).isEmpty && actionCells(in: withoutRex).isEmpty)
-        #expect(withoutRex.built.followers.isEmpty, "no Rex host, no monitor")
+    /// Every saved host has a section in Rex mode: the page is the panes, and a host
+    /// with none is still a host someone saved.
+    @Test func everySavedHostHasASectionInRexMode() async throws {
+        let plainOnly = try mountTab([plainHost])
+        defer { plainOnly.tearDown() }
+        #expect(headers(in: plainOnly) == ["sshTerminal.rexList.\(plainHost.id.uuidString).header"])
+        #expect(Array(plainOnly.built.followers.keys) == [plainHost.id], "every saved host is read")
 
-        let withRex = try mountTab([plainHost, rexHost])
-        defer { withRex.tearDown() }
-        #expect(Array(withRex.built.followers.keys) == [rexHost.id], "one monitor, for the Rex host only")
-        #expect(headers(in: withRex) == ["sshTerminal.rexList.\(rexHost.id.uuidString).header"])
+        let two = try mountTab([plainHost, rexHost])
+        defer { two.tearDown() }
+        // The follower dictionary has no order; the headings below are the order that
+        // shows.
+        #expect(Set(two.built.followers.keys) == Set([plainHost.id, rexHost.id]))
+        #expect(headers(in: two) == [
+            "sshTerminal.rexList.\(plainHost.id.uuidString).header",
+            "sshTerminal.rexList.\(rexHost.id.uuidString).header",
+        ], "saved order, as Shell mode lists them")
     }
 
     /// The rows follow a fake Rex: an element per session carrying a stable
@@ -785,7 +1017,8 @@ struct SSHTerminalRexSectionTests {
         defer { rig.tearDown() }
         let prefix = "sshTerminal.rexList.\(rexHost.id.uuidString)."
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { self.sessionCells(in: rig).count == 2 })
-        #expect(rexIDs(in: rig, prefix: prefix) == ["header", oppiSession, dotfilesSession, "new"], "collapsed at first")
+        // No New Session row beside sessions: the heading's ⋯ and the page's ＋ make one.
+        #expect(rexIDs(in: rig, prefix: prefix) == ["header", oppiSession, dotfilesSession], "collapsed at first")
 
         let oppi = try #require(sessionCells(in: rig).first)
         let button = try #require(disclosure(oppi) as? UIButton)
@@ -799,24 +1032,31 @@ struct SSHTerminalRexSectionTests {
         // Two windows: each is named over its panes.
         let ids = rexIDs(in: rig, prefix: prefix)
         #expect(ids == ["header", oppiSession, "window:01a18a26-6645-713c-97f1-2f1058c8c82f", claudeBlock, piBlock,
-                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession, "new"])
+                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession])
         let first = try #require(sessionCells(in: rig).first)
         let expandedButton = try #require(disclosure(first) as? UIButton)
         #expect(expandedButton.accessibilityValue == "Expanded")
         let actions = try #require(rowElement(first)?.accessibilityCustomActions)
-        #expect(actions.map(\.name) == ["Rename", "Close Session", "Hide Panes"], "VoiceOver reaches the disclosure through the row too")
+        #expect(actions.map(\.name) == ["Rename", "Close Session", "New Pane", "Hide Panes"], "VoiceOver reaches the disclosure through the row too")
 
-        // A pane row reads as the pane, with its folder and who waits.
+        // A pane row reads as the pane, with its folder and who waits, and when its
+        // program last moved. The time is relative to now, so only its shape is fixed.
         let pane = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == prefix + claudeBlock })
-        #expect(pane.accessibilityLabel == "claude, in window agents, Fixing the build \u{00B7} oppi, needs you")
-        #expect(pane.accessibilityValue == "Needs approval")
+        let label = try #require(pane.accessibilityLabel)
+        #expect(label.hasPrefix("claude, in window agents, Fixing the build \u{00B7} oppi"))
+        #expect(label.hasSuffix("needs you"))
+        #expect(label.contains("ago"), "the record's own time rides in the label: \(label)")
+        let value = try #require(pane.accessibilityValue)
+        #expect(value.hasPrefix("Needs approval"), "the value is \(value)")
+        #expect(value.contains("ago"), "the value is \(value)")
 
         // It outlasts a screen over the tab, and another session is unaffected.
         rig.navigation.pushViewController(UIViewController(), animated: false)
         rig.navigation.popViewController(animated: false)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix).count == 9
+            // header, two sessions, two windows and three panes: no New Session row.
+            return self.rexIDs(in: rig, prefix: prefix).count == 8
         })
 
         // Hide them again.
@@ -825,7 +1065,7 @@ struct SSHTerminalRexSectionTests {
         again.sendActions(for: .touchUpInside)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix) == ["header", self.oppiSession, self.dotfilesSession, "new"]
+            return self.rexIDs(in: rig, prefix: prefix) == ["header", self.oppiSession, self.dotfilesSession]
         })
     }
 
@@ -977,7 +1217,7 @@ struct SSHTerminalRexSectionTests {
             return self.sessionCells(in: rig).count == 2 && self.rowElement(self.sessionCells(in: rig)[0])?.accessibilityCustomActions?.isEmpty == false
         })
         let dotfilesCell = try #require(sessionCells(in: rig).last)
-        #expect(rowElement(dotfilesCell)?.accessibilityCustomActions?.map(\.name) == ["Rename", "Close Session", "Show Panes"])
+        #expect(rowElement(dotfilesCell)?.accessibilityCustomActions?.map(\.name) == ["Rename", "Close Session", "New Pane", "Show Panes"])
 
         // Close: an alert names the session and says what ends; Cancel sends nothing.
         _ = try customAction("Close Session", of: dotfilesCell).actionHandler?(try customAction("Close Session", of: dotfilesCell))
@@ -1024,9 +1264,11 @@ struct SSHTerminalRexSectionTests {
         })
     }
 
-    /// The row after the sessions makes one and opens it.
-    @Test func theNewSessionRowCreatesAndOpensTheShell() async throws {
-        let world = RexFakeWorld.preview()
+    /// A host with Rex running and nothing in it offers one row, New Session, and it
+    /// makes a session and opens it. Beside sessions there is no such row: the
+    /// heading's ⋯ and the page's ＋ make one.
+    @Test func theEmptySectionsNewSessionRowCreatesAndOpensTheShell() async throws {
+        let world = RexFakeWorld(sessions: [])
         let rig = try mountTab([rexHost], standIn: { _ in RexPreviewStreamHost(world: world) })
         defer { rig.tearDown() }
         let follower = try #require(rig.built.followers[rexHost.id])
@@ -1038,13 +1280,14 @@ struct SSHTerminalRexSectionTests {
             return self.actionCells(in: rig).contains { $0.accessibilityIdentifier == id }
         })
         let row = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == id })
-        #expect(row.accessibilityLabel == "New Rex Session")
+        #expect(row.accessibilityLabel == "New Session")
         try tap(row, in: rig)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { opened.count == 1 })
         #expect(opened[0].sessionID == "session:new-1")
+        // The row goes once the section has a session, and the heading still offers one.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.sessionCells(in: rig).count == 3
+            return self.sessionCells(in: rig).count == 1 && !self.actionCells(in: rig).contains { $0.accessibilityIdentifier == id }
         })
     }
 

@@ -1,5 +1,4 @@
 import Foundation
-import LocalAuthentication
 import Testing
 import UIKit
 @testable import Oppi

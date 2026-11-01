@@ -41,6 +41,21 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Terminal
+
+    /// The Terminal page's own choices, saved on this device.
+    enum Terminal {
+        /// What the page last showed (Rex, Shell). Nil when nothing was ever chosen,
+        /// so the page falls back to the first mode its experiments allow; the value
+        /// is kept while its experiment is off, so turning it on restores the page.
+        static var pageMode: SSHTerminalPageMode? {
+            guard let raw = UserDefaults.standard.string(forKey: AppPreferenceStore.Terminal.pageModeKey) else {
+                return nil
+            }
+            return SSHTerminalPageMode(rawValue: raw)
+        }
+    }
+
     // MARK: - Experiments
 
     /// Opt-in features, saved on this device. Every flag defaults to off.

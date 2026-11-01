@@ -571,10 +571,15 @@ struct RexEventTests {
         #expect(try parse(terminal("child_exited", #"{"exit_code":3,"error":"exit status 3"}"#)) == .childExited(session: session, block: block))
         #expect(try parse(terminal("program_status_removed", #"{"ids":["","bash"],"reason":"child_exited"}"#)) == .statusRemoved(session: session, block: block, ids: ["", "bash"]))
 
-        // The root record has no id of its own; a child's id is its record's.
+        // The root record has no id of its own; a child's id is its record's. A record
+        // that names when it last moved parses with that time: the pane row shows it.
         let root = #"{"id":"","record":{"state":"blocked","kind":"permission","app":"pi","effective_app":"pi","updated_at":"2026-10-30T00:59:16.372948-07:00","owner":{"pid":86966,"name":"bash"}},"reason":"report"}"#
+        let rootMoved = try Date(
+            "2026-10-30T00:59:16.372948-07:00", strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        )
         #expect(try parse(terminal("program_status_changed", root)) == .status(
-            session: session, block: block, .init(id: "", state: .blocked, kind: .permission, message: nil, app: "pi")
+            session: session, block: block,
+            .init(id: "", state: .blocked, kind: .permission, message: nil, app: "pi", updatedAt: rootMoved)
         ))
         let child = #"{"id":"bash","record":{"id":"bash","state":"working","app":"pi","effective_app":"pi"},"reason":"report"}"#
         #expect(try parse(terminal("program_status_changed", child)) == .status(

@@ -1,6 +1,4 @@
 import Foundation
-import LocalAuthentication
-import Synchronization
 import Testing
 import UIKit
 @testable import Oppi
@@ -18,27 +16,30 @@ private struct IsolatedStores {
         let hosts: UserDefaults
         let rex: UserDefaults
         let bar: UserDefaults
-        private let names: [String]
-        /// A suite made for one test after this object was built (a corrupt
-        /// catalog), named so it goes with the rest.
-        private let tracked = Mutex<[String]>([])
+        /// The device settings the page reads (its mode) belong to the test too.
+        let device: UserDefaults
+        /// Every suite to take away, including one a test makes later (a corrupt
+        /// catalog). Touched on the main actor only, like the tests.
+        private var names: Set<String>
 
         init() throws {
             let hostName = "SSHTerminalSettingsTests.hosts.\(UUID().uuidString)"
             let rexName = "SSHTerminalSettingsTests.rex.\(UUID().uuidString)"
             let barName = "SSHTerminalSettingsTests.bar.\(UUID().uuidString)"
+            let deviceName = "SSHTerminalSettingsTests.device.\(UUID().uuidString)"
             hosts = try #require(UserDefaults(suiteName: hostName))
             rex = try #require(UserDefaults(suiteName: rexName))
             bar = try #require(UserDefaults(suiteName: barName))
-            names = [hostName, rexName, barName]
+            device = try #require(UserDefaults(suiteName: deviceName))
+            names = [hostName, rexName, barName, deviceName]
         }
 
         func track(_ name: String) {
-            tracked.withLock { $0.append(name) }
+            names.insert(name)
         }
 
         func remove() {
-            for name in names + tracked.withLock({ $0 }) { hosts.removePersistentDomain(forName: name) }
+            for name in names { hosts.removePersistentDomain(forName: name) }
         }
     }
 
@@ -82,6 +83,19 @@ private struct IsolatedStores {
     /// The suites go with the test, so a slot's container does not fill up.
     func removeSuites() {
         suites.remove()
+    }
+
+    /// A device settings store over this test's own defaults, holding `mode` as if it
+    /// had been chosen (nil leaves nothing chosen).
+    @MainActor
+    func settings(mode: SSHTerminalPageMode?) -> SettingsStore {
+        let defaults = suites.device
+        if let mode {
+            defaults.set(mode.rawValue, forKey: AppPreferenceStore.Terminal.pageModeKey)
+        } else {
+            defaults.removeObject(forKey: AppPreferenceStore.Terminal.pageModeKey)
+        }
+        return SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
     }
 }
 
@@ -154,7 +168,14 @@ struct SSHTerminalSettingsTests {
         defer { page.window.isHidden = true }
         let keyboard = SSHTerminalBarItem.action(.keyboard).title(customKeys: [])
         let herdr = SSHTerminalBarItem.action(.herdr).title(customKeys: [])
-        #expect(try #require(page.element("settings.sshTerminal.bar")).accessibilityValue?.contains(keyboard) == true)
+        let rex = SSHTerminalBarItem.action(.rex).title(customKeys: [])
+        // Both switches are on here, so the summary names both: a summary that always
+        // left the experiments out would otherwise pass this test and the off one.
+        let barRow = try #require(page.element("settings.sshTerminal.bar"))
+        let first = try #require(barRow.accessibilityValue)
+        #expect(first.contains(keyboard), "the summary is \(first)")
+        #expect(first.contains(herdr), "the summary is \(first)")
+        #expect(first.contains(rex), "the summary is \(first)")
 
         hosts.barStore.setLayout(hosts.barStore.layout.setting(.action(.herdr), shown: false))
         page.reload()
@@ -220,10 +241,14 @@ struct SSHTerminalSettingsTests {
         let swipe = try #require(page.page.trailingSwipeActions(for: .rex(name.dnsName)))
         #expect(swipe.actions.map(\.style) == [.destructive])
 
-        // What that swipe runs: the store empties, and the list it draws is the Add
-        // row alone. The list is read through its snapshot, because a collection view
-        // can keep a removed cell in its hierarchy for a turn.
-        page.page.remove(dnsName: name.dnsName)
+        // The swipe's own handler, which is the action a person's swipe runs: the
+        // store empties, and the list it draws is the Add row alone. The list is read
+        // through its snapshot, because a collection view can keep a removed cell in
+        // its hierarchy for a turn.
+        let action = try #require(swipe.actions.first)
+        var finished: Bool?
+        action.handler(action, UIView()) { finished = $0 }
+        #expect(finished == true)
         #expect(hosts.rexStore.tailnetHosts().isEmpty)
         page.reload()
         #expect(page.page.items(in: .names).isEmpty)
@@ -254,51 +279,6 @@ struct SSHTerminalSettingsTests {
 
 /// A page mounted in a window that has appeared: what it draws, by identifier.
 /// File-scope, so both suites in this file mount the same way.
-@MainActor
-private struct MountedPage<Page: UIViewController> {
-    let window: UIWindow
-    let page: Page
-
-    /// Every accessible identifier on screen, so a test asks what the page shows.
-    var identifiers: [String] { Self.allIdentifiers(in: page.view) }
-
-    func element(_ identifier: String) -> UIView? { Self.view(identifier, in: page.view) }
-
-    /// Draws the page again, as a pass after a store change would.
-    func reload() {
-        page.setNeedsUpdateProperties()
-        page.updatePropertiesIfNeeded()
-        page.view.layoutIfNeeded()
-    }
-
-    private static func allIdentifiers(in view: UIView) -> [String] {
-        (view.accessibilityIdentifier.map { [$0] } ?? [])
-            + view.subviews.flatMap { allIdentifiers(in: $0) }
-    }
-
-    private static func view(_ identifier: String, in root: UIView) -> UIView? {
-        if root.accessibilityIdentifier == identifier { return root }
-        return root.subviews.lazy.compactMap { view(identifier, in: $0) }.first
-    }
-}
-
-
-@MainActor
-private func mountPage<Page: UIViewController>(_ page: Page) throws -> MountedPage<Page> {
-    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-    let window = UIWindow(windowScene: scene)
-    window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-    window.traitOverrides.appRootEnvironment = makeTestAppRoot()
-    window.rootViewController = RouterNavigationController(rootViewController: page)
-    window.makeKeyAndVisible()
-    page.beginAppearanceTransition(true, animated: false)
-    page.endAppearanceTransition()
-    page.setNeedsUpdateProperties()
-    page.updatePropertiesIfNeeded()
-    page.view.layoutIfNeeded()
-    return MountedPage(window: window, page: page)
-}
-
 /// The Terminal page's host row: its ⋯ menu is the only way a host is edited or
 /// deleted now that the row has no Edit button, and the menu asks before it
 /// removes anything.
@@ -325,7 +305,9 @@ struct SSHTerminalHostRowActionTests {
                 discovery: RexTailnetDiscovery { _ in .unreachable },
                 reach: { .none }
             ),
-            startsTailnet: {}
+            startsTailnet: {},
+            // This is about the host rows, which are Shell mode's list.
+            settings: hosts.settings(mode: .shell)
         ))
         defer { tab.window.isHidden = true }
 

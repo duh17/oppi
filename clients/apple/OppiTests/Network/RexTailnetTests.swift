@@ -14,6 +14,11 @@ struct RexTailnetTests {
         TailnetPeer(id: name, hostName: name, dnsName: dns, os: os, tailscaleIPs: ["100.64.0.1"], isOnline: online)
     }
 
+    /// The device defaults a test's page reads its mode from.
+    static func deviceDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "rex-tailnet-tests-device-\(UUID().uuidString)")!
+    }
+
     static func store() -> RexDirectStore {
         RexDirectStore(defaults: UserDefaults(suiteName: "rex-tailnet-tests-\(UUID().uuidString)")!)
     }
@@ -207,7 +212,10 @@ struct RexTailnetTests {
         ) {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
         }
-        let list = SSHTerminalHostListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
+        let list = SSHTerminalHostListViewController(
+            profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
+            settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())
+        )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -268,7 +276,10 @@ struct RexTailnetTests {
             made = follower
             return follower
         }
-        let list = SSHTerminalHostListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
+        let list = SSHTerminalHostListViewController(
+            profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
+            settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())
+        )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

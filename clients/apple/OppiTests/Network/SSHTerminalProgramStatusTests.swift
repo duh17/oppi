@@ -260,3 +260,47 @@ struct SSHTerminalProgramStatusEngineTests {
         }
     }
 }
+
+/// Rex's `program_status` records carry the time their program last moved, Herdr's
+/// shape (`message`) and Rex's (`msg`) alike; a record without one has no time rather
+/// than a guessed one.
+@Suite("Program status records carry their time")
+struct SSHTerminalPaneRecordTimeTests {
+    private func record(_ json: String) throws -> SSHTerminalPaneRecord {
+        try JSONDecoder().decode(SSHTerminalPaneRecord.self, from: Data(json.utf8))
+    }
+
+    @Test func rexsRecordTimeDecodesWithAFraction() throws {
+        let record = try record(#"{"id":"","state":"idle","effective_app":"pi","updated_at":"2026-10-29T18:48:48.372948-07:00"}"#)
+        let expected = try Date(
+            "2026-10-29T18:48:48.372948-07:00",
+            strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        )
+        #expect(record.updatedAt == expected)
+    }
+
+    @Test func aRecordWithoutAFractionDecodesToo() throws {
+        let with = try record(#"{"state":"working","updated_at":"2026-10-29T18:48:48-07:00"}"#)
+        let without = try record(#"{"state":"working","updated_at":"2026-10-29T18:48:48.000-07:00"}"#)
+        #expect(with.updatedAt != nil)
+        #expect(with.updatedAt == without.updatedAt, "a fraction of zero is the same moment")
+    }
+
+    @Test func aRecordWithoutATimeHasNone() throws {
+        let record = try record(#"{"id":"bash","state":"blocked","kind":"permission","msg":"Run it?"}"#)
+        #expect(record.updatedAt == nil)
+        #expect(record.message == "Run it?", "Rex's msg key still reads")
+        #expect(SSHTerminalPaneRecord(id: "", state: .idle).updatedAt == nil)
+    }
+
+    /// A pane's time is its newest record's, so a blocked child record newer than the
+    /// program's own is the one the row shows.
+    @Test func aPanesTimeIsItsNewestRecord() {
+        let older = SSHTerminalPaneRecord(id: "", state: .working, updatedAt: Date(timeIntervalSince1970: 1_000))
+        let newer = SSHTerminalPaneRecord(id: "bash", state: .blocked, kind: .permission, updatedAt: Date(timeIntervalSince1970: 2_000))
+        let pane = RexSnapshot.Pane(blockID: "b", label: nil, title: nil, pwd: nil, records: [older, newer])
+        #expect(pane.lastActivity == Date(timeIntervalSince1970: 2_000))
+        let plain = RexSnapshot.Pane(blockID: "b", label: nil, title: nil, pwd: nil, records: [])
+        #expect(plain.lastActivity == nil, "a pane that reports nothing has no time")
+    }
+}

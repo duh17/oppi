@@ -141,10 +141,10 @@ final class RexTailnetFollower: SSHTerminalRexListFollowing {
     }
 }
 
-/// The Terminal tab's Rex on your tailnet: the nodes added by name and those
+/// The Terminal tab's tailnet nodes: the ones added by name and the ones
 /// discovery finds, each with a `RexTailnetFollower` the tab lists as a Rex
-/// section of its own, and the card that heads them (what limits the list, and
-/// Add Rex by Tailscale Name).
+/// section of its own. Nothing heads them on the page; what was added by hand,
+/// and what limits the list, are Settings › Terminal › Rex on Your Tailnet.
 @MainActor @Observable
 final class RexTailnetSection {
     private(set) var entries: [RexTailnetHost] = []

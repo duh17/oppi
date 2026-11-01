@@ -250,6 +250,17 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - Terminal
+
+    /// The Terminal page's mode (`SSHTerminalPageMode`), kept as its raw value on
+    /// this device. Nothing stored means the page's own fallback (Rex while its
+    /// experiment is on, else Shell), which is why the default is empty rather than
+    /// a mode: a stored value is always a choice someone made.
+    enum Terminal {
+        static let pageModeKey = "\(AppIdentifiers.subsystem).sshTerminal.pageMode"
+        static let pageModeDefault = ""
+    }
+
     // MARK: - Durable Sessions
 
     /// Which engine Quick Session starts a new session on, where its server has Durable

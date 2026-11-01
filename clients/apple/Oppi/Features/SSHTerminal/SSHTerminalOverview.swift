@@ -12,19 +12,31 @@ struct SSHTerminalPaneRecord: Decodable, Equatable, Hashable, Sendable {
     /// The program the record belongs to, when the multiplexer names it (Rex's
     /// `effective_app`, inherited from a parent record, else the record's `app`).
     let app: String?
+    /// When the program last changed this record, when the multiplexer says: Rex
+    /// sends it, so a pane row can say how long ago it last moved. Nil for a record
+    /// without one, and for a whole pane that reports nothing.
+    let updatedAt: Date?
 
     /// Herdr names the line `message` and always sends `id`; Rex names it `msg`
     /// and leaves `id` out for the root record.
     private enum CodingKeys: String, CodingKey {
-        case id, state, kind, message, msg, app, effectiveApp = "effective_app"
+        case id, state, kind, message, msg, app, effectiveApp = "effective_app", updatedAt = "updated_at"
     }
 
-    init(id: String, state: ProgramStatusState, kind: ProgramStatusKind? = nil, message: String? = nil, app: String? = nil) {
+    init(
+        id: String,
+        state: ProgramStatusState,
+        kind: ProgramStatusKind? = nil,
+        message: String? = nil,
+        app: String? = nil,
+        updatedAt: Date? = nil
+    ) {
         self.id = id
         self.state = state
         self.kind = kind
         self.message = message
         self.app = app
+        self.updatedAt = updatedAt
     }
 
     init(from decoder: any Decoder) throws {
@@ -36,6 +48,18 @@ struct SSHTerminalPaneRecord: Decodable, Equatable, Hashable, Sendable {
             ?? container.decodeIfPresent(String.self, forKey: .msg)
         app = try container.decodeIfPresent(String.self, forKey: .effectiveApp)
             ?? container.decodeIfPresent(String.self, forKey: .app)
+        // Rex writes ISO 8601 with fractional seconds; a date this build cannot read
+        // is no time at all, never a wrong one.
+        updatedAt = Self.date(from: try container.decodeIfPresent(String.self, forKey: .updatedAt))
+    }
+
+    /// Rex's `updated_at`: `2026-10-30T00:59:16.372948-07:00`, and the same without
+    /// a fraction.
+    private static func date(from text: String?) -> Date? {
+        guard let text, !text.isEmpty else { return nil }
+        let withFraction = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        if let date = try? Date(text, strategy: withFraction) { return date }
+        return try? Date(text, strategy: Date.ISO8601FormatStyle())
     }
 
     /// A multiplexer keeps its own seen ledger, which Oppi cannot read: a done

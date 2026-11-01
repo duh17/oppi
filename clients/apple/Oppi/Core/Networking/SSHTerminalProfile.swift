@@ -300,6 +300,10 @@ struct SSHTerminalProfileStore {
     /// removed with the host (`delete`).
     var rexHosts: SSHTerminalRexHostStore { SSHTerminalRexHostStore(defaults: defaults) }
 
+    /// Which of a host's Rex sessions are expanded on the Terminal page, in the same
+    /// defaults.
+    var rexExpanded: SSHTerminalRexExpandedStore { SSHTerminalRexExpandedStore(defaults: defaults) }
+
     /// True when the catalog value is present but does not decode. Opening the
     /// list uses this to offer an explicit reset. It does not read the Keychain.
     var metadataIsCorrupt: Bool {
@@ -451,6 +455,7 @@ struct SSHTerminalProfileStore {
         try write(profiles.filter { $0.id != id })
         SSHTerminalColorStore(defaults: defaults).forget(id)
         SSHTerminalRexHostStore(defaults: defaults).forget(id)
+        SSHTerminalRexExpandedStore(defaults: defaults).forget(id)
         RexDirectStore(defaults: defaults).forget(id)
     }
 

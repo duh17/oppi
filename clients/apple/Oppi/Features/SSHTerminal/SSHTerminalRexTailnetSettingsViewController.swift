@@ -4,9 +4,8 @@ import UIKit
 /// by their Tailscale name alone, with no SSH host and no sign-in, and what limits
 /// that list.
 ///
-/// A node saved here shows on the Terminal page in Rex mode as a Rex section of
-/// its own, over its own Tailscale link; discovery finds the rest while that page
-/// shows. This page never connects and never probes: it lists what was saved and
+/// A node saved here shows on the Terminal page as a Rex section of its own, over
+/// its own Tailscale link; discovery finds the rest while that page shows. This page never connects and never probes: it lists what was saved and
 /// takes a name typed by hand (Add Rex by Tailscale Name), which is the only way
 /// in when Oppi has no Tailscale machine list of its own.
 final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
@@ -120,9 +119,8 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
         return config
     }
 
-    /// Removes one saved name. The row's swipe is its only way in; this is what
-    /// that handler runs, so a test can reach the same owner action.
-    func remove(dnsName: String) {
+    /// Removes one saved name: what its row's swipe runs.
+    private func remove(dnsName: String) {
         store.forgetTailnetHost(dnsName: dnsName)
         setNeedsUpdateProperties()
     }

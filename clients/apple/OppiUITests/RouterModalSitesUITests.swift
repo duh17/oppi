@@ -489,8 +489,9 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(oppi.value as? String, "Needs approval")
         XCTAssertEqual(dotfiles.label, "dotfiles, in dotfiles, 1 pane")
         XCTAssertEqual(dotfiles.value as? String, "Idle")
-        // The host's own row stays below the section.
-        XCTAssertTrue(app.buttons["sshTerminal.host.row.\(hostID)"].exists, "The Rex host's row must stay")
+        // Rex mode is the panes alone: the host is the section's heading, and its own
+        // row (which opens a plain shell) is what Shell mode lists instead.
+        XCTAssertFalse(app.buttons["sshTerminal.host.row.\(hostID)"].exists, "A host row is Shell mode's")
         attachScreenshot("terminal-tab-rex-section")
 
         // The disclosure shows the session's panes under the name of each window.
@@ -525,9 +526,25 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         let host = app.buttons["sshTerminal.host.row.\(hostID)"]
         XCTAssertTrue(host.waitForExistence(timeout: 15), "The saved Rex host is still listed with the experiment off")
         XCTAssertFalse(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "No Rex section with the experiment off")
-        // The tailnet list is Settings › Terminal › Rex on Your Tailnet now, and that
-        // page has no Rex row while the experiment is off (`SSHTerminalSettingsUITests`).
         attachScreenshot("terminal-tab-experiments-off")
+
+        // The end-to-end half of the gate: Terminal Settings, opened from the tab in
+        // this launch, has no Rex on Your Tailnet row while the switch is off. This is
+        // the setting the app reads, not an injected value.
+        app.buttons["sshTerminal.settings"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.sshTerminal.list"].waitForExistence(timeout: 5),
+            "The tab's ⚙︎ must open Terminal Settings"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.sshTerminal.bar"].waitForExistence(timeout: 5),
+            "Terminal Settings must list the Bottom Bar"
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["settings.sshTerminal.rexTailnet"].exists,
+            "Rex on Your Tailnet must be gone with its experiment off"
+        )
+        attachScreenshot("terminal-settings-experiments-off")
         assertRunning()
     }
 
@@ -579,11 +596,19 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(dotfiles.waitForNonExistence(timeout: 10), "A closed session must leave the list")
         attachScreenshot("terminal-tab-rex-closed")
 
-        // New Rex Session opens the shell it makes.
-        let new = app.cells[prefix + "new"]
-        XCTAssertTrue(new.waitForExistence(timeout: 5), "New Rex Session is missing")
-        new.tap()
-        XCTAssertTrue(app.buttons["sshTerminal.bar.rexPanes"].waitForExistence(timeout: 15), "New Rex Session must open the new shell")
+        // New Session is the heading's ⋯ while the section still has sessions (an empty
+        // one shows the row instead), and it opens the shell it makes.
+        let heading = app.buttons[prefix + "menu"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5), "The host heading has no ⋯ menu")
+        heading.tap()
+        // The ＋ in the bar is titled New Session too, so the item is the element with
+        // that label that is not the bar button.
+        let newSession = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ AND identifier != %@", "New Session", "sshTerminal.page.newSession")
+        ).firstMatch
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5), "The heading must offer New Session")
+        newSession.tap()
+        XCTAssertTrue(app.buttons["sshTerminal.bar.rexPanes"].waitForExistence(timeout: 15), "New Session must open the new shell")
         assertRunning()
     }
 

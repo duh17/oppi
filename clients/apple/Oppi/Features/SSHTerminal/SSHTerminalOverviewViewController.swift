@@ -226,7 +226,11 @@ class SSHTerminalOverviewCell: UICollectionViewListCell {
     /// multiplexer has no reading for draws neither, but keeps the mark's slot
     /// so its name lines up with its siblings'; one it reads in a way Oppi
     /// does not know says Unknown.
-    func statusAccessories(for status: SSHTerminalOverviewRow.Status, themeID: ThemeID) -> [UICellAccessory] {
+    /// `suffix` rides in the same trailing label as the status ("Needs approval ·
+    /// 2m ago"): a list cell draws one label accessory, and two assert.
+    func statusAccessories(
+        for status: SSHTerminalOverviewRow.Status, themeID: ThemeID, suffix: String? = nil
+    ) -> [UICellAccessory] {
         let kind: SessionStatusKind? = if case .known(let known) = status { known } else { nil }
         mark.isHidden = kind == nil
         if let kind {
@@ -235,10 +239,11 @@ class SSHTerminalOverviewCell: UICollectionViewListCell {
         let slot = UICellAccessory.customView(configuration: .init(
             customView: mark, placement: .leading(), reservedLayoutWidth: .custom(20)
         ))
-        guard let label = status.label else { return [slot] }
+        let text = [status.label, suffix].compactMap { $0 }.joined(separator: " \u{00B7} ")
+        guard !text.isEmpty else { return [slot] }
         return [
             slot,
-            .label(text: label, options: .init(
+            .label(text: text, options: .init(
                 tintColor: kind?.tint(themeID.appTheme) ?? themeID.palette.ui.comment,
                 font: .preferredFont(forTextStyle: .caption1)
             )),

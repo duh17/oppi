@@ -107,6 +107,10 @@ final class RexFakeWorld: Sendable {
             return .result(#"{"records":\#(pane(request)?.records ?? "[]")}"#)
         case "session.create":
             return create(request)
+        case "session.new_split":
+            // The block the caller then opens. The session's view is not read again here:
+            // the monitor's caller (a terminal) is the one that shows it.
+            return .result(#"{"block_ids":["block:new-pane-1"]}"#)
         case "session.set_label":
             return setLabel(request)
         case "session.destroy":
@@ -228,16 +232,21 @@ final class RexFakeWorld: Sendable {
     /// window of the first, a log tail in its second; a codex pane at idle in
     /// the other. Folders are what each shell last reported.
     static func preview(eventDelay: Duration = .milliseconds(20)) -> RexFakeWorld {
+        // Each record carries the time its program last moved, as Rex sends it, so a
+        // pane row's "2m ago" is read from the wire rather than made up on screen.
+        func ago(_ seconds: TimeInterval) -> String {
+            Date(timeIntervalSinceNow: -seconds).ISO8601Format()
+        }
         let agents = Window(
             id: "window:01a18a26-6645-713c-97f1-2f1058c8c82f", label: "agents", focused: claudeBlock,
             panes: [
                 Pane(
                     block: claudeBlock, title: "Fixing the build", pwd: "file://mac-studio/home/dev/workspace/oppi",
-                    records: #"[{"effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]"#
+                    records: #"[{"effective_app":"claude","state":"working","updated_at":"\#(ago(125))"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?","updated_at":"\#(ago(95))"}]"#
                 ),
                 Pane(
                     block: piBlock, title: "Adding skill frontmatter", pwd: "file://mac-studio/home/dev/workspace/oppi/server",
-                    records: #"[{"effective_app":"pi","state":"working"}]"#
+                    records: #"[{"effective_app":"pi","state":"working","updated_at":"\#(ago(185))"}]"#
                 ),
             ]
         )
@@ -249,7 +258,7 @@ final class RexFakeWorld: Sendable {
             id: "window:01a18a26-6645-713c-97f1-2f1058c8c831", label: "main", focused: codexBlock,
             panes: [Pane(
                 block: codexBlock, title: "Ready", pwd: "file://mac-studio/home/dev/dotfiles",
-                records: #"[{"effective_app":"codex","state":"idle"}]"#
+                records: #"[{"effective_app":"codex","state":"idle","updated_at":"\#(ago(740))"}]"#
             )]
         )
         return RexFakeWorld(sessions: [

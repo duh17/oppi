@@ -52,9 +52,9 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     @ObservationIgnored private let signsInSilently: @MainActor (SSHTerminalProfile) -> Bool
     /// The experiments, read each time: Rex is read only while its switch is on.
     @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
-    /// The last answer, kept until something that can change it: the Keychain is
-    /// not read on every pass of the screen. A `true` is only trusted for what
-    /// is drawn; a decision to sign in asks again.
+    /// The last answer, kept until something that can change it (`markNeedsConnection`,
+    /// `appeared()`, a new profile, the foreground, `stopForNoRex`): the Keychain and
+    /// the approval cache are read once per owed sign-in, not once per question.
     @ObservationIgnored private var silentCache: Bool?
     @ObservationIgnored private var reader: Task<Void, Never>?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -145,15 +145,21 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         }
     }
 
-    private var silentForDisplay: Bool {
-        if let silentCache { return silentCache }
-        let value = signsInSilently(profile)
-        silentCache = value
-        return value
+    private var silentForDisplay: Bool { canSignInSilently() }
+
+    /// Whether this follower's next pass would really dial: it owes a sign-in, has no
+    /// connection or attempt, and signing in asks the person for nothing (a screen
+    /// that may prompt always would). The page's connect budget charges only these, so
+    /// a host waiting for a tap cannot take a grant from one that will use it.
+    var wouldStartSignIn: Bool {
+        guard !isConnected, !session.connecting, needsListConnection, !trustPending else { return false }
+        return promptsAutomatically || canSignInSilently()
     }
 
-    private func canSignInSilently() -> Bool {
-        if silentCache == false { return false }
+    func canSignInSilently() -> Bool {
+        // A cached answer holds both ways: the budget asks before it grants, and the
+        // pass asks again before it dials, so one pass reads the Keychain once.
+        if let cached = silentCache { return cached }
         let value = signsInSilently(profile)
         silentCache = value
         return value
@@ -285,6 +291,16 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         session.closeRexSessions()
     }
 
+    /// No Rex on the host: the list's idle connection has nothing left to read, so it
+    /// goes, and no new sign-in is owed — the host keeps one muted line until someone
+    /// asks again (a pull to refresh, or the row's Retry).
+    func stopForNoRex() {
+        stopReading()
+        session.closeRexSessions()
+        needsListConnection = false
+        silentCache = nil
+    }
+
     /// Ends the stream and the connection: the screen is gone, or the person
     /// left it for another. It signs in again when the screen shows again.
     func close() {
@@ -298,8 +314,8 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     private(set) var managing = false
     private(set) var manageFailure: String?
 
-    /// The sessions whose panes the list shows. Kept for the follower's life,
-    /// which is the tab's visit: nothing is saved.
+    /// The sessions whose panes the list shows. The page keeps them per host
+    /// (`SSHTerminalRexExpandedStore`), so they survive a visit.
     var expandedSessions: Set<String> = []
 
     var isOpening: Bool { session.connecting || session.passwordPrompt }
@@ -349,6 +365,15 @@ extension SSHTerminalRexListFollowing {
     func createSession() async {
         await manage("Could not create a session.") {
             let pane = try await monitor.createSession()
+            monitor.openPane?(pane)
+        }
+    }
+
+    /// A new pane in a session, opened in a terminal of its own, as the session
+    /// header's ⊕ does.
+    func createPane(session sessionID: String) async {
+        await manage("Could not create a pane.") {
+            let pane = try await monitor.createPane(in: sessionID)
             monitor.openPane?(pane)
         }
     }
@@ -438,7 +463,7 @@ extension SSHTerminalRexHostStore {
     func record(_ finding: RexMonitor.Finding, on profile: SSHTerminalProfile) {
         switch finding {
         case .reached: markSeen(profile)
-        case .absent(.notInstalled): forget(profile.id)
+        case .absent(.notInstalled): markNoRex(profile)
         case .absent(.notRunning), .absent(.noNc), .absent(.refused): break
         }
     }
