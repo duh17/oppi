@@ -23,7 +23,11 @@ final class ServerMetricsViewController: UIViewController {
     /// so the page never asked for history.
     private var samplingOff = false
     private var isAppeared = false
-    private var loadTask: Task<Void, Never>?
+    /// The toggle's save chain and the history read that chain starts: kept as handles, so
+    /// the page can end the read it started and a caller taking the page down can wait for
+    /// both instead of guessing when they are done.
+    private(set) var samplingTask: Task<Void, Never>?
+    private(set) var loadTask: Task<Void, Never>?
     private var refreshTimer: Timer?
     private var switcher: SessionListServerSwitcher?
     private var switcherServerId: String?
@@ -81,6 +85,13 @@ final class ServerMetricsViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         return nil
+    }
+
+    isolated deinit {
+        // The page that started them is gone: its read has nobody to answer, and its timer
+        // nobody to refresh. (A toggle's save belongs to the store, which finishes it.)
+        loadTask?.cancel()
+        refreshTimer?.invalidate()
     }
 
     override func viewDidLoad() {
@@ -409,7 +420,7 @@ final class ServerMetricsViewController: UIViewController {
         // This server's own store: the one save path for the setting, which validates,
         // rolls back a failed save, and reloads on a revision conflict.
         let settings = coordinator.settings(for: serverId)
-        Task { [weak self] in
+        samplingTask = Task { [weak self] in
             let setting = SettingsCatalog.serverMetricsEnabled
             // The document held since an earlier read (here or from Server Settings) may be stale.
             _ = await settings.reload(setting)

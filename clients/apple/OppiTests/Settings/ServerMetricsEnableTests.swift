@@ -128,12 +128,22 @@ struct ServerMetricsEnableTests {
         try await turnOn(on: h.page)
     }
 
+    /// Turns sampling on and waits for what the tap started: the store's save chain, and the
+    /// history read that chain starts (`ServerMetricsViewController.setSampling` → `reload`).
+    /// Both handles are set before `sendActions` returns, so they wait on the page's own work
+    /// rather than a guess about when it is done — a read still in flight when the test ends
+    /// reaches TestURLProtocol after its handler is gone and is recorded against no test at all
+    /// (the «unknown» issues this file left on the unit shards).
     private func turnOn(on page: ServerMetricsViewController) async throws {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
             return Self.stateButton(titled: "Turn On", in: page) != nil
         })
         try #require(Self.stateButton(titled: "Turn On", in: page)).sendActions(for: .primaryActionTriggered)
+        let save = page.samplingTask
+        #expect(save != nil, "Turn On should start the page's save chain")
+        await save?.value
+        await page.loadTask?.value
     }
 
     @Test("Turning on saves through the store against the loaded revision and updates the cached flag")
