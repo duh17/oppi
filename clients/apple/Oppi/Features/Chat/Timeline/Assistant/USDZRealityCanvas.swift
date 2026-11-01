@@ -7,8 +7,8 @@ import SwiftUI
 /// the full-screen controller) is UIKit.
 ///
 /// Inputs are values: the file, the inspect pose the UIKit gestures edit, and
-/// a load-failure callback. `USDZSceneView` hosts it through
-/// `HostFactory.content` and replaces the root view when the pose changes.
+/// a load-failure callback. `USDZSceneView` mounts `USDZRealityCanvasHost` and
+/// hands it a new pose as the gestures move.
 struct USDZRealityCanvas: View {
     let fileURL: URL
     let pose: USDZInspectPose
@@ -26,6 +26,7 @@ struct USDZRealityCanvas: View {
             pose.apply(to: content.entities.first?.findEntity(named: Self.gimbalName))
         } placeholder: {
             ProgressView()
+                .tint(.themeBlue)
         }
         .realityViewCameraControls(.none)
         .realityViewLayoutBehavior(.centered)
@@ -55,5 +56,29 @@ extension USDZInspectPose {
         gimbal.orientation = pitchQ * yawQ
         gimbal.scale = SIMD3<Float>(repeating: zoom)
         gimbal.position = SIMD3<Float>(pan.x, pan.y, 0)
+    }
+}
+
+/// The canvas as UIKit: `USDZSceneView` mounts this in its own view and keeps the
+/// inspect gestures, which is why the canvas itself takes no touches. This file's one
+/// `UIHostingController` (allowed by `scripts/uikit-structure-guard.ts`); it publishes
+/// no app environment, because the canvas takes values only.
+@MainActor
+final class USDZRealityCanvasHost: UIHostingController<USDZRealityCanvas> {
+    private let onLoadFailed: () -> Void
+
+    init(fileURL: URL, pose: USDZInspectPose, onLoadFailed: @escaping () -> Void) {
+        self.onLoadFailed = onLoadFailed
+        super.init(rootView: USDZRealityCanvas(fileURL: fileURL, pose: pose, onLoadFailed: onLoadFailed))
+    }
+
+    @available(*, unavailable)
+    required init?(coder aDecoder: NSCoder) {
+        return nil
+    }
+
+    /// The gestures moved: RealityKit applies the pose in `update`.
+    func show(fileURL: URL, pose: USDZInspectPose) {
+        rootView = USDZRealityCanvas(fileURL: fileURL, pose: pose, onLoadFailed: onLoadFailed)
     }
 }

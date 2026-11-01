@@ -5,7 +5,9 @@ import AppKit
 #endif
 import Metal
 import QuartzCore
+#if os(macOS)
 import SwiftUI
+#endif
 
 #if canImport(UIKit)
 typealias OrbPlatformView = UIView
@@ -922,6 +924,7 @@ private final class OrbFrameLedger: @unchecked Sendable {
     }
 }
 
+#if os(macOS)
 struct OrbView: View {
     var style: OrbStyle
     var sizeClass: OrbSizeClass
@@ -953,42 +956,6 @@ struct OrbView: View {
     }
 }
 
-#if canImport(UIKit)
-private struct OrbRepresentable: UIViewRepresentable {
-    var style: OrbStyle
-    var sizeClass: OrbSizeClass
-    var tint: Color
-    var accents: [Color]
-    var voiceSpectrum: VoiceSpectrumFrame
-    var isActive: Bool
-    var isDarkBackground: Bool
-
-    func makeUIView(context: Context) -> OrbMetalView {
-        let view = OrbMetalView(style: style, sizeClass: sizeClass)
-        apply(view)
-        return view
-    }
-
-    func updateUIView(_ uiView: OrbMetalView, context: Context) {
-        apply(uiView)
-    }
-
-    static func dismantleUIView(_ uiView: OrbMetalView, coordinator: ()) {
-        uiView.stopAndDismantle()
-    }
-
-    private func apply(_ view: OrbMetalView) {
-        view.style = style
-        view.sizeClass = sizeClass
-        view.tintUIColor = UIColor(tint)
-        view.accentUIColors = accents.map { UIColor($0) }
-        view.voiceSpectrum = voiceSpectrum
-        view.isAnimationEnabled = isActive
-        view.isDarkBackground = isDarkBackground
-        view.honorsSystemReduceMotion = true
-    }
-}
-#else
 private struct OrbRepresentable: NSViewRepresentable {
     var style: OrbStyle
     var sizeClass: OrbSizeClass

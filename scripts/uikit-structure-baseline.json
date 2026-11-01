@@ -1,38 +1,11 @@
 {
   "version": 1,
   "files": {
-    "clients/apple/Oppi/App/AppRootEnvironment.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/AppRootViewController.swift": {
       "UIAlertController(": 1
     },
-    "clients/apple/Oppi/App/HostFactory.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Formatting/ANSIAttributedStringRenderer.swift": {
       "UIColor(<palette>.": 16
-    },
-    "clients/apple/Oppi/Core/Theme/AppFontConstants.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Theme/AppTheme.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Theme/RemoteTheme.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Theme/ThemeContrast.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/DiffAttributedStringBuilder.swift": {
       "UIColor(<palette>.": 10
@@ -77,9 +50,6 @@
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift": {
       "UIColor(<palette>.": 2
     },
@@ -109,9 +79,6 @@
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleListViewController.swift": {
       "SettingsListStyle.pin(": 1
-    },
-    "clients/apple/Oppi/Features/Server/UsageCharts.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersViewController.swift": {
       "UIAlertController(": 1
@@ -186,20 +153,9 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
       "toggleRow(": 1
     },
-    "clients/apple/OppiDebugHarness/ChatRoutesHarness.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/UIHangHarnessView.swift": {
-      "import SwiftUI": 1
+    "clients/apple/Shared/Theme/ModelColorHelpers.swift": {
+      "providerLogoAssetName(": 2,
+      "providerMonogram(": 2
     }
   }
 }

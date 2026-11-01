@@ -28,7 +28,7 @@ struct AppRootModalsTests {
         let editor = AppRootModals.dialogPresentation(for: ExtensionUIRequest(id: "r", sessionId: "s", method: "editor"))
         #expect(fallback.detents.count == 2)
         #expect(editor.detents.count == 1)
-        #expect(fallback.navigation != nil && editor.navigation != nil)
+        #expect(fallback.wrapsInNavigation && editor.wrapsInNavigation)
     }
 
     @Test("the fallback expires in whole seconds, at least one, from the deadline or the timeout")

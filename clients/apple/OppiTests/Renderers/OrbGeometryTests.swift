@@ -1,8 +1,5 @@
 import Foundation
-import SwiftUI
 import Testing
-import UIKit
-import Vision
 @testable import Oppi
 
 @Suite("OrbGeometry")
@@ -515,34 +512,6 @@ struct ThinkingOrbAttributionTests {
         #expect(ThinkingOrbAttribution.summary.contains("Metal"))
         #expect(ThinkingOrbAttribution.originalDesignURLString == "https://github.com/Jakubantalik/thinking-orbs")
         #expect(ThinkingOrbAttribution.swiftPortURLString == "https://github.com/haplollc/ThinkingOrbs")
-    }
-    /// Renders the Acknowledgments page and reads what is on screen: both contributors, their
-    /// roles, and both repositories must be visible to the user, not merely present in source.
-    @MainActor
-    @Test func acknowledgmentsViewNamesRolesAndBothRepositories() throws {
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
-        let host = UIHostingController(rootView: ThinkingOrbAcknowledgmentsView())
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.rootViewController = nil; window.isHidden = true }
-        host.view.layoutIfNeeded()
-        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
-            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-        }
-        let cgImage = try #require(image.cgImage)
-        let recognize = VNRecognizeTextRequest()
-        recognize.recognitionLevel = .accurate
-        try VNImageRequestHandler(cgImage: cgImage).perform([recognize])
-        let shown = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            .joined(separator: " ").lowercased()
-        #expect(shown.contains("jakub antalik"), "designer credit not visible: \(shown)")
-        #expect(shown.contains("original thinking-orbs designs"), "designer role not visible: \(shown)")
-        #expect(shown.contains("haplo llc"), "port credit not visible: \(shown)")
-        #expect(shown.contains("swift thinkingorbs port"), "port role not visible: \(shown)")
-        #expect(shown.contains("jakubantalik/thinking-orbs"), "original repository not visible: \(shown)")
-        #expect(shown.contains("haplollc/thinkingorbs"), "port repository not visible: \(shown)")
     }
     /// `Shared/Renderers/Orbs/LICENSE` is copied into the test bundle (project.yml), so this reads
     /// the file the repository ships rather than a path computed from this source file.

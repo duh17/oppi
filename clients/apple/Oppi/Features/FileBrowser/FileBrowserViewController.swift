@@ -540,7 +540,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// A workspace shell route: folders and workspace files open as routes
     /// through `AppNavigation`. In the chat panel folders open in place and
-    /// files push through the screen navigator.
+    /// files push onto the panel's own stack.
     private var routesThroughShell: Bool {
         FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
             usesInlineCompactNavigation: usesInlineCompactNavigation,

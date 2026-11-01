@@ -220,8 +220,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     // MARK: - Collection view lifecycle
 
     /// Builds the timeline's collection view with this controller as its
-    /// delegate and data source. `contentRoot` is the app root for SwiftUI
-    /// content the timeline hosts (its empty state).
+    /// delegate and data source. `contentRoot` is the app root above it, which
+    /// the empty state reads the theme from.
     func makeCollectionView(
         configuration: ChatTimelineConfiguration,
         contentRoot: AppRootEnvironment?
@@ -301,8 +301,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     private let context = ChatTimelineControllerContext()
     let ownedClock = ChatTimelineOwnedClockState()
-    /// The app root above this timeline, for SwiftUI content it hosts
-    /// through `HostFactory.content`. The timeline reads no services from it.
+    /// The app root above this timeline, for the empty state's theme. The
+    /// timeline reads no services from it.
     var contentRoot: AppRootEnvironment?
     /// Prepared when an explicit jump starts, spent when its row arrives.
     private var navigationArrivalHaptic: UIImpactFeedbackGenerator?

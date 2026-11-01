@@ -123,6 +123,9 @@ targets:
         type: group
         excludes:
           - "Renderers/Orbs/LICENSE"
+          # Mac-only SwiftUI in Shared: iOS has no orb acknowledgments page of
+          # its own (the Mac's Settings shows it).
+          - "Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift"
       # Debug harnesses and screenshot previews (and their fixtures). UI and E2E
       # tests launch the Debug app with harness launch arguments, so the folder
       # compiles into this target; Release excludes it below.

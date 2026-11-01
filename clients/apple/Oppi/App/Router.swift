@@ -1,28 +1,10 @@
 import UIKit
 
 // UIKit owns modal presentation and navigation pushes for iOS. This file is
-// the UIKit half of the router: presentation styles, bar policy, the modal
-// navigation container, and the host-owned search bar. SwiftUI screens become
-// controllers through `HostFactory` (`HostFactory.swift`), which also holds the
-// SwiftUI-facing API (`routerModal`, `routerSearchable`, and the
-// `screenNavigator` environment value with `present`, `push`, and `finish`).
+// the UIKit half of the router: presentation styles, the modal navigation
+// container, and the host-owned search bar.
 //
 // Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
-
-/// What a hosted screen wants from the UIKit bars of the navigation controller
-/// it sits in. Applied every time the screen appears, so popping back restores
-/// the previous screen's policy.
-struct ScreenBars: Equatable {
-    /// Large title. Inline otherwise. SwiftUI's `navigationBarTitleDisplayMode`
-    /// is ignored in a UIKit navigation bar until the bar prefers large titles.
-    /// On a vertical toolbar rail (iPhone Duo) the title stays inline: a large
-    /// title there showed no title at all.
-    var largeTitle = false
-    /// Shows the navigation controller's toolbar while the screen has SwiftUI
-    /// `.bottomBar` items. A hidden toolbar drops them silently; an empty one
-    /// still takes the bottom inset.
-    var showsToolbar = false
-}
 
 /// How the router shows a modal screen.
 @MainActor
@@ -34,12 +16,12 @@ struct ModalPresentation {
     /// The detent the sheet opens at. Nil opens at the smallest detent.
     /// A UIKit screen moves it later with `Router.selectSheetDetent`.
     var selectedDetent: UISheetPresentationController.Detent.Identifier?
-    /// Sheet corner radius (SwiftUI `presentationCornerRadius`). Nil keeps UIKit's.
+    /// Sheet corner radius. Nil keeps UIKit's.
     var sheetCornerRadius: CGFloat?
-    /// Non-nil wraps the screen in a `RouterNavigationController` with these
-    /// bars for the root screen. The screen then gets a UIKit navigation bar
-    /// for its title and toolbar items and pushes with `Router.push`.
-    var navigation: ScreenBars?
+    /// Whether the screen is wrapped in a `RouterNavigationController`. It then
+    /// gets a UIKit navigation bar for its title and bar items, and pushes with
+    /// `Router.push`.
+    var wrapsInNavigation = false
     var permittedArrowDirections: UIPopoverArrowDirection = .any
     /// UIKit turns a popover into a sheet in compact width, as SwiftUI does.
     /// `keepsPopoverInCompactWidth()` matches `.presentationCompactAdaptation(.popover)`.
@@ -77,9 +59,9 @@ struct ModalPresentation {
         return copy
     }
 
-    func inNavigation(_ bars: ScreenBars = ScreenBars()) -> Self {
+    func inNavigation() -> Self {
         var copy = self
-        copy.navigation = bars
+        copy.wrapsInNavigation = true
         return copy
     }
 
@@ -235,8 +217,7 @@ enum Router {
     /// `screen` must be a `RouterModalContainer` unless the presentation wraps
     /// it in navigation. `onDismiss` runs after UIKit finished dismissing it,
     /// however that happened. The navigation container follows the color
-    /// scheme of `theme`, else of the app root above `presenter`; hosted
-    /// screens follow the theme themselves.
+    /// scheme of `theme`, else of the app root above `presenter`.
     static func present(
         _ screen: UIViewController,
         presentation: ModalPresentation,
@@ -246,7 +227,7 @@ enum Router {
         onDismiss: (() -> Void)? = nil
     ) {
         let container: RouterModalContainer
-        if presentation.navigation != nil {
+        if presentation.wrapsInNavigation {
             let navigation = RouterNavigationController(rootViewController: screen)
             if let theme = theme ?? AppRootEnvironment.near(presenter)?.themeStore {
                 navigation.interfaceStyle = { theme.userInterfaceStyle }
@@ -292,9 +273,9 @@ enum Router {
         if presentation.style == .overFullScreen || presentation.style == .fullScreen {
             // A window-covering modal: drop the presenter's keyboard. Over
             // `.overFullScreen` it would float over the modal. `.fullScreen`
-            // takes the presenter out of the window, but a hosted SwiftUI
-            // field kept first responder there and came back under a stale
-            // keyboard inset with nothing left to dismiss it.
+            // takes the presenter out of the window, and a field kept first
+            // responder there came back under a stale keyboard inset with
+            // nothing left to dismiss it.
             presenter.view.window?.endEditing(true)
         }
         topPresenter(from: presenter).present(container, animated: true)
@@ -434,11 +415,10 @@ private final class PopoverInCompactWidth: NSObject, UIPopoverPresentationContro
     }
 }
 
-/// Host-owned search bar for a hosted screen.
+/// Host-owned search bar for a screen.
 ///
-/// SwiftUI `.searchable` does not reach a UIKit navigation bar, so
-/// `routerSearchable` installs this on the hosting controller's navigation
-/// item and keeps the screen's search text and the bar in sync both ways.
+/// UIKit's `UISearchController` installs on the screen's navigation item, and
+/// this keeps the screen's search text and the bar in sync both ways.
 @MainActor
 final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchControllerDelegate, UISearchBarDelegate {
     let searchController = UISearchController(searchResultsController: nil)

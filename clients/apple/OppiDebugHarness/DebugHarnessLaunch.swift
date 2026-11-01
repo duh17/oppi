@@ -28,10 +28,9 @@ enum DebugHarnessLaunch {
     /// that is not reused.
     static func makeHarnessRoot(root: AppRootEnvironment, generation: UInt64?) -> HarnessRootViewController? {
         guard let content = harnessContent(root: root) else { return nil }
-        // Harnesses and previews render app screens, the timeline, and
-        // UIKit-hosted SwiftUI without the app's root controller. The
-        // router and HostFactory need the app root above them there too,
-        // and the window needs the theme applied the way the app root does.
+        // Harnesses and previews render app screens and the timeline without
+        // the app's root controller. The window needs the app root above them
+        // there too, and the theme applied the way the app root does.
         return HarnessRootViewController(
             content: content,
             themeStore: root.themeStore,
@@ -40,14 +39,13 @@ enum DebugHarnessLaunch {
     }
 
     /// What the harness window root shows: a harness's own UIKit controller
-    /// when it has one, else `HostFactory.content` around its SwiftUI view
-    /// until T16-z moves the rest off the SwiftUI dispatch.
+    /// when it has one, else the harness's SwiftUI view hosted for it.
     private static func harnessContent(root: AppRootEnvironment) -> UIViewController? {
         if let controller = uiKitHarness(root: root) {
             return controller
         }
         guard let harness = harnessView else { return nil }
-        return HostFactory.content(harness, root: root)
+        return HarnessSwiftUIHost(harness, root: root)
     }
 
     /// The harnesses that are their own UIKit screen, so the window hosts a
@@ -356,6 +354,94 @@ final class HarnessLaunchReset {
         NativeMarkdownImageView.resetCachesForTesting()
         FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
         InlineVideoStillFrameStore.shared.removeAll()
+    }
+}
+
+// MARK: - The harness's SwiftUI roots
+
+extension ScenePhase {
+    init(_ phase: AppPhase) {
+        switch phase {
+        case .active: self = .active
+        case .inactive: self = .inactive
+        case .background: self = .background
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// The app root a harness's SwiftUI tree reads: the harness window has no
+    /// app root above it, so nothing inherits one.
+    @Entry var appRootEnvironment: AppRootEnvironment?
+}
+
+extension View {
+    /// The root services, stores, and theme values a harness's SwiftUI tree
+    /// gets: the same set the app root gave a hosted screen before `HostFactory`
+    /// was deleted.
+    ///
+    /// Keep it whole. Observed, mechanism unknown: with only the three values the
+    /// harness's own views name (`\.appRootEnvironment`, `\.theme`, `\.themeID`),
+    /// `UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership` failed 3 of
+    /// 3 runs in a concurrent two-shard iPad lane, each on the settle bound —
+    /// "The expanded row took 4.4s to rest (bound 3.0s): the content moves under
+    /// the finger" — while the whole set passed. Nothing in the harness reads a
+    /// store from the environment, so the cause is not a missing read; it is a
+    /// SwiftUI layout or settle difference we have not isolated.
+    func harnessEnvironment(_ root: AppRootEnvironment) -> some View {
+        self
+            .environment(root.coordinator)
+            .environment(root.coordinator.activeConnection)
+            .environment(root.coordinator.activeConnection.chatState)
+            .environment(root.coordinator.activeConnection.sessionStore)
+            .environment(root.coordinator.activeConnection.workspaceStore)
+            .environment(root.coordinator.activeConnection.serverResourceStore)
+            .environment(root.coordinator.activeConnection.askRequestStore)
+            .environment(root.coordinator.activeConnection.audioPlayer)
+            .environment(root.coordinator.activeConnection.gitStatusStore)
+            .environment(root.coordinator.activeConnection.fileIndexStore)
+            .environment(root.coordinator.activeConnection.messageQueueStore)
+            .environment(root.navigation)
+            .environment(root.coordinator.serverStore)
+            .environment(root.themeStore)
+            .environment(root.quickCommentTemplateStore)
+            .environment(\.theme, root.themeStore.appTheme)
+            .environment(\.themeID, root.themeStore.activeThemeID)
+            .environment(\.scenePhase, ScenePhase(AppScenePhase.shared.phase))
+            .environment(\.appRootEnvironment, root)
+            .environment(\.openURL, OpenURLAction { url in
+                root.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
+                return .handled
+            })
+            .tint(.themeBlue)
+    }
+}
+
+/// A harness's SwiftUI root as UIKit. `followsTheme` is for a screen at a router
+/// stack's root (the UI-hang harness), which the old hosted screen also gave the
+/// theme's color scheme and page; a harness window root gets neither.
+final class HarnessSwiftUIHost: UIHostingController<AnyView> {
+    private let root: AppRootEnvironment
+    private let followsTheme: Bool
+
+    init<Content: View>(_ content: Content, root: AppRootEnvironment, followsTheme: Bool = false) {
+        self.root = root
+        self.followsTheme = followsTheme
+        super.init(rootView: AnyView(content.harnessEnvironment(root)))
+    }
+
+    @available(*, unavailable)
+    required init?(coder aDecoder: NSCoder) {
+        return nil
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        guard followsTheme else { return }
+        // Observation tracking re-runs this when the store changes, so a harness
+        // that toggles the theme keeps the system chrome in step.
+        overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
+        view.backgroundColor = root.themeStore.backgroundColor
     }
 }
 #endif

@@ -70,10 +70,9 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         }
     }
 
-    /// Same rule as `HostedScreenController.applyTitleDisplayMode`: a large
-    /// title shows nothing where the system puts the bar on a vertical edge,
-    /// so the title stays inline there. `SystemVerticalBar` reads the trait the
-    /// chat's rail items use, and a trait change re-runs this pass.
+    /// A large title shows nothing where the system puts the bar on a vertical
+    /// edge, so the title stays inline there. `SystemVerticalBar` reads the trait
+    /// the chat's rail items use, and a trait change re-runs this pass.
     private func applyTitleDisplayMode() {
         let large = !SystemVerticalBar.traitIsActive(traitCollection)
         // The bar's own flag, not the item's mode, is what makes a large title

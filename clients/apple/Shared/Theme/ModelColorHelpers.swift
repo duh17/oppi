@@ -582,6 +582,9 @@ func providerMonogram(_ provider: String?) -> String {
     }
 }
 
+/// A provider's logo or monogram at `size` for the SwiftUI chrome that draws it:
+/// the `StatsDailyChart` tooltip on both platforms (inside Swift Charts, where
+/// `EntityIcon`'s UIKit image cannot go) and the Mac's model rows.
 struct ProviderGlyph: View {
     let provider: String?
     var size: CGFloat = 11

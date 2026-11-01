@@ -220,9 +220,9 @@ private enum SettingsPageThemes {
 
 /// A router screen at the root of a `RouterNavigationController`, the way the
 /// router presents a modal with `.inNavigation()`. Previews and harnesses of
-/// screens that rely on UIKit bars and the navigator host them here; the app
-/// root comes from the window. `content` runs in the screen's own graph: put
-/// its fixture environment on it, not on this view.
+/// screens that rely on UIKit bars host them here; the app root comes from the
+/// window. `content` runs in the screen's own graph: put its fixture
+/// environment on it, not on this view.
 ///
 /// The app puts the theme's appearance on its window (`AppRootViewController`),
 /// and system chrome that reads the window rather than the screen, such as the
@@ -294,8 +294,9 @@ private struct RouterPreviewNavigationHost<Content: View>: UIViewControllerRepre
             preconditionFailure("RouterPreviewNavigation needs appRootEnvironment(_:) above it")
         }
         let navigation = RouterNavigationController(
-            rootViewController: HostFactory.screen(root: root, content: content)
+            rootViewController: HarnessSwiftUIHost(content(), root: root, followsTheme: true)
         )
+        navigation.viewControllers.first?.traitOverrides.appRootEnvironment = root
         let themeStore = root.themeStore
         navigation.interfaceStyle = { themeStore.userInterfaceStyle }
         return navigation

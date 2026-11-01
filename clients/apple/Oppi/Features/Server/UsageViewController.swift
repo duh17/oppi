@@ -43,9 +43,9 @@ final class UsageViewController: UIViewController {
     private let workspaceList = UIStackView()
     private let noWorkspaces = UILabel()
 
-    private let chartHost = UsageChartHost()
-    private let donutHost = UsageChartHost()
-    private let hourlyHost = UsageChartHost()
+    private let chartHost = UsageChartHost<UsageDailyChartLeaf>()
+    private let donutHost = UsageChartHost<UsageModelDonutLeaf>()
+    private let hourlyHost = UsageChartHost<UsageHourlyChartLeaf>()
 
     /// `model` is for the screenshot harness and tests: the app makes the server's own.
     init(server: PairedServer, root: AppRootEnvironment, model: UsageModel? = nil) {
@@ -269,7 +269,7 @@ final class UsageViewController: UIViewController {
                     colors: chartColors,
                     onDaySelected: { [weak self] date in self?.model.selectDay(date) }
                 ),
-                in: chartSlot, parent: self, root: root
+                in: chartSlot, parent: self
             )
         }
 
@@ -293,7 +293,7 @@ final class UsageViewController: UIViewController {
         let key = Self.hourlyChartKey(detail, hourly: hourly, themeKey: chartColors.themeKey)
         if renderedHourly != key {
             renderedHourly = key
-            hourlyHost.show(UsageHourlyChartLeaf(entries: hourly, colors: chartColors), in: detailView.chartSlot, parent: self, root: root)
+            hourlyHost.show(UsageHourlyChartLeaf(entries: hourly, colors: chartColors), in: detailView.chartSlot, parent: self)
         }
     }
 
@@ -323,7 +323,7 @@ final class UsageViewController: UIViewController {
                 renderedDonut = key
                 donutHost.show(
                     UsageModelDonutLeaf(models: models, metric: model.metric, colors: chartColors),
-                    in: donutSlot, parent: self, root: root
+                    in: donutSlot, parent: self
                 )
             }
         }

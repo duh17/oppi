@@ -69,8 +69,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
     private let scheduleEditor = RouterModalPresenter()
     private var editingAgent: StoredAgentDefinition?
     private var editsSchedule = false
-    /// What the modals closed: the SwiftUI `routerModal` slots bumped it on
-    /// every dismissal, swipe-down included.
+    /// What the modals closed: bumped on every dismissal, swipe-down included.
     private var dismissedModals = 0
 
     init(root: AppRootEnvironment) {
@@ -200,8 +199,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
         }
     }
 
-    /// The two editor slots, from this screen's state: the SwiftUI list's
-    /// `routerModal(item:)` and `routerScreenModal(isPresented:)`.
+    /// The two editor slots, from this screen's state.
     private func updateEditors() {
         let connection = root.coordinator.activeConnection
         let editing = editingAgent

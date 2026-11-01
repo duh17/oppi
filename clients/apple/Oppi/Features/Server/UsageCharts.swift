@@ -2,9 +2,10 @@ import Charts
 import SwiftUI
 
 // The three charts Usage draws. Swift Charts is SwiftUI-only, so each is a leaf that
-// `UsageViewController` hosts through `HostFactory.content`: every input is a value
+// `UsageViewController` hosts through `UsageChartHost`: every input is a value
 // (data, palette colors, fonts, a callback), and a leaf reads no `@Environment` of its
-// own. The screen, the lists, and every other control around them are UIKit.
+// own: it takes every value as a parameter. The screen, the lists, and every other
+// control around them are UIKit.
 //
 // This is the framework-required Swift Charts file. It is the old `ModelBreakdownSection.swift`
 // (its import-SwiftUI baseline entry moved here) now holding only the chart leaves that came
@@ -164,19 +165,39 @@ struct UsageHourlyChartLeaf: View {
 
 // MARK: - Hosting
 
-/// One chart leaf embedded in a UIKit view through `HostFactory.content`: installed on
-/// first use, then given new content as the data changes. The hosting view reports its
-/// own height (a daily chart grows by a tooltip), so the stack around it re-lays out.
+/// A chart leaf as UIKit. This file's one `UIHostingController` (allowed by
+/// `scripts/uikit-structure-guard.ts`): the guard has no other hosting seam left.
+/// It publishes no app environment; a leaf takes values only.
 @MainActor
-final class UsageChartHost {
-    private var host: HostedContentController?
+private final class UsageChartLeafHost<Leaf: View>: UIHostingController<Leaf> {
+    init(_ leaf: Leaf) {
+        super.init(rootView: leaf)
+    }
 
-    func show<Leaf: View>(_ leaf: Leaf, in slot: UIView, parent: UIViewController, root: AppRootEnvironment) {
+    @available(*, unavailable)
+    required init?(coder aDecoder: NSCoder) {
+        return nil
+    }
+
+    /// New content for the same slot: the chart redraws with the new values.
+    func show(_ leaf: Leaf) {
+        rootView = leaf
+    }
+}
+
+/// One chart leaf embedded in a UIKit slot: installed on first use, then given new
+/// content as the data changes. The hosting view reports its own height (a daily chart
+/// grows by a tooltip), so the stack around it re-lays out.
+@MainActor
+final class UsageChartHost<Leaf: View> {
+    private var host: UsageChartLeafHost<Leaf>?
+
+    func show(_ leaf: Leaf, in slot: UIView, parent: UIViewController) {
         if let host {
-            host.setContent(leaf)
+            host.show(leaf)
             return
         }
-        let host = HostFactory.content(leaf, root: root)
+        let host = UsageChartLeafHost(leaf)
         host.sizingOptions = .intrinsicContentSize
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false

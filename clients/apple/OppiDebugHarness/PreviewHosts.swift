@@ -3,11 +3,7 @@ import UIKit
 
 /// UIKit hosts shared by the previews that are their own window root: the router
 /// stack a preview's screen sits in, the `screenshot.ready` marker a capture or
-/// UI test waits on, and the window's fixture app root. They replace what a
-/// preview got from modifiers on its SwiftUI body (`RouterPreviewNavigation`,
-/// `.accessibilityIdentifier("screenshot.ready")`,
-/// `.publishesAppRootToWindow(_:)`); the previews still dispatched as SwiftUI
-/// views keep using those.
+/// UI test waits on, and the window's fixture app root.
 @MainActor
 enum PreviewHost {
     /// A preview's screen at the root of a `RouterNavigationController`, the way
@@ -44,8 +40,7 @@ enum PreviewHost {
 
     /// Publishes `root` as the window's app root, for UIKit code anywhere in the
     /// window and for a sheet presented by a controller that does not carry the
-    /// fixture root in its own traits: the UIKit form of
-    /// `.publishesAppRootToWindow(_:)`.
+    /// fixture root in its own traits.
     static func publishAppRootToWindow(_ root: AppRootEnvironment, from host: UIViewController) {
         host.view.window?.traitOverrides.appRootEnvironment = root
     }

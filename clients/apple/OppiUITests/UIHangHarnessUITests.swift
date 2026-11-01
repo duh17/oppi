@@ -506,6 +506,66 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         }
     }
 
+    /// The timeline's offset once the expanded row has finished self-sizing: the
+    /// same offset *and* the same on-screen row frame for a whole `minimumWindow`,
+    /// counted from the last change of either.
+    ///
+    /// A repeat of one offset reading is too weak here. The row's final height
+    /// starts a top-anchored correction after the first readings match, and a drag
+    /// taken before it lands measures that correction instead of itself: on iPad
+    /// the offset then moved +183 pt against a downward drag
+    /// (`testExpandedExtensionTextScrollOwnership`).
+    ///
+    /// A change seen more than `restBound` after the row painted fails: content
+    /// that moves under the person's finger is a bug, not something to wait out.
+    /// The bound is on movement, not on the wait, because each reading is two
+    /// XCUITest queries and a loaded lane makes them slow without the row moving.
+    private func waitForExpandedRowAtRest(
+        diagTick: XCUIElement,
+        row: XCUIElement,
+        minimumWindow: TimeInterval = 1,
+        restBound: TimeInterval = 3,
+        timeout: TimeInterval = 8
+    ) -> Int {
+        XCTAssertTrue(row.exists, "The expanded row is not realized")
+        let start = Date()
+        let deadline = start.addingTimeInterval(timeout)
+        var previousOffset: Int?
+        var previousFrame: CGRect?
+        var lastChangeAt = start
+        var readings = 0
+        while true {
+            tapHarnessControl(diagTick)
+            let now = Date()
+            let offset = pollDiagnostic("diag.offsetY", timeout: 4)
+            let frame = row.frame
+            readings += 1
+            if offset != previousOffset || frame != previousFrame {
+                if now.timeIntervalSince(start) > restBound {
+                    XCTFail(
+                        "The expanded row was still moving "
+                            + "\(now.timeIntervalSince(start))s after it painted (bound \(restBound)s): "
+                            + "the content moves under the finger"
+                    )
+                }
+                lastChangeAt = now
+            } else if row.exists, now.timeIntervalSince(lastChangeAt) >= minimumWindow {
+                return offset
+            }
+            if now >= deadline, readings >= 3 {
+                XCTFail(
+                    "The expanded row did not come to rest within \(timeout)s "
+                        + "(offset=\(offset), previous=\(previousOffset.map(String.init) ?? "nil"), "
+                        + "frame=\(frame), previousFrame=\(previousFrame.map(String.init(describing:)) ?? "nil"), "
+                        + "readings=\(readings))"
+                )
+                return offset
+            }
+            previousOffset = offset
+            previousFrame = frame
+        }
+    }
+
     /// Scrolls the visual fixture rows into view before a focus button expands one of
     /// them. A tall iPad viewport then holds every fixture row as a built cell, which
     /// is the state where an expansion change must reconfigure a row instead of
@@ -639,9 +699,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             diagTick: diagTick
         )
 
-        // The top-anchored scroll keeps adjusting the offset while the expanded row
-        // self-sizes; a baseline read before that settles is not a baseline.
-        let baselineOffset = waitForTimelineOffsetToRest(diagTick: diagTick)
+        // The row's final height starts a top-anchored correction after the offset
+        // first holds still; a baseline read before that lands is not a baseline.
+        let baselineOffset = waitForExpandedRowAtRest(diagTick: diagTick, row: extensionRow)
 
         // Both drags start on the expanded row, so the row must stay on screen between
         // them: drag toward earlier content first (the row moves down, away from the top

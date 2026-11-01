@@ -663,7 +663,6 @@ private struct UIHangHarnessContent: View {
     @State private var streamTick = 0
 
     @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
-    @Environment(\.screenNavigator) private var navigator
     @State private var harnessNavigation = AppNavigation()
     @State private var streamEnabled = !UIHangHarnessConfig.streamDisabled
     @State private var diagnosticsTask: Task<Void, Never>?
@@ -1033,7 +1032,11 @@ private struct UIHangHarnessContent: View {
         chatReaderPayloadStore.removeAll()
         let route = chatReaderPayloadStore.store(payload)
         let store = chatReaderPayloadStore
-        navigator.push(ChatReaderViewController(target: route, store: store, navigation: harnessNavigation))
+        guard let host = HarnessHost.current else { return }
+        Router.push(
+            ChatReaderViewController(target: route, store: store, navigation: harnessNavigation),
+            from: host
+        )
     }
 
     private var controlsBar: some View {
@@ -2236,6 +2239,32 @@ private struct UIHangHarnessMessageQueue: UIViewRepresentable {
             verticalFittingPriority: .fittingSizeLevel
         )
         return CGSize(width: width, height: size.height)
+    }
+}
+
+// The controller hosting the harness's SwiftUI tree, for the routes the harness
+// pushes: chat readers of its own timeline. The harness root is a router stack
+// (`RouterPreviewNavigation`), so they go through `Router.push` from the
+// controller that hosts the tree, as they do from a UIKit screen.
+@MainActor
+enum HarnessHost {
+    /// The screen at the top of the harness's router stack: the UI-hang harness.
+    static var current: UIViewController? {
+        let root = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
+            .first
+        return root.flatMap { stack(in: $0)?.topViewController }
+    }
+
+    /// The first router stack under `controller`: the harness mounts one inside
+    /// its SwiftUI body (`RouterPreviewNavigation`), so the window root is not it.
+    private static func stack(in controller: UIViewController) -> RouterNavigationController? {
+        if let stack = controller as? RouterNavigationController { return stack }
+        for child in controller.children {
+            if let found = stack(in: child) { return found }
+        }
+        guard let presented = controller.presentedViewController else { return nil }
+        return stack(in: presented)
     }
 }
 

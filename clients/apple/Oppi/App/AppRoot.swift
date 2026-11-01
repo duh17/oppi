@@ -3,17 +3,14 @@ import UIKit
 
 /// App-scoped services the root publishes to every screen.
 ///
-/// The root view applies them with `appRootEnvironment(_:)`. `HostFactory`
-/// re-applies the same set on every SwiftUI screen UIKit hosts, so no screen
-/// depends on SwiftUI passing the presenter's environment across a UIKit seam.
-/// The iOS app on Mac (build 54) crashed on that path: "No Observable object of
-/// type ConnectionCoordinator".
+/// The app's scene publishes the root as a trait on its window, so every screen
+/// finds it there instead of through a presenter's environment. The iOS app on
+/// Mac (build 54) crashed on the other path: "No Observable object of type
+/// ConnectionCoordinator".
 ///
-/// UIKit code finds the same root as a trait (`UITraitCollection.appRootEnvironment`)
+/// UIKit code finds the root as a trait (`UITraitCollection.appRootEnvironment`)
 /// with `AppRootEnvironment.near(_:)`. The app's scene publishes it on its window,
 /// so every controller in the window inherits it: presented ones included.
-/// The SwiftUI value is a plain environment value, not bridged to the trait:
-/// a bridged value read nil in `NavigationStack` destinations.
 ///
 /// Every member is a store, so the root never changes for the app's
 /// lifetime: a screen that captured it when it was pushed reads the same live
@@ -33,8 +30,7 @@ struct AppRootEnvironment {
     let settings: SettingsStore
     /// The app's one Live Voice call, which outlives the chat that started it.
     let liveVoiceCalls: LiveVoiceCallCenter
-    /// The one owner of every open. UIKit reaches it here; SwiftUI through
-    /// the root's `openURL` action.
+    /// The one owner of every open: a link, a notification, a system control.
     let opener: AppOpener
 
     /// The app passes its own opener, the one `AppDelegate` wires to the
@@ -115,8 +111,8 @@ enum AppPhase: Sendable {
 
 /// The app scene's phase. SwiftUI's own `scenePhase` stays `.background` in a
 /// UIKit scene's hosting controllers, which would pause everything that waits
-/// for `.active` (the chat timeline, the SSH terminal); `appRootEnvironment(_:)`
-/// hands this one to the SwiftUI screens UIKit hosts.
+/// for `.active` (the chat timeline, the SSH terminal); the debug harness hands
+/// this one to the SwiftUI trees it hosts.
 @MainActor @Observable
 final class AppScenePhase {
     static let shared = AppScenePhase()

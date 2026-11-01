@@ -459,7 +459,7 @@ final class ComposerBusyModePickerController: UIViewController, RouterModalConta
 }
 
 /// Agent (and similar) popover list. UIKit so it can refresh while open without
-/// `HostFactory.setContent` joining a SwiftUI update.
+/// a SwiftUI update joining it.
 final class ComposerOptionListController: UIViewController, RouterModalContainer {
     var onDismissed: (() -> Void)?
 

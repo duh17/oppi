@@ -422,7 +422,7 @@
  "ReviewCommentStoreTests": 0.03,
  "ReviewCommentStripChromeTests": 0.05,
  "ReviewableControlMarkdownTests": 0.03,
- "RouterHostFactoryTests": 18.95,
+ "RouterUIKitTests": 12.21,
  "SQLHighlightDebugTests": 0,
  "SSCMultiSessionTests": 0,
  "SSCStateMachineTests": 0.04,

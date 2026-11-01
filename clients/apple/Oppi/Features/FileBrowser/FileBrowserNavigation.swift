@@ -241,7 +241,7 @@ enum FileBrowserTreeNavigationReducer {
     }
 
     /// Workspace-linked file routes exist only on the workspace shell's stacks.
-    /// The chat file panel pushes the reader through its own screen navigator.
+    /// The chat file panel pushes the reader onto its own stack.
     static func shouldUseWorkspaceLinkedFileDestination(
         usesInlineCompactNavigation: Bool,
         serverId: String?

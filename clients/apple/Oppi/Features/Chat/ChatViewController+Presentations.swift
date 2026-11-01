@@ -62,9 +62,9 @@ extension ChatViewController {
 
     /// Every chat modal is a router modal. Outline, Files, Git, and Context sit
     /// in a router navigation controller, as a modal here or in the trailing
-    /// column (`updateSidePanels`). Files and Context push through their
-    /// screen navigator; the outline is a UIKit screen that owns its bar and
-    /// search; Git presents its reviews over itself.
+    /// column (`updateSidePanels`). Files and Context push with `Router.push`;
+    /// the outline is a UIKit screen that owns its bar and search; Git presents
+    /// its reviews over itself.
     func updateModals() {
         guard let root else { return }
         let sidePanel = usesTrailingSidePanel

@@ -46,8 +46,7 @@ struct USDZInspectPose: Equatable {
 /// it. The inline card, the full-screen controller, and the file viewer all
 /// mount this.
 ///
-/// The canvas is hosted through `HostFactory.content`, which needs the app
-/// root, so it is installed once the view is in a window.
+/// The canvas is installed once the view is in a window.
 @MainActor
 final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
     /// Called on the main actor when RealityKit cannot load the file.
@@ -64,12 +63,12 @@ final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
     private(set) var pose = USDZInspectPose() {
         didSet {
             guard pose != oldValue, let fileURL else { return }
-            host?.setContent(canvas(for: fileURL))
+            host?.show(fileURL: fileURL, pose: pose)
         }
     }
 
     private var fileURL: URL?
-    private var host: HostedContentController?
+    private var host: USDZRealityCanvasHost?
     private var pinchStartZoom: Float = 1
 
     override init(frame: CGRect) {
@@ -119,18 +118,9 @@ final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
         installCanvasIfPossible()
     }
 
-    private func canvas(for fileURL: URL) -> USDZRealityCanvas {
-        USDZRealityCanvas(
-            fileURL: fileURL,
-            pose: pose,
-            onLoadFailed: { [weak self] in self?.onLoadFailed?() }
-        )
-    }
-
     private func installCanvasIfPossible() {
-        guard host == nil, let fileURL, window != nil,
-              let root = AppRootEnvironment.near(self) else { return }
-        let host = HostFactory.content(canvas(for: fileURL), root: root)
+        guard host == nil, let fileURL, window != nil else { return }
+        let host = USDZRealityCanvasHost(fileURL: fileURL, pose: pose) { [weak self] in self?.onLoadFailed?() }
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear
         // The gestures live on this view, so the canvas takes no touches.

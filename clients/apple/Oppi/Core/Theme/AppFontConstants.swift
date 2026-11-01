@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// The one owner of resolved UIKit fonts for reading surfaces.
@@ -11,7 +10,6 @@ import UIKit
 ///   Text Size, with headings and inline code as fixed ratios of the body.
 ///
 /// Full-screen readers multiply these by their own reader text scale.
-/// SwiftUI chrome uses the `Font.app*` constants below.
 enum AppFont {
     // MARK: - Code roles (selected code font × Code Text Size)
     //
@@ -151,52 +149,4 @@ enum AppFont {
         ]
         return levels.map { .systemFont(ofSize: bodySize * $0.size / 17, weight: $0.weight) }
     }
-}
-
-// MARK: - SwiftUI Font Constants
-
-extension Font {
-    // -- Badge / indicator fonts (tiny, fixed size) --
-
-    /// 7pt bold — unread counts, context badges
-    static let appBadgeCount = Font.system(size: 7, weight: .bold)
-
-    /// 8pt bold — small count badges
-    static let appBadge = Font.system(size: 8, weight: .bold)
-
-    /// 8pt semibold — small indicator labels
-    static let appBadgeLight = Font.system(size: 8, weight: .semibold)
-
-    /// 9pt semibold — tag labels, model badges
-    static let appTag = Font.system(size: 9, weight: .semibold)
-
-    /// 9pt bold — emphasized tag labels
-    static let appTagBold = Font.system(size: 9, weight: .bold)
-
-    // -- Chrome / navigation fonts --
-
-    /// 10pt semibold — chip labels, workspace details
-    static let appChip = Font.system(size: 10, weight: .semibold)
-
-    /// 11pt semibold — toolbar labels, session titles
-    static let appCaption = Font.system(size: 11, weight: .semibold)
-
-    /// 12pt regular — workspace names, context labels
-    static let appLabel = Font.system(size: 12)
-
-    // -- Settings / section headers --
-
-    /// 16pt medium — settings section headers
-    static let appSectionHeader = Font.system(size: 16, weight: .medium)
-
-    /// 18pt regular — emoji picker display
-    static let appEmoji = Font.system(size: 18)
-
-    /// 8pt regular — emoji caption
-    static let appEmojiCaption = Font.system(size: 8)
-
-    // -- Display / hero fonts --
-
-    /// 48pt regular — hero display (onboarding)
-    static let appHero = Font.system(size: 48)
 }

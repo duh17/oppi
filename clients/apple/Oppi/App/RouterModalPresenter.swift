@@ -3,19 +3,15 @@ import UIKit
 // The UIKit half of declarative modals: the root screen of a router modal and
 // the presenter that reconciles one slot's requested modal with what UIKit has
 // on screen. UIKit owners keep a presenter per slot and drive it from
-// `updateProperties()`; the SwiftUI anchors in `HostFactory.swift` drive the same
-// presenter until the last hosted screen is gone.
+// `updateProperties()`.
 
-/// The root screen of a router modal: SwiftUI content
-/// hosted through `HostFactory.screen`, or a UIKit view controller that owns
-/// its `navigationItem` (title, bar items, search) itself. A UIKit root needs
-/// a navigation presentation (`.inNavigation()`) unless it is a
-/// `RouterModalContainer` that presents bare (`Router.present`). It is built once per
-/// presentation. When the presenter re-renders, hosted content refreshes and
-/// a controller's `update` runs with the presenter's current values, so a
-/// UIKit modal that mirrors presenter state stays live like hosted content.
+/// The root screen of a router modal: a UIKit view controller that owns its
+/// `navigationItem` (title, bar items, search) itself. It needs a navigation
+/// presentation (`.inNavigation()`) unless it is a `RouterModalContainer` that
+/// presents bare (`Router.present`). It is built once per presentation. When the
+/// presenter re-renders, a controller's `update` runs with the presenter's
+/// current values, so a UIKit modal that mirrors presenter state stays live.
 enum RouterScreen {
-    case hosted(RouterHostedContent)
     case controller(() -> UIViewController, update: ((UIViewController) -> Void)? = nil)
 
     /// A UIKit root that the presenter refreshes on every re-render.
@@ -39,7 +35,7 @@ private extension ModalPresentation {
     /// same style and the same navigation wrapper. Sheet detents and the
     /// grabber change in place.
     func isPresentable(as other: ModalPresentation) -> Bool {
-        style == other.style && (navigation == nil) == (other.navigation == nil)
+        style == other.style && wrapsInNavigation == other.wrapsInNavigation
     }
 
     func hasSheetChrome(of other: ModalPresentation) -> Bool {
@@ -63,9 +59,8 @@ final class RouterModalPresenter {
     var onDismiss: (() -> Void)?
     var clearItem: (() -> Void)?
 
-    /// The presented root screen; `hostedScreen` too when it is SwiftUI.
+    /// The presented root screen.
     private var screen: UIViewController?
-    private var hostedScreen: HostedScreenController?
     private var presentedID: AnyHashable?
     private var presentedPresentation: ModalPresentation?
     private var presentationCount = 0
@@ -154,10 +149,7 @@ final class RouterModalPresenter {
                 }
                 // The presenter re-rendered (it is still in the window under
                 // sheets and popovers): refresh the content it builds.
-                switch request.screen {
-                case .hosted(let makeContent):
-                    hostedScreen?.setContent(makeContent)
-                case .controller(_, let update):
+                if case .controller(_, let update) = request.screen {
                     update?(screen)
                 }
                 return
@@ -168,11 +160,9 @@ final class RouterModalPresenter {
             return
         }
         guard request != nil, anchor?.viewIfLoaded?.window != nil, !presentationScheduled else { return }
-        // Present after the presenter's SwiftUI update, not inside it:
-        // `sync()` runs from the anchor's `updateUIViewController`, and a
-        // hosting controller created during that update joined the
-        // presenter's graph, and its title and bar items moved into the
-        // presenter's bar while its own bar stayed empty.
+        // Present on the next run-loop turn, not inside the caller's property
+        // pass: a controller created there would join a transition already in
+        // flight and present into it.
         presentationScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -192,17 +182,6 @@ final class RouterModalPresenter {
             self.screenDidDismiss()
         }
         switch request.screen {
-        case .hosted(let makeContent):
-            let hosted = Router.present(
-                root: request.root,
-                presentation: request.presentation,
-                from: anchor,
-                sourceView: anchor.view,
-                onDismiss: onDismiss,
-                content: makeContent
-            )
-            screen = hosted
-            hostedScreen = hosted
         case .controller(let makeController, _):
             let controller = makeController()
             screen = controller
@@ -224,7 +203,6 @@ final class RouterModalPresenter {
         let representing = isRepresenting
         isRepresenting = false
         screen = nil
-        hostedScreen = nil
         presentedID = nil
         presentedPresentation = nil
         if !representing {

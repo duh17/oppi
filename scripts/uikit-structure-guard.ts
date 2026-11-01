@@ -8,17 +8,23 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  * UIKit-first ownership guard for the iOS app target (clients/apple/Oppi and
  * its Debug-only clients/apple/OppiDebugHarness).
  *
- * UIKit owns iOS app structure, modal presentation, and new views. Two rules:
+ * UIKit owns iOS app structure, modal presentation, and new views. Three rules:
  *
  *  - Navigation and presentation constructs (NavigationStack, .sheet(, ...),
  *    UIHostingController( calls, and UIHostingController<...> as a superclass
  *    or type are disallowed in every file, debug previews and harnesses
- *    included: SwiftUI reaches UIKit through HostFactory, which owns the only
- *    hosting controllers. The only exceptions are the commented entries in
- *    `allowed` below.
- *  - `import SwiftUI` is a ratchet: a file's count fails the guard when it
- *    exceeds uikit-structure-baseline.json (files absent from the baseline
- *    have baseline 0). Decreases pass.
+ *    included: SwiftUI never owns structure. The only exceptions are the
+ *    commented entries in `allowed` below, which are the two framework leaves
+ *    that have to be SwiftUI (Swift Charts, RealityKit) and the debug harness's
+ *    own hosting. Nothing else in the app hosts SwiftUI.
+ *  - `import SwiftUI` is an allow-list (`swiftUIImporters` below), and it counts
+ *    `import Charts`, `import TipKit` and `import struct SwiftUI.X` too, because
+ *    both frameworks re-export SwiftUI. The iOS app target is UIKit everywhere
+ *    except the two framework leaves, the theme and colour files that carry the
+ *    palette's SwiftUI tokens, five TipKit files, the `Shared/` files the target
+ *    compiles, and the debug harness's previews. Any other file fails, and a new
+ *    entry needs Chen's approval. `@_exported import` of any of them fails even
+ *    in an allow-listed file.
  *
  *  - A `UIColor(<palette>.` bridge is a ratchet of the same kind: a UIKit
  *    call site converts the palette's SwiftUI `Color` again instead of reading
@@ -144,7 +150,15 @@ type Baseline = Record<string, Counts>;
 type Hit = { file: string; line: number; construct: string };
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
+// `OppiCore/` and `Shared/` are here because the iOS app target compiles all of
+// them (project.yml): a SwiftUI file there ships in the app exactly like one
+// under `Oppi/`. The extension targets hold only Apple-required widget files.
+const scanRoots = [
+  "clients/apple/Oppi",
+  "clients/apple/OppiDebugHarness",
+  "clients/apple/OppiCore",
+  "clients/apple/Shared",
+].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
 const navigationBarGuide = "dev/architecture-client.md, section \"Navigation bar\"";
@@ -155,6 +169,7 @@ const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
 /** The one owner of entity artwork (the guide's shared UIKit building blocks). */
 const entityIconOwner = "clients/apple/Oppi/Core/Views/EntityIcon.swift";
+
 
 /** A file that declares a page on the list kit: a subclass of the base, or of
  * the resource-detail base both detail pages share. */
@@ -235,6 +250,124 @@ const navigationBarOwners = [
   "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift",
 ];
 
+/**
+ * The files that may import SwiftUI, each with a reason. `Charts` and `TipKit`
+ * re-export SwiftUI, and a framework-qualified `import struct SwiftUI.X` is the
+ * same dependency, so all three count as importing SwiftUI: the iOS app is UIKit
+ * everywhere except the surfaces Apple requires in SwiftUI, and the files here
+ * say which one and why. Every other file fails the guard, and a new entry needs
+ * Chen's approval.
+ */
+const swiftUIImporters: { file: string; reason: string }[] = [
+  // The two framework leaves: SwiftUI only because the framework is.
+  {
+    file: "clients/apple/Oppi/Features/Server/UsageCharts.swift",
+    reason: "Swift Charts is SwiftUI-only: the three Usage chart leaves and the one UIHostingController that hosts them.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift",
+    reason: "RealityKit's RealityView is SwiftUI-only: the USDZ canvas and the one UIHostingController that hosts it.",
+  },
+  // The palette carries SwiftUI `Color`/`Font` tokens; the UIKit view of it is
+  // `ThemeUIKitPalette`, so these are the one place a Color crosses to UIKit.
+  {
+    file: "clients/apple/Oppi/Core/Theme/AppTheme.swift",
+    reason: "The `\\.theme` environment value and the SwiftUI `Color` tokens the palette carries.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Theme/ThemeStore.swift",
+    reason: "The store publishes `appTheme`, `Color` tokens, and a preferred color scheme.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Theme/RemoteTheme.swift",
+    reason: "An imported theme's JSON decodes into SwiftUI `Color` tokens.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift",
+    reason: "`ThemeUIKitPalette` and the built-in palettes' SwiftUI `Color` tokens.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Theme/ThemeContrast.swift",
+    reason: "Contrast resolution works on the palette's SwiftUI `Color` tokens.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Extensions/Color+Theme.swift",
+    reason: "`Color.theme…` helpers over the palette.",
+  },
+  // TipKit: the framework re-exports SwiftUI (`TipView`, `Text` inside a tip).
+  {
+    file: "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTips.swift",
+    reason: "TipKit re-exports SwiftUI; the tip rules and the tip views it draws.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift",
+    reason: "TipKit re-exports SwiftUI; the banner's `TipView`.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift",
+    reason: "TipKit re-exports SwiftUI; its hover tip is a `Tip`.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
+    reason: "TipKit re-exports SwiftUI; the tool row's tip anchor.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/CollapsedToolTimelineRowContent.swift",
+    reason: "TipKit re-exports SwiftUI; the collapsed tool row's tip.",
+  },
+  // Shared/ files the iOS target compiles.
+  {
+    file: "clients/apple/Shared/Theme/ModelColorHelpers.swift",
+    reason: "`import Charts`: the shared `StatsDailyChart` (whose tooltip draws `ProviderGlyph`), the model colors, and the stats aggregation the Usage charts draw from.",
+  },
+  {
+    file: "clients/apple/Shared/Renderers/Orbs/OrbMetalView.swift",
+    reason: "The thinking orb renderer: its SwiftUI `OrbView` wrapper is `#if os(macOS)` (the Mac's chat chrome); iOS draws the same `OrbMetalView` in UIKit.",
+  },
+  {
+    file: "clients/apple/Shared/Activity/LiveActivityPresentation.swift",
+    reason: "The Live Activity surface (Apple requires it in SwiftUI); shared with the widget extension.",
+  },
+  // The debug harness: previews that are still SwiftUI views, captured by
+  // scripts/screenshot-*.sh and launched by UI tests. It compiles into the app
+  // target in Debug only.
+  {
+    file: "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift",
+    reason: "The harness hosts its own SwiftUI roots; it is the only hosting seam left in the target.",
+  },
+  {
+    file: "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift",
+    reason: "The still-SwiftUI screenshot previews, their config, and the router preview host.",
+  },
+  {
+    file: "clients/apple/OppiDebugHarness/UIHangHarnessView.swift",
+    reason: "The UI-hang harness is a SwiftUI view around the UIKit timeline.",
+  },
+  {
+    file: "clients/apple/OppiDebugHarness/ChatRoutesHarness.swift",
+    reason: "The chat-routes harness is a SwiftUI fixture screen.",
+  },
+  {
+    file: "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift",
+    reason: "The session-timeline capture is a SwiftUI fixture screen.",
+  },
+];
+const swiftUIImporterFiles = swiftUIImporters.map((entry) => entry.file);
+
+/**
+ * SwiftUI in `Shared/` that the iOS target excludes (the same path is in
+ * `project.yml`'s `Oppi` sources): the Mac's own view. It ships in `OppiMac`
+ * only, so it is not an app importer, but the guard scans the folder and must
+ * know it. Keep this list and `project.yml` in step.
+ */
+const sharedMacOnlySwiftUI: { file: string; reason: string }[] = [
+  {
+    file: "clients/apple/Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift",
+    reason: "The Mac's orb acknowledgments page; iOS has none. Excluded from the Oppi target.",
+  },
+];
+const swiftUIExemptFiles = [...swiftUIImporterFiles, ...sharedMacOnlySwiftUI.map((entry) => entry.file)];
+
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
   { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g, disallowed: true },
@@ -261,7 +394,26 @@ const constructs: Construct[] = [
     disallowed: true,
     exemptFiles: navigationBarOwners,
   },
-  { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
+  {
+    name: "SwiftUI import (SwiftUI, Charts, or TipKit)",
+    // `Charts` and `TipKit` re-export SwiftUI, and `import struct SwiftUI.X` is
+    // the same dependency by another spelling. A Swift 6 access-level import
+    // (`public import`) and `@_spi(…)` bind SwiftUI just the same, so the
+    // attribute prefix and the access modifier are part of the match.
+    pattern:
+      /^[ \t]*(?:@[A-Za-z_]\w*(?:\([^)]*\))?[ \t]+)*(?:(?:public|internal|package|fileprivate|private)[ \t]+)?import[ \t]+(?:(?:struct|enum|class|protocol|typealias|var|let|func)[ \t]+)?(?:SwiftUI|Charts|TipKit)\b(?:[ \t]*\.[A-Za-z_]\w*)?/gm,
+    disallowed: true,
+    exemptFiles: swiftUIExemptFiles,
+  },
+  {
+    // `@_exported import SwiftUI` puts SwiftUI in the module's public interface
+    // for every file in the target, so it is disallowed even in an allow-listed
+    // file: the allow-list is per file, and an export is not.
+    name: "exported SwiftUI import",
+    pattern:
+      /^[ \t]*(?:@[A-Za-z_]\w*(?:\([^)]*\))?[ \t]+)*@_exported[ \t]+(?:(?:public|internal|package|fileprivate|private)[ \t]+)?import[ \t]+(?:(?:struct|enum|class|protocol|typealias|var|let|func)[ \t]+)?(?:SwiftUI|Charts|TipKit)\b/gm,
+    disallowed: true,
+  },
   // A UIKit call site that bridges the palette instead of reading its colors: see
   // "Client boundary rules current code" in the guide.
   {
@@ -405,10 +557,22 @@ const constructs: Construct[] = [
  */
 const allowed: { file: string; construct: string; count: number; reason: string }[] = [
   {
-    file: "clients/apple/Oppi/App/HostFactory.swift",
+    file: "clients/apple/Oppi/Features/Server/UsageCharts.swift",
     construct: "UIHostingController<",
-    count: 2,
-    reason: "HostedScreenController and HostedContentController are the hosting seam every other file goes through.",
+    count: 1,
+    reason: "UsageChartLeafHost is the Swift-Charts leaf's own UIKit host; a chart cannot be UIKit.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift",
+    construct: "UIHostingController<",
+    count: 1,
+    reason: "USDZRealityCanvasHost is the RealityKit canvas's own UIKit host; RealityView cannot be UIKit.",
+  },
+  {
+    file: "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift",
+    construct: "UIHostingController<",
+    count: 1,
+    reason: "HarnessSwiftUIHost is how a debug harness's SwiftUI root becomes a controller; every app screen is UIKit.",
   },
 ];
 
@@ -502,24 +666,27 @@ for (const [file, counts] of Object.entries(current)) {
 }
 
 if (failures.length === 0) {
-  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs; import SwiftUI, settings-list theming and settings writes within baseline.");
+  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs; import SwiftUI restricted to the allowed files; settings-list theming and settings writes within baseline.");
   process.exit(0);
 }
 
-console.log("UIKit structure guard: FAIL — SwiftUI structure constructs the guard disallows or the import baseline exceeds.\n");
+console.log("UIKit structure guard: FAIL — SwiftUI structure constructs the guard disallows, a SwiftUI import outside the allowed files, or a baseline exceeded.\n");
 for (const line of failures) console.log(line);
 console.log(`
 UIKit owns iOS app structure, modal presentation, and new views, previews and
-harnesses included. Present and push through the router (routerModal,
-ScreenNavigator push/finish; previews that are their own window root host
-through PreviewHost.screenStack, the rest with RouterPreviewNavigation) and
-host SwiftUI only through HostFactory. See ${guide}.
+harnesses included. Present and push through the router (Router.present,
+Router.push, and a RouterModalPresenter slot; previews that are their own window
+root host through PreviewHost.screenStack). SwiftUI survives only in the files
+\`swiftUIImporters\` names: the two framework leaves (Swift Charts, RealityKit),
+the theme and colour files, the TipKit files, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
+debug harness's previews. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
 UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in
-the guard's allowed list. A new \`import SwiftUI\` raises that file's baseline,
-which also needs approval; \`bun scripts/uikit-structure-guard.ts --update\`
-lowers it after a migration. After a rename or move, --update is fine when the
+the guard's allowed list. A new \`import SwiftUI\` fails too: the file needs
+approval and an entry in \`swiftUIImporters\`, with a reason. \`bun
+scripts/uikit-structure-guard.ts --update\` lowers the other ratchets after a
+migration. After a rename or move, --update is fine when the
 baseline diff only moves entries.
 
 A UIColor(<palette>.) bridge at a UIKit call site builds the palette's colour
