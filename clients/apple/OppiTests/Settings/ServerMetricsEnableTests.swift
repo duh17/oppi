@@ -197,6 +197,10 @@ struct ServerMetricsEnableTests {
         settings.viewWillAppear(true)
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { store.read(metrics).current == true })
+        // Coming back also loads the page's own rows (its summary, its providers, its devices),
+        // over this test's routes. That load ends here, while a handler still answers it: a
+        // request it left running would reach TestURLProtocol with no handler and no test left.
+        #expect(await h.routes.settle(), "a request outlived the test that answered it")
     }
 
     @Test("A conflict that brings another device's value updates the pill's cached flag too")
