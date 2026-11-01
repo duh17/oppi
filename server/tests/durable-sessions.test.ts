@@ -2611,7 +2611,7 @@ describe("durable-native threads", () => {
       };
       expect(f.manager.isActive(child.id)).toBe(true);
       // `oppi session wait` reads this through the events snapshot: the child is not settled.
-      expect(await f.manager.hasPendingWake(child.id)).toBe(true);
+      expect(await f.manager.awaitsNextTurn(child.id)).toBe(true);
       const wake = vi.spyOn(internals.active.get(child.id)!.sdkBackend, "hasPendingWake");
       const autoStop = vi.spyOn(internals, "autoStopSession");
       internals.lifecycleCoordinator.handleSessionSettled(child.id);

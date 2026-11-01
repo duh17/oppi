@@ -200,12 +200,6 @@ export interface Session {
    * last run outcome (done/error/idle) across a server restart.
    */
   programStatus?: ProgramStatus;
-  /**
-   * Only on a live `GET .../events` snapshot, and only `true`: a background job or supervised
-   * child will start this session's next turn, so a `ready` status is not a final answer yet.
-   * Derived per request from the runtime; never stored.
-   */
-  pendingWake?: boolean;
   model?: string;
 
   // Stats

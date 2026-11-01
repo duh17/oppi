@@ -840,7 +840,12 @@ export interface SessionEventsResponse {
   events: ServerMessage[];
   currentSeq: number;
   runtimeEpoch?: string;
-  session: Session;
+  /**
+   * `pendingWake` is set only on a live snapshot, and only `true`: a background job or
+   * supervised child will start the session's next turn, so `ready` is not a final answer yet.
+   * Derived per request from the runtime; never stored.
+   */
+  session: Session & { pendingWake?: true };
   catchUpComplete: boolean;
   live: boolean;
 }

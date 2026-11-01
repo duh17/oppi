@@ -1281,14 +1281,20 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * Whether a live session still waits on a background job or supervised child that will start
-   * its next turn. A failed check reads as no wake: a supervisor's wait must settle, not hang.
+   * Whether a `ready` live session will start its next turn: a background job or supervised
+   * child still waits to wake it, or the turn it started is not running yet. A job or child
+   * clears its wake as it starts that turn, but status turns `busy` only on `agent_start`,
+   * after Pi's before-start hooks, so the pending-work check closes that gap (auto-stop reads
+   * the same pair). Any other status skips the backend read. A failed check reads as no wake:
+   * a supervisor's wait must settle, not hang.
    */
-  async hasPendingWake(sessionId: string): Promise<boolean> {
+  async awaitsNextTurn(sessionId: string): Promise<boolean> {
     const active = this.active.get(this.sessionKey(sessionId));
-    if (!active) return false;
+    if (active?.session.status !== "ready") return false;
     try {
-      return await active.sdkBackend.hasPendingWake();
+      return (
+        (await active.sdkBackend.hasPendingWake()) || (await active.sdkBackend.hasPendingWork())
+      );
     } catch (error) {
       log.warn("sessions.pending_wake_check_failed", { sessionId, error: safeErrorMessage(error) });
       return false;

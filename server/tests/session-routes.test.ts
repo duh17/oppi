@@ -1375,7 +1375,7 @@ describe("sessions module", () => {
       },
       sessionRuntimes: {
         getCatchUp: mirrorGetCatchUp,
-        hasPendingWake: vi.fn(async () => false),
+        awaitsNextTurn: vi.fn(async () => false),
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
     } as unknown as RouteContext;
@@ -1420,7 +1420,7 @@ describe("sessions module", () => {
       control: { domain: "agents", intent: "create" },
     };
     let wake = true;
-    const hasPendingWake = vi.fn(async () => wake);
+    const awaitsNextTurn = vi.fn(async () => wake);
     const ctx = {
       storage: {
         getWorkspace: vi.fn(() => ({
@@ -1439,7 +1439,7 @@ describe("sessions module", () => {
           session: id === control.id ? control : stored,
           catchUpComplete: true,
         })),
-        hasPendingWake,
+        awaitsNextTurn,
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
     } as unknown as RouteContext;
@@ -1462,7 +1462,7 @@ describe("sessions module", () => {
       const snapshot = path.includes("control-") ? control : stored;
       expect(JSON.parse(res.body).session, path).toEqual({ ...snapshot, pendingWake: true });
     }
-    expect(hasPendingWake).toHaveBeenCalledTimes(paths.length);
+    expect(awaitsNextTurn).toHaveBeenCalledTimes(paths.length);
     // The stored session is never marked: the flag is per response.
     expect(stored).not.toHaveProperty("pendingWake");
     expect(control).not.toHaveProperty("pendingWake");
@@ -1477,6 +1477,71 @@ describe("sessions module", () => {
       res: res as never,
     });
     expect(JSON.parse(res.body).session).toEqual(stored);
+  });
+
+  // The wake check awaits the runtime (a durable harness read queues behind storage). The live
+  // session keeps changing meanwhile, so the response must pair its status with its own events:
+  // a `ready` status without the final message would let `oppi session wait` drop the report.
+  it("serves a live events snapshot whose status matches its events when the session settles during the wake check", async () => {
+    const live = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "busy" as "busy" | "ready",
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 4,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const finalMessage = {
+      seq: 7,
+      type: "message_end",
+      role: "assistant",
+      content: "final report",
+    };
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
+        getSession: vi.fn(() => live),
+      },
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
+      sessionRuntimes: {
+        // The turn ends while the check is awaiting: the final message is in the ring and the
+        // live session reads ready, in one step.
+        awaitsNextTurn: vi.fn(async () => {
+          await Promise.resolve();
+          live.status = "ready";
+          return false;
+        }),
+        getCatchUp: vi.fn(() => ({
+          events: live.status === "ready" ? [finalMessage] : [],
+          currentSeq: live.status === "ready" ? 7 : 6,
+          session: live,
+          catchUpComplete: true,
+        })),
+      },
+      ensureSessionContextWindow: vi.fn((value: unknown) => value),
+    } as unknown as RouteContext;
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    await dispatch({
+      method: "GET",
+      path: "/sessions/s1/events",
+      url: new URL("http://localhost/sessions/s1/events?since=6"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    const body = JSON.parse(res.body) as { events: unknown[]; session: { status: string } };
+    expect(body.session.status === "ready", "ready only with its final message").toBe(
+      body.events.length > 0,
+    );
   });
 
   it("returns a not-live snapshot for a stored session with no event ring", async () => {
@@ -1522,7 +1587,7 @@ describe("sessions module", () => {
         }),
       },
       sessions: { mobileRenderer: new MobileRendererRegistry() },
-      sessionRuntimes: { getCatchUp },
+      sessionRuntimes: { getCatchUp, awaitsNextTurn: vi.fn(async () => false) },
       ensureSessionContextWindow,
     } as unknown as RouteContext;
     const dispatch = createSessionRoutes(ctx, createRouteHelpers());
@@ -1762,7 +1827,7 @@ describe("sessions module", () => {
           session,
           catchUpComplete: true,
         })),
-        hasPendingWake: vi.fn(async () => false),
+        awaitsNextTurn: vi.fn(async () => false),
         isSessionConnected: vi.fn(() => true),
         stopSession: vi.fn(async () => undefined),
       },

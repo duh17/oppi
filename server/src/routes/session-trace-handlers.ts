@@ -297,10 +297,13 @@ export function createSessionTraceRouteHandlers(
       return;
     }
 
+    // A `ready` session whose background job or child will start its next turn is not settled;
+    // `oppi session wait` reads this. Ask before reading the ring: the check awaits the runtime,
+    // and the ring read, the live session, and the response must stay one synchronous snapshot.
+    // A stale `true` only holds a wait one more poll; a stale `false` could drop the final
+    // message. A stored, not-live session has no wakers.
+    const pendingWake = await ctx.sessionRuntimes.awaitsNextTurn(session.id);
     const catchUp = ctx.sessionRuntimes.getCatchUp(session.id, sinceSeq);
-    // A `ready` session whose background job or child will wake it is not settled; `oppi session
-    // wait` reads this. A stored, not-live session has no wakers.
-    const pendingWake = catchUp ? await ctx.sessionRuntimes.hasPendingWake(session.id) : false;
     // No ring means the session is stored but not live. 404 stays reserved for a
     // session that does not exist; callers already checked that.
     const body: SessionEventsResponse = catchUp
@@ -310,7 +313,7 @@ export function createSessionTraceRouteHandlers(
           ...(catchUp.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
           session: {
             ...ctx.ensureSessionContextWindow(catchUp.session),
-            ...(pendingWake ? { pendingWake } : {}),
+            ...(pendingWake ? { pendingWake: true as const } : {}),
           },
           catchUpComplete: catchUp.catchUpComplete,
           live: true,

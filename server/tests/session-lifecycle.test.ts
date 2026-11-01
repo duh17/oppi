@@ -278,6 +278,42 @@ describe("SessionManager catch-up", () => {
   });
 });
 
+describe("SessionManager awaitsNextTurn", () => {
+  // A job or child clears its wake as it starts the next turn, but status turns `busy` only on
+  // agent_start, after Pi's before-start hooks. `oppi session wait` must not read that gap as done.
+  it.each([
+    ["a pending wake", { wake: true, work: false }, true],
+    ["a started turn that is not running yet", { wake: false, work: true }, true],
+    ["neither", { wake: false, work: false }, false],
+  ])("on a ready session reports %s", async (_label, backend, expected) => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
+    vi.mocked(sdkBackend.hasPendingWake).mockResolvedValue(backend.wake);
+    vi.mocked(sdkBackend.hasPendingWork).mockResolvedValue(backend.work);
+    expect(await manager.awaitsNextTurn("s1")).toBe(expected);
+  });
+
+  it.each(["busy", "starting", "stopping", "stopped", "error"] as const)(
+    "skips the backend for a %s session",
+    async (status) => {
+      const { manager, sdkBackend } = makeManagerHarness({ status });
+      vi.mocked(sdkBackend.hasPendingWake).mockResolvedValue(true);
+      expect(await manager.awaitsNextTurn("s1")).toBe(false);
+      expect(sdkBackend.hasPendingWake).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reads no wake when the backend check fails, so a wait still settles", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
+    vi.mocked(sdkBackend.hasPendingWake).mockRejectedValue(new Error("harness closed"));
+    expect(await manager.awaitsNextTurn("s1")).toBe(false);
+  });
+
+  it("is false for a session that is not live", async () => {
+    const { manager } = makeManagerHarness();
+    expect(await manager.awaitsNextTurn("nope")).toBe(false);
+  });
+});
+
 // ─── Subscribe / Broadcast ───
 
 describe("SessionManager subscribe", () => {

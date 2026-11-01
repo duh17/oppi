@@ -25,7 +25,7 @@ interface WatchSessionState {
   sinceSeq: number;
   status?: string;
   programStatus?: ProgramStatus;
-  /** A background job or child will start the session's next turn (`Session.pendingWake`). */
+  /** A background job or child will start the session's next turn (`SessionEventsResponse.session.pendingWake`). */
   pendingWake?: boolean;
   messageCount?: number;
   pendingDialogs?: number;
