@@ -1983,6 +1983,8 @@ private final class OpenerHarness {
     var unreachableServers: Set<String> = []
     private var connections: [String: ServerConnection] = [:]
     private let traceRequests = OSAllocatedUnfairLock(initialState: 0)
+    /// The fixture's network: every request fails, and the handler ends with the harness.
+    private let networkRoutes: TestURLProtocol.RouteScope
 
     /// Timeline prefetches (`…/trace-page` requests) the fixture's network saw.
     var traceReads: Int { traceRequests.withLock { $0 } }
@@ -2047,7 +2049,7 @@ private final class OpenerHarness {
         )
         self.opener = opener
         let traceRequests = traceRequests
-        TestURLProtocol.handler = { request in
+        networkRoutes = TestURLProtocol.routeScope { request in
             if request.url?.path.hasSuffix("/trace-page") == true {
                 traceRequests.withLock { $0 += 1 }
             }
@@ -2068,6 +2070,10 @@ private final class OpenerHarness {
         if launch {
             opener.launchDidFinish()
         }
+    }
+
+    deinit {
+        networkRoutes.end()
     }
 
     func connection(_ serverId: String) -> ServerConnection {
@@ -2157,6 +2163,10 @@ private final class OpenerHarness {
             connection.setAPIClientForTesting(
                 makeTestURLProtocolClient(host: "\(serverId).test", scheme: "https")
             )
+            // Dialog hydration runs behind the route, so a test that ends first would leave its
+            // request to reach the double after the test: answer it here without the network.
+            // A test that cares about dialogs installs its own.
+            connection._getSessionDialogsForTesting = { _ in throw URLError(.notConnectedToInternet) }
             connections[serverId] = connection
         }
         // Every fixture is reachable to lookups; seeding never changes which
