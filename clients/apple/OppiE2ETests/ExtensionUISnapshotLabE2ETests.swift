@@ -30,8 +30,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try clearHarnessResponses(sessionId: sessionId)
 
         let draft = "message that must survive approval"
-        let chatInput = app.textViews["chat.input"]
-        tap(chatInput, named: "chat input")
+        let chatInput = focusChatInput()
         chatInput.typeText(draft)
         XCTAssertTrue(waitForInputValue(chatInput, equals: draft, timeout: 5))
 
