@@ -509,7 +509,8 @@ func makeTimelineConfiguration(
     hasOlderServerPage: Bool = false,
     openDestination: ChatTimelineOpenDestination? = nil,
     loadOlderPage: (@MainActor () async -> Bool)? = nil,
-    readAloudAvailable: Bool = false
+    readAloudAvailable: Bool = false,
+    extensionSurface: SessionExtensionSurface? = nil
 ) -> ChatTimelineConfiguration {
     var configuration = ChatTimelineConfiguration(
         items: items,
@@ -541,6 +542,7 @@ func makeTimelineConfiguration(
         iconAssetCache: connection.iconAssetCache,
         openDestination: openDestination,
         loadOlderPage: loadOlderPage,
+        extensionSurface: extensionSurface,
         audioPlayer: audioPlayer,
         reviewCommentSelectionRouter: reviewCommentSelectionRouter,
         topOverlap: topOverlap,

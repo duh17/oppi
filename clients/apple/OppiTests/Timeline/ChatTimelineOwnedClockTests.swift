@@ -181,6 +181,64 @@ struct ChatTimelineOwnedClockTests {
         #expect(snapshot.controllerOwnedApplyCount >= 1)
     }
 
+    /// An extension's `setWorkingVisible(false)` takes the working row off screen
+    /// while the run continues. The row's visibility comes from the session's
+    /// `SessionExtensionSurface`, which the previous and the next configuration
+    /// share by reference (`SessionExtensionSurface` is a `final class`), so a
+    /// live read of it compares the surface with itself and the chrome diff has
+    /// to use the value the last projection was built from.
+    @Test func extensionHidingItsWorkingRowRemovesItWhileTheRunContinues() throws {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-working-visible")
+        let sessionManager = ChatSessionManager(sessionId: windowed.sessionId)
+        bindSessionStatus(.busy, sessionManager: sessionManager, connection: windowed.connection)
+        defer {
+            windowed.window.isHidden = true
+            sessionManager.cleanup()
+        }
+        let surfaces = windowed.connection.extensionSurfaces
+        surfaces.apply(
+            ownedClockExtensionNotification("setWorkingMessage", message: "Running extension checks"),
+            sessionId: windowed.sessionId
+        )
+
+        // What the chat screen builds on every chrome push: a value snapshot of
+        // the chrome, with the session's surface held by reference.
+        func configuration() -> ChatTimelineConfiguration {
+            makeTimelineConfiguration(
+                items: [],
+                isBusy: true,
+                sessionId: windowed.sessionId,
+                reducer: windowed.reducer,
+                toolOutputStore: windowed.toolOutputStore,
+                toolArgsStore: windowed.toolArgsStore,
+                toolSegmentStore: windowed.toolSegmentStore,
+                connection: windowed.connection,
+                scrollController: windowed.scrollController,
+                audioPlayer: windowed.audioPlayer,
+                ownsTimelineProjection: true,
+                sessionManager: sessionManager,
+                extensionSurface: surfaces.surface(for: windowed.sessionId)
+            )
+        }
+
+        windowed.coordinator.updateHostChrome(configuration: configuration(), to: windowed.collectionView)
+        #expect(
+            windowed.coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID),
+            "a busy session with a working message did not show its working row"
+        )
+
+        surfaces.apply(
+            ownedClockExtensionNotification("setWorkingVisible", workingVisible: false),
+            sessionId: windowed.sessionId
+        )
+        windowed.coordinator.updateHostChrome(configuration: configuration(), to: windowed.collectionView)
+
+        #expect(
+            !windowed.coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID),
+            "the working row outlived the extension hiding it"
+        )
+    }
+
     @Test func outlineAvailabilityPublishesOnlyOnEmptyTransitionsAndBind() async {
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-outline")
         let availability = ChatTimelineOutlineAvailability()
@@ -865,6 +923,26 @@ private func waitForOwnedSourceChanges(
             controller.ownedSourceChangeCompletionGenerationForTesting >= generation + count
         }
     }
+}
+
+private func ownedClockExtensionNotification(
+    _ method: String,
+    message: String? = nil,
+    workingVisible: Bool? = nil
+) -> ExtensionUINotification {
+    ExtensionUINotification(
+        method: method,
+        message: message,
+        notifyType: nil,
+        statusKey: nil,
+        statusText: nil,
+        title: nil,
+        text: nil,
+        widgetKey: nil,
+        widgetLines: nil,
+        widgetPlacement: nil,
+        workingVisible: workingVisible
+    )
 }
 
 private final class AvailabilityNotificationRecorder: @unchecked Sendable {

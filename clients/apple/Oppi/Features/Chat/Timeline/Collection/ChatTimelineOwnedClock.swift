@@ -23,6 +23,12 @@ final class ChatTimelineOwnedClockState {
     var scrollCommandNonce = 0
     var lastScrollToBottomNonce: UInt = 0
     var lastConfiguration: ChatTimelineConfiguration?
+    /// The working row's visibility the last projection was built from. The
+    /// configuration holds `extensionSurface` by reference (a `final class` the
+    /// extension mutates in place), so both sides of a chrome diff read the same,
+    /// already-changed surface: the diff needs the value the rows were configured
+    /// with. Same bug class as the reducer's expanded set.
+    var configuredWorkingVisible: Bool?
     var emptyOverlay: ChatEmptyStateView?
     /// Bumped on session bind and dismantle so deferred chrome publishes cannot
     /// land on a stale reducer.
@@ -81,6 +87,8 @@ extension ChatTimelineController {
         ownedClock.isApplyingHostChrome = true
         defer { ownedClock.isApplyingHostChrome = false }
 
+        let workingVisible = configuration.extensionSurface?.layout.working?.visible
+
         if sessionChanged {
             ownedClock.bindEpoch &+= 1
         }
@@ -91,7 +99,12 @@ extension ChatTimelineController {
             trackOwnedTimelineSources()
         }
 
-        let chromeChanged = ownedProjectionChromeChanged(from: previous, to: configuration)
+        let chromeChanged = ownedProjectionChromeChanged(
+            from: previous,
+            to: configuration,
+            workingVisible: workingVisible
+        )
+        ownedClock.configuredWorkingVisible = workingVisible
         if previous == nil || sessionChanged || chromeChanged {
             applyOwnedProjection(to: collectionView)
         }
@@ -384,11 +397,15 @@ extension ChatTimelineController {
 
     private func ownedProjectionChromeChanged(
         from previous: ChatTimelineConfiguration?,
-        to next: ChatTimelineConfiguration
+        to next: ChatTimelineConfiguration,
+        workingVisible: Bool?
     ) -> Bool {
         guard let previous else { return true }
-        return previous.extensionSurface?.layout.working?.visible
-            != next.extensionSurface?.layout.working?.visible
+        // A live read of `extensionSurface` on either side compares the surface
+        // with itself: both configurations point at the one object, and the
+        // extension changed it before this push. The value the last projection
+        // was built from is the only one that says whether rows must rebuild.
+        return ownedClock.configuredWorkingVisible != workingVisible
             || previous.quietModeEnabled != next.quietModeEnabled
             || previous.workStripStyle != next.workStripStyle
             || previous.chromeStyle != next.chromeStyle
