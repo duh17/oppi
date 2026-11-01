@@ -13,7 +13,10 @@ import UIKit
 /// `mcp-detail` (`mcp-detail-failed`: the scope request answers 404), `mcp-failed`,
 /// `model-providers` (the connected and available groups over fixture usage),
 /// `model-providers-failed` (the status request answers 404); `schedules-failed`
-/// does the same for the schedules list. Server Settings and
+/// does the same for the schedules list. Terminal: `ssh-hosts` (the tab over two
+/// saved hosts), `ssh-term-settings` (Settings › Terminal, over App Settings, so
+/// Settings → Terminal is one Back away) and `ssh-term-tailnet`
+/// (Settings › Terminal › Rex on Your Tailnet). Server Settings and
 /// its pages: `server-settings`, `paired-devices` (`paired-devices-offline`:
 /// the devices request answers 404) and `about` (`about-failed`: the server info
 /// request answers 404).
@@ -231,6 +234,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             Self.applyTailnetFixture()
         case "ssh-hosts":
             Self.seedSSHHosts()
+        case "ssh-term-settings", "ssh-term-tailnet":
+            Self.seedSSHHosts()
+            Self.seedTailnetRex()
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
@@ -409,6 +415,19 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // Settings → Experiments: Live Voice's own switch and the two declared
             // ones (Rex, Herdr), all off unless the launch turns one on.
             return stack { SettingsExperimentsViewController(root: root) }
+        case "ssh-term-settings":
+            // Settings › Terminal: the same two hosts, and the Bottom Bar's summary.
+            // App Settings sits beneath it, which is the route that pushes it, so one
+            // launch walks Settings → Terminal as well as showing the page.
+            let settings = SSHTerminalSettingsViewController(reach: { .none })
+            settings.traitOverrides.appRootEnvironment = root
+            let navigation = stack { SettingsRootViewController(root: root) }
+            navigation.pushViewController(settings, animated: false)
+            return navigation
+        case "ssh-term-tailnet":
+            return stack {
+                SSHTerminalRexTailnetSettingsViewController(reach: { .systemOnly })
+            }
         case "theme-import", "theme-import-failed":
             // `-failed`: the themes request answers 404, so the list shows its
             // failed row.
@@ -494,6 +513,14 @@ final class SettingsSweepPreviewController: PreviewRootController {
         var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)
         ScreenshotVolatileDefaults.apply(values)
+    }
+
+    /// One Rex added by its Tailscale name, in the argument domain: a capture
+    /// shows it and nothing is saved for the next launch.
+    private static func seedTailnetRex() {
+        guard let host = RexTailnetHost(dnsName: "rex.tail1234.ts.net"),
+              let data = try? JSONEncoder().encode([host]) else { return }
+        ScreenshotVolatileDefaults.apply([RexDirectStore.tailnetHostsKey: data])
     }
 
     private static let workspace = Workspace(

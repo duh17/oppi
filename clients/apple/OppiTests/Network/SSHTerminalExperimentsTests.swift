@@ -97,7 +97,7 @@ struct SSHTerminalExperimentTests {
         }
     }
 
-    @Test("Turning Rex off ends its terminal and its follower and hides the tab's card; on starts them again")
+    @Test("Turning Rex off ends its terminal and its follower and hides the tab's Rex sections; on starts them again")
     func rexOffEndsWhatItRan() async throws {
         let defaults = try #require(UserDefaults(suiteName: "SSHTerminalExperimentTests-\(UUID().uuidString)"))
         let host = rexHost()
@@ -146,16 +146,17 @@ struct SSHTerminalExperimentTests {
         #expect(session.connecting, "Rex back on: the same follower signs in again")
         #expect(!follower.needsListConnection)
 
-        // The tab's card: gone while off, and back on when the nodes can be read again.
+        // The tab's Rex sections: gone while off, and back on when the nodes can be
+        // read again. Adding a node is the store's own write now that the tab has no
+        // Add row (`SSHTerminalRexTailnetSettingsViewController` writes it).
         let node = try #require(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
-        let section = RexTailnetSection(
-            store: RexDirectStore(defaults: defaults), reach: { .peers }, access: { access.value }
-        )
-        section.add(node)
+        let rexStore = RexDirectStore(defaults: defaults)
+        let section = RexTailnetSection(store: rexStore, reach: { .peers }, access: { access.value })
+        rexStore.saveTailnetHost(node)
         section.update(peers: [], selfDNSName: nil, sshRexHosts: [], active: false)
         #expect(section.isShown)
         section.clear()
-        #expect(!section.isShown && section.listedFollowers.isEmpty, "no card while Rex is off")
+        #expect(!section.isShown && section.listedFollowers.isEmpty, "no sections while Rex is off")
         // And a pull to refresh asks the tailnet nothing.
         await section.refresh()
         #expect(!section.isShown && section.entries.isEmpty, "nothing is discovered while Rex is off")
@@ -166,17 +167,10 @@ struct SSHTerminalExperimentTests {
         // with the switch on in this same run.
         access.value = .all
         section.update(peers: [], selfDNSName: nil, sshRexHosts: [], active: false)
-        #expect(section.isShown, "Rex back on: the card is listed again")
+        #expect(section.isShown, "Rex back on: the sections are listed again")
         #expect(SSHTerminalExperimentAccess.current == .all)
         #expect(SSHTerminalBarContext.plain.hidden().isEmpty)
     }
-}
-
-/// A keychain in name only: the follower's sign-in never reaches one.
-private final class MemoryKeychain: SSHCredentialStoring, @unchecked Sendable {
-    func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data? { nil }
-    func save(_ data: Data, account: String, requirePresence: Bool) throws {}
-    func delete(account: String) throws {}
 }
 
 /// A switch the test holds: the owners read it the way the app reads its own.

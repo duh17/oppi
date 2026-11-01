@@ -525,8 +525,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         let host = app.buttons["sshTerminal.host.row.\(hostID)"]
         XCTAssertTrue(host.waitForExistence(timeout: 15), "The saved Rex host is still listed with the experiment off")
         XCTAssertFalse(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "No Rex section with the experiment off")
-        XCTAssertFalse(app.staticTexts["sshTerminal.rexTailnet.title"].exists, "No Rex on your tailnet card with the experiment off")
-        XCTAssertFalse(app.buttons["sshTerminal.rexTailnet.add"].exists)
+        // The tailnet list is Settings › Terminal › Rex on Your Tailnet now, and that
+        // page has no Rex row while the experiment is off (`SSHTerminalSettingsUITests`).
         attachScreenshot("terminal-tab-experiments-off")
         assertRunning()
     }

@@ -61,13 +61,12 @@ struct RexTailnetTests {
         let peers = [Self.peer("rex", dns: Self.rex.dnsName), Self.peer("box", dns: "box.tail0000.ts.net")]
         let me = "oppi-ios.tail0000.ts.net"
         await discovery.discover(peers: peers, selfDNSName: me)
-        var reach = RexTailnetReach.peers
+        let reach = RexTailnetReach.peers
         let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }) {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
         }
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
-        #expect(section.entries.map(\.host.dnsName) == [Self.rex.dnsName, "box.tail0000.ts.net"])
-        #expect(section.entries.map(\.saved) == [true, false])
+        #expect(section.entries.map(\.dnsName) == [Self.rex.dnsName, "box.tail0000.ts.net"])
         #expect(section.listedFollowers.map(\.host.name) == ["Studio Rex", "box"])
         let rows = SSHTerminalRexListRow.rows(hostName: Self.rex.dnsName, state: try #require(section.listedFollowers.first).listState)
         #expect(rows.map(\.id) == ["header", "loading"], "a node not read yet is a host's section, loading")
@@ -77,15 +76,16 @@ struct RexTailnetTests {
         let said = try #require(URL(string: "https://Rex.Tail0000.ts.net/"))
         store.apply(.available(url: said, hostID: "host-1"), for: RexDirectHost(profile: ssh))
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [ssh], active: false)
-        #expect(section.entries.map(\.host.dnsName) == ["box.tail0000.ts.net"])
+        #expect(section.entries.map(\.dnsName) == ["box.tail0000.ts.net"])
         #expect(section.follower(id: Self.rex.id) == nil, "its follower is dropped with it")
 
-        // With only the Tailscale app's VPN there is no machine list: the
-        // saved Rex stays, and the card says how to add one.
-        reach = .systemOnly
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
-        #expect(section.entries.map(\.host.dnsName) == [Self.rex.dnsName])
-        #expect(section.cardRows == [.title(note: RexTailnetCardRow.listsNoMachines), .add])
+        // Forgotten, the saved name goes with its follower on the next update. A node
+        // discovery still sees stays listed (it is on the tailnet), so this update is
+        // one where discovery no longer finds it: the peers list without it.
+        store.forgetTailnetHost(dnsName: Self.rex.dnsName)
+        section.update(peers: [Self.peer("box", dns: "box.tail0000.ts.net")], selfDNSName: me, sshRexHosts: [], active: false)
+        #expect(!section.entries.contains { $0.dnsName == Self.rex.dnsName })
+        #expect(section.follower(id: Self.rex.id) == nil)
     }
 
     // MARK: - Opening a session without SSH
@@ -201,8 +201,9 @@ struct RexTailnetTests {
     /// A Rex added by name is listed as a section of its own in the update the
     /// add asks for, with nothing else to set off another one.
     @Test func aRexAddedByNameIsListedInTheSameUpdate() throws {
+        let store = Self.store()
         let section = RexTailnetSection(
-            store: Self.store(), discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
+            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
         ) {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
         }
@@ -221,14 +222,14 @@ struct RexTailnetTests {
         list.updatePropertiesIfNeeded()
         list.view.layoutIfNeeded()
         let header = "sshTerminal.rexList.\(Self.rex.id.uuidString).header"
-        #expect(Self.cellIdentifiers(list).contains("sshTerminal.rexTailnet.title"))
         #expect(!Self.cellIdentifiers(list).contains(header))
 
-        #expect(list.addTailnetRex(named: "https://Rex.tail0000.ts.net/"))
+        // Add Rex by Tailscale Name is Settings › Terminal › Rex on Your Tailnet now;
+        // what it writes is what the tab lists, in the next update.
+        store.saveTailnetHost(try #require(RexTailnetHost.parse("https://Rex.tail0000.ts.net/")))
         list.updatePropertiesIfNeeded()
         list.view.layoutIfNeeded()
         #expect(Self.cellIdentifiers(list).contains(header), "the added Rex's section is listed in that update")
-        #expect(!list.addTailnetRex(named: "rex.example.com"), "a name off the tailnet is refused")
     }
 
     /// What a tailnet Rex's monitor dialed: a fresh fake Rex (two sessions) per

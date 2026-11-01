@@ -49,10 +49,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case status, rex(UUID), tailnet, hosts, empty, terminal, reset }
+    private enum Section: Hashable { case status, rex(UUID), hosts, empty, reset }
     private enum Item: Hashable {
-        /// A row of the Rex on your tailnet card.
-        case tailnetCard(RexTailnetCardRow)
         case corrupt
         case connecting
         case failure(String)
@@ -62,8 +60,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case host(UUID)
         /// A row of a Rex host's section, by the host and the row's id there.
         case rexRow(host: UUID, id: String)
-        /// Settings > Terminal > Bottom Bar.
-        case bottomBar
         case reset
     }
 
@@ -215,14 +211,26 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
     }
 
+    /// The nav bar's two buttons: ＋ saves a host, ⚙︎ opens Settings › Terminal
+    /// (the hosts' forms, Rex on Your Tailnet, and the Bottom Bar), which is where
+    /// the occasional setup leaves this page.
     private func installBarItems() {
         let add = UIBarButtonItem(
-            title: "Add Host",
+            title: String(localized: "Add Host"),
             image: UIImage(systemName: "plus"),
             primaryAction: UIAction { [weak self] _ in self?.openEditor(profileID: nil) }
         )
         add.accessibilityIdentifier = "sshTerminal.host.add"
-        navigationItem.rightBarButtonItem = add
+        let settings = UIBarButtonItem(
+            title: String(localized: "Terminal Settings"),
+            image: UIImage(systemName: "gearshape"),
+            primaryAction: UIAction { [weak self] _ in
+                guard let self else { return }
+                Router.push(SSHTerminalSettingsViewController(), from: self)
+            }
+        )
+        settings.accessibilityIdentifier = "sshTerminal.settings"
+        navigationItem.rightBarButtonItems = [add, settings]
         if showsSidebarToggle, let root = AppRootEnvironment.near(self) {
             navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
         }
@@ -244,30 +252,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 palette: self.sshTerminalThemeID.palette,
                 enabled: !self.session.connecting && !self.session.passwordPrompt,
                 onConnect: { [weak self] in self?.open(profile) },
-                onEdit: { [weak self] in self?.openEditor(profileID: profile.id) }
+                onEdit: { [weak self] in self?.openEditor(profileID: profile.id) },
+                onDelete: { [weak self] in self?.confirmDelete(profile) }
             )
-        }
-        let indexCell = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
-            let store = SSHTerminalBarStore()
-            let layout = store.layout
-            let keys = store.customKeys
-            // Only the buttons a plain shell's bar can draw: no Herdr or Rex while
-            // its experiment is off.
-            let hidden = SSHTerminalBarContext.plain.hidden
-            let shown = layout.order.filter { item in
-                guard layout.isShown(item) else { return false }
-                guard case .action(let action) = item else { return true }
-                return !hidden.contains(action)
-            }
-            cell.configure(
-                title: String(localized: "Bottom Bar"),
-                image: nil,
-                value: shown.map { $0.title(customKeys: keys) }.joined(separator: ", "),
-                identifier: "settings.sshTerminal.bar"
-            ) { [weak self] in
-                guard let self else { return }
-                Router.push(SSHTerminalBarSettingsViewController(), from: self)
-            }
         }
         let rexCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configureRexRow(cell, item: item)
@@ -277,9 +264,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
         let rexSessionCell = UICollectionView.CellRegistration<SSHTerminalRexListSessionCell, Item> { [weak self] cell, _, item in
             self?.configureRexSession(cell, item: item)
-        }
-        let tailnetAddCell = UICollectionView.CellRegistration<SSHTerminalRexListActionCell, Item> { [weak self] cell, _, _ in
-            self?.configureTailnetAdd(cell)
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, item in
             switch item {
@@ -294,12 +278,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 default:
                     collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
                 }
-            case .tailnetCard(.add):
-                collectionView.dequeueConfiguredReusableCell(using: tailnetAddCell, for: indexPath, item: item)
             case .host:
                 collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
-            case .bottomBar:
-                collectionView.dequeueConfiguredReusableCell(using: indexCell, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
             }
@@ -342,19 +322,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
-        case .tailnetCard(.title(let note)):
-            content.text = "Rex on your tailnet"
-            content.textProperties.font = .preferredFont(forTextStyle: .headline)
-            content.secondaryText = note
-            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.secondaryTextProperties.numberOfLines = 0
-            cell.accessibilityIdentifier = "sshTerminal.rexTailnet.title"
-        case .tailnetCard(.discovery(let text)):
-            content.text = text
-            content.textProperties.color = palette.ui.comment
-            content.textProperties.numberOfLines = 0
-            cell.accessibilityIdentifier = "sshTerminal.rexTailnet.discovery"
-        case .host, .bottomBar, .rexRow, .tailnetCard(.add):
+        case .host, .rexRow:
             break
         case .reset:
             content.text = "Reset Host List"
@@ -409,10 +377,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             snapshot.appendItems(items, toSection: section)
             for (item, row) in zip(items, hostRows) { rows[item] = row }
         }
-        // Rex on your tailnet: its card, then each node as a Rex section like a host's.
+        // Rex on your tailnet: each node as a Rex section like a host's. What was
+        // added by name, and Add Rex by Tailscale Name, are Settings › Terminal ›
+        // Rex on Your Tailnet.
         if tailnetRex.isShown {
-            snapshot.appendSections([.tailnet])
-            snapshot.appendItems(tailnetRex.cardRows.map { .tailnetCard($0) }, toSection: .tailnet)
             for follower in tailnetRex.listedFollowers {
                 let section = Section.rex(follower.host.id)
                 let hostRows = SSHTerminalRexListRow.rows(hostName: follower.host.dnsName, state: follower.listState)
@@ -428,10 +396,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         } else if !profiles.isEmpty {
             snapshot.appendSections([.hosts])
             snapshot.appendItems(profiles.map { .host($0.id) }, toSection: .hosts)
-        }
-        if !metadataIsCorrupt {
-            snapshot.appendSections([.terminal])
-            snapshot.appendItems([.bottomBar], toSection: .terminal)
         }
         if metadataIsCorrupt {
             snapshot.appendSections([.reset])
@@ -557,53 +521,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// The follower behind a Rex section: a saved host's, or a tailnet node's.
     private func rexFollower(_ id: UUID) -> (any SSHTerminalRexListFollowing)? {
         rexHosts[id]?.follower ?? tailnetRex.follower(id: id)
-    }
-
-    private func configureTailnetAdd(_ cell: SSHTerminalRexListActionCell) {
-        let palette = sshTerminalThemeID.palette
-        var content = UIListContentConfiguration.cell()
-        content.text = "Add Rex by Tailscale Name\u{2026}"
-        content.textProperties.color = palette.ui.blue
-        content.image = UIImage(systemName: "plus")
-        content.imageProperties.tintColor = palette.ui.blue
-        cell.contentConfiguration = content
-        cell.accessories = []
-        cell.indentationLevel = 0
-        cell.configureAction(
-            identifier: "sshTerminal.rexTailnet.add", label: "Add Rex by Tailscale Name", value: nil,
-            hint: "Lists a Rex on your tailnet by its Tailscale name"
-        ) { [weak self] in self?.promptForTailnetRex() }
-    }
-
-    /// Add Rex by Tailscale Name: for a Rex Oppi cannot find itself (with only
-    /// the Tailscale app's VPN, Oppi has no machine list).
-    private func promptForTailnetRex(message: String? = nil, text: String = "") {
-        TextPrompt(
-            title: "Add Rex by Tailscale Name",
-            message: message ?? "The Rex's Tailscale name, as rex server tailscale pair shows it. Rex lets in the Tailscale account that signed it in.",
-            placeholder: "rex.tailnet-name.ts.net",
-            text: text,
-            actionTitle: "Add",
-            fieldIdentifier: "sshTerminal.rexTailnet.addName",
-            actionIdentifier: "sshTerminal.rexTailnet.addConfirm",
-            keyboardType: .URL
-        ).present(from: self) { [weak self] typed in
-            guard let self, !self.addTailnetRex(named: typed) else { return }
-            self.promptForTailnetRex(
-                message: "That is not a Tailscale name. Enter the full name, such as rex.tail1234.ts.net.",
-                text: typed
-            )
-        }
-    }
-
-    /// Saves the Rex named by what was typed and lists it on the next pass.
-    /// False for a name that is not a Rex's Tailscale name.
-    @discardableResult
-    func addTailnetRex(named typed: String) -> Bool {
-        guard let host = RexTailnetHost.parse(typed) else { return false }
-        tailnetRex.add(host)
-        setNeedsUpdateProperties()
-        return true
     }
 
     private func makeRexHost(_ profile: SSHTerminalProfile) -> RexHost {
@@ -844,7 +761,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// must not run it, and the row stays until the person confirms). Only
     /// while Rex can be changed.
     private func rexSwipeActions(host hostID: UUID, id: String) -> UISwipeActionsConfiguration? {
-        if id == "header" { return tailnetHeaderSwipeActions(host: hostID) }
         guard manageableSession(host: hostID, id: id) != nil else { return nil }
         let rename = UIContextualAction(style: .normal, title: "Rename") { [weak self] _, _, done in
             self?.renameRexSession(host: hostID, id: id)
@@ -874,8 +790,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             confirmReset()
         case .rexRow(let hostID, let id):
             activateRexRow(host: hostID, id: id)
-        case .tailnetCard(.add):
-            promptForTailnetRex()
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         default:
@@ -883,25 +797,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
     }
 
-    /// A Rex host's heading and its notes do nothing when tapped.
-    /// A Rex added by Tailscale name is removed from its heading; one discovery
-    /// found stays while it is on the tailnet, and a saved host's has no swipe.
-    private func tailnetHeaderSwipeActions(host hostID: UUID) -> UISwipeActionsConfiguration? {
-        guard let follower = tailnetRex.follower(id: hostID), tailnetRex.isSaved(follower.host.dnsName) else { return nil }
-        let name = follower.host.dnsName
-        let remove = UIContextualAction(style: .destructive, title: "Remove") { [weak self] _, _, done in
-            self?.tailnetRex.remove(dnsName: name)
-            self?.setNeedsUpdateProperties()
-            done(true)
-        }
-        remove.accessibilityLabel = "Remove Rex"
-        let config = UISwipeActionsConfiguration(actions: [remove])
-        config.performsFirstActionWithFullSwipe = false
-        return config
-    }
-
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        if case .tailnetCard(let row)? = dataSource?.itemIdentifier(for: indexPath) { return row == .add }
         guard case .rexRow = dataSource?.itemIdentifier(for: indexPath) else { return true }
         return dataSource?.itemIdentifier(for: indexPath).flatMap { rexRows[$0]?.kind.isAction } ?? false
     }
@@ -938,14 +834,21 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         session.showsTerminal = false
     }
 
-    private func confirmDelete(_ profile: SSHTerminalProfile) {
+    /// Asks to delete a host. The row's ⋯ **Delete Host** and its swipe both end
+    /// here, and the sheet's confirming button runs `deleteHost(_:)`. Not private,
+    /// so a test reaches the same owner action a touch does.
+    func confirmDelete(_ profile: SSHTerminalProfile) {
         Confirmation(
             title: "Delete this host and its saved passwords?",
-            actionTitle: "Delete Host"
-        ).present(from: self, anchor: nil) { [weak self] in self?.delete(profile) }
+            actionTitle: "Delete Host",
+            actionIdentifier: "sshTerminal.host.delete.confirm"
+        ).present(from: self, anchor: nil) { [weak self] in self?.deleteHost(profile) }
     }
 
-    private func delete(_ profile: SSHTerminalProfile) {
+    /// Removes a host, its saved passwords, and its terminals: what the
+    /// confirmation's button runs. Not private, so a test reaches the same owner
+    /// action the sheet does rather than re-implementing a delete.
+    func deleteHost(_ profile: SSHTerminalProfile) {
         do {
             if session.connectedProfile?.id == profile.id { session.cancel() }
             try profileStore().delete(id: profile.id)

@@ -135,6 +135,10 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
 final class SSHTerminalHostRowCell: UICollectionViewListCell {
     let connectButton = UIButton(type: .system)
     private var tapAction: UIAction?
+    /// The row's \u{2026} menu: the host's own actions, which a row's own width has
+    /// no place for as buttons. Edit Host opens the form, and Delete Host asks
+    /// before it removes the host, as the row's swipe does.
+    private let menuButton = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -143,11 +147,14 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         contentView.addSubview(connectButton)
         NSLayoutConstraint.activate([
             connectButton.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            connectButton.trailingAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.trailingAnchor, constant: -8),
+            connectButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor, constant: -8),
             connectButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             connectButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             connectButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
+        // A menu button is one tap target: its menu opens on touch, and
+        // `accessibilityActivate` (VoiceOver) opens the same menu.
+        menuButton.showsMenuAsPrimaryAction = true
     }
 
     @available(*, unavailable)
@@ -160,7 +167,8 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         palette: ThemePalette,
         enabled: Bool,
         onConnect: @escaping () -> Void,
-        onEdit: @escaping () -> Void
+        onEdit: @escaping () -> Void,
+        onDelete: @escaping () -> Void
     ) {
         var conf = UIButton.Configuration.plain()
         conf.title = profile.endpointLabel
@@ -213,14 +221,18 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         tapAction = tap
         connectButton.addAction(tap, for: .touchUpInside)
 
-        let edit = UIButton(type: .system)
-        var editConf = UIButton.Configuration.plain()
-        editConf.title = "Edit"
-        editConf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        edit.configuration = editConf
-        edit.accessibilityIdentifier = "sshTerminal.host.edit.\(profile.id.uuidString)"
-        edit.addAction(UIAction { _ in onEdit() }, for: .touchUpInside)
-        accessories = [.customView(configuration: .init(customView: edit, placement: .trailing()))]
+        var menuConf = UIButton.Configuration.plain()
+        menuConf.image = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+        menuConf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+        menuConf.baseForegroundColor = palette.ui.comment
+        menuButton.configuration = menuConf
+        menuButton.accessibilityIdentifier = "sshTerminal.host.menu.\(profile.id.uuidString)"
+        let edit = UIAction(title: String(localized: "Edit Host")) { _ in onEdit() }
+        // Destructive, and it asks first: the row's swipe and this item run the same
+        // confirmation.
+        let remove = UIAction(title: String(localized: "Delete Host"), attributes: .destructive) { _ in onDelete() }
+        menuButton.menu = UIMenu(children: [edit, remove])
+        accessories = [.customView(configuration: .init(customView: menuButton, placement: .trailing()))]
     }
 
     override func prepareForReuse() {
@@ -231,5 +243,7 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
             self.tapAction = nil
         }
         connectButton.accessibilityIdentifier = nil
+        menuButton.menu = nil
+        menuButton.accessibilityIdentifier = nil
     }
 }

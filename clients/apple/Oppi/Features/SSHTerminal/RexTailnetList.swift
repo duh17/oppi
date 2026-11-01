@@ -2,68 +2,27 @@ import Foundation
 import Observation
 import UIKit
 
-/// One Rex on the Terminal tab's tailnet list: added by name, found by
-/// discovery, or both, once.
-struct RexTailnetEntry: Equatable, Sendable {
-    let host: RexTailnetHost
-    /// Added by name: it stays when discovery no longer sees it, and can be removed.
-    let saved: Bool
-
-    /// Saved ones first, in the order they were added, then the rest found,
-    /// by name. A discovered Rex that is also saved keeps the saved entry. A
-    /// Rex a listed SSH host already reaches (`listedBySSH`: its remembered
-    /// `RexDirectStore` address names it) is left out: that host's own Rex
-    /// section lists it, over one link.
-    static func merge(
+/// The Rexes the Terminal tab's tailnet list shows, once each: the ones saved by
+/// name first, in the order they were added, then the rest discovery found, by
+/// name. A Rex a listed SSH host already reaches (`listedBySSH`: its remembered
+/// `RexDirectStore` address names it) is left out, because that host's own Rex
+/// section lists it over one link.
+extension Array where Element == RexTailnetHost {
+    static func tailnet(
         saved: [RexTailnetHost],
         discovered: [RexTailnetHost],
         listedBySSH: (RexTailnetHost) -> Bool
-    ) -> [Self] {
+    ) -> [RexTailnetHost] {
         var seen = Set<String>()
-        var entries: [Self] = []
+        var hosts: [RexTailnetHost] = []
         for host in saved where seen.insert(host.dnsName).inserted && !listedBySSH(host) {
-            entries.append(Self(host: host, saved: true))
+            hosts.append(host)
         }
         let found = discovered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         for host in found where seen.insert(host.dnsName).inserted && !listedBySSH(host) {
-            entries.append(Self(host: host, saved: false))
+            hosts.append(host)
         }
-        return entries
-    }
-}
-
-/// One row of the Rex on your tailnet card, above the nodes' own Rex sections.
-enum RexTailnetCardRow: Hashable, Sendable {
-    /// The heading, with what limits the list (no machine list, no tailnet).
-    case title(note: String?)
-    /// Discovery's state when it has found nothing to list.
-    case discovery(String)
-    /// Add Rex by Tailscale Name.
-    case add
-
-    static let listsNoMachines = "Oppi's own Tailscale is off, so it cannot list your tailnet's machines. Add a Rex by its Tailscale name, or connect Tailscale in Settings to find Rex here."
-    static let onNoTailnet = "This device is not on a tailnet. Connect Tailscale in Settings, or the Tailscale app, to reach Rex without SSH."
-    static let lookingForRex = "Looking for Rex on your tailnet\u{2026}"
-    static let foundNone = "No Rex found on your tailnet. A Rex shows here once its Tailscale serving is on (rex server tailscale on)."
-
-    var id: String {
-        switch self {
-        case .title: "title"
-        case .discovery: "discovery"
-        case .add: "add"
-        }
-    }
-
-    static func rows(listsNodes: Bool, reach: RexTailnetReach, probing: Bool) -> [Self] {
-        let note: String? = switch reach {
-        case .peers: nil
-        case .systemOnly: listsNoMachines
-        case .none: onNoTailnet
-        }
-        var rows: [Self] = [.title(note: note)]
-        if !listsNodes, reach == .peers { rows.append(.discovery(probing ? lookingForRex : foundNone)) }
-        rows.append(.add)
-        return rows
+        return hosts
     }
 }
 
@@ -188,7 +147,7 @@ final class RexTailnetFollower: SSHTerminalRexListFollowing {
 /// Add Rex by Tailscale Name).
 @MainActor @Observable
 final class RexTailnetSection {
-    private(set) var entries: [RexTailnetEntry] = []
+    private(set) var entries: [RexTailnetHost] = []
     private(set) var reach: RexTailnetReach = .none
     /// Each listed node's follower, by name.
     private(set) var followers: [String: RexTailnetFollower] = [:]
@@ -199,9 +158,10 @@ final class RexTailnetSection {
     /// The tab has been active since it last showed: a machine that did not
     /// answer is asked again on the next visit, not after each prompt.
     @ObservationIgnored private var visiting = false
-    /// What the store holds, read once until it changes: the saved nodes, and
-    /// the Tailscale names the listed SSH hosts' Rex said they serve at.
-    @ObservationIgnored private var savedCache: [RexTailnetHost]?
+    /// The Tailscale names the listed SSH hosts' Rex said they serve at, read once
+    /// for a given host list. The saved nodes themselves are read on every update:
+    /// they are the store's own small array, and a cached copy would outlive a
+    /// forget until the store's notification arrived (one update late).
     @ObservationIgnored private var sshNamesCache: (hosts: [SSHTerminalProfile], names: Set<String>)?
     /// Bumped when the store changes, so the tab runs another pass.
     private var storeRevision = 0
@@ -239,20 +199,15 @@ final class RexTailnetSection {
     }
 
     private func storeChanged() {
-        savedCache = nil
         sshNamesCache = nil
         storeRevision += 1
     }
 
-    /// The tab shows the card once it lists a node, or there is a way onto a tailnet.
+    /// The tab shows the tailnet nodes once it lists one, or there is a way onto a tailnet.
     var isShown: Bool { !entries.isEmpty || reach != .none }
 
     /// The listed nodes' followers, in list order.
-    var listedFollowers: [RexTailnetFollower] { entries.compactMap { followers[$0.host.dnsName] } }
-
-    var cardRows: [RexTailnetCardRow] {
-        RexTailnetCardRow.rows(listsNodes: !entries.isEmpty, reach: reach, probing: discovery.probing)
-    }
+    var listedFollowers: [RexTailnetFollower] { entries.compactMap { followers[$0.dnsName] } }
 
     /// Takes what the tab knows now: the node's machine list and its own name,
     /// the SSH hosts whose Rex the tab already lists (one of them reaching the
@@ -265,8 +220,7 @@ final class RexTailnetSection {
         self.peers = peers
         self.selfDNSName = selfDNSName
         if self.reach != reach { self.reach = reach }
-        let saved = savedCache ?? store.tailnetHosts()
-        savedCache = saved
+        let saved = store.tailnetHosts()
         let sshNames: Set<String>
         if let cached = sshNamesCache, cached.hosts == sshRexHosts {
             sshNames = cached.names
@@ -274,19 +228,19 @@ final class RexTailnetSection {
             sshNames = store.tailnetNames(among: sshRexHosts)
             sshNamesCache = (sshRexHosts, sshNames)
         }
-        let next = RexTailnetEntry.merge(
+        let next = [RexTailnetHost].tailnet(
             saved: saved,
             discovered: reach == .peers ? discovery.found(among: peers, selfDNSName: selfDNSName) : [],
             listedBySSH: { sshNames.contains($0.dnsName) }
         )
         if next != entries { entries = next }
-        let wanted = Set(entries.map(\.host.dnsName))
+        let wanted = Set(entries.map(\.dnsName))
         for name in followers.keys where !wanted.contains(name) {
             followers[name]?.close()
             followers[name] = nil
         }
-        for entry in entries where followers[entry.host.dnsName] == nil {
-            followers[entry.host.dnsName] = makeFollower(entry.host)
+        for host in entries where followers[host.dnsName] == nil {
+            followers[host.dnsName] = makeFollower(host)
         }
         // Like the followers, a prompt over the tab does not stop discovery;
         // leaving the tab does (`stop`).
@@ -329,23 +283,9 @@ final class RexTailnetSection {
         await discovering?.value
     }
 
-    func add(_ host: RexTailnetHost) {
-        store.saveTailnetHost(host)
-        storeChanged()
-    }
-
-    func remove(dnsName: String) {
-        store.forgetTailnetHost(dnsName: dnsName)
-        storeChanged()
-    }
-
     /// The listed node that registers terminals under `id`.
     func follower(id: UUID) -> RexTailnetFollower? {
         followers.values.first { $0.host.id == id }
-    }
-
-    func isSaved(_ dnsName: String) -> Bool {
-        entries.contains { $0.host.dnsName == dnsName && $0.saved }
     }
 
     /// One discovery pass at a time; a new one replaces the one running.

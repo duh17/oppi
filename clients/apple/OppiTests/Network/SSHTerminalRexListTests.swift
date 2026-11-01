@@ -8,17 +8,6 @@ import UIKit
 /// Saved hosts and passwords for a test: its own defaults suite and an
 /// in-memory keychain, so nothing reaches the app's real store.
 private struct IsolatedHosts {
-    private final class MemoryKeychain: SSHCredentialStoring {
-        private let items = Mutex<[String: Data]>([:])
-        func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data? {
-            items.withLock { $0[account] }
-        }
-        func save(_ data: Data, account: String, requirePresence: Bool) throws {
-            items.withLock { $0[account] = data }
-        }
-        func delete(account: String) throws { items.withLock { $0[account] = nil } }
-    }
-
     private let suite = "SSHTerminalRexListTests.\(UUID().uuidString)"
     private let keychain = MemoryKeychain()
 
@@ -539,7 +528,10 @@ struct SSHTerminalRexSectionTests {
         // Off the tailnet whatever machine runs the test, with nothing saved:
         // these tests are about the saved hosts' Rex sections alone.
         let tailnetRex = RexTailnetSection(
-            store: RexDirectStore(defaults: UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)") ?? .standard),
+            // A suite of its own, never the app's: another test reads that.
+            store: RexDirectStore(
+                defaults: try #require(UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)"))
+            ),
             discovery: RexTailnetDiscovery { _ in .unreachable },
             reach: { .none }
         )

@@ -326,7 +326,10 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .tailscale:
             Router.push(TailnetSettingsViewController(coordinator: coordinator), from: self)
         case .sshTerminal:
-            Router.push(SSHTerminalHostListViewController(), from: self)
+            // Settings › Terminal is the terminal's setup (its hosts' forms, Rex on
+            // Your Tailnet, and the Bottom Bar); the Terminal page itself is a
+            // route of its own, reached from the sidebar.
+            Router.push(SSHTerminalSettingsViewController(), from: self)
         case .privacy:
             Router.push(SettingsPrivacyViewController(root: root), from: self)
         case .experiments:
