@@ -186,10 +186,14 @@ struct RexDirectTests {
         let host = RexDirectHost(profile: Self.profile())
         store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
         let late = FakeRex()
-        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in
+        // The production deadline is `RexRoutePlan.directTimeout`; a short one keeps the test fast.
+        let deadline = Duration.milliseconds(400)
+        let plan = RexRoutePlan(
+            host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, directDeadline: deadline
+        ) { _, _, _, sink in
             // A stream that ignores cancellation and arrives after the deadline.
             await withCheckedContinuation { continuation in
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(5500)) { continuation.resume() }
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(1500)) { continuation.resume() }
             }
             return late.open(sink)
         }
@@ -198,7 +202,7 @@ struct RexDirectTests {
         let (link, control) = try await RexLink.connect(plan: plan, openStream: { _, _, sink in bridge.open(sink) }, run: nil)
         let elapsed = ContinuousClock.now - started
         #expect(link.route == .ssh)
-        #expect(elapsed >= RexRoutePlan.directTimeout && elapsed < RexRoutePlan.directTimeout + .seconds(1), "\(elapsed)")
+        #expect(elapsed >= deadline && elapsed < deadline + .seconds(1), "\(elapsed)")
         #expect(try await Self.eventually(.seconds(5)) { late.host.isOpen && late.host.isClosed }, "the late stream is closed")
         control.close()
     }

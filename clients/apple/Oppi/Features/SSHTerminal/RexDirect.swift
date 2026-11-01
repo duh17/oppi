@@ -75,6 +75,8 @@ final class RexRoutePlan: Sendable {
 
     let host: RexDirectHost
     let openDirect: RexLink.OpenDirect
+    /// This plan's `directTimeout`: from the socket's open to Rex's welcome.
+    let directDeadline: Duration
     private let store: RexDirectStore
     private let tailnetUsable: @Sendable () -> Bool
     private let isCurrent: @Sendable () -> Bool
@@ -88,9 +90,11 @@ final class RexRoutePlan: Sendable {
         store: RexDirectStore = RexDirectStore(),
         tailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() },
         isCurrent: (@Sendable () -> Bool)? = nil,
+        directDeadline: Duration = RexRoutePlan.directTimeout,
         openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open
     ) {
         self.host = host
+        self.directDeadline = directDeadline
         self.store = store
         self.tailnetUsable = tailnetUsable
         self.isCurrent = isCurrent ?? {
@@ -152,7 +156,7 @@ final class RexRoutePlan: Sendable {
     }
 
     /// A control connection Rex welcomed over Tailscale within
-    /// `directTimeout`, or nil when this open does not try (`directCandidate`)
+    /// `directDeadline`, or nil when this open does not try (`directCandidate`)
     /// or the attempt failed, which is remembered.
     func attemptDirect(
         openStream: @escaping RexLink.OpenStream, onWritable: (@Sendable (Bool) -> Void)?
@@ -161,8 +165,9 @@ final class RexRoutePlan: Sendable {
         let link = RexLink(route: .tailscale(url), openStream: openStream, openDirect: openDirect)
         let started = ContinuousClock.now
         do {
-            let control = try await Self.within(Self.directTimeout) {
-                try await link.connect(timeout: Self.directTimeout, onWritable: onWritable)
+            let deadline = directDeadline
+            let control = try await Self.within(deadline) {
+                try await link.connect(timeout: deadline, onWritable: onWritable)
             }
             // Cancelled while the welcome came in: nobody takes it.
             guard !Task.isCancelled else {
