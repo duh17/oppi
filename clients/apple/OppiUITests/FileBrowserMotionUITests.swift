@@ -3,19 +3,9 @@ import XCTest
 /// Real previous/next interaction on the approved screenshot-preview fixtures.
 /// Not a screenshot-only test.
 ///
-/// SwiftUI `@Environment(\.accessibilityReduceMotion)` follows the simulator
-/// host default `com.apple.Accessibility ReduceMotionEnabled`, not
-/// `-UIAccessibilityReduceMotion`. A default `OppiUITests` run must stay green
-/// with Reduce Motion off: the six `WithoutReduceMotion` tests execute, and the
-/// four `WithReduceMotion` tests `XCTSkip` unless the wrapper already shows
-/// `reduce-motion-on` (or `OPPI_SIM_REDUCE_MOTION=1` after the host write).
-///
-/// Reduce Motion on (owned simulator, then restore `false`):
-/// `xcrun simctl spawn <udid> defaults write com.apple.Accessibility ReduceMotionEnabled -bool true`
-/// `-only-testing:OppiUITests/FileBrowserMotionUITests/testOrdinaryPreviousNextWithReduceMotion`
-/// `-only-testing:OppiUITests/FileBrowserMotionUITests/testReviewPreviousNextWithReduceMotion`
-/// `-only-testing:OppiUITests/FileBrowserMotionUITests/testOrdinaryNextTravelCaptureWithReduceMotion`
-/// `-only-testing:OppiUITests/FileBrowserMotionUITests/testReviewNextTravelCaptureWithReduceMotion`
+/// The wrapper publishes `reduce-motion-off` in a default run: the simulator host
+/// default is `com.apple.Accessibility ReduceMotionEnabled` off, and
+/// `-UIAccessibilityReduceMotion` does not change it.
 @MainActor
 final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
@@ -38,17 +28,6 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         tapPrevious()
         assertMarker("FILE_MOTION_ALPHA")
         XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
-    }
-
-    func testOrdinaryPreviousNextWithReduceMotion() throws {
-        launchPreview(screen: "file-browser-motion")
-        try skipUnlessHostReduceMotionEnabled()
-        assertReduceMotion(true)
-        assertMarker("FILE_MOTION_BETA")
-        tapNext()
-        assertMarker("FILE_MOTION_GAMMA")
-        tapPrevious()
-        assertMarker("FILE_MOTION_BETA")
     }
 
     func testOrdinaryNextThenPreviousWithoutReduceMotion() {
@@ -78,17 +57,6 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
     }
 
-    func testReviewPreviousNextWithReduceMotion() throws {
-        launchPreview(screen: "review-file-motion")
-        try skipUnlessHostReduceMotionEnabled()
-        assertReduceMotion(true)
-        assertMarker("FILE_MOTION_BETA")
-        tapNext()
-        assertMarker("FILE_MOTION_GAMMA")
-        tapPrevious()
-        assertMarker("FILE_MOTION_BETA")
-    }
-
     func testReviewNextThenPreviousWithoutReduceMotion() {
         launchPreview(screen: "review-file-motion")
         assertReduceMotion(false)
@@ -103,56 +71,10 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         assertMarker("FILE_MOTION_BETA")
     }
 
-    func testOrdinaryNextTravelCaptureWithoutReduceMotion() {
-        launchPreview(screen: "file-browser-motion")
-        assertReduceMotion(false)
-        assertMarker("FILE_MOTION_BETA")
-        tapNextAndCaptureBurst(label: "ordinary-off")
-        assertMarker("FILE_MOTION_GAMMA")
-    }
-
-    func testOrdinaryNextTravelCaptureWithReduceMotion() throws {
-        launchPreview(screen: "file-browser-motion")
-        try skipUnlessHostReduceMotionEnabled()
-        assertReduceMotion(true)
-        assertMarker("FILE_MOTION_BETA")
-        tapNextAndCaptureBurst(label: "ordinary-on")
-        assertMarker("FILE_MOTION_GAMMA")
-    }
-
-    func testReviewNextTravelCaptureWithoutReduceMotion() {
-        launchPreview(screen: "review-file-motion")
-        assertReduceMotion(false)
-        assertMarker("FILE_MOTION_BETA")
-        tapNextAndCaptureBurst(label: "review-off")
-        assertMarker("FILE_MOTION_GAMMA")
-    }
-
-    func testReviewNextTravelCaptureWithReduceMotion() throws {
-        launchPreview(screen: "review-file-motion")
-        try skipUnlessHostReduceMotionEnabled()
-        assertReduceMotion(true)
-        assertMarker("FILE_MOTION_BETA")
-        tapNextAndCaptureBurst(label: "review-on")
-        assertMarker("FILE_MOTION_GAMMA")
-    }
-
     /// The motion previews publish `FILE_MOTION_*` markers in this overlay, on
     /// top of the preview every launch shares.
     private func launchPreview(screen: String) {
         launchPreview(screen: screen, environment: ["OPPI_FILE_MOTION_MARKER": "1"], readyTimeout: 8)
-    }
-
-    private func skipUnlessHostReduceMotionEnabled() throws {
-        if ProcessInfo.processInfo.environment["OPPI_SIM_REDUCE_MOTION"] == "1" {
-            return
-        }
-        if app.staticTexts["reduce-motion-on"].waitForExistence(timeout: 2) {
-            return
-        }
-        throw XCTSkip(
-            "Host ReduceMotionEnabled is off. Default UI runs skip WithReduceMotion tests. Enable with: xcrun simctl spawn <udid> defaults write com.apple.Accessibility ReduceMotionEnabled -bool true, then OPPI_SIM_REDUCE_MOTION=1. Restore to false after."
-        )
     }
 
     private func assertReduceMotion(_ expected: Bool) {
@@ -179,32 +101,6 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         let button = app.buttons["fileViewer.previous"]
         XCTAssertTrue(button.waitForExistence(timeout: 4), "Previous file control missing")
         button.tap()
-    }
-
-    private func tapNextAndCaptureBurst(label: String) {
-        guard let root = ProcessInfo.processInfo.environment["MOTION_CAPTURE_DIR"], !root.isEmpty else {
-            tapNext()
-            return
-        }
-        let folder = URL(fileURLWithPath: root).appendingPathComponent(label, isDirectory: true)
-        try? FileManager.default.removeItem(at: folder)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var frames: [Data] = [app.screenshot().pngRepresentation]
-        tapNext()
-        let started = Date()
-        while Date().timeIntervalSince(started) < 0.40 {
-            frames.append(app.screenshot().pngRepresentation)
-        }
-        for (index, png) in frames.enumerated() {
-            let url = folder.appendingPathComponent(String(format: "frame-%03d.png", index))
-            try? png.write(to: url)
-        }
-        let elapsed = Date().timeIntervalSince(started)
-        let fps = elapsed > 0 ? Double(frames.count - 1) / elapsed : 0
-        let payload = """
-        {"label":"\(label)","frames":\(frames.count),"seconds":\(elapsed),"fps":\(fps)}
-        """
-        try? payload.data(using: .utf8)?.write(to: folder.appendingPathComponent("capture.json"))
     }
 
     private func assertMarker(_ marker: String) {

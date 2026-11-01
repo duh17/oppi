@@ -17,9 +17,6 @@ final class SemanticPickHarnessViewController: UIViewController {
     private let diagramContainer = UIView()
     private let diagnosticsStack = UIStackView()
     private let readyLabel = SemanticPickHarnessViewController.makeDiagnosticLabel(id: "harness.ready")
-    private let stagedCountLabel = SemanticPickHarnessViewController.makeDiagnosticLabel(id: "diag.semantic.stagedCount")
-    private let promptLabel = SemanticPickHarnessViewController.makeDiagnosticLabel(id: "diag.semantic.prompt")
-    private var reviewComments: ChatReviewCommentsController?
     private var router: ReviewCommentSelectionRouter?
     private var diagramBody: UIView?
 
@@ -40,7 +37,6 @@ final class SemanticPickHarnessViewController: UIViewController {
             store: ReviewCommentStore(defaults: defaults, keyPrefix: suiteName)
         )
         comments.load(localScopeId: "harness", sessionId: "session-1")
-        reviewComments = comments
         router = ReviewCommentSelectionRouter(
             dispatchWithPresentation: { _, _ in },
             inlineSave: { [weak self] body, request in
@@ -82,8 +78,6 @@ final class SemanticPickHarnessViewController: UIViewController {
         diagnosticsStack.isAccessibilityElement = false
         diagnosticsStack.alpha = 0.02
         diagnosticsStack.addArrangedSubview(readyLabel)
-        diagnosticsStack.addArrangedSubview(stagedCountLabel)
-        diagnosticsStack.addArrangedSubview(promptLabel)
         view.addSubview(diagnosticsStack)
 
         NSLayoutConstraint.activate([
@@ -158,9 +152,6 @@ final class SemanticPickHarnessViewController: UIViewController {
 
     private func updateDiagnostics() {
         setDiagnostic(readyLabel, value: "1")
-        setDiagnostic(stagedCountLabel, value: String(reviewComments?.stagedCount ?? 0))
-        let prompt = reviewComments?.appendReviewBlock(to: "") ?? ""
-        setDiagnostic(promptLabel, value: prompt.isEmpty ? "empty" : prompt)
     }
 
     private static func makeDiagnosticLabel(id: String) -> UILabel {

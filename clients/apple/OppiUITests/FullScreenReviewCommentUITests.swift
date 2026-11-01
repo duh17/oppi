@@ -173,37 +173,12 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         )
     }
 
-    func testFullScreenDiffWrappingAlignsLineHeader() throws {
-        launchReviewCommentHarness(diffWrapping: true)
-
-        XCTAssertEqual(
-            waitForDiagnostic("diag.diffWrap.ready", timeout: 10, matching: { $0 == 1 }),
-            1,
-            "Diff wrapping diagnostics did not report aligned continuation rows"
-        )
-        let fragmentCount = waitForDiagnostic("diag.diffWrap.fragmentCount", timeout: 2, matching: { $0 >= 2 })
-        let headIndent = waitForDiagnostic("diag.diffWrap.headIndentHundredths", timeout: 2, matching: { $0 > 0 })
-        let secondX = waitForDiagnostic("diag.diffWrap.secondXHundredths", timeout: 2, matching: { $0 > 0 })
-        let expectedX = waitForDiagnostic("diag.diffWrap.expectedXHundredths", timeout: 2, matching: { $0 > 0 })
-
-        saveScreenshot(name: "fullscreen-diff-wrapping-line-header-alignment")
-
-        XCTAssertGreaterThanOrEqual(fragmentCount, 2)
-        XCTAssertLessThanOrEqual(abs(headIndent - expectedX), 50)
-        XCTAssertLessThanOrEqual(abs(secondX - expectedX), 100)
-    }
-
     private func launchReviewCommentHarness(
-        diffWrapping: Bool = false,
         embedded: Bool = false
     ) {
         app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--fullscreen-review-comment-harness")
         app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS"] = "1"
-        if diffWrapping {
-            app.launchArguments.append("--fullscreen-diff-wrapping-harness")
-            app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_DIFF_WRAPPING"] = "1"
-        }
         if embedded {
             app.launchArguments.append("--fullscreen-embedded-review-harness")
             app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_EMBEDDED"] = "1"

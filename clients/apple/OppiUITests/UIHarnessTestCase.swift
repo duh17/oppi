@@ -221,10 +221,6 @@ class UIHarnessTestCase: XCTestCase {
         return -1
     }
 
-    func waitForDiagnosticAtLeastValue(_ id: String, minimum: Int, timeout: TimeInterval) -> Int {
-        waitForDiagnosticAtLeast(id, minimum: minimum, timeout: timeout)
-    }
-
     func waitForDiagnosticAtMostOrNil(_ id: String, maximum: Int, timeout: TimeInterval) -> Int? {
         let deadline = Date().addingTimeInterval(timeout)
 

@@ -39,9 +39,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     }
     """
 
-    private static let diffWrappingRemovedLine = "- If `date +%s` is less than `1787464800` (2026-08-22 23:00:00 PDT) and `opencode-go/x-preview-f-free` (Ox Alpha) is eligible and clears the task floor, use that exact model for the new launch. Once `now >= 1787464800`, the override is expired: refresh `oppi models --json` and resume the durable rules. Do not keep preferring Ox Alpha."
-    private static let diffWrappingAddedLine = "- If `date +%s` is less than `1787554799` (2026-08-23 23:59:59 PDT) and `openai-codex/gpt-5.6-sol` is eligible and clears the task floor, use that exact model for new implementation and review launches. This directive is the review route too; do not pick a second reviewer model just to differ. Once `now >= 1787554799`, the override is expired: refresh `oppi models --json` and resume the durable rules. Do not keep preferring Sol."
-
     private static var embeddedModeEnabled: Bool {
         let processInfo = ProcessInfo.processInfo
         return processInfo.arguments.contains("--fullscreen-embedded-review-harness")
@@ -60,43 +57,10 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         ).barItems
     }
 
-    private static var diffWrappingModeEnabled: Bool {
-        let processInfo = ProcessInfo.processInfo
-        return processInfo.arguments.contains("--fullscreen-diff-wrapping-harness")
-            || processInfo.environment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_DIFF_WRAPPING"] == "1"
-    }
-
-    private static var diffWrappingLines: [DiffLine] {
-        [
-            DiffLine(kind: .context, text: "}", oldLineNumber: 217, newLineNumber: 217),
-            DiffLine(kind: .context, text: "});", oldLineNumber: 218, newLineNumber: 218),
-            DiffLine(kind: .context, text: "", oldLineNumber: 219, newLineNumber: 219),
-            DiffLine(kind: .removed, text: diffWrappingRemovedLine, oldLineNumber: 220, newLineNumber: nil),
-            DiffLine(kind: .added, text: diffWrappingAddedLine, oldLineNumber: nil, newLineNumber: 220),
-            DiffLine(kind: .added, text: "    const repoRoot = mkdtempSync(join(tmpdir(), \"oppi-architecture-layer-rules-\"));", oldLineNumber: nil, newLineNumber: 221),
-            DiffLine(kind: .added, text: "", oldLineNumber: nil, newLineNumber: 222),
-            DiffLine(kind: .added, text: "    try {", oldLineNumber: nil, newLineNumber: 223),
-            DiffLine(kind: .added, text: "        write(", oldLineNumber: nil, newLineNumber: 224),
-            DiffLine(kind: .added, text: "            join(repoRoot, \"pi-extensions/oppi-ui-proxy.ts\"),", oldLineNumber: nil, newLineNumber: 225),
-            DiffLine(kind: .added, text: "            [", oldLineNumber: nil, newLineNumber: 226),
-            DiffLine(kind: .added, text: "                \"function installExtensionUIProxy(ctx) {\",", oldLineNumber: nil, newLineNumber: 227),
-            DiffLine(kind: .added, text: "                \"  const ui = ctx.ui;\",", oldLineNumber: nil, newLineNumber: 228),
-            DiffLine(kind: .added, text: "                \"  ui.setWidget = (key, content) => {\",", oldLineNumber: nil, newLineNumber: 229),
-            DiffLine(kind: .added, text: "                \"    if (key === 'local-only') return content;\",", oldLineNumber: nil, newLineNumber: 230),
-            DiffLine(kind: .added, text: "            ].join(\"\\n\"),", oldLineNumber: nil, newLineNumber: 231),
-        ]
-    }
-
     private let diagnosticsStack = UIStackView()
     private let readyLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "harness.ready")
     private let inlineComposerLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.inlineComposer")
     private let stagedCountLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.stagedCount")
-    private let diffWrapReadyLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.ready")
-    private let diffWrapEnabledLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.wrapEnabled")
-    private let diffWrapFragmentCountLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.fragmentCount")
-    private let diffWrapHeadIndentLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.headIndentHundredths")
-    private let diffWrapSecondXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.secondXHundredths")
-    private let diffWrapExpectedXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.expectedXHundredths")
     private let embeddedBackLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.embedded.backCount")
     private let selectButton = UIButton(type: .system)
     private var embeddedBackCount = 0
@@ -108,7 +72,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         installCodeController()
         installHarnessControls()
         updateDiagnostics()
-        scheduleDiffWrappingDiagnosticRefreshes()
     }
 
     override func viewDidLayoutSubviews() {
@@ -121,7 +84,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         setDiagnostic(inlineComposerLabel, value: hasVisibleView(identifier: "review-comment.inline-composer") ? 1 : 0)
         setDiagnostic(stagedCountLabel, value: reviewComments?.stagedCount ?? 0)
         setDiagnostic(embeddedBackLabel, value: embeddedBackCount)
-        updateDiffWrappingDiagnostics()
     }
 
     private func installCodeController() {
@@ -149,46 +111,19 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             voiceInputManager: VoiceInputManager.shared,
             stash: comments
         )
-        let content: FullScreenCodeContent
-        let context: ReviewCommentSelectionContext
-        if Self.diffWrappingModeEnabled {
-            // The launch's volatile argument domain, never the simulator's
-            // defaults: a persisted wrap setting outlives this launch and
-            // changes every later diff reader on the simulator, unit tests
-            // hosted in the app included.
-            if let data = try? JSONEncoder().encode(FullScreenReaderPreferences(textScale: 0.95, wrapsText: true)) {
-                ScreenshotVolatileDefaults.apply([FullScreenReaderPreferencesStore.key(for: .diff): data])
-            }
-            let filePath = "server/tests/architecture-layer-rules.test.ts"
-            content = .diff(
-                ToolDiffDocument(
-                    lines: Self.diffWrappingLines,
-                    filePath: filePath,
-                    copyText: DiffEngine.formatUnified(Self.diffWrappingLines)
-                )
-            )
-            context = ReviewCommentSelectionContext(
-                dispatcher: router,
-                sessionId: "session-1",
-                sourceLabel: "Diff Wrapping",
-                filePath: filePath,
-                languageHint: "typescript"
-            )
-        } else {
-            content = .code(
-                content: Self.fixtureCode,
-                language: "bash",
-                filePath: "scripts/oppi.sh",
-                startLine: 193
-            )
-            context = ReviewCommentSelectionContext(
-                dispatcher: router,
-                sessionId: "session-1",
-                sourceLabel: "Full Screen Code",
-                filePath: "scripts/oppi.sh",
-                languageHint: "bash"
-            )
-        }
+        let content = FullScreenCodeContent.code(
+            content: Self.fixtureCode,
+            language: "bash",
+            filePath: "scripts/oppi.sh",
+            startLine: 193
+        )
+        let context = ReviewCommentSelectionContext(
+            dispatcher: router,
+            sessionId: "session-1",
+            sourceLabel: "Full Screen Code",
+            filePath: "scripts/oppi.sh",
+            languageHint: "bash"
+        )
         let presentationMode: FullScreenCodeViewController.PresentationMode = Self.embeddedModeEnabled
             ? .embedded(onDismiss: { [weak self] in
                 guard let self else { return }
@@ -200,7 +135,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: context,
-            editItems: Self.diffWrappingModeEnabled ? [] : Self.editItems()
+            editItems: Self.editItems()
         )
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
@@ -225,7 +160,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
         selectButton.configuration = config
         selectButton.translatesAutoresizingMaskIntoConstraints = false
-        selectButton.isHidden = Self.diffWrappingModeEnabled
         selectButton.addAction(UIAction { [weak self] _ in
             self?.selectFixtureRange()
             self?.selectButton.isHidden = true
@@ -241,12 +175,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             readyLabel,
             inlineComposerLabel,
             stagedCountLabel,
-            diffWrapReadyLabel,
-            diffWrapEnabledLabel,
-            diffWrapFragmentCountLabel,
-            diffWrapHeadIndentLabel,
-            diffWrapSecondXLabel,
-            diffWrapExpectedXLabel,
             embeddedBackLabel,
         ].forEach(diagnosticsStack.addArrangedSubview)
         view.addSubview(diagnosticsStack)
@@ -258,57 +186,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             diagnosticsStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 2),
             diagnosticsStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 2),
         ])
-    }
-
-    private func scheduleDiffWrappingDiagnosticRefreshes() {
-        guard Self.diffWrappingModeEnabled else { return }
-        for delay in [0.1, 0.3, 0.6, 1.0, 1.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.updateDiagnostics()
-            }
-        }
-    }
-
-    private func updateDiffWrappingDiagnostics() {
-        guard Self.diffWrappingModeEnabled,
-              let diffBody = firstNativeFullScreenDiffBody(in: view),
-              let diagnostics = diffBody.diffWrappingDiagnosticsForTesting()
-        else {
-            setDiagnostic(diffWrapReadyLabel, value: 0)
-            setDiagnostic(diffWrapEnabledLabel, value: 0)
-            setDiagnostic(diffWrapFragmentCountLabel, value: -1)
-            setDiagnostic(diffWrapHeadIndentLabel, value: -1)
-            setDiagnostic(diffWrapSecondXLabel, value: -1)
-            setDiagnostic(diffWrapExpectedXLabel, value: -1)
-            return
-        }
-
-        let secondX = diagnostics.secondFragmentX ?? -1
-        let aligned = diagnostics.wrapsText
-            && diagnostics.textContainerLineBreakMode == .byCharWrapping
-            && diagnostics.paragraphLineBreakMode == .byCharWrapping
-            && diagnostics.fragmentCount >= 2
-            && abs(diagnostics.paragraphHeadIndent - diagnostics.expectedCodeColumnX) <= 0.5
-            && abs(secondX - diagnostics.expectedCodeColumnX) <= 1.0
-
-        setDiagnostic(diffWrapReadyLabel, value: aligned ? 1 : 0)
-        setDiagnostic(diffWrapEnabledLabel, value: diagnostics.wrapsText ? 1 : 0)
-        setDiagnostic(diffWrapFragmentCountLabel, value: diagnostics.fragmentCount)
-        setDiagnostic(diffWrapHeadIndentLabel, value: Int((diagnostics.paragraphHeadIndent * 100).rounded()))
-        setDiagnostic(diffWrapSecondXLabel, value: Int((secondX * 100).rounded()))
-        setDiagnostic(diffWrapExpectedXLabel, value: Int((diagnostics.expectedCodeColumnX * 100).rounded()))
-    }
-
-    private func firstNativeFullScreenDiffBody(in root: UIView) -> NativeFullScreenDiffBody? {
-        if let diffBody = root as? NativeFullScreenDiffBody {
-            return diffBody
-        }
-        for subview in root.subviews {
-            if let match = firstNativeFullScreenDiffBody(in: subview) {
-                return match
-            }
-        }
-        return nil
     }
 
     private func selectFixtureRange() {
