@@ -294,6 +294,9 @@ Each of these has cost a worker a false red or a false green.
 - **A `UIAction` or `UIAlertAction` handler can't be run from a unit test.** Test the owner method the action calls (`confirmDelete`, `deleteHost`), and prove the menu item itself in a UI test. Don't add a test-only property to reach the closure.
 - **Experiments are on in unit tests.** `OppiTests` registers Rex and Herdr as on when the bundle loads (`OppiTestExperimentsAtLoad.m`), so `SSHTerminalExperimentAccess.current` reads on. A test of the off state passes an explicit `SSHTerminalExperimentAccess`. UI tests set experiments per launch with `OppiTestLaunch.experimentArguments`.
 - **Launch arguments are strings.** `-key YES` reaches `UserDefaults` as the string `"YES"`, so `object(forKey:) as? Bool` is nil. Read flags with `bool(forKey:)` once you know something is stored.
+- **A popover menu's actions are buttons.** On iOS 26 and 27 `app.menuItems` does not find a `UIMenu` shown from a bar button; query enabled buttons whose whole `label` is the action's title, then assert `isHittable` in Swift (`hittable` is not a legal predicate key). A broad `descendants(matching: .any)[title]` can match a list row with the same text, so an "is not selected" check passes for the wrong element.
+- **A row array can't prove a row works.** A test that checks the rows a page builds misses a row drawn by a cell that has no action, or an action that returns early. Mount the page in a window and activate the row through its owner, the way a tap does. The Terminal tab's Retry row was dead three ways while every row-array test passed.
+- **Prove a new test can fail.** When the fix was written before its test, put the old code back once and see the test go red, then restore it and grep that the fix is back.
 
 ### iOS E2E tests
 
