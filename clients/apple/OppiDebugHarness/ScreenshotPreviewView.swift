@@ -91,20 +91,10 @@ struct ScreenshotPreviewView: View {
                 order: ChatTopBarAction.allCases,
                 shown: ChatTopBarAction.defaultShown
             )
-        case "chat-top-bar-terminal":
-            ChatTopBarScreenshotPreview(
-                order: [.terminal, .files, .git, .outline, .context],
-                shown: [.terminal, .files]
-            )
         case "chat-top-bar-all":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
                 shown: Set(ChatTopBarAction.allCases)
-            )
-        case "chat-top-bar-none":
-            ChatTopBarScreenshotPreview(
-                order: ChatTopBarAction.allCases,
-                shown: []
             )
         case "chat-top-bar-reordered":
             ChatTopBarScreenshotPreview(
@@ -134,9 +124,8 @@ private struct ChatRoutesHarnessPreview: View {
     var body: some View { ChatRoutesHarnessView() }
 }
 
-/// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-terminal`, `-all`, `-none`, and
-/// `-reordered`: the chat's bar over the `chat-routes` fixtures with a chosen
-/// top bar. The layout goes in the volatile argument domain, so the simulator's
+/// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-all`, and `-reordered`: the
+/// chat's bar over the `chat-routes` fixtures with a chosen top bar. The layout goes in the volatile argument domain, so the simulator's
 /// saved settings are untouched and a test's bar does not depend on what an
 /// earlier run left behind.
 private struct ChatTopBarScreenshotPreview: View {
@@ -154,14 +143,14 @@ private struct ChatTopBarScreenshotPreview: View {
     var body: some View { ChatRoutesHarnessView() }
 }
 
-/// `SCREENSHOT_SCREEN=settings-chat` / `settings-chat-top-bar`: a UIKit settings page as the root of a router stack, over fixture services.
+/// `SCREENSHOT_SCREEN=settings-chat`: the Chat settings page as the root of a router stack, over fixture services.
 /// The page shares the app's `ThemeStore`. Nothing here calls a server.
 @MainActor
 final class SettingsPagePreviewController: PreviewRootController {
     /// The page shares the app's own `ThemeStore`, the one that owns the window:
     /// a theme chosen on the page then re-themes the window, as in the app. A
     /// store of its own would change only itself.
-    init(screen: String, themeStore: ThemeStore) {
+    init(themeStore: ThemeStore) {
         // Every settings page can be captured in an imported theme
         // (`SCREENSHOT_COLOR_SCHEME=custom:Paper`), not only Appearance.
         ScreenshotVolatileDefaults.applyImportedThemes()
@@ -178,10 +167,7 @@ final class SettingsPagePreviewController: PreviewRootController {
             root: root,
             themeStore: themeStore,
             content: PreviewHost.screenStack(root: root) {
-                switch screen {
-                case "settings-chat-top-bar": SettingsChatTopBarViewController()
-                default: SettingsChatViewController(root: root)
-                }
+                SettingsChatViewController(root: root)
             }
         )
     }

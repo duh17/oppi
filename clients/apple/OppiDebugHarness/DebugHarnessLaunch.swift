@@ -81,12 +81,8 @@ enum DebugHarnessLaunch {
             if ScreenshotPreviewConfig.screen == "workspace-settings" {
                 return WorkspaceSettingsPreviewController()
             }
-            if ScreenshotPreviewConfig.screen == "settings-chat"
-                || ScreenshotPreviewConfig.screen == "settings-chat-top-bar" {
-                return SettingsPagePreviewController(
-                    screen: ScreenshotPreviewConfig.screen,
-                    themeStore: root.themeStore
-                )
+            if ScreenshotPreviewConfig.screen == "settings-chat" {
+                return SettingsPagePreviewController(themeStore: root.themeStore)
             }
             // The router family: its routes, the modal sites behind it, and the
             // shell those routes are drawn in.

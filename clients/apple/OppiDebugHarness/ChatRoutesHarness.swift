@@ -206,14 +206,10 @@ private enum ChatRoutesFixture {
         }
         connection.workspaceStore.workspacesByServer[serverId] = [workspace]
         connection.sessionStore.switchServer(to: serverId)
-        var routesSession = session(
+        connection.sessionStore.upsert(session(
             id: sessionId,
             status: environment["CHAT_ROUTES_STATUS"] == "busy" ? .busy : .ready
-        )
-        if environment["CHAT_ROUTES_ENGINE"] == "durable" {
-            routesSession.engine = .durable
-        }
-        connection.sessionStore.upsert(routesSession)
+        ))
         enableShare(on: connection)
         connection.chatState.cachedModels = models
         if environment["CHAT_ROUTES_ASK"] == "1" {
@@ -358,7 +354,7 @@ private enum ChatRoutesFixture {
     )
 
     /// `CHAT_ROUTES_MANY_CHANGES=1`: 120 more files the session changed, so
-    /// the Git button's badge reads 99+ (`chat-top-bar-all`).
+    /// the Git button's badge reads 99+ (`chat-top-bar-reordered`).
     static let manyChangePaths: [String] = environment["CHAT_ROUTES_MANY_CHANGES"] == "1"
         ? (1...120).map { "Sources/Generated/Route\($0).swift" }
         : []

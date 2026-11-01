@@ -20,57 +20,28 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: - Top bar
 
-    /// The default bar: the context ring alone, with Files, Git, Outline, and
-    /// Terminal (the harness workspace has a folder a shell can start in) in
-    /// the … menu. Customize Top
-    /// Bar… opens the Top Bar page over the chat.
-    func testTopBarShowsTheDefaultButtonsAndTheRestInTheMenu() {
+    // Which buttons a layout puts on the bar and in the … menu, and in what
+    // order, is `ChatTopBarLayoutTests`; what the Top Bar page shows and
+    // writes is `SettingsChatTopBarPageTests`. These tests are the bar the
+    // chat draws from a stored layout, the system menu, and the push to the
+    // page.
+
+    /// The default bar (the context ring alone, with Files, Git, Outline, and
+    /// Terminal in the … menu) and its one-time hint: it shows under the bar
+    /// of a chat on the default bar and says where the other tools went.
+    /// Opening the menu is finding them, so the hint goes and stays gone after
+    /// a relaunch. The menu keeps each item's glance on its label's line
+    /// (Git's changes here).
+    func testDefaultBarHintPointsAtTheMenuUntilItIsOpened() {
         // The default layout is pinned in the volatile domain, so this reads
         // the default and not whatever an earlier run saved on this simulator.
-        launchScreen("chat-top-bar-default")
-        let context = app.buttons["chat.toolbar.context"]
-        XCTAssertTrue(context.waitForExistence(timeout: 15), "The context ring is the default bar")
-        for id in ["files", "git", "outline", "terminal"] {
-            XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is in the menu by default, not the bar")
-        }
-        attachScreenshot("chat-top-bar-default")
-
-        let more = app.buttons["chat.toolbar.more"]
-        XCTAssertTrue(more.exists, "The bar keeps a … menu")
-        more.tap()
-        let customize = app.buttons["Customize Top Bar…"]
-        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu must offer Customize Top Bar…")
-        for id in ["files", "git", "outline", "terminal"] {
-            XCTAssertTrue(app.buttons["chat.toolbar.menu.\(id)"].exists, "The menu must offer \(id)")
-        }
-        attachScreenshot("chat-top-bar-menu")
-        customize.tap()
-        XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "Customize Top Bar must open the Top Bar page")
-        for id in ["files", "git", "outline", "context", "terminal"] {
-            XCTAssertTrue(
-                app.switches["settings.chat.topBar.\(id)"].waitForExistence(timeout: 5),
-                "The Top Bar page must show the \(id) switch"
-            )
-        }
-        XCTAssertEqual(app.switches["settings.chat.topBar.context"].value as? String, "1", "Context starts on")
-        XCTAssertEqual(app.switches["settings.chat.topBar.files"].value as? String, "0", "Files starts in the menu")
-        XCTAssertEqual(app.switches["settings.chat.topBar.terminal"].value as? String, "0", "Terminal starts off")
-        XCTAssertTrue(
-            app.switches["settings.chat.topBar.terminal"].isEnabled,
-            "Terminal's switch works like the others"
-        )
-        attachScreenshot("chat-settings-top-bar")
-        assertRunning()
-    }
-
-    /// The default bar's one-time hint: it shows under the bar of a chat on the
-    /// default bar and says where the other tools went. Opening the menu is
-    /// finding them, so the hint goes and stays gone after a relaunch. The menu
-    /// keeps each item's glance on its label's line (Git's changes here).
-    func testDefaultBarHintPointsAtTheMenuUntilItIsOpened() {
         launchScreen("chat-top-bar-default", arguments: ["--reset-feature-tips"])
         let tip = app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"]
         XCTAssertTrue(tip.waitForExistence(timeout: 15), "A chat on the default bar must show the chat tools hint")
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring is the default bar")
+        for id in ["files", "git", "outline", "terminal"] {
+            XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is in the menu by default, not the bar")
+        }
         let message = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "Pin them to the top bar in Settings"))
             .firstMatch
@@ -84,6 +55,11 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             git.label.hasPrefix("Git") && git.label.contains("+2"),
             "Git's menu item must carry its changes on its line: \(git.label)"
         )
+        // Terminal too: the harness workspace has a folder a shell can start in.
+        for id in ["files", "outline", "terminal"] {
+            XCTAssertTrue(app.buttons["chat.toolbar.menu.\(id)"].exists, "The menu must offer \(id)")
+        }
+        XCTAssertTrue(app.buttons["Customize Top Bar…"].exists, "The … menu must offer Customize Top Bar…")
         attachScreenshot("chat-top-bar-menu-glance")
         app.buttons["chat.toolbar.menu.outline"].tap()
         let outline = app.buttons["chat.outline.close"]
@@ -96,31 +72,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         launchScreen("chat-top-bar-default")
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15))
         XCTAssertFalse(tip.waitForExistence(timeout: 3), "The hint shows once")
-        assertRunning()
-    }
-
-    /// A three-character count ("99+") fits the Git button's slot: every
-    /// control in the bar keeps one even pitch, Git does not run into the
-    /// button beside it, and the button still says the full count.
-    func testGitBadgeOfHundredsStaysClearOfTheNextButton() {
-        launchScreen("chat-top-bar-all", environment: ["CHAT_ROUTES_MANY_CHANGES": "1"])
-        let git = app.buttons["chat.toolbar.git"]
-        let outline = app.buttons["chat.toolbar.outline"]
-        XCTAssertTrue(outline.waitForExistence(timeout: 15), "The all-on bar must load")
-        XCTAssertTrue(
-            // Changes, not touches: the touched files Git reports (121 of 122).
-            waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
-            "The Git button must say the full count: \(git.value ?? "nil")"
-        )
-        XCTAssertLessThanOrEqual(git.frame.maxX, outline.frame.minX, "The badge's button must end before Outline starts")
-        let controls = ["files", "git", "outline", "context", "terminal", "more"].map { app.buttons["chat.toolbar.\($0)"] }
-        let centers = controls.map(\.frame.midX).sorted()
-        let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
-        XCTAssertLessThan(
-            (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
-            "The bar's controls must sit on one pitch: \(pitches)"
-        )
-        attachScreenshot("chat-top-bar-git-badge-99")
         assertRunning()
     }
 
@@ -145,102 +96,54 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    /// A bar someone customized needs no hint about where its buttons went.
-    func testCustomizedBarShowsNoMenuHint() {
-        launchScreen("chat-top-bar-all", arguments: ["--reset-feature-tips"])
-        XCTAssertTrue(app.buttons["chat.toolbar.files"].waitForExistence(timeout: 15), "The all-on bar must load")
+    /// A customized bar, every button on in a chosen order: the bar reads the
+    /// stored order left to right, the … menu holds nothing but Customize Top
+    /// Bar…, and that opens the Top Bar page listing the same order with a
+    /// reorder handle on every row. A customized bar needs no hint about where
+    /// its buttons went. A three-character Git count ("99+") fits Git's slot:
+    /// every control keeps one even pitch, Git does not run into the button
+    /// after it, and the button still says the full count.
+    func testTopBarFollowsTheChosenOrder() {
+        launchScreen(
+            "chat-top-bar-reordered",
+            environment: ["CHAT_ROUTES_MANY_CHANGES": "1"],
+            arguments: ["--reset-feature-tips"]
+        )
+        let ids = ["outline", "files", "context", "git", "terminal"]
+        for id in ids {
+            XCTAssertTrue(app.buttons["chat.toolbar.\(id)"].waitForExistence(timeout: 15), "\(id) must be on the bar")
+        }
+        assertLeftToRight(ids.map { app.buttons["chat.toolbar.\($0)"] }, "The reordered bar")
+
+        let git = app.buttons["chat.toolbar.git"]
+        XCTAssertTrue(
+            // Changes, not touches: the touched files Git reports (121 of 122).
+            waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
+            "The Git button must say the full count: \(git.value ?? "nil")"
+        )
+        XCTAssertLessThanOrEqual(
+            git.frame.maxX, app.buttons["chat.toolbar.terminal"].frame.minX,
+            "The badge's button must end before Terminal starts"
+        )
+        let centers = (ids + ["more"]).map { app.buttons["chat.toolbar.\($0)"].frame.midX }.sorted()
+        let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
+        XCTAssertLessThan(
+            (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
+            "The bar's controls must sit on one pitch: \(pitches)"
+        )
+        attachScreenshot("chat-top-bar-reordered")
         XCTAssertFalse(
             app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"].waitForExistence(timeout: 4),
             "A customized bar must not show the chat tools hint"
         )
-        assertRunning()
-    }
-
-    /// Terminal on and shown: it takes its place in the bar, and the buttons the
-    /// user hid — Git, Outline, and the ring — are in the … menu instead.
-    func testTopBarWithTerminalOnAndTheRestInTheMenu() {
-        launchScreen("chat-top-bar-terminal")
-        XCTAssertTrue(
-            app.buttons["chat.toolbar.terminal"].waitForExistence(timeout: 15),
-            "Terminal must show when it is on"
-        )
-        XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files is on")
-        XCTAssertFalse(app.buttons["chat.toolbar.git"].exists, "A hidden Git is not on the bar")
-        XCTAssertFalse(app.buttons["chat.toolbar.outline"].exists, "A hidden Outline is not on the bar")
-        XCTAssertFalse(app.buttons["chat.toolbar.context"].exists, "A hidden ring is not on the bar")
-        attachScreenshot("chat-top-bar-terminal")
 
         app.buttons["chat.toolbar.more"].tap()
-        XCTAssertTrue(
-            app.buttons["chat.toolbar.menu.outline"].waitForExistence(timeout: 5),
-            "Outline is the … menu's action"
-        )
-        XCTAssertTrue(app.buttons["chat.toolbar.menu.context"].exists, "The hidden ring is in the … menu")
-        XCTAssertTrue(app.buttons["chat.toolbar.menu.git"].exists, "The hidden Git is in the … menu")
-        attachScreenshot("chat-top-bar-terminal-menu")
-        assertRunning()
-    }
-
-    /// Every button on: all five are in the bar in the chosen order, and the …
-    /// menu has nothing but Customize Top Bar….
-    func testTopBarShowsEveryButtonWhenAllAreOn() {
-        launchScreen("chat-top-bar-all")
-        let order = [
-            "chat.toolbar.files", "chat.toolbar.git", "chat.toolbar.outline", "chat.toolbar.context", "chat.toolbar.terminal",
-        ]
-        for id in order {
-            XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
-        }
-        assertLeftToRight(order.map { app.buttons[$0] }, "The all-on bar")
-        attachScreenshot("chat-top-bar-all")
-
-        app.buttons["chat.toolbar.more"].tap()
-        XCTAssertTrue(app.buttons["Customize Top Bar…"].waitForExistence(timeout: 5), "The … menu stays")
+        let customize = app.buttons["Customize Top Bar…"]
+        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu stays")
         XCTAssertFalse(
             app.buttons["chat.toolbar.menu.files"].exists,
             "Nothing is hidden, so the … menu holds only Customize Top Bar…"
         )
-        assertRunning()
-    }
-
-    /// Every button off: only … is left, and the menu offers all five.
-    func testTopBarShowsOnlyTheMenuWhenEveryButtonIsOff() {
-        launchScreen("chat-top-bar-none")
-        let more = app.buttons["chat.toolbar.more"]
-        XCTAssertTrue(more.waitForExistence(timeout: 15), "… is the only bar control left")
-        for id in ["files", "git", "outline", "context", "terminal"] {
-            XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is hidden")
-        }
-        attachScreenshot("chat-top-bar-none")
-
-        more.tap()
-        for id in ["files", "git", "outline", "context", "terminal"] {
-            XCTAssertTrue(
-                app.buttons["chat.toolbar.menu.\(id)"].waitForExistence(timeout: 5),
-                "\(id) must be in the … menu"
-            )
-        }
-        XCTAssertTrue(app.buttons["Customize Top Bar…"].exists, "Customize Top Bar… stays last")
-        attachScreenshot("chat-top-bar-none-menu")
-        assertRunning()
-    }
-
-    /// A stored order is what the bar reads, and the Top Bar page lists the same
-    /// order with a reorder handle on every row.
-    func testTopBarFollowsTheChosenOrder() {
-        launchScreen("chat-top-bar-reordered")
-        let order = [
-            "chat.toolbar.outline", "chat.toolbar.files", "chat.toolbar.context", "chat.toolbar.git", "chat.toolbar.terminal",
-        ]
-        for id in order {
-            XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
-        }
-        assertLeftToRight(order.map { app.buttons[$0] }, "The reordered bar")
-        attachScreenshot("chat-top-bar-reordered")
-
-        app.buttons["chat.toolbar.more"].tap()
-        let customize = app.buttons["Customize Top Bar…"]
-        XCTAssertTrue(customize.waitForExistence(timeout: 5))
         customize.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5))
         let rows = ["outline", "files", "context", "git", "terminal"].map { "settings.chat.topBar.row.\($0)" }
@@ -275,69 +178,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             "The pushed page must be the Top Bar page"
         )
         assertRunning()
-    }
-
-    /// The Top Bar page itself, with nothing pinned in the argument domain, so
-    /// these are the writes a person makes: a switch writes the layout, a drag
-    /// reorders it, and both survive a relaunch.
-    ///
-    /// This is the one test that writes the persistent layout. The launch
-    /// contract starts it clean and the next test's launch clears what it wrote;
-    /// the relaunch inside the test shares its token, so it keeps the writes.
-    func testTopBarSettingsSwitchAndReorderWriteTheLayout() {
-        launchScreen("settings-chat-top-bar")
-        let rowIDs = ["files", "git", "outline", "context", "terminal"]
-        func row(_ id: String) -> XCUIElement { app.cells["settings.chat.topBar.row.\(id)"] }
-        func handle(_ id: String) -> XCUIElement { row(id).buttons["settings.chat.topBar.row.\(id)"] }
-        for id in rowIDs {
-            XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must be a row")
-        }
-        assertTopToBottom(rowIDs.map(row), "The Top Bar page's opening order")
-        let outlineSwitch = app.switches["settings.chat.topBar.outline"]
-        XCTAssertEqual(outlineSwitch.value as? String, "0", "Outline starts in the menu")
-
-        // A switch writes: Outline pinned to the bar.
-        outlineSwitch.tap()
-        XCTAssertTrue(
-            waitFor((outlineSwitch.value as? String) == "1"),
-            "Pinning Outline must flip its switch"
-        )
-
-        // A drag writes: Terminal's handle to the top.
-        XCTAssertTrue(handle("terminal").exists, "Terminal must keep its reorder handle")
-        drag(handle("terminal"), above: row("files"))
-        XCTAssertTrue(
-            waitFor(row("terminal").frame.minY < row("files").frame.minY),
-            "Dragging Terminal to the top must reorder the page"
-        )
-        assertTopToBottom(["terminal", "files", "git", "outline", "context"].map(row), "The dragged order")
-
-        // Both writes are the layout, not the screen: a fresh launch reads them
-        // back on the page the writes came from.
-        app.terminate()
-        launchScreen("settings-chat-top-bar")
-        for id in rowIDs {
-            XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must come back as a row")
-        }
-        assertTopToBottom(["terminal", "files", "git", "outline", "context"].map(row), "The order after a relaunch")
-        XCTAssertEqual(
-            app.switches["settings.chat.topBar.outline"].value as? String,
-            "1",
-            "The pinned button must still be pinned after a relaunch"
-        )
-        assertRunning()
-    }
-
-    /// Drags a row's reorder handle above or below another row, the way a person
-    /// moves it: press on the handle, drag, and hold so the list commits the
-    /// move instead of flinging.
-    private func drag(_ handle: XCUIElement, above row: XCUIElement) {
-        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
-            forDuration: 0.8,
-            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.6
-        )
     }
 
     /// Left-to-right order of the controls the caller names, which is the order
@@ -385,32 +225,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     // MARK: - Side panels
-
-    /// A classic chat's outline switches between Timeline and Tree; a durable
-    /// chat has no tree, so its outline is the timeline with no switch.
-    func testDurableOutlineShowsOnlyTheTimeline() {
-        for (engine, offersTree) in [("classic", true), ("durable", false)] {
-            launch(environment: engine == "durable" ? ["CHAT_ROUTES_ENGINE": "durable"] : [:])
-            let outlineButton = app.buttons["chat.toolbar.outline"]
-            XCTAssertTrue(outlineButton.waitForExistence(timeout: 10), "\(engine): outline must be available")
-            outlineButton.tap()
-            XCTAssertTrue(
-                app.navigationBars["Session Outline"].waitForExistence(timeout: 5),
-                "\(engine): outline did not open"
-            )
-            XCTAssertTrue(
-                app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ROUTES_FILL_2")).firstMatch
-                    .waitForExistence(timeout: 5),
-                "\(engine): the outline must list the timeline"
-            )
-            XCTAssertEqual(
-                app.segmentedControls.buttons["Tree"].exists, offersTree,
-                offersTree ? "A classic outline keeps the Tree switch" : "A durable outline has no Tree switch"
-            )
-            attachScreenshot("outline-\(engine)")
-            app.terminate()
-        }
-    }
 
     /// Regular width puts these in the trailing column beside the chat;
     /// compact width presents them as sheets.
