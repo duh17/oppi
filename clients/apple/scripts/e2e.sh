@@ -230,7 +230,6 @@ apply_group_defaults() {
                 "${TWO_SERVER_SUITES[@]}"
                 "OppiE2ETests/BrowserAutomationVideoToolRowE2ETests"
                 "OppiE2ETests/ExtensionUISnapshotLabE2ETests"
-                "OppiE2ETests/FeatureEducationTipsPreviewE2ETests"
                 "OppiE2ETests/FileBrowserVideoPlaybackE2ETests"
                 "OppiE2ETests/IPadAdaptiveShellScreenshotE2ETests"
                 "OppiE2ETests/ToolRowAudioArtifactE2ETests"
@@ -251,7 +250,6 @@ apply_group_defaults() {
         screenshot)
             ONLY_TESTING+=(
                 "OppiE2ETests/ExtensionUISnapshotLabE2ETests"
-                "OppiE2ETests/FeatureEducationTipsPreviewE2ETests"
                 "OppiE2ETests/IPadAdaptiveShellScreenshotE2ETests"
                 "OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests"
             )

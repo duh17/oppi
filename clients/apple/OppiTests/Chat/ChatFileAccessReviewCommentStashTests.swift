@@ -125,6 +125,32 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(button.accessibilityValue as? String == "1 staged comment")
     }
 
+    /// Cancel closes the editor without writing: the staged comment keeps the body it
+    /// had, and the next open shows it unchanged.
+    @Test func cancellingAnEditLeavesTheStagedCommentAsItWas() throws {
+        let comments = try makeIsolatedReviewComments(stagedCount: 1)
+        let comment = try #require(comments.stagedComments.first)
+        let sheet = ReviewCommentStashViewController(stash: comments, editing: comment, onClose: {})
+        let host = UINavigationController(rootViewController: sheet)
+        host.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        let window = present(host)
+        defer { window.isHidden = true }
+
+        let field = try #require(timelineAllViews(in: sheet.view).compactMap { $0 as? UITextView }.first {
+            $0.accessibilityLabel == "Review comment text"
+        })
+        // UIKit calls this from the keyboard; the sheet is hosted without an input session here.
+        field.text = comment.body + " Updated"
+        field.delegate?.textViewDidChange?(field)
+        #expect(sheet.navigationItem.rightBarButtonItem?.isEnabled == true)
+
+        let cancel = try #require(sheet.navigationItem.leftBarButtonItem?.primaryAction)
+        cancel.performWithSender(nil, target: nil)
+        host.view.layoutIfNeeded()
+
+        #expect(comments.stagedComments.first?.body == comment.body)
+    }
+
     /// Ending an edit hides the editor and empties its sections; the collection view must
     /// agree, or the next layout (keyboard dismissal, rotation) indexes an empty array.
     @Test func endingEditReloadsTheEditorListSoLaterLayoutDoesNotTrap() throws {

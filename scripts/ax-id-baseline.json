@@ -35,9 +35,7 @@
     "clients/apple/Oppi/Features/FileBrowser/FileViewerViewController.swift": 1,
     "clients/apple/Oppi/Features/Review/CommitDetailViewController.swift": 2,
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailViewController.swift": 4,
-    "clients/apple/OppiDebugHarness/FeatureEducationP0TipPreview.swift": 5,
     "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift": 5,
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": 1,
-    "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": 3
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": 1
   }
 }

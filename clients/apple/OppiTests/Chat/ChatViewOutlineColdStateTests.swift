@@ -7,9 +7,9 @@ import UIKit
 /// the timeline's own clock: the chat pushes no chrome while tokens stream.
 ///
 /// Do not reintroduce a synthetic `SessionOutlineViewController`
-/// present/onSelect path here. Drive the real bar, presented Session Outline,
-/// and row navigation with `OppiUITests/ChatOutlineColdStateUITests` (DEBUG
-/// chat harness, no model).
+/// present/onSelect path here. The real bar, presented Session Outline, and
+/// row navigation are driven by `OppiUITests/ChatRoutesUITests` (production
+/// chat over fixtures, no model).
 @Suite("Chat outline cold state", .serialized)
 @MainActor
 struct ChatViewOutlineColdStateTests {

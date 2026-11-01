@@ -186,25 +186,16 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
       "toggleRow(": 1
     },
-    "clients/apple/OppiDebugHarness/ChatOutlineColdHarnessView.swift": {
+    "clients/apple/OppiDebugHarness/ChatRoutesHarness.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/FeatureEducationP0TipPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/NavigationChromeProfileHarnessView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/UIHangHarnessView.swift": {

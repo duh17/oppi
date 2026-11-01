@@ -54,8 +54,6 @@ const scanPaths = ["Oppi", "OppiDebugHarness"];
 const previewAllowlistGlobs = [
   "**/ScreenshotPreviewView.swift",
   "**/ExtensionDockStressPreview.swift",
-  "**/StreamingFlickerPreviewView.swift",
-  "**/FeatureEducationP0TipPreview.swift",
   "**/*Preview.swift",
   "**/*HarnessView.swift",
 ];

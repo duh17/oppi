@@ -86,10 +86,6 @@ struct ScreenshotPreviewView: View {
             ChatRoutesHarnessPreview()
         case "session-timeline":
             SessionTimelinePreview()
-        case "streaming-flicker":
-            StreamingFlickerPreviewView()
-        case "feature-tip-p0":
-            FeatureEducationP0TipPreview()
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,

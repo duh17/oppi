@@ -14,9 +14,6 @@ enum DebugHarnessLaunch {
     /// The window root for the harness or screenshot preview the launch
     /// arguments chose, or nil for the app.
     static func rootViewController(root: AppRootEnvironment) -> UIViewController? {
-        if ReviewCommentStashHarnessConfig.isEnabled {
-            return ReviewCommentStashHarnessController(root: root)
-        }
         guard let controller = makeHarnessRoot(root: root, generation: HarnessLaunchReset.isEnabled ? 0 : nil) else { return nil }
         if HarnessLaunchReset.isEnabled {
             // Nothing came before this root, so there is nothing to wait for.
@@ -57,9 +54,6 @@ enum DebugHarnessLaunch {
     /// controller instead of a SwiftUI representable. Each family that drops
     /// its wrappers adds its configs here.
     private static func uiKitHarness(root: AppRootEnvironment) -> UIViewController? {
-        if HTMLDOMAnnotationHarnessConfig.isEnabled {
-            return HTMLDOMAnnotationHarnessViewController()
-        }
         if WikiLineAnchorHarnessConfig.isEnabled {
             return WikiLineAnchorHarnessViewController()
         }
@@ -68,9 +62,6 @@ enum DebugHarnessLaunch {
         }
         if FullScreenReviewCommentHarnessConfig.isEnabled {
             return FullScreenReviewCommentHarnessViewController()
-        }
-        if CodeGutterAlignmentHarnessConfig.isEnabled {
-            return HarnessViewHostController(content: CodeGutterAlignmentHarnessRootView())
         }
         if CodeBlockWrappingHarnessConfig.isEnabled {
             return HarnessViewHostController(content: CodeBlockWrappingHarnessRootView())
@@ -108,9 +99,6 @@ enum DebugHarnessLaunch {
             if ScreenshotPreviewConfig.screen == "workspace-shell" {
                 return WorkspaceShellPreviewController()
             }
-            if ScreenshotPreviewConfig.screen == "locked-server-cover" {
-                return LockedServerCoverPreviewController()
-            }
             // The files, terminal, and audio family: the motion captures, the
             // terminal's three fixture connections, and the script reader.
             switch ScreenshotPreviewConfig.screen {
@@ -130,12 +118,6 @@ enum DebugHarnessLaunch {
     /// The SwiftUI harness or screenshot preview chosen by launch arguments, or
     /// nil for the app.
     private static var harnessView: AnyView? {
-        if ChatOutlineColdHarnessConfig.isEnabled {
-            return AnyView(ChatOutlineColdHarnessView())
-        }
-        if NavigationChromeProfileConfig.isEnabled {
-            return AnyView(NavigationChromeProfileHarnessView())
-        }
         if UIHangHarnessConfig.isEnabled {
             return AnyView(UIHangHarnessView())
         }

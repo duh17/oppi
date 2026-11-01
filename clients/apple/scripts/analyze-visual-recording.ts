@@ -4,11 +4,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-/** Same downscale as StreamingFlickerCaptureUITests, full-frame (no overlay crop). */
+/** Full-frame downscale, no overlay crop. */
 export const SAMPLE_WIDTH = 96;
 export const SAMPLE_HEIGHT = 160;
 
-/** Flicker harness: `delta > 18` is a large jump. */
+/** `delta > 18` is a large jump. */
 export const LARGE_DELTA_THRESHOLD = 18;
 
 /** Near-zero mean luma delta. Documented on every report as `freeze_threshold`. */
@@ -94,7 +94,7 @@ export function lumaFromRgb24(rgb: Uint8Array): Uint8Array {
     const r = rgb[i * 3] ?? 0;
     const g = rgb[i * 3 + 1] ?? 0;
     const b = rgb[i * 3 + 2] ?? 0;
-    // Rec.601 luma, truncated into 0…255 like the flicker UITest UInt8 cast.
+    // Rec.601 luma, truncated into 0…255 as a UInt8 cast does.
     luma[i] = Math.max(0, Math.min(255, Math.trunc(0.299 * r + 0.587 * g + 0.114 * b)));
   }
   return luma;
@@ -441,7 +441,7 @@ Options:
 
 Sampling:
   Downscale to ${SAMPLE_WIDTH}x${SAMPLE_HEIGHT}, Rec.601 luma, mean absolute per-pixel delta.
-  Large-delta threshold: ${LARGE_DELTA_THRESHOLD} (same as StreamingFlickerCaptureUITests).
+  Large-delta threshold: ${LARGE_DELTA_THRESHOLD}.
   Freeze threshold: ${FREEZE_THRESHOLD} (reported as freeze_threshold).
   settle_s is the last large-delta timestamp relative to window_start_s, or 0 if none.
   window_start_s / window_end_s are the kept range on the source timeline.

@@ -54,8 +54,6 @@
  "UIHangHarnessUITests/testExpandedReadMarkdownScrollNoStagger": 78.2,
  "UIHangHarnessUITests/testExpandedWriteMarkdownScrollNoStagger": 71,
  "UIHangHarnessUITests/testImagePreviewPreservesDetachedVisibleRowY": 36.3,
- "UIHangHarnessUITests/testReadableMarkdownTableChatBubbleScreenshot": 25.4,
- "UIHangHarnessUITests/testReadableMarkdownTableExpandedReadScreenshot": 28.2,
  "UIHangHarnessUITests/testSessionSwitchNoStalls": 33.3,
  "UIHangHarnessUITests/testThemeToggleAndKeyboardDuringStreamingNoStalls": 28.1,
  "UIHangHarnessUITests/testVisualToolsetTapThroughRendersWithoutStalls": 33.8,
