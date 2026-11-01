@@ -172,9 +172,11 @@ struct ServerExtensionsViewControllerTests {
         })
         #expect(catalog.requests == settled + 1)
         // The replaced state row leaves the screen (a recycled cell may linger, hidden).
+        // The screen itself stays in its window, so a button without one was removed.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
-            return Self.buttons(withIdentifier: "extensions.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+            return screen.view.window != nil
+                && Self.buttons(withIdentifier: "extensions.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
         })
         await Self.removeCachedCatalog(of: serverId)
     }
