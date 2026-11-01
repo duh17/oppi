@@ -80,6 +80,9 @@ final class SSHTerminalPaneTransition {
     private var timeout: Task<Void, Never>?
     /// The finger is past the new-pane threshold: the tick was made.
     private var tickedForNewPane = false
+    /// Live panes this drag has named (`SSHTerminalPaneStepping.takeAhead`),
+    /// so a finger going back and forth takes each once.
+    private var takenAhead: Set<String> = []
     /// Opening the pane failed while the slide was still running.
     private var creationFailedMidSlide = false
 
@@ -95,6 +98,7 @@ final class SSHTerminalPaneTransition {
     func beginDrag() -> Bool {
         guard phase == .idle, present() else { return false }
         phase = .dragging
+        takenAhead = []
         onSwitching?(true)
         return true
     }
@@ -111,7 +115,11 @@ final class SSHTerminalPaneTransition {
         let newPane = neighbour == nil && offersNewPane && translationX < 0
         let offset = SSHTerminalPaneSwipe.offset(translation: translationX, width: width, canStep: neighbour != nil || newPane)
         let side = offset + (translationX < 0 ? width : -width)
-        installIncoming(target: grid.paneStepping?.livePane(SSHTerminalPaneSwipe.direction(of: translationX)))
+        let live = grid.paneStepping?.livePane(SSHTerminalPaneSwipe.direction(of: translationX))
+        installIncoming(target: live)
+        // The finger names this neighbour: it is taken and sized for this
+        // screen now, so its program has redrawn for the phone by the release.
+        if let live, takenAhead.insert(live).inserted { grid.paneStepping?.takeAhead(live) }
         guard newPane else {
             tickedForNewPane = false
             placeholder?.title = neighbour

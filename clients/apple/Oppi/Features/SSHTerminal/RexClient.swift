@@ -613,6 +613,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// Takes back per pane since this phone's user last acted
         /// (`userActed`), at most `maximumReclaims`.
         var reclaims: [String: Int] = [:]
+        /// The neighbour a drag toward it named (`takeAhead`): taken once, by
+        /// the next pass of the lane loop, then forgotten.
+        var ahead: String?
         /// The size each owned pane was last given, so a switch does not
         /// size again a pane the screen just sized (the first pane, on the
         /// first layout).
@@ -696,10 +699,18 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// until it was shown. The page shows the session, the pane has a lane
         /// (one without takes it as it opens), and the takes since the user
         /// last acted are under the cap. A neighbour waits until it is shown.
+        /// Before it, the neighbour a drag named (`ahead`), on the same terms.
         var paneToReclaim: String? {
-            guard onScreen, lanes[requested] != nil, !owned.contains(requested), wantedLanes.contains(requested),
-                  reclaims[requested, default: 0] < RexSessionConnection.maximumReclaims else { return nil }
-            return requested
+            if takeable(requested) { return requested }
+            if let ahead, takeable(ahead) { return ahead }
+            return nil
+        }
+
+        /// `block` streams on a page that shows, this client does not own it,
+        /// and the takes since the user last acted are under the cap.
+        func takeable(_ block: String) -> Bool {
+            onScreen && lanes[block] != nil && !owned.contains(block) && wantedLanes.contains(block)
+                && reclaims[block, default: 0] < RexSessionConnection.maximumReclaims
         }
 
         var laneWork: Bool {
@@ -862,6 +873,20 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             state.onScreen = onScreen
             guard onScreen else { return false }
             state.reclaims[state.requested] = nil
+            return startSwitching(&state)
+        }
+        if start { Task { await runLanes() } }
+    }
+
+    /// A drag toward `block`, a neighbour, named it: take it now and size it
+    /// for this screen, through the same take as the shown pane's, so its
+    /// program redraws for the phone while the finger is still down. On a
+    /// page that shows and under the cap only; a pane this client owns is
+    /// left as it is. A swipe that springs back keeps the pane.
+    func takeAhead(_ block: String) {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended, state.armed, block != state.requested, state.takeable(block) else { return false }
+            state.ahead = block
             return startSwitching(&state)
         }
         if start { Task { await runLanes() } }
@@ -1087,6 +1112,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                     state.owned.insert(taken)
                     state.sized[taken] = nil
                     state.reclaims[taken, default: 0] += 1
+                    if taken == state.ahead { state.ahead = nil }
                     return .reclaim(taken)
                 }
                 if let next = state.lanesToOpen.first { return .open(next) }
@@ -1097,6 +1123,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                     for block in behind { state.sized[block] = nil }
                     return .handBack(Array(behind))
                 }
+                // A drag's neighbour not taken by now (owned, or no longer
+                // takeable) is not taken later, by a fight or a page return.
+                state.ahead = nil
                 state.switching = false
                 return .done
             }

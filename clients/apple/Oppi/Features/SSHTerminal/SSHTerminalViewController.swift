@@ -1105,7 +1105,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                       self.channel.readyEngine(for: block) != nil else { return nil }
                 return block
             },
-            target: { [weak self] delta in self?.channel.rex?.latest.pane(offsetBy: delta) }
+            target: { [weak self] delta in self?.channel.rex?.latest.pane(offsetBy: delta) },
+            takeAhead: { [weak self] block in self?.channel.rex?.takeAhead(block) }
         )
     }
 

@@ -110,6 +110,10 @@ struct SSHTerminalPaneStepping {
     /// The block of the pane `delta` places along, whether it is live or not:
     /// what a switch with no finger names before the session moves.
     var target: (Int) -> String?
+    /// A drag toward the live pane `block` named it: take it now, sized for
+    /// this screen, so the screen sliding in is laid out for the phone before
+    /// the release (`RexSessionConnection.takeAhead`). Once per pane per drag.
+    var takeAhead: (String) -> Void
 }
 
 /// The bar's pane switcher menu: the session's panes in strip order, the

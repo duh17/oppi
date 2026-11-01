@@ -216,6 +216,12 @@ final class RexSessionModel {
         connection.keepLive(blocks)
     }
 
+    /// A drag named the neighbour `block`: it is taken and sized for this
+    /// screen before the release (`RexSessionConnection.takeAhead`).
+    func takeAhead(_ block: String) {
+        connection.takeAhead(block)
+    }
+
     /// A pane off screen whose stream cannot be read: its lane is dropped and
     /// the screen falls back to that pane's card if a swipe reaches it.
     func paneFailed(_ block: String) {

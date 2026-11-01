@@ -55,7 +55,8 @@ struct RexLivePanesTests {
                     guard let block = model.latest.pane(offsetBy: delta), channel.isReady(block) else { return nil }
                     return block
                 },
-                target: { [model] delta in model.latest.pane(offsetBy: delta) }
+                target: { [model] delta in model.latest.pane(offsetBy: delta) },
+                takeAhead: { [model] block in model.takeAhead(block) }
             )
         }
 
@@ -337,6 +338,35 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
+    /// A drag toward a live neighbour takes it and sizes it for this screen
+    /// while the finger is still down, so the screen sliding in is already laid
+    /// out for the phone. A finger going back and forth takes it once.
+    @Test func aDragTowardALiveNeighbourTakesItBeforeTheRelease() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        let screen = try Screen(rig: rig, shown: a)
+        #expect(takes(of: b, in: rig) == 0, "b streams untaken")
+        let transition = screen.transition
+
+        #expect(transition.beginDrag())
+        transition.drag(translationX: -150, neighbour: "title b", offersNewPane: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.size(of: b) == Self.phone },
+                "b: \(String(describing: rig.fake.size(of: b)))")
+        #expect(transition.phase == .dragging, "before the release")
+
+        transition.drag(translationX: -40, neighbour: "title b", offersNewPane: false)
+        transition.drag(translationX: 30, neighbour: nil, offersNewPane: false)
+        transition.drag(translationX: -160, neighbour: "title b", offersNewPane: false)
+        _ = await waitForMainActorCondition(timeout: .milliseconds(300)) { false }
+        #expect(takes(of: b, in: rig) == 1, "one take for the drag")
+        #expect(rig.model.latest.shown == a, "the session has not moved")
+
+        transition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
+        screen.dismiss()
+        await rig.stop()
+    }
+
     /// The shown pane closes in Rex while the page is away: the session moves
     /// to its neighbour, whose stream opens, but nothing is taken off the page.
     /// The page coming back takes it, once.
@@ -476,7 +506,8 @@ struct RexLivePanesTests {
             newPane: { false },
             canCreatePane: { false },
             livePane: { _ in b },
-            target: { _ in b }
+            target: { _ in b },
+            takeAhead: { _ in }
         )
         grid.present(a)
         container.layoutIfNeeded()
