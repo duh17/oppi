@@ -745,7 +745,10 @@ struct AppEventStreamCoordinatorTests {
 @Suite("Sticky Refresh Reconciliation", .serialized)
 @MainActor
 struct StickyRefreshReconciliationTests {
-    @Test(arguments: ["workspace", "session"])
+    // `.timeLimit` is a hang guard, not the test's completion signal: the await below is the
+    // verdict, and a handshake that never reports must fail the test instead of stalling the
+    // whole unit shard.
+    @Test(.timeLimit(.minutes(1)), arguments: ["workspace", "session"])
     func connectedWithoutSnapshotRepairsPreexistingListFailure(_ failedProjection: String) async throws {
         let connection = makeReconciliationConnection()
         defer { cleanup(connection) }
@@ -762,20 +765,19 @@ struct StickyRefreshReconciliationTests {
             return try Self.reconciliationResponse(for: request)
         }
 
+        // `connectAppEventStream(awaitHandshake:)` returns once the coordinator's handshake —
+        // including the repair this test is about — has settled, so these assert its outcome
+        // rather than race it. One pass refreshed both projections and cleared the failure it
+        // was asked to repair; a second pass would mean the handshake fetched twice.
         _ = try await connectAppEventStream(
             for: connection,
-            snapshotRequired: false
+            snapshotRequired: false,
+            awaitHandshake: true
         )
 
-        let repaired = await waitForMainActorCondition(timeout: .seconds(2)) {
-            requestCounter.count(path: "/workspaces") == 1
-                && requestCounter.count(path: "/skills") == 1
-                && requestCounter.count(path: "/sessions/recent") == 1
-                && !connection.workspaceStore.lastSyncFailed
-                && !connection.sessionStore.lastSyncFailed
-        }
-
-        #expect(repaired)
+        #expect(requestCounter.count(path: "/workspaces") == 1)
+        #expect(requestCounter.count(path: "/skills") == 1)
+        #expect(requestCounter.count(path: "/sessions/recent") == 1)
         #expect(connection.workspaceStore.lastSyncFailed == false)
         #expect(connection.sessionStore.lastSyncFailed == false)
     }
@@ -1120,8 +1122,24 @@ struct StickyRefreshReconciliationTests {
 
     private func connectAppEventStream(
         for connection: ServerConnection,
-        snapshotRequired: Bool
+        snapshotRequired: Bool,
+        awaitHandshake: Bool = false
     ) async throws -> ScriptedAppEventSocketFactory {
+        var handshake: AsyncStream<Void>?
+        if awaitHandshake {
+            // The coordinator handles an event only after it has awaited the `.connected`
+            // snapshot repair, and that event's handler then refreshes pending pairing
+            // approvals. This seam firing is therefore the handshake's completion, repair
+            // included — a real signal, where polling `appEventStreamTransportState` raced a
+            // one-second deadline on a loaded host. Callers that hold a repair response on
+            // purpose (a gated request) must keep the default: they would deadlock here.
+            let (stream, sink) = AsyncStream<Void>.makeStream()
+            handshake = stream
+            connection._listPairingApprovalsForTesting = {
+                sink.yield()
+                return []
+            }
+        }
         let factory = ScriptedAppEventSocketFactory()
         let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         let client = AppEventStreamClient(
@@ -1137,9 +1155,13 @@ struct StickyRefreshReconciliationTests {
         )
         let socket = try #require(factory.sockets.first)
         socket.yield(.string("{\"type\":\"app_events_connected\",\"serverTime\":42,\"snapshotRequired\":\(snapshotRequired) }"))
-        #expect(await waitForMainActorCondition {
-            connection.appEventStreamTransportState == .connected
-        })
+        if let handshake {
+            for await _ in handshake { break }
+        } else {
+            #expect(await waitForMainActorCondition {
+                connection.appEventStreamTransportState == .connected
+            })
+        }
         return factory
     }
 
