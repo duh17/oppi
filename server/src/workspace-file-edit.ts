@@ -483,20 +483,21 @@ export async function readBoundedRequestBody(
   });
 }
 
-async function unlinkCapturedTemp(temp: CapturedTemp): Promise<void> {
-  let removed = false;
+/// Removes the temp this request wrote, proving it is still the inode it opened.
+/// - Returns: whether it removed the name (a replaced or substituted entry is
+///   left alone). The caller syncs the directory, once, where it knows what else
+///   in that directory changed.
+async function unlinkCapturedTemp(temp: CapturedTemp): Promise<boolean> {
   try {
     const lst = await fs.lstat(temp.path);
-    if (lst.dev !== temp.dev || lst.ino !== temp.ino) return;
-    if (lst.isSymbolicLink()) return;
+    if (lst.dev !== temp.dev || lst.ino !== temp.ino) return false;
+    if (lst.isSymbolicLink()) return false;
     await fs.unlink(temp.path);
-    removed = true;
+    return true;
   } catch {
     // Replaced or already gone. Never follow a substituted entry.
+    return false;
   }
-  // The removal is an entry in the directory too: sync it so a cleanup that
-  // reported success is not undone by a power loss, leaving the temp behind.
-  if (removed) await syncDirectory(dirname(temp.path));
 }
 
 /**
@@ -680,7 +681,11 @@ async function writeEditedFileAtomic(
   } catch {
     return { kind: "error", status: 500, message: "Failed to write file" };
   } finally {
-    if (captured) await unlinkCapturedTemp(captured);
+    // The removal is an entry in the directory too: sync it so a cleanup that
+    // reported success is not undone by a power loss, leaving the temp behind.
+    if (captured && (await unlinkCapturedTemp(captured))) {
+      await syncDirectory(dirname(captured.path));
+    }
   }
 }
 
@@ -798,7 +803,13 @@ async function createEditedFile(
       return { kind: "error", status: 500, message: "Failed to write file" };
     }
     // The new name has to survive a power loss too, not only its bytes: the
-    // directory entry is what makes the file exist.
+    // directory entry is what makes the file exist. The temp goes first, so one
+    // sync covers both the name that appeared and the temp that went away.
+    if (temp) {
+      const written = temp;
+      temp = undefined;
+      await unlinkCapturedTemp(written);
+    }
     await syncDirectory(parentReal);
   } catch {
     if (created) await unlinkCreatedFile(createPath, created);

@@ -815,21 +815,24 @@ struct WorkspaceFileEditSessionTests {
 
     /// A write in flight holds the bytes it is writing, so a discard now would
     /// show disk while the server takes the buffer: it is refused, and the
-    /// notice says why.
+    /// notice says why. (A write that carries every edit is the exception; see
+    /// `discardingClosesWhenTheFlightCarriesEveryEdit`.)
     @Test func discardingIsRefusedWhileAWriteIsInFlight() async {
         let harness = Harness()
         let session = harness.open(autoSave: false)
         harness.type(" one", into: session)
         session.saveNow()
         #expect(await eventually { harness.scripted.pending.count == 1 })
+        // Typed after the save went: these bytes are not in the write out.
+        harness.type(" two", into: session)
 
         #expect(session.discardChanges() == false, "a write in flight refuses the discard")
         #expect(session.status == .saving)
-        #expect(session.currentText == "hello one", "the edits stay")
+        #expect(session.currentText == "hello one two", "the edits stay")
         #expect(session.draftNotice != nil, "the notice line says why")
 
         harness.scripted.resolveNext(.saved(etag: tag("b")))
-        #expect(await eventually { session.status == .saved })
+        #expect(await eventually { session.status == .pending })
         #expect(session.discardChanges(), "and it goes once the write landed")
     }
 
@@ -935,6 +938,175 @@ struct WorkspaceFileEditSessionTests {
         #expect(session.status == .saved)
         #expect(session.hasUnsavedChanges == false)
         #expect(session.hasUnconfirmedChanges == false, "Done has nothing left to ask")
+    }
+
+    /// A queued save belongs to the version it was made against. When the write
+    /// ahead of it comes back stale, that save must never be sent: Replace (or
+    /// Use Disk, then a save) decides what the buffer becomes, and a stranded
+    /// queue would otherwise write the old bytes over the reviewed version.
+    @Test func aStaleFlightDropsTheQueuedSave() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        // A second save, queued behind the first, and then more typing: the
+        // queued bytes are already older than the buffer.
+        harness.type(" two", into: session)
+        #expect(session.saveNow())
+        #expect(harness.scripted.writeLog.count == 1)
+        harness.type(" three", into: session)
+
+        // The first write lost: someone else wrote the file.
+        harness.scripted.resolveNext(.stale)
+        #expect(await eventually { session.status == .conflict })
+
+        // Review, then Replace: exactly one more write, with the buffer.
+        harness.scripted.reads = [.snapshot(WorkspaceFileDiskSnapshot(bytes: Data("theirs".utf8), etag: tag("c")))]
+        _ = await session.reviewDisk()
+        session.replaceDiskVersion()
+        #expect(await eventually { harness.scripted.writeLog.count == 2 })
+        harness.scripted.resolveNext(.saved(etag: tag("d")))
+        #expect(await eventually { session.status == .saved })
+
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(harness.scripted.writeLog.count == 2, "the queued save must not outlive the conflict")
+        #expect(
+            harness.scripted.writeLog[1].bytes == Data("hello one two three".utf8),
+            "Replace writes the buffer the person kept"
+        )
+    }
+
+    /// Use Disk drops a queued save too: the bytes it would have sent are the
+    /// ones the person just discarded. The write that follows is the session's
+    /// own (Auto-Save on), so nothing else clears the queue for it.
+    @Test func useDiskDropsTheQueuedSave() async {
+        let harness = Harness()
+        let session = harness.open(idleDelay: .milliseconds(20), autoSave: true)
+        harness.type(" one", into: session)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        // The idle save is in flight; this save waits behind it.
+        harness.type(" two", into: session)
+        #expect(session.saveNow())
+        #expect(harness.scripted.writeLog.count == 1)
+
+        harness.scripted.resolveNext(.stale)
+        #expect(await eventually { session.status == .conflict })
+        harness.scripted.reads = [.snapshot(WorkspaceFileDiskSnapshot(bytes: Data("theirs".utf8), etag: tag("c")))]
+        let result = await session.useDiskVersion()
+        #expect(result == .replaced("theirs"))
+        // The page applies the replacement to its text view; the harness's buffer
+        // is that text view.
+        harness.buffer = "theirs"
+
+        // Typing again, and the idle save writes what is on screen now.
+        harness.type(" more", into: session)
+        #expect(await eventually { harness.scripted.writeLog.count == 2 })
+        harness.scripted.resolveNext(.saved(etag: tag("d")))
+        #expect(await eventually { session.status == .saved })
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(harness.scripted.writeLog.count == 2, "the queued save must not outlive Use Disk")
+        #expect(harness.scripted.writeLog[1].bytes == Data("theirs more".utf8))
+        #expect(harness.scripted.writeLog.allSatisfy { $0.bytes != Data("hello one two".utf8) })
+    }
+
+    /// A queued save is not the session's own write: turning Auto-Save off while
+    /// its flight fails must not strand it.
+    @Test func aGatedRetrySendsTheQueuedSave() async {
+        let harness = Harness()
+        var isOn = true
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: tag("a")),
+            maxBytes: 64,
+            transport: harness.scripted.transport,
+            draftStore: harness.store,
+            idleDelay: .milliseconds(20),
+            retryDelay: .seconds(60),
+            isAutoSaveOn: { isOn }
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+
+        // The idle save is in flight when the person saves over it.
+        harness.type(" one", into: session)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        harness.type(" two", into: session)
+        #expect(session.saveNow(), "queued behind the idle save")
+
+        isOn = false
+        harness.scripted.resolveNext(.notSent)
+        #expect(
+            await eventually { harness.scripted.writeLog.count == 2 },
+            "the person's save goes even though the retry is gated"
+        )
+        #expect(harness.scripted.writeLog[1].bytes == Data("hello one two".utf8))
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+    }
+
+    /// A buffer over the limit stays Too Large after the flight ahead of it
+    /// lands: the acknowledge must not call it saved.
+    @Test func tooLargeSurvivesTheFlightItWaitedFor() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        harness.type(String(repeating: "x", count: 80), into: session)
+        #expect(session.saveNow() == false, "over the server's limit")
+        #expect(session.status == .tooLarge)
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(session.status == .tooLarge, "the banner still says why the save did not go")
+        #expect(harness.scripted.writeLog.count == 1)
+    }
+
+    /// Quitting without saving closes when the write out already carries every
+    /// edit: nothing would be lost.
+    @Test func discardingClosesWhenTheFlightCarriesEveryEdit() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+
+        #expect(session.discardChanges(from: .commandLine), "the write out is this buffer")
+        #expect(session.draftNotice == nil, "nothing to warn about")
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved })
+    }
+
+    /// A refused Discard says so in its own words (Done's, or Vim's), and the
+    /// notice goes once the write it waited for lands.
+    @Test func aRefusedDiscardNoticeClearsWhenTheWriteLands() async {
+        let harness = Harness()
+        let session = harness.open(autoSave: false)
+        harness.type(" one", into: session)
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        harness.type(" two", into: session)
+
+        #expect(session.discardChanges() == false)
+        let fromPage = session.draftNotice
+        #expect(fromPage?.contains("Discard Changes") == true, "Done's wording: \(fromPage ?? "none")")
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .pending })
+        #expect(session.draftNotice == nil, "the notice described a moment that is over")
+
+        // Vim's own wording, on the same refusal.
+        #expect(session.saveNow())
+        #expect(await eventually { harness.scripted.writeLog.count == 2 })
+        harness.type(" three", into: session)
+        #expect(session.discardChanges(from: .commandLine) == false)
+        #expect(session.draftNotice?.contains("quit") == true, "Vim's wording: \(session.draftNotice ?? "none")")
+        harness.scripted.resolveNext(.saved(etag: tag("c")))
+        #expect(await eventually { session.draftNotice == nil })
     }
 
     /// ⌘S and Vim's `:w` are the person's save: one write, and Done then closes

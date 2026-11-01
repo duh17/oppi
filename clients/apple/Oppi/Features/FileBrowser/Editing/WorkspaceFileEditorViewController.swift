@@ -120,6 +120,10 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     /// The Auto-Save the session was last told about, so a change reaches an
     /// editor that is open (on: the idle save starts; off: the timer stops).
     private var appliedAutoSaves: Bool?
+    /// The Auto-Save change observer; a block token, so `deinit` removes it.
+    /// `nonisolated(unsafe)` only so the nonisolated `deinit` can hand it back to
+    /// NotificationCenter; it is written once, on the main actor, in `viewDidLoad`.
+    nonisolated(unsafe) private var autoSaveObserver: NSObjectProtocol?
     private var appliedTabWidth: Int?
     private var keyCommandCache: (key: String, commands: [UIKeyCommand])?
     /// Set while this controller moves the selection, so the change is not
@@ -157,6 +161,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let autoSaveObserver { NotificationCenter.default.removeObserver(autoSaveObserver) }
     }
 
     private var vimEnabled: Bool { preferences.keybindings == .vim }
@@ -258,18 +263,15 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         // Auto-Save is a stored setting: Settings > Editor writes it without a
         // redraw here, so the editor hears the change instead (see
         // `updateProperties`, which starts or stops the idle save it owes).
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(autoSaveSettingDidChange),
-            name: .codeEditorAutoSaveDidChange,
-            object: nil
-        )
-        setNeedsUpdateProperties()
-    }
-
-    /// Auto-Save changed while this editor is open (Settings > Editor, or the
-    /// options menu): redraw, which hands the change to the session.
-    @objc private func autoSaveSettingDidChange() {
+        // A block observer on the main queue: a selector observer here would be
+        // called on whichever thread posted, which is a crash waiting to happen.
+        autoSaveObserver = NotificationCenter.default.addObserver(
+            forName: .codeEditorAutoSaveDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setNeedsUpdateProperties() }
+        }
         setNeedsUpdateProperties()
     }
 
@@ -472,8 +474,9 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
                 onDone()
             case .discardAndQuit:
                 // Vim's quit-without-saving: the edits go, as Discard Changes
-                // does. A write in flight refuses it, and the notice says why.
-                if session.discardChanges() { onDone() }
+                // does. A write in flight refuses it (its own wording), and a
+                // write that already carries every edit just closes.
+                if session.discardChanges(from: .commandLine) { onDone() }
             case .commandLine(let prompt):
                 statusBar.beginCommand(prompt)
             case .scrollCaret(let position):

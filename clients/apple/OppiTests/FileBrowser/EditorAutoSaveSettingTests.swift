@@ -49,6 +49,15 @@ struct EditorAutoSaveSettingTests {
         harness.window.rootViewController = nil
     }
 
+    /// Presents the page again: an appearance, which is when the page re-reads
+    /// the rows it draws.
+    private func show(_ harness: Harness) {
+        harness.window.rootViewController = harness.page
+        harness.window.makeKeyAndVisible()
+        harness.page.view.setNeedsLayout()
+        harness.page.view.layoutIfNeeded()
+    }
+
     private func cell(_ item: Item, in page: SettingsEditorViewController) -> UICollectionViewCell? {
         page.view.layoutIfNeeded()
         return page.indexPath(for: item).flatMap { page.collectionView.cellForItem(at: $0) }
@@ -104,22 +113,39 @@ struct EditorAutoSaveSettingTests {
         #expect(await waitForMainActorCondition { autoSaveToggle(h.preferences)?.state == .on })
     }
 
-    @Test("The editor's menu writes the value Settings > Editor reads")
+    /// The menu and Settings > Editor are never on screen together (Settings is
+    /// its own presentation), and the page re-reads its rows when it appears. So
+    /// the contract is: the menu's write is what Settings > Editor shows the next
+    /// time it appears.
+    @Test("The editor's menu writes the value Settings > Editor shows when it appears")
     func theMenuWritesTheSettingsRow() async throws {
         let h = try makeHarness()
         defer { hide(h) }
         #expect(await waitForMainActorCondition { cell(.autoSave, in: h.page) != nil })
+        #expect(Self.switches(in: cell(.autoSave, in: h.page) ?? UIView()).first?.isOn == false, "it starts off")
+
+        // The editor's "…" menu writes while the page is away.
+        hide(h)
         try #require(autoSaveToggle(h.preferences)).performWithSender(nil, target: nil)
         #expect(h.preferences.autoSaves, "the menu turned Auto-Save on")
         #expect(
             h.defaults.object(forKey: AppPreferenceStore.Editor.autoSaveKey) as? Bool == true,
             "the menu stores the declared key, not a second one"
         )
+
+        // Appearing again, the page shows what the menu wrote.
+        show(h)
         #expect(await waitForMainActorCondition {
             Self.switches(in: cell(.autoSave, in: h.page) ?? UIView()).first?.isOn == true
         }, "the row shows what the menu wrote")
 
+        // And the menu toggles both ways, so the page shows that too.
+        hide(h)
         try #require(autoSaveToggle(h.preferences)).performWithSender(nil, target: nil)
         #expect(h.preferences.autoSaves == false, "the menu toggles both ways")
+        show(h)
+        #expect(await waitForMainActorCondition {
+            Self.switches(in: cell(.autoSave, in: h.page) ?? UIView()).first?.isOn == false
+        }, "the row shows the menu's second write")
     }
 }

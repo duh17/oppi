@@ -148,6 +148,9 @@ final class WorkspaceFileEditSession {
     @ObservationIgnored private var confirmedGeneration = 0
     /// A person's save waiting for the write in flight; see `saveNow()`.
     @ObservationIgnored private var pendingConfirmedSave: PendingSave?
+    /// The notice a refused Discard left, so the write that was in flight can
+    /// clear it when it lands instead of leaving a stale sentence behind.
+    @ObservationIgnored private var refusedDiscardNotice: String?
     @ObservationIgnored var onSettled: ((WorkspaceFileEditSession) -> Void)?
 
     private init(
@@ -364,6 +367,9 @@ final class WorkspaceFileEditSession {
     /// runs with Auto-Save off, and the only one that marks their edits
     /// confirmed, so closing straight after it does not ask again.
     ///
+    /// A save asked for now replaces one that was queued behind the write in
+    /// flight: the newer bytes are the person's last word on the document.
+    ///
     /// - Returns: whether their bytes were sent or queued behind the write in
     ///   flight. False means nothing was sent — the buffer is over the server's
     ///   limit, or the session has stopped saving — so the caller keeps the
@@ -384,9 +390,26 @@ final class WorkspaceFileEditSession {
             confirmedGeneration = editGeneration
             return true
         }
+        // Sent now: anything queued is older than this save.
+        pendingConfirmedSave = nil
         guard startSaveIfPossible(origin: .confirmed) else { return false }
         confirmedGeneration = editGeneration
         return true
+    }
+
+    /// Where a Discard came from, for the sentence a refusal leaves behind.
+    enum DiscardSource {
+        /// Done → Discard Changes.
+        case page
+        /// Vim's quit-without-saving.
+        case commandLine
+
+        var refusalNotice: String {
+            switch self {
+            case .page: String(localized: "Saving… Discard Changes again when it finishes.")
+            case .commandLine: String(localized: "Saving… quit again when it finishes.")
+            }
+        }
     }
 
     /// The person discarded the changes: back to the disk bytes, draft dropped.
@@ -396,15 +419,24 @@ final class WorkspaceFileEditSession {
     ///
     /// A write in flight holds the bytes it is writing, so discarding now would
     /// show disk while the server takes the buffer: it is refused, and the
-    /// notice line says why.
-    /// - Returns: whether the edits were discarded.
+    /// notice line says why. A write that already carries every edit is the
+    /// exception — nothing would be lost, so the caller may simply close.
+    /// - Returns: whether the edits were discarded (or already on their way).
     @discardableResult
-    func discardChanges() -> Bool {
-        guard inFlight == nil else {
-            draftNotice = String(localized: "Saving… Discard Changes again when it finishes.")
+    func discardChanges(from source: DiscardSource = .page) -> Bool {
+        if let flight = inFlight {
+            if flight.generation == editGeneration,
+               flight.bytes == WorkspaceFileTextCodec.encode(currentText) {
+                // The write out is exactly what is on screen: closing loses nothing.
+                return true
+            }
+            let notice = source.refusalNotice
+            refusedDiscardNotice = notice
+            draftNotice = notice
             return false
         }
         draftNotice = nil
+        refusedDiscardNotice = nil
         pendingConfirmedSave = nil
         cancelPendingWork()
         textProvider = nil
@@ -517,6 +549,8 @@ final class WorkspaceFileEditSession {
         }
         reviewedDisk = nil
         confirmedGeneration = editGeneration
+        // Replace writes the buffer: a save queued behind the flight is older.
+        pendingConfirmedSave = nil
         send(bytes: bytes, generation: editGeneration, condition: .version(tag), origin: .confirmed)
     }
 
@@ -645,19 +679,27 @@ final class WorkspaceFileEditSession {
         guard inFlight?.token == flight.token else { return }
         inFlight = nil
         inFlightTask = nil
+        // The write it waited for is over, so the notice it left is stale.
+        clearRefusedDiscardNotice()
         guard flight.epoch == epoch else { return }
         switch outcome {
         case .saved(let etag):
             acknowledge(bytes: flight.bytes, condition: .version(etag), generation: flight.generation)
         case .stale:
+            // Nothing a person queued can be sent now: their save was made
+            // against a version that is gone, and Review or Use Disk decides
+            // what the buffer becomes.
+            pendingConfirmedSave = nil
             reviewedDisk = nil
             setStatus(.conflict)
             checkpoint()
         case .missing:
+            pendingConfirmedSave = nil
             reviewedDisk = nil
             setStatus(.deleted)
             checkpoint()
         case .rejected(let status, let message):
+            pendingConfirmedSave = nil
             setStatus(status == 413 ? .tooLarge : .failed(message))
             checkpoint()
         case .notSent:
@@ -691,8 +733,9 @@ final class WorkspaceFileEditSession {
             checkpoint()
         }
         // A person's save that waited for this flight goes first: it is the
-        // bytes they asked for, not whatever the session would send next.
-        if !sendPendingConfirmedSave(), editGeneration != generation, idleTask == nil {
+        // bytes they asked for, not whatever the session would send next. A
+        // buffer over the limit stays Too Large rather than being called saved.
+        if !sendPendingConfirmedSave(), editGeneration != generation, idleTask == nil, status != .tooLarge {
             startSaveIfPossible()
         }
     }
@@ -707,8 +750,8 @@ final class WorkspaceFileEditSession {
         guard !status.stopsAutosave else { return false }
         guard pending.bytes != diskBytes else {
             // The flight that just landed wrote their bytes: nothing is left to
-            // send, and the buffer is the disk's again.
-            if editGeneration == pending.generation { setStatus(.saved) }
+            // send, and their save is acknowledged against the base it left.
+            acknowledge(bytes: pending.bytes, condition: baseCondition, generation: pending.generation)
             return false
         }
         guard pending.bytes.count <= maxBytes else {
@@ -727,6 +770,9 @@ final class WorkspaceFileEditSession {
         // A retry is the session's own write. With Auto-Save off only bytes a
         // person already confirmed go again; the rest stay pending and kept.
         guard flight.origin == .confirmed || autoSaveSetting() else {
+            // A save the person queued behind this flight is still theirs to
+            // send: Auto-Save has nothing to do with it.
+            if sendPendingConfirmedSave() { return }
             setStatus(.pending)
             checkpoint()
             return
@@ -751,7 +797,8 @@ final class WorkspaceFileEditSession {
         guard flight.origin == .confirmed || autoSaveSetting() else {
             // Auto-Save went off while this retry waited: nothing is owed. The
             // edits are unsaved, not unreachable — the banner says so, and the
-            // draft keeps them.
+            // draft keeps them. A save the person queued is still theirs to send.
+            if sendPendingConfirmedSave() { return }
             setStatus(.pending)
             checkpoint()
             return
@@ -787,10 +834,14 @@ final class WorkspaceFileEditSession {
                 setStatus(.pending)
                 retry(flight)
             } else {
+                // Disk is a version nobody can write over: a queued save was
+                // made against the old one.
+                pendingConfirmedSave = nil
                 setStatus(.conflict)
                 checkpoint()
             }
         case .missing:
+            pendingConfirmedSave = nil
             setStatus(.deleted)
             checkpoint()
         case .creatable:
@@ -803,6 +854,7 @@ final class WorkspaceFileEditSession {
                 checkpoint()
                 retry(flight)
             } else {
+                pendingConfirmedSave = nil
                 setStatus(.deleted)
                 checkpoint()
             }
@@ -837,6 +889,15 @@ final class WorkspaceFileEditSession {
         retryTask = nil
         inFlight = nil
         inFlightTask = nil
+        pendingConfirmedSave = nil
+    }
+
+    /// The notice a refused Discard left goes once the write it waited for ends:
+    /// it described a moment that is over.
+    private func clearRefusedDiscardNotice() {
+        guard let refusedDiscardNotice, draftNotice == refusedDiscardNotice else { return }
+        self.refusedDiscardNotice = nil
+        draftNotice = nil
     }
 
     private func setStatus(_ next: Status) {

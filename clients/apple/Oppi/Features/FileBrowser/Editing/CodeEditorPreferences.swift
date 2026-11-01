@@ -146,8 +146,10 @@ enum CodeEditorWrapKind: Sendable {
     }
 }
 
-/// Device-local editor settings. The editor and Settings read the same
-/// observable instance, so a change in either shows in the other at once.
+/// Device-local editor settings. The editor and Settings > Editor read and write
+/// the same stored value: an editor that is open follows a write made in
+/// Settings, and Settings > Editor shows what the editor's "…" menu wrote the
+/// next time the page appears (the two are never on screen together).
 @MainActor @Observable
 final class CodeEditorPreferences {
     static let shared = CodeEditorPreferences()
