@@ -7,8 +7,7 @@ import UIKit
 /// A `ServerResourceDetailScreenController`: the base owns the server switch,
 /// the detail load, the switch's save, and the whole-screen state. The catalog
 /// row shows at once; the detail request adds the file list, and a newer detail
-/// summary wins over a stale catalog row until a mutation settles
-/// (`resolvedServerSkillDetailSummary`).
+/// summary wins over a stale catalog row until a mutation settles.
 @MainActor
 final class ServerSkillDetailViewController: ServerResourceDetailScreenController<
     ServerSkillSummary, ServerSkillDetail, ServerSkillDetailViewController.Section, ServerSkillDetailViewController.Item
@@ -45,6 +44,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                 showsConnecting: true,
                 expectedKind: .skill,
                 catalog: .skills,
+                catalogRow: { $0.skills(forServer: serverId).first { $0.id == resourceId } },
                 mutationKey: .skill(resourceId),
                 fetch: { api, store in
                     let detail = try await api.getServerSkill(id: resourceId)
@@ -55,13 +55,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                     await store.setSkillEnabled(id: resourceId, enabled: enabled, serverId: serverId, api: api)
                 }
             )
-        )
-    }
-
-    override func summary(in store: ServerResourceStore) -> ServerSkillSummary? {
-        resolvedServerSkillDetailSummary(
-            catalogSummary: store.skills(forServer: target.serverId).first { $0.id == target.resourceId },
-            freshDetail: usesDetailSummary ? detail : nil
         )
     }
 
@@ -266,13 +259,4 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             resourceId: target.resourceId
         ))
     }
-}
-
-/// A successful detail response is newer than the catalog row that opened it.
-/// This lets Retry clear stale row errors without changing catalog ownership.
-func resolvedServerSkillDetailSummary(
-    catalogSummary: ServerSkillSummary?,
-    freshDetail: ServerSkillDetail?
-) -> ServerSkillSummary? {
-    freshDetail?.summary ?? catalogSummary
 }

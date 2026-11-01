@@ -408,7 +408,6 @@ struct ServerResourceStoreTests {
         #expect(ServerSkillListPresentation(skills: [pending], query: privatePath).visibleSkills.isEmpty)
         #expect(ServerSkillListPresentation.accessibilityLabel(for: pending) == "skill-package, @scope/cached-skill, Pi agent, Enabled")
         #expect(!ServerSkillListPresentation.accessibilityLabel(for: pending).contains(privatePath))
-        #expect(resolvedServerSkillDetailSummary(catalogSummary: pending, freshDetail: nil)?.packageName == "@scope/cached-skill")
 
         await mutationGate.release()
         await mutation.value
@@ -417,7 +416,6 @@ struct ServerResourceStoreTests {
         #expect(settled == authoritative)
         #expect(settled.packageName == "@scope/authoritative-skill")
         #expect(ServerSkillListPresentation(skills: [settled], query: "@scope/authoritative-skill").visibleSkills == [settled])
-        #expect(resolvedServerSkillDetailSummary(catalogSummary: settled, freshDetail: nil)?.packageName == "@scope/authoritative-skill")
     }
 
     @Test func optimisticExtensionToggleRetainsPackageMetadataAcrossPendingRollbackAndPresentation() async throws {
@@ -452,7 +450,6 @@ struct ServerResourceStoreTests {
         #expect(ServerExtensionListPresentation(extensions: [pending], query: privatePath).visibleExtensions.isEmpty)
         #expect(ServerExtensionListPresentation.accessibilityLabel(for: pending) == "extension-package, @scope/cached-extension, Pi user settings, Enabled")
         #expect(!ServerExtensionListPresentation.accessibilityLabel(for: pending).contains(privatePath))
-        #expect(resolvedServerExtensionDetailSummary(catalogSummary: pending, freshDetail: nil)?.packageName == "@scope/cached-extension")
 
         await mutationGate.release()
         await mutation.value
@@ -461,7 +458,6 @@ struct ServerResourceStoreTests {
         #expect(rolledBack == cached)
         #expect(rolledBack.packageName == "@scope/cached-extension")
         #expect(ServerExtensionListPresentation(extensions: [rolledBack], query: "@scope/cached-extension").visibleExtensions == [rolledBack])
-        #expect(resolvedServerExtensionDetailSummary(catalogSummary: rolledBack, freshDetail: nil)?.packageName == "@scope/cached-extension")
     }
 
     @Test func normalToggleIsOptimisticAndRollsBackOnlyItsRowOnFailure() async {

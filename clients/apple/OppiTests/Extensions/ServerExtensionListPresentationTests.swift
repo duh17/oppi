@@ -140,26 +140,58 @@ struct ServerExtensionListPresentationTests {
         return nil
     }
 
-    @Test func healthyDetailRetrySupersedesStaleCatalogErrorForRenderingAndToggle() {
-        let staleCatalog = extensionRow(
-            id: "review",
-            name: "Review",
-            state: .error,
-            loadError: "Stale catalog failure"
+    /// The precedence lives in `ServerResourceDetailScreenController`, so both
+    /// pages share it; this page is the harness.
+    @Test func aHealthyDetailAnswerSupersedesAStaleCatalogErrorForRenderingAndToggle() async throws {
+        let resourceId = "review"
+        let healthy = extensionRow(id: resourceId, name: "Review", state: .on)
+        let answers = ExtensionDetailAnswers(
+            catalog: ServerExtensionCatalog(extensions: [
+                extensionRow(id: resourceId, name: "Review", state: .error, loadError: "Stale catalog failure"),
+            ]),
+            detail: ServerExtensionDetail(summary: healthy, contributedTools: ["review"], contributedCommands: nil),
+            enabled: healthy
         )
-        let healthyDetail = ServerExtensionDetail(
-            summary: extensionRow(id: "review", name: "Review", state: .on),
-            contributedTools: nil,
-            contributedCommands: nil
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try answers.answer(for: request)
+        })
+        defer { routes.end() }
+        let root = try makeTestAppRoot(
+            readyServerId: ExtensionDetailAnswers.serverId,
+            apiClient: makeTestURLProtocolClient(host: ExtensionDetailAnswers.host)
         )
+        let connection = root.coordinator.activeConnection
+        let api = try #require(connection.apiClient)
+        connection.serverResourceStore.switchServer(to: ExtensionDetailAnswers.serverId)
+        await connection.serverResourceStore.load(serverId: ExtensionDetailAnswers.serverId, api: api)
+        #expect(connection.serverResourceStore.extensions(forServer: ExtensionDetailAnswers.serverId).first?.state == .error,
+                "the page opens on the stale catalog row")
 
-        let rendered = resolvedServerExtensionDetailSummary(
-            catalogSummary: staleCatalog,
-            freshDetail: healthyDetail
+        let page = ServerExtensionDetailViewController(
+            target: ServerResourceDetailNavTarget(
+                serverId: ExtensionDetailAnswers.serverId, kind: .extension, resourceId: resourceId
+            ),
+            root: root,
+            connection: connection
         )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
-        #expect(rendered == healthyDetail.summary)
-        #expect(rendered?.state == .on)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.sections().contains { $0.id == .tools }
+        }, "the detail landed")
+
+        let summary = try #require(page.state?.summary)
+        #expect(summary == healthy, "the detail's answer beats the stale catalog row")
+        #expect(summary.loadError == nil)
+        let toggle = try #require(Self.switchWithIdentifier("server.extension.enabled", in: page.view))
+        #expect(toggle.isOn, "the switch shows the detail's state")
+        #expect(toggle.isEnabled, "a stale error row no longer blocks the switch")
     }
 
     @Test func theOppiBarNeedsAUserOwnedEntryFile() {

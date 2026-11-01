@@ -90,23 +90,6 @@ struct ServerSkillListPresentationTests {
         #expect(ServerSkillListPresentation.accessibilityLabel(for: row) == "Broken, Pi user settings, Error")
     }
 
-    @Test func healthyDetailRetrySupersedesStaleCatalogErrorForRenderingAndToggle() {
-        let staleCatalog = skill(id: "release", name: "Release", state: .error, loadError: "Stale catalog failure")
-        let healthyDetail = ServerSkillDetail(
-            summary: skill(id: "release", name: "Release", state: .enabled),
-            skillMarkdown: "# Release",
-            files: []
-        )
-
-        let rendered = resolvedServerSkillDetailSummary(
-            catalogSummary: staleCatalog,
-            freshDetail: healthyDetail
-        )
-
-        #expect(rendered == healthyDetail.summary)
-        #expect(rendered?.state == .enabled)
-    }
-
     private func skill(
         id: String,
         name: String,

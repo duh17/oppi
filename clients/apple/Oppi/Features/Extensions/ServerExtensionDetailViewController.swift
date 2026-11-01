@@ -9,8 +9,7 @@ import UIKit
 /// A `ServerResourceDetailScreenController`: the base owns the server switch,
 /// the detail load, the switch's save, and the whole-screen state. The catalog
 /// row shows at once; the detail request adds the contributions, and a newer
-/// detail summary wins over a stale catalog row until a mutation settles
-/// (`resolvedServerExtensionDetailSummary`).
+/// detail summary wins over a stale catalog row until a mutation settles.
 @MainActor
 final class ServerExtensionDetailViewController: ServerResourceDetailScreenController<
     ServerExtensionSummary, ServerExtensionDetail,
@@ -52,19 +51,13 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 failureTitle: String(localized: "Couldn't Load Contents"),
                 expectedKind: .extension,
                 catalog: .extensions,
+                catalogRow: { $0.extensions(forServer: serverId).first { $0.id == resourceId } },
                 mutationKey: .normalExtension(resourceId),
                 fetch: { api, _ in try await api.getServerExtension(id: resourceId) },
                 sendEnabled: { enabled, api, store in
                     await store.setExtensionEnabled(id: resourceId, enabled: enabled, serverId: serverId, api: api)
                 }
             )
-        )
-    }
-
-    override func summary(in store: ServerResourceStore) -> ServerExtensionSummary? {
-        resolvedServerExtensionDetailSummary(
-            catalogSummary: store.extensions(forServer: target.serverId).first { $0.id == target.resourceId },
-            freshDetail: usesDetailSummary ? detail : nil
         )
     }
 
@@ -275,13 +268,4 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         self.composer = composer
         return composer
     }
-}
-
-/// A successful detail response is newer than the catalog row that opened it.
-/// This lets Retry clear stale row errors without changing catalog ownership.
-func resolvedServerExtensionDetailSummary(
-    catalogSummary: ServerExtensionSummary?,
-    freshDetail: ServerExtensionDetail?
-) -> ServerExtensionSummary? {
-    freshDetail?.summary ?? catalogSummary
 }

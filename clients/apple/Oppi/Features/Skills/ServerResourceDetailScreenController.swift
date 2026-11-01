@@ -32,6 +32,15 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
     var canToggleServerDefault: Bool { state != .error && state != .unknown }
 }
 
+/// A detail response carries its own newer copy of the catalog's row.
+protocol ServerResourceDetailAnswer {
+    associatedtype Summary
+    var summary: Summary { get }
+}
+
+extension ServerSkillDetail: ServerResourceDetailAnswer {}
+extension ServerExtensionDetail: ServerResourceDetailAnswer {}
+
 /// What a detail page reads from the route, its server's store, and the detail
 /// load, taken once in `updateProperties()` so observation tracks it and a
 /// reconfigured row sees one consistent copy.
@@ -47,7 +56,7 @@ struct ServerResourceDetailState<Summary, Detail> {
 
 /// One resource-detail page's own half: the copy of its failure, where its
 /// resource is kept, and how it is asked for and saved.
-struct ServerResourceDetailPage<Detail> {
+struct ServerResourceDetailPage<Detail: ServerResourceDetailAnswer> {
     /// The title before the catalog row arrives.
     var title: String
     var listIdentifier: String
@@ -61,6 +70,9 @@ struct ServerResourceDetailPage<Detail> {
     var expectedKind: ServerResourceDetailKind?
     /// Where the resource is kept, for the switch's pending and failure state.
     var catalog: ServerResourceCatalogKind
+    /// The catalog's row for the page's resource: what the page shows until a
+    /// detail response answers (and again after a save, until the reload does).
+    var catalogRow: @MainActor (ServerResourceStore) -> Detail.Summary?
     var mutationKey: ServerResourceMutationKey
     /// The detail request. The store comes in rather than being read off the
     /// page, so the closure the loader holds does not hold the page.
@@ -81,10 +93,10 @@ struct ServerResourceDetailPage<Detail> {
 @MainActor
 class ServerResourceDetailScreenController<
     Summary: ServerResourceDetailSummary,
-    Detail,
+    Detail: ServerResourceDetailAnswer,
     Section: Hashable & Sendable,
     Item: Hashable & Sendable
->: ListScreenController<Section, Item> {
+>: ListScreenController<Section, Item> where Detail.Summary == Summary {
     let target: ServerResourceDetailNavTarget
     let root: AppRootEnvironment
     /// The page's own details and where its answers come from.
@@ -135,11 +147,12 @@ class ServerResourceDetailScreenController<
         root.coordinator.serverStore.server(for: target.serverId)?.name ?? "this server"
     }
 
-    // MARK: - Page hook
-
-    /// The resource as the page's rows show it: the catalog's row, which a newer
-    /// detail response replaces until a mutation settles.
-    func summary(in store: ServerResourceStore) -> Summary? { nil }
+    /// The resource as the page's rows show it: the catalog's row, which a
+    /// successful detail response (newer than the row that opened the page, so
+    /// Retry clears a stale row error) replaces until a mutation settles.
+    private func summary(in store: ServerResourceStore) -> Summary? {
+        (usesDetailSummary ? detail?.summary : nil) ?? page.catalogRow(store)
+    }
 
     // MARK: - Lifecycle
 
