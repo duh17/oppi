@@ -140,10 +140,17 @@ struct ToolCallDocumentTests {
         #expect(items[2] == [.paragraph([.text("true")])])
     }
     @Test func misleadingPreambleStartsRemainBoundedAndPreserved() throws {
-        let output = "Header\n" + String(repeating: "[\n", count: 15_000) + "invalid"
+        // Each `[` line is a start the line-suffix search tries; 3,000 of them
+        // cost more than its work budget (`OrderedJSON.byteBudget` \* 4).
+        let starts = String(repeating: "[\n", count: 3_000)
+        let output = "Header\n" + starts + "invalid"
         let d = try doc(output)
         #expect(parseCommonMark(d.text) == [.codeBlock(language: "text", code: output)])
         #expect(d.rawText?.hasSuffix(output) == true)
+        // Bounded: the search gives up at its budget, so a valid line after
+        // that many starts is never reached and the output stays text.
+        let late = "Header\n" + starts + #"{"answer":42}"#
+        #expect(parseCommonMark(try doc(late).text) == [.codeBlock(language: "text", code: late)])
         #expect(try doc("Header\n  \n  {\"answer\":42}").text.contains("| answer | 42 |"))
     }
     @Test func inputFieldCapIncludesCodeAndMultilineFields() throws {
