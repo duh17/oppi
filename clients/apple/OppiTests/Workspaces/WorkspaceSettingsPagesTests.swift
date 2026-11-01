@@ -83,6 +83,7 @@ struct WorkspaceSettingsPagesTests {
     private func mount(
         workspace: Workspace,
         fixture: Bool = false,
+        skills: [SkillInfo] = [],
         extensions: [ExtensionInfo] = [],
         sandboxMcpServers: [McpServerSummary] = [],
         _ make: (WorkspaceSettingsModel, ServerConnection, AppRootEnvironment) -> UIViewController
@@ -99,7 +100,7 @@ struct WorkspaceSettingsPagesTests {
         connection.workspaceStore.upsert(workspace, serverId: Self.serverId)
         let model = fixture
             ? WorkspaceSettingsModel.screenshotFixture(
-                workspace: workspace, skills: [], extensions: extensions,
+                workspace: workspace, skills: skills, extensions: extensions,
                 projectTrust: .trusted, sandboxMcpServers: sandboxMcpServers
             )
             : WorkspaceSettingsModel(seed: workspace)
@@ -327,6 +328,93 @@ struct WorkspaceSettingsPagesTests {
         let shown = try await waitFor(UISwitch.self, "workspace.edit.extension.todos", in: mounted)
         try await waitUntil { !shown.isOn }
         #expect(!shown.isOn, "the switch shows what the server answered")
+    }
+
+    /// The page's labels, for the state row's reason.
+    private func texts(in mounted: Mounted) -> [String] {
+        mounted.window.layoutIfNeeded()
+        func walk(_ view: UIView) -> [String] {
+            ((view as? UILabel)?.text.map { [$0] } ?? []) + view.subviews.flatMap(walk)
+        }
+        return walk(mounted.page.view)
+    }
+
+    @Test func aRefusedExtensionWriteShowsWhyAndPutsTheSwitchBack() async throws {
+        let workspace = makeTestWorkspace(id: "w1")
+        let on = ExtensionInfo(name: "workflow", path: "~/.pi/agent/extensions/workflow", kind: "file", source: "pi")
+        let off = ExtensionInfo(name: "simplify", path: "~/.pi/agent/extensions/simplify", kind: "file", source: "pi", enabled: false)
+        let mounted = try mount(workspace: workspace, fixture: true, extensions: [on, off]) { model, _, root in
+            WorkspaceExtensionsViewController(model: model, root: root)
+        }
+        defer { close(mounted) }
+        // No server to write to.
+        mounted.connection.setAPIClientForTesting(nil)
+
+        let toggle = try await waitFor(UISwitch.self, "workspace.edit.extension.workflow", in: mounted)
+        let other = try await waitFor(UISwitch.self, "workspace.edit.extension.simplify", in: mounted)
+        #expect(toggle.isOn)
+        #expect(!other.isOn)
+        toggle.isOn = false
+        toggle.sendActions(for: .valueChanged)
+
+        try await waitUntil { self.texts(in: mounted).contains("Server is offline") }
+        #expect(texts(in: mounted).contains("Server is offline"), "a refused write shows its reason on the page")
+        let shown = try await waitFor(UISwitch.self, "workspace.edit.extension.workflow", in: mounted)
+        try await waitUntil { shown.isOn }
+        #expect(shown.isOn, "a refused write puts the switch back")
+    }
+
+    // MARK: - Skills
+
+    private static let skills = [
+        SkillInfo(name: "agents-md", description: "Manage AGENTS.md files.", path: "/skills/agents-md"),
+        SkillInfo(name: "audio-transcribe", description: "Transcribe audio files and videos with a long description that wraps.", path: "/skills/audio-transcribe", enabled: false),
+    ]
+
+    @Test func theSkillsPageShowsEachSwitchBesideItsInfoButtonInOneColumn() async throws {
+        let mounted = try mount(workspace: makeTestWorkspace(id: "w1"), fixture: true, skills: Self.skills) { model, connection, root in
+            WorkspaceSkillsViewController(model: model, connection: connection, root: root)
+        }
+        defer { close(mounted) }
+        // A wide row (an iPad's) is where a stretching control would show.
+        mounted.window.frame = CGRect(x: 0, y: 0, width: 1024, height: 1600)
+
+        let enabled = try await waitFor(UISwitch.self, "workspace.edit.skill.agents-md", in: mounted)
+        let disabled = try await waitFor(UISwitch.self, "workspace.edit.skill.audio-transcribe", in: mounted)
+        let info = try await waitFor(UIButton.self, "workspace.edit.skill.agents-md.detail", in: mounted)
+        #expect(enabled.isOn)
+        #expect(!disabled.isOn)
+        // The controls keep their own size at the trailing edge, whatever the
+        // text's length: the info button never takes the row's spare width.
+        let space: UIView = mounted.page.view
+        let switchFrame = enabled.convert(enabled.bounds, to: space)
+        let otherSwitchFrame = disabled.convert(disabled.bounds, to: space)
+        let infoFrame = info.convert(info.bounds, to: space)
+        #expect(infoFrame.width <= 60, "the info button must not stretch: \(infoFrame)")
+        #expect(infoFrame.minX - switchFrame.maxX <= 16, "the switch must sit beside the info button")
+        #expect(abs(switchFrame.minX - otherSwitchFrame.minX) <= 1, "the switches must form one column")
+    }
+
+    @Test func aRefusedSkillWriteShowsWhyAndInfoOpensTheSkill() async throws {
+        let mounted = try mount(workspace: makeTestWorkspace(id: "w1"), fixture: true, skills: Self.skills) { model, connection, root in
+            WorkspaceSkillsViewController(model: model, connection: connection, root: root)
+        }
+        defer { close(mounted) }
+        // No server to write to.
+        mounted.connection.setAPIClientForTesting(nil)
+
+        let toggle = try await waitFor(UISwitch.self, "workspace.edit.skill.agents-md", in: mounted)
+        toggle.isOn = false
+        toggle.sendActions(for: .valueChanged)
+        try await waitUntil { self.texts(in: mounted).contains("Server is offline") }
+        #expect(texts(in: mounted).contains("Server is offline"), "a refused write shows its reason on the page")
+        let shown = try await waitFor(UISwitch.self, "workspace.edit.skill.agents-md", in: mounted)
+        try await waitUntil { shown.isOn }
+        #expect(shown.isOn, "a refused write puts the switch back")
+
+        try await waitFor(UIButton.self, "workspace.edit.skill.agents-md.detail", in: mounted).sendActions(for: .touchUpInside)
+        try await waitUntil { mounted.nav.topViewController is SkillDetailViewController }
+        #expect((mounted.nav.topViewController as? SkillDetailViewController)?.title == "agents-md")
     }
 
     @Test func anEmptySandboxMcpListPointsToMcpServers() async throws {

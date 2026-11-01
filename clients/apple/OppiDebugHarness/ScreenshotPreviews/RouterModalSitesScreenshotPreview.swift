@@ -102,16 +102,13 @@ private final class RouterModalSitesRootViewController: UIViewController {
         _ = connection.focusedSessionStore.focus(sessionId: "router-modal-sites-session")
         let response = response
         connection._sendMessageForTesting = { @MainActor message in
-            guard case .extensionUIResponse(_, let value, _, let cancelled, _) = message else { return }
-            response.summary = cancelled == true ? "cancelled" : "value=\(value ?? "")"
+            guard case .extensionUIResponse(_, _, _, let cancelled, _) = message, cancelled == true else { return }
+            response.summary = "cancelled"
         }
 
         let buttons = [
             button("Extension Dialog", id: "routerModalSites.dialog") { [weak self] in
                 self?.showDialog(method: "custom", title: "Pick a Plan")
-            },
-            button("Extension Editor", id: "routerModalSites.editor") { [weak self] in
-                self?.showDialog(method: "editor", title: "Commit Message")
             },
             button("Notice", id: "routerModalSites.notice") { [weak self] in
                 self?.connection.extensionToast = "Extension finished.\nDocs https://example.com/docs"
@@ -178,7 +175,7 @@ private final class RouterModalSitesRootViewController: UIViewController {
     }
 }
 
-/// The last answer the connection's send hook saw.
+/// "cancelled" once the connection's send hook sees the dialog's Cancel.
 @MainActor @Observable
 private final class RouterModalSitesResponse {
     var summary = "none"

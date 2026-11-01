@@ -263,10 +263,13 @@ struct AppRootModalsTests {
 
     private final class AnswerRecorder {
         private(set) var cancelledIds: [String] = []
+        /// Submitted values by request id, in the order they were sent.
+        private(set) var values: [(id: String, value: String)] = []
 
         func record(_ message: ClientMessage) {
-            guard case .extensionUIResponse(let id, _, _, let cancelled, _) = message, cancelled == true else { return }
-            cancelledIds.append(id)
+            guard case .extensionUIResponse(let id, let value, _, let cancelled, _) = message else { return }
+            if cancelled == true { cancelledIds.append(id) }
+            if let value { values.append((id, value)) }
         }
     }
 
@@ -329,6 +332,38 @@ struct AppRootModalsTests {
         )
         #expect((editor as? UITextView)?.text == "Line 1\nLine 2\nLine 3")
         #expect(composer.navigationItem.leftBarButtonItem?.accessibilityIdentifier == "extension.dialog.cancel")
+    }
+
+    @Test("an editor's Submit sends the typed text as the request's answer and closes the editor")
+    func editorSubmitAnswersWithTheTypedText() async throws {
+        let root = try makeRoot(servers: ["alpha"])
+        let connection = root.coordinator.activeConnection
+        let answers = AnswerRecorder()
+        connection._sendMessageForTesting = { message in answers.record(message) }
+        _ = connection.focusedSessionStore.focus(sessionId: "s")
+        let (host, window) = try show(root)
+        // The editor takes focus as it opens: resign it before the window goes.
+        defer { window.endEditing(true); hide(window) }
+
+        connection.activeExtensionDialog = ExtensionUIRequest(id: "editor-2", sessionId: "s", method: "editor", title: "Ship?")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        let composer = try #require(navigation.topViewController as? ExpandedComposerViewController)
+        composer.view.layoutIfNeeded()
+        let editor = try #require(
+            firstView(in: composer.view, where: { $0.accessibilityIdentifier == "extension.dialog.editor" }) as? UITextView
+        )
+        // What the keyboard does: text into the view, which tells its delegate.
+        editor.insertText("ship it")
+
+        let submit = try #require(composer.navigationItem.rightBarButtonItem)
+        #expect(submit.accessibilityIdentifier == "extension.dialog.submit")
+        submit.primaryAction?.performWithSender(nil, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { host.presentedViewController == nil })
+        #expect(answers.values.map(\.id) == ["editor-2"])
+        #expect(answers.values.map(\.value) == ["ship it"])
+        #expect(answers.cancelledIds.isEmpty)
+        #expect(connection.activeExtensionDialog == nil)
     }
 
     @Test("a dialog queued after the chat takes focus still presents its sheet")

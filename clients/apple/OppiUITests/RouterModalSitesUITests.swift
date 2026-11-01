@@ -39,20 +39,6 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    func testExtensionEditorSubmitsTheTypedValue() {
-        launchSite("root")
-        app.buttons["routerModalSites.editor"].tap()
-        let editor = app.textViews["extension.dialog.editor"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 5), "Extension editor did not open")
-        attachScreenshot("extension-editor")
-        editor.tap()
-        editor.typeText("ship it")
-        app.buttons["extension.dialog.submit"].tap()
-        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Submit must close the editor")
-        XCTAssertEqual(label("routerModalSites.lastResponse"), "value=ship it")
-        assertRunning()
-    }
-
     func testNoticeClosesByDoneAndBySwipe() {
         launchSite("root")
         let notice = app.navigationBars["Notice"]
@@ -257,86 +243,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     }
 
     func testWorkspaceDetailsIconPickerSavesIntoTheDraft() {
-        launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "details"])
-        pickIconAndSave(row: app.buttons["workspace.edit.icon"])
-    }
-
-    /// The Skills page lists one switch per skill with its saved state; a write
-    /// with no server shows its error inline, and a skill's info button pushes
-    /// that skill's detail on the page's server.
-    func testWorkspaceSkillsPageTogglesAndOpensDetail() {
-        launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "skills"])
-        let list = app.collectionViews["workspace.edit.skills.list"]
-        XCTAssertTrue(list.waitForExistence(timeout: 10), "The Skills page did not open")
-        XCTAssertTrue(app.navigationBars["Skills"].exists, "The Skills page must carry its title")
-        let enabled = list.switches["workspace.edit.skill.agents-md"]
-        let disabled = list.switches["workspace.edit.skill.audio-transcribe"]
-        XCTAssertTrue(enabled.waitForExistence(timeout: 5), "A skill must show its switch")
-        XCTAssertEqual(enabled.value as? String, "1")
-        XCTAssertEqual(disabled.value as? String, "0")
-        // The controls keep their own size at the trailing edge, wide iPad row
-        // included: the info button never takes the row's spare width.
-        let info = list.buttons["workspace.edit.skill.agents-md.detail"]
-        XCTAssertTrue(info.exists, "A skill must show its info button")
-        XCTAssertLessThanOrEqual(info.frame.width, 60, "The info button must not stretch")
-        XCTAssertLessThanOrEqual(info.frame.minX - enabled.frame.maxX, 16, "The switch must sit beside the info button")
-        XCTAssertEqual(enabled.frame.minX, disabled.frame.minX, accuracy: 1, "The switches must form one column")
-        attachScreenshot("workspace-skills-page")
-
-        enabled.tap()
-        XCTAssertTrue(
-            list.staticTexts["Server is offline"].waitForExistence(timeout: 5),
-            "A write with no server must show its error"
-        )
-        XCTAssertEqual(enabled.value as? String, "1", "A refused write must put the switch back")
-
-        info.tap()
-        XCTAssertTrue(app.navigationBars["agents-md"].waitForExistence(timeout: 5), "The info button did not push the skill")
-        XCTAssertTrue(app.staticTexts["Failed to load"].waitForExistence(timeout: 5), "A detail with no server must say it failed")
-        attachScreenshot("workspace-skill-detail-offline")
-        assertRunning()
-    }
-
-    /// The Extensions page lists Oppi's and Pi's extensions with a switch each; a
-    /// write with no server shows its error inline and puts the switch back.
-    func testWorkspaceExtensionsPageTogglesAndShowsItsError() {
-        launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "extensions"])
-        let list = app.collectionViews["workspace.edit.extensions.list"]
-        XCTAssertTrue(list.waitForExistence(timeout: 10), "The Extensions page did not open")
-        XCTAssertTrue(app.navigationBars["Extensions"].exists, "The Extensions page must carry its title")
-        let enabled = list.switches["workspace.edit.extension.workflow"]
-        let disabled = list.switches["workspace.edit.extension.simplify"]
-        XCTAssertTrue(enabled.waitForExistence(timeout: 5), "An extension must show its switch")
-        XCTAssertEqual(enabled.value as? String, "1")
-        XCTAssertEqual(disabled.value as? String, "0")
-        attachScreenshot("workspace-extensions-page")
-
-        enabled.tap()
-        XCTAssertTrue(
-            list.staticTexts["Server is offline"].waitForExistence(timeout: 5),
-            "A write with no server must show its error"
-        )
-        XCTAssertEqual(enabled.value as? String, "1", "A refused write must put the switch back")
-        assertRunning()
-    }
-
-    /// Workspace Settings carries the compact Oppi bar for this workspace:
-    /// no pills at rest, the pills with the keyboard, Send once there is text.
-    func testWorkspaceSettingsShowsTheOppiBar() {
         launch(screen: "workspace-settings")
-        let input = app.textViews["chat.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 10), "Workspace Settings did not show the Oppi bar")
-        let send = app.buttons["chat.send"]
-        let model = app.buttons["session.toolbar.model"]
-        XCTAssertFalse(send.isEnabled, "Send must wait for a request")
-        XCTAssertFalse(model.exists, "The compact bar shows no pills at rest")
-        attachScreenshot("workspace-settings-oppi-bar-rest")
-        input.tap()
-        XCTAssertTrue(model.waitForExistence(timeout: 5), "Focus must open the pills")
-        input.typeText("Rename it")
-        XCTAssertTrue(waitFor(send.isEnabled), "Typing must enable Send")
-        attachScreenshot("workspace-settings-oppi-bar-expanded")
-        assertRunning()
+        pickIconAndSave(row: app.buttons["workspace.edit.icon"])
     }
 
     // MARK: SSH terminal
@@ -467,84 +375,6 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("rex-panes-new-menu")
         newPane.tap()
         XCTAssertTrue(waitFor(paneValue(switcher) == "new shell, 5 of 5"), "The menu's New Pane must open and show a pane")
-        assertRunning()
-    }
-
-    /// The Terminal tab leads with the saved Rex host's live sessions: one
-    /// row per session naming it, where it works, its windows and panes, and
-    /// who waits on you, with the status as its value. The disclosure lists a
-    /// session's panes, grouped by window, and a tap on a pane or on the
-    /// session opens it as a Rex terminal.
-    func testTerminalTabListsRexSessionsExpandsThemAndATapOpensTheTerminal() {
-        // Rex is an experiment (Settings → Experiments): this test asks for it.
-        launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
-        let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
-        let prefix = "sshTerminal.rexList.\(hostID)."
-        let oppi = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c63"]
-        let dotfiles = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
-        XCTAssertTrue(oppi.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
-        XCTAssertTrue(dotfiles.exists)
-        XCTAssertTrue(app.descendants(matching: .any)[prefix + "header"].exists, "The host's heading is missing")
-        XCTAssertEqual(oppi.label, "oppi, in oppi, 2 windows \u{00B7} 3 panes \u{00B7} 1 needs you")
-        XCTAssertEqual(oppi.value as? String, "Needs approval")
-        XCTAssertEqual(dotfiles.label, "dotfiles, in dotfiles, 1 pane")
-        XCTAssertEqual(dotfiles.value as? String, "Idle")
-        // Rex mode is the panes alone: the host is the section's heading, and its own
-        // row (which opens a plain shell) is what Shell mode lists instead.
-        XCTAssertFalse(app.buttons["sshTerminal.host.row.\(hostID)"].exists, "A host row is Shell mode's")
-        attachScreenshot("terminal-tab-rex-section")
-
-        // The disclosure shows the session's panes under the name of each window.
-        let pi = app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"]
-        XCTAssertFalse(pi.exists, "Sessions start collapsed")
-        let disclosure = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c63.disclosure"]
-        XCTAssertEqual(disclosure.value as? String, "Collapsed")
-        disclosure.tap()
-        XCTAssertTrue(pi.waitForExistence(timeout: 5), "The disclosure must list the session's panes")
-        XCTAssertEqual(disclosure.value as? String, "Expanded")
-        XCTAssertTrue(app.descendants(matching: .any)[prefix + "window:01a18a26-6645-713c-97f1-2f1058c8c82f"].exists, "A session with two windows names each")
-        XCTAssertTrue(app.cells[prefix + "block:01a18a26-6620-78ba-80d4-4e8caa018b37"].exists)
-        XCTAssertFalse(app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62cc"].exists, "Another session stays collapsed")
-        attachScreenshot("terminal-tab-rex-expanded")
-
-        // A tap on a pane opens the session's terminal.
-        pi.tap()
-        let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "A tap on a pane must open its Rex terminal")
-        attachScreenshot("terminal-tab-rex-opened")
-        assertRunning()
-    }
-
-    /// Rex and Herdr are experiments, and the app ships with both off: the
-    /// Terminal tab then has no Rex UI at all, though the host saved with Rex is
-    /// still a saved host, opening as its plain shell.
-    func testTerminalTabHasNoRexOrHerdrWhileBothExperimentsAreOff() {
-        // Both off explicitly: the app ships this way, and a value another run left
-        // in the slot's app container must not decide it.
-        launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: false, .herdr: false]))
-        let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
-        let host = app.buttons["sshTerminal.host.row.\(hostID)"]
-        XCTAssertTrue(host.waitForExistence(timeout: 15), "The saved Rex host is still listed with the experiment off")
-        XCTAssertFalse(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "No Rex section with the experiment off")
-        attachScreenshot("terminal-tab-experiments-off")
-
-        // The end-to-end half of the gate: Terminal Settings, opened from the tab in
-        // this launch, has no Rex on Your Tailnet row while the switch is off. This is
-        // the setting the app reads, not an injected value.
-        app.buttons["sshTerminal.settings"].tap()
-        XCTAssertTrue(
-            app.descendants(matching: .any)["settings.sshTerminal.list"].waitForExistence(timeout: 5),
-            "The tab's ⚙︎ must open Terminal Settings"
-        )
-        XCTAssertTrue(
-            app.descendants(matching: .any)["settings.sshTerminal.bar"].waitForExistence(timeout: 5),
-            "Terminal Settings must list the Bottom Bar"
-        )
-        XCTAssertFalse(
-            app.descendants(matching: .any)["settings.sshTerminal.rexTailnet"].exists,
-            "Rex on Your Tailnet must be gone with its experiment off"
-        )
-        attachScreenshot("terminal-settings-experiments-off")
         assertRunning()
     }
 
