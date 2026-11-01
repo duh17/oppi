@@ -112,3 +112,75 @@ struct WorkspaceStoppedSessionGroupingTests {
         #expect(workspace.map(ids) == [["today"], ["spring-forward-late", "spring-forward-start"]])
     }
 }
+
+@Suite("Workspace older-history section rows across refreshes")
+struct WorkspaceArchiveSectionRowsTests {
+    private let day: TimeInterval = 86_400
+    private let monthStart = Date(timeIntervalSince1970: 1_779_000_000)
+
+    private func bucket(_ id: String, from start: Date, days: Int, count: Int = 1) -> WorkspaceSessionArchiveBucket {
+        WorkspaceSessionArchiveBucket(
+            id: id,
+            kind: id.hasPrefix("day:") ? .day : .month,
+            startAt: start,
+            endAt: start.addingTimeInterval(TimeInterval(days) * day),
+            itemCount: count,
+            managedStoppedCount: count,
+            importableLocalCount: 0,
+            latestActivity: nil
+        )
+    }
+
+    private func loadedState(_ buckets: [WorkspaceSessionArchiveBucket]) -> WorkspaceDetailViewController.ContentState {
+        var state = WorkspaceDetailViewController.ContentState()
+        state.archiveBuckets = buckets
+        for bucket in buckets {
+            state.archiveStoppedSessionsByBucketID[bucket.id] = []
+            state.archiveLocalSessionsByBucketID[bucket.id] = []
+            state.expandedStoppedGroupIDs.insert(bucket.id)
+        }
+        return state
+    }
+
+    /// The server lengthens the month holding the 30-day line by a day at each of its midnights;
+    /// rows loaded for the shorter range miss that day, so they go and the open section reloads.
+    @Test func sectionWhoseRangeGrewDropsItsRowsAndAsksForAReload() {
+        let may = bucket("month:2026-05", from: monthStart, days: 20)
+        let unchanged = bucket("month:2026-04", from: monthStart.addingTimeInterval(-30 * day), days: 30)
+        var state = loadedState([may, unchanged])
+
+        let grown = bucket("month:2026-05", from: monthStart, days: 21, count: 2)
+        let reload = state.replaceArchiveBuckets([grown, unchanged])
+
+        #expect(reload.map(\.id) == ["month:2026-05"])
+        #expect(reload.first?.endAt == grown.endAt)
+        #expect(state.archiveStoppedSessionsByBucketID["month:2026-05"] == nil)
+        #expect(state.archiveLocalSessionsByBucketID["month:2026-05"] == nil)
+        #expect(state.archiveStoppedSessionsByBucketID["month:2026-04"] != nil)
+        #expect(state.archiveLocalSessionsByBucketID["month:2026-04"] != nil)
+        #expect(state.expandedStoppedGroupIDs == ["month:2026-05", "month:2026-04"])
+    }
+
+    @Test func sectionWithTheSameRangeKeepsItsRowsWhenOnlyItsCountChanges() {
+        let may = bucket("month:2026-05", from: monthStart, days: 20)
+        var state = loadedState([may])
+
+        let reload = state.replaceArchiveBuckets([bucket("month:2026-05", from: monthStart, days: 20, count: 3)])
+
+        #expect(reload.isEmpty)
+        #expect(state.archiveStoppedSessionsByBucketID["month:2026-05"] != nil)
+    }
+
+    @Test func sectionThatLeavesTheListLosesItsRowsAndItsExpansion() {
+        let gone = bucket("day:2026-05-01", from: monthStart, days: 1)
+        let kept = bucket("day:2026-05-02", from: monthStart.addingTimeInterval(day), days: 1)
+        var state = loadedState([gone, kept])
+        state.expandedStoppedGroupIDs.insert("recent:today")
+
+        let reload = state.replaceArchiveBuckets([kept])
+
+        #expect(reload.isEmpty)
+        #expect(state.archiveStoppedSessionsByBucketID.keys.sorted() == ["day:2026-05-02"])
+        #expect(state.expandedStoppedGroupIDs == ["day:2026-05-02", "recent:today"])
+    }
+}

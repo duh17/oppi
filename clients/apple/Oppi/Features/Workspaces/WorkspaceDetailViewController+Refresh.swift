@@ -5,22 +5,6 @@ import UIKit
 extension WorkspaceDetailViewController {
     // MARK: Archive buckets
 
-    private func isArchiveBucketGroupID(_ id: String) -> Bool {
-        id.hasPrefix("day:") || id.hasPrefix("month:")
-    }
-
-    private func pruneArchiveState(validBucketIDs: Set<String>) {
-        state.archiveStoppedSessionsByBucketID = state.archiveStoppedSessionsByBucketID.filter { validBucketIDs.contains($0.key) }
-        state.archiveLocalSessionsByBucketID = state.archiveLocalSessionsByBucketID.filter { validBucketIDs.contains($0.key) }
-        state.loadingArchiveBucketIDs = state.loadingArchiveBucketIDs.filter { validBucketIDs.contains($0) }
-        state.expandedStoppedGroupIDs = state.expandedStoppedGroupIDs.filter {
-            validBucketIDs.contains($0) || !isArchiveBucketGroupID($0)
-        }
-        state.collapsedStoppedGroupIDs = state.collapsedStoppedGroupIDs.filter {
-            validBucketIDs.contains($0) || !isArchiveBucketGroupID($0)
-        }
-    }
-
     func ensureArchiveBucketLoaded(_ bucket: WorkspaceSessionArchiveBucket) async {
         if state.archiveStoppedSessionsByBucketID[bucket.id] != nil || state.archiveLocalSessionsByBucketID[bucket.id] != nil {
             return
@@ -41,6 +25,10 @@ extension WorkspaceDetailViewController {
                 until: until,
                 worktreeId: state.selectedWorktreeId
             )
+            // A refresh while this loaded can have moved the section's range; the rows would miss a day.
+            guard state.archiveBuckets.contains(where: {
+                $0.id == bucket.id && $0.startAt == bucket.startAt && $0.endAt == bucket.endAt
+            }) else { return }
             state.archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries
                 .map(\.session)
                 .filter { session in
@@ -162,8 +150,10 @@ extension WorkspaceDetailViewController {
                 requestStartedAt: startedAt
             )
             state.recentRangeStart = rangeStart
-            state.archiveBuckets = response.archiveBuckets
-            pruneArchiveState(validBucketIDs: Set(response.archiveBuckets.map(\.id)))
+            let staleOpenBuckets = state.replaceArchiveBuckets(response.archiveBuckets)
+            for bucket in staleOpenBuckets {
+                Task { await ensureArchiveBucketLoaded(bucket) }
+            }
             state.localSessions = response.importableSessions
             connection.applyWorkspaceAttentionSnapshot(
                 APIClient.WorkspaceAttentionResponse(
@@ -240,5 +230,32 @@ extension WorkspaceDetailViewController {
             ),
             workspaceId: workspaceId
         )
+    }
+}
+
+extension WorkspaceDetailViewController.ContentState {
+    /// Takes the server's older-history sections. Rows loaded for a section stay only while its
+    /// id still names the same `[startAt, endAt)`: the month holding the 30-day line gains a day
+    /// at each server midnight, so rows loaded before it would miss that day. Returns the
+    /// expanded sections whose rows were dropped, for the caller to load again.
+    mutating func replaceArchiveBuckets(_ buckets: [WorkspaceSessionArchiveBucket]) -> [WorkspaceSessionArchiveBucket] {
+        let previous = Dictionary(archiveBuckets.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let validIDs = Set(buckets.map(\.id))
+        let reusableIDs = Set(buckets.filter { bucket in
+            previous[bucket.id].map { $0.startAt == bucket.startAt && $0.endAt == bucket.endAt } ?? false
+        }.map(\.id))
+
+        archiveBuckets = buckets
+        archiveStoppedSessionsByBucketID = archiveStoppedSessionsByBucketID.filter { reusableIDs.contains($0.key) }
+        archiveLocalSessionsByBucketID = archiveLocalSessionsByBucketID.filter { reusableIDs.contains($0.key) }
+        loadingArchiveBucketIDs = loadingArchiveBucketIDs.filter { reusableIDs.contains($0) }
+        expandedStoppedGroupIDs = expandedStoppedGroupIDs.filter { validIDs.contains($0) || !Self.isArchiveBucketGroupID($0) }
+        collapsedStoppedGroupIDs = collapsedStoppedGroupIDs.filter { validIDs.contains($0) || !Self.isArchiveBucketGroupID($0) }
+
+        return buckets.filter { expandedStoppedGroupIDs.contains($0.id) && !reusableIDs.contains($0.id) }
+    }
+
+    private static func isArchiveBucketGroupID(_ id: String) -> Bool {
+        id.hasPrefix("day:") || id.hasPrefix("month:")
     }
 }
