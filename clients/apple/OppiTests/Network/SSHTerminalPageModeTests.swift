@@ -116,9 +116,14 @@ struct SSHTerminalPageModeTests {
         defaults.removePersistentDomain(forName: name)
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
+        // The page reads its hosts through a `@Sendable` closure, and a `UserDefaults`
+        // is not Sendable: it carries the suite's name, and makes the defaults in it.
+        let profileStore: @Sendable () -> SSHTerminalProfileStore = {
+            SSHTerminalProfileStore(defaults: UserDefaults(suiteName: name)!, keychain: MemoryKeychain())
+        }
 
         let first = try mountPage(SSHTerminalHostListViewController(
-            profileStore: { SSHTerminalProfileStore(defaults: defaults, keychain: MemoryKeychain()) },
+            profileStore: profileStore,
             settings: settings
         ))
         first.page.choose(.shell)
@@ -126,7 +131,7 @@ struct SSHTerminalPageModeTests {
         #expect(defaults.string(forKey: AppPreferenceStore.Terminal.pageModeKey) == "shell")
 
         let second = try mountPage(SSHTerminalHostListViewController(
-            profileStore: { SSHTerminalProfileStore(defaults: defaults, keychain: MemoryKeychain()) },
+            profileStore: profileStore,
             settings: settings
         ))
         defer { second.window.isHidden = true }

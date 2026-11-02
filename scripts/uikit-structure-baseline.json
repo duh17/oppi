@@ -69,10 +69,6 @@
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
-      "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1
-    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
