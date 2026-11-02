@@ -62,7 +62,7 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import { exportDurableToHtml } from "./durable-export.js";
-import { readDurableSessionEntries } from "./durable-history.js";
+import { isRecoveredPartial, readDurableSessionEntries } from "./durable-history.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -1114,13 +1114,29 @@ export class DurableBackend implements AgentBackend {
       followUp: items.flatMap((item) => (item.mode === "followUp" ? [text(item.content)] : [])),
     };
   }
-  messages(): PiMessage[] {
-    return this.view.value.entries.flatMap((entry) =>
-      this.projection.recoveredEntryIds.has(entry.id) ||
-      this.projection.inputCards.entries.has(entry.id)
-        ? []
-        : (entry.model ?? []),
+  /**
+   * The active transcript the model sees, head marker first: `Conversation.context()`, not the
+   * conversation view, whose entries pi-durable may bound to a window.
+   */
+  private async contextEntries(): Promise<readonly EntryRecord[]> {
+    return (await this.conversation.context(BACKGROUND_CONTEXT)).entries;
+  }
+  /** Messages of `entries` as the trace shows them: no generated inputs, no retried attempts. */
+  private async visibleMessages(entries: readonly EntryRecord[]): Promise<PiMessage[]> {
+    const cards = await readDurableInputCards(
+      this.harness,
+      new Set(entries.map((entry) => entry.conversationId)),
     );
+    const messages: PiMessage[] = [];
+    for (const entry of entries) {
+      if (cards.entries.has(entry.id)) continue;
+      if (await isRecoveredPartial(entry, this.harness, entries)) continue;
+      messages.push(...(entry.model ?? []));
+    }
+    return messages;
+  }
+  async messages(): Promise<PiMessage[]> {
+    return this.visibleMessages(await this.contextEntries());
   }
   getStateSnapshot(): PiStateSnapshot {
     const model = this.agent.model;
@@ -1140,7 +1156,8 @@ export class DurableBackend implements AgentBackend {
     };
   }
   async getSessionStats(): Promise<Awaited<ReturnType<AgentBackend["getSessionStats"]>>> {
-    const messages = this.messages();
+    const entries = await this.contextEntries();
+    const messages = await this.visibleMessages(entries);
     const usage = this.view.value.docs["pi.usage"] as UsageState | undefined;
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
     let cost = 0;
@@ -1177,7 +1194,7 @@ export class DurableBackend implements AgentBackend {
     }
     // The effective prompt is the replay of the active context's `pi.system` entries.
     const systemPromptChars = getCurrentSystemPrompt(
-      this.view.value.entries.flatMap((entry) => entry.model ?? []),
+      entries.flatMap((entry) => entry.model ?? []),
     ).length;
     const agent = await this.conversation.agent(BACKGROUND_CONTEXT);
     const agentsFiles = this.resources.contextFiles.map((file) => ({
@@ -1275,7 +1292,7 @@ export class DurableBackend implements AgentBackend {
   }
   async compact(instructions?: string): Promise<CompactionResult> {
     this.assertOpen();
-    const usageBefore = this.messages()
+    const usageBefore = (await this.messages())
       .reverse()
       .find((message) => message.role === "assistant")?.usage;
     const tokensBefore =
@@ -1415,7 +1432,7 @@ export class DurableBackend implements AgentBackend {
       cwd: agent.cwd ?? "",
       state: {
         systemPrompt: getCurrentSystemPrompt(
-          this.view.value.entries.flatMap((entry) => entry.model ?? []),
+          (await this.contextEntries()).flatMap((entry) => entry.model ?? []),
         ),
         tools: agent.tools.map((tool) => ({
           name: tool.name,

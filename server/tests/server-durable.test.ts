@@ -658,7 +658,7 @@ describe("server durable managed runtime", () => {
       const resumed = await backend(harness, f.models, f.session, f.dir);
       harness.resume();
       await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
-      const results = resumed.messages().filter((m) => m.role === "toolResult") as Array<{
+      const results = (await resumed.messages()).filter((m) => m.role === "toolResult") as Array<{
         details?: unknown;
         isError?: boolean;
       }>;
@@ -2763,11 +2763,40 @@ describe("server durable managed runtime", () => {
       }),
     ).rejects.toThrow("reserved durable requestId namespace");
     expect(accepted).not.toHaveBeenCalled();
-    expect(runtime.messages()).toHaveLength(0);
+    expect(await runtime.messages()).toHaveLength(0);
     expect(f.faux.state.callCount).toBe(0);
     await runtime.prompt("Normal prompt", { clientTurnId: "ordinary-client-id" });
     await harness.waitForIdle(context);
-    expect(runtime.messages().filter((m) => m.role === "user")).toHaveLength(1);
+    expect((await runtime.messages()).filter((m) => m.role === "user")).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it("reads messages and the system prompt from the whole active context of a long conversation", async () => {
+    const f = await fixture([fauxAssistantMessage("First answer")]);
+    const harness = await openHarness(f.dir, f.models);
+    const runtime = await backend(harness, f.models, f.session, f.dir);
+    await runtime.prompt("First prompt", { clientTurnId: "long-context" });
+    await harness.waitForIdle(context);
+    const before = await runtime.getSessionStats();
+    expect(before.contextComposition?.piSystemPromptChars).toBeGreaterThan(0);
+    const id = f.session.serverDurable!.conversationId! as ConversationId;
+    const conversation = (await harness.conversation(id, context))!;
+    // Far more entries than a conversation view window holds (newest 50 to 100).
+    await conversation.commit(async (tx) => {
+      for (let index = 0; index < 150; index += 1)
+        await tx.appendEntry(id, {
+          kind: "pi.user",
+          model: [{ role: "user", content: `filler ${index}`, timestamp: index }],
+        });
+    }, context);
+    const messages = await runtime.messages();
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(151);
+    expect(messages[0]).toMatchObject({ role: "user", content: "First prompt" });
+    const stats = await runtime.getSessionStats();
+    expect(stats.userMessages).toBe(151);
+    expect(stats.contextComposition?.piSystemPromptChars).toBe(
+      before.contextComposition?.piSystemPromptChars,
+    );
     await runtime.dispose();
   });
 
@@ -3826,18 +3855,14 @@ describe("server durable managed runtime", () => {
       context,
     ))!;
     await rebound.waitForIdle(context);
-    expect(resumed.messages().filter((message) => message.role === "user")).toHaveLength(1);
+    expect((await resumed.messages()).filter((message) => message.role === "user")).toHaveLength(1);
     expect(
-      resumed
-        .messages()
-        .filter(
-          (message) =>
-            message.role === "assistant" &&
-            Array.isArray(message.content) &&
-            message.content.some(
-              (block: { text?: string }) => block.text === "RESUMED_EXACTLY_ONCE",
-            ),
-        ),
+      (await resumed.messages()).filter(
+        (message) =>
+          message.role === "assistant" &&
+          Array.isArray(message.content) &&
+          message.content.some((block: { text?: string }) => block.text === "RESUMED_EXACTLY_ONCE"),
+      ),
     ).toHaveLength(1);
     const accepted = vi.fn();
     await resumed.prompt("Continue exactly this original turn", {
@@ -4484,7 +4509,7 @@ describe("server durable managed runtime", () => {
       false,
     );
     expect(activeBackend.isDisposed).toBe(false);
-    expect(activeBackend.messages()).toEqual([]);
+    expect(await activeBackend.messages()).toEqual([]);
     await activeBackend.detachForRestart();
   });
 

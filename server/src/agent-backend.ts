@@ -120,7 +120,7 @@ export interface AgentBackend {
   getStateSnapshot(): PiStateSnapshot;
   getSessionStats():
     (SessionStats & Record<string, unknown>) | Promise<SessionStats & Record<string, unknown>>;
-  messages(): PiMessage[];
+  messages(): PiMessage[] | Promise<PiMessage[]>;
   forkMessages():
     Array<{ entryId: string; text: string }> | Promise<Array<{ entryId: string; text: string }>>;
   sessionTree(): SessionTreeManager & CanonicalSessionTree;

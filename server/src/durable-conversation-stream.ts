@@ -169,19 +169,15 @@ class ConversationRoom implements DocPresenter {
   private async load(): Promise<void> {
     const conversation = await this.harness.conversation(this.conversationId, context);
     if (!conversation) throw new Error(`Durable conversation ${this.conversationId} is missing`);
-    const state = await conversation.viewState(context);
-    const view = state.value;
-    state.dispose();
-    // Installed whole, not through `addEntry`: the view lists the head marker first, then
+    // The active transcript, not the conversation view: the view's entries may be a window.
+    const active = await conversation.context(context);
+    // Installed whole, not through `addEntry`: the context lists the head marker first, then
     // the entries it keeps, whose ids are below the marker's and which `addEntry` drops.
-    this.entries = [...view.entries];
-    const marker = this.entries[0];
-    if (marker?.head !== undefined) this.head = marker.id;
+    this.entries = [...active.entries];
+    if (active.head) this.head = active.head.id;
     for (const entry of this.entries) this.index(entry);
     for (const spec of CONVERSATION_CLIENT_DOCS) {
-      const value =
-        view.docs[spec.kind] ??
-        (await this.harness.snapshot(spec.doc, this.conversationId, context));
+      const value = await this.harness.snapshot(spec.doc, this.conversationId, context);
       if (value) this.setDoc(spec.kind, value);
     }
     let first: number | undefined;

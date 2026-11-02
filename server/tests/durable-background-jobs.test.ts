@@ -367,13 +367,17 @@ describe("native Durable background jobs", () => {
           events.filter((event) => event.type === "message_start" || event.type === "message_end"),
         ),
       ).not.toContain("FINAL-OUTPUT");
-      expect(backend.messages().filter((message) => message.role === "user")).toHaveLength(1);
+      expect((await backend.messages()).filter((message) => message.role === "user")).toHaveLength(
+        1,
+      );
     } finally {
       await backend.detachForRestart();
     }
     const resumed = await attach();
     try {
-      expect(resumed.messages().filter((message) => message.role === "user")).toHaveLength(1);
+      expect((await resumed.messages()).filter((message) => message.role === "user")).toHaveLength(
+        1,
+      );
       expect(events.filter((event) => event.type === "notice")).toHaveLength(1);
     } finally {
       await resumed.detachForRestart();
@@ -457,7 +461,7 @@ describe("native Durable background jobs", () => {
         });
         release.resolve();
         await delivery(f.harness, f.root);
-        expect(JSON.stringify(backend.messages())).not.toContain("FINAL-OUTPUT");
+        expect(JSON.stringify(await backend.messages())).not.toContain("FINAL-OUTPUT");
         const trace = await readDurableTrace(f.harness, f.root.id, "full");
         expect(
           trace.filter((event) => event.presentation?.title === "Background job bash-1"),
