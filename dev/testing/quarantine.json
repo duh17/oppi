@@ -1,7 +1,7 @@
 [
   {
     "id": "OppiUITests/UIHarnessExpandTests/testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap",
-    "owner": "lead 47ad499a",
+    "owner": "lead",
     "backlog": "harness/notebook-single-tap-ipad",
     "reason": "Fails on iPad at base 5025d1fca: 'Diagnostic diag.notebookExpanded did not reach expected value 1 (last=0)' at UIHarnessTestCase.swift:196 - the notebook row never reports expanded, and on a later run the tool call inside it was never hittable. iPad only; unrelated to the HostFactory deletion.",
     "addedAt": "2026-11-01",
@@ -9,10 +9,18 @@
   },
   {
     "id": "OppiUITests/UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership",
-    "owner": "lead 47ad499a",
+    "owner": "lead",
     "backlog": "harness/expanded-extension-scroll-ipad",
     "reason": "iPad: 'Timeline offset did not decrease enough during downward drag inside expanded extension text (baseline=6988, last=7171, minimumDelta=24)', a deterministic +183 pt flip. Passes at base 5025d1fca isolated; host shape differs.",
     "addedAt": "2026-11-01",
     "expires": "2026-11-15"
+  },
+  {
+    "id": "OppiUITests/SSHTerminalBottomBarUITests/testRexPanelSwitchesPaneAndOpensAnotherSession",
+    "owner": "lead",
+    "backlog": "terminal/rex-panel-switch-ipad",
+    "reason": "iPad: fails once and passes on rerun in three separate gates, including one with no launch reuse, so it is a flake of its own and not a leak from a neighbour.",
+    "addedAt": "2026-11-02",
+    "expires": "2026-11-16"
   }
 ]
