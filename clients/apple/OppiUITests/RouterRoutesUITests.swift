@@ -24,31 +24,31 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 0")
         app.buttons["routerRoutes.quickComments"].tap()
         let quickComments = app.navigationBars["Quick Comments"]
-        XCTAssertTrue(quickComments.waitForExistence(timeout: 5), "Quick Comments was not pushed")
+        XCTAssertTrue(quickComments.waitUntilExists(timeout: 5), "Quick Comments was not pushed")
         assertRunning()
 
         button(labelBeginningWith: "Explain").tap()
         let editor = app.navigationBars["Edit Quick Comment"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 5), "Editor sheet did not open in a navigation bar")
+        XCTAssertTrue(editor.waitUntilExists(timeout: 5), "Editor sheet did not open in a navigation bar")
         attachScreenshot("sheet-medium-detent-light")
         assertRunning()
 
         app.buttons["quickComments.editor.symbolPicker"].tap()
         let idea = button(labelContaining: "Idea")
-        XCTAssertTrue(idea.waitForExistence(timeout: 5), "Icon popover did not open")
+        XCTAssertTrue(idea.waitUntilExists(timeout: 5), "Icon popover did not open")
         attachScreenshot("popover-anchored-light")
         assertRunning()
         idea.tap()
-        XCTAssertTrue(idea.waitForNonExistence(timeout: 5), "Picking an icon must close the popover")
+        XCTAssertTrue(idea.waitUntilGone(timeout: 5), "Picking an icon must close the popover")
         XCTAssertTrue(editor.exists, "Closing the popover must keep the editor sheet")
 
         cancelButton.tap()
-        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Cancel must close the editor sheet")
+        XCTAssertTrue(editor.waitUntilGone(timeout: 5), "Cancel must close the editor sheet")
         XCTAssertTrue(quickComments.exists)
         assertRunning()
 
         app.buttons["BackButton"].tap()
-        XCTAssertTrue(app.navigationBars["Router Routes"].waitForExistence(timeout: 5), "Back must pop to the root")
+        XCTAssertTrue(app.navigationBars["Router Routes"].waitUntilExists(timeout: 5), "Back must pop to the root")
         assertRunning()
     }
 
@@ -57,7 +57,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         launch(colorScheme: "dark")
         app.buttons["routerRoutes.editAgent"].tap()
         let editAgent = app.navigationBars["Edit Agent"]
-        XCTAssertTrue(editAgent.waitForExistence(timeout: 5), "Edit Agent did not present")
+        XCTAssertTrue(editAgent.waitUntilExists(timeout: 5), "Edit Agent did not present")
         attachScreenshot("full-screen-edit-agent")
         let toolsRow = app.buttons["agent.nativeEdit.tools"]
         XCTAssertTrue(text(of: toolsRow).contains("1 selected"), "Fixture agent starts with one tool: \(text(of: toolsRow))")
@@ -65,23 +65,23 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         toolsRow.tap()
         let tools = app.navigationBars["Agent Tools"]
-        XCTAssertTrue(tools.waitForExistence(timeout: 5), "Tools was not pushed inside the modal")
+        XCTAssertTrue(tools.waitUntilExists(timeout: 5), "Tools was not pushed inside the modal")
         attachScreenshot("in-modal-push-tools")
         app.buttons["agent.nativeEdit.toolMode"].tap()
         let piDefaults = app.buttons["Pi defaults"].firstMatch
-        XCTAssertTrue(piDefaults.waitForExistence(timeout: 5), "Tool selection menu did not open")
+        XCTAssertTrue(piDefaults.waitUntilExists(timeout: 5), "Tool selection menu did not open")
         piDefaults.tap()
         assertRunning()
 
         app.buttons["BackButton"].tap()
-        XCTAssertTrue(tools.waitForNonExistence(timeout: 5), "Back must pop Tools")
+        XCTAssertTrue(tools.waitUntilGone(timeout: 5), "Back must pop Tools")
         XCTAssertTrue(
             waitFor(text(of: toolsRow).contains("Pi defaults")),
             "The pushed page's choice must show on the editor: \(text(of: toolsRow))"
         )
 
         app.buttons["agent.nativeEdit.save"].tap()
-        XCTAssertTrue(editAgent.waitForNonExistence(timeout: 5), "Save must close the full-screen modal")
+        XCTAssertTrue(editAgent.waitUntilGone(timeout: 5), "Save must close the full-screen modal")
         XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "agent tools=inherit")
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
@@ -91,28 +91,28 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         launch(colorScheme: "dark")
         app.buttons["routerRoutes.editAgent"].tap()
         let editAgent = app.navigationBars["Edit Agent"]
-        XCTAssertTrue(editAgent.waitForExistence(timeout: 5), "Edit Agent did not present")
+        XCTAssertTrue(editAgent.waitUntilExists(timeout: 5), "Edit Agent did not present")
 
         // The System Prompt footer follows the toggle and Append/Replace.
         XCTAssertTrue(app.staticTexts["Uses the server's default system prompt."].exists)
         app.switches["agent.nativeEdit.customPrompt"].tap()
         XCTAssertTrue(
-            app.staticTexts["Adds these instructions after the server's default system prompt."].waitForExistence(timeout: 5),
+            app.staticTexts["Adds these instructions after the server's default system prompt."].waitUntilExists(timeout: 5),
             "Turning on a custom prompt must describe Append"
         )
         app.buttons["agent.nativeEdit.promptMode"].tap()
         app.buttons["Replace"].firstMatch.tap()
         XCTAssertTrue(
-            app.staticTexts["Uses these instructions instead of the server's default system prompt."].waitForExistence(timeout: 5),
+            app.staticTexts["Uses these instructions instead of the server's default system prompt."].waitUntilExists(timeout: 5),
             "Replace must describe replacing the default prompt"
         )
 
         // The root of a presented navigation controller, where SwiftUI
         // dismiss() does nothing.
         cancelButton.tap()
-        XCTAssertTrue(editAgent.waitForNonExistence(timeout: 5), "Cancel must close the full-screen modal")
+        XCTAssertTrue(editAgent.waitUntilGone(timeout: 5), "Cancel must close the full-screen modal")
         let dismissed = app.staticTexts["routerRoutes.dismissedModals"]
-        XCTAssertTrue(dismissed.waitForExistence(timeout: 5))
+        XCTAssertTrue(dismissed.waitUntilExists(timeout: 5))
         XCTAssertEqual(dismissed.label, "Dismissed 1", "onDismiss must run once after finish()")
         XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "none")
         assertRunning()
@@ -122,13 +122,13 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         launch(colorScheme: "dark")
         app.buttons["routerRoutes.editSchedule"].tap()
         let editSchedule = app.navigationBars["Edit Schedule"]
-        XCTAssertTrue(editSchedule.waitForExistence(timeout: 5), "Edit Schedule did not present")
+        XCTAssertTrue(editSchedule.waitUntilExists(timeout: 5), "Edit Schedule did not present")
 
         openTimeZonePicker()
         let timeZone = app.navigationBars["Time Zone"]
-        XCTAssertTrue(timeZone.waitForExistence(timeout: 5), "Time zone sheet did not open in a navigation bar")
+        XCTAssertTrue(timeZone.waitUntilExists(timeout: 5), "Time zone sheet did not open in a navigation bar")
         let search = app.searchFields["Search time zones"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "The host must own a search field")
+        XCTAssertTrue(search.waitUntilExists(timeout: 5), "The host must own a search field")
         assertRunning()
 
         search.tap()
@@ -139,14 +139,14 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("search-sheet-filtered")
 
         tokyo.tap()
-        XCTAssertTrue(timeZone.waitForNonExistence(timeout: 5), "Choosing a zone must close the sheet")
+        XCTAssertTrue(timeZone.waitUntilGone(timeout: 5), "Choosing a zone must close the sheet")
         XCTAssertTrue(editSchedule.exists, "Closing the sheet must keep Edit Schedule")
         let row = app.buttons["schedule.nativeEdit.timeZone"]
         XCTAssertTrue(text(of: row).contains("Asia/Tokyo"), "The chosen zone must reach the screen: \(text(of: row))")
         assertRunning()
 
         app.buttons["schedule.nativeEdit.save"].tap()
-        XCTAssertTrue(editSchedule.waitForNonExistence(timeout: 5), "Save must close Edit Schedule")
+        XCTAssertTrue(editSchedule.waitUntilGone(timeout: 5), "Save must close Edit Schedule")
         XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "schedule timeZone=Asia/Tokyo")
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
@@ -158,30 +158,30 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         launch(colorScheme: "dark")
         app.buttons["routerRoutes.editSchedule"].tap()
         let editSchedule = app.navigationBars["Edit Schedule"]
-        XCTAssertTrue(editSchedule.waitForExistence(timeout: 5), "Edit Schedule did not present")
+        XCTAssertTrue(editSchedule.waitUntilExists(timeout: 5), "Edit Schedule did not present")
 
         openTimeZonePicker()
         let search = app.searchFields["Search time zones"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "The host must own a search field")
+        XCTAssertTrue(search.waitUntilExists(timeout: 5), "The host must own a search field")
         search.tap()
         search.typeText("Tok")
-        XCTAssertTrue(app.buttons["Asia/Tokyo"].waitForExistence(timeout: 5), "Search did not filter")
+        XCTAssertTrue(app.buttons["Asia/Tokyo"].waitUntilExists(timeout: 5), "Search did not filter")
 
         // Pull the sheet's own content down while the search is active.
         dragToBottom(app.buttons["Asia/Tokyo"])
-        XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Swipe-down must close the searching sheet")
-        XCTAssertTrue(editSchedule.waitForExistence(timeout: 5))
+        XCTAssertTrue(search.waitUntilGone(timeout: 5), "Swipe-down must close the searching sheet")
+        XCTAssertTrue(editSchedule.waitUntilExists(timeout: 5))
         assertRunning()
 
         // The editor takes taps again: its row reopens the sheet.
         openTimeZonePicker()
         let timeZone = app.navigationBars["Time Zone"]
-        XCTAssertTrue(timeZone.waitForExistence(timeout: 5), "The editor must take taps after the swipe")
+        XCTAssertTrue(timeZone.waitUntilExists(timeout: 5), "The editor must take taps after the swipe")
         dragToBottom(timeZone)
-        XCTAssertTrue(timeZone.waitForNonExistence(timeout: 5), "Swipe-down must close the sheet")
+        XCTAssertTrue(timeZone.waitUntilGone(timeout: 5), "Swipe-down must close the sheet")
 
         cancelButton.tap()
-        XCTAssertTrue(editSchedule.waitForNonExistence(timeout: 5), "Cancel must close Edit Schedule")
+        XCTAssertTrue(editSchedule.waitUntilGone(timeout: 5), "Cancel must close Edit Schedule")
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
     }
@@ -195,24 +195,24 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         ] {
             app.buttons[entry].tap()
             let editor = app.navigationBars[editorTitle]
-            XCTAssertTrue(editor.waitForExistence(timeout: 5), "\(editorTitle) did not present")
+            XCTAssertTrue(editor.waitUntilExists(timeout: 5), "\(editorTitle) did not present")
 
             tapRow(modelRow)
             let models = app.navigationBars["Models"]
-            XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open from \(editorTitle)")
+            XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open from \(editorTitle)")
             attachScreenshot("model-picker-\(editorTitle)")
             assertRunning()
             dragToBottom(models)
-            XCTAssertTrue(models.waitForNonExistence(timeout: 5), "Swipe-down must close the model picker")
+            XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
 
             // The binding cleared on swipe-down, so the row opens it again.
             tapRow(modelRow)
-            XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen from \(editorTitle)")
+            XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen from \(editorTitle)")
             dragToBottom(models)
-            XCTAssertTrue(models.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(models.waitUntilGone(timeout: 5))
 
             cancelButton.tap()
-            XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Cancel must close \(editorTitle)")
+            XCTAssertTrue(editor.waitUntilGone(timeout: 5), "Cancel must close \(editorTitle)")
             assertRunning()
         }
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 2")
@@ -226,9 +226,9 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     func testWorkspaceShellOpensAndPopsRoutes() {
         launchShell()
         let drawerButton = app.buttons["workspace.sidebar.open"]
-        let isSplit = !drawerButton.waitForExistence(timeout: 3)
+        let isSplit = !drawerButton.waitUntilExists(timeout: 3)
         XCTAssertTrue(
-            app.searchFields["Search sessions"].waitForExistence(timeout: 5),
+            app.searchFields["Search sessions"].waitUntilExists(timeout: 5),
             "All Sessions must search in the host's bar"
         )
         attachScreenshot("shell-inbox")
@@ -236,30 +236,30 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.open.oppi"].tap()
         let session = app.buttons["session.nav.rail-2"]
-        XCTAssertTrue(session.waitForExistence(timeout: 10), "The workspace's sessions did not show")
+        XCTAssertTrue(session.waitUntilExists(timeout: 10), "The workspace's sessions did not show")
         attachScreenshot("shell-workspace")
         assertRunning()
 
         session.tap()
         let chatBack = app.buttons["chat.toolbar.back"]
-        XCTAssertTrue(chatBack.waitForExistence(timeout: 10), "The chat did not open")
+        XCTAssertTrue(chatBack.waitUntilExists(timeout: 10), "The chat did not open")
         attachScreenshot("shell-chat")
         assertRunning()
         chatBack.tap()
-        XCTAssertTrue(session.waitForExistence(timeout: 5), "Back from the chat must return to the workspace")
+        XCTAssertTrue(session.waitUntilExists(timeout: 5), "Back from the chat must return to the workspace")
         assertRunning()
         if !isSplit {
             app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop to All Sessions")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop to All Sessions")
         }
 
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.skills.open"].tap()
-        XCTAssertTrue(app.searchFields["Search skills"].waitForExistence(timeout: 5), "Skills must search in the host's bar")
+        XCTAssertTrue(app.searchFields["Search skills"].waitUntilExists(timeout: 5), "Skills must search in the host's bar")
         assertRunning()
         if !isSplit {
             app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Skills")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop Skills")
         }
         assertRunning()
     }
@@ -273,13 +273,13 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     func testShellSettingsPushesEveryPageAndBack() {
         launchShell()
         let drawerButton = app.buttons["workspace.sidebar.open"]
-        let isSplit = !drawerButton.waitForExistence(timeout: 3)
+        let isSplit = !drawerButton.waitUntilExists(timeout: 3)
         revealSidebar(isSplit: isSplit)
         app.buttons["App Settings"].tap()
         let settings = app.navigationBars["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings did not open")
+        XCTAssertTrue(settings.waitUntilExists(timeout: 5), "Settings did not open")
         XCTAssertTrue(
-            app.buttons["settings.addServer"].waitForExistence(timeout: 5),
+            app.buttons["settings.addServer"].waitUntilExists(timeout: 5),
             "The Servers section must offer Add Server"
         )
         // App Settings is the root of its pages, so it keeps a large title: the
@@ -298,7 +298,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         app.buttons["settings.server.sha256:rail-inbox-preview"].tap()
         let serverSettings = app.navigationBars["Server Settings"]
-        XCTAssertTrue(serverSettings.waitForExistence(timeout: 5), "The Servers row did not open Server Settings")
+        XCTAssertTrue(serverSettings.waitUntilExists(timeout: 5), "The Servers row did not open Server Settings")
         assertRunning()
         for (row, title) in [
             ("server.manageWorkspaces", "Workspaces"),
@@ -311,7 +311,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             pushAndReturn(row: row, title: title, to: serverSettings)
         }
         goBack()
-        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back must return from Server Settings to Settings")
+        XCTAssertTrue(settings.waitUntilExists(timeout: 5), "Back must return from Server Settings to Settings")
 
         let pages: [(row: String, title: String, links: [(row: String, title: String)])] = [
             ("settings.row.general", "General", []),
@@ -336,19 +336,19 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             }
             row.tap()
             let bar = app.navigationBars[page.title]
-            XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(page.row) did not push \(page.title)")
+            XCTAssertTrue(bar.waitUntilExists(timeout: 5), "\(page.row) did not push \(page.title)")
             assertRunning()
             for link in page.links {
                 pushAndReturn(row: link.row, title: link.title, to: bar)
             }
             goBack()
-            XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back from \(page.title) must return to Settings")
+            XCTAssertTrue(settings.waitUntilExists(timeout: 5), "Back from \(page.title) must return to Settings")
         }
         attachScreenshot("shell-settings-after-pages")
 
         if !isSplit {
             goBack()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Settings")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop Settings")
         }
         assertRunning()
     }
@@ -361,15 +361,15 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     func testWorkspaceShellUtilityAndSettingsPagesPushAndPop() {
         launchShell()
         let drawerButton = app.buttons["workspace.sidebar.open"]
-        let isSplit = !drawerButton.waitForExistence(timeout: 3)
+        let isSplit = !drawerButton.waitUntilExists(timeout: 3)
 
         let hostPill = app.buttons["server.switcher"]
-        XCTAssertTrue(hostPill.waitForExistence(timeout: 5), "All Sessions has no host pill")
+        XCTAssertTrue(hostPill.waitUntilExists(timeout: 5), "All Sessions has no host pill")
         hostPill.tap()
         let metricsItem = app.buttons["hostSwitcher.serverMetrics"]
-        XCTAssertTrue(metricsItem.waitForExistence(timeout: 5), "The host pill has no Server Metrics item")
+        XCTAssertTrue(metricsItem.waitUntilExists(timeout: 5), "The host pill has no Server Metrics item")
         metricsItem.tap()
-        XCTAssertTrue(app.navigationBars["Server Metrics"].waitForExistence(timeout: 5), "Server Metrics did not open")
+        XCTAssertTrue(app.navigationBars["Server Metrics"].waitUntilExists(timeout: 5), "Server Metrics did not open")
         let metricsBar = app.navigationBars["Server Metrics"]
         let range = app.segmentedControls["server.metrics.range"]
         XCTAssertTrue(range.exists, "Server Metrics has no range control")
@@ -390,49 +390,49 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
         if !isSplit {
             goBack()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Server Metrics")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop Server Metrics")
         }
 
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.agents.open"].tap()
         let agents = app.navigationBars["Agents"]
-        XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
+        XCTAssertTrue(agents.waitUntilExists(timeout: 5), "Agents did not open in the UIKit bar")
         // The shell's paired server points at this machine's own address, so what the load does
         // depends on the host (refused, or a pinned-certificate cancel). Either way the list and
         // Pi report it in a row, never an alert, and a cancel never reads as a failure.
-        XCTAssertTrue(app.buttons["agents.row.pi"].waitForExistence(timeout: 5), "Agents has no Pi row")
+        XCTAssertTrue(app.buttons["agents.row.pi"].waitUntilExists(timeout: 5), "Agents has no Pi row")
         assertFailedLoadRowIsNotACancel("agents.state")
         app.buttons["agents.row.pi"].tap()
-        XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
+        XCTAssertTrue(app.navigationBars["Pi"].waitUntilExists(timeout: 5), "Agents did not push Pi")
         assertFailedLoadRowIsNotACancel("agents.pi.state")
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
+        XCTAssertTrue(agents.waitUntilExists(timeout: 5), "Back must return to Agents")
         assertFailedLoadRowIsNotACancel("agents.state")
         if !isSplit {
             app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop Agents")
         }
 
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.mcpServers.open"].tap()
-        XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 5), "MCP Servers did not open in the UIKit bar")
+        XCTAssertTrue(app.navigationBars["MCP Servers"].waitUntilExists(timeout: 5), "MCP Servers did not open in the UIKit bar")
         XCTAssertTrue(app.buttons["mcp.add"].exists, "MCP Servers has no Add button")
         attachScreenshot("shell-mcp-servers")
         assertRunning()
         if !isSplit {
             app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop MCP Servers")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop MCP Servers")
         }
 
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.open.oppi"].tap()
         let openSettings = app.buttons["workspace.edit.open"].firstMatch
-        XCTAssertTrue(openSettings.waitForExistence(timeout: 10), "The workspace did not show")
+        XCTAssertTrue(openSettings.waitUntilExists(timeout: 10), "The workspace did not show")
         openSettings.tap()
         let settings = app.navigationBars["Workspace Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "Workspace Settings did not open in the UIKit bar")
+        XCTAssertTrue(settings.waitUntilExists(timeout: 10), "Workspace Settings did not open in the UIKit bar")
         for (row, title) in [
             ("workspace.edit.details", "Details"),
             ("workspace.edit.instructions", "Instructions"),
@@ -447,22 +447,22 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         if !isSplit {
             goBack()
             goBack()
-            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop to All Sessions")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop to All Sessions")
         }
 
         revealSidebar(isSplit: isSplit)
         app.buttons["App Settings"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Settings did not open")
+        XCTAssertTrue(app.navigationBars["Settings"].waitUntilExists(timeout: 5), "Settings did not open")
         app.buttons["settings.server.sha256:rail-inbox-preview"].tap()
-        XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 5), "Server Settings did not open")
+        XCTAssertTrue(app.navigationBars["Server Settings"].waitUntilExists(timeout: 5), "Server Settings did not open")
         reveal(app.buttons["server.manageWorkspaces"]).tap()
         let workspaces = app.navigationBars["Workspaces"]
-        XCTAssertTrue(workspaces.waitForExistence(timeout: 5), "Server Settings did not push Workspaces")
+        XCTAssertTrue(workspaces.waitUntilExists(timeout: 5), "Server Settings did not push Workspaces")
         app.buttons["server.workspace.oppi"].tap()
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "Workspaces did not push the workspace's settings")
+        XCTAssertTrue(settings.waitUntilExists(timeout: 10), "Workspaces did not push the workspace's settings")
         pushAndReturn(row: "workspace.edit.instructions", title: "Instructions", to: settings)
         goBack()
-        XCTAssertTrue(workspaces.waitForExistence(timeout: 5), "Back must return to Workspaces")
+        XCTAssertTrue(workspaces.waitUntilExists(timeout: 5), "Back must return to Workspaces")
         assertRunning()
     }
 
@@ -475,10 +475,10 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         revealSidebar(isSplit: true)
         app.buttons["workspace.open.oppi"].tap()
         let session = app.buttons["session.nav.rail-2"]
-        XCTAssertTrue(session.waitForExistence(timeout: 10), "The workspace's sessions did not show")
+        XCTAssertTrue(session.waitUntilExists(timeout: 10), "The workspace's sessions did not show")
         session.tap()
         let chatBack = app.buttons["chat.toolbar.back"]
-        XCTAssertTrue(chatBack.waitForExistence(timeout: 10), "The chat did not open")
+        XCTAssertTrue(chatBack.waitUntilExists(timeout: 10), "The chat did not open")
 
         let splitToggle = app.buttons["workspace.split.sidebarToggle"]
         XCUIDevice.shared.orientation = .portrait
@@ -487,7 +487,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("shell-ipad-portrait-chat")
         assertRunning()
         chatBack.tap()
-        XCTAssertTrue(session.waitForExistence(timeout: 5), "Back must return to the workspace under the chat")
+        XCTAssertTrue(session.waitUntilExists(timeout: 5), "Back must return to the workspace under the chat")
         XCTAssertTrue(app.buttons["BackButton"].exists, "The workspace must sit above All Sessions")
 
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -500,10 +500,10 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     /// Taps `row`, expects the page titled `title`, then goes back to `bar`.
     private func pushAndReturn(row: String, title: String, to bar: XCUIElement) {
         reveal(app.buttons[row]).tap()
-        XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "\(row) did not push \(title)")
+        XCTAssertTrue(app.navigationBars[title].waitUntilExists(timeout: 5), "\(row) did not push \(title)")
         assertRunning()
         goBack()
-        XCTAssertTrue(bar.waitForExistence(timeout: 5), "Back from \(title) must return")
+        XCTAssertTrue(bar.waitUntilExists(timeout: 5), "Back from \(title) must return")
         assertRunning()
     }
 
@@ -514,7 +514,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
     /// Scrolls the list until `element` can take a tap.
     private func reveal(_ element: XCUIElement) -> XCUIElement {
-        _ = element.waitForExistence(timeout: 5)
+        _ = element.waitUntilExists(timeout: 5)
         for _ in 0..<8 where !element.isHittable {
             app.swipeUp()
         }
@@ -536,7 +536,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             ready: nil
         )
         XCTAssertTrue(
-            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
+            app.collectionViews["workspace.sessionList"].waitUntilExists(timeout: 10),
             "The workspace shell did not appear"
         )
     }
@@ -552,7 +552,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             app.buttons["workspace.sidebar.open"].tap()
         }
         XCTAssertTrue(
-            app.buttons["workspace.open.oppi"].waitForExistence(timeout: 5),
+            app.buttons["workspace.open.oppi"].waitUntilExists(timeout: 5),
             "The workspace sidebar did not show"
         )
     }
@@ -560,7 +560,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     private func launch(colorScheme: String) {
         launchPreview(screen: "router-routes", colorScheme: colorScheme, ready: nil)
         XCTAssertTrue(
-            app.buttons["routerRoutes.quickComments"].waitForExistence(timeout: 10),
+            app.buttons["routerRoutes.quickComments"].waitUntilExists(timeout: 10),
             "Router routes harness did not appear"
         )
     }
@@ -616,7 +616,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     /// the connect attempt fails again, which under a loaded pool can exceed 5 s.
     private func assertFailedLoadRowIsNotACancel(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
         let row = app.buttons[identifier]
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "\(identifier) never showed its failure row", file: file, line: line)
+        XCTAssertTrue(row.waitUntilExists(timeout: 15), "\(identifier) never showed its failure row", file: file, line: line)
         XCTAssertNotEqual(row.label, "cancelled", "A cancelled load must not show as a failure", file: file, line: line)
         XCTAssertFalse(app.alerts.firstMatch.exists, "A failed load must not raise an alert", file: file, line: line)
     }

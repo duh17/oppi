@@ -46,7 +46,7 @@ final class AudioScriptReaderUITests: XCTestCase {
         launchScriptReader()
 
         let transcript = app.collectionViews["audioLyrics.transcript"]
-        XCTAssertTrue(transcript.waitForExistence(timeout: 8), "Script reader transcript did not appear")
+        XCTAssertTrue(transcript.waitUntilExists(timeout: 8), "Script reader transcript did not appear")
         let playing = app.cells["audioLyrics.line.2"]
         XCTAssertTrue(waitUntil { playing.exists && playing.isSelected }, "Line 2 should be current at 0:31")
         assertAnchored(playing, in: transcript)
@@ -54,7 +54,7 @@ final class AudioScriptReaderUITests: XCTestCase {
         let currentLine = app.buttons["Current Line"]
         XCTAssertFalse(currentLine.exists, "Following playback should not offer Current Line")
         transcript.swipeUp()
-        XCTAssertTrue(currentLine.waitForExistence(timeout: 3), "Dragging the transcript should stop following")
+        XCTAssertTrue(currentLine.waitUntilExists(timeout: 3), "Dragging the transcript should stop following")
 
         currentLine.tap()
         XCTAssertTrue(waitUntil { !currentLine.exists }, "Current Line should resume following and hide")
@@ -71,10 +71,10 @@ final class AudioScriptReaderUITests: XCTestCase {
 
     func testSpeedAndSleepTimerControls() {
         launchScriptReader()
-        XCTAssertTrue(app.cells["audioLyrics.line.2"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.cells["audioLyrics.line.2"].waitUntilExists(timeout: 8))
 
         let speed = app.buttons["Playback Speed"]
-        XCTAssertTrue(speed.waitForExistence(timeout: 3))
+        XCTAssertTrue(speed.waitUntilExists(timeout: 3))
         speed.tap()
         app.buttons["1.5\u{00D7}"].firstMatch.tap()
         XCTAssertTrue(waitUntil { (speed.value as? String) == "1.5\u{00D7}" }, "Speed should read 1.5\u{00D7}")
@@ -119,7 +119,7 @@ final class AudioScriptReaderUITests: XCTestCase {
     private func dismissNotificationPrompt() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let dontAllow = springboard.buttons["Don’t Allow"]
-        if dontAllow.waitForExistence(timeout: 5) {
+        if dontAllow.waitUntilExists(timeout: 5) {
             dontAllow.tap()
         }
     }

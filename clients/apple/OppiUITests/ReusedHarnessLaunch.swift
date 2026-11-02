@@ -48,7 +48,7 @@ enum ReusedHarnessLaunch {
         }
         let app = launch()
         let marker = app.descendants(matching: .any)[markerID]
-        if marker.waitForExistence(timeout: 10), marker.value as? String == "0" {
+        if marker.waitUntilExists(timeout: 10), marker.value as? String == "0" {
             entries[owner] = Entry(app: app, signature: signature, generation: 0)
         } else {
             XCTFail("Launch reuse: the fresh launch did not publish \(markerID)=0 (marker value: \(describe(marker))). The app was not started with \(OppiTestLaunch.reuseLaunchKey)=1 or does not support reuse.")
@@ -89,7 +89,7 @@ enum ReusedHarnessLaunch {
             XCTFail("Launch reuse: the in-process reset did not take. Expected \(markerID)=\(entry.generation) within 10 s, found \(found); the earlier test's state may still be on screen.")
             return nil
         }
-        guard entry.app.descendants(matching: .any)[readyID].waitForExistence(timeout: 10) else {
+        guard entry.app.descendants(matching: .any)[readyID].waitUntilExists(timeout: 10) else {
             discard(owner: owner)
             XCTFail("Launch reuse: reset generation \(entry.generation) applied but \(readyID) never appeared.")
             return nil

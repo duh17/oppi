@@ -18,23 +18,23 @@ final class SemanticPickJourneyUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
 
-        XCTAssertTrue(app.descendants(matching: .any)["harness.ready"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)["harness.ready"].waitUntilExists(timeout: 15))
         app.buttons["semantic-pick.diagram.ambiguity"].tap()
-        XCTAssertTrue(app.buttons["semantic-pick.enter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["semantic-pick.enter"].waitUntilExists(timeout: 5))
 
         func openChooser() {
             app.buttons["semantic-pick.enter"].tap()
             let target = app.buttons["semantic-pick.target.slice.1"]
-            XCTAssertTrue(target.waitForExistence(timeout: 5))
+            XCTAssertTrue(target.waitUntilExists(timeout: 5))
             target.tap()
-            XCTAssertTrue(app.scrollViews["semantic-pick.chooser-scroll"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.scrollViews["semantic-pick.chooser-scroll"].waitUntilExists(timeout: 5))
         }
 
         openChooser()
         let first = app.buttons["semantic-pick.choice.slice:1"]
-        XCTAssertTrue(first.waitForExistence(timeout: 3) && first.isHittable)
+        XCTAssertTrue(first.waitUntilExists(timeout: 3) && first.isHittable)
         first.tap()
-        XCTAssertTrue(app.buttons["semantic-pick.comment"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["semantic-pick.comment"].waitUntilExists(timeout: 3))
         app.buttons["semantic-pick.leave"].tap()
 
         openChooser()
@@ -51,6 +51,6 @@ final class SemanticPickJourneyUITests: XCTestCase {
             "Last ambiguity choice was not reachable; chooser frame \(chooser.frame), last frame \(last.frame)"
         )
         last.tap()
-        XCTAssertTrue(app.buttons["semantic-pick.comment"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["semantic-pick.comment"].waitUntilExists(timeout: 3))
     }
 }

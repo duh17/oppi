@@ -26,7 +26,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         launchSite("root")
         app.buttons["routerModalSites.dialog"].tap()
         let dialog = app.navigationBars["Pick a Plan"]
-        XCTAssertTrue(dialog.waitForExistence(timeout: 5), "Extension dialog did not open in a navigation bar")
+        XCTAssertTrue(dialog.waitUntilExists(timeout: 5), "Extension dialog did not open in a navigation bar")
         attachScreenshot("extension-dialog")
         assertRunning()
 
@@ -34,7 +34,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(dialog.waitForExistence(timeout: 2), "Swipe-down must not dismiss an unanswered dialog")
 
         app.buttons["extension.dialog.cancel"].tap()
-        XCTAssertTrue(dialog.waitForNonExistence(timeout: 5), "Cancel must close the dialog")
+        XCTAssertTrue(dialog.waitUntilGone(timeout: 5), "Cancel must close the dialog")
         XCTAssertEqual(label("routerModalSites.lastResponse"), "cancelled")
         assertRunning()
     }
@@ -44,14 +44,14 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         let notice = app.navigationBars["Notice"]
         for closesBySwipe in [false, true] {
             app.buttons["routerModalSites.notice"].tap()
-            XCTAssertTrue(notice.waitForExistence(timeout: 5), "Notice did not open in a navigation bar")
+            XCTAssertTrue(notice.waitUntilExists(timeout: 5), "Notice did not open in a navigation bar")
             if closesBySwipe {
                 dragToBottom(notice)
             } else {
                 attachScreenshot("notice")
                 app.buttons["Done"].firstMatch.tap()
             }
-            XCTAssertTrue(notice.waitForNonExistence(timeout: 5), "Notice must close")
+            XCTAssertTrue(notice.waitUntilGone(timeout: 5), "Notice must close")
             XCTAssertTrue(waitFor(self.label("routerModalSites.noticeState") == "Notice cleared"))
             assertRunning()
         }
@@ -64,9 +64,9 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         for _ in 0..<2 {
             app.buttons["routerModalSites.whatsNew"].tap()
             let done = app.buttons["whatsNew.done"]
-            XCTAssertTrue(done.waitForExistence(timeout: 5), "What's New did not open")
+            XCTAssertTrue(done.waitUntilExists(timeout: 5), "What's New did not open")
             done.tap()
-            XCTAssertTrue(done.waitForNonExistence(timeout: 5), "Continue must close What's New")
+            XCTAssertTrue(done.waitUntilGone(timeout: 5), "Continue must close What's New")
             XCTAssertTrue(waitFor(self.label("routerModalSites.whatsNewState") == "What's New cleared"))
             assertRunning()
         }
@@ -87,48 +87,48 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     func testQuickSessionPickerPopoversSelectIntoTheSheet() {
         launchSite("quick-session")
         let workspacePicker = app.buttons["quickSession.workspacePicker"]
-        XCTAssertTrue(workspacePicker.waitForExistence(timeout: 10), "Quick session did not appear")
+        XCTAssertTrue(workspacePicker.waitUntilExists(timeout: 10), "Quick session did not appear")
 
         workspacePicker.tap()
         let kypu = app.buttons["quickSession.workspace.kypu"]
-        XCTAssertTrue(kypu.waitForExistence(timeout: 5), "Workspace popover did not open")
+        XCTAssertTrue(kypu.waitUntilExists(timeout: 5), "Workspace popover did not open")
         attachScreenshot("quick-session-workspace-popover")
         kypu.tap()
-        XCTAssertTrue(kypu.waitForNonExistence(timeout: 5), "Choosing a workspace must close the popover")
+        XCTAssertTrue(kypu.waitUntilGone(timeout: 5), "Choosing a workspace must close the popover")
         XCTAssertTrue(waitFor(workspacePicker.label.contains("kypu")), "Workspace pill: \(workspacePicker.label)")
 
         workspacePicker.tap()
         let oppi = app.buttons["quickSession.workspace.oppi"]
-        XCTAssertTrue(oppi.waitForExistence(timeout: 5), "Workspace popover did not reopen")
+        XCTAssertTrue(oppi.waitUntilExists(timeout: 5), "Workspace popover did not reopen")
         oppi.tap()
         XCTAssertTrue(waitFor(workspacePicker.label.contains("oppi")), "Workspace pill: \(workspacePicker.label)")
         assertRunning()
 
         let worktreePicker = app.buttons["quickSession.worktreePicker"]
-        XCTAssertTrue(worktreePicker.waitForExistence(timeout: 5), "Two worktrees must show the worktree pill")
+        XCTAssertTrue(worktreePicker.waitUntilExists(timeout: 5), "Two worktrees must show the worktree pill")
         worktreePicker.tap()
         let routerFix = app.buttons["quickSession.worktree.router-fix"]
-        XCTAssertTrue(routerFix.waitForExistence(timeout: 5), "Worktree popover did not open")
+        XCTAssertTrue(routerFix.waitUntilExists(timeout: 5), "Worktree popover did not open")
         routerFix.tap()
-        XCTAssertTrue(routerFix.waitForNonExistence(timeout: 5), "Choosing a worktree must close the popover")
+        XCTAssertTrue(routerFix.waitUntilGone(timeout: 5), "Choosing a worktree must close the popover")
         XCTAssertTrue(waitFor(worktreePicker.label.contains("router-fix")), "Worktree pill: \(worktreePicker.label)")
         assertRunning()
 
         let agentPicker = app.buttons["quickSession.agentPicker"]
         agentPicker.tap()
         let reviewer = app.buttons["quickSession.agent.reviewer"]
-        XCTAssertTrue(reviewer.waitForExistence(timeout: 5), "Agent popover did not open")
+        XCTAssertTrue(reviewer.waitUntilExists(timeout: 5), "Agent popover did not open")
         attachScreenshot("quick-session-agent-popover")
         reviewer.tap()
-        XCTAssertTrue(reviewer.waitForNonExistence(timeout: 5), "Choosing an Agent must close the popover")
+        XCTAssertTrue(reviewer.waitUntilGone(timeout: 5), "Choosing an Agent must close the popover")
         XCTAssertTrue(waitFor(agentPicker.label.contains("Reviewer")), "Agent pill: \(agentPicker.label)")
 
         // A tap outside closes a popover without choosing.
         agentPicker.tap()
         let pi = app.buttons["quickSession.agent.pi"]
-        XCTAssertTrue(pi.waitForExistence(timeout: 5), "Agent popover did not reopen")
+        XCTAssertTrue(pi.waitUntilExists(timeout: 5), "Agent popover did not reopen")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
-        XCTAssertTrue(pi.waitForNonExistence(timeout: 5), "A tap outside must close the popover")
+        XCTAssertTrue(pi.waitUntilGone(timeout: 5), "A tap outside must close the popover")
         XCTAssertTrue(agentPicker.label.contains("Reviewer"))
         assertRunning()
     }
@@ -139,9 +139,9 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     func testModelPickerDefaultSaveFailureAlertShowsWhileSearching() {
         launchSite("quick-session")
         let model = app.buttons["session.toolbar.model"]
-        XCTAssertTrue(model.waitForExistence(timeout: 10), "Quick session did not appear")
+        XCTAssertTrue(model.waitUntilExists(timeout: 10), "Quick session did not appear")
         model.tap()
-        XCTAssertTrue(app.navigationBars["Models"].waitForExistence(timeout: 5), "Model picker did not open")
+        XCTAssertTrue(app.navigationBars["Models"].waitUntilExists(timeout: 5), "Model picker did not open")
 
         let alert = app.alerts["Couldn't Set Default Model"]
         let search = app.searchFields["Search models…"]
@@ -150,10 +150,10 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         let star = app.buttons["model.picker.star.fixture/fixture-steady"]
         XCTAssertTrue(star.waitForExistence(timeout: 5), "The search must keep the matching model")
         star.tap()
-        XCTAssertTrue(alert.waitForExistence(timeout: 5), "The failed save must show its alert over the active search")
+        XCTAssertTrue(alert.waitUntilExists(timeout: 5), "The failed save must show its alert over the active search")
         attachScreenshot("model-picker-default-failure-alert")
         alert.buttons["OK"].tap()
-        XCTAssertTrue(alert.waitForNonExistence(timeout: 5), "OK must dismiss the alert")
+        XCTAssertTrue(alert.waitUntilGone(timeout: 5), "OK must dismiss the alert")
         XCTAssertTrue(app.navigationBars["Models"].exists, "The picker stays open after a failed save")
         assertRunning()
     }
@@ -161,22 +161,22 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     func testQuickSessionModelSheetAndExpandedComposerReachTheSheet() {
         launchSite("quick-session")
         let model = app.buttons["session.toolbar.model"]
-        XCTAssertTrue(model.waitForExistence(timeout: 10), "Quick session did not appear")
+        XCTAssertTrue(model.waitUntilExists(timeout: 10), "Quick session did not appear")
 
         model.tap()
         let models = app.navigationBars["Models"]
-        XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open")
+        XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open")
         let steady = app.buttons.matching(NSPredicate(format: "identifier ENDSWITH %@", "fixture-steady")).firstMatch
-        XCTAssertTrue(steady.waitForExistence(timeout: 5), "Stub models did not load")
+        XCTAssertTrue(steady.waitUntilExists(timeout: 5), "Stub models did not load")
         attachScreenshot("quick-session-model-sheet")
         steady.tap()
-        XCTAssertTrue(models.waitForNonExistence(timeout: 5), "Choosing a model must close the picker")
+        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Choosing a model must close the picker")
         XCTAssertTrue(waitFor(self.text(of: model).contains("fixture-steady")), "Model pill: \(text(of: model))")
 
         model.tap()
-        XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen")
+        XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen")
         dragToBottom(models)
-        XCTAssertTrue(models.waitForNonExistence(timeout: 5), "Swipe-down must close the model picker")
+        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
         assertRunning()
 
         // Expand shows once the draft fills the inline budget.
@@ -184,16 +184,16 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         inline.tap()
         inline.typeText("one\ntwo\nthree\nfour\nfive\nsix")
         let expand = app.buttons["chat.expand"]
-        XCTAssertTrue(expand.waitForExistence(timeout: 5), "A long draft must show Expand")
+        XCTAssertTrue(expand.waitUntilExists(timeout: 5), "A long draft must show Expand")
         expand.tap()
         let editor = app.textViews["expanded.composer.editor"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 5), "Expanded composer did not open")
+        XCTAssertTrue(editor.waitUntilExists(timeout: 5), "Expanded composer did not open")
         XCTAssertTrue((editor.value as? String)?.contains("six") == true, "The expanded composer must show the draft")
         attachScreenshot("quick-session-expanded-composer")
         editor.tap()
         editor.typeText(" from expanded")
         app.buttons["expanded.composer.cancel"].tap()
-        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Cancel must close the expanded composer")
+        XCTAssertTrue(editor.waitUntilGone(timeout: 5), "Cancel must close the expanded composer")
         XCTAssertTrue(
             waitFor((inline.value as? String)?.contains("from expanded") == true),
             "The expanded edit must reach the quick session: \(inline.value as? String ?? "nil")"
@@ -211,17 +211,17 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     func testWorkspaceCreateWithOppiOpensTheGuidedComposerAboveTheForm() {
         launch(screen: "settings-sweep", environment: ["SCREENSHOT_SWEEP_PAGE": "workspace-create"])
         let row = app.buttons["workspace.create.createWithOppi"]
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "Create with Oppi row did not appear")
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Create with Oppi row did not appear")
         row.tap()
         XCTAssertTrue(
-            app.navigationBars["Create Workspace"].waitForExistence(timeout: 5),
+            app.navigationBars["Create Workspace"].waitUntilExists(timeout: 5),
             "Create with Oppi must open the guided composer titled Create Workspace"
         )
         attachScreenshot("workspace-create-guided-composer")
 
         // The server has no workspace, and the composer still takes the request.
         let input = app.textViews["chat.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 10), "The guided composer's input did not appear")
+        XCTAssertTrue(input.waitUntilExists(timeout: 10), "The guided composer's input did not appear")
         let send = app.buttons["chat.send"]
         XCTAssertFalse(send.isEnabled, "Send must wait for a request")
         input.tap()
@@ -235,7 +235,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // Cancel closes the guided sheet and leaves the form under it.
         cancelButton.tap()
         XCTAssertTrue(
-            app.navigationBars["Create Workspace"].waitForNonExistence(timeout: 5),
+            app.navigationBars["Create Workspace"].waitUntilGone(timeout: 5),
             "Cancel must close the guided composer"
         )
         XCTAssertTrue(app.buttons["workspace.create.manual"].waitForExistence(timeout: 5), "The create form must stay open")
@@ -253,18 +253,18 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // Herdr is an experiment (Settings → Experiments): this test asks for it.
         launch(screen: "ssh-terminal", arguments: OppiTestLaunch.experimentArguments([.herdr: true]))
         let herdr = app.buttons["sshTerminal.herdr"]
-        XCTAssertTrue(herdr.waitForExistence(timeout: 10), "Herdr toolbar button did not appear")
+        XCTAssertTrue(herdr.waitUntilExists(timeout: 10), "Herdr toolbar button did not appear")
         let sheet = app.navigationBars["Herdr"]
         for closesBySwipe in [false, true] {
             herdr.tap()
-            XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Herdr sheet did not open in a navigation bar")
+            XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Herdr sheet did not open in a navigation bar")
             if closesBySwipe {
                 dragToBottom(sheet)
             } else {
                 attachScreenshot("herdr-sheet")
                 app.buttons["Done"].firstMatch.tap()
             }
-            XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Herdr sheet must close")
+            XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Herdr sheet must close")
             assertRunning()
         }
     }
@@ -279,13 +279,13 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // Rex is an experiment (Settings → Experiments): this test asks for it.
         launch(screen: "ssh-terminal-rex-panes", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(switcher.label, "Pane")
         XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3", "The session opens on its first pane")
         let cells = (0...2).map { app.buttons["sshTerminal.rexMinimap.\($0)"] }
         XCTAssertFalse(cells[0].exists, "The minimap stays hidden when the terminal opens")
         let grid = app.descendants(matching: .any)["sshTerminal.grid"]
-        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue(grid.waitUntilExists(timeout: 5))
         attachScreenshot("rex-panes-first")
 
         // A vertical drag scrolls history: the grid leaves the live screen and the pane stays.
@@ -294,12 +294,12 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         let top = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
         let bottom = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
         top.press(forDuration: 0.05, thenDragTo: bottom, withVelocity: .default, thenHoldForDuration: 0)
-        XCTAssertTrue(backToLive.waitForExistence(timeout: 5), "A vertical drag must scroll the history")
+        XCTAssertTrue(backToLive.waitUntilExists(timeout: 5), "A vertical drag must scroll the history")
         XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3", "A vertical drag must not change pane")
         XCTAssertFalse(cells[0].exists, "Scrolling history does not show the minimap")
         attachScreenshot("rex-panes-scrolled")
         backToLive.tap()
-        XCTAssertTrue(backToLive.waitForNonExistence(timeout: 5), "Back to Live must return the grid to the live screen")
+        XCTAssertTrue(backToLive.waitUntilGone(timeout: 5), "Back to Live must return the grid to the live screen")
 
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()
@@ -314,7 +314,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // (a tap opens the Rex panel instead).
         switcher.press(forDuration: 1.0)
         let third = app.buttons["sshTerminal.rexPanes.2"]
-        XCTAssertTrue(third.waitForExistence(timeout: 5), "The switcher's menu did not open")
+        XCTAssertTrue(third.waitUntilExists(timeout: 5), "The switcher's menu did not open")
         XCTAssertTrue(app.buttons["sshTerminal.rexPanes.0"].exists && app.buttons["sshTerminal.rexPanes.1"].exists)
         attachScreenshot("rex-panes-menu")
         third.tap()
@@ -326,11 +326,11 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // Rex control (the pane switcher) holds Rex Sessions.
         app.buttons["sshTerminal.more"].tap()
         let customize = app.buttons["sshTerminal.menu.customize"]
-        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu did not open")
+        XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu did not open")
         customize.tap()
         let list = app.descendants(matching: .any)["settings.sshTerminal.bar.list"]
-        XCTAssertTrue(list.waitForExistence(timeout: 5), "Customize Bar did not open")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].waitForExistence(timeout: 5), "A Rex pane's Customize Bar must list the switcher")
+        XCTAssertTrue(list.waitUntilExists(timeout: 5), "Customize Bar did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].waitUntilExists(timeout: 5), "A Rex pane's Customize Bar must list the switcher")
         XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.rex"].exists, "A Rex pane's Customize Bar must not list Rex Sessions")
         let panelChoice = app.descendants(matching: .any)["settings.sshTerminal.bar.rexPanel.thisPane"]
         scrollUntilHittable(panelChoice)
@@ -347,10 +347,10 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // Rex is an experiment (Settings → Experiments): this test asks for it.
         launch(screen: "ssh-terminal-rex-panes", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3")
         let grid = app.descendants(matching: .any)["sshTerminal.grid"]
-        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue(grid.waitUntilExists(timeout: 5))
 
         // The first pane's edge gives way and opens nothing.
         grid.swipeRight()
@@ -370,7 +370,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // The menu's last item opens another one after the shown pane.
         switcher.press(forDuration: 1.0)
         let newPane = app.buttons["sshTerminal.rexPanes.new"]
-        XCTAssertTrue(newPane.waitForExistence(timeout: 5), "The switcher's menu has no New Pane item")
+        XCTAssertTrue(newPane.waitUntilExists(timeout: 5), "The switcher's menu has no New Pane item")
         XCTAssertEqual(newPane.label, "New Pane")
         attachScreenshot("rex-panes-new-menu")
         newPane.tap()
@@ -386,28 +386,28 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         launch(screen: "ssh-terminal-rex-list", arguments: OppiTestLaunch.experimentArguments([.rex: true]))
         let prefix = "sshTerminal.rexList.5E5E5E5E-0000-4000-8000-000000000001."
         let dotfiles = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
-        XCTAssertTrue(dotfiles.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
+        XCTAssertTrue(dotfiles.waitUntilExists(timeout: 15), "The Rex section did not list its sessions")
 
         // Close asks first, and Cancel leaves the session where it is.
         dotfiles.swipeLeft()
         let close = app.buttons["Close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "A swipe must offer Close")
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "A swipe must offer Close")
         XCTAssertTrue(app.buttons["Rename"].exists, "A swipe must offer Rename")
         attachScreenshot("terminal-tab-rex-swipe")
         close.tap()
         let confirm = app.alerts["Close session \u{201C}dotfiles\u{201D}?"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Close must ask first")
+        XCTAssertTrue(confirm.waitUntilExists(timeout: 5), "Close must ask first")
         XCTAssertTrue(confirm.staticTexts["Every pane's program ends."].exists)
         attachScreenshot("terminal-tab-rex-close-confirm")
         confirm.buttons["Cancel"].tap()
-        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(confirm.waitUntilGone(timeout: 5))
         XCTAssertTrue(dotfiles.exists, "Cancel must leave the session")
 
         // Rename: the name goes to Rex and the row follows its event.
         dotfiles.swipeLeft()
         app.buttons["Rename"].tap()
         let field = app.textFields["sshTerminal.rexList.rename.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename must ask for a name")
+        XCTAssertTrue(field.waitUntilExists(timeout: 5), "Rename must ask for a name")
         XCTAssertEqual(field.value as? String, "dotfiles")
         attachScreenshot("terminal-tab-rex-rename")
         field.tap()
@@ -420,36 +420,36 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         dotfiles.swipeLeft()
         app.buttons["Close"].tap()
         let again = app.alerts["Close session \u{201C}config\u{201D}?"]
-        XCTAssertTrue(again.waitForExistence(timeout: 5))
+        XCTAssertTrue(again.waitUntilExists(timeout: 5))
         // The accessibility tree doubles an identified alert button here too (Close is not the preferred one).
         again.buttons["sshTerminal.rexList.close.confirm"].firstMatch.tap()
-        XCTAssertTrue(dotfiles.waitForNonExistence(timeout: 10), "A closed session must leave the list")
+        XCTAssertTrue(dotfiles.waitUntilGone(timeout: 10), "A closed session must leave the list")
         attachScreenshot("terminal-tab-rex-closed")
 
         // New Session is the heading's ⋯ while the section still has sessions (an empty
         // one shows the row instead), and it opens the shell it makes.
         let heading = app.buttons[prefix + "menu"]
-        XCTAssertTrue(heading.waitForExistence(timeout: 5), "The host heading has no ⋯ menu")
+        XCTAssertTrue(heading.waitUntilExists(timeout: 5), "The host heading has no ⋯ menu")
         heading.tap()
         // The ＋ in the bar is titled New Session too, so the item is the element with
         // that label that is not the bar button.
         let newSession = app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@ AND identifier != %@", "New Session", "sshTerminal.page.newSession")
         ).firstMatch
-        XCTAssertTrue(newSession.waitForExistence(timeout: 5), "The heading must offer New Session")
+        XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "The heading must offer New Session")
         newSession.tap()
-        XCTAssertTrue(app.buttons["sshTerminal.bar.rexPanes"].waitForExistence(timeout: 15), "New Session must open the new shell")
+        XCTAssertTrue(app.buttons["sshTerminal.bar.rexPanes"].waitUntilExists(timeout: 15), "New Session must open the new shell")
         assertRunning()
     }
 
     func testProgramStatusPopoverOpensAndClosesOnOutsideTap() {
         launch(screen: "ssh-terminal-status-blocked")
         let glyph = app.buttons["sshTerminal.programStatus"]
-        XCTAssertTrue(glyph.waitForExistence(timeout: 10), "Program status glyph did not appear")
+        XCTAssertTrue(glyph.waitUntilExists(timeout: 10), "Program status glyph did not appear")
         let detail = app.descendants(matching: .any)["sshTerminal.programStatusDetail"]
         for _ in 0..<2 {
             glyph.tap()
-            XCTAssertTrue(detail.waitForExistence(timeout: 5), "Program status popover did not open")
+            XCTAssertTrue(detail.waitUntilExists(timeout: 5), "Program status popover did not open")
             attachScreenshot("program-status-popover")
             // Let the presentation settle first: a popover swallows taps while
             // it animates in, which is not something an outside tap can fix.
@@ -469,7 +469,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
             )
             app.coordinate(withNormalizedOffset: point).tap()
             XCTAssertTrue(
-                detail.waitForNonExistence(timeout: 5),
+                detail.waitUntilGone(timeout: 5),
                 "A tap outside must close the popover (popover \(popover), tapped at \(tap))"
             )
             assertRunning()
@@ -477,7 +477,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// The popover stops moving and takes hits: its presentation animation is
-    /// over. Kept separate from `waitForExistence`, which returns as soon as the
+    /// over. Kept separate from `waitUntilExists`, which returns as soon as the
     /// element exists, when a tap outside would still be swallowed.
     private func waitForPopoverToSettle(_ popover: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -505,25 +505,25 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     func testPasswordSheetEditsTheProfileAndClosesByCancelAndSwipe() {
         launch(screen: "settings-sweep", environment: ["SCREENSHOT_SWEEP_PAGE": "ssh-hosts"])
         let host = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "sshTerminal.host.row.")).firstMatch
-        XCTAssertTrue(host.waitForExistence(timeout: 10), "SSH host list did not appear")
+        XCTAssertTrue(host.waitUntilExists(timeout: 10), "SSH host list did not appear")
         let sheet = app.navigationBars["SSH Sign In"]
 
         host.tap()
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Password sheet did not open in a navigation bar")
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Password sheet did not open in a navigation bar")
         let savePassword = app.switches["Save Password"]
-        XCTAssertTrue(savePassword.waitForExistence(timeout: 5))
+        XCTAssertTrue(savePassword.waitUntilExists(timeout: 5))
         XCTAssertEqual(savePassword.value as? String, "0")
         savePassword.tap()
         XCTAssertTrue(waitFor(savePassword.value as? String == "1"), "The toggle must round-trip through the host list")
         attachScreenshot("ssh-password-sheet")
         cancelButton.tap()
-        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Cancel must close the password sheet")
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Cancel must close the password sheet")
         assertRunning()
 
         host.tap()
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Password sheet did not reopen")
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Password sheet did not reopen")
         dragToBottom(sheet)
-        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "Swipe-down must close the password sheet")
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Swipe-down must close the password sheet")
         XCTAssertTrue(host.isEnabled, "The host row must take taps again")
         assertRunning()
     }
@@ -532,43 +532,43 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
 
     private func openNowPlayingAndGoBackTwice() {
         let open = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Now Playing")).firstMatch
-        XCTAssertTrue(open.waitForExistence(timeout: 10), "Now Playing control did not appear")
+        XCTAssertTrue(open.waitUntilExists(timeout: 10), "Now Playing control did not appear")
         for _ in 0..<2 {
             open.tap()
             let back = app.buttons["fullscreen-audio.back"]
-            XCTAssertTrue(back.waitForExistence(timeout: 5), "Now Playing player did not open")
+            XCTAssertTrue(back.waitUntilExists(timeout: 5), "Now Playing player did not open")
             attachScreenshot("now-playing")
             assertRunning()
             back.tap()
-            XCTAssertTrue(back.waitForNonExistence(timeout: 5), "Back must close the player")
-            XCTAssertTrue(open.waitForExistence(timeout: 5), "The presenter must be back")
+            XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back must close the player")
+            XCTAssertTrue(open.waitUntilExists(timeout: 5), "The presenter must be back")
             assertRunning()
         }
     }
 
     private func pickIconAndSave(row: XCUIElement) {
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "Icon row did not appear")
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Icon row did not appear")
         scrollUntilHittable(row)
         let before = row.value as? String
         let picker = app.descendants(matching: .any)["workspace.iconPicker.list"]
 
         row.tap()
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), "Icon picker did not open")
+        XCTAssertTrue(picker.waitUntilExists(timeout: 5), "Icon picker did not open")
         cancelButton.tap()
-        XCTAssertTrue(picker.waitForNonExistence(timeout: 5), "Cancel must close the icon picker")
+        XCTAssertTrue(picker.waitUntilGone(timeout: 5), "Cancel must close the icon picker")
         assertRunning()
 
         // Full screen in compact width; swipe-down only where it is a sheet.
         if app.windows.firstMatch.horizontalSizeClass != .compact {
             row.tap()
-            XCTAssertTrue(picker.waitForExistence(timeout: 5), "Icon picker did not reopen")
+            XCTAssertTrue(picker.waitUntilExists(timeout: 5), "Icon picker did not reopen")
             dragToBottom(app.navigationBars.firstMatch)
-            XCTAssertTrue(picker.waitForNonExistence(timeout: 5), "Swipe-down must close the icon picker")
+            XCTAssertTrue(picker.waitUntilGone(timeout: 5), "Swipe-down must close the icon picker")
             assertRunning()
         }
 
         row.tap()
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), "Icon picker did not open a third time")
+        XCTAssertTrue(picker.waitUntilExists(timeout: 5), "Icon picker did not open a third time")
         let symbol = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.iconPicker.symbol.")).firstMatch
         scrollUntilHittable(symbol)
         let symbolID = symbol.identifier
@@ -576,7 +576,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("icon-picker")
         app.buttons["workspace.iconPicker.save"].tap()
         // Save commits asynchronously before the picker closes.
-        XCTAssertTrue(picker.waitForNonExistence(timeout: 15), "Save must close the icon picker")
+        XCTAssertTrue(picker.waitUntilGone(timeout: 15), "Save must close the icon picker")
         XCTAssertTrue(
             waitFor(row.value as? String != before),
             "The picked icon (\(symbolID)) must reach the form: \(row.value as? String ?? "nil")"
@@ -596,7 +596,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
 
     private func label(_ identifier: String) -> String {
         let element = app.staticTexts[identifier]
-        _ = element.waitForExistence(timeout: 5)
+        _ = element.waitUntilExists(timeout: 5)
         return element.label
     }
 

@@ -25,7 +25,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(ignore.waitForExistence(timeout: 2), "In-card Ignore → should stay available after a selection")
         ignore.tap()
 
-        XCTAssertTrue(questionTwo.waitForExistence(timeout: 2), "In-card Ignore should move to question two immediately")
+        XCTAssertTrue(questionTwo.waitUntilExists(timeout: 2), "In-card Ignore should move to question two immediately")
         releaseDelay()
         XCTAssertFalse(
             questionThree.waitForExistence(timeout: 1),
@@ -40,7 +40,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         waitForDelayPending()
 
         let currentDot = pageDot(1)
-        XCTAssertTrue(currentDot.waitForExistence(timeout: 2), "Current page dot Question 1 of 3 should be tappable")
+        XCTAssertTrue(currentDot.waitUntilExists(timeout: 2), "Current page dot Question 1 of 3 should be tappable")
         currentDot.tap()
 
         XCTAssertTrue(questionOne.waitForExistence(timeout: 2), "Tapping the current page dot should keep question one")
@@ -58,11 +58,11 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         waitForDelayPending()
 
         let expand = app.descendants(matching: .any)["ask.expand"]
-        XCTAssertTrue(expand.waitForExistence(timeout: 2), "Expand ask request should be visible")
+        XCTAssertTrue(expand.waitUntilExists(timeout: 2), "Expand ask request should be visible")
         expand.tap()
 
         let sheet = app.descendants(matching: .any)["ask.approval.scroll"]
-        XCTAssertTrue(sheet.waitForExistence(timeout: 3), "Expand ask request must open the expanded ask sheet")
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 3), "Expand ask request must open the expanded ask sheet")
         releaseDelay()
         XCTAssertFalse(
             questionTwo.waitForExistence(timeout: 1),
@@ -77,17 +77,17 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
     /// X path: ignore-all before any answer, which still marks submitted.
     func testComposerXIgnoresRequestBeforeSelection() {
         launchIntentPreview()
-        XCTAssertTrue(delayIdle.waitForExistence(timeout: 2), "No delay should be pending before a selection")
+        XCTAssertTrue(delayIdle.waitUntilExists(timeout: 2), "No delay should be pending before a selection")
 
         let composerIgnore = app.buttons["Ignore request"]
         XCTAssertTrue(
-            composerIgnore.waitForExistence(timeout: 2),
+            composerIgnore.waitUntilExists(timeout: 2),
             "Composer X (Ignore request) is reachable only before a selectable answer makes Send the primary action"
         )
         composerIgnore.tap()
 
         XCTAssertTrue(
-            app.staticTexts["Ignored all"].waitForExistence(timeout: 2),
+            app.staticTexts["Ignored all"].waitUntilExists(timeout: 2),
             "Composer X should ignore the whole request"
         )
         XCTAssertTrue(questionOne.waitForExistence(timeout: 2), "Composer X must not wait for store removal")
@@ -98,16 +98,16 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
     func testSameIdContentUpdateClampsPage() {
         launchIntentPreview()
         let lastDot = pageDot(3)
-        XCTAssertTrue(lastDot.waitForExistence(timeout: 2), "Last page dot should be tappable")
+        XCTAssertTrue(lastDot.waitUntilExists(timeout: 2), "Last page dot should be tappable")
         lastDot.tap()
-        XCTAssertTrue(questionThree.waitForExistence(timeout: 2), "Page 3 should be reachable before replacement")
+        XCTAssertTrue(questionThree.waitUntilExists(timeout: 2), "Page 3 should be reachable before replacement")
 
         let replace = app.buttons["Replace same-id content"]
-        XCTAssertTrue(replace.waitForExistence(timeout: 2), "Same-id replacement control should be visible")
+        XCTAssertTrue(replace.waitUntilExists(timeout: 2), "Same-id replacement control should be visible")
         replace.tap()
 
         XCTAssertTrue(
-            replacementQuestion.waitForExistence(timeout: 2),
+            replacementQuestion.waitUntilExists(timeout: 2),
             "Same-id shorter content must clamp onto the replacement question"
         )
         XCTAssertFalse(questionThree.waitForExistence(timeout: 1), "Clamped page must not keep the old last question")
@@ -117,9 +117,9 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
     func testTallAskCardScrollsInsideCappedSlot() {
         launchPreview(screen: "ask-card-tall-scroll", readyTimeout: 8)
         let scroll = app.scrollViews["chat.ask.scroll"]
-        XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Ask slot scroll view missing")
+        XCTAssertTrue(scroll.waitUntilExists(timeout: 5), "Ask slot scroll view missing")
         let last = app.descendants(matching: .any)["ask.option.omega"]
-        XCTAssertTrue(last.waitForExistence(timeout: 5), "Last Ask option missing from the tall card")
+        XCTAssertTrue(last.waitUntilExists(timeout: 5), "Last Ask option missing from the tall card")
         XCTAssertFalse(
             app.keyboards.firstMatch.exists,
             "Tall Ask preview must start unfocused so the keyboard-down slot can be measured"
@@ -137,9 +137,9 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         )
 
         let input = app.textViews["chat.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5), "Composer input missing")
+        XCTAssertTrue(input.waitUntilExists(timeout: 5), "Composer input missing")
         input.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Keyboard did not appear")
+        XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "Keyboard did not appear")
         saveScreenshot(name: "ask-tall-keyboard-up")
         XCTAssertLessThanOrEqual(
             scroll.frame.height,
@@ -159,7 +159,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
     func testIgnoreHitTargetOutsideGlyph() {
         launchIntentPreview()
         let ignore = inCardIgnore
-        XCTAssertTrue(ignore.waitForExistence(timeout: 2), "In-card Ignore → should be visible")
+        XCTAssertTrue(ignore.waitUntilExists(timeout: 2), "In-card Ignore → should be visible")
         XCTAssertGreaterThanOrEqual(
             ignore.frame.height,
             44,
@@ -174,7 +174,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         let outsideGlyph = ignore.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.88))
         outsideGlyph.tap()
         XCTAssertTrue(
-            questionTwo.waitForExistence(timeout: 2),
+            questionTwo.waitUntilExists(timeout: 2),
             "A tap in the Ignore padding, outside the caption glyph, must still Ignore"
         )
         saveScreenshot(name: "ask-intent-ignore-hit")
@@ -206,7 +206,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         let labels = ["alpha": "Alpha", "bravo": "Bravo"]
         let label = labels[value] ?? value.capitalized
         let option = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
-        XCTAssertTrue(option.waitForExistence(timeout: 5), "Missing option \(label)")
+        XCTAssertTrue(option.waitUntilExists(timeout: 5), "Missing option \(label)")
         option.tap()
     }
 
@@ -216,20 +216,20 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
 
     private func waitForDelayPending() {
         XCTAssertTrue(
-            delayPending.waitForExistence(timeout: 2),
+            delayPending.waitUntilExists(timeout: 2),
             "AskCard must register a pending auto-advance wait after the option tap"
         )
     }
 
     private func releaseDelay() {
         let release = app.buttons["Release delay"]
-        XCTAssertTrue(release.waitForExistence(timeout: 2), "Release delay control should be visible")
+        XCTAssertTrue(release.waitUntilExists(timeout: 2), "Release delay control should be visible")
         release.tap()
     }
 
     private func launchIntentPreview() {
         launchPreview(screen: "ask-card-intent-regression", readyTimeout: 8)
-        XCTAssertTrue(questionOne.waitForExistence(timeout: 5), "Question one should be visible")
+        XCTAssertTrue(questionOne.waitUntilExists(timeout: 5), "Question one should be visible")
     }
 
     private func saveScreenshot(name: String) {

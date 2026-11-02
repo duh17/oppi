@@ -32,7 +32,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         // A generic extension call (`extensions.notes`) paints as a notebook cell
         // instead, so it cannot stand in for this surface.
         let readFocus = app.descendants(matching: .any)["harness.readMarkdown.focus"]
-        XCTAssertTrue(readFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(readFocus.waitUntilExists(timeout: 4))
         readFocus.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.readMarkdownExpanded", equals: 1, timeout: 4), 1)
@@ -66,7 +66,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         // Focus the extension text tool — it has long plain-text content that
         // supports full-screen expansion via double-tap.
         let extensionTextFocus = app.descendants(matching: .any)["harness.extensionText.focus"]
-        XCTAssertTrue(extensionTextFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(extensionTextFocus.waitUntilExists(timeout: 4))
         extensionTextFocus.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
@@ -96,7 +96,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6), 7)
 
         let thinkingFocus = app.descendants(matching: .any)["harness.thinking.focus"]
-        XCTAssertTrue(thinkingFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(thinkingFocus.waitUntilExists(timeout: 4))
         thinkingFocus.tap()
         openFullScreenFromExpandedTool(
             rowIdentifier: "chat.timeline.row.alpha-reader-thinking",
@@ -108,7 +108,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         dismissFullScreenAndReturnToTimeline(expectedFullscreenContentIdentifier: nil)
 
         let toolFocus = app.descendants(matching: .any)["harness.extensionText.focus"]
-        XCTAssertTrue(toolFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(toolFocus.waitUntilExists(timeout: 4))
         toolFocus.tap()
         XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
         openFullScreenFromExpandedTool(
@@ -129,11 +129,11 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         launchHarness(noStream: true, includeVisualFixtures: true)
 
         let open = app.descendants(matching: .any)["harness.extensionReader.open"]
-        XCTAssertTrue(open.waitForExistence(timeout: 6))
+        XCTAssertTrue(open.waitUntilExists(timeout: 6))
         open.tap()
 
         let back = app.buttons["extension-native-surface-jobs-detail-back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 6), "The extension reader did not open with its own Back")
+        XCTAssertTrue(back.waitUntilExists(timeout: 6), "The extension reader did not open with its own Back")
         XCTAssertEqual(
             app.navigationBars.count, 0,
             "The extension reader must not sit under the stack's bar: \(app.navigationBars.allElementsBoundByIndex.map(\.identifier))"
@@ -177,25 +177,25 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 9, timeout: 6), 9)
 
         let scroll = app.descendants(matching: .any)["harness.notebook.scroll"]
-        XCTAssertTrue(scroll.waitForExistence(timeout: 4))
+        XCTAssertTrue(scroll.waitUntilExists(timeout: 4))
         scroll.tap()
 
         let row = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-tool-notebook"].firstMatch
         let header = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-tool-notebook.header"].firstMatch
         let timeline = app.descendants(matching: .any)["harness.timeline"].firstMatch
-        XCTAssertTrue(header.waitForExistence(timeout: 4))
+        XCTAssertTrue(header.waitUntilExists(timeout: 4))
         XCTAssertEqual(pollDiagnostic("diag.notebookExpanded", timeout: 1), 0)
         header.tap()
         XCTAssertEqual(waitForDiagnostic("diag.notebookExpanded", equals: 1, timeout: 4), 1)
 
         let call = row.descendants(matching: .any)["tool.notebook.call"].firstMatch
-        XCTAssertTrue(call.waitForExistence(timeout: 4))
+        XCTAssertTrue(call.waitUntilExists(timeout: 4))
         for _ in 0..<4 where !call.isHittable {
             timeline.swipeUp()
         }
         XCTAssertTrue(call.isHittable)
         let code = row.descendants(matching: .any)["tool.notebook.code"].firstMatch
-        XCTAssertTrue(code.waitForExistence(timeout: 4))
+        XCTAssertTrue(code.waitUntilExists(timeout: 4))
 
         // The code text, then blank space right of a call name.
         for target in [code.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
@@ -209,7 +209,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         call.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).doubleTap()
         XCTAssertTrue(
-            fullScreenDismissControl().waitForExistence(timeout: 4),
+            fullScreenDismissControl().waitUntilExists(timeout: 4),
             "Double-tap on the calls section did not open the reader"
         )
         dismissFullScreenAndReturnToTimeline(expectedFullscreenContentIdentifier: nil)
@@ -219,10 +219,10 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
     func testCustomLogExpandsToCappedTerminal() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
         expandAll.tap()
         let bottom = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottom.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottom.waitUntilExists(timeout: 4))
         bottom.tap()
 
         let row = app.descendants(matching: .any)[
@@ -232,14 +232,14 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         for _ in 0..<8 where !row.isHittable {
             timeline.swipeUp()
         }
-        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertTrue(row.waitUntilExists(timeout: 4))
         let preview = row.descendants(matching: .any)["custom.preview"].firstMatch
-        XCTAssertTrue(preview.waitForExistence(timeout: 4))
+        XCTAssertTrue(preview.waitUntilExists(timeout: 4))
         XCTAssertFalse(row.descendants(matching: .any)["custom.terminal"].firstMatch.exists)
         let collapsedHeight = row.frame.height
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)).tap()
         let terminal = row.descendants(matching: .any)["custom.terminal"].firstMatch
-        XCTAssertTrue(terminal.waitForExistence(timeout: 4))
+        XCTAssertTrue(terminal.waitUntilExists(timeout: 4))
         XCTAssertFalse(preview.exists)
         XCTAssertGreaterThan(row.frame.height, collapsedHeight)
         XCTAssertLessThan(row.frame.height, collapsedHeight + 700)
@@ -256,23 +256,23 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         // Show all items so compaction rows are in the render window.
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
         expandAll.tap()
 
         // Scroll to bottom where visual fixtures (including compaction) live.
         let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitUntilExists(timeout: 4))
         bottomButton.tap()
 
         // The compaction row is near but not at the very bottom (audio clip is
         // last). If not immediately visible, swipe the timeline to find it.
         let timeline = app.descendants(matching: .any)["harness.timeline"]
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
         let compactionRow = app.descendants(matching: .any)[
             "chat.timeline.row.alpha-visual-compaction-expandable"
         ]
         let compactionToggle = app.descendants(matching: .any)["compaction.expand-toggle"]
-        if !compactionToggle.waitForExistence(timeout: 2) {
+        if !compactionToggle.waitUntilExists(timeout: 2) {
             for _ in 0..<8 {
                 if compactionRow.exists || compactionToggle.exists { break }
                 timeline.swipeDown()
@@ -280,7 +280,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         }
 
         XCTAssertTrue(
-            compactionToggle.waitForExistence(timeout: 3),
+            compactionToggle.waitUntilExists(timeout: 3),
             "compaction.expand-toggle must exist so expand/collapse can be exercised"
         )
         XCTAssertTrue(
@@ -331,18 +331,18 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
         expandAll.tap()
 
         // Scroll to bottom near expandable content.
         let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitUntilExists(timeout: 4))
         bottomButton.tap()
         sleep(1)
 
         // Rapid-cycle compaction toggle if available.
         let compactionToggle = app.descendants(matching: .any)["compaction.expand-toggle"]
-        if compactionToggle.waitForExistence(timeout: 4) {
+        if compactionToggle.waitUntilExists(timeout: 4) {
             for _ in 0..<5 {
                 compactionToggle.tap()
                 Thread.sleep(forTimeInterval: 0.08)
@@ -351,7 +351,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         // Rapid-cycle the expand-all button to trigger render window + tool reconfigure.
         let topButton = app.descendants(matching: .any)["harness.scroll.top"]
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(topButton.waitUntilExists(timeout: 4))
 
         for _ in 0..<5 {
             expandAll.tap()
@@ -386,16 +386,16 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         expectedContentSnippet: String
     ) {
         let timeline = app.descendants(matching: .any)["harness.timeline"].firstMatch
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4), "Harness timeline missing before full-screen expand")
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4), "Harness timeline missing before full-screen expand")
 
         let row = app.descendants(matching: .any)[rowIdentifier].firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 4), "Expanded tool row \(rowIdentifier) did not appear")
+        XCTAssertTrue(row.waitUntilExists(timeout: 4), "Expanded tool row \(rowIdentifier) did not appear")
 
         let doubleTapTarget: XCUIElement
         if let contentIdentifier {
             let content = app.descendants(matching: .any)[contentIdentifier].firstMatch
             XCTAssertTrue(
-                content.waitForExistence(timeout: 4),
+                content.waitUntilExists(timeout: 4),
                 "Expanded content \(contentIdentifier) did not appear"
             )
             doubleTapTarget = content
@@ -415,12 +415,12 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         for (index, offset) in offsets.enumerated() where !dismiss.exists {
             doubleTapTarget.coordinate(withNormalizedOffset: offset).doubleTap()
             let timeout: TimeInterval = index == 0 ? 2.5 : 1.2
-            if dismiss.waitForExistence(timeout: timeout) { break }
+            if dismiss.waitUntilExists(timeout: timeout) { break }
         }
 
         if !dismiss.exists {
             row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).doubleTap()
-            _ = dismiss.waitForExistence(timeout: 1.5)
+            _ = dismiss.waitUntilExists(timeout: 1.5)
         }
 
         // Hosted markdown disables the row double-tap recognizer; context menu
@@ -438,7 +438,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         }
 
         XCTAssertTrue(
-            dismiss.waitForExistence(timeout: 4),
+            dismiss.waitUntilExists(timeout: 4),
             "Full-screen viewer did not expose fullScreen.code.close"
         )
 
@@ -446,7 +446,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
             XCTAssertTrue(
                 app.descendants(matching: .any)[expectedFullscreenContentIdentifier]
                     .firstMatch
-                    .waitForExistence(timeout: 4),
+                    .waitUntilExists(timeout: 4),
                 "Intended full-screen content \(expectedFullscreenContentIdentifier) did not appear"
             )
         }
@@ -455,7 +455,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
             NSPredicate(format: "label CONTAINS %@", expectedContentSnippet)
         ).firstMatch
         XCTAssertTrue(
-            snippet.waitForExistence(timeout: 4),
+            snippet.waitUntilExists(timeout: 4),
             "Full-screen content snippet '\(expectedContentSnippet)' did not appear"
         )
     }
@@ -481,7 +481,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         }
 
         let timeline = app.descendants(matching: .any)["harness.timeline"].firstMatch
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4), "Timeline did not return after full-screen dismiss")
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4), "Timeline did not return after full-screen dismiss")
         XCTAssertTrue(
             timeline.isHittable,
             "Timeline was not hittable after returning from full-screen"

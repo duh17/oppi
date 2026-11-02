@@ -70,7 +70,7 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
         ])
 
         let strip = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(strip.waitForExistence(timeout: 15), "The thread link should list the strip")
+        XCTAssertTrue(strip.waitUntilExists(timeout: 15), "The thread link should list the strip")
         XCTAssertEqual(strip.value as? String, "Expanded", "The link should open the thread")
         XCTAssertLessThan(strip.frame.maxY, app.windows.firstMatch.frame.maxY, "The strip should be on screen")
 
@@ -100,13 +100,13 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
     func testOpenThreadListsYourTurnBeforeWorkingAndClosingTheFoldKeepsLiveMembers() {
         launch()
         let strip = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(strip.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(strip.waitUntilExists(timeout: 15), "Thread strip missing")
         strip.tap()
         XCTAssertTrue(waitForValue(strip, "Expanded"))
 
         let working = app.buttons["session.nav.child-working"]
         let idle = app.buttons["session.nav.child-kypu"]
-        XCTAssertTrue(working.waitForExistence(timeout: 10), "The working member should list")
+        XCTAssertTrue(working.waitUntilExists(timeout: 10), "The working member should list")
         XCTAssertTrue(idle.exists, "The idle member should list")
         XCTAssertLessThan(idle.frame.minY, working.frame.minY, "Your Turn lists before Working, as the list does")
 
@@ -115,12 +115,12 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
         fold.tap()
         XCTAssertTrue(waitForValue(fold, "Expanded"))
         let stopped = app.buttons["session.nav.child-done"]
-        XCTAssertTrue(stopped.waitForExistence(timeout: 5), "Opening the fold should list the stopped member")
+        XCTAssertTrue(stopped.waitUntilExists(timeout: 5), "Opening the fold should list the stopped member")
 
         scrollClearOfBottomBar(fold)
         fold.tap()
         XCTAssertTrue(waitForValue(fold, "Collapsed"))
-        XCTAssertTrue(stopped.waitForNonExistence(timeout: 5), "Closing the fold hides the stopped members")
+        XCTAssertTrue(stopped.waitUntilGone(timeout: 5), "Closing the fold hides the stopped members")
         XCTAssertTrue(working.exists, "Closing the fold keeps the live members")
     }
 
@@ -129,7 +129,7 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
     func testThreadLinkOpensTheThreadInPlaceAndScrollsToItsRoot() {
         launch(environment: ["SCREENSHOT_THREAD_FOCUS": "thread-root", "SCREENSHOT_LIST_FILLER": "25"])
         let strip = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(strip.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(strip.waitUntilExists(timeout: 15), "Thread strip missing")
         XCTAssertTrue(waitForValue(strip, "Expanded"), "The link should open the thread in place")
 
         let root = app.buttons["session.nav.thread-root"]
@@ -145,7 +145,7 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
     /// The control for the scroll: without a link the same list leaves the thread root below the filler.
     func testWithoutAThreadLinkTheRootStaysBelowTheOtherSessions() {
         launch(environment: ["SCREENSHOT_LIST_FILLER": "25"])
-        XCTAssertTrue(app.buttons["session.nav.filler-24"].waitForExistence(timeout: 15), "Filler sessions missing")
+        XCTAssertTrue(app.buttons["session.nav.filler-24"].waitUntilExists(timeout: 15), "Filler sessions missing")
         XCTAssertFalse(app.buttons["session.nav.thread-root"].exists, "The root should be below the first screen")
     }
 
@@ -153,13 +153,13 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
     func testBigThreadKeepsItsLiveMembersOnTheFirstScreen() {
         launch(environment: ["SCREENSHOT_THREAD_STOPPED_COUNT": "100"])
         let strip = app.buttons["thread.nav.thread-root"]
-        XCTAssertTrue(strip.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(strip.waitUntilExists(timeout: 15), "Thread strip missing")
         strip.tap()
         XCTAssertTrue(waitForValue(strip, "Expanded"))
 
         let working = app.buttons["session.nav.child-working"]
         let fold = app.buttons["thread.stopped.thread-root"]
-        XCTAssertTrue(working.waitForExistence(timeout: 10), "The working member should list")
+        XCTAssertTrue(working.waitUntilExists(timeout: 10), "The working member should list")
         XCTAssertTrue(app.windows.firstMatch.frame.contains(working.frame), "The live member is on the first screen")
         XCTAssertTrue(fold.exists, "The fold row follows the live members on the first screen")
         XCTAssertEqual(fold.label, "102 Stopped")

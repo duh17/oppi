@@ -53,7 +53,7 @@ final class UIValidateTests: XCTestCase {
 
         let ready = app.descendants(matching: .any)[resolvedReady]
         XCTAssertTrue(
-            ready.waitForExistence(timeout: 8),
+            ready.waitUntilExists(timeout: 8),
             "Screenshot preview \(resolvedScreen) did not become ready"
         )
 
@@ -102,7 +102,7 @@ final class UIValidateTests: XCTestCase {
                 let swipeUp = identifier.hasPrefix("swipeup:")
                 let targetID = (doubleTap || swipeUp) ? String(identifier.dropFirst(identifier.firstIndex(of: ":").map { identifier.distance(from: identifier.startIndex, to: $0) + 1 } ?? 0)) : identifier
                 let target = app.descendants(matching: .any).matching(identifier: targetID).firstMatch
-                XCTAssertTrue(target.waitForExistence(timeout: 8), "Missing action: \(identifier)")
+                XCTAssertTrue(target.waitUntilExists(timeout: 8), "Missing action: \(identifier)")
                 if doubleTap { target.doubleTap() } else if swipeUp { target.swipeUp() } else { target.tap() }
             }
             _ = try app.snapshot() // Wait for the resulting UI state to settle.

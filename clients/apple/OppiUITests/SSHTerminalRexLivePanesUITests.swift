@@ -76,9 +76,9 @@ final class SSHTerminalRexLivePanesUITests: XCTestCase {
     func testACommittedSwipePutsTheNextPaneOnTheGrid() {
         launch()
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear")
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear")
         let grid = element("sshTerminal.grid")
-        XCTAssertTrue(grid.waitForExistence(timeout: 15), "The terminal grid never appeared")
+        XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The terminal grid never appeared")
         // The pane count settles when the panes' titles arrive, after the pill.
         XCTAssertTrue(waitFor(paneValue(switcher).contains("1 of 3")), "Not three panes: \(paneValue(switcher))")
         // The grid names the pane it paints, and it is the pane the switcher

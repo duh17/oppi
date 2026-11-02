@@ -21,7 +21,7 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
     func testSkillsListRowsSearchAndNoResults() {
         launchSettingsSweep(page: "skills", showsWrites: true)
         let release = app.buttons["skills.row.release"]
-        XCTAssertTrue(release.waitForExistence(timeout: 10), "Skills list did not load")
+        XCTAssertTrue(release.waitUntilExists(timeout: 10), "Skills list did not load")
         XCTAssertEqual(release.label, "release, ~/.pi/agent/skills, Enabled")
         XCTAssertEqual(app.buttons["skills.row.broken"].label, "release-checks, ~/.pi/agent/skills, Error")
         XCTAssertEqual(app.buttons["skills.row.deep-research"].label, "deep-research, Pi user settings, Disabled")
@@ -31,14 +31,14 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertFalse(app.buttons["serverCatalog.server.menu"].exists)
 
         let search = app.searchFields["Search skills"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "Skills must search in the host's bar")
+        XCTAssertTrue(search.waitUntilExists(timeout: 5), "Skills must search in the host's bar")
         search.tap()
         search.typeText("deep")
-        XCTAssertTrue(app.buttons["skills.row.deep-research"].waitForExistence(timeout: 5))
-        XCTAssertTrue(release.waitForNonExistence(timeout: 10), "Search must narrow the list")
+        XCTAssertTrue(app.buttons["skills.row.deep-research"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(release.waitUntilGone(timeout: 10), "Search must narrow the list")
         search.clearText()
         search.typeText("no-matching-skill")
-        XCTAssertTrue(app.staticTexts["skills.state"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["skills.state"].waitUntilExists(timeout: 5))
         XCTAssertFalse(app.buttons["skills.row.deep-research"].exists)
         assertRunning()
     }
@@ -47,7 +47,7 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
     func testOfflineCatalogShowsCachedWarning() {
         launchSettingsSweep(page: "skills-offline", showsWrites: true)
         XCTAssertTrue(
-            app.descendants(matching: .any)["skills.cachedWarning"].waitForExistence(timeout: 10),
+            app.descendants(matching: .any)["skills.cachedWarning"].waitUntilExists(timeout: 10),
             "A failed refresh with cached rows must warn"
         )
         XCTAssertTrue(app.buttons["skills.row.release"].exists, "The cached catalog must stay listed")
@@ -58,7 +58,7 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
     func testSkillDetailSwitchSavesAndOffersFiles() {
         launchSettingsSweep(page: "skill-detail", showsWrites: true)
         let enabled = app.switches["skills.detail.enabled"]
-        XCTAssertTrue(enabled.waitForExistence(timeout: 10), "Skill page did not load")
+        XCTAssertTrue(enabled.waitUntilExists(timeout: 10), "Skill page did not load")
         XCTAssertEqual(enabled.label, "Enable release on mac-studio")
         XCTAssertEqual(enabled.value as? String, "1")
 
@@ -69,7 +69,7 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
         )
 
         let files = app.buttons["skills.files.open"]
-        XCTAssertTrue(files.waitForExistence(timeout: 10), "The file list row did not show")
+        XCTAssertTrue(files.waitUntilExists(timeout: 10), "The file list row did not show")
         XCTAssertEqual(files.label, "Browse release files")
         XCTAssertEqual(files.value as? String, "3 files")
         assertRunning()
@@ -79,7 +79,7 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
     func testSkillBrowserOpensFolders() {
         launchSettingsSweep(page: "skill-browser", showsWrites: true)
         let file = app.buttons["skills.file.SKILL.md"]
-        XCTAssertTrue(file.waitForExistence(timeout: 10), "The file tree did not load")
+        XCTAssertTrue(file.waitUntilExists(timeout: 10), "The file tree did not load")
         XCTAssertEqual(file.label, "Open SKILL.md")
         let folder = app.buttons["skills.dir.scripts"]
         XCTAssertTrue(folder.exists)
@@ -87,11 +87,11 @@ final class ServerSkillsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertFalse(app.buttons["skills.file.scripts/check.sh"].exists)
 
         folder.tap()
-        XCTAssertTrue(app.buttons["skills.file.scripts/check.sh"].waitForExistence(timeout: 5), "Opening a folder must list its files")
+        XCTAssertTrue(app.buttons["skills.file.scripts/check.sh"].waitUntilExists(timeout: 5), "Opening a folder must list its files")
         XCTAssertEqual(folder.value as? String, "Expanded")
         folder.tap()
         XCTAssertTrue(
-            app.buttons["skills.file.scripts/check.sh"].waitForNonExistence(timeout: 10),
+            app.buttons["skills.file.scripts/check.sh"].waitUntilGone(timeout: 10),
             "Closing the folder must hide its files"
         )
         assertRunning()

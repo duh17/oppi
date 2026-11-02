@@ -82,7 +82,7 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         let unexpectedLabel = expected ? "reduce-motion-off" : "reduce-motion-on"
         let labeled = app.staticTexts[expectedLabel]
         XCTAssertTrue(
-            labeled.waitForExistence(timeout: 4),
+            labeled.waitUntilExists(timeout: 4),
             "DEBUG wrapper @Environment accessibilityReduceMotion was not \(expectedLabel) before interaction"
         )
         XCTAssertFalse(
@@ -93,13 +93,13 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
 
     private func tapNext() {
         let button = app.buttons["fileViewer.next"]
-        XCTAssertTrue(button.waitForExistence(timeout: 4), "Next file control missing")
+        XCTAssertTrue(button.waitUntilExists(timeout: 4), "Next file control missing")
         button.tap()
     }
 
     private func tapPrevious() {
         let button = app.buttons["fileViewer.previous"]
-        XCTAssertTrue(button.waitForExistence(timeout: 4), "Previous file control missing")
+        XCTAssertTrue(button.waitUntilExists(timeout: 4), "Previous file control missing")
         button.tap()
     }
 
@@ -108,7 +108,7 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
             .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", marker, marker))
             .firstMatch
         XCTAssertTrue(
-            match.waitForExistence(timeout: 8),
+            match.waitUntilExists(timeout: 8),
             "Expected visible page marker \(marker)"
         )
     }

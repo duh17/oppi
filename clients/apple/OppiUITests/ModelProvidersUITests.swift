@@ -21,11 +21,11 @@ final class ModelProvidersUITests: XCTestCase, PreviewUITestCase {
     func testProvidersLoadTheirGroupsAndOpenTheKeySheet() {
         launchSettingsSweep(page: "model-providers", showsWrites: true)
         XCTAssertTrue(
-            app.collectionViews["server.modelProviders.list"].waitForExistence(timeout: 10),
+            app.collectionViews["server.modelProviders.list"].waitUntilExists(timeout: 10),
             "The providers list did not appear"
         )
         let connected = app.staticTexts["Connected"]
-        XCTAssertTrue(connected.waitForExistence(timeout: 10), "The connected group is missing")
+        XCTAssertTrue(connected.waitUntilExists(timeout: 10), "The connected group is missing")
         XCTAssertTrue(app.staticTexts["Available"].exists, "The available group is missing")
         XCTAssertTrue(
             app.buttons["server.modelProviders.anthropic.manage"].exists,
@@ -40,13 +40,13 @@ final class ModelProvidersUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
 
         let setKey = app.buttons["server.modelProviders.openai.connect"]
-        XCTAssertTrue(setKey.waitForExistence(timeout: 5), "The unconnected provider has no connect button")
+        XCTAssertTrue(setKey.waitUntilExists(timeout: 5), "The unconnected provider has no connect button")
         setKey.tap()
         let sheet = app.navigationBars["Set API Key"]
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "The key sheet did not open from its row")
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "The key sheet did not open from its row")
         // A key is a secure field, so XCUITest reports it as a secure text field.
         let field = app.secureTextFields["server.modelProviders.apiKey.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "The key sheet has no field")
+        XCTAssertTrue(field.waitUntilExists(timeout: 5), "The key sheet has no field")
         attachScreenshot("model-providers-api-key")
 
         let save = app.buttons["server.modelProviders.apiKey.save"]
@@ -59,7 +59,7 @@ final class ModelProvidersUITests: XCTestCase, PreviewUITestCase {
         // A bar item in a router sheet reports no hit point to XCTest, so tap
         // the center of its frame.
         let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "The key sheet has no Cancel")
+        XCTAssertTrue(cancel.waitUntilExists(timeout: 5), "The key sheet has no Cancel")
         cancel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Cancel must close the key sheet")
         XCTAssertTrue(app.staticTexts["Connected"].waitForExistence(timeout: 5), "The list must still be there")

@@ -91,7 +91,7 @@ class UIHarnessTestCase: XCTestCase {
         }
 
         XCTAssertTrue(
-            app.descendants(matching: .any)["harness.ready"].waitForExistence(timeout: 10),
+            app.descendants(matching: .any)["harness.ready"].waitUntilExists(timeout: 10),
             "Harness did not become ready"
         )
     }
@@ -140,7 +140,7 @@ class UIHarnessTestCase: XCTestCase {
             }
 
             let element = app.descendants(matching: .any)[id]
-            if element.waitForExistence(timeout: 0.15),
+            if element.waitUntilExists(timeout: 0.15),
                let value = parseDiagnosticValue(element) {
                 return value
             }
@@ -266,7 +266,7 @@ class UIHarnessTestCase: XCTestCase {
         line: UInt = #line
     ) {
         XCTAssertTrue(
-            element.waitForExistence(timeout: timeout),
+            element.waitUntilExists(timeout: timeout),
             "Harness control did not exist",
             file: file,
             line: line

@@ -40,10 +40,10 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
 
     private func openTerminalSettings() {
         let settings = app.buttons["sshTerminal.settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "The Terminal page's ⚙︎ did not appear")
+        XCTAssertTrue(settings.waitUntilExists(timeout: 10), "The Terminal page's ⚙︎ did not appear")
         settings.tap()
         XCTAssertTrue(
-            element("settings.sshTerminal.list").waitForExistence(timeout: 5),
+            element("settings.sshTerminal.list").waitUntilExists(timeout: 5),
             "⚙︎ must open Settings › Terminal"
         )
     }
@@ -63,24 +63,24 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
 
         // The Bottom Bar row opens the bar's own page, and Back returns here.
         app.buttons["settings.sshTerminal.bar"].firstMatch.tap()
-        XCTAssertTrue(element("settings.sshTerminal.bar.list").waitForExistence(timeout: 5), "Bottom Bar did not open")
+        XCTAssertTrue(element("settings.sshTerminal.bar.list").waitUntilExists(timeout: 5), "Bottom Bar did not open")
         app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(element("settings.sshTerminal.list").waitForExistence(timeout: 5), "Back must return to Terminal Settings")
+        XCTAssertTrue(element("settings.sshTerminal.list").waitUntilExists(timeout: 5), "Back must return to Terminal Settings")
 
         // The ⋯ is the Terminal page's row, so Back once more takes this there.
         app.buttons["BackButton"].firstMatch.tap()
         let menu = hostMenus.firstMatch
-        XCTAssertTrue(menu.waitForExistence(timeout: 5), "The Terminal page's host row has no ⋯ menu")
+        XCTAssertTrue(menu.waitUntilExists(timeout: 5), "The Terminal page's host row has no ⋯ menu")
         menu.tap()
         attachScreenshot("host-menu")
         // A menu's items carry no identifier, so each is found by its title.
         let edit = app.descendants(matching: .any)["Edit Host"].firstMatch
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "The host menu must offer Edit Host")
+        XCTAssertTrue(edit.waitUntilExists(timeout: 5), "The host menu must offer Edit Host")
         edit.tap()
-        XCTAssertTrue(app.textFields["sshTerminal.host"].waitForExistence(timeout: 5), "Edit Host did not push the form")
+        XCTAssertTrue(app.textFields["sshTerminal.host"].waitUntilExists(timeout: 5), "Edit Host did not push the form")
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(
-            app.buttons["sshTerminal.settings"].waitForExistence(timeout: 5),
+            app.buttons["sshTerminal.settings"].waitUntilExists(timeout: 5),
             "Back must return to the Terminal page the form was opened from"
         )
         assertRunning()
@@ -93,15 +93,15 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
         openTerminalSettings()
         app.buttons["settings.sshTerminal.rexTailnet"].firstMatch.tap()
         XCTAssertTrue(
-            element("settings.sshTerminal.rexTailnet.list").waitForExistence(timeout: 5),
+            element("settings.sshTerminal.rexTailnet.list").waitUntilExists(timeout: 5),
             "Rex on Your Tailnet did not open"
         )
         let add = app.buttons["settings.sshTerminal.rexTailnet.add"]
-        XCTAssertTrue(add.waitForExistence(timeout: 5), "The page has no Add Rex by Tailscale Name row")
+        XCTAssertTrue(add.waitUntilExists(timeout: 5), "The page has no Add Rex by Tailscale Name row")
 
         add.tap()
         let field = app.textFields["sshTerminal.rexTailnet.addName"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Add Rex by Tailscale Name did not ask for a name")
+        XCTAssertTrue(field.waitUntilExists(timeout: 5), "Add Rex by Tailscale Name did not ask for a name")
         field.tap()
         field.typeText("rex.tail1234.ts.net")
         // The alert's button is exposed twice on iOS 27 (once as a key artifact), so
@@ -109,7 +109,7 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
         app.buttons["sshTerminal.rexTailnet.addConfirm"].firstMatch.tap()
 
         let row = element("settings.sshTerminal.rexTailnet.rex.tail1234.ts.net")
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "The added Rex must be a row")
+        XCTAssertTrue(row.waitUntilExists(timeout: 5), "The added Rex must be a row")
         attachScreenshot("settings-rex-tailnet-added")
         assertRunning()
     }
@@ -119,24 +119,24 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
     /// rows open the form.
     func testSettingsRootOpensTerminalAndItsHostForm() {
         launch(page: "ssh-term-settings")
-        XCTAssertTrue(element("settings.sshTerminal.list").waitForExistence(timeout: 10), "Settings › Terminal did not open")
+        XCTAssertTrue(element("settings.sshTerminal.list").waitUntilExists(timeout: 10), "Settings › Terminal did not open")
 
         app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(element("settings.list").waitForExistence(timeout: 5), "Back must reach App Settings")
+        XCTAssertTrue(element("settings.list").waitUntilExists(timeout: 5), "Back must reach App Settings")
         let terminal = app.buttons["settings.sshTerminal"]
-        XCTAssertTrue(terminal.waitForExistence(timeout: 5), "App Settings has no Terminal row")
+        XCTAssertTrue(terminal.waitUntilExists(timeout: 5), "App Settings has no Terminal row")
         terminal.tap()
         XCTAssertTrue(
-            element("settings.sshTerminal.list").waitForExistence(timeout: 5),
+            element("settings.sshTerminal.list").waitUntilExists(timeout: 5),
             "Settings → Terminal must open Terminal Settings"
         )
 
         let host = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "settings.sshTerminal.host.")).firstMatch
-        XCTAssertTrue(host.waitForExistence(timeout: 5), "Terminal Settings has no host row")
+        XCTAssertTrue(host.waitUntilExists(timeout: 5), "Terminal Settings has no host row")
         host.tap()
-        XCTAssertTrue(app.textFields["sshTerminal.host"].waitForExistence(timeout: 5), "A host row must open its form")
+        XCTAssertTrue(app.textFields["sshTerminal.host"].waitUntilExists(timeout: 5), "A host row must open its form")
         app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(element("settings.sshTerminal.list").waitForExistence(timeout: 5), "Back must return to Terminal Settings")
+        XCTAssertTrue(element("settings.sshTerminal.list").waitUntilExists(timeout: 5), "Back must return to Terminal Settings")
         assertRunning()
     }
 
@@ -153,18 +153,18 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(menus.count, 2, "Both saved hosts have a ⋯ menu")
         menus.firstMatch.tap()
         let delete = app.descendants(matching: .any)["Delete Host"].firstMatch
-        XCTAssertTrue(delete.waitForExistence(timeout: 5), "The host menu must offer Delete Host")
+        XCTAssertTrue(delete.waitUntilExists(timeout: 5), "The host menu must offer Delete Host")
         delete.tap()
         // A sheet on iPhone, a popover on iPad; the confirming button is the one
         // element with its own identifier, exposed twice (once as a key artifact).
         let confirm = app.buttons["sshTerminal.host.delete.confirm"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Deleting a host must ask first")
+        XCTAssertTrue(confirm.waitUntilExists(timeout: 5), "Deleting a host must ask first")
         attachScreenshot("host-delete-confirmation")
 
         // Since iOS 26 an action sheet anchored to its source is drawn as a popover
         // and the system omits the `.cancel` action: a tap outside dismisses it.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
-        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5), "Tapping outside must close the confirmation")
+        XCTAssertTrue(confirm.waitUntilGone(timeout: 5), "Tapping outside must close the confirmation")
         assertRunning()
     }
 }

@@ -329,10 +329,10 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
 
     private func enqueueSteer(times: Int) {
         let clear = app.descendants(matching: .any)["harness.queue.clear"]
-        XCTAssertTrue(clear.waitForExistence(timeout: 4))
+        XCTAssertTrue(clear.waitUntilExists(timeout: 4))
         clear.tap()
         let enqueue = app.descendants(matching: .any)["harness.queue.enqueueSteer"]
-        XCTAssertTrue(enqueue.waitForExistence(timeout: 4))
+        XCTAssertTrue(enqueue.waitUntilExists(timeout: 4))
         for _ in 0..<times {
             enqueue.tap()
         }
@@ -340,10 +340,10 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
 
     private func expandQueue() {
         let toggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 4))
         toggle.tap()
         let list = app.descendants(matching: .any)["chat.messageQueue.list"]
-        XCTAssertTrue(list.waitForExistence(timeout: 4), "Queue editor did not expand")
+        XCTAssertTrue(list.waitUntilExists(timeout: 4), "Queue editor did not expand")
     }
 
     private func writeReceipt(_ receipt: QAVerificationReceipt) {

@@ -20,7 +20,7 @@ final class InAppBrowserPresentationUITests: XCTestCase {
         let browserView = app.descendants(matching: .any)["inAppBrowser.view"]
         let githubNavigationBar = app.navigationBars["github.com"]
         XCTAssertTrue(
-            browserView.waitForExistence(timeout: 15) || githubNavigationBar.waitForExistence(timeout: 3),
+            browserView.waitUntilExists(timeout: 15) || githubNavigationBar.waitUntilExists(timeout: 3),
             "In-app browser did not open"
         )
 

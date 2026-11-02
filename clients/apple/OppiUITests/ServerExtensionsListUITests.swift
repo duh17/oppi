@@ -19,10 +19,10 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
 
     func testCatalogSectionsAndRowsAreButtons() {
         launchSettingsSweep(page: "extensions")
-        XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Extensions"].waitUntilExists(timeout: 10))
 
         let server = app.descendants(matching: .any)["serverCatalog.server.passive"]
-        XCTAssertTrue(server.waitForExistence(timeout: 5), "A single paired server is a passive row")
+        XCTAssertTrue(server.waitUntilExists(timeout: 5), "A single paired server is a passive row")
         XCTAssertEqual(server.label, "Current server: mac-studio")
 
         for header in ["Built-in", "Needs Attention", "Enabled Pi Extensions", "Disabled Pi Extensions"] {
@@ -40,18 +40,18 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
     func testSearchFiltersAndShowsNoResults() {
         launchSettingsSweep(page: "extensions")
         let search = app.searchFields["Search extensions"]
-        XCTAssertTrue(search.waitForExistence(timeout: 10), "The search bar did not render")
+        XCTAssertTrue(search.waitUntilExists(timeout: 10), "The search bar did not render")
         search.tap()
         search.typeText("workflow")
-        XCTAssertTrue(app.buttons["extensions.row.workflow"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["extensions.row.workflow"].waitUntilExists(timeout: 5))
         XCTAssertTrue(
-            app.buttons["extensions.row.simplify"].waitForNonExistence(timeout: 5),
+            app.buttons["extensions.row.simplify"].waitUntilGone(timeout: 5),
             "Search must filter rows"
         )
         XCTAssertFalse(app.buttons["extensions.row.oppi-ask"].exists)
 
         search.clearAndTypeText("no-matching-extension")
-        XCTAssertTrue(app.staticTexts["extensions.state"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["extensions.state"].waitUntilExists(timeout: 5))
         XCTAssertEqual(
             app.staticTexts["extensions.state"].label, "No extensions match “no-matching-extension”.",
             "The empty state names the query"
@@ -59,13 +59,13 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("extensions-no-results")
 
         search.clearAndTypeText("")
-        XCTAssertTrue(app.buttons["extensions.row.simplify"].waitForExistence(timeout: 5), "Clearing search brings the rows back")
+        XCTAssertTrue(app.buttons["extensions.row.simplify"].waitUntilExists(timeout: 5), "Clearing search brings the rows back")
     }
 
     func testCachedCatalogShowsOfflineWarningOverRows() {
         launchSettingsSweep(page: "extensions-offline")
         let warning = app.descendants(matching: .any)["extensions.cachedWarning"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 10), "A failed sync over a cached catalog warns")
+        XCTAssertTrue(warning.waitUntilExists(timeout: 10), "A failed sync over a cached catalog warns")
         XCTAssertTrue(warning.label.contains("Showing cached settings for mac-studio"))
         XCTAssertTrue(app.buttons["extensions.row.workflow"].exists, "The cached rows stay")
         attachScreenshot("extensions-cached-offline")
@@ -74,7 +74,7 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
     func testUnavailableCatalogShowsRetry() {
         launchSettingsSweep(page: "extensions-unavailable")
         let retry = app.buttons["extensions.state"]
-        XCTAssertTrue(retry.waitForExistence(timeout: 20), "A failed first load offers Retry")
+        XCTAssertTrue(retry.waitUntilExists(timeout: 20), "A failed first load offers Retry")
         XCTAssertTrue(retry.label.localizedCaseInsensitiveContains("Couldn't Load Extensions"), "The row says what failed: \(retry.label)")
         XCTAssertFalse(app.buttons["extensions.row.workflow"].exists)
         attachScreenshot("extensions-unavailable")
@@ -82,7 +82,7 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
 
     func testCatalogWithoutPiExtensionsSaysSo() {
         launchSettingsSweep(page: "extensions-builtin-only")
-        XCTAssertTrue(app.staticTexts["extensions.noPi"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["extensions.noPi"].waitUntilExists(timeout: 10))
         XCTAssertTrue(app.buttons["extensions.row.oppi-ask"].exists, "Built-in extensions still list")
         attachScreenshot("extensions-no-pi")
     }

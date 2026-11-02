@@ -52,8 +52,8 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
     /// Shell. Choosing it lists the saved hosts and takes the Rex sections away.
     func testTheModeButtonSwitchesBetweenRexAndShell() {
         launch(page: "ssh-hosts-mode", rex: true)
-        XCTAssertTrue(app.buttons["sshTerminal.mode"].waitForExistence(timeout: 10), "Rex on: the page has no mode button")
-        XCTAssertTrue(element("sshTerminal.mode").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sshTerminal.mode"].waitUntilExists(timeout: 10), "Rex on: the page has no mode button")
+        XCTAssertTrue(element("sshTerminal.mode").waitUntilExists(timeout: 5))
         // Rex first: every saved host's section, and no plain host row to open.
         XCTAssertTrue(waitFor(!rexHeaders.allElementsBoundByIndex.isEmpty), "Rex mode must list the hosts' Rex sections")
         XCTAssertEqual(hostRows.count, 0, "Rex mode lists panes, not host rows")
@@ -64,7 +64,7 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
         app.buttons["sshTerminal.mode"].tap()
         let rex = menuItem("Rex")
         let shell = menuItem("Shell")
-        XCTAssertTrue(rex.waitForExistence(timeout: 5), "The mode menu must offer Rex")
+        XCTAssertTrue(rex.waitUntilExists(timeout: 5), "The mode menu must offer Rex")
         XCTAssertTrue(rex.isHittable, "the menu item is on screen")
         XCTAssertTrue(shell.exists && shell.isHittable, "The mode menu must offer Shell")
         XCTAssertTrue(rex.isSelected, "The menu must tick the mode on screen")
@@ -78,7 +78,7 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
         // And the tick follows the choice.
         app.buttons["sshTerminal.mode"].tap()
         let shellAgain = menuItem("Shell")
-        XCTAssertTrue(shellAgain.waitForExistence(timeout: 5), "The mode menu must open again")
+        XCTAssertTrue(shellAgain.waitUntilExists(timeout: 5), "The mode menu must open again")
         XCTAssertTrue(shellAgain.isSelected, "The menu must tick the mode now on screen")
         XCTAssertFalse(menuItem("Rex").isSelected, "The mode left behind is unticked")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
@@ -98,20 +98,20 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
             arguments: OppiTestLaunch.experimentArguments([.rex: true])
         )
         let prefix = "sshTerminal.rexList.\(hostID)."
-        XCTAssertTrue(app.buttons[prefix + oppi].waitForExistence(timeout: 15), "The Rex section did not list its sessions")
+        XCTAssertTrue(app.buttons[prefix + oppi].waitUntilExists(timeout: 15), "The Rex section did not list its sessions")
 
         // The session's own ⊕ adds a pane to it.
         XCTAssertTrue(app.buttons[prefix + oppi + ".newPane"].exists, "A session has no ⊕ New Pane")
         // The heading is the host in Rex mode, so its ⋯ carries New Session.
         let menu = app.buttons[prefix + "menu"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 5), "The host heading has no ⋯ menu")
+        XCTAssertTrue(menu.waitUntilExists(timeout: 5), "The host heading has no ⋯ menu")
         menu.tap()
         // The ＋ in the bar is titled New Session too, so the item is the element with
         // that label that is not the bar button.
         let newSession = app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@ AND identifier != %@", "New Session", "sshTerminal.page.newSession")
         ).firstMatch
-        XCTAssertTrue(newSession.waitForExistence(timeout: 5), "The host heading must offer New Session")
+        XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "The host heading must offer New Session")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
 
         // One session open, the other closed: the chevron says which.
@@ -120,7 +120,7 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
         openDisclosure.tap()
         XCTAssertTrue(waitFor((openDisclosure.value as? String) == "Expanded"), "The chevron must expand the session")
         XCTAssertEqual(app.buttons[prefix + dotfiles + ".disclosure"].value as? String, "Collapsed")
-        XCTAssertTrue(app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"].waitForExistence(timeout: 5), "The open session lists its panes")
+        XCTAssertTrue(app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"].waitUntilExists(timeout: 5), "The open session lists its panes")
         attachScreenshot("terminal-page-rex-panes")
 
         // The mode toolbar floats over the list; the last row still has to be reachable
@@ -138,7 +138,7 @@ final class SSHTerminalModeUITests: XCTestCase, PreviewUITestCase {
     /// Both experiments off: the page is Shell, with no button to say so.
     func testThereIsNoModeButtonWhenBothExperimentsAreOff() {
         launch(page: "ssh-hosts-mode", rex: false, herdr: false)
-        XCTAssertTrue(hostRows.firstMatch.waitForExistence(timeout: 10), "Shell mode must list the saved hosts")
+        XCTAssertTrue(hostRows.firstMatch.waitUntilExists(timeout: 10), "Shell mode must list the saved hosts")
         XCTAssertFalse(app.buttons["sshTerminal.mode"].exists, "No mode choice: no mode button")
         attachScreenshot("terminal-page-no-mode")
         assertRunning()

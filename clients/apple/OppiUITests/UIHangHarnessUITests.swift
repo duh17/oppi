@@ -23,7 +23,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
     private func enableBusyStreaming() {
         let streamToggle = app.descendants(matching: .any)["harness.stream.toggle"]
-        XCTAssertTrue(streamToggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(streamToggle.waitUntilExists(timeout: 4))
         streamToggle.tap()
         XCTAssertEqual(waitForDiagnostic("diag.isBusy", equals: 1, timeout: 4), 1)
         XCTAssertEqual(waitForDiagnostic("diag.streaming", equals: 1, timeout: 4), 1)
@@ -31,17 +31,17 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
     private func reachDetachedScrolledUpState() {
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
         expandAll.tap()
 
         let topButton = app.descendants(matching: .any)["harness.scroll.top"]
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(topButton.waitUntilExists(timeout: 4))
         topButton.tap()
 
         let timeline = app.descendants(matching: .any)["harness.timeline"]
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
-        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
+        XCTAssertTrue(diagTick.waitUntilExists(timeout: 4))
 
         let deadline = Date().addingTimeInterval(8)
         var lastTop: Int?
@@ -68,13 +68,13 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
     private func reachAttachedBottomState() {
         let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitUntilExists(timeout: 4))
         bottomButton.tap()
 
         let timeline = app.descendants(matching: .any)["harness.timeline"]
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
-        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
+        XCTAssertTrue(diagTick.waitUntilExists(timeout: 4))
 
         let deadline = Date().addingTimeInterval(8)
         var lastNear: Int?
@@ -115,9 +115,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let beta = app.descendants(matching: .any)["harness.session.beta"]
         let gamma = app.descendants(matching: .any)["harness.session.gamma"]
 
-        XCTAssertTrue(alpha.waitForExistence(timeout: 4))
-        XCTAssertTrue(beta.waitForExistence(timeout: 4))
-        XCTAssertTrue(gamma.waitForExistence(timeout: 4))
+        XCTAssertTrue(alpha.waitUntilExists(timeout: 4))
+        XCTAssertTrue(beta.waitUntilExists(timeout: 4))
+        XCTAssertTrue(gamma.waitUntilExists(timeout: 4))
 
         for _ in 0..<5 {
             alpha.tap()
@@ -146,19 +146,19 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         launchHarness(noStream: true, assistantOverlapFixture: true)
 
         let focus = app.descendants(matching: .any)["harness.assistantOverlap.focus"]
-        XCTAssertTrue(focus.waitForExistence(timeout: 4))
+        XCTAssertTrue(focus.waitUntilExists(timeout: 4))
         focus.tap()
 
         let row = app.descendants(matching: .any)["chat.timeline.assistant.alpha-assistant-overlap"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
         for _ in 0..<24 where !row.exists {
             timeline.swipeUp(velocity: .fast)
         }
-        XCTAssertTrue(row.waitForExistence(timeout: 3), "Assistant overlap row should be reachable in the harness timeline")
+        XCTAssertTrue(row.waitUntilExists(timeout: 3), "Assistant overlap row should be reachable in the harness timeline")
 
         let diag = app.descendants(matching: .any)["harness.diag.tick"]
-        XCTAssertTrue(diag.waitForExistence(timeout: 4))
+        XCTAssertTrue(diag.waitUntilExists(timeout: 4))
         diag.tap()
         XCTAssertEqual(waitForDiagnostic("diag.assistantOverlapReady", equals: 1, timeout: 6), 1)
         let baselineHeight = waitForDiagnosticAtLeast("diag.assistantRowHeightPx", minimum: 40, timeout: 6)
@@ -166,7 +166,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantOverflowPx", timeout: 2), 1)
 
         let advance = app.descendants(matching: .any)["harness.assistantOverlap.advance"]
-        XCTAssertTrue(advance.waitForExistence(timeout: 4))
+        XCTAssertTrue(advance.waitUntilExists(timeout: 4))
         advance.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.assistantOverlapPhase", equals: 1, timeout: 6), 1)
@@ -211,7 +211,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
 
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
-        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
+        XCTAssertTrue(pulse.waitUntilExists(timeout: 4))
 
         let topBefore = pollDiagnostic("diag.topIndex", timeout: 4)
         XCTAssertGreaterThanOrEqual(topBefore, 0)
@@ -247,11 +247,11 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
 
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
-        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
+        XCTAssertTrue(pulse.waitUntilExists(timeout: 4))
 
         let row = app.descendants(matching: .any)["chat.timeline.row.alpha-u-1"]
         XCTAssertTrue(
-            row.waitForExistence(timeout: 5),
+            row.waitUntilExists(timeout: 5),
             "Opted-in yank test must show the scrolled-up user row"
         )
         let glyph = row.descendants(matching: .any).matching(
@@ -262,7 +262,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             )
         ).firstMatch
         XCTAssertTrue(
-            glyph.waitForExistence(timeout: 5),
+            glyph.waitUntilExists(timeout: 5),
             "Opted-in yank test must show the scrolled-up prompt glyph"
         )
         let rowYBefore = row.frame.minY
@@ -284,8 +284,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             charsBefore
         )
 
-        XCTAssertTrue(row.waitForExistence(timeout: 3), "Visible row identity disappeared after stream pulse")
-        XCTAssertTrue(glyph.waitForExistence(timeout: 3), "Visible glyph disappeared after stream pulse")
+        XCTAssertTrue(row.waitUntilExists(timeout: 3), "Visible row identity disappeared after stream pulse")
+        XCTAssertTrue(glyph.waitUntilExists(timeout: 3), "Visible glyph disappeared after stream pulse")
         let rowYAfter = row.frame.minY
         let glyphYAfter = glyph.frame.minY
         XCTAssertLessThanOrEqual(
@@ -312,22 +312,22 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         launchHarness(noStream: true)
 
         let streamToggle = app.descendants(matching: .any)["harness.stream.toggle"]
-        XCTAssertTrue(streamToggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(streamToggle.waitUntilExists(timeout: 4))
         streamToggle.tap()
 
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
-        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
+        XCTAssertTrue(pulse.waitUntilExists(timeout: 4))
         pulse.tap()
 
         let hbBefore = pollDiagnostic("diag.heartbeat", timeout: 6)
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
         let themeToggle = app.descendants(matching: .any)["harness.theme.toggle"]
-        XCTAssertTrue(themeToggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(themeToggle.waitUntilExists(timeout: 4))
         themeToggle.tap()
 
         let input = app.textFields["harness.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 4))
+        XCTAssertTrue(input.waitUntilExists(timeout: 4))
         input.tap()
 
         // Advance stream once more while keyboard is up.
@@ -352,34 +352,34 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
         expandAll.tap()
 
         let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
-        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
+        XCTAssertTrue(renderToolSet.waitUntilExists(timeout: 4))
         renderToolSet.tap()
 
         let visualImageButton = app.descendants(matching: .any)["harness.visual.image"]
-        XCTAssertTrue(visualImageButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(visualImageButton.waitUntilExists(timeout: 4))
         visualImageButton.tap()
         sleep(1) // Allow scroll animation and cell rendering
 
         // Thumbnail tap-through: a user photo opens the pushed chat reader
         // (as in a real chat), and its back button returns to the timeline.
         let firstThumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
-        XCTAssertTrue(firstThumbnail.waitForExistence(timeout: 10), "Visual image thumbnail did not become visible")
+        XCTAssertTrue(firstThumbnail.waitUntilExists(timeout: 10), "Visual image thumbnail did not become visible")
         firstThumbnail.tap()
         let readerBack = app.descendants(matching: .any)["fullscreen-image.back"]
-        XCTAssertTrue(readerBack.waitForExistence(timeout: 5), "Image reader did not open")
+        XCTAssertTrue(readerBack.waitUntilExists(timeout: 5), "Image reader did not open")
         readerBack.tap()
         XCTAssertTrue(waitForElementToDisappear(readerBack, timeout: 5), "Image reader did not close")
 
         let topButton = app.descendants(matching: .any)["harness.scroll.top"]
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(topButton.waitUntilExists(timeout: 4))
         topButton.tap()
 
         let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitUntilExists(timeout: 4))
         bottomButton.tap()
 
         XCTAssertTrue(assertHarnessStillRunning(context: "rendering visual toolset + image fullscreen"))
@@ -422,14 +422,14 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
         let visualImageButton = app.descendants(matching: .any)["harness.visual.image"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
-        XCTAssertTrue(visualImageButton.waitForExistence(timeout: 4))
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(visualImageButton.waitUntilExists(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
         visualImageButton.tap()
 
         let row = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-user-image"]
         let thumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "Visual image row did not become visible")
-        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5), "Visual image thumbnail did not become visible")
+        XCTAssertTrue(row.waitUntilExists(timeout: 5), "Visual image row did not become visible")
+        XCTAssertTrue(thumbnail.waitUntilExists(timeout: 5), "Visual image thumbnail did not become visible")
 
         // Match the reported reading gesture: move away, reverse direction,
         // then stop detached with the same stable row still visible.
@@ -443,8 +443,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             from: CGVector(dx: 0.5, dy: 0.42),
             to: CGVector(dx: 0.5, dy: 0.54)
         )
-        XCTAssertTrue(row.waitForExistence(timeout: 3))
-        XCTAssertTrue(thumbnail.waitForExistence(timeout: 3))
+        XCTAssertTrue(row.waitUntilExists(timeout: 3))
+        XCTAssertTrue(thumbnail.waitUntilExists(timeout: 3))
         // Measured inside the timeline: the router shows its navigation bar again
         // when the reader pops, which moves the harness chrome but not the viewport.
         let rowYBefore = row.frame.minY - timeline.frame.minY
@@ -452,10 +452,10 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         // A user photo opens the pushed chat reader; Back must land on the same viewport.
         thumbnail.tap()
         let readerBack = app.descendants(matching: .any)["fullscreen-image.back"]
-        XCTAssertTrue(readerBack.waitForExistence(timeout: 5), "Image reader did not open")
+        XCTAssertTrue(readerBack.waitUntilExists(timeout: 5), "Image reader did not open")
         readerBack.tap()
         XCTAssertTrue(waitForElementToDisappear(readerBack, timeout: 5), "Image reader did not close")
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "Stable image row disappeared after preview")
+        XCTAssertTrue(row.waitUntilExists(timeout: 5), "Stable image row disappeared after preview")
 
         let rowYAfter = row.frame.minY - timeline.frame.minY
         XCTAssertLessThanOrEqual(
@@ -581,7 +581,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     /// header's accessibility value is what proves the row painted expanded.
     private func expandedTopRow(itemID: String, topDiagnostic: String, diagTick: XCUIElement) -> XCUIElement {
         let header = app.descendants(matching: .any)["chat.timeline.row.\(itemID).header"]
-        XCTAssertTrue(header.waitForExistence(timeout: 4), "Header for \(itemID) is not on screen")
+        XCTAssertTrue(header.waitUntilExists(timeout: 4), "Header for \(itemID) is not on screen")
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline, (header.value as? String)?.contains("Expanded") != true {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -609,9 +609,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
 
-        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
-        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(extensionFocus.waitUntilExists(timeout: 4))
+        XCTAssertTrue(diagTick.waitUntilExists(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
 
         revealVisualFixtureRows()
         extensionFocus.tap()
@@ -686,9 +686,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
 
-        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
-        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(extensionFocus.waitUntilExists(timeout: 4))
+        XCTAssertTrue(diagTick.waitUntilExists(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
 
         revealVisualFixtureRows()
         extensionFocus.tap()
@@ -789,8 +789,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
 
-        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
-        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitUntilExists(timeout: 4))
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 4))
 
         tapHarnessControl(focusButton)
         XCTAssertEqual(waitForDiagnostic(expandedDiagnosticID, equals: 1, timeout: 4), 1)
@@ -876,9 +876,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let alpha = app.descendants(matching: .any)["harness.session.alpha"]
         let beta = app.descendants(matching: .any)["harness.session.beta"]
         let gamma = app.descendants(matching: .any)["harness.session.gamma"]
-        XCTAssertTrue(alpha.waitForExistence(timeout: 4))
-        XCTAssertTrue(beta.waitForExistence(timeout: 4))
-        XCTAssertTrue(gamma.waitForExistence(timeout: 4))
+        XCTAssertTrue(alpha.waitUntilExists(timeout: 4))
+        XCTAssertTrue(beta.waitUntilExists(timeout: 4))
+        XCTAssertTrue(gamma.waitUntilExists(timeout: 4))
 
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]
         let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
@@ -887,12 +887,12 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
         let themeToggle = app.descendants(matching: .any)["harness.theme.toggle"]
 
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
-        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
-        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
-        XCTAssertTrue(themeToggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(expandAll.waitUntilExists(timeout: 4))
+        XCTAssertTrue(renderToolSet.waitUntilExists(timeout: 4))
+        XCTAssertTrue(topButton.waitUntilExists(timeout: 4))
+        XCTAssertTrue(bottomButton.waitUntilExists(timeout: 4))
+        XCTAssertTrue(pulse.waitUntilExists(timeout: 4))
+        XCTAssertTrue(themeToggle.waitUntilExists(timeout: 4))
 
         let sessions = [alpha, beta, gamma]
         for cycle in 0..<6 {
@@ -927,7 +927,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
 
         // Reset baseline so simulator relaunches cannot leak stale queue state.
         let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
-        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        XCTAssertTrue(clearQueue.waitUntilExists(timeout: 4))
         clearQueue.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
@@ -937,7 +937,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         let startedBefore = pollDiagnostic("diag.queueStartedEvents", timeout: 4)
 
         let enqueueSteer = app.descendants(matching: .any)["harness.queue.enqueueSteer"]
-        XCTAssertTrue(enqueueSteer.waitForExistence(timeout: 4))
+        XCTAssertTrue(enqueueSteer.waitUntilExists(timeout: 4))
         enqueueSteer.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 1, timeout: 4), 1)
@@ -945,10 +945,10 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         XCTAssertEqual(waitForDiagnostic("diag.queueFollowUpCount", equals: 0, timeout: 4), 0)
 
         let queueContainer = app.descendants(matching: .any)["chat.messageQueue.toggle"]
-        XCTAssertTrue(queueContainer.waitForExistence(timeout: 4))
+        XCTAssertTrue(queueContainer.waitUntilExists(timeout: 4))
 
         let startSteer = app.descendants(matching: .any)["harness.queue.startSteer"]
-        XCTAssertTrue(startSteer.waitForExistence(timeout: 4))
+        XCTAssertTrue(startSteer.waitUntilExists(timeout: 4))
         startSteer.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
@@ -963,25 +963,25 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         launchQueueHarness()
 
         let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
-        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        XCTAssertTrue(clearQueue.waitUntilExists(timeout: 4))
         clearQueue.tap()
 
         let enqueueSteer = app.descendants(matching: .any)["harness.queue.enqueueSteer"]
-        XCTAssertTrue(enqueueSteer.waitForExistence(timeout: 4))
+        XCTAssertTrue(enqueueSteer.waitUntilExists(timeout: 4))
         enqueueSteer.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 1, timeout: 4), 1)
 
         let queueToggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
         XCTAssertTrue(
-            queueToggle.waitForExistence(timeout: 4),
+            queueToggle.waitUntilExists(timeout: 4),
             "Queue toggle should be discoverable for interaction"
         )
         queueToggle.tap()
 
         let refreshButton = app.descendants(matching: .any)["chat.messageQueue.editInComposer"]
         XCTAssertTrue(
-            refreshButton.waitForExistence(timeout: 4),
+            refreshButton.waitUntilExists(timeout: 4),
             "Expanding queue should reveal Edit in composer"
         )
 
@@ -996,29 +996,29 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         launchQueueHarness()
 
         let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
-        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        XCTAssertTrue(clearQueue.waitUntilExists(timeout: 4))
         clearQueue.tap()
 
         let enqueueAttachments = app.descendants(matching: .any)["harness.queue.enqueueAttachments"]
-        XCTAssertTrue(enqueueAttachments.waitForExistence(timeout: 4))
+        XCTAssertTrue(enqueueAttachments.waitUntilExists(timeout: 4))
         enqueueAttachments.tap()
 
         XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 2, timeout: 4), 2)
 
         let queueToggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
-        XCTAssertTrue(queueToggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(queueToggle.waitUntilExists(timeout: 4))
         queueToggle.tap()
 
         let imageAttachment = app.descendants(matching: .any)["chat.messageQueue.attachment.harness-image"]
         XCTAssertTrue(
-            imageAttachment.waitForExistence(timeout: 4),
+            imageAttachment.waitUntilExists(timeout: 4),
             "An image-only queued message should show its image name"
         )
         XCTAssertEqual(imageAttachment.label, "Photo image-1.jpg")
 
         let fileAttachment = app.descendants(matching: .any)["chat.messageQueue.attachment.harness-file"]
         XCTAssertTrue(
-            fileAttachment.waitForExistence(timeout: 4),
+            fileAttachment.waitUntilExists(timeout: 4),
             "A file-only queued message should show its file name"
         )
         XCTAssertEqual(fileAttachment.label, "Attachment notes.txt")
@@ -1032,13 +1032,13 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         app.descendants(matching: .any)["harness.stream.pulse"].tap()
         XCTAssertGreaterThan(pollDiagnostic("diag.streamChars", timeout: 4), charactersBefore)
         let clear = app.descendants(matching: .any)["harness.queue.clear"]
-        XCTAssertTrue(clear.waitForExistence(timeout: 4))
+        XCTAssertTrue(clear.waitUntilExists(timeout: 4))
         clear.tap()
         app.descendants(matching: .any)["harness.queue.enqueueSteer"].tap()
         app.descendants(matching: .any)["harness.queue.enqueueFollow"].tap()
         app.descendants(matching: .any)["chat.messageQueue.toggle"].tap()
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.messageQueue.remove.")).firstMatch
-        XCTAssertTrue(remove.waitForExistence(timeout: 4))
+        XCTAssertTrue(remove.waitUntilExists(timeout: 4))
         XCTAssertGreaterThanOrEqual(remove.frame.width, 44)
         XCTAssertGreaterThanOrEqual(remove.frame.height, 44)
         remove.tap()
@@ -1047,7 +1047,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         app.descendants(matching: .any)["chat.messageQueue.editInComposer"].tap()
         XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
         let input = app.textFields["harness.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 4))
+        XCTAssertTrue(input.waitUntilExists(timeout: 4))
         XCTAssertTrue((input.value as? String ?? "").contains("Harness follow-up message"))
         XCTAssertEqual(pollDiagnostic("diag.isBusy", timeout: 4), 1)
         XCTAssertEqual(pollDiagnostic("diag.streaming", timeout: 4), 1)

@@ -24,7 +24,7 @@ final class CodeBlockWrappingUITests: XCTestCase {
         )
 
         let wrapButton = app.buttons.matching(identifier: "markdown.codeBlock.wrap").firstMatch
-        XCTAssertTrue(wrapButton.waitForExistence(timeout: 4), "Code block wrap toggle should be visible")
+        XCTAssertTrue(wrapButton.waitUntilExists(timeout: 4), "Code block wrap toggle should be visible")
         wrapButton.tap()
 
         XCTAssertEqual(
@@ -70,7 +70,7 @@ final class CodeBlockWrappingUITests: XCTestCase {
         var lastValue: Int?
 
         while Date() < deadline {
-            if element.waitForExistence(timeout: 0.2), let value = parseDiagnosticValue(element) {
+            if element.waitUntilExists(timeout: 0.2), let value = parseDiagnosticValue(element) {
                 lastValue = value
                 if predicate(value) {
                     return value

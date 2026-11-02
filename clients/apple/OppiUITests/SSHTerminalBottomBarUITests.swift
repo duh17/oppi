@@ -75,12 +75,12 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
 
     private func openBottomBarSettings() {
         let more = app.buttons["sshTerminal.more"]
-        XCTAssertTrue(more.waitForExistence(timeout: 10), "The terminal's … button did not appear")
+        XCTAssertTrue(more.waitUntilExists(timeout: 10), "The terminal's … button did not appear")
         more.tap()
         let customize = app.buttons["sshTerminal.menu.customize"]
-        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu did not open")
+        XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu did not open")
         customize.tap()
-        XCTAssertTrue(element("settings.sshTerminal.bar.list").waitForExistence(timeout: 5), "Bottom Bar did not open")
+        XCTAssertTrue(element("settings.sshTerminal.bar.list").waitUntilExists(timeout: 5), "Bottom Bar did not open")
     }
 
     /// Adds ⌃D named EOF for every program, from the list's Add Custom Key….
@@ -90,7 +90,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         XCTAssertTrue(add.exists, "Add Custom Key… is not in the list")
         add.tap()
         let name = app.textFields["settings.sshTerminal.bar.key.name"]
-        XCTAssertTrue(name.waitForExistence(timeout: 5), "The add screen did not open")
+        XCTAssertTrue(name.waitUntilExists(timeout: 5), "The add screen did not open")
         let save = app.buttons["settings.sshTerminal.bar.key.save"]
         XCTAssertFalse(save.isEnabled, "Save waits for a key the terminal can send")
         name.tap()
@@ -112,7 +112,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
 
     func testACustomKeyMadeInBottomBarSettingsIsOnTheBarAndSendsItsKey() {
         launch(screen: "ssh-terminal")
-        XCTAssertTrue(app.buttons["sshTerminal.more"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sshTerminal.more"].waitUntilExists(timeout: 10))
         attachScreenshot("bar-few-buttons")
         openBottomBarSettings()
 
@@ -143,7 +143,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         let eof = customButtons.element(boundBy: 0)
         XCTAssertEqual(eof.label, "EOF", "VoiceOver says the name")
         let sent = app.staticTexts["sshTerminal.preview.sent"]
-        XCTAssertTrue(sent.waitForExistence(timeout: 5))
+        XCTAssertTrue(sent.waitUntilExists(timeout: 5))
         XCTAssertEqual(sent.label, "none", "Nothing has been sent yet")
         attachScreenshot("bar-with-custom-key")
 
@@ -170,8 +170,8 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         }
         app.buttons["BackButton"].tap()
         let more = app.buttons["sshTerminal.more"]
-        XCTAssertTrue(more.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["sshTerminal.bar.keyboard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(more.waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["sshTerminal.bar.keyboard"].waitUntilExists(timeout: 5))
         attachScreenshot("bar-many-buttons")
 
         // Everything drawn sits between Back and the right edge, and the pill is not wider than that room.
@@ -179,7 +179,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         XCTAssertGreaterThan(app.buttons["sshTerminal.bar.keyboard"].frame.minX, back.maxX, "The pill must not cover Back")
         XCTAssertLessThanOrEqual(more.frame.maxX, app.frame.maxX)
         more.tap()
-        XCTAssertTrue(app.buttons["sshTerminal.menu.customize"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sshTerminal.menu.customize"].waitUntilExists(timeout: 5))
         attachScreenshot("more-menu-overflow")
         assertRunning()
     }
@@ -189,7 +189,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
     func testRexPaneSwitcherHasItsOwnPillAtTheTrailingCorner() {
         launch(screen: "ssh-terminal-rex-panes")
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear")
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear")
         let more = app.buttons["sshTerminal.more"]
         XCTAssertTrue(more.exists)
         XCTAssertGreaterThan(switcher.frame.minX, more.frame.maxX, "The switcher is past the bar's pill")
@@ -204,7 +204,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         XCTAssertTrue(waitFor((switcher.value as? String)?.hasPrefix("tail -f server.log, 2 of 3, Needs approval") == true), "The blocked pane speaks its status: \(switcher.value as? String ?? "nil")")
         attachScreenshot("rex-pill-blocked")
         switcher.tap()
-        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitUntilExists(timeout: 5))
         XCTAssertFalse(app.cells.staticTexts["No program status reported."].exists, "This pane lists the blocked program's status")
         attachScreenshot("rex-panel-blocked")
         app.buttons["Done"].firstMatch.tap()
@@ -221,7 +221,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
     func testRexPanelSwitchesPaneAndOpensAnotherSession() {
         launch(screen: "ssh-terminal-rex-panes")
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear")
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear")
         XCTAssertFalse(app.buttons["sshTerminal.programStatus"].exists, "A Rex pane has no separate status symbol")
         XCTAssertFalse(app.buttons["sshTerminal.rex"].exists, "A Rex pane has no separate Rex Sessions button")
         let pane = "\u{03C0} - oppi, 1 of 3"
@@ -232,7 +232,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         attachScreenshot("rex-pill-working")
 
         switcher.tap()
-        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5), "A tap must open the Rex panel")
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitUntilExists(timeout: 5), "A tap must open the Rex panel")
         XCTAssertTrue(element("sshTerminal.rexPanel.panes").exists)
         attachScreenshot("rex-panel")
         // The sheet opens half height: the rest of the list is below its fold.
@@ -247,7 +247,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
 
         // A pane of this session is shown from the panel, and the panel closes.
         let logs = element("sshTerminal.rexPanel.pane.block:preview-logs")
-        XCTAssertTrue(logs.waitForExistence(timeout: 5))
+        XCTAssertTrue(logs.waitUntilExists(timeout: 5))
         logs.tap()
         XCTAssertTrue(
             waitFor((switcher.value as? String)?.hasPrefix("tail -f server.log, 2 of 3") == true),
@@ -257,7 +257,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
 
         // Another session's pane opens through the panel.
         switcher.tap()
-        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitUntilExists(timeout: 5))
         scroll { others.count == 2 }
         XCTAssertTrue(waitFor(others.count == 2, timeout: 10))
         let dotfiles = others.containing(NSPredicate(format: "label CONTAINS %@", "dotfiles")).element(boundBy: 0)
@@ -280,9 +280,9 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         others.tap()
         app.buttons["BackButton"].tap()
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 10))
+        XCTAssertTrue(switcher.waitUntilExists(timeout: 10))
         switcher.tap()
-        XCTAssertTrue(element("sshTerminal.rexPanel.panes").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("sshTerminal.rexPanel.panes").waitUntilExists(timeout: 5))
         scroll { element("sshTerminal.rexPanel.newPane").exists }
         XCTAssertFalse(element("sshTerminal.rexPanel.otherSessions").exists, "Other Sessions was turned off")
         assertRunning()

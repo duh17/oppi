@@ -41,7 +41,7 @@ extension PreviewUITestCase where Self: XCTestCase {
         )
         guard let ready else { return }
         XCTAssertTrue(
-            application.descendants(matching: .any)[ready].waitForExistence(timeout: readyTimeout),
+            application.descendants(matching: .any)[ready].waitUntilExists(timeout: readyTimeout),
             "Preview \(screen) did not publish \(ready)"
         )
     }
@@ -58,7 +58,7 @@ extension PreviewUITestCase where Self: XCTestCase {
         if writeDelay > 0 { environment["SCREENSHOT_SWEEP_WRITE_DELAY"] = String(writeDelay) }
         launchPreview(screen: "settings-sweep", environment: environment, colorScheme: "dark")
         guard showsWrites else { return }
-        XCTAssertTrue(lastWriteElement.waitForExistence(timeout: 10), "The sweep's write record did not appear")
+        XCTAssertTrue(lastWriteElement.waitUntilExists(timeout: 10), "The sweep's write record did not appear")
     }
 
     /// The sweep's record of the last write its fixture server received.
@@ -84,8 +84,8 @@ extension PreviewUITestCase where Self: XCTestCase {
 
     /// Polls `condition` until it holds or `timeout` passes, for a claim XCTest
     /// cannot ask as one element's existence: a value, an order, or two elements
-    /// together. Prefer `waitForExistence` and `waitForNonExistence` when the
-    /// claim is one element's presence.
+    /// together. Prefer `waitUntilExists` and `waitUntilGone` when the claim is
+    /// one element's presence.
     ///
     /// 5 s is the budget most of the suite's classes used. A sheet-heavy class
     /// (`RouterSettingsModalsUITests`, `ModelProvidersUITests`,
@@ -98,6 +98,29 @@ extension PreviewUITestCase where Self: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return condition()
+    }
+}
+
+/// Element waits without XCTest's one-second first check. `waitForExistence` and
+/// `waitForNonExistence` first evaluate their condition about a second after they
+/// start, even when it already holds: on a pool simulator an `exists` read took
+/// 6 ms and a `waitForExistence` that held at once 1.07 s, and 98% of this suite's
+/// waits hold at their first check. These read `exists` once and fall back to
+/// XCTest's wait, with the same timeout, only when it does not hold yet.
+///
+/// Not for a claim that something stays after an action that could remove it ("a
+/// swipe must not dismiss the dialog"): read at once, it can pass before the
+/// dismissal starts. Such a claim keeps XCTest's wait, or a wait that holds for a
+/// set time.
+extension XCUIElement {
+    /// `waitForExistence(timeout:)`, answered at once when the element already exists.
+    func waitUntilExists(timeout: TimeInterval) -> Bool {
+        exists || waitForExistence(timeout: timeout)
+    }
+
+    /// `waitForNonExistence(timeout:)`, answered at once when the element is already gone.
+    func waitUntilGone(timeout: TimeInterval) -> Bool {
+        !exists || waitForNonExistence(timeout: timeout)
     }
 }
 
