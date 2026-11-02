@@ -392,7 +392,7 @@ describe("server resource routes", () => {
       `/server/resources/skills/${skill.id}/file?path=notes.md`,
       jsonRequest({ content: "updated", baseRevision: FILE_REVISION }),
     );
-    expect(filePut.statusCode).toBe(404);
+    expect(filePut.statusCode).toBe(405);
 
     const enabled = await dispatch(
       routes,
@@ -615,7 +615,7 @@ describe("server resource routes", () => {
     const unsupported = await dispatch(routes, "POST", "/server/resources/skills");
     const unrelated = await dispatch(routes, "GET", "/server/resources/skillz");
 
-    expect(unsupported.statusCode).toBe(404);
+    expect(unsupported.statusCode).toBe(405);
     expect(unrelated.statusCode).toBe(404);
   });
 });

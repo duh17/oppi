@@ -785,29 +785,4 @@ describe("GET /host/contents", () => {
   });
 });
 
-describe("auth contract", () => {
-  it("registers /files/current reads as owner-authenticated session routes", async () => {
-    const { apiRouteSpecs } = await import("../src/routes/registry.js");
-    const routes = apiRouteSpecs.filter(
-      (route) => route.path === "/files/current" && route.method !== "PUT",
-    );
-    expect(routes.map((route) => route.method).sort()).toEqual(["GET", "HEAD"]);
-    expect(routes.every((route) => route.auth === "owner")).toBe(true);
-    expect(routes.every((route) => route.nativeClientUses?.includes("session"))).toBe(true);
-  });
-
-  it("registers /host/contents as owner-authenticated session routes", async () => {
-    const { apiRouteSpecs } = await import("../src/routes/registry.js");
-    const routes = apiRouteSpecs.filter(
-      (route) => route.path === "/host/contents" || route.path === "/host/contents/{path+}",
-    );
-    expect(routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
-      "GET /host/contents",
-      "GET /host/contents/{path+}",
-    ]);
-    expect(routes.every((route) => route.auth === "owner")).toBe(true);
-    expect(routes.every((route) => route.nativeClientUses?.includes("session"))).toBe(true);
-  });
-});
-
 void existsSync;

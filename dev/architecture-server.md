@@ -197,6 +197,10 @@ Tool presentation facts and full-output lifetime are documented in [Tool inspect
 
 Server Metrics and the Mobile Output Guide share one save contract. GET and PUT responses carry `revision`; a PUT may carry `baseRevision`, and a stale one answers `409 { error, code: "revision_conflict", current }` and changes nothing. Server Metrics keeps the revision beside the value in `config.json` (`applySetting` in `server/src/settings/config-settings.ts` checks and bumps it under the config lock); omitting `baseRevision` is last-writer-wins. The Mobile Output Guide requires it. The Dictionary keeps its own `revision` contract. `oppi config set` writes `config.json` without bumping a revision.
 
+### Route registry
+
+`server/src/routes/registry.ts` lists every HTTP and WebSocket route the server answers: method, path template, `operationId`, `surface`, `auth`, and an optional `transport` and `description`. `RouteHandler` refuses a request whose path matches no row (404) or whose method no matching row allows (405 with `Allow`) before any dispatcher runs, so a handler added without its row is unreachable. The UI test fixtures under `/e2e/ui/` are the one exception. `server/tests/route-registry.integration.test.ts` holds `auth` to the server: a request without credentials gets 401 on exactly the `owner` rows. A new route adds its row and its handler together; metrics name requests by the row's path template.
+
 Pi owns the Skills and Extensions settings, so the server-global and workspace-scoped routes map failures through one function, `httpStatusForPiResourceError` in `server/src/settings/pi-resource-errors.ts`, by error class rather than message text.
 
 ## Server boundary rules current code

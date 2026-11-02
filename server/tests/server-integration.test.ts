@@ -1276,7 +1276,7 @@ describe("themes API", () => {
 
   it("PUT /themes/:name is not part of the HTTP API", async () => {
     const res = await put("/themes/test-dark", { theme: {} });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(405);
   });
 });
 

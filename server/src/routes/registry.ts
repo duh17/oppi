@@ -2,178 +2,21 @@ export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteSurface = "core" | "admin" | "internal";
 export type RouteAuth = "none" | "owner";
 export type RouteTransport = "http" | "websocket";
-// Which iOS/Mac app flows should depend on this route?
-// - session: watching and controlling agent sessions.
-// - settings: configuring the local server and workspaces.
-// This is separate from `surface`, which answers who owns the route: core, admin, or internal.
-export type NativeClientUse = "session" | "settings";
 
-export type SchemaRef = `#/components/schemas/${string}`;
-
-export interface ApiRouteSchemas {
-  path?: SchemaRef;
-  query?: SchemaRef;
-  body?: SchemaRef;
-  response?: SchemaRef;
-  error?: SchemaRef;
-}
-
+/**
+ * Every route the server answers. `RouteHandler` refuses a request that matches no row here, so a
+ * handler without its row is unreachable, and the auth integration test holds `auth` to what the
+ * server enforces.
+ */
 export interface ApiRouteSpec {
   method: HttpMethod;
   path: string;
   operationId: string;
   surface: RouteSurface;
+  /** `none`: served without credentials. `owner`: needs the owner bearer or a paired device's token. */
   auth: RouteAuth;
   transport?: RouteTransport;
-  nativeClientUses?: readonly NativeClientUse[];
   description?: string;
-  schemas?: ApiRouteSchemas;
-}
-
-const schemaRef = (name: string): SchemaRef => `#/components/schemas/${name}` as SchemaRef;
-const errorResponse = schemaRef("ErrorResponse");
-
-const sessionOperationIds = new Set<string>([
-  "getHealth",
-  "pairDevice",
-  "issueTailscalePairingInvite",
-  "getCurrentUser",
-  "getServerInfo",
-  "listModels",
-  "putPushRegistration",
-  "deletePushRegistration",
-  "listWorkspaceCatalog",
-  "getWorkspace",
-  "listWorkspaceSessions",
-  "listWorkspaceSessionBuckets",
-  "getWorkspacePaths",
-  "getWorkspaceContentsRoot",
-  "getWorkspaceContents",
-  "getCurrentFile",
-  "headCurrentFile",
-  "putCurrentFile",
-  "listCurrentFileSidecars",
-  "getCurrentFileMediaInfo",
-  "getHostContentsRoot",
-  "getHostContents",
-  "createSessionAttachment",
-  "putSessionAttachmentContent",
-  "createWorkspaceSession",
-  "getWorkspaceSession",
-  "getWorkspaceSessionTracePage",
-  "getWorkspaceSessionTraceOutline",
-  "deleteWorkspaceSession",
-  "stopWorkspaceSession",
-  "resumeWorkspaceSession",
-  "forkWorkspaceSession",
-  "getSessionEvents",
-  "listSessionChanges",
-  "getSessionDiff",
-  "getSessionWorktreeChanges",
-  "getSessionWorktreeDiff",
-  "getSessionToolOutput",
-  "headSessionToolOutput",
-  "openSessionStream",
-  "openAppEventStream",
-  "openDictationStream",
-  "synthesizeSpeech",
-  "searchSessions",
-  "listSessions",
-  "getSession",
-  "getSessionTrace",
-  "getGenericSessionEvents",
-  "getSessionDialogs",
-  "getSessionAttachment",
-  "headSessionAttachment",
-  "sendSessionCommand",
-  "stopSession",
-  "listRecentSessions",
-  "getWorkspaceGitSummary",
-  "getWorkspaceGitStatus",
-  "getWorkspaceGitDiff",
-  "listWorkspaceCommits",
-  "getWorkspaceGitGraph",
-  "getWorkspaceCommit",
-  "getWorkspaceCommitDiff",
-  "listWorkspaceQuickActions",
-  "prepareWorkspaceQuickActionSelection",
-  "createWorkspaceQuickActionSession",
-  "listWorkspaceWorktrees",
-  "getWorkspaceWorktreeStatus",
-  "previewWorkspaceWorktree",
-  "createControlSession",
-  "getControlSession",
-  "getControlSessionTracePage",
-  "getControlSessionTraceOutline",
-  "deleteControlSession",
-  "stopControlSession",
-  "resumeControlSession",
-  "getControlSessionEvents",
-  "getControlSessionToolOutput",
-  "headControlSessionToolOutput",
-  "createControlSessionAttachment",
-  "putControlSessionAttachmentContent",
-  "getControlSessionAttachment",
-  "headControlSessionAttachment",
-  "sendControlSessionCommand",
-  "openControlSessionStream",
-  "getIconAsset",
-  "headIconAsset",
-]);
-
-const settingsOperationIds = new Set<string>([
-  "getProviderQuotas",
-  "getServerStats",
-  "getDailyServerStats",
-  "listServerSkills",
-  "getServerSkill",
-  "getServerSkillFile",
-  "setServerSkillEnabled",
-  "listServerExtensions",
-  "getServerExtension",
-  "setServerExtensionEnabled",
-  "getMobileOutputGuide",
-  "setMobileOutputGuide",
-  "updateServer",
-  "getPiSystemPrompt",
-  "getPiDefaultTools",
-  "setPiDefaultTools",
-  "createWorkspace",
-  "updateWorkspace",
-  "deleteWorkspace",
-  "createWorkspaceWorktree",
-  "openWorkspaceWorktree",
-  "removeWorkspaceWorktree",
-  "listProviderAuthStatus",
-  "startProviderAuthFlow",
-  "getProviderAuthFlow",
-  "submitProviderAuthPromptResponse",
-  "submitProviderAuthManualCode",
-  "cancelProviderAuthFlow",
-  "setProviderApiKey",
-  "removeProviderCredential",
-  "listSkills",
-  "getSkill",
-  "getSkillFile",
-  "listExtensions",
-  "listHostDirectories",
-  "getHostPathStatus",
-  "completeHostPath",
-  "createHostPath",
-  "listThemes",
-  "getTheme",
-  "uploadMetricKitPayload",
-  "uploadTelemetryEvents",
-  "createIconAsset",
-  "getIconAsset",
-  "headIconAsset",
-]);
-
-function nativeClientUsesFor(operationId: string): readonly NativeClientUse[] | undefined {
-  const uses: NativeClientUse[] = [];
-  if (sessionOperationIds.has(operationId)) uses.push("session");
-  if (settingsOperationIds.has(operationId)) uses.push("settings");
-  return uses.length > 0 ? uses : undefined;
 }
 
 const rawApiRouteSpecs = [
@@ -183,7 +26,6 @@ const rawApiRouteSpecs = [
     operationId: "getHealth",
     surface: "internal",
     auth: "none",
-    schemas: { response: schemaRef("HealthResponse"), error: errorResponse },
   },
   { method: "POST", path: "/pair", operationId: "pairDevice", surface: "admin", auth: "none" },
   {
@@ -194,12 +36,74 @@ const rawApiRouteSpecs = [
     auth: "none",
   },
   {
+    method: "POST",
+    path: "/pair/approval-status",
+    operationId: "getPairingApprovalStatus",
+    surface: "admin",
+    auth: "none",
+  },
+  {
+    method: "POST",
+    path: "/auth/challenge",
+    operationId: "createDeviceAuthChallenge",
+    surface: "admin",
+    auth: "none",
+  },
+  {
+    method: "POST",
+    path: "/auth/refresh",
+    operationId: "refreshDeviceAccessToken",
+    surface: "admin",
+    auth: "none",
+  },
+  {
+    method: "GET",
+    path: "/auth/pairing-approvals",
+    operationId: "listPairingApprovals",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/auth/pairing-approvals/{approvalId}/approve",
+    operationId: "approvePairing",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/auth/pairing-approvals/{approvalId}/deny",
+    operationId: "denyPairing",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/auth/devices",
+    operationId: "listDevices",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "DELETE",
+    path: "/auth/devices/{deviceId}",
+    operationId: "revokeDevice",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/auth/rotate",
+    operationId: "rotateOwnerToken",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
     method: "GET",
     path: "/me",
     operationId: "getCurrentUser",
     surface: "core",
     auth: "owner",
-    schemas: { response: schemaRef("CurrentUserResponse"), error: errorResponse },
   },
 
   {
@@ -359,6 +263,13 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "POST",
+    path: "/pi/resources/enabled",
+    operationId: "setPiResourceEnabled",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
     method: "PUT",
     path: "/server/resources/pi/default-model",
     operationId: "setPiDefaultModel",
@@ -371,7 +282,6 @@ const rawApiRouteSpecs = [
     operationId: "listModels",
     surface: "core",
     auth: "owner",
-    schemas: { response: schemaRef("ModelsResponse"), error: errorResponse },
   },
   {
     method: "PUT",
@@ -445,6 +355,13 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "GET",
+    path: "/control-sessions/{sessionId}/input-card-output/{cardId}",
+    operationId: "getControlSessionInputCardOutput",
+    surface: "core",
+    auth: "owner",
+  },
+  {
     method: "POST",
     path: "/control-sessions/{sessionId}/command",
     operationId: "sendControlSessionCommand",
@@ -508,7 +425,6 @@ const rawApiRouteSpecs = [
     operationId: "listWorkspaceCatalog",
     surface: "core",
     auth: "owner",
-    schemas: { response: schemaRef("WorkspaceCatalogResponse"), error: errorResponse },
   },
   {
     method: "POST",
@@ -516,11 +432,6 @@ const rawApiRouteSpecs = [
     operationId: "createWorkspace",
     surface: "admin",
     auth: "owner",
-    schemas: {
-      body: schemaRef("CreateWorkspaceRequest"),
-      response: schemaRef("WorkspaceResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -528,11 +439,6 @@ const rawApiRouteSpecs = [
     operationId: "getWorkspace",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      response: schemaRef("WorkspaceResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "PUT",
@@ -540,12 +446,6 @@ const rawApiRouteSpecs = [
     operationId: "updateWorkspace",
     surface: "admin",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      body: schemaRef("UpdateWorkspaceRequest"),
-      response: schemaRef("WorkspaceResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "DELETE",
@@ -553,11 +453,6 @@ const rawApiRouteSpecs = [
     operationId: "deleteWorkspace",
     surface: "admin",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      response: schemaRef("OkResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -572,11 +467,6 @@ const rawApiRouteSpecs = [
     operationId: "getWorkspacePaths",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      response: schemaRef("FileIndexResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -682,12 +572,6 @@ const rawApiRouteSpecs = [
     operationId: "createWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      body: schemaRef("CreateSessionRequest"),
-      response: schemaRef("SessionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -695,12 +579,6 @@ const rawApiRouteSpecs = [
     operationId: "getWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      query: schemaRef("SessionTraceQuery"),
-      response: schemaRef("SessionDetailResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -722,11 +600,6 @@ const rawApiRouteSpecs = [
     operationId: "deleteWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      response: schemaRef("OkResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "POST",
@@ -741,11 +614,6 @@ const rawApiRouteSpecs = [
     operationId: "stopWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      response: schemaRef("SessionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "POST",
@@ -753,11 +621,6 @@ const rawApiRouteSpecs = [
     operationId: "resumeWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      response: schemaRef("SessionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "POST",
@@ -765,12 +628,6 @@ const rawApiRouteSpecs = [
     operationId: "forkWorkspaceSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      body: schemaRef("ForkSessionRequest"),
-      response: schemaRef("SessionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -778,12 +635,6 @@ const rawApiRouteSpecs = [
     operationId: "getSessionEvents",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspaceSessionPathParams"),
-      query: schemaRef("SessionEventsQuery"),
-      response: schemaRef("SessionEventsResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -820,17 +671,18 @@ const rawApiRouteSpecs = [
     operationId: "getSessionToolOutput",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("ToolOutputPathParams"),
-      query: schemaRef("ToolOutputQuery"),
-      response: schemaRef("ToolOutputResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "HEAD",
     path: "/workspaces/{workspaceId}/sessions/{sessionId}/tool-output/{toolCallId}",
     operationId: "headSessionToolOutput",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/sessions/{sessionId}/input-card-output/{cardId}",
+    operationId: "getSessionInputCardOutput",
     surface: "core",
     auth: "owner",
   },
@@ -859,6 +711,72 @@ const rawApiRouteSpecs = [
     transport: "websocket",
   },
   {
+    method: "GET",
+    path: "/mirror/v1/bridge",
+    operationId: "openMirrorBridge",
+    surface: "internal",
+    auth: "none",
+    transport: "websocket",
+    description:
+      "The oppi-mirror Pi extension's bridge. Owner Unix socket only; 404 on the network.",
+  },
+  {
+    method: "GET",
+    path: "/dictation/dictionary/global",
+    operationId: "getGlobalDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/dictation/dictionary/global",
+    operationId: "addToGlobalDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/dictation/dictionary/global",
+    operationId: "replaceGlobalDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "DELETE",
+    path: "/dictation/dictionary/global",
+    operationId: "removeFromGlobalDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/dictation/dictionary/workspaces/{workspaceId}",
+    operationId: "getWorkspaceDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "POST",
+    path: "/dictation/dictionary/workspaces/{workspaceId}",
+    operationId: "addToWorkspaceDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/dictation/dictionary/workspaces/{workspaceId}",
+    operationId: "replaceWorkspaceDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "DELETE",
+    path: "/dictation/dictionary/workspaces/{workspaceId}",
+    operationId: "removeFromWorkspaceDictationDictionary",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
     method: "POST",
     path: "/speech",
     operationId: "synthesizeSpeech",
@@ -880,11 +798,6 @@ const rawApiRouteSpecs = [
     operationId: "listRecentSessions",
     surface: "core",
     auth: "owner",
-    schemas: {
-      query: schemaRef("RecentSessionsQuery"),
-      response: schemaRef("WorkspaceSessionSummariesResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "GET",
@@ -1221,11 +1134,6 @@ const rawApiRouteSpecs = [
     operationId: "listWorkspaceQuickActions",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      response: schemaRef("WorkspaceQuickActionsResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "POST",
@@ -1233,12 +1141,6 @@ const rawApiRouteSpecs = [
     operationId: "prepareWorkspaceQuickActionSelection",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      body: schemaRef("WorkspaceQuickActionSelectionRequest"),
-      response: schemaRef("WorkspaceQuickActionSelectionResponse"),
-      error: errorResponse,
-    },
   },
   {
     method: "POST",
@@ -1246,12 +1148,6 @@ const rawApiRouteSpecs = [
     operationId: "createWorkspaceQuickActionSession",
     surface: "core",
     auth: "owner",
-    schemas: {
-      path: schemaRef("WorkspacePathParams"),
-      body: schemaRef("CreateWorkspaceQuickActionSessionRequest"),
-      response: schemaRef("WorkspaceQuickActionSessionResponse"),
-      error: errorResponse,
-    },
   },
 
   {
@@ -1448,24 +1344,53 @@ const rawApiRouteSpecs = [
     surface: "admin",
     auth: "owner",
   },
+  {
+    method: "POST",
+    path: "/telemetry/client-logs",
+    operationId: "uploadClientLogs",
+    surface: "admin",
+    auth: "owner",
+  },
 ] as const satisfies readonly ApiRouteSpec[];
 
-export const apiRouteSpecs = rawApiRouteSpecs.map((route): ApiRouteSpec => {
-  const nativeClientUses = nativeClientUsesFor(route.operationId);
-  return nativeClientUses ? { ...route, nativeClientUses } : route;
-});
+export const apiRouteSpecs: readonly ApiRouteSpec[] = rawApiRouteSpecs;
 
 interface CompiledRoutePattern {
   pattern: string;
   regex: RegExp;
+  methods: ReadonlySet<HttpMethod>;
 }
 
 const compiledPathPatterns: CompiledRoutePattern[] = uniquePathTemplates(apiRouteSpecs).map(
   (path) => ({
     pattern: pathTemplateToMetricPattern(path),
     regex: pathTemplateToRegex(path),
+    methods: new Set(
+      apiRouteSpecs.filter((route) => route.path === path).map((route) => route.method),
+    ),
   }),
 );
+
+/**
+ * The methods registered for a request path, across every template it matches (`/sessions/search`
+ * also matches `/sessions/{sessionId}`); `undefined` when no template matches. A path with a
+ * trailing slash falls back to the path without it, as `normalizeRegisteredPathPattern` does.
+ */
+export function registeredMethodsForPath(path: string): ReadonlySet<string> | undefined {
+  const methods = methodsMatching(path);
+  if (methods || path.length <= 1 || !path.endsWith("/")) return methods;
+  return methodsMatching(path.slice(0, -1));
+}
+
+function methodsMatching(path: string): Set<string> | undefined {
+  let methods: Set<string> | undefined;
+  for (const entry of compiledPathPatterns) {
+    if (!entry.regex.test(path)) continue;
+    methods ??= new Set();
+    for (const method of entry.methods) methods.add(method);
+  }
+  return methods;
+}
 
 export function normalizeRegisteredPathPattern(path: string): string | undefined {
   const direct = compiledPathPatterns.find((entry) => entry.regex.test(path))?.pattern;

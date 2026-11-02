@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createIconAssetRoutes } from "../src/routes/icon-assets.js";
 import { createRouteHelpers } from "../src/routes/http.js";
-import { apiRouteSpecs } from "../src/routes/registry.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Storage } from "../src/storage.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
@@ -53,15 +52,6 @@ afterEach(() => {
 });
 
 describe("icon asset routes", () => {
-  it("registers upload, GET, and HEAD as owner-authenticated routes", () => {
-    const routes = apiRouteSpecs.filter((route) => route.path.startsWith("/icon-assets"));
-    expect(routes.map(({ method, auth }) => ({ method, auth }))).toEqual([
-      { method: "POST", auth: "owner" },
-      { method: "GET", auth: "owner" },
-      { method: "HEAD", auth: "owner" },
-    ]);
-  });
-
   it("uploads and serves identical bytes through the route dispatcher", async () => {
     const dispatch = createIconAssetRoutes(
       { storage } as unknown as RouteContext,
