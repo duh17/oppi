@@ -83,6 +83,8 @@ import {
   stopService,
   uninstallService,
 } from "../src/launchd.js";
+import { parseCliArgs } from "../src/cli/args.js";
+import { unsupportedFlagsMessage } from "../src/cli/help.js";
 
 function isPrintDomain(cmd: string, domain: string): boolean {
   return cmd.includes(`launchctl print ${domain}`) && !cmd.includes(`launchctl print ${domain}/`);
@@ -170,6 +172,17 @@ describe("plist XML generation", () => {
     expect(xml).toContain("<string>serve</string>");
     expect(xml).toContain("<string>--data-dir</string>");
     expect(xml).toContain("<string>/tmp/test-oppi</string>");
+  });
+
+  it("starts the CLI with flags its serve help topic accepts", () => {
+    const xml = captureWrittenPlist("/tmp/test-oppi");
+    const array = xml.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1] ?? "";
+    const argv = [...array.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1] ?? "");
+    expect(argv.slice(0, 2)).toEqual([
+      "/opt/homebrew/bin/node",
+      "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js",
+    ]);
+    expect(unsupportedFlagsMessage(parseCliArgs(argv.slice(2)))).toBeUndefined();
   });
 
   it("includes KeepAlive with SuccessfulExit=false", () => {

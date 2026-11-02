@@ -2,6 +2,8 @@ export type ParsedCliArgs = {
   command: string;
   flags: Record<string, string>;
   positional: string[];
+  /** The short a flag was typed as (`tools` → `-t`), so errors can name what the user typed. */
+  shortSpellings: Record<string, string>;
 };
 
 type ShortFlagSpec = {
@@ -23,6 +25,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
   const command = args[0] || "help";
   const flags: Record<string, string> = {};
   const positional: string[] = [];
+  const shortSpellings: Record<string, string> = {};
 
   let parseFlags = true;
   for (let i = 1; i < args.length; i++) {
@@ -44,6 +47,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
       const spec = SHORT_FLAGS[arg.slice(1)];
       if (!spec) throw new Error(`Unknown flag: ${arg}`);
       if (Object.hasOwn(flags, spec.name)) throw new Error(`Duplicate flag: --${spec.name}`);
+      shortSpellings[spec.name] = arg;
       if (spec.boolean) {
         flags[spec.name] = "true";
       } else {
@@ -56,7 +60,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
     }
   }
 
-  return { command, flags, positional };
+  return { command, flags, positional, shortSpellings };
 }
 
 function consumeFlagValue(args: string[], index: number): { value: string; index: number } {

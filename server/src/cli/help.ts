@@ -1,5 +1,5 @@
 import * as c from "../ansi.js";
-import { isHelpFlag } from "./args.js";
+import { isHelpFlag, type ParsedCliArgs } from "./args.js";
 import {
   captureHumanCliOutput,
   setCapturedCliExitCode,
@@ -144,9 +144,14 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["serve"],
     title: "Serve",
     summary: "Start the Oppi server in the foreground.",
-    usage: "oppi serve [--host <host>]",
+    usage: "oppi serve [--host <host>] [--data-dir <path>]",
     flags: [
       { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+      {
+        name: "--data-dir",
+        value: "<path>",
+        summary: "data directory; wins over OPPI_DATA_DIR (default ~/.config/oppi)",
+      },
     ],
     notes: [
       "On first run, serve creates owner credentials, enables TLS, and prints a pairing QR. It uses Tailscale TLS when `tailscale cert` can issue a certificate for this machine, otherwise self-signed TLS. It keeps any tls.mode other than disabled, and keeps disabled when publicUrl + proxy.trustedPeers configure a trusted HTTP reverse proxy.",
@@ -159,9 +164,14 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["start"],
     title: "Start",
     summary: "Alias for 'oppi serve'.",
-    usage: "oppi start [--host <host>]",
+    usage: "oppi start [--host <host>] [--data-dir <path>]",
     flags: [
       { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+      {
+        name: "--data-dir",
+        value: "<path>",
+        summary: "data directory; wins over OPPI_DATA_DIR (default ~/.config/oppi)",
+      },
     ],
     examples: [{ command: "oppi start" }],
   },
@@ -199,7 +209,8 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["status"],
     title: "Status",
     summary: "Show server config, Local Network addresses, Tailscale status, and pairing state.",
-    usage: "oppi status",
+    usage: "oppi status [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: ["This reads local config and host network state; it does not contact the server API."],
     examples: [{ command: "oppi status" }],
   },
@@ -338,18 +349,22 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["config", "show"],
     title: "Show config",
     summary: "Print current or default config as formatted JSON.",
-    usage: "oppi config show [--default]",
-    flags: [{ name: "--default", summary: "show built-in defaults instead of current config" }],
+    usage: "oppi config show [--default] [--json]",
+    flags: [
+      { name: "--default", summary: "show built-in defaults instead of current config" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
     examples: [{ command: "oppi config show" }, { command: "oppi config show --default" }],
   },
   {
     path: ["config", "get"],
     title: "Get config",
     summary: "Print one config value.",
-    usage: "oppi config get <key>",
+    usage: "oppi config get <key> [--json]",
     arguments: [
       { name: "<key>", summary: "config path such as port, tls.mode, or runtimeEnv.NAME" },
     ],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: ["The output is intentionally plain so scripts can read it."],
     examples: [{ command: "oppi config get port" }, { command: "oppi config get tls.mode" }],
   },
@@ -357,11 +372,12 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["config", "set"],
     title: "Set config",
     summary: "Update one supported config value.",
-    usage: "oppi config set <key> <value>",
+    usage: "oppi config set <key> <value> [--json]",
     arguments: [
       { name: "<key>", summary: "supported config key or runtimeEnv.<NAME>" },
       { name: "<value>", summary: "string, number, boolean, or JSON depending on the key" },
     ],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     keys: [
       { name: "port", summary: "number; server port" },
       { name: "host", summary: "string; bind address" },
@@ -2250,36 +2266,33 @@ const DEFAULT_SUBCOMMANDS: Readonly<Record<string, string>> = {
   worktree: "list",
 };
 
-/** Flags every command accepts besides its topic's own. Help flags never reach dispatch. */
-const GLOBAL_FLAGS: readonly string[] = ["json", "help"];
+/**
+ * Flags every command accepts besides its topic's own. Help flags never reach dispatch; `--json`
+ * is not global, because most setup commands do not write an envelope.
+ */
+const GLOBAL_FLAGS: readonly string[] = ["help"];
 
 function canonicalSubcommand(noun: string, subcommand: string): string {
   return SUBCOMMAND_ALIASES[noun]?.[subcommand] ?? subcommand;
 }
 
 /**
- * The topic whose flags an invocation may use: the verb's topic, else the noun's (a noun
- * without verb topics, or a verb the command will reject as unknown).
+ * The topic whose flags an invocation may use: the verb's topic, or the noun's when the noun has
+ * no verbs. An unknown or missing verb of a noun that has verbs gets no topic: dispatch reports
+ * the verb, which is the real mistake.
  */
 function invocationTopic(command: string, positional: readonly string[]): HelpTopic | undefined {
   const noun = command === "--version" || command === "-v" ? "version" : command;
   const nounTopic = resolveHelpTopic([noun]);
-  if (!nounTopic) return undefined;
+  if (!nounTopic?.subcommands?.length) return nounTopic;
   const verb = positional[0] ?? DEFAULT_SUBCOMMANDS[noun];
-  if (verb === undefined) return nounTopic;
-  return resolveHelpTopic([noun, canonicalSubcommand(noun, verb)]) ?? nounTopic;
+  return verb === undefined ? undefined : resolveHelpTopic([noun, canonicalSubcommand(noun, verb)]);
 }
 
-/**
- * The help topics are the flag allow-list of every command: a flag its topic does not declare
- * (by name or alias) is refused before dispatch, so a guessed flag fails instead of doing nothing.
- */
-export function unsupportedFlagsMessage(
-  command: string,
-  positional: readonly string[],
-  flags: Readonly<Record<string, string>>,
-): string | undefined {
-  const topic = invocationTopic(command, positional);
+type FlagRejection = { message: string; jsonAccepted: boolean };
+
+function flagRejection(parsed: ParsedCliArgs): FlagRejection | undefined {
+  const topic = invocationTopic(parsed.command, parsed.positional);
   if (!topic) return undefined;
   const declared = topic.flags ?? [];
   const accepted = new Set(GLOBAL_FLAGS);
@@ -2289,32 +2302,43 @@ export function unsupportedFlagsMessage(
       if (spelling.startsWith("--")) accepted.add(spelling.slice(2));
     }
   }
-  const unsupported = Object.keys(flags)
+  const unsupported = Object.keys(parsed.flags)
     .filter((flag) => !accepted.has(flag))
+    .map((flag) => parsed.shortSpellings[flag] ?? `--${flag}`)
     .sort();
   if (unsupported.length === 0) return undefined;
 
   const label = topic.path.join(" ");
   const names = declared.map((flag) => flag.name);
-  if (!names.includes("--json")) names.push("--json");
   // The parser does not split `--flag=value`; name the spelling it does read.
-  const equalsForm = unsupported.find((flag) => accepted.has(flag.split("=")[0] ?? ""));
+  const equalsForm = unsupported
+    .map((flag) => flag.split("=")[0] ?? "")
+    .find((flag, index) => unsupported[index] !== flag && accepted.has(flag.slice(2)));
   const equalsHint = equalsForm
-    ? ` Use --${equalsForm.split("=")[0]} <value>; the equals form is not supported.`
+    ? ` Use ${equalsForm} <value>; the equals form is not supported.`
     : "";
-  return `Unsupported flag for '${label}': --${unsupported.join(", --")}. Accepted flags: ${names.join(", ")}.${equalsHint} Run 'oppi ${label} --help'.`;
+  return {
+    message: `Unsupported flag for '${label}': ${unsupported.join(", ")}. Accepted flags: ${names.join(", ") || "none"}.${equalsHint} Run 'oppi ${label} --help'.`,
+    jsonAccepted: accepted.has("json"),
+  };
+}
+
+/**
+ * The help topics are the flag allow-list of every command: a flag its topic does not declare
+ * (by name or alias) is refused before dispatch, so a guessed flag fails instead of doing nothing.
+ */
+export function unsupportedFlagsMessage(parsed: ParsedCliArgs): string | undefined {
+  return flagRejection(parsed)?.message;
 }
 
 /** Reports an unsupported flag as the command's failure; true when the command must not run. */
-export function rejectUnsupportedFlags(
-  command: string,
-  positional: readonly string[],
-  flags: Readonly<Record<string, string>>,
-): boolean {
-  const message = unsupportedFlagsMessage(command, positional, flags);
-  if (message === undefined) return false;
+export function rejectUnsupportedFlags(parsed: ParsedCliArgs): boolean {
+  const rejection = flagRejection(parsed);
+  if (rejection === undefined) return false;
+  const { message } = rejection;
   const line = c.red(`  Error: ${message}`);
-  if (flags.json === "true") {
+  // An envelope only where the command writes one; a refused --json gets the plain error.
+  if (rejection.jsonAccepted && parsed.flags.json === "true") {
     writeJsonEnvelope({ ok: false, error: { message } });
     captureHumanCliOutput(() => writeHumanLine(line));
   } else {

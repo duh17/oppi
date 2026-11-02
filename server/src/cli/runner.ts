@@ -109,8 +109,26 @@ export async function runCli(
   };
 }
 
+/** The commands `runCli` dispatches; the CLI entry point hands these over unparsed. */
+export const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
+  "status",
+  "quota",
+  "models",
+  "agent",
+  "dictionary",
+  "workspace",
+  "worktree",
+  "session",
+  "control",
+  "extensions",
+  "schedule",
+  "wait",
+  "config",
+]);
+
 async function executeCliCommand(args: readonly string[], options: CliRunOptions): Promise<void> {
-  const { command, flags, positional } = parseCliArgs([...args]);
+  const parsed = parseCliArgs([...args]);
+  const { command, flags, positional } = parsed;
   if (isNestedHelpRequest(command, positional, flags)) {
     const topic = resolveHelpTopic(helpPathFor(command, positional));
     if (!topic) {
@@ -125,7 +143,8 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
     writeCliHelpOutput(topic, flags.json === "true");
     return;
   }
-  if (rejectUnsupportedFlags(command, positional, flags)) return;
+  // Other commands fall through to "Unknown command" below.
+  if (RUNNER_COMMANDS.has(command) && rejectUnsupportedFlags(parsed)) return;
 
   const dataDir = options.dataDir ?? process.env.OPPI_DATA_DIR ?? undefined;
   const connection = createCliConnectionConfig(dataDir);

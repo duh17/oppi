@@ -11,8 +11,8 @@ import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { basename, dirname, join } from "node:path";
-import { runCli } from "./cli/runner.js";
+import { basename, dirname, join, resolve } from "node:path";
+import { RUNNER_COMMANDS, runCli } from "./cli/runner.js";
 import {
   getLocalHostname,
   getLocalIp,
@@ -82,7 +82,6 @@ import {
   serveUpdatedProcess,
 } from "./server-update.js";
 import type { ServerRestartMode } from "./types/server-update.js";
-import { cmdConfig } from "./cli/commands/config.js";
 import { parseDurationMs } from "./cli/commands/wait.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 
@@ -1356,24 +1355,10 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
 
 // ─── Main ───
 
-const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
-  "status",
-  "quota",
-  "models",
-  "agent",
-  "dictionary",
-  "workspace",
-  "worktree",
-  "session",
-  "control",
-  "extensions",
-  "schedule",
-  "wait",
-]);
-
 export async function runCliMain(args: readonly string[] = process.argv.slice(2)): Promise<void> {
   const invocationArgs = [...args];
-  const { command, flags, positional } = parseCliArgs(invocationArgs);
+  const parsed = parseCliArgs(invocationArgs);
+  const { command, flags, positional } = parsed;
 
   if (isNestedHelpRequest(command, positional, flags)) {
     cmdHelp(helpPathFor(command, positional), flags.json === "true");
@@ -1384,7 +1369,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     await runCli(invocationArgs);
     return;
   }
-  if (rejectUnsupportedFlags(command, positional, flags)) return;
+  if (rejectUnsupportedFlags(parsed)) return;
 
   // These commands run before Storage to avoid creating default config prematurely
   if (command === "init") {
@@ -1415,7 +1400,13 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     case "serve":
     case "start":
       {
-        const storage = new Storage(dataDir, { migrateWorkspaceFolders: true });
+        // Service managers pass --data-dir and OPPI_DATA_DIR. The flag wins, and the env takes
+        // its value so every reader in this process and the sessions it starts agrees.
+        const dataDirFlag = flags["data-dir"];
+        if (dataDirFlag) process.env.OPPI_DATA_DIR = resolve(dataDirFlag);
+        const storage = new Storage(process.env.OPPI_DATA_DIR || undefined, {
+          migrateWorkspaceFolders: true,
+        });
         await setUpAutoNamePackage({
           dataDir: storage.getDataDir(),
           once: (key, run) => storage.runMigrationOnce(key, run),
@@ -1445,10 +1436,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
 
     case "devices":
       await cmdDevices(connection, positional[0], positional[1]);
-      break;
-
-    case "config":
-      cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);
       break;
 
     default:

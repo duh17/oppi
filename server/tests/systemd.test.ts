@@ -5,6 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { parseCliArgs } from "../src/cli/args.js";
+import { unsupportedFlagsMessage } from "../src/cli/help.js";
 import { buildSystemdUnit, parseSystemdUnit, systemdUnitPath } from "../src/systemd.js";
 
 function line(unit: string, prefix: string): string[] {
@@ -31,6 +33,15 @@ describe("systemdUnitPath", () => {
 describe("buildSystemdUnit", () => {
   const node = "/home/alice/.oppi/runtime/node/bin/node";
   const cli = "/home/alice/.oppi/install/current/lib/node_modules/oppi-server/dist/src/cli.js";
+
+  it("starts the CLI with flags its serve help topic accepts", () => {
+    const unit = buildSystemdUnit(node, cli, "/home/alice/.config/oppi");
+    const execStart = line(unit, "ExecStart=")[0] ?? "";
+    // The test paths need no escapes, so each quoted word is the argv word.
+    const argv = [...execStart.matchAll(/"([^"]*)"/g)].map((match) => match[1] ?? "");
+    expect(argv.slice(0, 2)).toEqual([node, cli]);
+    expect(unsupportedFlagsMessage(parseCliArgs(argv.slice(2)))).toBeUndefined();
+  });
 
   it("runs serve with the chosen runtime and CLI by absolute path", () => {
     const unit = buildSystemdUnit(node, cli, "/home/alice/.config/oppi");

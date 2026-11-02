@@ -7,6 +7,7 @@ describe("parseCliArgs", () => {
       command: "session",
       flags: { json: "true" },
       positional: ["read", "sess-1", "--odd-path"],
+      shortSpellings: {},
     });
   });
 
@@ -27,6 +28,7 @@ describe("parseCliArgs", () => {
       command: "server",
       flags: { help: "true" },
       positional: ["install", "ignored"],
+      shortSpellings: {},
     });
     expect(isHelpFlag(parsed.flags)).toBe(true);
   });
@@ -62,6 +64,7 @@ describe("parseCliArgs", () => {
         workspace: "ws-1",
       },
       positional: ["create"],
+      shortSpellings: { name: "-n", tools: "-t", "exclude-tools": "-xt", "no-tools": "-nt" },
     });
   });
 
@@ -73,6 +76,7 @@ describe("parseCliArgs", () => {
         "no-tools": "true",
       },
       positional: ["create", "Reviewer"],
+      shortSpellings: { "no-builtin-tools": "-nbt", "no-tools": "-nt" },
     });
   });
 
@@ -93,16 +97,19 @@ describe("parseCliArgs", () => {
       command: "agent",
       flags: { name: "Reviewer", skills: "", extensions: "" },
       positional: ["create"],
+      shortSpellings: {},
     });
     expect(parseCliArgs(["agent", "create", "--allowed-workspaces", ""])).toEqual({
       command: "agent",
       flags: { "allowed-workspaces": "" },
       positional: ["create"],
+      shortSpellings: {},
     });
     expect(parseCliArgs(["session", "create", "-t", ""])).toEqual({
       command: "session",
       flags: { tools: "" },
       positional: ["create"],
+      shortSpellings: { tools: "-t" },
     });
   });
 
@@ -111,6 +118,7 @@ describe("parseCliArgs", () => {
       command: "agent",
       flags: { skills: "true", json: "true" },
       positional: ["create"],
+      shortSpellings: {},
     });
   });
 });
