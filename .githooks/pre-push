@@ -31,11 +31,30 @@ ensure_server_deps() {
   (cd "$REPO_ROOT/server" && node scripts/ensure-installed-deps.mjs)
 }
 
+# The busy-slot holder of run_self_test's slot fixture: create its release file, then stop the
+# waiting shell under lockf and lockf itself. Globals, because the EXIT trap that also calls this
+# runs after run_self_test's frame is gone. The holder stays in the hook's process group (no
+# `set -m`: its setpgid can fail with EPERM and print to the lane), so a gate that stops the
+# hook's group stops it too.
+SELF_TEST_SLOT_HOLDER=""
+SELF_TEST_SLOT_RELEASE=""
+release_slot_holder() {
+  [[ -n "$SELF_TEST_SLOT_HOLDER" ]] || return 0
+  : > "$SELF_TEST_SLOT_RELEASE" 2>/dev/null || true
+  pkill -TERM -P "$SELF_TEST_SLOT_HOLDER" 2>/dev/null || true
+  kill -TERM "$SELF_TEST_SLOT_HOLDER" 2>/dev/null || true
+  wait "$SELF_TEST_SLOT_HOLDER" 2>/dev/null || true
+  SELF_TEST_SLOT_HOLDER=""
+}
+
 # --lanes-only: just the lane-runner fixtures below (seconds), not the suites and checks before them.
 run_self_test() {
   # This self-test is the harness lane, which can run inside batch-gate.ts --with-pre-push. Its
   # fixtures fail lanes on purpose; their lane_event lines must never reach that gate's events file.
-  unset OPPI_PRE_PUSH_EVENTS
+  # Nor may they take the Apple lane's slot signal or a slot an ancestor holds: each fixture's
+  # apple_then_mac and heavy.sh calls set up their own. OPPI_HEAVY_PARENT_PID stays: a fixture's
+  # queued heavy.sh job should give up when the hook is gone.
+  unset OPPI_PRE_PUSH_EVENTS APPLE_SLOT_SIGNAL OPPI_HEAVY_HELD
   if [[ "${1:-}" != "--lanes-only" ]]; then
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
@@ -257,11 +276,25 @@ HOOK_SHAPE
   # With one of the two xcode-build slots busy elsewhere, the iOS build takes the free one first and
   # the early Release compile waits for it, though the Release lane starts first and the build
   # spends 0.5 s on its guards before asking (scripts/heavy.sh has no queue).
+  # The holder marks slot-held from inside its lock; never probe the slot with lockf instead. A
+  # probe without -k unlinks the slot file when it exits, so a holder that opened the file during
+  # a probe then locks the deleted inode while every later probe finds a new file free: the
+  # self-test spun there for 45 minutes in a land-queue gate. The holder has none of the lane's
+  # output, gives up after 60 s, and release_slot_holder frees it here or from the EXIT trap, so
+  # it can neither hang nor outlive the self-test.
   mkdir -p "$lane_fixture/heavy"
-  /usr/bin/lockf -k "$lane_fixture/heavy/xcode-build.0" \
-    /bin/bash -c 'while [[ ! -e "$0" ]]; do sleep 0.1; done' "$lane_fixture/free-slot" &
-  local slot_holder="$!"
-  while /usr/bin/lockf -s -t 0 "$lane_fixture/heavy/xcode-build.0" true; do sleep 0.05; done
+  SELF_TEST_SLOT_RELEASE="$lane_fixture/free-slot"
+  trap release_slot_holder EXIT
+  /usr/bin/lockf -k "$lane_fixture/heavy/xcode-build.0" /bin/bash -c \
+    ': > "$1"; for ((i = 0; i < 600; i++)); do [[ -e "$0" ]] && exit 0; sleep 0.1; done' \
+    "$lane_fixture/free-slot" "$lane_fixture/slot-held" </dev/null >/dev/null 2>&1 &
+  SELF_TEST_SLOT_HOLDER="$!"
+  local held_wait=0
+  while [[ ! -e "$lane_fixture/slot-held" && "$held_wait" -lt 300 ]]; do sleep 0.1; held_wait=$((held_wait + 1)); done
+  [[ -e "$lane_fixture/slot-held" ]] || {
+    echo "pre-push self-test: the busy-slot holder did not take its xcode-build slot within 30 s" >&2
+    exit 1
+  }
   set +e
   (
     set -euo pipefail
@@ -277,8 +310,8 @@ HOOK_SHAPE
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  : > "$lane_fixture/free-slot"
-  wait "$slot_holder" || true
+  release_slot_holder
+  trap - EXIT
   [[ "$lane_status" -eq 0 && "$(tr '\n' ' ' < "$lane_fixture/trace")" == "apple release " ]] || {
     echo "pre-push self-test: with one xcode-build slot busy, the iOS build must take the free slot before the early Release compile" >&2
     exit 1

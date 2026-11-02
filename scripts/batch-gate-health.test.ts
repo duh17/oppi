@@ -448,6 +448,41 @@ ${ending}
     expect(existsSync(events) ? readFileSync(events, "utf8") : "").toBe("");
   });
 
+  // The gate reads the hook's output until it closes. A busy-slot holder that outlived the self-test
+  // with that output open kept a land-queue gate waiting long after every lane had passed.
+  test("a hook self-test stopped while its fixture holds a build slot leaves no holder and its output closes", async () => {
+    const hook = join(import.meta.dir, "..", ".githooks", "pre-push");
+    const processes = () =>
+      Bun.spawnSync(["ps", "-Ao", "pid=,ppid=,command="], { stdout: "pipe" }).stdout.toString().split("\n")
+        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+        .filter((match) => match !== null)
+        .map(([, pid, ppid, command]) => ({ pid: Number(pid), ppid: Number(ppid), command }));
+    const run = Bun.spawn([hook, "--self-test", "--lanes-only"], { stdout: "pipe", stderr: "pipe" });
+    const output = Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()]).then(() => "closed");
+    // The busy-slot fixture's holder: the hook's own `lockf ... free-slot` child.
+    let holders: { pid: number; release: string }[] = [];
+    try {
+      const deadline = Date.now() + 30_000;
+      while (holders.length === 0 && Date.now() < deadline) {
+        holders = processes()
+          .filter((proc) => proc.ppid === run.pid && proc.command.startsWith("/usr/bin/lockf ") && proc.command.includes("/free-slot"))
+          .map((proc) => ({ pid: proc.pid, release: proc.command.match(/(\S+\/free-slot)/)![1] }));
+        if (holders.length === 0) await Bun.sleep(100);
+      }
+      expect(holders).not.toEqual([]);
+
+      run.kill("SIGTERM"); // the hook alone, as a timeout or a parent that signals only its child would
+
+      expect(await Promise.race([output, Bun.sleep(5_000).then(() => "still open")])).toBe("closed");
+      const alive = new Set(processes().map((proc) => proc.pid));
+      expect(holders.filter((holder) => alive.has(holder.pid))).toEqual([]);
+    } finally {
+      // Release a leaked holder so a red run does not outlive the test.
+      for (const holder of holders) writeFileSync(holder.release, "");
+      run.kill("SIGKILL");
+    }
+  });
+
   test("a green pre-push lets the early UI lanes finish and then runs the rest; the summary leads with the hook", () => {
     const fx = overlapCheckout({ ending: "passes", uiSeconds: 0.2 });
     fx.script("e2e", [{ log: e2eLog({ testSend: "passed" }) }]);
