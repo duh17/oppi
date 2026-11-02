@@ -211,6 +211,7 @@ const SubagentParams: Schema<{
   type: "object",
   properties: {
     action: {
+      type: "string",
       enum: ["launch", "release"],
       description:
         "launch creates a child. release stops supervision and does not stop the session.",

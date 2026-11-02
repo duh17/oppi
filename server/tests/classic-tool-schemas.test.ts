@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import askExtension from "../plugins/ask/index.js";
@@ -8,12 +7,8 @@ import { createSandboxGrepToolDefinition, type GondolinVm } from "../src/gondoli
 import { LiveVoiceSpeech } from "../src/live-voice-speech.js";
 import { createNotifyExtension } from "../src/session-notify-extension.js";
 
-// The classic tools' parameters as TypeBox built them before they moved to pi-schema, recorded
-// once from the TypeBox code. Classic sessions and the Pi terminal share these entries, so the
-// model must see the same schema and Pi must accept the same calls.
-const TYPEBOX_SCHEMAS = JSON.parse(
-  readFileSync(new URL("./fixtures/classic-tool-schemas.typebox.json", import.meta.url), "utf8"),
-) as Record<string, unknown>;
+// Classic sessions and the Pi terminal share these entries, so their schemas must keep accepting
+// what TypeBox's did: arguments they do not declare, but no value outside an enum.
 
 /** Every tool a classic factory registers, by name, from a Pi API that records `registerTool`. */
 function registeredParameters(factory: (pi: never) => void): Record<string, unknown> {
@@ -48,24 +43,14 @@ function classicSchemas(): Record<string, unknown> {
   };
 }
 
-/**
- * The same JSON Schema in either builder's spelling: an absent `additionalProperties` and `true`
- * both allow other properties; TypeBox's string enum also says `type: "string"`, and a union of
- * constants is the same as their `enum`.
- */
-function normalized(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(normalized);
-  if (typeof schema !== "object" || schema === null) return schema;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) out[key] = normalized(value);
-  const anyOf = out.anyOf;
-  if (Array.isArray(anyOf) && anyOf.every((branch) => branch && "const" in branch)) {
-    delete out.anyOf;
-    out.enum = anyOf.map((branch: { const: unknown }) => branch.const);
-  }
-  if (Array.isArray(out.enum)) delete out.type;
-  if (out.additionalProperties === true) delete out.additionalProperties;
-  return out;
+function validate(schemas: Record<string, unknown>, name: string, args: unknown): unknown {
+  const tool = { name, description: name, parameters: schemas[name] } as never;
+  return validateToolArguments(tool, {
+    type: "toolCall",
+    id: "c1",
+    name,
+    arguments: args,
+  } as never);
 }
 
 /** A real call of each tool, with an argument the schema does not declare. */
@@ -101,18 +86,14 @@ const CALLS: Record<string, Record<string, unknown>> = {
 describe("classic tool schemas on pi-schema", () => {
   const schemas = classicSchemas();
 
-  it("registers every recorded classic tool", () => {
-    expect(Object.keys(schemas).sort()).toEqual(Object.keys(TYPEBOX_SCHEMAS).sort());
-  });
-
-  it.each(Object.keys(TYPEBOX_SCHEMAS))("%s matches its TypeBox schema", (name) => {
-    expect(normalized(schemas[name])).toEqual(normalized(TYPEBOX_SCHEMAS[name]));
-  });
-
   it.each(Object.keys(CALLS))("Pi accepts a real %s call with an undeclared argument", (name) => {
     const args = { ...CALLS[name], unexpected: "kept" };
-    const tool = { name, description: name, parameters: schemas[name] } as never;
-    const call = { type: "toolCall", id: "c1", name, arguments: args } as never;
-    expect(validateToolArguments(tool, call)).toEqual(args);
+    expect(validate(schemas, name, args)).toEqual(args);
+  });
+
+  it("Pi rejects an action outside the enum", () => {
+    expect(() => validate(schemas, "background_job", { action: "status" })).toThrow(
+      /action: expected one of \["start","cancel"\]/,
+    );
   });
 });

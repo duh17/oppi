@@ -170,6 +170,7 @@ const BackgroundJobParams: Schema<{
   type: "object",
   properties: {
     action: {
+      type: "string",
       enum: ["start", "cancel"],
       description:
         "start runs a command in the background. cancel stops a job. Neither is a status poll.",
