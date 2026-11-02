@@ -39,7 +39,7 @@ struct ChatActionHandlerRecoveryTests {
 
         connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         connection._setActiveSessionIdForTesting(sessionId)
-        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection.focusedStreamBinder._setEndpointKindForTesting("split_session")
         connection.routeStreamMessage(StreamMessage(
             sessionId: sessionId,
             seq: nil,

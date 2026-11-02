@@ -123,8 +123,8 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.transportPath == .paired)
         #expect(conn.wsClient !== oldClient)
         #expect(oldClient.status == .disconnected)
-        #expect(conn.focusedSessionStreamURLForTesting?.host == "my-server.tail00000.ts.net")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/s2/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.host == "my-server.tail00000.ts.net")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/s2/stream")
         #expect(rebinds == 1)
         #expect(!conn.route.isTransportDemoting)
     }

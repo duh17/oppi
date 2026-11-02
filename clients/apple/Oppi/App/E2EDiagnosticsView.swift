@@ -60,7 +60,7 @@ final class E2EDiagnosticsView: UIView {
             ("e2e.ws.connectionID", String(connection.wsClient?.diagnosticConnectionID ?? 0)),
             ("e2e.transport.path", connection.transportPath.rawValue),
             ("e2e.stream.requiredCapabilities", connection.requiredSplitStreamCapabilitiesStatusForDiagnostics),
-            ("e2e.stream.sessionEndpoint", connection.focusedSessionStreamEndpointKind),
+            ("e2e.stream.sessionEndpoint", connection.focusedStreamBinder.endpointKind),
             ("e2e.ws.focusedSession", connection.focusedSessionId ?? "none"),
             ("e2e.ws.desiredSubscriptions", desiredSubscriptions(connection)),
             ("e2e.ws.ackedSubscriptions", ackedSubscriptions(connection)),

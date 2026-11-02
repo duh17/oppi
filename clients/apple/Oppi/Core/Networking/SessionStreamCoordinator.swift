@@ -87,7 +87,7 @@ final class SessionStreamCoordinator {
             return nil
         }
         guard connection.wsClient != nil else { return nil }
-        guard connection.focusedSessionStreamEndpointKind == "split_session" else {
+        guard connection.focusedStreamBinder.isBound else {
             streamCoordinatorLogger.error("Split session stream unavailable for \(sessionId, privacy: .public)")
             return nil
         }
@@ -198,7 +198,7 @@ final class SessionStreamCoordinator {
             "queueSyncStatus": "async",
             "totalMs": String(totalMs),
             "transport": transport.rawValue,
-            "streamEndpoint": connection.focusedSessionStreamEndpointKind,
+            "streamEndpoint": connection.focusedStreamBinder.endpointKind,
             "endpointHostKind": endpointHostKind,
             "connectMs": String(streamOpenMs),
         ])
@@ -210,7 +210,7 @@ final class SessionStreamCoordinator {
         guard connection.wsClient != nil else { return }
         connection.cancelDeferredQueueSync()
 
-        guard connection.focusedSessionStreamEndpointKind == "split_session",
+        guard connection.focusedStreamBinder.isBound,
               let focusedSessionId = connection.focusedSessionId else { return }
 
         transition(to: .resubscribing(sessionId: focusedSessionId), event: .streamConnected)

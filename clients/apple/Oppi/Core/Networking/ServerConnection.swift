@@ -75,16 +75,10 @@ final class ServerConnection {
     /// The one `/server/info` read scheduled after a load found a voice backend still
     /// `checking` or `unreachable` (`scheduleVoiceBackendFollowUpIfNeeded`).
     private var voiceBackendFollowUpTask: Task<Void, Never>?
-    private(set) var focusedSessionStreamEndpointKind = "none"
-    private var focusedSessionStreamSessionId: String?
-    private var focusedSessionStreamWorkspaceId: String?
-    private var focusedSessionStreamRouteScope: SessionRouteScope?
-    private var focusedSessionStreamURL: URL?
+    /// The focused-session stream binding: endpoint, parked frames, external-open
+    /// claim, recovery presentation owner, deferred playback disconnects.
+    let focusedStreamBinder = FocusedSessionStreamBinder()
     private(set) var transportPath: ConnectionTransportPath = .paired
-    /// Session that currently owns focused-stream recovery presentation.
-    /// Derived `isFocusedSessionStreamRecovering` is true only while this owner
-    /// is the focused session (or focus has not been assigned yet).
-    private var focusedStreamRecoverySessionId: String?
 
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
         if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
@@ -124,7 +118,7 @@ final class ServerConnection {
     }
 
     func focusedSessionStreamEndpointIsUnsupported() -> Bool {
-        focusedSessionStreamEndpointKind == "split_session"
+        focusedStreamBinder.isBound
             && isUnsupportedSplitStreamStatus(wsClient?.lastHTTPStatusCode)
     }
 
@@ -375,9 +369,6 @@ final class ServerConnection {
     /// ChatSessionManager checks this to suppress auto-reconnect.
     var fatalSetupError = false
 
-    /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
-    var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
-
     /// Per-session `AppSessionUsage` telemetry and its de-duplication state.
     let sessionUsageMetrics = SessionUsageMetricsReporter()
 
@@ -437,20 +428,11 @@ final class ServerConnection {
     }
 
     var isFocusedSessionStreamRecovering: Bool {
-        guard let owner = focusedStreamRecoverySessionId else { return false }
-        if let focusedSessionId {
-            return owner == focusedSessionId
-        }
-        return true
+        focusedStreamBinder.isRecovering(focusedSessionId: focusedSessionId)
     }
 
     func setFocusedSessionStreamRecovering(_ recovering: Bool, sessionId: String) {
-        if recovering {
-            if let focusedSessionId, focusedSessionId != sessionId { return }
-            focusedStreamRecoverySessionId = sessionId
-        } else if focusedStreamRecoverySessionId == sessionId {
-            focusedStreamRecoverySessionId = nil
-        }
+        focusedStreamBinder.setRecovering(recovering, sessionId: sessionId, focusedSessionId: focusedSessionId)
     }
 
     private func attachHTTPAuthSession(to client: APIClient, credentials: ServerCredentials) {
@@ -620,7 +602,7 @@ final class ServerConnection {
             "hasFocusedSession": focusedSessionId == nil ? "false" : "true",
         ]
         pathChangeMetadata.merge(diagnosticEndpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
-        pathChangeMetadata.merge(diagnosticEndpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        pathChangeMetadata.merge(diagnosticEndpointMetadata(focusedStreamBinder.streamURL, prefix: "stream")) { current, _ in current }
         ClientLog.info("Network", "Force stream reconnect after path change", metadata: pathChangeMetadata)
 
         // Tear down old WS + consumption task. Per-session continuations
@@ -629,7 +611,7 @@ final class ServerConnection {
         // bootstrap generations after a path-change reconnect.
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
-        parkedFocusedSessionFrames.removeAll()
+        focusedStreamBinder.dropAllParkedFrames()
         wsClient.disconnect()
 
         refreshPreparedFocusedSessionEndpointAfterEndpointChange()
@@ -655,14 +637,6 @@ final class ServerConnection {
 
     /// Per-session continuations for routing stream messages with metadata in-band.
     internal var sessionEventContinuations: [String: AsyncStream<SessionStreamEvent>.Continuation] = [:]
-
-    /// Focused-session frames that arrived after `connectStream()` but before
-    /// `streamSession` registered a continuation. Notification tap and in-app
-    /// re-entry open the bound socket first; without this buffer the server
-    /// bootstrap (`connected`, catch-up, `state`) is dropped and later
-    /// `connectStream()` is a no-op because the socket is already connected.
-    private var parkedFocusedSessionFrames: [String: [SessionStreamEvent]] = [:]
-    private static let parkedFocusedSessionFrameLimit = 64
 
     /// Connect the active session WebSocket endpoint.
     ///
@@ -719,7 +693,7 @@ final class ServerConnection {
         sessionStreamCoordinator.noteStreamDisconnected()
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
-        parkedFocusedSessionFrames.removeAll()
+        focusedStreamBinder.dropAllParkedFrames()
         for (_, cont) in sessionEventContinuations {
             cont.finish()
         }
@@ -844,7 +818,7 @@ final class ServerConnection {
         // Conversation stream frames carry no sessionId: they belong to the session the
         // focused socket is bound to.
         let sessionId: String? = if case .conversationStream = message {
-            frameEvent.sessionId ?? focusedSessionStreamSessionId
+            frameEvent.sessionId ?? focusedStreamBinder.boundSessionId
         } else {
             frameEvent.sessionId
         }
@@ -882,7 +856,7 @@ final class ServerConnection {
             if let cont = sessionEventContinuations[sessionId] {
                 cont.yield(event)
             } else if isFocusedSession(sessionId) {
-                parkFocusedSessionFrame(event)
+                focusedStreamBinder.park(event)
             }
         }
 
@@ -1004,47 +978,8 @@ final class ServerConnection {
 
     // MARK: - External Session Open Claim
 
-    /// A notification or `oppi://session` tap binds the focused-session stream
-    /// before navigation commits. A ChatViewController for a different session is often
-    /// still mounted at that moment: its `onAppear` re-entry or connect loop
-    /// would steal focus and tear down the socket that was opened for the
-    /// tapped session milliseconds earlier, leaving the target with an ask card
-    /// and no timeline. The claim makes the tapped session win focus
-    /// arbitration until its own view binds the stream.
-    private struct ExternalSessionOpenClaim {
-        let sessionId: String
-        let expiresAt: ContinuousClock.Instant
-    }
-
-    private var externalSessionOpenClaim: ExternalSessionOpenClaim?
-
-    /// Bounded so a target whose view never mounts cannot pin arbitration.
-    static let externalSessionOpenClaimWindow: Duration = .seconds(5)
-
     private var effectiveExternalSessionOpenClaimWindow: Duration {
-        _externalSessionOpenClaimWindowForTesting ?? Self.externalSessionOpenClaimWindow
-    }
-
-    private func beginExternalSessionOpenClaim(for sessionId: String) {
-        externalSessionOpenClaim = ExternalSessionOpenClaim(
-            sessionId: sessionId,
-            expiresAt: ContinuousClock.now.advanced(by: effectiveExternalSessionOpenClaimWindow)
-        )
-    }
-
-    /// True while another session holds the external-open claim.
-    func externalSessionOpenClaimBlocks(_ sessionId: String) -> Bool {
-        guard let claim = externalSessionOpenClaim else { return false }
-        guard ContinuousClock.now < claim.expiresAt else {
-            externalSessionOpenClaim = nil
-            return false
-        }
-        return claim.sessionId != sessionId
-    }
-
-    private func resolveExternalSessionOpenClaim(for sessionId: String) {
-        guard externalSessionOpenClaim?.sessionId == sessionId else { return }
-        externalSessionOpenClaim = nil
+        _externalSessionOpenClaimWindowForTesting ?? FocusedSessionStreamBinder.externalOpenClaimWindow
     }
 
     /// A scoped-lock prompt was cancelled after `prepareExternalSessionOpen`
@@ -1057,7 +992,7 @@ final class ServerConnection {
         restoringActiveSessionId previousActive: String?,
         restoringFocusedSessionId previousFocused: String?
     ) {
-        resolveExternalSessionOpenClaim(for: sessionId)
+        focusedStreamBinder.resolveExternalOpenClaim(for: sessionId)
         if sessionStore.activeSessionId == sessionId {
             sessionStore.activeSessionId = previousActive
         }
@@ -1072,7 +1007,7 @@ final class ServerConnection {
     private func recordExternalSessionOpenClaimRefusal(_ sessionId: String, context: String) {
         recordFocusArbitration(
             outcome: "refused",
-            previousSessionId: externalSessionOpenClaim?.sessionId,
+            previousSessionId: focusedStreamBinder.externalOpenClaimSessionId,
             nextSessionId: sessionId,
             context: context
         )
@@ -1081,11 +1016,7 @@ final class ServerConnection {
     // MARK: - Session Streaming
 
     private func clearFocusedSessionStreamEndpoint() {
-        focusedSessionStreamEndpointKind = "none"
-        focusedSessionStreamSessionId = nil
-        focusedSessionStreamWorkspaceId = nil
-        focusedSessionStreamRouteScope = nil
-        focusedSessionStreamURL = nil
+        focusedStreamBinder.clearBinding()
         wsClient?.setStreamURL(nil)
     }
 
@@ -1099,12 +1030,6 @@ final class ServerConnection {
         }
     }
 
-    private func focusedSessionStreamTargetMatches(sessionId: String, routeScope: SessionRouteScope) -> Bool {
-        focusedSessionStreamEndpointKind == "split_session"
-            && focusedSessionStreamSessionId == sessionId
-            && focusedSessionStreamRouteScope == routeScope
-    }
-
     /// Open the URL-bound focused session stream for the holder of `claim`.
     /// Every rebind or socket side effect happens only while `claim` is current.
     func streamSession(
@@ -1112,7 +1037,7 @@ final class ServerConnection {
         routeScope: SessionRouteScope,
         claim: FocusedSessionContext
     ) async -> AsyncStream<SessionStreamEvent>? {
-        guard !externalSessionOpenClaimBlocks(sessionId) else {
+        guard !focusedStreamBinder.externalOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "stream_bind")
             return nil
         }
@@ -1141,7 +1066,7 @@ final class ServerConnection {
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
         // The tapped session's own timeline now owns the stream; ordinary focus
         // arbitration resumes for later navigation.
-        resolveExternalSessionOpenClaim(for: sessionId)
+        focusedStreamBinder.resolveExternalOpenClaim(for: sessionId)
         guard !Task.isCancelled else { return nil }
         return await sessionStreamCoordinator.streamSession(
             connection: self,
@@ -1202,7 +1127,7 @@ final class ServerConnection {
     }
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, routeScope: SessionRouteScope) {
-        let previousBoundSessionId = focusedSessionStreamSessionId
+        let previousBoundSessionId = focusedStreamBinder.boundSessionId
         if previousBoundSessionId != sessionId {
             recordFocusArbitration(
                 outcome: "requested",
@@ -1212,11 +1137,11 @@ final class ServerConnection {
             )
         }
 
-        if focusedSessionStreamTargetMatches(sessionId: sessionId, routeScope: routeScope) {
+        if focusedStreamBinder.isBound(sessionId: sessionId, routeScope: routeScope) {
             // Keep a live/reconnecting transport for the same bound endpoint,
             // but still recompute the URL below. Endpoint selection may have
             // changed after Wi-Fi/cellular handoff while the session target did not.
-        } else if focusedSessionStreamEndpointKind == "split_session",
+        } else if focusedStreamBinder.isBound,
                   hasActiveFocusedSessionStreamTransport() {
             recordFocusArbitration(
                 outcome: "cancelled",
@@ -1233,7 +1158,7 @@ final class ServerConnection {
             recordSessionStreamUnavailable(reason: hasRequiredSplitStreamCapabilities ? "missingEndpointSelection" : streamCapabilityUnavailableReason())
             return
         }
-        guard let sessionStreamURL = makeFocusedSessionStreamURL(
+        guard let sessionStreamURL = FocusedSessionStreamBinder.streamURL(
             selection: selection,
             sessionId: sessionId,
             routeScope: routeScope
@@ -1242,12 +1167,8 @@ final class ServerConnection {
             return
         }
 
-        let previousURL = focusedSessionStreamURL
-        focusedSessionStreamEndpointKind = "split_session"
-        focusedSessionStreamSessionId = sessionId
-        focusedSessionStreamWorkspaceId = routeScope.workspaceId
-        focusedSessionStreamRouteScope = routeScope
-        focusedSessionStreamURL = sessionStreamURL
+        let previousURL = focusedStreamBinder.streamURL
+        focusedStreamBinder.bind(sessionId: sessionId, routeScope: routeScope, url: sessionStreamURL)
         wsClient?.setPreferredEndpoint(selection)
         wsClient?.setStreamURL(sessionStreamURL, sessionId: sessionId, workspaceId: routeScope.workspaceId)
 
@@ -1271,28 +1192,10 @@ final class ServerConnection {
         }
     }
 
-    private func makeFocusedSessionStreamURL(
-        selection: EndpointSelection,
-        sessionId: String,
-        routeScope: SessionRouteScope
-    ) -> URL? {
-        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
-        switch routeScope {
-        case .workspace(let workspaceId):
-            components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
-        case .control:
-            components.path = "/control-sessions/\(sessionId)/stream"
-        }
-        return components.url
-    }
-
     private func refreshPreparedFocusedSessionEndpointAfterEndpointChange() {
-        guard focusedSessionStreamEndpointKind == "split_session",
-              let sessionId = focusedSessionStreamSessionId,
-              let routeScope = focusedSessionStreamRouteScope else {
+        guard focusedStreamBinder.isBound,
+              let sessionId = focusedStreamBinder.boundSessionId,
+              let routeScope = focusedStreamBinder.boundRouteScope else {
             return
         }
 
@@ -1318,7 +1221,7 @@ final class ServerConnection {
             "hasWebSocketClient": wsClient == nil ? "false" : "true",
         ]
         metadata.merge(diagnosticEndpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
-        metadata.merge(diagnosticEndpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        metadata.merge(diagnosticEndpointMetadata(focusedStreamBinder.streamURL, prefix: "stream")) { current, _ in current }
         ClientLog.warning("Network", "Session stream unavailable", metadata: metadata)
     }
 
@@ -1397,7 +1300,7 @@ final class ServerConnection {
 
     /// Close local continuations for a specific session stream.
     func closeSessionStreamContinuations(_ sessionId: String) {
-        parkedFocusedSessionFrames.removeValue(forKey: sessionId)
+        focusedStreamBinder.dropParkedFrames(for: sessionId)
         sessionEventContinuations[sessionId]?.finish()
         sessionEventContinuations.removeValue(forKey: sessionId)
     }
@@ -1409,11 +1312,7 @@ final class ServerConnection {
         _ sessionId: String,
         _ continuation: AsyncStream<SessionStreamEvent>.Continuation
     ) {
-        let hasParkedBootstrap = parkedFocusedSessionFrames[sessionId]?.contains {
-            if case .connected = $0.message { return true }
-            return false
-        } ?? false
-        if wsClient?.status == .connected, !hasParkedBootstrap {
+        if wsClient?.status == .connected, !focusedStreamBinder.hasParkedBootstrap(for: sessionId) {
             // A connected socket is not reusable by a new runtime unless its
             // bootstrap can be delivered to that consumer. It may have gone to
             // an old continuation or been dropped during a focus change. Reopen
@@ -1425,7 +1324,7 @@ final class ServerConnection {
             cancelDeferredQueueSync()
             streamConsumptionTask?.cancel()
             streamConsumptionTask = nil
-            parkedFocusedSessionFrames.removeAll()
+            focusedStreamBinder.dropAllParkedFrames()
             wsClient?.disconnect()
         }
         sessionEventContinuations[sessionId]?.finish()
@@ -1433,41 +1332,9 @@ final class ServerConnection {
         drainParkedFocusedSessionFrames(for: sessionId)
     }
 
-    private func parkFocusedSessionFrame(_ event: SessionStreamEvent) {
-        var buffer = parkedFocusedSessionFrames[event.sessionId] ?? []
-        if buffer.count >= Self.parkedFocusedSessionFrameLimit {
-            if let index = buffer.firstIndex(where: { !Self.isProtectedParkedSessionMessage($0.message) }) {
-                let dropped = buffer.remove(at: index)
-                ClientLog.info("Stream", "Dropped oldest non-protected parked frame", metadata: [
-                    "sessionId": event.sessionId,
-                    "droppedType": dropped.message.typeLabel,
-                    "incomingType": event.message.typeLabel,
-                    "limit": String(Self.parkedFocusedSessionFrameLimit),
-                ])
-            } else if !Self.isProtectedParkedSessionMessage(event.message) {
-                ClientLog.info("Stream", "Dropped parked frame at bound", metadata: [
-                    "sessionId": event.sessionId,
-                    "type": event.message.typeLabel,
-                    "limit": String(Self.parkedFocusedSessionFrameLimit),
-                ])
-                return
-            }
-            // Protected bootstrap frames may exceed the bound so connected/state
-            // are never evicted. The overflow is a handful of UI frames, not catch-up.
-        }
-        if buffer.isEmpty {
-            ClientLog.info("Stream", "Parking focused session frames until consumer attaches", metadata: [
-                "sessionId": event.sessionId,
-                "type": event.message.typeLabel,
-            ])
-        }
-        buffer.append(event)
-        parkedFocusedSessionFrames[event.sessionId] = buffer
-    }
-
     private func drainParkedFocusedSessionFrames(for sessionId: String) {
         guard let continuation = sessionEventContinuations[sessionId] else { return }
-        let parked = parkedFocusedSessionFrames.removeValue(forKey: sessionId) ?? []
+        let parked = focusedStreamBinder.takeParkedFrames(for: sessionId)
         guard !parked.isEmpty else { return }
         ClientLog.info("Stream", "Draining parked focused session frames", metadata: [
             "sessionId": sessionId,
@@ -1478,32 +1345,17 @@ final class ServerConnection {
         }
     }
 
-    private static func isProtectedParkedSessionMessage(_ message: ServerMessage) -> Bool {
-        switch message {
-        case .connected, .state, .sessionSummary, .extensionUIRequest, .extensionUINotification:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func cancelDeferredPlaybackDisconnect(for sessionId: String) {
-        if let task = deferredPlaybackDisconnectTasks.removeValue(forKey: sessionId) {
-            task.cancel()
-        }
-    }
-
     private func deferDisconnectSessionUntilLiveAudioStreamFinishes(_ claim: FocusedSessionContext) {
         let sessionId = claim.sessionId
-        cancelDeferredPlaybackDisconnect(for: sessionId)
-        deferredPlaybackDisconnectTasks[sessionId] = Task { @MainActor [weak self] in
+        focusedStreamBinder.cancelDeferredDisconnect(of: sessionId)
+        focusedStreamBinder.deferDisconnect(of: sessionId, until: Task { @MainActor [weak self] in
             while let self,
                   !Task.isCancelled,
                   self.audioPlayer.activeLiveTransportSessionID == sessionId {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             guard let self, !Task.isCancelled else { return }
-            self.deferredPlaybackDisconnectTasks.removeValue(forKey: sessionId)
+            self.focusedStreamBinder.finishDeferredDisconnect(of: sessionId)
             // Re-validate after the wait: a newer owner may have claimed this
             // same session while audio drained, and its stream must survive.
             // (Focus on another session keeps the old per-session teardown.)
@@ -1513,7 +1365,7 @@ final class ServerConnection {
                 return
             }
             self.disconnectSession(sessionId: sessionId)
-        }
+        })
     }
 
     private func disconnectSessionResources(for sessionId: String) {
@@ -1582,7 +1434,7 @@ final class ServerConnection {
             )
             return
         }
-        if !externalSessionOpenClaimBlocks(claim.sessionId),
+        if !focusedStreamBinder.externalOpenClaimBlocks(claim.sessionId),
            let holder = focusedSessionStore.handBack(from: claim) {
             recordFocusArbitration(
                 outcome: "handed_back",
@@ -1608,8 +1460,8 @@ final class ServerConnection {
     /// dispatch checks this instead of the runtime's entry state alone.
     func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness {
         guard focusedSessionStore.isFocused(sessionId),
-              focusedSessionStreamEndpointKind == "split_session",
-              focusedSessionStreamSessionId == sessionId,
+              focusedStreamBinder.isBound,
+              focusedStreamBinder.boundSessionId == sessionId,
               let wsClient else {
             return .down
         }
@@ -1629,15 +1481,15 @@ final class ServerConnection {
         startsClaim: Bool,
         holder: FocusClaimHolder? = nil
     ) -> FocusedSessionContext? {
-        guard !externalSessionOpenClaimBlocks(sessionId) else {
+        guard !focusedStreamBinder.externalOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "focus")
             return nil
         }
-        cancelDeferredPlaybackDisconnect(for: sessionId)
+        focusedStreamBinder.cancelDeferredDisconnect(of: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
             if let previousSessionId {
-                parkedFocusedSessionFrames.removeValue(forKey: previousSessionId)
+                focusedStreamBinder.dropParkedFrames(for: previousSessionId)
             }
             recordFocusArbitration(
                 outcome: "requested",
@@ -1688,7 +1540,7 @@ final class ServerConnection {
         routeScope: SessionRouteScope?
     ) {
         _onPrepareForSessionReentryForTesting?(sessionId)
-        guard !externalSessionOpenClaimBlocks(sessionId) else {
+        guard !focusedStreamBinder.externalOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "reentry")
             return
         }
@@ -1728,7 +1580,7 @@ final class ServerConnection {
         // Claim before the first await: the timeline prefetch and dialog
         // hydration below are exactly the window in which a still-mounted
         // ChatViewController for another session re-enters and steals the transport.
-        beginExternalSessionOpenClaim(for: sessionId)
+        focusedStreamBinder.beginExternalOpenClaim(for: sessionId, window: effectiveExternalSessionOpenClaimWindow)
         sessionStore.activeSessionId = sessionId
         await prefetchSessionTimelineIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(
@@ -1763,7 +1615,7 @@ final class ServerConnection {
     /// chat for another session from stealing the transport until the target
     /// mounts. `completeExternalSessionOpen` finishes the rest.
     func beginExternalSessionOpen(sessionId: String, workspaceIdHint: String? = nil) {
-        beginExternalSessionOpenClaim(for: sessionId)
+        focusedStreamBinder.beginExternalOpenClaim(for: sessionId, window: effectiveExternalSessionOpenClaimWindow)
         sessionStore.activeSessionId = sessionId
         bindSessionForReentry(
             sessionId,
@@ -1877,7 +1729,7 @@ final class ServerConnection {
     }
 
     func disconnectSession(sessionId: String) {
-        cancelDeferredPlaybackDisconnect(for: sessionId)
+        focusedStreamBinder.cancelDeferredDisconnect(of: sessionId)
         let isFocusedSession = focusedSessionId == sessionId
 
         if isFocusedSession {
@@ -1925,8 +1777,8 @@ final class ServerConnection {
         sessionIdOverride: String?
     ) throws {
         guard let requestedSessionId = sessionIdOverride,
-              focusedSessionStreamEndpointKind == "split_session",
-              let boundSessionId = focusedSessionStreamSessionId,
+              focusedStreamBinder.isBound,
+              let boundSessionId = focusedStreamBinder.boundSessionId,
               boundSessionId != requestedSessionId else {
             return
         }
@@ -1937,8 +1789,8 @@ final class ServerConnection {
             routeScope: sessionStore.routeScope(for: requestedSessionId)
         )
 
-        guard focusedSessionStreamEndpointKind == "split_session",
-              focusedSessionStreamSessionId == requestedSessionId else {
+        guard focusedStreamBinder.isBound,
+              focusedStreamBinder.boundSessionId == requestedSessionId else {
             throw FocusedSessionBindingError.rebindUnavailable(
                 requestedSessionId: requestedSessionId,
                 boundSessionId: boundSessionId
@@ -2061,7 +1913,7 @@ final class ServerConnection {
     func makeLiveVoiceWebSocketClient(sessionId: String, routeScope: SessionRouteScope) -> WebSocketClient? {
         guard let selection = endpointSelection,
               let credentials,
-              let streamURL = makeFocusedSessionStreamURL(
+              let streamURL = FocusedSessionStreamBinder.streamURL(
                   selection: selection,
                   sessionId: sessionId,
                   routeScope: routeScope
@@ -2203,11 +2055,6 @@ final class ServerConnection {
         apiClient = client
     }
 
-    // periphery:ignore - used by stream coordinator tests via @testable import
-    func setFocusedSessionStreamEndpointKindForTesting(_ kind: String) {
-        focusedSessionStreamEndpointKind = kind
-    }
-
     func setAPIClientForTesting(_ client: APIClient?) {
         installAPIClient(client)
     }
@@ -2228,10 +2075,6 @@ final class ServerConnection {
 
     func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, routeScope: SessionRouteScope) {
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
-    }
-
-    var focusedSessionStreamURLForTesting: URL? {
-        focusedSessionStreamURL
     }
 
     func setSplitStreamCapabilitiesForTesting(
@@ -2346,10 +2189,7 @@ extension ServerConnection: ServerRouteHost {
     }
 
     func tearDownForRouteRebuild() -> (sessionId: String, routeScope: SessionRouteScope)? {
-        var focusedTarget: (sessionId: String, routeScope: SessionRouteScope)?
-        if let sessionId = focusedSessionStreamSessionId, let routeScope = focusedSessionStreamRouteScope {
-            focusedTarget = (sessionId, routeScope)
-        }
+        let focusedTarget = focusedStreamBinder.boundTarget
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         wsClient?.disconnect()

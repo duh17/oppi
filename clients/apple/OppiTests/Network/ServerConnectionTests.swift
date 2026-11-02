@@ -1630,7 +1630,7 @@ struct StreamLifecycleTests {
         // GET /server/info; a real failure would trigger availability route
         // recovery and tear down the transport this test observes.
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
         let streamFactory = ScriptedFrameStreamFactory()
         conn._connectStreamForTesting = { streamFactory.makeStream() }
 

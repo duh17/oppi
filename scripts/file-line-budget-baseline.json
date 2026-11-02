@@ -11,7 +11,7 @@
       "reason": "Endpoint families and transport mechanics in one actor; the transport split follows the route contract."
     },
     "clients/apple/Oppi/Core/Networking/ServerConnection.swift": {
-      "budget": 2400,
+      "budget": 2300,
       "owner": "SC1-SC3 ServerConnection state owners",
       "reason": "Facade plus eight extension files that share its state; the owners are still landing."
     },

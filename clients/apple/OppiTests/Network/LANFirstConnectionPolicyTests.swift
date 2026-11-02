@@ -328,7 +328,7 @@ struct LANFirstConnectionPolicyTests {
         #expect(connection.transportPath == .paired)
         #expect(connection.apiClient !== oldAPI)
         #expect(connection.wsClient !== oldSocket)
-        #expect(connection.focusedSessionStreamURLForTesting?.host == credentials.host)
+        #expect(connection.focusedStreamBinder.streamURL?.host == credentials.host)
         #expect(opens == 1)
         #expect(!connection.route.isTransportDemoting)
     }

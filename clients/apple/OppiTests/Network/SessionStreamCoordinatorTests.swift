@@ -349,7 +349,7 @@ struct SSCStateMachineTests {
         ))
         connection.wsClient?._setStatusForTesting(.connected)
         connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection.focusedStreamBinder._setEndpointKindForTesting("split_session")
         connection._sendMessageForTesting = { _ in }
 
         connection.routeStreamMessage(StreamMessage(
@@ -371,7 +371,7 @@ struct SSCStateMachineTests {
         _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.wsClient?._setStatusForTesting(.connected)
         connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection.focusedStreamBinder._setEndpointKindForTesting("split_session")
         connection._sendMessageForTesting = { _ in }
         let coordinator = connection.sessionStreamCoordinator
         // Each replacement has no parked bootstrap, so model the server's

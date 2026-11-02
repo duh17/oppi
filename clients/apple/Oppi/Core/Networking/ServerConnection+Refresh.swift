@@ -473,7 +473,7 @@ extension ServerConnection {
 
         // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.
         // Home/workspace-list refreshes and pre-stream session focus stay HTTP-only.
-        if focusedSessionId != nil, focusedSessionStreamEndpointKind == "split_session" {
+        if focusedSessionId != nil, focusedStreamBinder.isBound {
             if case .reconnecting = wsClient?.status {
                 wsClient?.cancelReconnectBackoff()
                 streamConsumptionTask?.cancel()

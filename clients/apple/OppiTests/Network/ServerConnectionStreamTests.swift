@@ -89,7 +89,7 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("new-child", workspaceIdHint: " ws-1 ")
 
         #expect(conn.focusedSessionId == "new-child")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/ws-1/sessions/new-child/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/ws-1/sessions/new-child/stream")
         #expect(opens == 1)
     }
 
@@ -106,7 +106,7 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("parent")
 
         #expect(conn.focusedSessionId == "parent")
-        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.focusedStreamBinder.endpointKind == "split_session")
         #expect(conn.streamConsumptionTask != nil,
                 "Re-entry should eagerly reopen the bound session transport so session actions work before ChatSessionManager.connect finishes")
     }
@@ -131,7 +131,7 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("new-child")
 
         #expect(conn.focusedSessionId == "new-child")
-        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.focusedStreamBinder.endpointKind == "split_session")
         #expect(conn.streamConsumptionTask != nil,
                 "Notification re-entry should bind the focused stream from the pending permission gate workspace before the session summary arrives")
 
@@ -445,7 +445,7 @@ struct ServerConnectionStreamTests {
         conn.wsClient?._setStatusForTesting(.connected)
         let oldConsumption = makeCancellableNeverCompletingTaskForTesting()
         conn.streamConsumptionTask = oldConsumption
-        let endpoint = conn.focusedSessionStreamURLForTesting
+        let endpoint = conn.focusedStreamBinder.streamURL
 
         if bootstrap == "oldConsumer" {
             let (oldStream, oldContinuation) = AsyncStream<SessionStreamEvent>.makeStream()
@@ -467,7 +467,7 @@ struct ServerConnectionStreamTests {
         conn._connectStreamForTesting = {
             opens += 1
             #expect(conn.wsClient?.status == .disconnected, "Rebind must close the old socket before opening")
-            #expect(conn.focusedSessionStreamURLForTesting == endpoint, "Socket-only reopen must keep the bound endpoint")
+            #expect(conn.focusedStreamBinder.streamURL == endpoint, "Socket-only reopen must keep the bound endpoint")
             conn.wsClient?._setStatusForTesting(.connected)
             return AsyncStream { continuation in
                 continuation.yield(StreamFrameEvent(
@@ -617,7 +617,7 @@ struct ServerConnectionStreamTests {
         // GET /server/info; a real failure would trigger availability route
         // recovery and tear down the transport this test observes.
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
         let streamFactory = ScriptedFrameStreamFactory()
         conn._connectStreamForTesting = { streamFactory.makeStream() }
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -751,7 +751,7 @@ struct ServerConnectionStreamTests {
         ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
 
         let start = ContinuousClock.now
         let stream = await conn.sessionStreamCoordinator.streamSession(
@@ -776,7 +776,7 @@ struct ServerConnectionStreamTests {
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         conn._setActiveSessionIdForTesting("s1")
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
 
         var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
@@ -823,7 +823,7 @@ struct ServerConnectionStreamTests {
         ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
         conn._sendMessageForTesting = { _ in }
 
         let start = ContinuousClock.now
@@ -852,7 +852,7 @@ struct ServerConnectionStreamTests {
                 makeTestSession(id: "old", workspaceId: "w1"),
                 makeTestSession(id: "new", workspaceId: "w1"),
             ])
-            conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+            conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
             conn.wsClient?.setStreamURL(URL(string: "ws://127.0.0.1:9/workspaces/w1/sessions/old/stream"))
             conn.wsClient?._setStatusForTesting(status)
             let staleTask = makeCancellableNeverCompletingTaskForTesting()
@@ -875,7 +875,7 @@ struct ServerConnectionStreamTests {
             #expect(didCancelStaleTask,
                     "Switching bound session streams must tear down stale \(status) transport")
             #expect(conn.focusedSessionId == "new")
-            #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+            #expect(conn.focusedStreamBinder.endpointKind == "split_session")
 
             conn.deferredQueueSyncTask?.cancel()
             conn.streamConsumptionTask?.cancel()
@@ -887,7 +887,7 @@ struct ServerConnectionStreamTests {
         let (conn, _) = await makeTestConnection()
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
 
         var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
@@ -946,7 +946,7 @@ struct ServerConnectionStreamTests {
 
         #expect(stream == nil)
         #expect(conn.extensionToast == nil)
-        #expect(conn.focusedSessionStreamEndpointKind == "none")
+        #expect(conn.focusedStreamBinder.endpointKind == "none")
     }
 
     @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
@@ -956,7 +956,7 @@ struct ServerConnectionStreamTests {
         ))
         conn.wsClient?._setStatusForTesting(.connected)
         conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.focusedStreamBinder._setEndpointKindForTesting("split_session")
 
         var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
@@ -991,7 +991,7 @@ struct ServerConnectionStreamTests {
             routeScope: .control
         )
 
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/control-sessions/control-1/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/control-sessions/control-1/stream")
     }
 
     @Test func mismatchedSteerRebindsBeforeEmittingFrame() async throws {
@@ -1004,7 +1004,7 @@ struct ServerConnectionStreamTests {
 
         var emittedBoundPaths: [String] = []
         conn._sendMessageForTesting = { message in
-            emittedBoundPaths.append(conn.focusedSessionStreamURLForTesting?.path ?? "none")
+            emittedBoundPaths.append(conn.focusedStreamBinder.streamURL?.path ?? "none")
             guard case .prompt(_, _, .steer?, let requestId?, _) = message else { return }
             _ = conn.commands.resolveTurnCommandResult(
                 command: "prompt",
@@ -1018,7 +1018,7 @@ struct ServerConnectionStreamTests {
 
         #expect(emittedBoundPaths == ["/workspaces/w1/sessions/session-a/stream"])
         #expect(conn.focusedSessionId == "session-a")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-a/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/session-a/stream")
         conn.disconnectSession()
     }
 
@@ -1043,7 +1043,7 @@ struct ServerConnectionStreamTests {
         try await conn.sendPrompt("already safe", streamingBehavior: .steer, sessionIdOverride: "session-a")
 
         #expect(prepareCount == 0)
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-a/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/session-a/stream")
     }
 
     @Test func mismatchedSteerWithoutRouteFailsBeforeEmittingFrame() async {
@@ -1063,7 +1063,7 @@ struct ServerConnectionStreamTests {
         }
 
         #expect(emittedCount == 0)
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-b/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/session-b/stream")
     }
 
     @Test func everyOverriddenTurnCommandRepairsMismatchedBinding() async throws {
@@ -1077,7 +1077,7 @@ struct ServerConnectionStreamTests {
 
             var emittedPath: String?
             conn._sendMessageForTesting = { message in
-                emittedPath = conn.focusedSessionStreamURLForTesting?.path
+                emittedPath = conn.focusedStreamBinder.streamURL?.path
                 switch message {
                 case .prompt(_, _, _, let requestId, _):
                     if let requestId {
@@ -1177,7 +1177,7 @@ struct ServerConnectionStreamTests {
 
         #expect(conn.focusedSessionId == "target",
                 "A stale ChatViewController must not steal focus from the notification target")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/target/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/target/stream")
         #expect(streamConnects == 1, "The tapped session's stream must not be torn down and reopened")
         #expect(conn.streamConsumptionTask != nil)
 
@@ -1192,7 +1192,7 @@ struct ServerConnectionStreamTests {
 
         #expect(staleStream == nil, "A stale session must lose the shared focused-session transport")
         #expect(conn.focusedSessionId == "target")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/target/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/target/stream")
 
         conn.disconnectStream()
     }
@@ -1214,7 +1214,7 @@ struct ServerConnectionStreamTests {
         conn.prepareForSessionReentry("stale")
 
         #expect(conn.focusedSessionId == "stale")
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/stale/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/stale/stream")
 
         conn.streamConsumptionTask?.cancel()
         conn.disconnectStream()

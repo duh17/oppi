@@ -416,7 +416,7 @@ struct ChatViewLifecycleTests {
             "A stale ChatViewController appearing must not steal focus from the notification target"
         )
         #expect(
-            connection.focusedSessionStreamURLForTesting?.path
+            connection.focusedStreamBinder.streamURL?.path
                 == "/workspaces/\(workspaceId)/sessions/\(targetSessionId)/stream"
         )
         #expect(streamConnects == 1, "The notification target's socket must survive the stale appear")

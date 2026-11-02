@@ -652,7 +652,7 @@ struct ChatActionHandlerTests {
 
         connection.wsClient?._setStatusForTesting(.connected)
         connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
-        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection.focusedStreamBinder._setEndpointKindForTesting("split_session")
         connection.routeStreamMessage(StreamMessage(
             sessionId: sessionId,
             seq: nil,

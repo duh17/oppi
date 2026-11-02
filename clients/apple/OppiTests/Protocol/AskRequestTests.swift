@@ -1056,7 +1056,7 @@ struct AskRequestTests {
 
         #expect(conn.focusedSessionId == "child")
         #expect(conn.sessionStore.session(id: "child")?.status == .busy)
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/child/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/child/stream")
         #expect(streamConnects == 1)
         #expect(ChatViewController.resolvedComposerAskRequest(
             conn.askRequestStore.pending(for: "child"),
@@ -1100,7 +1100,7 @@ struct AskRequestTests {
 
         let cached = await TimelineCache.shared.loadTrace(sessionId, serverId: testTraceCacheServerId)
         #expect(cached?.events.contains(where: { $0.text == "Stay in this session." }) == true)
-        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/\(sessionId)/stream")
+        #expect(conn.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/\(sessionId)/stream")
         conn.disconnectStream()
         await TimelineCache.shared.removeTrace(sessionId, serverId: testTraceCacheServerId)
     }

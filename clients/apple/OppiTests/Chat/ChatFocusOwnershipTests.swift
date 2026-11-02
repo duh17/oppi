@@ -186,7 +186,7 @@ struct ChatFocusOwnershipTests {
         #expect(await opened == nil)
         #expect(connectCalls == 0, "Stale open must not reconnect the shared socket")
         #expect(connection.focusedSessionStore.focused == holder)
-        #expect(connection.focusedSessionStreamURLForTesting == nil)
+        #expect(connection.focusedStreamBinder.streamURL == nil)
     }
 
     /// v3 review P1a: the claim moves after `streamSession`'s own check, inside
@@ -612,7 +612,7 @@ struct ChatFocusOwnershipTests {
         #expect(await configureTestConnection(connection, apiClient: makeTestURLProtocolClient(host: "localhost")))
         #expect(await oldOpen.value == nil)
         #expect(opens == 0)
-        #expect(connection.focusedSessionStreamURLForTesting == nil)
+        #expect(connection.focusedStreamBinder.streamURL == nil)
         #expect(connection.sessionEventContinuations["s1"] == nil)
         #expect(connection.focusedSessionStore.focused == claim)
     }

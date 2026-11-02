@@ -799,7 +799,7 @@ private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, s
     connection.wsClient?._setStatusForTesting(.connected)
     connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
     connection._setActiveSessionIdForTesting(sessionId)
-    connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+    connection.focusedStreamBinder._setEndpointKindForTesting("split_session")
     connection.routeStreamMessage(StreamMessage(
         sessionId: sessionId,
         seq: nil,

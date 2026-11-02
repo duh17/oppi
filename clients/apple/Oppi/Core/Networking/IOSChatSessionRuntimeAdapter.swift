@@ -185,7 +185,7 @@ final class IOSChatSessionRuntimeAdapter:
     }
 
     func externalOpenClaimBlocks(sessionId: String) -> Bool {
-        connection?.externalSessionOpenClaimBlocks(sessionId) == true
+        connection?.focusedStreamBinder.externalOpenClaimBlocks(sessionId) == true
     }
 
     func setActiveSessionIdForTesting(_ sessionId: String) {

@@ -711,7 +711,7 @@ struct AppOpenerTests {
         #expect(refreshes == 0)
         #expect(connection.sessionStore.activeSessionId == nil)
         #expect(connection.focusedSessionId == nil)
-        #expect(!connection.externalSessionOpenClaimBlocks("other"))
+        #expect(!connection.focusedStreamBinder.externalOpenClaimBlocks("other"))
     }
 
     /// A successful unlock opens the loaded session without waiting for the network either.
@@ -772,7 +772,7 @@ struct AppOpenerTests {
         #expect(harness.coordinator.activeServerId == "server-a")
         #expect(dialogReads == 0, "Nothing else about the session loads after the cancel")
         #expect(connection.sessionStore.activeSessionId == nil)
-        #expect(!connection.externalSessionOpenClaimBlocks("other"))
+        #expect(!connection.focusedStreamBinder.externalOpenClaimBlocks("other"))
     }
 
     /// An open a newer one replaced asks nobody (the route's own gate covers the moved session), but
@@ -1660,7 +1660,7 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "current")
         #expect(target.sessionStore.activeSessionId == nil)
         // The abandoned open no longer refuses another session's focus.
-        #expect(!target.externalSessionOpenClaimBlocks("other"))
+        #expect(!target.focusedStreamBinder.externalOpenClaimBlocks("other"))
     }
 
     @Test func aSiriReceiptOlderThanAParkedRequestKeepsItsPromptButDoesNotOpen() async throws {
@@ -1754,7 +1754,7 @@ struct AppOpenerTests {
         // workspace; the cancel hands focus and the stream back.
         harness.expectSessionRoute(serverId: "server-a", sessionId: "current")
         #expect(connection.focusedSessionId == "current")
-        #expect(connection.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/current/stream")
+        #expect(connection.focusedStreamBinder.streamURL?.path == "/workspaces/w1/sessions/current/stream")
     }
 
     @Test func cancellingALockOnlyDialogsRevealClosesTheLockedStream() async throws {
@@ -1776,7 +1776,7 @@ struct AppOpenerTests {
         // Nothing was focused before: the locked session's focus and stream close.
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
         #expect(connection.focusedSessionId == nil)
-        #expect(connection.focusedSessionStreamURLForTesting == nil)
+        #expect(connection.focusedStreamBinder.streamURL == nil)
         #expect(connection.sessionStore.viewingSessionId == nil)
     }
 

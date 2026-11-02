@@ -75,13 +75,13 @@ struct ServerConnectionStreamRecoveryTests {
         defer { cleanup(connection) }
 
         #expect(connection.transportPath == .lan)
-        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
+        #expect(connection.focusedStreamBinder.streamURL?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
 
         connection.handleNetworkPathChange()
         try await waitForPairedFocusedStream(connection)
 
         #expect(connection.transportPath == .paired)
-        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
+        #expect(connection.focusedStreamBinder.streamURL?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
     }
 
     /// Walking off Wi‑Fi often kills the LAN socket first. By the time the path
@@ -94,7 +94,7 @@ struct ServerConnectionStreamRecoveryTests {
 
         connection.wsClient?._setStatusForTesting(.disconnected)
         #expect(connection.transportPath == .lan)
-        #expect(connection.focusedSessionStreamURLForTesting?.host == "192.168.1.42")
+        #expect(connection.focusedStreamBinder.streamURL?.host == "192.168.1.42")
 
         connection.handleNetworkPathChange()
         try await waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
@@ -103,7 +103,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
         #expect(connection.wsClient != nil)
         #expect(
-            connection.focusedSessionStreamURLForTesting?.absoluteString
+            connection.focusedStreamBinder.streamURL?.absoluteString
                 == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream"
         )
         #expect(connectCalls() == 1, "Focused stream must be explicitly reopened after LAN path loss")
@@ -124,7 +124,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
         #expect(connection.wsClient != nil)
         #expect(
-            connection.focusedSessionStreamURLForTesting?.absoluteString
+            connection.focusedStreamBinder.streamURL?.absoluteString
                 == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream"
         )
         #expect(connectCalls() == 1, "Reconnecting LAN socket must be replaced by a paired stream open")
@@ -191,7 +191,7 @@ struct ServerConnectionStreamRecoveryTests {
         let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
         while true {
             let pairedURLReady = connection.transportPath == .paired
-                && connection.focusedSessionStreamURLForTesting?.absoluteString
+                && connection.focusedStreamBinder.streamURL?.absoluteString
                     == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream"
             let connectsReady = (connectCalls?() ?? minConnectCalls) >= minConnectCalls
             if pairedURLReady && connectsReady {
@@ -199,7 +199,7 @@ struct ServerConnectionStreamRecoveryTests {
             }
             if ContinuousClock.now >= deadline {
                 Issue.record(
-                    "Timed out waiting for paired focused stream (transport=\(connection.transportPath), url=\(String(describing: connection.focusedSessionStreamURLForTesting)), connects=\(connectCalls?() ?? -1))"
+                    "Timed out waiting for paired focused stream (transport=\(connection.transportPath), url=\(String(describing: connection.focusedStreamBinder.streamURL)), connects=\(connectCalls?() ?? -1))"
                 )
                 return
             }
@@ -324,7 +324,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(opened != nil)
         #expect(connection.transportPath == .paired)
         #expect(
-            connection.focusedSessionStreamURLForTesting?.absoluteString
+            connection.focusedStreamBinder.streamURL?.absoluteString
                 == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream"
         )
         #expect(connectCalls >= 1)
@@ -502,7 +502,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connectCalls >= 1)
         #expect(!connection.isFocusedSessionStreamRecovering)
         #expect(
-            connection.focusedSessionStreamURLForTesting?.path
+            connection.focusedStreamBinder.streamURL?.path
                 == "/workspaces/w1/sessions/s1/stream"
         )
     }
