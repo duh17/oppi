@@ -14,6 +14,7 @@
 | Coverage, privacy manifest, project file | Coverage gate, archive report, `xcodegen generate` | [Apple](apple.md) |
 | Mac app (only when the work names Mac) | Mac checks | [Mac](mac.md) |
 | `dev/**/*.md` | `bun scripts/dev-docs-guard.ts` | [dev/README.md](../README.md#what-belongs-in-dev) |
+| A red pre-push or land gate | Read the summary lines | [Gate reports](#gate-reports) |
 
 - Never pipe `sim-pool.sh` output through `grep`, `tail`, or `head`; read its summary and log paths. Long runs go through `background_job`.
 - Semantic iOS controls and identifier naming: [iOS accessibility and agent testability](ios-accessibility-testability.md). `scripts/ax-id-guard.ts` fails a UI or E2E test that references an identifier the app does not define. The QA driver refuses `firstMatch` and coordinate fallbacks ([qa-verification.md](qa-verification.md)).
@@ -42,7 +43,7 @@
 - A waiter exits 143 once `OPPI_HEAVY_PARENT_PID` dies or it is orphaned; nested use of a held class runs directly.
 - `sim-pool run` takes an `xcode-build` slot itself (same files and gate priority) around its build only, never while holding a simulator, and honours `OPPI_HEAVY_HELD`.
 
-## Batch gate
+## Batch gate (land queue)
 
 A queue gates a batch with two repo-owned commands from a checkout of the batch:
 
@@ -63,6 +64,15 @@ Exit codes: `0` pass or nothing named; `1` a lane failed (every lane runs) or a 
 - **Red-lane ledger:** in a land-queue batch (`LAND_QUEUE_BATCH`), each failed lane appends to `$(git rev-parse --git-common-dir)/oppi/land-queue/red-lanes.jsonl` with `cause_guess` (`selector`, `compile`, `quarantine`, `test-failure`, `infra`, `unknown`), `cause_evidence`, and `cause_confirmed: null` for a person to correct. Not yet written by the pre-push Apple build, Mac, Release, and harness lanes.
 - **Quarantine:** `dev/testing/quarantine.json`, entries `{id, owner, reason, addedAt, expires, backlog}` with ids under `OppiTests/`, `OppiUITests/`, or `OppiE2ETests/`. `expires` at most 30 days out (`QUARANTINE_MAX_DAYS`). The blocking run skips entries and a non-blocking run reports them; an expired or incomplete entry fails the gate before anything runs. Two-server suites cannot skip, so their entries still block.
 - **Lane budgets:** `dev/testing/lane-budgets.json` (`{"<lane>": {"measure": "longest-shard" | "median-test" | "wall", "seconds": n}}`). Over budget prints `WARNING <lane> over budget` and never fails; a malformed file warns and continues. `bun scripts/gate-report.ts budget <lane> <seconds>`.
+
+Reading the summary lines:
+
+- `INFRASTRUCTURE FAIL` (shard) / `INFRASTRUCTURE failure, no tests ran in shard-N` (summary): the shard ran no tests (no slot, a simulator that would not boot, a runner that never started). Not a test failure, and nothing reruns; sim-pool's own error line follows. Test failures read `FAIL` / `test failures in shard-N`.
+- `«unknown»` in a Swift Testing summary: an issue recorded with no test to blame (often a request that outlived its test). It fails the run with no failed test to rerun.
+- `red lane <lane>: cause guess <cause> (<evidence>); recorded in <path>` in a land-queue batch, or `not recorded (no LAND_QUEUE_BATCH)` outside one.
+- `quarantined (non-blocking): passed|failed <ids>`: the separate run of quarantined tests; it never fails the lane.
+- `ios-unit: not run; the pre-push gate already ran every OppiUnitTests test in its unit shards, including …`: the unit selectors are covered by this HEAD's shards, not skipped.
+- `pre-push: FAIL (its <lane> lane failed; the hook exited 0)`: a hook lane failed under `--with-pre-push`, so the gate failed even though the hook itself exited 0.
 
 Each sim-pool run writes a log and `*.summary.json` under `clients/apple/.build/logs/` and prints `Artifact: <path>`; read them before rerunning a red lane.
 

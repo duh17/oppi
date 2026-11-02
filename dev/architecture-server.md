@@ -44,7 +44,7 @@ graph TD
 
 ## Push
 
-Push is relay-only and end-to-end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key. `server/src/push/` owns it:
+Push is relay-only and end-to-end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key. `server/src/push/` owns sealing and delivery; the two notifiers live in `server/src/`:
 
 - `envelope.ts` is the only way to make a `SealedPushEnvelope`. `hpke.ts` implements RFC 9180 from `node:crypto` only; push uses no third-party crypto package.
 - `relay-client.ts` tries `[primary, standby]` and prunes a registration only on a primary `410`. `push-sender.ts` keeps no per-push state and never writes config; the phone deduplicates on the envelope's HPKE `enc`.
