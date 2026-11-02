@@ -74,6 +74,9 @@ function serverMode(path: string): ServerGateMode {
     || path === "server/testing-policy.json"
     || path.startsWith("server/scripts/")
     || path.startsWith("server/e2e/")
+    // The plugin host evaluates server/plugins at runtime (jiti), outside Vitest's import graph,
+    // so `vitest --changed` would miss the suites that load a changed plugin through the host.
+    || path.startsWith("server/plugins/")
     || /^server\/(vitest|tsconfig|eslint|prettier|knip)/.test(path)
   ) {
     return "full";

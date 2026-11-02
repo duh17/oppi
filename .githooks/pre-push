@@ -639,6 +639,12 @@ run_harness_gate() {
 
 run_server_gate() {
   (cd "$REPO_ROOT/server" && npm run check:server)
+  # The classic entries of these built-in plugins keep `bun test` suites, which Vitest excludes
+  # (server/vitest.config.ts); together they take a few seconds.
+  local plugin
+  for plugin in background-jobs subagents; do
+    (cd "$REPO_ROOT/server/plugins/$plugin" && run_without_git_local_env bun test --silent)
+  done
   local log_dir test_log
   # Absolute: the suites below run from server/, and the log redirect resolves there.
   # Common dir, not the per-worktree git dir: the land queue deletes a batch worktree (and
