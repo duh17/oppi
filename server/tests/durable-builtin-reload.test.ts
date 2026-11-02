@@ -48,7 +48,7 @@ describe("built-in plugins", () => {
     const reloaded = await runtime.reloadExtensions();
     expect(reloaded.errors).toEqual([]);
     expect(reloaded.loaded).toContainEqual(
-      expect.objectContaining({ name: "project-context", builtIn: true }),
+      expect.objectContaining({ name: "oppi-project-context", builtIn: true }),
     );
     // Replaced under its name: the next resolution uses the new code, in the same place.
     expect(await sections()).toContain("reload_probe");
@@ -60,7 +60,7 @@ describe("built-in plugins", () => {
       expect.objectContaining({ plugin: "oppi-project-context", entry: realpathSync(entry) }),
     ]);
     expect(broken.kept).toEqual([
-      expect.objectContaining({ name: "project-context", builtIn: true }),
+      expect.objectContaining({ name: "oppi-project-context", builtIn: true }),
     ]);
     expect(await sections()).toContain("reload_probe");
     expect(installed()).toEqual(order);

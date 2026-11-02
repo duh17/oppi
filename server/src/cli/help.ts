@@ -2173,7 +2173,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "A reloaded extension replaces the installed one with the same name: running tool calls finish on the old code, and the next request or call uses the new code.",
       "A plugin that fails to load keeps its previous code installed and is listed under errors and kept. A plugin that is gone is uninstalled. A new plugin that takes a name, tool, or task another plugin has is an error; built-ins and plugins already loaded keep theirs.",
       "Sessions pick up a newly added extension the next time they attach (open, resume, or server restart).",
-      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools, builtIn (one of Oppi's built-in plugins), required; skipped and errors items have entry, message, and plugin when the issue is one plugin's.",
+      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name (the plugin's, as the list shows it), entry, runtimes, tools, builtIn (one of Oppi's built-in plugins), required; skipped and errors items have entry, message, and plugin when the issue is one plugin's.",
     ],
     examples: [{ command: "oppi extensions reload --json" }],
   },

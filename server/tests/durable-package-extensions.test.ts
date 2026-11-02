@@ -426,7 +426,9 @@ describe("plugins from Pi packages", () => {
     const f = await fixture(callsTool("unused"));
     const report = await f.reload();
     expect(report.errors).toEqual([]);
-    expect(fromPackages(report).loaded).toEqual(["linked-shared"]);
+    expect(fromPackages(report).loaded).toEqual(["linked"]);
+    // Its extension's name came from the shared file.
+    expect(rowNamed(await f.rows(), "linked").plugin?.extension).toBe("linked-shared");
   });
 
   it("loads the other packages when one repeats a built-in's task or has a bad section key", async () => {
@@ -943,6 +945,13 @@ describe("plugins on the extension list", () => {
 
       const reloaded = JSON.parse((await cli("reload", "--json")).stdout);
       expect(fromPackages(reloaded.data)).toEqual({ loaded: ["probe"], kept: [] });
+      // The report names each plugin as its row does (`oppi-file-tools`, not its extension's name).
+      const rowNames = new Set(
+        (listed.data.extensions as ServerExtensionSummary[]).map((row) => row.name),
+      );
+      const loadedNames = (reloaded.data as DurableExtensionReport).loaded.map((p) => p.name);
+      expect(loadedNames).toContain("oppi-file-tools");
+      expect(loadedNames.filter((name) => !rowNames.has(name))).toEqual([]);
     } finally {
       await new Promise<void>((resolve) => api.close(() => resolve()));
     }

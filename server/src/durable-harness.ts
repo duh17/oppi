@@ -190,6 +190,7 @@ export function durableStoreMetaFromSession(session: Session, cwd: string): Dura
 
 /** A plugin's durable extension, by its extension name. */
 export interface DurableExtensionSummary {
+  /** The plugin's name, as its row on the extension list has it. */
   name: string;
   /** The plugin's facet file. */
   entry: string;
@@ -224,7 +225,7 @@ export interface DurableExtensionReport {
 
 function summarize(loaded: LoadedPlugin): DurableExtensionSummary {
   return {
-    name: loaded.extension.name,
+    name: loaded.name,
     entry: loaded.facet,
     runtimes: loaded.runtimes,
     tools: (loaded.extension.tools ?? []).map((tool) => tool.name),
