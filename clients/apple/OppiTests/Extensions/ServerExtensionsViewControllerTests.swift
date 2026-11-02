@@ -181,6 +181,58 @@ struct ServerExtensionsViewControllerTests {
         await Self.removeCachedCatalog(of: serverId)
     }
 
+    @Test("plugins list with their badges, a broken one needs attention, and Reload reports and refreshes the list")
+    func pluginRowsAndReload() async throws {
+        let serverId = UUID().uuidString
+        let answers = PluginCatalogAnswers()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in try answers.answer(for: request) })
+        defer { routes.end() }
+        let root = try await makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "ready-server.test")
+        )
+        let screen = ServerExtensionsViewController(root: root)
+        let window = try show(UINavigationController(rootViewController: screen))
+        defer { hide(window) }
+
+        var control: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            control = Self.button(withIdentifier: "extensions.row.control", in: screen.view)
+            return control != nil
+        })
+        #expect(answers.listQueries.allSatisfy { $0 == "plugins=true" }, "the page asks for plugin rows")
+        // A row speaks its kinds, source, and state from its fields.
+        let controlLabel = control?.accessibilityLabel ?? ""
+        #expect(["Plugin", "Built-in", "Required", "Enabled"].allSatisfy(controlLabel.contains))
+        let bothLabel = Self.button(withIdentifier: "extensions.row.both", in: screen.view)?.accessibilityLabel ?? ""
+        #expect(["Plugin", "Pi extension", "Enabled"].allSatisfy(bothLabel.contains))
+        #expect(!bothLabel.contains("Required"))
+        let sections = screen.sections()
+        #expect(sections.first { $0.id == .kind(.needsAttention) }?.items == [.row("broken")])
+        #expect(sections.first { $0.id == .notice }?.items == [.pluginsUnavailable])
+
+        let reload = try #require(screen.navigationItem.rightBarButtonItems?.first {
+            $0.accessibilityIdentifier == "extensions.reload"
+        })
+        #expect(reload.isEnabled)
+        screen.reloadPlugins()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return screen.sections().first { $0.id == .reload }?.items.contains(.reloadLine("kept.broken")) == true
+        }, "the report lists the plugin whose previous code still runs")
+        #expect(answers.reloads == 1)
+        // The reload changed the server's plugins: the list asks again and drops the stale note.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return screen.sections().first { $0.id == .notice } == nil
+        })
+        #expect(screen.sections().first { $0.id == .reload }?.items.first == .reloadLine("loaded"))
+        #expect(reload.isEnabled, "a finished reload can run again")
+        #expect(await routes.settle(), "a request outlived the test that answered it")
+        await Self.removeCachedCatalog(of: serverId)
+    }
+
     private static func removeCachedCatalog(of serverId: String) async {
         TimelineCache.shared.markRemoved(serverId)
         await TimelineCache.shared.removeServer(serverId)
@@ -220,6 +272,69 @@ struct ServerExtensionsViewControllerTests {
         }
         return found
     }
+}
+
+/// A server with plugins: a required built-in, a package that is both kinds, and a broken owner
+/// plugin. Its first list says the plugins could not all load; after a reload it does not.
+private final class PluginCatalogAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var queries: [String?] = []
+    private var reloadCount = 0
+
+    var listQueries: [String?] { lock.withLock { queries } }
+    var reloads: Int { lock.withLock { reloadCount } }
+
+    func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
+        let path = request.url?.path ?? ""
+        if request.httpMethod == "POST", path.hasSuffix("/server/resources/extensions/reload") {
+            lock.withLock { reloadCount += 1 }
+            return try mockJSONResponse(encoding: ServerPluginReloadReport(
+                loaded: [.init(name: "oppi-control", entry: "/server/plugins/control/server.ts")],
+                kept: [.init(name: "broken", entry: "/plugins/broken/server.ts")],
+                removed: [],
+                skipped: [],
+                errors: [.init(entry: "/plugins/broken/server.ts", message: "Unexpected token", plugin: "broken")]
+            ), for: request)
+        }
+        guard request.httpMethod == "GET", path.hasSuffix("/server/resources/extensions") else { return nil }
+        let reloaded = lock.withLock {
+            queries.append(request.url?.query)
+            return reloadCount > 0
+        }
+        return try mockJSONResponse(encoding: ServerExtensionCatalog(
+            extensions: Self.rows,
+            pluginsUnavailable: reloaded ? nil : "Oppi's built-in plugins failed to load"
+        ), for: request)
+    }
+
+    private static let rows: [ServerExtensionSummary] = {
+        func plugin(required: Bool = false, loadError: String? = nil) -> ServerPluginSummary {
+            ServerPluginSummary(
+                extensionName: "plugin", required: required, enabled: loadError == nil, runtimes: ["host"],
+                tools: ["tool"], hooks: [], sections: [], wraps: [], tasks: [], loadError: loadError,
+                kept: loadError != nil
+            )
+        }
+        return [
+            ServerExtensionSummary(
+                id: "control", name: "oppi-control", description: nil, kind: .builtIn,
+                provenance: .init(kind: .builtIn, label: "Oppi"), path: nil, state: .on, loadError: nil,
+                warnings: [], isRemovable: false, kinds: [.plugin], source: .builtIn, plugin: plugin(required: true)
+            ),
+            ServerExtensionSummary(
+                id: "both", name: "both", description: nil, kind: .directory,
+                provenance: .init(kind: .piAgent, label: "~/.pi/agent/extensions"), path: nil, state: .on,
+                loadError: nil, warnings: [], isRemovable: false, kinds: [.plugin, .piExtension], source: .owner,
+                plugin: plugin()
+            ),
+            ServerExtensionSummary(
+                id: "broken", name: "broken", description: nil, kind: .directory,
+                provenance: .init(kind: .piAgent, label: "~/.pi/agent/plugins"), path: nil, state: .error,
+                loadError: "Unexpected token", warnings: [], isRemovable: false, kinds: [.plugin], source: .owner,
+                plugin: plugin(loadError: "Unexpected token")
+            ),
+        ]
+    }()
 }
 
 private extension UIView {

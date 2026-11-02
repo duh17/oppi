@@ -22,6 +22,14 @@ enum ServerResourceMutationKey: Hashable, Sendable {
     case normalExtension(String)
 }
 
+/// The last plugin reload asked of one server (`POST /server/resources/extensions/reload`).
+enum ServerPluginReloadState: Equatable, Sendable {
+    case reloading
+    case finished(ServerPluginReloadReport)
+    /// The request itself failed; the server's plugins are as they were.
+    case failed(String)
+}
+
 /// Independent, server-scoped state for global Pi Skills and Extensions.
 ///
 /// This deliberately has no dependency on workspace or session stores. Every
@@ -33,11 +41,15 @@ final class ServerResourceStore {
     typealias ExtensionsRequest = @MainActor () async throws -> ServerExtensionCatalog
     typealias SkillMutationRequest = @MainActor (String, Bool) async throws -> ServerSkillSummary
     typealias ExtensionMutationRequest = @MainActor (String, Bool) async throws -> ServerExtensionSummary
+    typealias PluginReloadRequest = @MainActor () async throws -> ServerPluginReloadReport
 
     private struct Partition {
         var skills: [ServerSkillSummary] = []
         var extensions: [ServerExtensionSummary] = []
         var builtInTools: [ServerToolSummary] = []
+        /// Why the latest extension list has no plugins: the server could not load them.
+        var pluginsUnavailable: String?
+        var pluginReload: ServerPluginReloadState?
         var skillsLoaded = false
         var extensionsLoaded = false
         var skillsSync = ServerSyncState()
@@ -87,6 +99,14 @@ final class ServerResourceStore {
 
     func builtInTools(forServer serverId: String) -> [ServerToolSummary] {
         partitions[serverId]?.builtInTools ?? []
+    }
+
+    func pluginsUnavailable(forServer serverId: String) -> String? {
+        partitions[serverId]?.pluginsUnavailable
+    }
+
+    func pluginReload(forServer serverId: String) -> ServerPluginReloadState? {
+        partitions[serverId]?.pluginReload
     }
 
     /// The latest detail a Skill's page loaded. Its file list and the files it
@@ -224,6 +244,7 @@ final class ServerResourceStore {
                     )
                     $0.extensions = mergedExtensions
                     $0.builtInTools = catalog.builtInTools
+                    $0.pluginsUnavailable = catalog.pluginsUnavailable
                     $0.extensionsLoaded = true
                     $0.extensionsSync.markSyncSucceeded(at: now())
                 }
@@ -251,6 +272,35 @@ final class ServerResourceStore {
             serverId: serverId,
             fetchSkills: { try await api.listServerSkills() },
             fetchExtensions: { try await api.listServerExtensions() }
+        )
+    }
+
+    // MARK: - Plugin reload
+
+    /// Reloads `serverId`'s plugins and keeps the report on that server, whichever is active when
+    /// it answers; a reload changes the rows, so `refresh` then loads the catalog again. A reload
+    /// already running is not asked twice.
+    func reloadPlugins(
+        serverId: String,
+        request: @escaping PluginReloadRequest,
+        refresh: @escaping @MainActor () async -> Void
+    ) async {
+        guard partitions[serverId]?.pluginReload != .reloading else { return }
+        update(serverId) { $0.pluginReload = .reloading }
+        switch await Self.capture(request) {
+        case .success(let report):
+            update(serverId) { $0.pluginReload = .finished(report) }
+            await refresh()
+        case .failure(let error):
+            update(serverId) { $0.pluginReload = .failed(Self.errorText(error)) }
+        }
+    }
+
+    func reloadPlugins(serverId: String, api: APIClient) async {
+        await reloadPlugins(
+            serverId: serverId,
+            request: { try await api.reloadServerExtensions() },
+            refresh: { [weak self] in await self?.load(serverId: serverId, api: api) }
         )
     }
 

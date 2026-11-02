@@ -12,20 +12,97 @@ struct ServerExtensionListPresentationTests {
             extensionRow(id: "enabled", name: "Alpha", state: .on),
             extensionRow(id: "broken", name: "Broken", state: .error, loadError: "Import failed"),
             extensionRow(id: "other-built-in", name: "Another", kind: .builtIn, state: .on),
+            // An owner plugin sits with the Pi extensions it can be turned on and off beside.
+            extensionRow(id: "durable-only", name: "Durable", kind: .directory, state: .on, kinds: [.plugin], source: .owner),
+            extensionRow(id: "working-words", name: "Words", kind: .builtIn, state: .on, kinds: [.plugin], source: .builtIn),
         ]
 
         let presentation = ServerExtensionListPresentation(extensions: rows, query: "")
 
-        #expect(presentation.sections.map(\.kind) == [
-            .builtIn,
-            .needsAttention,
-            .enabledPiExtensions,
-            .disabledPiExtensions,
-        ])
-        #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in"])
+        #expect(presentation.sections.map(\.kind) == [.builtIn, .needsAttention, .enabled, .disabled])
+        #expect(presentation.sections.map(\.kind.rawValue) == ["Built-in", "Needs Attention", "Enabled", "Disabled"])
+        #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in", "working-words"])
         #expect(presentation.sections[1].extensions.map(\.id) == ["broken"])
-        #expect(presentation.sections[2].extensions.map(\.id) == ["enabled"])
+        #expect(presentation.sections[2].extensions.map(\.id) == ["enabled", "durable-only"])
         #expect(presentation.sections[3].extensions.map(\.id) == ["disabled"])
+    }
+
+    @Test func badgesNameTheRowsKindsAndSourceFromItsFieldsAlone() {
+        func badges(_ row: ServerExtensionSummary) -> [String] {
+            ServerExtensionListPresentation.badges(for: row).map(\.label)
+        }
+        #expect(badges(extensionRow(
+            id: "control", name: "anything", kind: .builtIn, state: .on,
+            kinds: [.plugin], source: .builtIn, plugin: plugin(required: true)
+        )) == ["Plugin", "Built-in", "Required"])
+        #expect(badges(extensionRow(
+            id: "both", name: "both", kind: .directory, state: .on,
+            kinds: [.plugin, .piExtension], source: .owner, plugin: plugin()
+        )) == ["Plugin", "Pi extension"])
+        #expect(badges(extensionRow(
+            id: "project", name: "project", kind: .directory, state: .on, kinds: [.plugin], source: .project
+        )) == ["Plugin", "Project"])
+        #expect(badges(extensionRow(
+            id: "classic", name: "classic", state: .on, kinds: [.piExtension], source: .owner
+        )) == ["Pi extension"])
+        // A name says nothing: a row called like Oppi Control without the fields has no badge.
+        #expect(badges(extensionRow(id: "old", name: "oppi-control", state: .on)).isEmpty)
+    }
+
+    @Test func aRequiredBuiltInCannotBeTurnedOffAndABrokenOneNeedsAttention() {
+        let required = extensionRow(
+            id: "control", name: "control", kind: .builtIn, state: .on,
+            kinds: [.plugin], source: .builtIn, plugin: plugin(required: true)
+        )
+        let optional = extensionRow(
+            id: "sql", name: "sql", kind: .builtIn, state: .on,
+            kinds: [.plugin], source: .builtIn, plugin: plugin()
+        )
+        let broken = extensionRow(
+            id: "words", name: "words", kind: .builtIn, state: .error, loadError: "Unexpected token",
+            kinds: [.plugin], source: .builtIn, plugin: plugin(required: true, loadError: "Unexpected token", kept: true)
+        )
+        #expect(!required.canToggleServerDefault)
+        #expect(optional.canToggleServerDefault)
+        #expect(!broken.canToggleServerDefault)
+
+        let presentation = ServerExtensionListPresentation(extensions: [required, optional, broken], query: "")
+        #expect(presentation.sections.map(\.kind) == [.builtIn, .needsAttention])
+        #expect(presentation.sections[1].extensions.map(\.id) == ["words"])
+        // A kept plugin's status says its previous code still runs; a healthy one's does not.
+        #expect(ServerExtensionListPresentation.statusLabel(for: broken).contains("previous code"))
+        #expect(!ServerExtensionListPresentation.statusLabel(for: required).contains("previous code"))
+        let label = ServerExtensionListPresentation.accessibilityLabel(for: broken)
+        #expect(["Plugin", "Required", "Error", "previous code"].allSatisfy(label.contains))
+        #expect(ServerExtensionListPresentation(extensions: [required], query: "required").visibleExtensions.map(\.id) == ["control"])
+    }
+
+    @Test func aPluginsDetailListsWhatItContributesWithHooksByTask() {
+        let sections = ServerExtensionListPresentation.pluginSections(for: ServerPluginSummary(
+            extensionName: "webtools", required: false, enabled: true,
+            runtimes: ["host"],
+            tools: ["web_search", "web_fetch"],
+            hooks: [
+                ServerPluginHook(task: "pi.generation", handlers: ["beforeRequest"]),
+                ServerPluginHook(task: "pi.tool", handlers: ["beforeTool"]),
+                ServerPluginHook(task: "pi.generation", handlers: ["beforeProviderRequest", "beforeRequest"]),
+            ],
+            sections: [],
+            wraps: [ServerPluginWrap(tool: "read"), ServerPluginWrap(section: "guide")],
+            tasks: [],
+            loadError: nil,
+            kept: false
+        ))
+
+        // Empty groups are left out.
+        #expect(sections.map(\.title) == ["Tools", "Hooks", "Wraps", "Runtimes"])
+        #expect(sections[0].lines == ["web_search", "web_fetch"])
+        #expect(sections[1].lines == [
+            "pi.generation: beforeRequest, beforeProviderRequest",
+            "pi.tool: beforeTool",
+        ])
+        #expect(sections[2].lines == ["Tool read", "Prompt section guide"])
+        #expect(sections[3].lines == ["host"])
     }
 
     @Test func searchMatchesCapabilityProvenanceKindAndState() {
@@ -194,6 +271,63 @@ struct ServerExtensionListPresentationTests {
         #expect(toggle.isEnabled, "a stale error row no longer blocks the switch")
     }
 
+    @Test func aRequiredPluginsDetailListsWhatItContributesAndKeepsItsSwitchOn() async throws {
+        let resourceId = "control"
+        let row = extensionRow(
+            id: resourceId, name: "oppi-control", kind: .builtIn, state: .on,
+            kinds: [.plugin], source: .builtIn,
+            plugin: ServerPluginSummary(
+                extensionName: "control", required: true, enabled: true, runtimes: ["host"],
+                tools: ["oppi_control"], hooks: [ServerPluginHook(task: "pi.tool", handlers: ["beforeTool"])],
+                sections: ["control"], wraps: [], tasks: [], loadError: nil, kept: false
+            )
+        )
+        // A plugin-only row's detail is its summary: its contributions come with it.
+        let answers = ExtensionDetailAnswers(
+            catalog: ServerExtensionCatalog(extensions: [row]),
+            detail: ServerExtensionDetail(summary: row),
+            enabled: row
+        )
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in try answers.answer(for: request) })
+        defer { routes.end() }
+        let root = try await makeTestAppRoot(
+            readyServerId: ExtensionDetailAnswers.serverId,
+            apiClient: makeTestURLProtocolClient(host: ExtensionDetailAnswers.host)
+        )
+        let connection = root.coordinator.activeConnection
+        let api = try #require(connection.apiClient)
+        connection.serverResourceStore.switchServer(to: ExtensionDetailAnswers.serverId)
+        await connection.serverResourceStore.load(serverId: ExtensionDetailAnswers.serverId, api: api)
+
+        let page = ServerExtensionDetailViewController(
+            target: ServerResourceDetailNavTarget(
+                serverId: ExtensionDetailAnswers.serverId, kind: .extension, resourceId: resourceId
+            ),
+            root: root,
+            connection: connection
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return Self.switchWithIdentifier("server.extension.enabled", in: page.view) != nil
+        })
+        let sections = page.sections()
+        #expect(sections.map(\.id).prefix(3) == [.summary, .status, .serverDefault], "status first")
+        #expect(sections.first { $0.id == .plugin("Tools") }?.items == [.pluginLine("Tools", "oppi_control")])
+        #expect(sections.first { $0.id == .plugin("Hooks") }?.items == [.pluginLine("Hooks", "pi.tool: beforeTool")])
+        #expect(sections.first { $0.id == .plugin("Prompt Sections") } != nil)
+        #expect(sections.first { $0.id == .source }?.items.contains(.detail("Source")) == true)
+        let toggle = try #require(Self.switchWithIdentifier("server.extension.enabled", in: page.view))
+        #expect(toggle.isOn)
+        #expect(!toggle.isEnabled, "a required built-in cannot be turned off")
+    }
+
     @Test func theOppiBarNeedsAUserOwnedEntryFile() {
         let path = "/Users/chen/.pi/agent/extensions/workflow.ts"
 
@@ -229,7 +363,10 @@ struct ServerExtensionListPresentationTests {
         provenanceKind: ServerResourceProvenanceKind? = nil,
         state: ServerExtensionState,
         loadError: String? = nil,
-        path: String? = nil
+        path: String? = nil,
+        kinds: [ServerExtensionRowKind]? = nil,
+        source: ServerExtensionSource? = nil,
+        plugin: ServerPluginSummary? = nil
     ) -> ServerExtensionSummary {
         ServerExtensionSummary(
             id: id,
@@ -244,7 +381,18 @@ struct ServerExtensionListPresentationTests {
             state: state,
             loadError: loadError,
             warnings: [],
-            isRemovable: false
+            isRemovable: false,
+            kinds: kinds,
+            source: source,
+            plugin: plugin
+        )
+    }
+
+    private func plugin(required: Bool = false, loadError: String? = nil, kept: Bool = false) -> ServerPluginSummary {
+        ServerPluginSummary(
+            extensionName: loadError == nil || kept ? "plugin" : nil, required: required, enabled: loadError == nil,
+            runtimes: ["host"], tools: [], hooks: [], sections: [], wraps: [], tasks: [],
+            loadError: loadError, kept: kept
         )
     }
 }

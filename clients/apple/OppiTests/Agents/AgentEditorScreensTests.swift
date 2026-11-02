@@ -22,7 +22,9 @@ struct AgentEditorScreensTests {
         return connection
     }
 
-    private func makeAgent(tools: [String]? = ["read"], skillPaths: [String]? = nil) -> StoredAgentDefinition {
+    private func makeAgent(
+        tools: [String]? = ["read"], skillPaths: [String]? = nil, extensionIds: [String]? = nil
+    ) -> StoredAgentDefinition {
         StoredAgentDefinition(
             id: "agent-editor-tests",
             name: "Design Reviewer",
@@ -33,7 +35,8 @@ struct AgentEditorScreensTests {
             definition: AgentDefinition(
                 name: "Design Reviewer",
                 icon: .defaultValue,
-                resources: skillPaths.map { AgentResources(skillPaths: $0) },
+                resources: skillPaths == nil && extensionIds == nil
+                    ? nil : AgentResources(skillPaths: skillPaths, extensionIds: extensionIds),
                 sessionDefaults: AgentSessionDefaults(tools: tools)
             ),
             createdAt: Date(timeIntervalSince1970: 1),
@@ -217,6 +220,39 @@ struct AgentEditorScreensTests {
         }, "deselecting an unavailable path removes its row")
         screen.navigation.popViewController(animated: false)
         #expect(await screen.waitFor { screen.button("agent.nativeEdit.skills")?.accessibilityValue == "1" })
+    }
+
+    @Test("the Extensions page offers the Pi extensions, a package's plugin included, and no plugin-only row")
+    func extensionsPageOffersOnlyPiExtensions() async throws {
+        let connection = makeConnection()
+        let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/extensions")
+        func row(_ id: String, kinds: [ServerExtensionRowKind], source: ServerExtensionSource = .owner) -> ServerExtensionSummary {
+            ServerExtensionSummary(
+                id: id, name: id, description: nil, kind: .directory, provenance: provenance, path: nil,
+                state: .on, loadError: nil, warnings: [], isRemovable: false, kinds: kinds, source: source
+            )
+        }
+        connection.serverResourceStore.replaceExtensions([
+            row("classic", kinds: [.piExtension]),
+            row("both", kinds: [.plugin, .piExtension]),
+            row("durable-only", kinds: [.plugin]),
+            row("oppi-control", kinds: [.plugin], source: .builtIn),
+        ], serverId: Self.serverId)
+        let editor = AgentNativeEditViewController(
+            // An exact selection, so the editor offers the Extensions page.
+            agent: makeAgent(extensionIds: []), apiClient: nil, connection: connection, serverName: "mac-studio"
+        ) { _ in }
+        let screen = try Screen(editor)
+        defer { screen.hide() }
+
+        let open = try #require(await screen.waitForButton("agent.nativeEdit.extensions"))
+        open.sendActions(for: .touchUpInside)
+        let page = try #require(await screen.waitForPushedPage(AgentResourceSelectionViewController.self))
+
+        #expect(await screen.waitFor { screen.button("agent.nativeEdit.extension.both", in: page.view) != nil })
+        #expect(screen.button("agent.nativeEdit.extension.classic", in: page.view) != nil)
+        #expect(screen.button("agent.nativeEdit.extension.durable-only", in: page.view) == nil)
+        #expect(screen.button("agent.nativeEdit.extension.oppi-control", in: page.view) == nil)
     }
 
     @Test("an unlisted workspace stays choosable when it is already chosen, and the runtime filters the rest")

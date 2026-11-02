@@ -464,14 +464,18 @@ struct ServerResourceStoreTests {
         let pendingPresentation = ServerExtensionListPresentation(extensions: [pending], query: "@scope/cached-extension")
         #expect(pendingPresentation.visibleExtensions == [pending])
         #expect(ServerExtensionListPresentation(extensions: [pending], query: privatePath).visibleExtensions.isEmpty)
-        #expect(ServerExtensionListPresentation.accessibilityLabel(for: pending) == "extension-package, @scope/cached-extension, Pi user settings, Enabled")
-        #expect(!ServerExtensionListPresentation.accessibilityLabel(for: pending).contains(privatePath))
+        #expect(pending.state == .on, "the switch shows the change while it saves")
+        let pendingLabel = ServerExtensionListPresentation.accessibilityLabel(for: pending)
+        #expect(["Plugin", "Pi extension", "Enabled"].allSatisfy(pendingLabel.contains))
+        #expect(!pendingLabel.contains(privatePath))
 
         await mutationGate.release()
         await mutation.value
 
         let rolledBack = try #require(store.extensions(forServer: "server-a").first { $0.id == cached.id })
         #expect(rolledBack == cached)
+        #expect(rolledBack.state == .off, "the failed save puts the switch back")
+        #expect(rolledBack.kinds == [.plugin, .piExtension])
         #expect(rolledBack.packageName == "@scope/cached-extension")
         #expect(ServerExtensionListPresentation(extensions: [rolledBack], query: "@scope/cached-extension").visibleExtensions == [rolledBack])
     }
@@ -658,6 +662,80 @@ struct ServerResourceStoreTests {
         #expect(store.mutationError(for: .skill(original.id), serverId: "server-a") == nil)
     }
 
+    @Test func aPluginReloadReportsOnItsOwnServerThenRefreshesItsCatalog() async {
+        let gate = SuspensionGate()
+        let store = configuredStore(skills: [])
+        store.replaceExtensions([], serverId: "server-b")
+        let report = ServerPluginReloadReport(
+            loaded: [.init(name: "webtools", entry: "/plugins/webtools/server.ts")],
+            kept: [.init(name: "broken", entry: "/plugins/broken/server.ts")],
+            removed: [],
+            skipped: [],
+            errors: [.init(entry: "/plugins/broken/server.ts", message: "Unexpected token", plugin: "broken")]
+        )
+        let refreshes = RefreshCount()
+
+        let reload = Task { @MainActor in
+            await store.reloadPlugins(
+                serverId: "server-a",
+                request: {
+                    await gate.suspend()
+                    return report
+                },
+                refresh: { refreshes.value += 1 }
+            )
+        }
+        await gate.waitUntilSuspended()
+        #expect(store.pluginReload(forServer: "server-a") == .reloading)
+        // The server switches while the reload runs: its answer stays with server A.
+        store.switchServer(to: "server-b")
+        await gate.release()
+        await reload.value
+
+        #expect(store.pluginReload(forServer: "server-a") == .finished(report))
+        #expect(store.pluginReload(forServer: "server-b") == nil)
+        #expect(refreshes.value == 1, "a reload changes the rows, so the catalog loads again")
+
+        await store.reloadPlugins(
+            serverId: "server-a",
+            request: { throw APIError.server(status: 500, message: "Unable to reload plugins: boom") },
+            refresh: { refreshes.value += 1 }
+        )
+        guard case .failed(let reason) = store.pluginReload(forServer: "server-a") else {
+            Issue.record("a failed reload is not reported: \(String(describing: store.pluginReload(forServer: "server-a")))")
+            return
+        }
+        #expect(reason.contains("Unable to reload plugins: boom"))
+        #expect(refreshes.value == 1, "a failed reload changed nothing to refresh")
+    }
+
+    @Test func theNoteThatPluginsCouldNotLoadFollowsTheLatestCatalog() async {
+        let store = ServerResourceStore(cache: makeCache(), now: { fixedNow })
+        await store.load(
+            serverId: "server-a",
+            fetchSkills: { [] },
+            fetchExtensions: {
+                ServerExtensionCatalog(extensions: [], pluginsUnavailable: "Oppi's built-in plugins failed to load")
+            }
+        )
+        #expect(store.pluginsUnavailable(forServer: "server-a") == "Oppi's built-in plugins failed to load")
+        #expect(store.pluginsUnavailable(forServer: "server-b") == nil)
+
+        // A failed refresh keeps the note it had; a later answer without one clears it.
+        await store.load(
+            serverId: "server-a",
+            fetchSkills: { [] },
+            fetchExtensions: { throw APIError.server(status: 503, message: "Offline") }
+        )
+        #expect(store.pluginsUnavailable(forServer: "server-a") != nil)
+        await store.load(
+            serverId: "server-a",
+            fetchSkills: { [] },
+            fetchExtensions: { ServerExtensionCatalog(extensions: []) }
+        )
+        #expect(store.pluginsUnavailable(forServer: "server-a") == nil)
+    }
+
     private var fixedNow: Date {
         Date(timeIntervalSince1970: 1_700_000_000)
     }
@@ -746,6 +824,11 @@ struct ServerResourceStoreTests {
             plugin: plugin
         )
     }
+}
+
+@MainActor
+private final class RefreshCount {
+    var value = 0
 }
 
 private enum RefreshCacheState: CaseIterable {

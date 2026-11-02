@@ -1,9 +1,11 @@
 import UIKit
 
 /// Extensions for the active server (route `.utility(.extensions)`): the
-/// selected-server row, then the catalog in sections (Built-in, Needs
-/// Attention, Enabled and Disabled Pi Extensions), with search, pull to
-/// refresh, and its loading, offline, empty, and failed states in the list. A
+/// selected-server row, then Pi extensions and plugins in sections (Built-in,
+/// Needs Attention, Enabled, Disabled), with search, pull to refresh, and its
+/// loading, offline, empty, and failed states in the list. Reload (a bar
+/// button) reloads the server's plugins; its report is the Last Reload
+/// section, kept per server by the store, until the next one. A
 /// row opens the extension's detail through `AppNavigation`, so the route
 /// survives a stack/split change. The screen follows the active server and
 /// reloads the catalog when it changes and each time it appears.
@@ -18,13 +20,15 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     }
 
     enum Section: Hashable, Sendable {
-        case server, notice, state, noPi
+        case server, notice, reload, state, noPi
         case kind(ServerExtensionSectionKind)
     }
 
     enum Item: Hashable, Sendable {
         case server
         case cachedWarning
+        case pluginsUnavailable
+        case reloadLine(String)
         case row(String)
     }
 
@@ -37,6 +41,9 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         var hasSeveralServers: Bool
         var presentation: ServerExtensionListPresentation
         var catalog: ServerExtensionCatalogPresentationState
+        var pluginsUnavailable: String?
+        var reload: ServerPluginReloadState?
+        var canReload: Bool
         /// The rows' extensions by id, built once per pass.
         var resources: [String: ServerExtensionSummary]
         /// A size change re-measures every row (line limits, wrapped labels).
@@ -46,6 +53,16 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     private let root: AppRootEnvironment
     private let search = ScreenSearchController(prompt: "Search extensions")
     private var sidebarToggle: UIBarButtonItem?
+    private lazy var reloadItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(
+            title: String(localized: "Reload"),
+            image: UIImage(systemName: "arrow.clockwise"),
+            primaryAction: UIAction { [weak self] _ in self?.reloadPlugins() }
+        )
+        item.accessibilityIdentifier = "extensions.reload"
+        item.accessibilityLabel = String(localized: "Reload Plugins")
+        return item
+    }()
     private var state: ViewState?
 
     private var searchText = "" {
@@ -117,6 +134,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         } else {
             catalog = .unavailable
         }
+        let reload = activeServerId.flatMap { store?.pluginReload(forServer: $0) }
+        let isConnected = activeServerId.flatMap { coordinator.connection(for: $0) }?.apiClient != nil
         state = ViewState(
             activeServerId: activeServerId,
             server: server,
@@ -124,6 +143,9 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             hasSeveralServers: servers.count > 1,
             presentation: presentation,
             catalog: catalog,
+            pluginsUnavailable: activeServerId.flatMap { store?.pluginsUnavailable(forServer: $0) },
+            reload: reload,
+            canReload: isConnected && reload != .reloading,
             resources: Dictionary(
                 presentation.visibleExtensions.map { ($0.id, $0) },
                 uniquingKeysWith: { first, _ in first }
@@ -131,7 +153,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             contentSize: traitCollection.preferredContentSizeCategory
         )
         super.updateProperties()
-        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
+        reloadItem.isEnabled = state?.canReload == true
+        ListScreen.setBarItems(trailing: [reloadItem], leading: sidebarItems(), on: navigationItem)
         search.setText(searchText)
     }
 
@@ -151,9 +174,20 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         var sections: [ListSection<Section, Item>] = []
         if state.server != nil {
             sections.append(ListSection(.server, items: [.server]))
-            if state.catalog == .cachedOffline {
-                sections.append(ListSection(.notice, items: [.cachedWarning]))
+            let notices: [Item] = [
+                state.catalog == .cachedOffline ? .cachedWarning : nil,
+                state.pluginsUnavailable == nil ? nil : .pluginsUnavailable,
+            ].compactMap { $0 }
+            if !notices.isEmpty {
+                sections.append(ListSection(.notice, items: notices))
             }
+        }
+        if let reload = state.reload {
+            sections.append(ListSection(
+                .reload,
+                header: String(localized: "Last Reload"),
+                items: ServerPluginReloadPresentation.lines(for: reload).map { .reloadLine($0.id) }
+            ))
         }
         if let row = stateRow(hasContent: !state.presentation.visibleExtensions.isEmpty, isLoading: state.catalog == .firstLoad, failure: failureReport(
             reason: state.catalog == .unavailable
@@ -196,8 +230,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// The catalog's groups carry a heading; the server, notice, and state rows
     /// do not.
     override func showsHeader(for section: Section) -> Bool {
-        if case .kind = section { return true }
-        return false
+        switch section {
+        case .kind, .reload: true
+        default: false
+        }
     }
 
     /// The caption the catalog's compact loading row shows.
@@ -225,11 +261,18 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             ]
         case .cachedWarning:
             inputs = [state.server?.name]
+        case .pluginsUnavailable:
+            inputs = [state.pluginsUnavailable]
+        case .reloadLine(let id):
+            inputs = [state.reload.flatMap { reload in
+                ServerPluginReloadPresentation.lines(for: reload).first { $0.id == id }
+            }]
         case .row(let id):
             guard let resource = state.resources[id] else { return AnyHashable(0) }
             inputs = [
                 resource.name, resource.description, resource.packageName, resource.provenance.label,
-                resource.state, resource.kind,
+                resource.state, resource.kind, resource.kinds, resource.source, resource.plugin?.required,
+                resource.plugin?.kept, resource.warnings.first,
             ]
         }
         return [AnyHashable(state.contentSize), AnyHashable(inputs)]
@@ -249,6 +292,16 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     }
 
     // MARK: - Actions
+
+    /// Reloads the active server's plugins. The store keeps the report on the server that was
+    /// asked, so a switch meanwhile cannot show it under another server.
+    func reloadPlugins() {
+        guard let serverId = coordinator.activeServerId,
+              let connection = coordinator.connection(for: serverId),
+              let api = connection.apiClient else { return }
+        let store = connection.serverResourceStore
+        Task { await store.reloadPlugins(serverId: serverId, api: api) }
+    }
 
     private func open(_ resourceId: String) {
         guard let serverId = coordinator.activeServerId else { return }
@@ -300,6 +353,46 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         cell.accessibilityIdentifier = "extensions.cachedWarning"
     }
 
+    private lazy var pluginsUnavailableRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
+        guard let self, let reason = state?.pluginsUnavailable else { return }
+        var content = UIListContentConfiguration.subtitleCell()
+        content.text = String(localized: "Plugins could not be loaded")
+        content.secondaryText = reason
+        content.image = UIImage(systemName: "exclamationmark.triangle.fill")
+        content.textProperties.font = .scaled(.subheadline, .semibold)
+        content.textProperties.adjustsFontForContentSizeCategory = true
+        content.textProperties.color = palette.ui.orange
+        content.secondaryTextProperties.font = .scaled(.footnote)
+        content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
+        content.secondaryTextProperties.color = palette.ui.comment
+        content.imageProperties.tintColor = palette.ui.orange
+        cell.contentConfiguration = content
+        cell.isAccessibilityElement = true
+        cell.accessibilityLabel = "\(content.text ?? ""), \(reason)"
+        cell.accessibilityIdentifier = "extensions.pluginsUnavailable"
+    }
+
+    private lazy var reloadLineRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+        guard let self, case .reloadLine(let id) = item, let reload = state?.reload,
+              let line = ServerPluginReloadPresentation.lines(for: reload).first(where: { $0.id == id }) else { return }
+        var content = line.detail == nil ? UIListContentConfiguration.cell() : UIListContentConfiguration.subtitleCell()
+        content.text = line.text
+        content.secondaryText = line.detail
+        content.image = UIImage(systemName: line.symbol)
+        let color = line.isIssue ? palette.ui.orange : palette.ui.fg
+        content.textProperties.font = .scaled(.subheadline)
+        content.textProperties.adjustsFontForContentSizeCategory = true
+        content.textProperties.color = color
+        content.secondaryTextProperties.font = .scaled(.caption1)
+        content.secondaryTextProperties.adjustsFontForContentSizeCategory = true
+        content.secondaryTextProperties.color = palette.ui.comment
+        content.imageProperties.tintColor = line.isIssue ? palette.ui.orange : palette.ui.comment
+        cell.contentConfiguration = content
+        cell.isAccessibilityElement = true
+        cell.accessibilityLabel = [line.text, line.detail].compactMap { $0 }.joined(separator: ", ")
+        cell.accessibilityIdentifier = "extensions.reload.\(id)"
+    }
+
     private lazy var extensionRow = UICollectionView.CellRegistration<ServerExtensionRowCell, Item> { [weak self] cell, _, item in
         guard let self, case .row(let id) = item, let resource = state?.resources[id] else { return }
         cell.configure(resource: resource, palette: palette) { [weak self] in self?.open(id) }
@@ -307,7 +400,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
 
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (serverRow, cachedWarningRow, extensionRow)
+        _ = (serverRow, cachedWarningRow, pluginsUnavailableRow, reloadLineRow, extensionRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -316,6 +409,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             collectionView.dequeueConfiguredReusableCell(using: serverRow, for: indexPath, item: item)
         case .cachedWarning:
             collectionView.dequeueConfiguredReusableCell(using: cachedWarningRow, for: indexPath, item: item)
+        case .pluginsUnavailable:
+            collectionView.dequeueConfiguredReusableCell(using: pluginsUnavailableRow, for: indexPath, item: item)
+        case .reloadLine:
+            collectionView.dequeueConfiguredReusableCell(using: reloadLineRow, for: indexPath, item: item)
         case .row:
             collectionView.dequeueConfiguredReusableCell(using: extensionRow, for: indexPath, item: item)
         }

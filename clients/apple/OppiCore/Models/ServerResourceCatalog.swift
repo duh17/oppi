@@ -205,6 +205,15 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+extension ServerExtensionSummary {
+    /// A classic Pi extension (perhaps also a plugin): what a classic Pi session, and so an
+    /// Agent's extension selection, can load. A server that predates plugins lists only those.
+    var isPiExtension: Bool { kinds?.contains(.piExtension) ?? true }
+
+    /// Shipped with the server. A server that predates plugins says so only in `kind`.
+    var isBuiltIn: Bool { source.map { $0 == .builtIn } ?? (kind == .builtIn) }
+}
+
 /// What an extension-list row is: a plugin (durable sessions), a classic Pi extension, or both.
 enum ServerExtensionRowKind: String, Codable, Sendable, Equatable {
     case plugin
@@ -388,14 +397,19 @@ struct ServerExtensionCatalog: Codable, Sendable, Equatable {
     /// Tools Pi extensions register off (`codemode`, `tool_search`); `defaultTools` turns them on.
     /// Absent from servers that predate discovery.
     let optionalTools: [ServerToolSummary]?
+    /// Why no plugin is listed: the server could not load its plugins. Only on a list that asked
+    /// for plugin rows.
+    let pluginsUnavailable: String?
 
     init(
         extensions: [ServerExtensionSummary],
         builtInTools: [ServerToolSummary] = [],
-        optionalTools: [ServerToolSummary]? = nil
+        optionalTools: [ServerToolSummary]? = nil,
+        pluginsUnavailable: String? = nil
     ) {
         self.extensions = extensions
         self.builtInTools = builtInTools
         self.optionalTools = optionalTools
+        self.pluginsUnavailable = pluginsUnavailable
     }
 }

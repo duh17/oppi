@@ -108,9 +108,10 @@ struct ServerResourceAPIClientTests {
             if requestCount == 1 {
                 #expect(request.httpMethod == "GET")
                 #expect(request.url?.path == "/server/resources/extensions")
-                #expect(request.url?.query == nil)
+                // The list with the rows that are only a plugin.
+                #expect(request.url?.query == "plugins=true")
                 return mockResponse(json: """
-                {"extensions":[{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false}],"builtInTools":[{"name":"read","description":"Read files","defaultEnabled":true},{"name":"grep","description":"Search files","defaultEnabled":false}]}
+                {"extensions":[{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false}],"builtInTools":[{"name":"read","description":"Read files","defaultEnabled":true},{"name":"grep","description":"Search files","defaultEnabled":false}],"pluginsUnavailable":"Oppi's built-in plugins failed to load"}
                 """)
             }
 
@@ -127,6 +128,7 @@ struct ServerResourceAPIClientTests {
         #expect(catalog.extensions.map(\.id) == ["extension_abc"])
         #expect(catalog.builtInTools.map(\.name) == ["read", "grep"])
         #expect(catalog.builtInTools.first?.defaultEnabled == true)
+        #expect(catalog.pluginsUnavailable == "Oppi's built-in plugins failed to load")
         #expect(detail.summary.kind == .file)
         #expect(detail.contributedToolDetails?.first?.description == "Review changes")
     }

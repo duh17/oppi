@@ -25,7 +25,7 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(server.waitUntilExists(timeout: 5), "A single paired server is a passive row")
         XCTAssertEqual(server.label, "Current server: mac-studio")
 
-        for header in ["Built-in", "Needs Attention", "Enabled Pi Extensions", "Disabled Pi Extensions"] {
+        for header in ["Built-in", "Needs Attention", "Enabled", "Disabled"] {
             XCTAssertTrue(app.staticTexts[header].exists, "\(header) section is missing")
         }
         let workflow = app.buttons["extensions.row.workflow"]

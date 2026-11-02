@@ -20,9 +20,14 @@ extension APIClient {
         return try JSONDecoder().decode(ServerSkillSummary.self, from: data)
     }
 
-    /// Lists server-global Pi extensions and their contributed tools.
+    /// Lists server-global Pi extensions and plugins, the rows that are only a plugin included
+    /// (`plugins=true`), and their contributed tools. An Agent's selection offers only the Pi
+    /// extensions (`ServerExtensionSummary.isPiExtension`).
     func listServerExtensions() async throws -> ServerExtensionCatalog {
-        let data = try await get(url: serverResourceURL(pathSegments: ["extensions"]))
+        let data = try await get(url: serverResourceURL(
+            pathSegments: ["extensions"],
+            queryItems: [URLQueryItem(name: "plugins", value: "true")]
+        ))
         return try JSONDecoder().decode(ServerExtensionCatalog.self, from: data)
     }
 

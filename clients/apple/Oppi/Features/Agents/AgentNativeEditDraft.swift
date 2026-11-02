@@ -136,9 +136,11 @@ final class AgentNativeEditDraft {
         return connection.serverResourceStore.skills(forServer: serverId)
     }
 
+    /// The Pi extensions an Agent can select: a row that is only a plugin loads in durable
+    /// sessions, never through an Agent's classic selection.
     var availableExtensions: [ServerExtensionSummary] {
         guard let serverId = connection.currentServerId else { return [] }
-        return connection.serverResourceStore.extensions(forServer: serverId)
+        return connection.serverResourceStore.extensions(forServer: serverId).filter(\.isPiExtension)
     }
 
     var effectiveExtensionToolGroups: [AgentExtensionToolGroup] {

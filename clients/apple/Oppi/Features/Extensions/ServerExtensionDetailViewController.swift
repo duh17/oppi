@@ -1,8 +1,11 @@
 import UIKit
 
-/// One Pi extension on one server (route `.serverResourceDetail`, kind
-/// `.extension`): its server default switch, where it comes from, its status
-/// with Retry, and the tools and commands it contributes. An extension with a
+/// One Pi extension or plugin on one server (route `.serverResourceDetail`, kind
+/// `.extension`): its status and load errors first, its server default switch
+/// (off limits for a required built-in), where it comes from, and what it
+/// contributes: a Pi extension's tools and commands, a plugin's tools, hooks by
+/// task, prompt sections, wraps, tasks and runtimes, all from the row's
+/// protocol fields. An extension with a
 /// user-editable host file also carries the compact Oppi bar, the shared guided
 /// composer on this screen's server, which starts a session for that file.
 ///
@@ -17,6 +20,8 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
 > {
     enum Section: Hashable, Sendable {
         case summary, serverDefault, source, status, loading, tools, commands
+        /// One group of what a plugin contributes, by its title.
+        case plugin(String)
     }
 
     enum Item: Hashable, Sendable {
@@ -26,9 +31,13 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case detail(String)
         case status
         case loadError(String)
+        /// A failed plugin reload left its previous code running.
+        case kept
         case warning(String)
         case tool(String)
         case command(String)
+        /// One line of a plugin group: the group's title, then the line.
+        case pluginLine(String, String)
     }
 
     /// The compact Oppi bar, made once the screen has its server and an
@@ -74,17 +83,29 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
 
     override func sections() -> [ListSection<Section, Item>] {
         guard let state else { return [] }
+        // Load errors first: what failed matters more than where it came from.
         var sections: [ListSection<Section, Item>] = [
             ListSection(.summary, items: [.title]),
+            ListSection(.status, header: "Status", items: statusItems),
             ListSection(
                 .serverDefault,
                 header: "Server Default",
-                footer: "New sessions use this setting. Reload an active session to apply it now.",
+                footer: state.summary.plugin?.required == true
+                    ? "The server needs this built-in, so it stays on."
+                    : "New sessions use this setting. Reload an active session to apply it now.",
                 items: state.mutationError == nil ? [.enabled] : [.enabled, .mutationError]
             ),
             ListSection(.source, header: "Source", items: sourceItems),
-            ListSection(.status, header: "Status", items: statusItems),
         ]
+        if let plugin = state.summary.plugin {
+            for group in ServerExtensionListPresentation.pluginSections(for: plugin) {
+                sections.append(ListSection(
+                    .plugin(group.title),
+                    header: "Plugin \(group.title)",
+                    items: Self.unique(group.lines).map { Item.pluginLine(group.title, $0) }
+                ))
+            }
+        }
         // The contributions' place: the kit's compact loading row until the detail
         // arrives, and its one failed row with Retry when the request failed.
         if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure) {
@@ -104,7 +125,12 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
     private var sourceItems: [Item] {
         var items = [Item]()
         if state?.summary.packageName != nil { items.append(.detail("Package")) }
-        return items + [.detail("Provenance"), .detail("Kind"), .detail("Scope")]
+        items += [.detail("Provenance"), .detail("Kind")]
+        if ServerExtensionListPresentation.sourceLabel(state?.summary.source) != nil { items.append(.detail("Source")) }
+        if state.flatMap({ ServerExtensionListPresentation.kindsLabel(for: $0.summary) }) != nil {
+            items.append(.detail("Type"))
+        }
+        return items + [.detail("Scope")]
     }
 
     /// What Pi makes of the extension — its state, why it could not load it, and
@@ -115,6 +141,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         let summary = state.summary
         var items: [Item] = [.status]
         if let reason = summary.loadError ?? unreadableReason(summary) { items.append(.loadError(reason)) }
+        if summary.plugin?.kept == true { items.append(.kept) }
         return items + Self.unique(summary.warnings).map(Item.warning)
     }
 
@@ -148,7 +175,9 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .loadError(let reason): AnyHashable(reason)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
+            AnyHashable(summary.source), AnyHashable(summary.kinds), AnyHashable(summary.plugin?.required),
         ])
+        case .pluginLine(let group, let line): AnyHashable([group, line])
         case .tool(let name), .command(let name):
             // A contribution name is selectable text: a pass that redrew the row
             // would drop a selection or the copy menu, so it is keyed by it.
@@ -199,6 +228,8 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             case "Package": summary.packageName ?? ""
             case "Provenance": summary.provenance.label
             case "Kind": ServerExtensionListPresentation.kindLabel(for: summary.kind)
+            case "Source": ServerExtensionListPresentation.sourceLabel(summary.source) ?? ""
+            case "Type": ServerExtensionListPresentation.kindsLabel(for: summary) ?? ""
             default: "Server default"
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
@@ -219,6 +250,16 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(reason, style: .footnote, color: palette.ui.orange)
             }
+        case .kept:
+            ListScreen.staticRow(cell, identifier: "server.extension.kept")
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.symbolLabel(
+                    "The reload failed, so its previous code still runs.",
+                    systemImage: "clock.arrow.circlepath",
+                    style: .footnote,
+                    color: palette.ui.fg
+                )
+            }
         case .warning(let warning):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -229,7 +270,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     color: palette.ui.fg
                 )
             }
-        case .tool(let name), .command(let name):
+        case .tool(let name), .command(let name), .pluginLine(_, let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
                 ControlRowViews.selectableText(name, style: .body, color: palette.ui.fg)

@@ -59,6 +59,8 @@ The catalog has no working directory. It lists Pi-native user candidates from `~
 
 The server's extension list (`oppi extensions list`) also has its [plugins](#plugins), Oppi's built-ins included. A Pi package with a plugin is one row under its classic extension's ID; a plugin without a classic extension has a row of its own, listed only for clients that ask for plugin rows, so an Agent's extension picker never offers one. A plugin's row names its tools, hooks, prompt sections, wraps, and tasks, whether it is required, and why it failed to load; when a reload failed and its previous code still runs, the row says so.
 
+The app's **Extensions** page lists the same rows. Each row is marked **Plugin**, **Pi extension**, or both, and **Built-in** and **Required** where they apply; a required built-in's switch stays on. A row that failed to load is under **Needs Attention**, and its page shows the error first. A plugin's page lists its tools, hooks by task, prompt sections, wraps, tasks, and runtimes. **Reload** (the bar button) runs `oppi extensions reload` and shows what loaded, what kept its previous code, what was removed, and what failed, under **Last Reload**.
+
 The workspace **Extensions** picker starts from the extensions Pi resolves for the session's folder, also scans global and project `.pi/extensions` so newly copied files appear, and names them as follows:
 
 - Files must end in `.ts` or `.js`; `.test` and `.spec` files are ignored.

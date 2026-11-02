@@ -646,7 +646,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             hasLoaded: store.hasLoadedExtensions(forServer: serverId),
             isSyncing: isLoading || sync.isSyncing,
             lastSyncFailed: sync.lastSyncFailed,
-            hasRows: !store.extensions(forServer: serverId).isEmpty
+            // An Agent selects Pi extensions only.
+            hasRows: store.extensions(forServer: serverId).contains(where: \.isPiExtension)
         )
     }
 

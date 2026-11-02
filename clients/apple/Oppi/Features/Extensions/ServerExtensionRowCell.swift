@@ -1,7 +1,8 @@
 import UIKit
 
 /// One extension in the Extensions list: its puzzle mark, name, description,
-/// package, provenance, and state, with the system disclosure chevron. The
+/// package, provenance, its badges (Plugin, Pi extension, Built-in, Required),
+/// state, and first warning, with the system disclosure chevron. The
 /// whole row is one button (`extensions.row.<id>`), so a tap, a VoiceOver
 /// activation, and `app.buttons[id]` all open its detail.
 final class ServerExtensionRowCell: UICollectionViewListCell {
@@ -13,6 +14,8 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
     private let provenanceLabel = UILabel()
     private let stateIcon = UIImageView()
     private let stateLabel = UILabel()
+    private let badgeRow = UIStackView()
+    private let warningLabel = UILabel()
     private let textStack = UIStackView()
     private var tapAction: UIAction?
 
@@ -30,7 +33,8 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
         packageLabel.font = .scaled(.caption1)
         provenanceLabel.font = .scaled(.caption1)
         stateLabel.font = .scaled(.caption1, .medium)
-        for label in [nameLabel, descriptionLabel, packageLabel, provenanceLabel, stateLabel] {
+        warningLabel.font = .scaled(.caption1)
+        for label in [nameLabel, descriptionLabel, packageLabel, provenanceLabel, stateLabel, warningLabel] {
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 0
         }
@@ -41,11 +45,14 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
         stateRow.axis = .horizontal
         stateRow.alignment = .firstBaseline
         stateRow.spacing = 4
+        badgeRow.axis = .horizontal
+        badgeRow.alignment = .center
+        badgeRow.spacing = 6
 
         textStack.axis = .vertical
         textStack.alignment = .leading
         textStack.spacing = 4
-        for view in [nameLabel, descriptionLabel, packageLabel, provenanceLabel, stateRow] {
+        for view in [nameLabel, descriptionLabel, packageLabel, provenanceLabel, badgeRow, stateRow, warningLabel] {
             textStack.addArrangedSubview(view)
         }
         for view in [iconView, textStack, button] {
@@ -108,8 +115,13 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .small)
         )
         stateIcon.tintColor = isIssue ? palette.ui.orange : comment
-        stateLabel.text = ServerExtensionListPresentation.stateLabel(for: resource.state)
+        stateLabel.text = ServerExtensionListPresentation.statusLabel(for: resource)
         stateLabel.textColor = isIssue ? palette.ui.orange : comment
+        configureBadges(ServerExtensionListPresentation.badges(for: resource), palette: palette)
+        // The first warning (a linked built-in, plugins that could not load); the detail lists all.
+        warningLabel.text = resource.warnings.first
+        warningLabel.isHidden = resource.warnings.isEmpty
+        warningLabel.textColor = palette.ui.orange
         applyDescriptionLineLimit()
 
         button.accessibilityIdentifier = "extensions.row.\(resource.id)"
@@ -120,8 +132,28 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
         button.addAction(tap, for: .touchUpInside)
     }
 
+    private func configureBadges(_ badges: [ServerExtensionBadge], palette: ThemePalette) {
+        badgeRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for badge in badges {
+            let pill = InsetLabel(insets: UIEdgeInsets(top: 2, left: 6, bottom: 2, right: 6), capsule: true)
+            let color = switch badge.tone {
+            case .kind: palette.ui.blue
+            case .source: palette.ui.comment
+            case .required: palette.ui.purple
+            }
+            pill.text = badge.label
+            pill.font = .scaled(.caption2, .semibold)
+            pill.textColor = color
+            pill.backgroundColor = color.withAlphaComponent(0.14)
+            badgeRow.addArrangedSubview(pill)
+        }
+        badgeRow.isHidden = badges.isEmpty
+    }
+
     private func applyDescriptionLineLimit() {
-        descriptionLabel.numberOfLines = traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 0 : 2
+        let isAccessibilitySize = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        descriptionLabel.numberOfLines = isAccessibilitySize ? 0 : 2
+        warningLabel.numberOfLines = isAccessibilitySize ? 0 : 2
     }
 
     override func prepareForReuse() {

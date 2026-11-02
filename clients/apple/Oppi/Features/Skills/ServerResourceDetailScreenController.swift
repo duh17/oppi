@@ -29,7 +29,8 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
     var detailLoadError: String? { loadError }
     var detailState: AnyHashable { AnyHashable(state) }
     var isServerDefaultOn: Bool { state == .on }
-    var canToggleServerDefault: Bool { state != .error && state != .unknown }
+    /// A built-in the server needs stays on: its plugin says it is required.
+    var canToggleServerDefault: Bool { state != .error && state != .unknown && plugin?.required != true }
 }
 
 /// A detail response carries its own newer copy of the catalog's row.
