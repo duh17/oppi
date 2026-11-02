@@ -216,6 +216,7 @@ The repository owns separate local and CI simulator runners. `sim-pool.sh` manag
 
 ```bash
 ./.githooks/pre-push --self-test
+./.githooks/pre-push --self-test --lanes-only   # just the lane-runner fixtures, seconds
 
 # Run the focused script checks while editing the coverage lane.
 ./clients/apple/scripts/sim-pool.sh self-test

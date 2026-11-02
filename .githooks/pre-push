@@ -31,14 +31,20 @@ ensure_server_deps() {
   (cd "$REPO_ROOT/server" && node scripts/ensure-installed-deps.mjs)
 }
 
+# --lanes-only: just the lane-runner fixtures below (seconds), not the suites and checks before them.
 run_self_test() {
-  bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
-  bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
-    "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
-    "$REPO_ROOT/scripts/gate-report.test.ts"
-  (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
-    --reporter=dot --silent=passed-only)
-  "$SIM_POOL" self-test
+  # This self-test is the harness lane, which can run inside batch-gate.ts --with-pre-push. Its
+  # fixtures fail lanes on purpose; their lane_event lines must never reach that gate's events file.
+  unset OPPI_PRE_PUSH_EVENTS
+  if [[ "${1:-}" != "--lanes-only" ]]; then
+    bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
+    bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
+      "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
+      "$REPO_ROOT/scripts/gate-report.test.ts"
+    (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
+      --reporter=dot --silent=passed-only)
+    "$SIM_POOL" self-test
+  fi
 
   # Regression for run_cached status capture.
   # Bash suppresses set -e for a function invoked in an || / && list, so
@@ -225,6 +231,52 @@ HOOK_SHAPE
     echo "pre-push self-test: a passing Apple lane must run Mac, the Release compile, and the unit tests and record every marker" >&2
     exit 1
   }
+  rm -f "$lane_fixture"/*
+  # The Release compile starts with the iOS build, not after it.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=0
+    run_apple_gate() { sleep 1; [[ -e "$lane_fixture/release-started" ]]; }
+    run_ios_unit_gate() { true; }
+    run_ios_release_gate() { touch "$lane_fixture/release-started"; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -eq 0 && -e "$lane_fixture/apple.pass" ]] || {
+    echo "pre-push self-test: the Release compile must start while the iOS build runs" >&2
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
+  # A red iOS build still waits for the early Release compile, starts neither Mac nor the unit
+  # tests, and fails with its own status even when Release fails too.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { return 5; }
+    run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { echo unit-ran >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { sleep 1; echo release-ran >> "$lane_fixture/trace"; return 9; }
+    apple_then_mac & lane_pid="$!"
+    lane_exit=0
+    wait "$lane_pid" || lane_exit=$?
+    cat "$lane_fixture/trace" > "$lane_fixture/trace-at-return"
+    exit "$lane_exit"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -eq 5 && "$(cat "$lane_fixture/trace-at-return")" == "release-ran" && ! -e "$lane_fixture/apple.pass" && ! -e "$lane_fixture/ios-release.pass" ]] || {
+    echo "pre-push self-test: a failing iOS build must wait for the early Release compile, skip Mac and unit tests, and fail with its own status" >&2
+    exit 1
+  }
   rm -rf "$lane_fixture"
 
   # Git exports repository-local variables to hooks. Those variables are required
@@ -269,7 +321,7 @@ HOOK_SHAPE
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
-  run_self_test
+  run_self_test "${2:-}"
   exit 0
 fi
 
@@ -649,6 +701,9 @@ run_ios_release_gate() {
   mkdir -p "$log_dir"
   build_log="$log_dir/ios-release-$(date +%Y%m%d-%H%M%S).log"
   echo "[ios-release] build log: $build_log"
+  # A worktree the land queue keeps between batches would otherwise grow one log (~3 MB) per gate.
+  local old_log
+  while IFS= read -r old_log; do rm -f "$old_log"; done < <(ls -t "$log_dir"/ios-release-*.log 2>/dev/null | tail -n +10)
   set +e
   (cd "$REPO_ROOT/clients/apple" && DEVELOPER_DIR="$developer_dir" \
     "$HEAVY" xcode-build -- xcodebuild \
@@ -697,25 +752,39 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
   fi
 fi
 
-# After the iOS build, the Mac compile (~50 s), the Release device-SDK compile, and the sharded iOS
-# unit tests (~3.5 min) run together, overlapping the server lane. A failed iOS build skips all three.
+# The Release device-SDK compile (whole-module, ~5 min, the gate's longest compile) needs only the
+# sources, so it starts with the iOS Debug build. After that build, the Mac compile (~50 s) and the
+# sharded iOS unit tests (~3.5 min) join it, overlapping the server lane. A failed iOS build skips
+# Mac and the unit tests, and the lane still waits for the Release compile and ends with the iOS
+# build's status.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
-# shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
-# ends this function with that status before the other lanes start. Those lanes run in the
-# background so run_cached keeps set -e for its own marker write; their statuses are captured
-# at `wait` (set +e / status=$?) and the function returns only after all of them ended, so a
-# failed lane never leaves another running. An EXIT trap cannot do that wait: it runs after
-# the function frame is gone, so a `local` PID is already unbound under set -u.
+# shell (see run_cached). The Apple build runs in a nested `set -e` shell whose status is read
+# under set +e, so a failure is kept, never swallowed. The other lanes run in the background so
+# run_cached keeps set -e for its own marker write; their statuses are captured at `wait`
+# (set +e / status=$?) and the function returns only after all of them ended, so a failed lane
+# never leaves another running. An EXIT trap cannot do that wait: it runs after the function
+# frame is gone, so a `local` PID is already unbound under set -u.
 apple_then_mac() {
-  run_cached apple run_apple_gate
-  local mac_pid="" unit_pid release_pid unit_status=0 release_status=0 mac_status=0
+  local mac_pid="" unit_pid release_pid apple_status=0 unit_status=0 release_status=0 mac_status=0
+  run_cached ios-release run_ios_release_gate & release_pid="$!"
+  set +e
+  (
+    set -euo pipefail
+    run_cached apple run_apple_gate
+  )
+  apple_status=$?
+  if [[ "$apple_status" -ne 0 ]]; then
+    wait "$release_pid"
+    set -e
+    return "$apple_status"
+  fi
+  set -e
   # The Apple build above already built the unit products (run_ios_unit_gate), so the shards need
   # no xcode-build slot and start at once, beside the Mac and Release compiles that take the slots.
   run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"
   fi
-  run_cached ios-release run_ios_release_gate & release_pid="$!"
   set +e
   wait "$unit_pid"
   unit_status=$?

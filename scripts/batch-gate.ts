@@ -78,7 +78,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { loadQuarantine, runFailures, runTestIds, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
@@ -119,13 +119,47 @@ export const BUILD_CACHE_KEY_LINE = "batch-gate: build-cache-key";
 export const BUILD_CACHE_PATHS = [
   "clients/apple/.build/dd",
   "clients/apple/.build/pre-push-mac",
-  "clients/apple/.build/pre-push-release",
+  // Not pre-push-release: its whole-module Release compile rebuilds the Oppi module whatever is kept.
   // Installed from a host cache by `cp -R`: new copies would carry new mtimes and re-link the app.
   // ensure-prebuilt-frameworks.sh replaces them when their BUILD_ID pin changes.
   "clients/apple/Vendor",
 ];
 /** Exit code of a --with-pre-push gate whose hook failed. */
 export const PRE_PUSH_FAILED = 3;
+
+/**
+ * The stamps that let the SwiftLint and ArchitectureBoundaries build phases (project.yml) skip when
+ * nothing they watch is newer. A queue keeps .build/dd between batches, and the phases' watch lists
+ * do not cover every input the guards read, so a gate deletes them: both phases run in every gate,
+ * as they did in a fresh worktree. Paths: <DerivedData>/Build/Intermediates.noindex/<project>.build/
+ * <configuration>/<target>.build/DerivedSources/<stamp>.
+ */
+const PHASE_STAMPS = new Set(["swiftlint.stamp", "architecture-boundaries.stamp"]);
+
+function forgetPhaseStamps(worktree: string): string[] {
+  const removed: string[] = [];
+  const below = (dir: string) => {
+    try {
+      return readdirSync(dir).map((name) => join(dir, name));
+    } catch {
+      return []; // missing, or a file such as dd.lock
+    }
+  };
+  for (const derived of below(join(worktree, "clients", "apple", ".build"))) {
+    for (const project of below(join(derived, "Build", "Intermediates.noindex"))) {
+      for (const configuration of below(project)) {
+        for (const target of below(configuration)) {
+          for (const stamp of below(join(target, "DerivedSources"))) {
+            if (!PHASE_STAMPS.has(basename(stamp))) continue;
+            rmSync(stamp, { force: true });
+            removed.push(stamp);
+          }
+        }
+      }
+    }
+  }
+  return removed;
+}
 
 /** The pinned Xcode and its build number: the toolchain that owns the kept DerivedData. */
 export function buildCacheKey(env: NodeJS.ProcessEnv = process.env): string {
@@ -640,7 +674,13 @@ const startsEarly = (lane: Lane) => lane.name.startsWith("ui-");
 /** When the early lanes start: once this pre-push lane passed, with the hook (`now`), or after it passed (`end`). */
 type EarlyStart = { after: string } | "now" | "end";
 
-type PrePushRun = { code: number; seconds: number };
+/**
+ * `failedLane`: the first hook lane that reported `failed`. The hook passed only when it exited 0 and no
+ * lane failed: a stray event with a green exit is still a red gate (fail closed).
+ */
+type PrePushRun = { code: number; seconds: number; failedLane: string | null };
+
+const prePushPassed = (run: PrePushRun) => run.code === 0 && run.failedLane === null;
 
 /**
  * Run the pre-push `hook` and the `early` lanes together (see --with-pre-push in the header). Once
@@ -672,6 +712,7 @@ async function gateAlongsidePrePush(input: {
     }
   };
   let hookChild: ChildProcess | undefined;
+  let failedLane: string | null = null;
   const cancel = (why: string) => {
     if (cancelled) return;
     cancelled = true;
@@ -698,7 +739,10 @@ async function gateAlongsidePrePush(input: {
     const lines = text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean);
     for (const line of lines.slice(seen)) {
       const [lane, outcome] = line.split(" ");
-      if (outcome === "failed") cancel(`its ${lane} lane failed`);
+      if (outcome === "failed") {
+        failedLane ??= lane;
+        cancel(`its ${lane} lane failed`);
+      }
       else if (typeof input.earlyStart === "object" && lane === input.earlyStart.after) startEarly(`after the pre-push ${lane} lane ${outcome === "cache-hit" ? "hit its cache" : "passed"}`);
     }
     seen = lines.length;
@@ -707,7 +751,7 @@ async function gateAlongsidePrePush(input: {
   const hook = await runStep("pre-push", input.hook, (child) => (hookChild = child));
   clearInterval(poll);
   readEvents();
-  const prePush = { code: hook.code, seconds: elapsed() };
+  const prePush = { code: hook.code, seconds: elapsed(), failedLane };
   const results: LaneResult[] = [];
   if (stopping) {
     // SIGTERM/SIGINT: the caller reports nothing and exits 143.
@@ -846,6 +890,7 @@ async function main(argv: string[]): Promise<number> {
       const deps = await syncDeps();
       if (deps !== 0) return deps;
     }
+    for (const stamp of forgetPhaseStamps(worktree)) console.log(`[batch-gate] removed ${stamp}: the build phase runs in this gate`);
     const events = mkdtempSync(join(tmpdir(), "batch-gate-pre-push-"));
     try {
       const eventsPath = join(events, "events");
@@ -874,7 +919,7 @@ async function main(argv: string[]): Promise<number> {
     } finally {
       rmSync(events, { recursive: true, force: true });
     }
-    if (prePush.code === 0 && plan.lanes.length === 0 && results.length === 0) {
+    if (prePushPassed(prePush) && plan.lanes.length === 0 && results.length === 0) {
       console.log("[batch-gate] no lanes to run; the pre-push gate is the whole gate");
       console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree))}`);
       return 0;
@@ -884,7 +929,10 @@ async function main(argv: string[]): Promise<number> {
   // The batch's own budget file; one that cannot be read is a warning, never a failure.
   const { budgets, warnings } = loadBudgets(join(worktree, "dev", "testing", "lane-budgets.json"));
   console.log("[batch-gate] summary:");
-  if (prePush) console.log(`[batch-gate] pre-push: ${prePush.code === 0 ? "PASS" : `FAIL (exit ${prePush.code})`} ${prePush.seconds}s`);
+  if (prePush) {
+    const verdict = prePushPassed(prePush) ? "PASS" : prePush.code === 0 ? `FAIL (its ${prePush.failedLane} lane failed; the hook exited 0)` : `FAIL (exit ${prePush.code})`;
+    console.log(`[batch-gate] pre-push: ${verdict} ${prePush.seconds}s`);
+  }
   if (plan.notes.some((note) => note.startsWith("ios-unit: not run"))) console.log("[batch-gate] ios-unit: not run (covered by the pre-push unit shards)");
   for (const result of results) {
     if (result.cancelled) {
@@ -895,6 +943,9 @@ async function main(argv: string[]): Promise<number> {
     if (budget.warning) warnings.push(budget.warning);
     console.log(`[batch-gate] ${result.lane.name}: ${result.code === 0 ? "PASS" : `FAIL (exit ${result.code})`} ${result.seconds}s; ${budget.line}`);
   }
+  // A red hook leaves lanes that never started; say so, so a missing lane is never read as a pass.
+  const reported = new Set(results.map((result) => result.lane.name));
+  for (const lane of plan.lanes.filter((lane) => !reported.has(lane.name))) console.log(`[batch-gate] ${lane.name}: NOT RUN; the pre-push gate failed first`);
   for (const warning of warnings) console.log(`[batch-gate] ${warning}`);
   // A red lane hid nothing: its failures are reported. Flakes of the lanes that passed were hidden.
   // A cancelled lane is neither: its run was cut short, so it is not a red lane of the ledger.
@@ -904,7 +955,7 @@ async function main(argv: string[]): Promise<number> {
   for (const result of red) {
     reportRed(worktree, { lane: result.lane.name, profile: result.lane.profile, exit: result.code, seconds: result.seconds, tests: result.failed, output: result.output });
   }
-  if (prePush && prePush.code !== 0) return PRE_PUSH_FAILED;
+  if (prePush && !prePushPassed(prePush)) return PRE_PUSH_FAILED;
   return red.length === 0 ? 0 : 1;
 }
 

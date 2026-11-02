@@ -348,7 +348,12 @@ targets:
             "$SRCROOT/OppiActivityExtension"
             "$SRCROOT/OppiControlWidget"
             "$SRCROOT/OppiShareExtension"
+            # The screenshot-screen guard reads the UI and E2E tests.
+            "$SRCROOT/OppiUITests"
+            "$SRCROOT/OppiE2ETests"
           )
+          # The repo guards the check runs, and their baselines.
+          WATCH_FILES=("$SRCROOT"/../../scripts/*-guard.ts "$SRCROOT"/../../scripts/*-baseline.json)
 
           needs_check=0
           if [ ! -f "$STAMP_FILE" ]; then
@@ -360,6 +365,14 @@ targets:
           elif [ -f "$ARCH_RULES" ] && [ "$ARCH_RULES" -nt "$STAMP_FILE" ]; then
             needs_check=1
           else
+            for file in "${WATCH_FILES[@]}"; do
+              if [ -f "$file" ] && [ "$file" -nt "$STAMP_FILE" ]; then
+                needs_check=1
+                break
+              fi
+            done
+          fi
+          if [ "$needs_check" -eq 0 ]; then
             for dir in "${WATCH_DIRS[@]}"; do
               if [ -d "$dir" ] && find "$dir" -type f -name "*.swift" -newer "$STAMP_FILE" -print -quit | grep -q .; then
                 needs_check=1

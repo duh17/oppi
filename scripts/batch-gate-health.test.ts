@@ -299,13 +299,24 @@ describe("batch gate: quarantine", () => {
 });
 
 describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => {
+  /** What the stand-in hook does after its Apple build passed (or, for `before-apple`, instead of passing it). */
+  const HOOK_ENDINGS = {
+    passes: `touch "$STATE/hook-done"\nexit 0`,
+    "lane-fails": `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[ios-unit] FAILED" >&2\nsleep 2\nexit 1`,
+    // A lane reported red, yet the hook exits 0: a stray event, as the self-test's fixtures once wrote.
+    "event-then-passes": `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\nexit 0`,
+    // Red outside any lane (check-home-paths, the deps sync): no event, only the exit.
+    "exits-without-event": `echo "pre-push: absolute home paths in tracked files" >&2\nexit 1`,
+  } as const;
+
   /**
-   * An app change whose gate names a UI and an E2E suite. The stand-in hook reads its push row, says
-   * `apple passed` after 0.5 s (leaving an `apple-passed` marker), then after 1 s more either says
-   * `ios-unit failed` and exits 1 two seconds later, or exits 0. The stand-in ui-shards records
-   * whether the Apple build had passed when it started, then works for `uiSeconds` unless stopped.
+   * An app change whose gate names a UI and an E2E suite. The stand-in hook reads its push row and
+   * records whether the kept build stamps still existed. Then, after 0.5 s, it either fails its
+   * Apple build (`before-apple`) or says `apple passed` (leaving an `apple-passed` marker) and, 1 s
+   * later, ends as `ending` says. The stand-in ui-shards records whether the Apple build had
+   * passed when it started, then works for `uiSeconds` unless stopped.
    */
-  function overlapCheckout(options: { hookFails: boolean; uiSeconds: number }) {
+  function overlapCheckout(options: { ending: keyof typeof HOOK_ENDINGS | "before-apple"; uiSeconds: number }) {
     const fx = fakeCheckout();
     const state = join(fx.checkout, "..", "state");
     const apple = join(fx.checkout, "clients", "apple");
@@ -319,15 +330,24 @@ await Bun.sleep(${options.uiSeconds * 1000});
 writeFileSync("${state}/ui-" + profile + ".done", "");
 `);
     mkdirSync(join(fx.checkout, ".githooks"));
+    // Build-phase stamps an earlier batch left in the kept DerivedData.
+    const stamps = ["dd/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/Oppi.build/DerivedSources", "pre-push-mac/Build/Intermediates.noindex/Oppi.build/Debug/OppiMac.build/DerivedSources"]
+      .flatMap((dir) => ["swiftlint.stamp", "architecture-boundaries.stamp"].map((name) => join(apple, ".build", dir, name)));
+    for (const stamp of stamps) {
+      mkdirSync(join(stamp, ".."), { recursive: true });
+      writeFileSync(stamp, "");
+    }
+    const ending = options.ending === "before-apple"
+      ? `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[apple] FAILED" >&2\nsleep 1\nexit 1`
+      : `touch "$STATE/apple-passed"\necho "apple passed" >> "$OPPI_PRE_PUSH_EVENTS"\nsleep 1\n${HOOK_ENDINGS[options.ending]}`;
     writeFileSync(join(fx.checkout, ".githooks", "pre-push"), `#!/bin/bash
 set -euo pipefail
-cat > "${state}/hook.stdin"
+STATE="${state}"
+cat > "$STATE/hook.stdin"
+ls ${stamps.map((stamp) => `"${stamp}"`).join(" ")} > "$STATE/stamps-at-hook" 2>/dev/null || true
 echo "[apple] starting"
 sleep 0.5
-touch "${state}/apple-passed"
-echo "apple passed" >> "$OPPI_PRE_PUSH_EVENTS"
-sleep 1
-${options.hookFails ? `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[ios-unit] FAILED" >&2\nsleep 2\nexit 1` : `touch "${state}/hook-done"\nexit 0`}
+${ending}
 `);
     chmodSync(join(fx.checkout, ".githooks", "pre-push"), 0o755);
     fx.git("checkout", "-q", "-b", "feature");
@@ -349,7 +369,7 @@ ${options.hookFails ? `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "
   }
 
   test("a red pre-push lane stops the UI lanes it started early, starts no other lane, and fails the gate", () => {
-    const fx = overlapCheckout({ hookFails: true, uiSeconds: 60 });
+    const fx = overlapCheckout({ ending: "lane-fails", uiSeconds: 60 });
 
     const result = fx.gate();
 
@@ -368,12 +388,68 @@ ${options.hookFails ? `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "
     expect(fx.calls("e2e")).toEqual([]);
     expect(result.out).toMatch(/\[batch-gate\] pre-push: FAIL \(exit 1\) [0-9]+s/);
     expect(result.out).toMatch(/\[batch-gate\] ui-iphone: CANCELLED [0-9]+s; stopped because the pre-push gate failed/);
+    expect(result.out).toContain("[batch-gate] e2e: NOT RUN; the pre-push gate failed first");
     // A lane cut short is not a red lane of its own.
     expect(fx.ledger("land-queue/red-lanes.jsonl")).toEqual([]);
   });
 
+  test("a lane that reported red fails the gate even when the hook then exits 0", () => {
+    const fx = overlapCheckout({ ending: "event-then-passes", uiSeconds: 60 });
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(3);
+    expect(fx.has("hook-done")).toBe(false);
+    expect(fx.has("ui-iphone.terminated")).toBe(true);
+    expect(fx.calls("e2e")).toEqual([]);
+    expect(result.out).toMatch(/\[batch-gate\] pre-push: FAIL \(its apple lane failed; the hook exited 0\) [0-9]+s/);
+  });
+
+  test("a hook that fails outside any lane, with no event, still stops the early lanes and fails the gate", () => {
+    const fx = overlapCheckout({ ending: "exits-without-event", uiSeconds: 60 });
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(3);
+    expect(fx.has("ui-iphone.terminated")).toBe(true);
+    expect(result.out).toContain("[batch-gate] pre-push: the hook failed (exit 1)");
+    expect(result.out).toMatch(/\[batch-gate\] ui-iphone: CANCELLED/);
+    expect(result.out).toContain("[batch-gate] e2e: NOT RUN; the pre-push gate failed first");
+  });
+
+  test("a red Apple build starts no lane at all, and the summary lists every lane as not run", () => {
+    const fx = overlapCheckout({ ending: "before-apple", uiSeconds: 60 });
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(3);
+    expect(fx.has("ui-iphone.start")).toBe(false);
+    expect(fx.calls("e2e")).toEqual([]);
+    expect(result.out).toContain("[batch-gate] ui-iphone: NOT RUN; the pre-push gate failed first");
+    expect(result.out).toContain("[batch-gate] e2e: NOT RUN; the pre-push gate failed first");
+  });
+
+  test("the kept DerivedData's SwiftLint and architecture stamps are gone before the hook builds, so both phases run", () => {
+    const fx = overlapCheckout({ ending: "passes", uiSeconds: 0.2 });
+    fx.script("e2e", [{ log: e2eLog({ testSend: "passed" }) }]);
+
+    expect(fx.gate().code).toBe(0);
+    expect(fx.read("stamps-at-hook")).toBe("");
+  });
+
+  test("the hook's own self-test, run as a lane inside such a gate, writes no lane event into the gate's file", () => {
+    const events = join(mkdtempSync(join(tmpdir(), "batch-gate-events-")), "events");
+    temps.push(join(events, ".."));
+    const hook = join(import.meta.dir, "..", ".githooks", "pre-push");
+
+    const run = Bun.spawnSync([hook, "--self-test", "--lanes-only"], { env: { ...process.env, OPPI_PRE_PUSH_EVENTS: events }, stdout: "pipe", stderr: "pipe" });
+
+    expect(run.exitCode).toBe(0);
+    expect(existsSync(events) ? readFileSync(events, "utf8") : "").toBe("");
+  });
+
   test("a green pre-push lets the early UI lanes finish and then runs the rest; the summary leads with the hook", () => {
-    const fx = overlapCheckout({ hookFails: false, uiSeconds: 0.2 });
+    const fx = overlapCheckout({ ending: "passes", uiSeconds: 0.2 });
     fx.script("e2e", [{ log: e2eLog({ testSend: "passed" }) }]);
 
     const result = fx.gate();
