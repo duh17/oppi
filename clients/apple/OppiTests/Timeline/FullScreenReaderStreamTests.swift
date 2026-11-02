@@ -4,9 +4,10 @@ import UIKit
 @testable import Oppi
 
 /// A reader opened from a timeline row outlives that row. Opening it pushes a
-/// page, so the chat leaves the window; the timeline keeps applying rows, but
-/// only a row that still has a configured cell hears about them. A reader must
-/// follow its item's text whether or not its cell exists.
+/// page, so the chat leaves the window; the timeline keeps applying rows, but a
+/// row that left the viewport is not configured again, so its own cell stops
+/// hearing about them. A reader must follow its item's text whether or not the
+/// timeline still configures a cell for it.
 @Suite("Full-screen reader stream", .serialized)
 @MainActor
 struct FullScreenReaderStreamTests {
@@ -34,20 +35,28 @@ struct FullScreenReaderStreamTests {
         #expect(openedText == opening)
         let stream = try #require(openedStream)
 
+        let rowIndexPath = IndexPath(item: 0, section: 0)
+        // The row renders its own preview, so "never saw the new line" below is a
+        // real read rather than an empty string.
+        #expect(
+            fixture.rowText(at: rowIndexPath)?.contains("Reasoning line") == true,
+            "the row renders its text before it scrolls away: \(fixture.rowText(at: rowIndexPath) ?? "no cell")"
+        )
+
+        // The answer below keeps growing, so the thinking row leaves the viewport
+        // and the timeline stops showing it.
+        let leftViewport = await fixture.scrollToTailLeavingViewport(at: 0)
+        #expect(
+            leftViewport,
+            "the thinking row must have left the viewport for this to be the freeze: \(fixture.geometryForTesting)"
+        )
+
         let reader = fixture.presentReader(content: content)
         let liveBody = try #require(
             reader.installedBodyViewForTesting as? NativeFullScreenThinkingBody
         )
         #expect(fixture.chatHost.view.window == nil, "the push must take the chat off screen")
         #expect(liveBody.debugTextViewForTesting.text == opening)
-
-        // The answer below keeps growing, so the thinking row leaves the viewport
-        // and UIKit stops configuring its cell.
-        fixture.scrollToTail()
-        #expect(
-            fixture.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) == nil,
-            "the thinking row must have no configured cell for this to be the freeze: \(fixture.geometryForTesting)"
-        )
 
         let grown = opening + "\nReasoning line 31"
         fixture.apply(
@@ -58,9 +67,17 @@ struct FullScreenReaderStreamTests {
 
         #expect(
             stream.snapshot.text == grown,
-            "reader stream after the row lost its cell: \(stream.snapshot.text.suffix(60))"
+            "reader stream after the row left the viewport: \(stream.snapshot.text.suffix(60))"
         )
         #expect(liveBody.debugTextViewForTesting.text == grown)
+        // The row itself never heard about the new line: whatever cell the timeline
+        // still holds for it was not configured, which is the freeze the reader has
+        // to survive on its own.
+        let rowTextAfterGrowth = fixture.rowText(at: rowIndexPath)
+        #expect(
+            rowTextAfterGrowth?.contains("Reasoning line 31") != true,
+            "the row that left the viewport was configured with the new line: \(rowTextAfterGrowth ?? "no cell")"
+        )
 
         // The turn ending still completes the reader.
         fixture.apply(
@@ -101,12 +118,18 @@ struct FullScreenReaderStreamTests {
         }
         let stream = try #require(openedStream)
 
-        let reader = fixture.presentReader(content: content)
-        fixture.scrollToTail()
+        let rowIndexPath = IndexPath(item: 0, section: 0)
         #expect(
-            fixture.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) == nil,
-            "the tool row must have no configured cell for this to be the freeze: \(fixture.geometryForTesting)"
+            fixture.rowText(at: rowIndexPath)?.contains("Compiling module 1") == true,
+            "the row renders its output before it scrolls away: \(fixture.rowText(at: rowIndexPath) ?? "no cell")"
         )
+        let leftViewport = await fixture.scrollToTailLeavingViewport(at: 0)
+        #expect(
+            leftViewport,
+            "the tool row must have left the viewport for this to be the freeze: \(fixture.geometryForTesting)"
+        )
+
+        let reader = fixture.presentReader(content: content)
 
         fixture.apply(
             items: [runningTool(output: "Compiling module 1\nCompiling module 2\nBuild complete")] + trailer,
@@ -117,16 +140,23 @@ struct FullScreenReaderStreamTests {
 
         #expect(
             stream.snapshot.output.contains("Build complete"),
-            "tool reader stream after the row lost its cell: \(stream.snapshot.output)"
+            "tool reader stream after the row left the viewport: \(stream.snapshot.output)"
         )
         let rendered = timelineAllTextViews(in: reader.view)
             .map(timelineRenderedText)
             .joined(separator: "\n")
         #expect(rendered.contains("Build complete"))
         #expect(!stream.snapshot.isDone, "a running call's reader is still live")
+        // The row itself was not configured with the new output either: the reader
+        // followed the call without it.
+        let rowTextAfterGrowth = fixture.rowText(at: rowIndexPath)
+        #expect(
+            rowTextAfterGrowth?.contains("Build complete") != true,
+            "the row that left the viewport was configured with the new output: \(rowTextAfterGrowth ?? "no cell")"
+        )
 
-        // The call finishing reaches the reader once, even without its cell, and
-        // the reader mounts the finished body.
+        // The call finishing reaches the reader once, even with the row out of the
+        // viewport, and the reader mounts the finished body.
         fixture.apply(
             items: [completedTool(output: "Compiling module 1\nBuild complete")] + trailer,
             liveRowIDs: [],
@@ -412,8 +442,31 @@ private final class ReaderTimelineFixture {
         settleTimelineLayout(collectionView)
     }
 
-    /// Moves the viewport to the tail so the opened row's cell is recycled.
-    func scrollToTail() {
+    /// Renders the row at `indexPath` from the cell the timeline holds for it, or
+    /// nil when there is no cell.
+    func rowText(at indexPath: IndexPath) -> String? {
+        collectionView.cellForItem(at: indexPath).map { cell in
+            (timelineAllLabels(in: cell.contentView).map(timelineRenderedText)
+                + timelineAllTextViews(in: cell.contentView).map(timelineRenderedText))
+                .joined(separator: "\n")
+        }
+    }
+
+    /// Scrolls the viewport to the tail and waits until the timeline stops showing
+    /// the row at `index`.
+    ///
+    /// The row leaving the visible set is the whole precondition this timeline can
+    /// reach, and it is the one that matters: once it is out, no configuration
+    /// reaches the row again until it comes back on screen (asserted where these
+    /// tests apply the next text). `cellForItem(at:)` does not go nil here — UIKit
+    /// keeps the cell for a row that left the viewport, hidden and still laid out
+    /// at that row's frame, and hands it back to no wait: measured with the
+    /// timeline still windowed, after two seconds of run-loop turns and layout
+    /// passes it was `hidden=true inCollection=true frame=(16 8; 358 200)` with 49
+    /// cells under a 17-row viewport. Asserting the nil instead made the
+    /// precondition depend on a recycle that never came, while the reader's own
+    /// behaviour was fine.
+    func scrollToTailLeavingViewport(at index: Int) async -> Bool {
         settleTimelineLayout(collectionView)
         let insets = collectionView.adjustedContentInset
         let maxY = max(
@@ -422,11 +475,26 @@ private final class ReaderTimelineFixture {
         )
         collectionView.setContentOffset(CGPoint(x: 0, y: maxY), animated: false)
         settleTimelineLayout(collectionView)
+        let timeline = collectionView
+        let row = IndexPath(item: index, section: 0)
+        return await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            settleTimelineLayout(timeline)
+            return !timeline.indexPathsForVisibleItems.contains(row)
+        }
     }
 
     var geometryForTesting: String {
-        "contentSize=\(collectionView.contentSize) bounds=\(collectionView.bounds) "
-            + "offset=\(collectionView.contentOffset) items=\(itemCount)"
+        let row = IndexPath(item: 0, section: 0)
+        let cell = collectionView.cellForItem(at: row)
+        let cellState = cell.map {
+            "hidden=\($0.isHidden) inCollection=\($0.superview === collectionView) frame=\($0.frame)"
+        } ?? "none"
+        return "contentSize=\(collectionView.contentSize) bounds=\(collectionView.bounds) "
+            + "offset=\(collectionView.contentOffset) items=\(itemCount) "
+            + "visible=\(collectionView.indexPathsForVisibleItems.count) "
+            + "row0Visible=\(collectionView.indexPathsForVisibleItems.contains(row)) "
+            + "row0Cell=\(cellState) windowed=\(collectionView.window != nil) "
+            + "subviews=\(collectionView.subviews.count)"
     }
 
     func thinkingRow(at index: Int) throws -> ThinkingTimelineRowContentView {
