@@ -1,6 +1,6 @@
 # Oppi server architecture: Cleanup targets and code map
 
-Part of [Oppi server architecture](../architecture-server.md). Open cleanup targets and file pointers by area.
+Part of [Oppi server architecture](../architecture-server.md). Cleanup targets and entry points only: one row per area, pointing at the owning files.
 
 ## Server cleanup targets
 
