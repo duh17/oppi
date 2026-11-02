@@ -39,14 +39,14 @@ struct ServerConnectionForegroundRecoveryTests {
             guard routeReachable else { throw URLError(.cannotConnectToHost) }
             return foregroundRecoveryServerInfo()
         }
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             apiClientFactory: apiFactory,
             serverInfoBootstrap: bootstrap
         ))
 
         routeReachable = false
-        #expect(!(await conn.reconfigureForExplicitRetry(
+        #expect(!(await conn.route.reconfigureForExplicitRetry(
             credentials: credentials,
             apiClientFactory: apiFactory,
             serverInfoBootstrap: bootstrap
@@ -63,7 +63,7 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(conn.apiClient != nil)
 
         routeReachable = false
-        #expect(!(await conn.reconfigureForExplicitRetry(
+        #expect(!(await conn.route.reconfigureForExplicitRetry(
             credentials: credentials,
             apiClientFactory: apiFactory,
             serverInfoBootstrap: bootstrap

@@ -8,13 +8,13 @@ import Testing
 struct LANFirstConnectionPolicyTests {
     @Test func brokenLANExpiresBeforePairedBootstrap() async throws {
         let connection = makeConnection()
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         let expired = OSAllocatedUnfairLock(initialState: false)
-        connection.lanBootstrapDeadline = {
+        connection.route.lanBootstrapDeadline = {
             .init(wait: { expired.withLock { $0 = true } })
         }
         var hosts: [String] = []
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, deadline in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, deadline in
             let host = await client.baseURL.host ?? ""
             hosts.append(host)
             if host == self.endpoint.host {
@@ -33,10 +33,10 @@ struct LANFirstConnectionPolicyTests {
     @Test(arguments: ["cell", "unknown", "other"])
     func staleLANIsNotAttemptedOffLocalNetwork(path: String) async {
         let connection = makeConnection()
-        connection.networkPathType = { path }
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.networkPathType = { path }
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         var hosts: [String] = []
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
             hosts.append(await client.baseURL.host ?? "")
             return self.info
         })
@@ -47,10 +47,10 @@ struct LANFirstConnectionPolicyTests {
 
     @Test func healthyLANStreamSurvivesOneHTTPFailureButNotPingTimeout() async throws {
         let connection = makeConnection()
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         var availabilityObserver: APIClientAvailabilityObserver?
         var hosts: [String] = []
-        let configured = await connection.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
+        let configured = await connection.route.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
             availabilityObserver = observer
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [LANPolicyURLProtocol.self]
@@ -72,19 +72,19 @@ struct LANFirstConnectionPolicyTests {
 
         // The same external fixture must answer the new auth-free readiness
         // boundary before the existing authenticated route handoff is allowed.
-        connection.automaticRouteReachabilityProbe = { selection, credentials, route in
+        connection.route.automaticRouteReachabilityProbe = { selection, credentials, route in
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [LANPolicyURLProtocol.self]
-            return await ServerConnection.probeAutomaticRoute(
+            return await ServerRouteController.probeAutomaticRoute(
                 selection, credentials: credentials, route: route, configuration: configuration
             )
         }
-        await connection.handlePersistentStreamHealthFailure(.pingTimeout)
+        await connection.route.handlePersistentStreamHealthFailure(.pingTimeout)
         #expect(connection.transportPath == .paired)
         #expect(connection.apiClient !== api)
         #expect(hosts == [endpoint.host, credentials.host])
         // Discovery churn alone must not retry a demoted LAN route.
-        await connection.setDiscoveredLANEndpoint(endpoint)?.value
+        await connection.route.setDiscoveredLANEndpoint(endpoint)?.value
         #expect(hosts == [endpoint.host, credentials.host])
         cleanup(connection)
     }
@@ -98,7 +98,7 @@ struct LANFirstConnectionPolicyTests {
         hosts: LANHostLog
     ) async throws -> (ServerConnection, WebSocketClient, DictationStreamClient?) {
         let connection = makeConnection()
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
             hosts.values.append(await client.baseURL.host ?? "")
             return self.info
         })
@@ -118,7 +118,7 @@ struct LANFirstConnectionPolicyTests {
             dictation = try #require(connection.makeDictationStreamClient())
             dictation?._setStatusForTesting(.connected)
         }
-        #expect(connection.setDiscoveredLANEndpoint(endpoint) == nil)
+        #expect(connection.route.setDiscoveredLANEndpoint(endpoint) == nil)
         return (connection, socket, dictation)
     }
 
@@ -128,8 +128,8 @@ struct LANFirstConnectionPolicyTests {
         // The dictation provider owns its client in production; keep it alive here.
         let (connection, socket, dictation) = try await deferredPromotion(work: work, hosts: hosts)
         defer { cleanup(connection); withExtendedLifetime(dictation) {} }
-        await connection.promoteLANAtIdleBoundary()
-        await connection.retryLANAtForegroundBoundary()
+        await connection.route.promoteLANAtIdleBoundary()
+        await connection.route.retryLANAtForegroundBoundary()
         #expect(connection.wsClient === socket)
         #expect(connection.transportPath == .paired)
         #expect(hosts.values == [credentials.host])
@@ -160,7 +160,7 @@ struct LANFirstConnectionPolicyTests {
         #expect(connection.transportPath == .paired)
         #expect(hosts.values == [credentials.host])
 
-        await connection.retryLANAtForegroundBoundary()
+        await connection.route.retryLANAtForegroundBoundary()
         #expect(connection.transportPath == .lan)
         #expect(hosts.values == [credentials.host, endpoint.host])
     }
@@ -178,8 +178,8 @@ struct LANFirstConnectionPolicyTests {
             TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture"),
             generation: original.generation &+ 50
         )
-        #expect(connection.needsTailnetRouteRebuild)
-        await connection.reevaluateNetworkEndpointAtBoundary()
+        #expect(connection.route.needsTailnetRouteRebuild)
+        await connection.route.reevaluateNetworkEndpointAtBoundary()
         #expect(connection.wsClient !== socket)
         #expect(connection.transportPath == .paired)
         #expect(hosts.values == [credentials.host, credentials.host])
@@ -189,7 +189,7 @@ struct LANFirstConnectionPolicyTests {
         connection.sessionStore.upsert(ready)
         connection.commands.unregisterTurnSend(requestId: "req", clientTurnId: "turn")
         dictation?._setStatusForTesting(.disconnected)
-        await connection.retryLANAtForegroundBoundary()
+        await connection.route.retryLANAtForegroundBoundary()
         #expect(connection.transportPath == .lan)
         #expect(hosts.values == [credentials.host, credentials.host, endpoint.host])
     }
@@ -197,10 +197,10 @@ struct LANFirstConnectionPolicyTests {
     @Test func failedLANCandidateIsRetriedAtTheNextForegroundBoundary() async {
         let connection = makeConnection()
         defer { cleanup(connection) }
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         var hosts: [String] = []
         var lanShouldFail = true
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
             let host = await client.baseURL.host ?? ""
             hosts.append(host)
             if host == self.endpoint.host, lanShouldFail { throw URLError(.timedOut) }
@@ -209,7 +209,7 @@ struct LANFirstConnectionPolicyTests {
         #expect(configured)
         #expect(connection.transportPath == .paired)
         lanShouldFail = false
-        await connection.retryLANAtForegroundBoundary()
+        await connection.route.retryLANAtForegroundBoundary()
         #expect(connection.transportPath == .lan)
         #expect(hosts == [endpoint.host, credentials.host, endpoint.host])
     }
@@ -222,7 +222,7 @@ struct LANFirstConnectionPolicyTests {
         let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
         TailnetTransportRoute.publish(proxy, generation: 100)
         var bootstraps = 0
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
             bootstraps += 1
             // A node that republishes after every handshake, up to a safety stop.
             if bootstraps < 12 { TailnetTransportRoute.publish(proxy, generation: UInt64(100 + bootstraps)) }
@@ -230,7 +230,7 @@ struct LANFirstConnectionPolicyTests {
         })
         #expect(configured)
         #expect(bootstraps == 3)
-        #expect(connection.needsTailnetRouteRebuild)
+        #expect(connection.route.needsTailnetRouteRebuild)
     }
 
     @Test func pairedClientWaitsForCurrentGenerationProxyBeforeBuilding() async throws {
@@ -240,12 +240,12 @@ struct LANFirstConnectionPolicyTests {
         let oldGeneration = TailnetTransportRoute.generation
         defer { TailnetTransportRoute.publish(oldProxy, generation: oldGeneration) }
         TailnetTransportRoute.publish(nil)
-        connection.prepareTailnetProxy = {
+        connection.route.prepareTailnetProxy = {
             await gate.wait()
             TailnetTransportRoute.publish(TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture"), generation: 42)
         }
         var built = false
-        let configuration = Task { await connection.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
+        let configuration = Task { await connection.route.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
             built = true
             #expect(TailnetTransportRoute.generation == 42)
             return APIClient(environment: environment, availabilityObserver: observer)
@@ -255,19 +255,19 @@ struct LANFirstConnectionPolicyTests {
         #expect(!built)
         gate.release()
         #expect(await configuration.value)
-        #expect(connection.configuredSOCKSGeneration == 42)
-        #expect(!connection.needsTailnetRouteRebuild)
+        #expect(connection.route.configuredSOCKSGeneration == 42)
+        #expect(!connection.route.needsTailnetRouteRebuild)
         cleanup(connection)
     }
 
     @Test func proxyDeadlineAllowsSystemResolverBootstrap() async {
         let connection = makeConnection()
         var waitExpired = false
-        connection.prepareTailnetProxy = {
+        connection.route.prepareTailnetProxy = {
             waitExpired = true
             throw TailnetSameUserPairing.Failure.proxyNotReady
         }
-        let configured = await connection.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
+        let configured = await connection.route.configureForUse(credentials: credentials, apiClientFactory: { environment, observer in
             #expect(waitExpired)
             return APIClient(environment: environment, availabilityObserver: observer)
         }, serverInfoBootstrap: { _, _ in self.info })
@@ -299,9 +299,9 @@ struct LANFirstConnectionPolicyTests {
     @Test func bonjourRemovalThenPathChangeRebindsTheStoppedLANStreamOnce() async throws {
         let connection = makeConnection()
         defer { cleanup(connection) }
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         var hosts: [String] = []
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
             hosts.append(await client.baseURL.host ?? "")
             return self.info
         })
@@ -318,9 +318,9 @@ struct LANFirstConnectionPolicyTests {
 
         // Same MainActor turn: removal clears discovery but its demotion task
         // has not run when the path callback stops the old socket.
-        let removal = try #require(connection.setDiscoveredLANEndpoint(nil))
+        let removal = try #require(connection.route.setDiscoveredLANEndpoint(nil))
         connection.handleNetworkPathChange()
-        #expect(connection.isTransportDemoting)
+        #expect(connection.route.isTransportDemoting)
         #expect(connection.apiClient === oldAPI)
         await removal.value
 
@@ -330,27 +330,27 @@ struct LANFirstConnectionPolicyTests {
         #expect(connection.wsClient !== oldSocket)
         #expect(connection.focusedSessionStreamURLForTesting?.host == credentials.host)
         #expect(opens == 1)
-        #expect(!connection.isTransportDemoting)
+        #expect(!connection.route.isTransportDemoting)
     }
 
     @Test func removedLANDoesNotPromoteOnReappearanceUntilForegroundBoundary() async {
         let connection = makeConnection()
         defer { cleanup(connection) }
-        connection.setDiscoveredLANEndpoint(endpoint)
+        connection.route.setDiscoveredLANEndpoint(endpoint)
         var hosts: [String] = []
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { client, _ in
             hosts.append(await client.baseURL.host ?? "")
             return self.info
         })
         #expect(configured)
-        await connection.setDiscoveredLANEndpoint(nil)?.value
+        await connection.route.setDiscoveredLANEndpoint(nil)?.value
         #expect(connection.transportPath == .paired)
-        await connection.setDiscoveredLANEndpoint(endpoint)?.value
-        await connection.promoteLANAtIdleBoundary()
+        await connection.route.setDiscoveredLANEndpoint(endpoint)?.value
+        await connection.route.promoteLANAtIdleBoundary()
         #expect(connection.transportPath == .paired)
         #expect(hosts == [endpoint.host, credentials.host])
 
-        await connection.retryLANAtForegroundBoundary()
+        await connection.route.retryLANAtForegroundBoundary()
         #expect(connection.transportPath == .lan)
         #expect(hosts == [endpoint.host, credentials.host, endpoint.host])
     }
@@ -371,7 +371,7 @@ struct LANFirstConnectionPolicyTests {
             )
         }
         var bootstraps = 0
-        let configured = await connection.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
+        let configured = await connection.route.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
             bootstraps += 1
             return self.makeInfo(appEvents: bootstraps > 1)
         })
@@ -385,21 +385,21 @@ struct LANFirstConnectionPolicyTests {
         #expect(oldAPI.tailnetRoute.generation == 11)
         #expect(oldSocket.tailnetRoute == oldAPI.tailnetRoute)
         #expect(connection.appEventStreamCoordinator.tailnetRoute == oldAPI.tailnetRoute)
-        #expect(connection.needsTailnetRouteRebuild)
+        #expect(connection.route.needsTailnetRouteRebuild)
 
-        await connection.reevaluateNetworkEndpointAtBoundary()
+        await connection.route.reevaluateNetworkEndpointAtBoundary()
         let newAPI = try #require(connection.apiClient)
         #expect(newAPI.tailnetRoute.generation == 12)
         #expect(connection.wsClient?.tailnetRoute == newAPI.tailnetRoute)
         #expect(connection.appEventStreamCoordinator.tailnetRoute == newAPI.tailnetRoute)
         #expect(bootstraps == 2)
-        #expect(!connection.needsTailnetRouteRebuild)
+        #expect(!connection.route.needsTailnetRouteRebuild)
     }
 
     private func makeConnection() -> ServerConnection {
         let connection = ServerConnection()
-        connection.networkPathType = { "wifi" }
-        connection.prepareTailnetProxy = { }
+        connection.route.networkPathType = { "wifi" }
+        connection.route.prepareTailnetProxy = { }
         return connection
     }
 

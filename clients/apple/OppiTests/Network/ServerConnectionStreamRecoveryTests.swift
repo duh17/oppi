@@ -140,7 +140,7 @@ struct ServerConnectionStreamRecoveryTests {
             connectCalls += 1
             return AsyncStream { $0.finish() }
         }
-        let configured = await connection.configureForUse(
+        let configured = await connection.route.configureForUse(
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in try self.mockServerInfo() }
         )
@@ -221,7 +221,7 @@ struct ServerConnectionStreamRecoveryTests {
         defer { holdFirstDemotion.withLock { $0 = false } }
 
         var bootstrapCalls = 0
-        #expect(await connection.configureForUse(
+        #expect(await connection.route.configureForUse(
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in
                 bootstrapCalls += 1
@@ -242,14 +242,14 @@ struct ServerConnectionStreamRecoveryTests {
 
         let holeDeadline = ContinuousClock.now + .milliseconds(1_000)
         while ContinuousClock.now < holeDeadline {
-            if connection.isTransportDemoting,
+            if connection.route.isTransportDemoting,
                connection.apiClient == nil,
                connection.wsClient == nil {
                 break
             }
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(connection.isTransportDemoting)
+        #expect(connection.route.isTransportDemoting)
         #expect(connection.apiClient == nil)
         #expect(connection.wsClient == nil)
         #expect(connection.serverHealth().transportState == .connecting)
@@ -264,7 +264,7 @@ struct ServerConnectionStreamRecoveryTests {
 
         holdFirstDemotion.withLock { $0 = false }
         try await waitForPairedFocusedStream(connection, timeoutMs: 2_000)
-        #expect(!connection.isTransportDemoting)
+        #expect(!connection.route.isTransportDemoting)
         #expect(connection.transportPath == .paired)
     }
 
@@ -286,7 +286,7 @@ struct ServerConnectionStreamRecoveryTests {
             return AsyncStream { $0.finish() }
         }
 
-        #expect(await connection.configureForUse(
+        #expect(await connection.route.configureForUse(
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in
                 bootstrapCalls += 1
@@ -307,12 +307,12 @@ struct ServerConnectionStreamRecoveryTests {
 
         let holeDeadline = ContinuousClock.now + .milliseconds(1_000)
         while ContinuousClock.now < holeDeadline {
-            if connection.isTransportDemoting, connection.apiClient == nil {
+            if connection.route.isTransportDemoting, connection.apiClient == nil {
                 break
             }
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(connection.isTransportDemoting)
+        #expect(connection.route.isTransportDemoting)
         #expect(connection.apiClient == nil)
 
         async let stream = connection.streamSession("s1", workspaceId: "w1")
@@ -349,8 +349,8 @@ struct ServerConnectionStreamRecoveryTests {
             deviceCredential: original
         )))
         let wsBefore = connection.wsClient
-        let streamGeneration = connection.persistentStreamGenerationForTesting
-        let configurationGeneration = connection.transportConfigurationGenerationForTesting
+        let streamGeneration = connection.route.persistentStreamGeneration
+        let configurationGeneration = connection.route.transportConfigurationGeneration
 
         let rotated = DeviceCredential(
             deviceId: "dev_1",
@@ -365,8 +365,8 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.applyPersistedDeviceCredential(rotated))
         #expect(connection.credentials?.deviceCredential?.accessToken == "at_rotated")
         #expect(connection.wsClient === wsBefore)
-        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
-        #expect(connection.transportConfigurationGenerationForTesting == configurationGeneration)
+        #expect(connection.route.persistentStreamGeneration == streamGeneration)
+        #expect(connection.route.transportConfigurationGeneration == configurationGeneration)
 
         let otherDevice = DeviceCredential(
             deviceId: "dev_other",
@@ -377,7 +377,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(!connection.applyPersistedDeviceCredential(otherDevice))
         #expect(connection.credentials?.deviceCredential?.accessToken == "at_rotated")
         #expect(connection.wsClient === wsBefore)
-        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
+        #expect(connection.route.persistentStreamGeneration == streamGeneration)
     }
 
     @Test func applyPersistedSameRouteCredentialsKeepsTheCompleteIncomingSnapshot() async {
@@ -401,7 +401,7 @@ struct ServerConnectionStreamRecoveryTests {
         )
         #expect(await configureTestConnection(connection, credentials: original))
         let wsBefore = connection.wsClient
-        let streamGeneration = connection.persistentStreamGenerationForTesting
+        let streamGeneration = connection.route.persistentStreamGeneration
 
         let incoming = ServerCredentials(
             host: original.host,
@@ -428,7 +428,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.credentials?.pairingToken == "pair_new")
         #expect(connection.credentials?.name == "Studio Renamed")
         #expect(connection.wsClient === wsBefore)
-        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
+        #expect(connection.route.persistentStreamGeneration == streamGeneration)
     }
 
     @Test func focusedStreamRecoveryIsOwnedByTheFocusedSession() async {

@@ -465,9 +465,9 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
-        await retryLANAtForegroundBoundary()
+        await route.retryLANAtForegroundBoundary()
         if apiClient == nil {
-            await reevaluateNetworkEndpointAtBoundary()
+            await route.reevaluateNetworkEndpointAtBoundary()
         }
         guard let apiClient else { return }
 

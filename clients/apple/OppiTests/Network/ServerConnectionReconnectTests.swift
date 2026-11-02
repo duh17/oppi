@@ -27,7 +27,7 @@ struct ServerConnectionReconnectTests {
         #expect(recovered, "Must reopen the session WebSocket without HTTP watchdog recovery")
         #expect(fixture.rejectedStatuses == [503, 503, 503])
         #expect(conn.wsClient === retryOwner)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
         #expect(conn.isFocusedStreamBindReady())
         #expect(ContinuousClock.now - started < .seconds(8))
     }
@@ -47,14 +47,14 @@ struct ServerConnectionReconnectTests {
         #expect(await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
             fixture.upgradeCount == 2 && client.status == .disconnected
         })
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     private func makeLoopbackConnection(_ fixture: ReconnectWebSocketFixture) async throws -> ServerConnection {
         let conn = ServerConnection()
-        conn.networkPathType = { "cellular" }
+        conn.route.networkPathType = { "cellular" }
         let credentials = ServerCredentials(host: "127.0.0.1", port: Int(fixture.port), token: "test", name: "Loopback", scheme: .https)
-        #expect(await conn.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
+        #expect(await conn.route.configureForUse(credentials: credentials, serverInfoBootstrap: { _, _ in
             try JSONDecoder().decode(ServerInfo.self, from: Data(#"{"name":"Test","version":"1","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"sessionStream":{"version":1}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8))
         }))
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")

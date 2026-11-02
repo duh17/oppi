@@ -673,8 +673,8 @@ struct ConnectionCoordinatorTests {
 
         let first = await coordinator.ensureConnectionReady(for: server)
         let wsBefore = first.wsClient
-        let streamGeneration = first.persistentStreamGenerationForTesting
-        let configurationGeneration = first.transportConfigurationGenerationForTesting
+        let streamGeneration = first.route.persistentStreamGeneration
+        let configurationGeneration = first.route.transportConfigurationGeneration
         #expect(wsBefore != nil)
         #expect(first.apiClient != nil)
 
@@ -698,11 +698,11 @@ struct ConnectionCoordinatorTests {
         #expect(after === first, "Same-route token rotation must keep the live connection")
         #expect(after.wsClient === wsBefore, "Rotating at_ must not replace the focused WebSocket client")
         #expect(
-            after.persistentStreamGenerationForTesting == streamGeneration,
+            after.route.persistentStreamGeneration == streamGeneration,
             "Rotating at_ must not rebuild persistent streams"
         )
         #expect(
-            after.transportConfigurationGenerationForTesting == configurationGeneration,
+            after.route.transportConfigurationGeneration == configurationGeneration,
             "Rotating at_ must not bump transport configuration generation"
         )
         #expect(after.credentials?.deviceCredential?.accessToken == "at_rotated")
@@ -718,7 +718,7 @@ struct ConnectionCoordinatorTests {
         let first = await coordinator.ensureConnectionReady(for: server)
         #expect(first.apiClient != nil)
         #expect(first.wsClient != nil)
-        let configurationGeneration = first.transportConfigurationGenerationForTesting
+        let configurationGeneration = first.route.transportConfigurationGeneration
         first.setAPIClientForTesting(nil)
         #expect(!first.hasViableConfiguredTransport)
 
@@ -741,7 +741,7 @@ struct ConnectionCoordinatorTests {
         #expect(after.hasViableConfiguredTransport)
         #expect(after.credentials?.deviceCredential?.accessToken == "at_rotated")
         #expect(
-            after.transportConfigurationGenerationForTesting != configurationGeneration,
+            after.route.transportConfigurationGeneration != configurationGeneration,
             "Dead transport must not skip reconfigure"
         )
     }
@@ -753,7 +753,7 @@ struct ConnectionCoordinatorTests {
 
         let first = await coordinator.ensureConnectionReady(for: server)
         let wsBefore = first.wsClient
-        let streamGeneration = first.persistentStreamGenerationForTesting
+        let streamGeneration = first.route.persistentStreamGeneration
 
         var renamed = try #require(store.server(for: server.id))
         renamed.name = "Studio Renamed"
@@ -765,7 +765,7 @@ struct ConnectionCoordinatorTests {
 
         #expect(after === first)
         #expect(after.wsClient === wsBefore)
-        #expect(after.persistentStreamGenerationForTesting == streamGeneration)
+        #expect(after.route.persistentStreamGeneration == streamGeneration)
         #expect(after.credentials?.name == "Studio Renamed")
     }
 
@@ -776,8 +776,8 @@ struct ConnectionCoordinatorTests {
 
         let first = await coordinator.ensureConnectionReady(for: server)
         let wsBefore = first.wsClient
-        let streamGeneration = first.persistentStreamGenerationForTesting
-        let configurationGeneration = first.transportConfigurationGenerationForTesting
+        let streamGeneration = first.route.persistentStreamGeneration
+        let configurationGeneration = first.route.transportConfigurationGeneration
 
         var moved = try #require(store.server(for: server.id))
         moved.host = "studio-b.example.test"
@@ -788,12 +788,12 @@ struct ConnectionCoordinatorTests {
         )
         #expect(afterHost === first)
         #expect(afterHost.wsClient !== wsBefore)
-        #expect(afterHost.persistentStreamGenerationForTesting != streamGeneration)
-        #expect(afterHost.transportConfigurationGenerationForTesting != configurationGeneration)
+        #expect(afterHost.route.persistentStreamGeneration != streamGeneration)
+        #expect(afterHost.route.transportConfigurationGeneration != configurationGeneration)
         #expect(afterHost.credentials?.host == "studio-b.example.test")
 
         let wsAfterHost = afterHost.wsClient
-        let streamGenerationAfterHost = afterHost.persistentStreamGenerationForTesting
+        let streamGenerationAfterHost = afterHost.route.persistentStreamGeneration
 
         var otherDevice = try #require(store.server(for: server.id))
         otherDevice.deviceCredential = DeviceCredential(
@@ -809,7 +809,7 @@ struct ConnectionCoordinatorTests {
         )
         #expect(afterDevice === first)
         #expect(afterDevice.wsClient !== wsAfterHost)
-        #expect(afterDevice.persistentStreamGenerationForTesting != streamGenerationAfterHost)
+        #expect(afterDevice.route.persistentStreamGeneration != streamGenerationAfterHost)
         #expect(afterDevice.credentials?.deviceCredential?.deviceId == "dev_other")
     }
 
@@ -1554,7 +1554,7 @@ struct ConnectionCoordinatorTests {
         await coordinator._applyLANDiscoveryForTesting([])
         // Demotion rebuilds the paired route asynchronously, as in production.
         #expect(await waitForMainActorCondition {
-            lanConnection.transportPath == .paired && !lanConnection.isTransportDemoting
+            lanConnection.transportPath == .paired && !lanConnection.route.isTransportDemoting
         })
 
         #expect(lanConnection.transportPath == .paired)
@@ -1736,7 +1736,7 @@ struct ConnectionCoordinatorTests {
         let lanConnection = await coordinator.ensureConnectionReady(for: lan)
         let socksConnection = await coordinator.ensureConnectionReady(for: socks)
         #expect(lanConnection.transportPath == .lan)
-        #expect(socksConnection.configuredSOCKSGeneration == 42)
+        #expect(socksConnection.route.configuredSOCKSGeneration == 42)
         let lanSocket = lanConnection.wsClient
         let socksSocket = socksConnection.wsClient
         let priorBuilds = builds
@@ -1753,7 +1753,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:route-convergence", name: "Convergence", host: "studio.tail1234.ts.net")
         coordinator.serverStore.addOrUpdate(server)
         let connection = coordinator.activatePairedServerShell(server)
-        connection.prepareTailnetProxy = { }
+        connection.route.prepareTailnetProxy = { }
         connection._appEventWebSocketFactoryForTesting = { _ in
             AppEventWebSocketTransport(
                 identity: connection,
@@ -1788,7 +1788,7 @@ struct ConnectionCoordinatorTests {
         #expect(api.tailnetRoute.generation == 52)
         #expect(prepared.wsClient?.tailnetRoute == api.tailnetRoute)
         #expect(prepared.appEventStreamCoordinator.tailnetRoute == api.tailnetRoute)
-        #expect(!prepared.needsTailnetRouteRebuild)
+        #expect(!prepared.route.needsTailnetRouteRebuild)
     }
 
     @Test func verifiedDiscoveryBeforePathClassificationLogsOnceWhenPathBecomesLocal() {
@@ -1844,7 +1844,7 @@ struct ConnectionCoordinatorTests {
         #expect(hosts == ["192.168.1.42"])
         #expect(connection.transportPath == .lan)
         discovery.stop()
-        await connection.setDiscoveredLANEndpoint(nil)?.value
+        await connection.route.setDiscoveredLANEndpoint(nil)?.value
         connection.disconnectStream()
         connection.disconnectAppEventStream()
     }

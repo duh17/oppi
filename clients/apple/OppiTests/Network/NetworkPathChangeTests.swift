@@ -17,7 +17,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         #expect(conn.transportPath == .paired)
         #expect(await conn.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
@@ -41,7 +41,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         // cancelReconnectBackoff sets status to .disconnected, then connectStream()
         // starts a fresh connection. The WS client should exist and not be in
@@ -61,7 +61,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         // After path change, endpoint should be paired and WS should be
         // reconnecting or connecting (not still .connected to dead LAN IP)
@@ -89,7 +89,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         // Should attempt to reconnect with the updated (paired) endpoint
         #expect(conn.transportPath == .paired)
@@ -116,7 +116,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         #expect(conn.focusedSessionId == "s1",
                 "Focused session must survive network path change")
@@ -134,7 +134,7 @@ struct ServerConnectionNetworkPathChangeTests {
 
         conn.handleNetworkPathChange()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         #expect(pipe.reducer.items.count == countBefore,
                 "Timeline must not be cleared by network path change")
@@ -314,7 +314,7 @@ struct ConnectionCoordinatorPathChangeTests {
         // Simulate network path change (calls handleNetworkPathChange on all connections)
         coordinator._applyNetworkPathChangeForTesting()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         #expect(conn.transportPath == .paired,
                 "LAN endpoint should be cleared after network path change")
@@ -357,7 +357,7 @@ struct ConnectionCoordinatorPathChangeTests {
 
         coordinator._applyNetworkPathChangeForTesting()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { connA.transportPath == .paired && !connA.isTransportDemoting })
+        #expect(await waitForMainActorCondition { connA.transportPath == .paired && !connA.route.isTransportDemoting })
 
         #expect(connA.transportPath == .paired, "Server A should fall back to paired")
         #expect(connB.transportPath == .paired, "Server B should remain paired")
@@ -446,7 +446,7 @@ struct ConnectionCoordinatorPathChangeTests {
         // (In real code, this goes through the debounce; we call directly for test.)
         coordinator._applyNetworkPathChangeForTesting()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         // Step 5: Verify recovery
         #expect(conn.transportPath == .paired,
@@ -493,7 +493,7 @@ struct ConnectionCoordinatorPathChangeTests {
         // NWPathMonitor fires
         coordinator._applyNetworkPathChangeForTesting()
         // Demotion rebuilds the paired route asynchronously, as in production.
-        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.route.isTransportDemoting })
 
         // Should have cancelled the stale backoff and started fresh
         #expect(conn.transportPath == .paired)
@@ -534,11 +534,11 @@ struct ConnectionCoordinatorPathChangeTests {
 
         // A Bonjour promotion must not interrupt an active turn, even when
         // the new LAN endpoint is verified and the paired socket is healthy.
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         var session = makeTestSession(id: "active-turn", workspaceId: "w1")
         session.status = .busy
         conn.sessionStore.upsert(session)
-        conn.setDiscoveredLANEndpoint(
+        conn.route.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,

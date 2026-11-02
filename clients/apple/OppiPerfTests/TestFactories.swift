@@ -87,7 +87,7 @@ func configureTestConnection(
             modelCount: 0
         )
     )
-    return await connection.configureForUse(
+    return await connection.route.configureForUse(
         credentials: credentials,
         serverInfoBootstrap: { _, _ in info }
     )

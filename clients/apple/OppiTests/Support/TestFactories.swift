@@ -212,13 +212,13 @@ func configureTestConnection(
     apiClient: APIClient? = nil
 ) async -> Bool {
     if let apiClient {
-        return await connection.configureForUse(
+        return await connection.route.configureForUse(
             credentials: credentials,
             apiClientFactory: { _, _ in apiClient },
             serverInfoBootstrap: { _, _ in serverInfo }
         )
     }
-    return await connection.configureForUse(
+    return await connection.route.configureForUse(
         credentials: credentials,
         serverInfoBootstrap: { _, _ in serverInfo }
     )
@@ -228,8 +228,8 @@ func configureTestConnection(
 /// it starts: an idle connection promotes to the LAN through its own setup path.
 @MainActor
 func discoverTestLANEndpoint(on connection: ServerConnection, _ endpoint: LANDiscoveredEndpoint) async {
-    connection.networkPathType = { "wifi" }
-    await connection.setDiscoveredLANEndpoint(endpoint)?.value
+    connection.route.networkPathType = { "wifi" }
+    await connection.route.setDiscoveredLANEndpoint(endpoint)?.value
 }
 
 /// A first setup that fails the way an unreachable server does (`/server/info`
@@ -240,13 +240,13 @@ func failTestConnectionSetupTemporarily(
     _ connection: ServerConnection,
     credentials: ServerCredentials = makeTestCredentials()
 ) async {
-    let configured = await connection.configureForUse(
+    let configured = await connection.route.configureForUse(
         credentials: credentials,
         apiClientFactory: { _, _ in makeTestURLProtocolClient(host: credentials.host) },
         serverInfoBootstrap: { _, _ in throw URLError(.timedOut) }
     )
     #expect(!configured)
-    #expect(connection.canRetryInitialTransportOnTimer)
+    #expect(connection.route.canRetryInitialTransportOnTimer)
 }
 
 extension ConnectionCoordinator {

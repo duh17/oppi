@@ -20,6 +20,7 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 - `SessionUsageMetricsReporter` sends `AppSessionUsage` once per changed session snapshot and forgets a session with its stream.
 - `ExtensionDialogQueue` holds each session's sheet-backed extension dialogs, the first being `activeExtensionDialog`; `extensionToast` is an app notice and stays on the connection.
 - `AppEventListRepair` holds one app-event window's list-repair owner slot, epoch fence, and single follow-up budget; `ServerConnection+Refresh` runs the refreshes it decides.
+- `ServerRouteController` (`connection.route`) owns route selection: candidates, LAN promotion and demotion, Tailnet rebuilds, transport generations, and recovery; the connection installs what it commits through `ServerRouteHost`.
 
 ## UIKit and SwiftUI ownership
 

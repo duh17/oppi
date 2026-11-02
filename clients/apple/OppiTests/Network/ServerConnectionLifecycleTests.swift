@@ -19,20 +19,20 @@ struct ServerConnectionLifecycleTests {
 
     @Test func persistentHealthFailureWithoutAlternateRoutePreservesRetryOwner() async {
         let conn = ServerConnection()
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: makeHTTPOnlyCredentials(),
             serverInfoBootstrap: successfulServerInfoBootstrap
         ))
 
         let retryOwner = conn.wsClient
         retryOwner?._setStatusForTesting(.reconnecting(attempt: 4))
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
         #expect(conn.transportPath == .paired)
         #expect(conn.apiClient != nil)
         #expect(conn.wsClient === retryOwner)
         #expect(conn.wsClient?.status == .reconnecting(attempt: 4))
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
         #expect(conn.isFocusedStreamBindReady())
     }
 
@@ -41,7 +41,7 @@ struct ServerConnectionLifecycleTests {
         // Off the local network the discovered LAN endpoint is recorded but
         // not promoted, so it is still an eligible alternate after the path
         // returns to Wi-Fi.
-        conn.networkPathType = { "cellular" }
+        conn.route.networkPathType = { "cellular" }
         let credentials = ServerCredentials(
             host: "my-server.tail00000.ts.net",
             port: 7749,
@@ -52,8 +52,8 @@ struct ServerConnectionLifecycleTests {
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         var hosts: [String] = []
-        conn.automaticRouteReachabilityProbe = { _, _, _ in true }
-        #expect(await conn.configureForUse(
+        conn.route.automaticRouteReachabilityProbe = { _, _, _ in true }
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 let host = await client.baseURL.host ?? ""
@@ -62,30 +62,30 @@ struct ServerConnectionLifecycleTests {
                 return successfulServerInfo()
             }
         ))
-        await conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        await conn.route.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",
             tlsCertFingerprintPrefix: "TLSFINGERPRINT"
         ))?.value
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         #expect(hosts == [credentials.host])
 
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
         #expect(hosts == [credentials.host, "192.168.1.42"])
         #expect(conn.apiClient == nil)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func unavailableAlternativeKeepsRetryOwnerThenHealthyProbeHandsOffOnce() async throws {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.networkPathType = { "wifi" }
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var pairedAvailable = false
         var pairedProbes = 0
         var bootstraps = 0
-        conn.automaticRouteReachabilityProbe = { _, _, _ in
+        conn.route.automaticRouteReachabilityProbe = { _, _, _ in
             pairedProbes += 1
             if pairedAvailable {
                 // Focus can change while the auth-free probe is in flight.
@@ -93,7 +93,7 @@ struct ServerConnectionLifecycleTests {
             }
             return pairedAvailable
         }
-        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+        #expect(await conn.route.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
             bootstraps += 1
             return successfulServerInfo()
         }))
@@ -107,7 +107,7 @@ struct ServerConnectionLifecycleTests {
             rebinds += 1
             return AsyncStream { _ in }
         }
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
         #expect(pairedProbes == 1)
         #expect(bootstraps == 1, "An unhealthy probe must not create an authenticated candidate")
         #expect(conn.apiClient === oldAPI)
@@ -117,7 +117,7 @@ struct ServerConnectionLifecycleTests {
         #expect(rebinds == 0)
 
         pairedAvailable = true
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 6))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 6))
         #expect(pairedProbes == 2)
         #expect(bootstraps == 2)
         #expect(conn.transportPath == .paired)
@@ -126,39 +126,39 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.focusedSessionStreamURLForTesting?.host == "my-server.tail00000.ts.net")
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/s2/stream")
         #expect(rebinds == 1)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func terminalFailureDuringAutomaticProbeCannotHandOffTransport() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.networkPathType = { "wifi" }
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var bootstraps = 0
-        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+        #expect(await conn.route.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
             bootstraps += 1
             return successfulServerInfo()
         }))
-        conn.automaticRouteReachabilityProbe = { _, _, _ in
+        conn.route.automaticRouteReachabilityProbe = { _, _, _ in
             conn.failTransportTerminallyForTesting()
             return true
         }
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
         #expect(bootstraps == 1)
         #expect(conn.apiClient == nil)
         #expect(conn.wsClient == nil)
-        #expect(!conn.canAutomaticallyRetryInitialTransport)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.canAutomaticallyRetryInitialTransport)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func automaticProbeMakesNoAuthenticatedRequestOrCredentialWrite() async throws {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.networkPathType = { "wifi" }
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         let device = DeviceCredential(deviceId: "probe-device", accessToken: "expired", expiresAt: 0, refreshChallenge: nil)
         let credentials = makeHTTPOnlyCredentials().withDeviceCredential(device)
         var bootstraps = 0
         var credentialWrites = 0
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { _, _ in bootstraps += 1; return successfulServerInfo() },
             deviceCredentialDidChange: { _ in credentialWrites += 1 }
@@ -168,10 +168,10 @@ struct ServerConnectionLifecycleTests {
         AutomaticProbeURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AutomaticProbeURLProtocol.self]
-        conn.automaticRouteReachabilityProbe = { selection, credentials, route in
-            await ServerConnection.probeAutomaticRoute(selection, credentials: credentials, route: route, configuration: configuration)
+        conn.route.automaticRouteReachabilityProbe = { selection, credentials, route in
+            await ServerRouteController.probeAutomaticRoute(selection, credentials: credentials, route: route, configuration: configuration)
         }
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
         let request = try #require(AutomaticProbeURLProtocol.requests.first)
         #expect(AutomaticProbeURLProtocol.requests.count == 1)
         #expect(request.url?.path == "/health")
@@ -182,7 +182,7 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.credentials == credentials)
         #expect(conn.apiClient === oldAPI)
         #expect(conn.wsClient === oldSocket)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func staleTailnetProbeDoesNotSpendRestartBudgetOrReplaceSocket() async throws {
@@ -191,61 +191,61 @@ struct ServerConnectionLifecycleTests {
         let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
         TailnetTransportRoute.publish(proxy, generation: 501)
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.networkPathType = { "wifi" }
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var bootstraps = 0
         var proxyPreparations = 0
-        conn.prepareTailnetProxy = { proxyPreparations += 1 }
-        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+        conn.route.prepareTailnetProxy = { proxyPreparations += 1 }
+        #expect(await conn.route.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
             bootstraps += 1
             return successfulServerInfo()
         }))
         let oldSocket = try #require(conn.wsClient)
-        conn.automaticRouteReachabilityProbe = { _, _, captured in
+        conn.route.automaticRouteReachabilityProbe = { _, _, captured in
             #expect(captured.generation == 501)
             TailnetTransportRoute.publish(proxy, generation: 502)
             return true
         }
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
         #expect(bootstraps == 1)
         #expect(proxyPreparations == 0)
         #expect(conn.wsClient === oldSocket)
         #expect(conn.transportPath == .lan)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func supersededProbeCannotTearDownExplicitReplacement() async throws {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.networkPathType = { "wifi" }
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var bootstraps = 0
-        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
+        #expect(await conn.route.configureForUse(credentials: makeHTTPOnlyCredentials(), serverInfoBootstrap: { _, _ in
             bootstraps += 1
             return successfulServerInfo()
         }))
         defer { conn.disconnectStream() }
         conn._connectStreamForTesting = { AsyncStream { _ in } }
         var replacement: WebSocketClient?
-        conn.automaticRouteReachabilityProbe = { _, _, _ in
-            #expect(await conn.reconfigureForExplicitRetry(
+        conn.route.automaticRouteReachabilityProbe = { _, _, _ in
+            #expect(await conn.route.reconfigureForExplicitRetry(
                 credentials: self.makeHTTPOnlyCredentials(),
                 serverInfoBootstrap: { _, _ in bootstraps += 1; return successfulServerInfo() }
             ))
             replacement = conn.wsClient
             return true
         }
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await conn.route.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
         #expect(bootstraps == 2)
         #expect(replacement != nil)
         #expect(conn.wsClient === replacement)
-        #expect(!conn.isTransportDemoting)
+        #expect(!conn.route.isTransportDemoting)
     }
 
     @Test func unixTransportPathIsNotARouteCandidate() {
         let conn = ServerConnection()
-        #expect(conn.routeCandidateKindForTesting(.unix) == nil)
-        #expect(conn.routeCandidateKindForTesting(.lan) == .lan)
-        #expect(conn.routeCandidateKindForTesting(.paired) == .paired)
+        #expect(ServerRouteController.routeCandidateKind(for: .unix) == nil)
+        #expect(ServerRouteController.routeCandidateKind(for: .lan) == .lan)
+        #expect(ServerRouteController.routeCandidateKind(for: .paired) == .paired)
     }
 
     @Test func transportGenerationPreventsTurnRetryAcrossReplacement() async {
@@ -303,7 +303,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func unavailableLANCandidateDoesNotOverwritePairedRoute() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         let credentials = ServerCredentials(
             host: "my-server.tail00000.ts.net",
             port: 7749,
@@ -314,7 +314,7 @@ struct ServerConnectionLifecycleTests {
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         var lanBootstraps = 0
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
@@ -324,7 +324,7 @@ struct ServerConnectionLifecycleTests {
                 return successfulServerInfo()
             }
         ))
-        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.route.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",
@@ -339,12 +339,12 @@ struct ServerConnectionLifecycleTests {
 
     @Test func freshVerifiedLANConnectsWithoutTryingPaired() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
         var lanBootstraps = 0
         var pairedBootstraps = 0
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
@@ -358,16 +358,16 @@ struct ServerConnectionLifecycleTests {
         #expect(lanBootstraps == 1)
         #expect(pairedBootstraps == 0)
         #expect(conn.transportPath == .lan)
-        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(conn.route.canAutomaticallyRetryInitialTransport)
         #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
     }
 
     @Test func tlsOnLANFallsBackToPairedCandidate() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
-        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
-        #expect(await conn.configureForUse(
+        conn.route.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
@@ -377,48 +377,48 @@ struct ServerConnectionLifecycleTests {
             }
         ))
         #expect(conn.transportPath == .paired)
-        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(conn.route.canAutomaticallyRetryInitialTransport)
         #expect(await conn.apiClient?.baseURL.host == credentials.host)
     }
 
     @Test func pairedOnlyDNSMissStaysRetryableAndRecoversOnNextBootstrap() async {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { _, _ in throw URLError(.cannotFindHost) }
         ) == false)
         #expect(conn.apiClient == nil)
-        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(conn.route.canAutomaticallyRetryInitialTransport)
 
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: successfulServerInfoBootstrap
         ))
         #expect(conn.apiClient != nil)
-        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(conn.route.canAutomaticallyRetryInitialTransport)
     }
 
     @Test func tlsBootstrapFailureStillFailCloses() async {
         let conn = ServerConnection()
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: makeHTTPOnlyCredentials(),
             serverInfoBootstrap: { _, _ in throw URLError(.serverCertificateUntrusted) }
         ) == false)
         #expect(conn.apiClient == nil)
-        #expect(!conn.canAutomaticallyRetryInitialTransport)
+        #expect(!conn.route.canAutomaticallyRetryInitialTransport)
     }
 
     @Test func replacingLANCandidateCannotAdoptStaleBootstrapResult() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         let gate = LANCandidateProbeGate(
             reachableHost: "192.168.1.43",
             firstProbeResult: true
         )
         #expect(await configureTestConnection(conn, credentials: credentials) == true)
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 let url = await client.baseURL
@@ -433,11 +433,11 @@ struct ServerConnectionLifecycleTests {
             }
         ) == false)
 
-        let staleTransition = conn.setDiscoveredLANEndpoint(
+        let staleTransition = conn.route.setDiscoveredLANEndpoint(
             makeLANCandidate(host: "192.168.1.42")
         )
         await gate.waitForFirstProbe()
-        let currentTransition = conn.setDiscoveredLANEndpoint(
+        let currentTransition = conn.route.setDiscoveredLANEndpoint(
             makeLANCandidate(host: "192.168.1.43")
         )
         await currentTransition?.value
@@ -451,12 +451,12 @@ struct ServerConnectionLifecycleTests {
 
     @Test func repeatedIdenticalLANCandidateStartsOneBootstrap() async {
         let conn = ServerConnection()
-        conn.networkPathType = { "wifi" }
+        conn.route.networkPathType = { "wifi" }
         let credentials = makeHTTPOnlyCredentials()
         let counter = LANProbeCounter()
         let candidate = makeLANCandidate(host: "192.168.1.42")
-        conn.setDiscoveredLANEndpoint(candidate)
-        #expect(await conn.configureForUse(
+        conn.route.setDiscoveredLANEndpoint(candidate)
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
                 if await client.baseURL.host == "192.168.1.42" {
@@ -466,8 +466,8 @@ struct ServerConnectionLifecycleTests {
                 throw URLError(.cannotConnectToHost)
             }
         ))
-        let transition = conn.setDiscoveredLANEndpoint(candidate)
-        conn.setDiscoveredLANEndpoint(candidate)
+        let transition = conn.route.setDiscoveredLANEndpoint(candidate)
+        conn.route.setDiscoveredLANEndpoint(candidate)
         await transition?.value
 
         #expect(await counter.value == 1)
@@ -485,7 +485,7 @@ struct ServerConnectionLifecycleTests {
             serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: successfulServerInfoBootstrap
         ))
@@ -504,7 +504,7 @@ struct ServerConnectionLifecycleTests {
             throw WebSocketError.notConnected
         }
         conn.sender._onTurnRetryDelayForTesting = {
-            conn.setDiscoveredLANEndpoint(nil)
+            conn.route.setDiscoveredLANEndpoint(nil)
         }
 
         await #expect(throws: CancellationError.self) {
@@ -776,7 +776,7 @@ struct ServerConnectionLifecycleTests {
             Task { @MainActor in await conn.refreshWorkspaceCatalog(force: true) }
         }
 
-        #expect(await conn.configureForUse(
+        #expect(await conn.route.configureForUse(
             credentials: makeHTTPOnlyCredentials(),
             apiClientFactory: { environment, observer in
                 let configuration = URLSessionConfiguration.ephemeral

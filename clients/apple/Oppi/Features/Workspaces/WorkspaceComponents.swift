@@ -101,7 +101,7 @@ enum ServerConnectionLanePresentation {
 
         // Mid Wi‑Fi→cell demotion keeps a stale transportPath (.lan) while
         // composition is nil. Don't claim "via local network" in that hole.
-        if connection.isTransportDemoting {
+        if connection.route.isTransportDemoting {
             return state == .connected ? "Connected" : "Recovering connection"
         }
 
@@ -134,7 +134,7 @@ enum ServerConnectionLanePresentation {
         guard ServerTLSTrustPolicy.isTailscaleHostname(host) else {
             return "paired HTTPS"
         }
-        return connection.configuredSOCKSGeneration != 0 ? "in-app Tailscale" : "Tailscale"
+        return connection.route.configuredSOCKSGeneration != 0 ? "in-app Tailscale" : "Tailscale"
     }
 }
 

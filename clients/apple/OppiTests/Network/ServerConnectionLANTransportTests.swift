@@ -36,7 +36,7 @@ struct ServerConnectionLANTransportTests {
 
     @Test func activeTurnKeepsPairedCompositionWhenLANIsDiscovered() async {
         let connection = ServerConnection()
-        connection.networkPathType = { "wifi" }
+        connection.route.networkPathType = { "wifi" }
         var session = makeTestSession(id: "active", workspaceId: "w1")
         session.status = .busy
         connection.sessionStore.upsert(session)
@@ -46,7 +46,7 @@ struct ServerConnectionLANTransportTests {
         let initialWebSocketClient = connection.wsClient
         connection.wsClient?._setStatusForTesting(.connected)
 
-        connection.setDiscoveredLANEndpoint(
+        connection.route.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -77,7 +77,7 @@ struct ServerConnectionLANTransportTests {
 
         let activeWebSocketClient = connection.wsClient
 
-        await connection.setDiscoveredLANEndpoint(nil)?.value
+        await connection.route.setDiscoveredLANEndpoint(nil)?.value
 
         #expect(connection.transportPath == .paired)
         #expect(connection.wsClient !== activeWebSocketClient)
@@ -89,7 +89,7 @@ struct ServerConnectionLANTransportTests {
         let credentials = makeCredentials()
         #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
-        connection.setDiscoveredLANEndpoint(
+        connection.route.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,

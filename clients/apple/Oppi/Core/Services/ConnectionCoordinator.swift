@@ -391,7 +391,7 @@ final class ConnectionCoordinator {
             }
             if prepared === disconnectedSentinel,
                retryPreparationAfterBoundaryServerIds.contains(serverId),
-               connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
+               connections[serverId]?.route.canAutomaticallyRetryInitialTransport == true {
                 retryPreparationAfterBoundaryServerIds.remove(serverId)
                 finishConnectionPreparation(serverId: serverId, id: preparation.id)
                 return await ensureConnectionReady(for: latestServer, forceReconfigure: forceReconfigure)
@@ -446,7 +446,7 @@ final class ConnectionCoordinator {
         let retryAfterBoundary = retryPreparationAfterBoundaryServerIds.remove(serverId) != nil
         if prepared?.credentials == nil,
            retryAfterBoundary,
-           connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
+           connections[serverId]?.route.canAutomaticallyRetryInitialTransport == true {
             return await ensureConnectionReady(for: currentServer)
         }
         guard let prepared,
@@ -496,7 +496,7 @@ final class ConnectionCoordinator {
                     existing.disconnectStream()
                     existing.disconnectAppEventStream()
                 }
-                existing.setDiscoveredLANEndpoint(initialLANEndpoint)
+                existing.route.setDiscoveredLANEndpoint(initialLANEndpoint)
                 guard await configureConnection(
                     existing,
                     credentials: server.credentials,
@@ -530,7 +530,7 @@ final class ConnectionCoordinator {
 
         let connection = ServerConnection(seenStorage: seenStorage)
         // Feed verified discovery into the HTTPS endpoint selection before initial configuration.
-        connection.setDiscoveredLANEndpoint(initialLANEndpoint)
+        connection.route.setDiscoveredLANEndpoint(initialLANEndpoint)
         guard await configureConnection(
             connection,
             credentials: server.credentials,
@@ -593,7 +593,7 @@ final class ConnectionCoordinator {
 
             // Bonjour can change again while an asynchronous transport setup
             // is in flight. Repeat after each transition to close that window.
-            let transition = connection.setDiscoveredLANEndpoint(latestEndpoint)
+            let transition = connection.route.setDiscoveredLANEndpoint(latestEndpoint)
             await transition?.value
             reconciledEndpoint = latestEndpoint
         }
@@ -624,7 +624,7 @@ final class ConnectionCoordinator {
         preservingPersistentStreams: Bool = false,
         preparationID: UUID
     ) async -> Bool {
-        connection.networkPathType = networkPathType
+        connection.route.networkPathType = networkPathType
         let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self, weak connection] result in
             guard let self, let connection,
                   let serverId = credentials.normalizedServerFingerprint,
@@ -658,14 +658,14 @@ final class ConnectionCoordinator {
         }
         #endif
         if preservingPersistentStreams {
-            return await connection.reconfigureForExplicitRetry(
+            return await connection.route.reconfigureForExplicitRetry(
                 credentials: credentials,
                 apiClientFactory: apiFactory,
                 serverInfoBootstrap: bootstrap,
                 deviceCredentialDidChange: deviceCredentialObserver
             )
         }
-        return await connection.configureForUse(
+        return await connection.route.configureForUse(
             credentials: credentials,
             apiClientFactory: apiFactory,
             serverInfoBootstrap: bootstrap,
@@ -821,7 +821,7 @@ final class ConnectionCoordinator {
         }
         let serverIds = tailnetServers
             .filter { !preparingServerIds.contains($0.id) }
-            .filter { connections[$0.id]?.needsTailnetRouteRebuild ?? true }
+            .filter { connections[$0.id]?.route.needsTailnetRouteRebuild ?? true }
             .map(\.id)
         // Rebuild concurrently; one slow server must not delay the others.
         let retries = serverIds.map { serverId in
@@ -883,7 +883,7 @@ final class ConnectionCoordinator {
         for server in serverStore.servers {
             let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
             if let conn = connections[server.id] {
-                conn.setDiscoveredLANEndpoint(endpoint)
+                conn.route.setDiscoveredLANEndpoint(endpoint)
             }
         }
     }
@@ -893,7 +893,7 @@ final class ConnectionCoordinator {
     func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) async {
         for server in serverStore.servers {
             let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
-            await connections[server.id]?.setDiscoveredLANEndpoint(endpoint)?.value
+            await connections[server.id]?.route.setDiscoveredLANEndpoint(endpoint)?.value
         }
     }
 
@@ -1278,7 +1278,7 @@ final class ConnectionCoordinator {
         guard let connection = connections[serverId], connection.credentials == nil else {
             return
         }
-        guard connection.canAutomaticallyRetryInitialTransport else { return }
+        guard connection.route.canAutomaticallyRetryInitialTransport else { return }
         if connectionPreparationTasks[serverId] != nil {
             retryPreparationAfterBoundaryServerIds.insert(serverId)
             return
@@ -1335,7 +1335,7 @@ final class ConnectionCoordinator {
         // connection's failed reconfigure is the stream recovery's business.
         guard isCurrentPreparation(preparationID, serverId: serverId),
               connection.credentials == nil else { return }
-        guard connection.canRetryInitialTransportOnTimer else {
+        guard connection.route.canRetryInitialTransportOnTimer else {
             endInitialSetupRetry(serverId)
             return
         }
