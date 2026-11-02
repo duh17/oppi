@@ -101,6 +101,34 @@ struct GitStatusStoreTests {
         #expect(store.tracks(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId))
     }
 
+    // MARK: - isAwaitingStatus
+
+    /// The panels' one "still loading" rule: loading while this checkout's first fetch is in flight or the
+    /// store holds another checkout; "No Git status" only once a fetch for this checkout ended with nothing.
+    @Test func awaitingStatusUntilThisCheckoutLoadsOrFails() {
+        let store = GitStatusStore()
+        #expect(store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: nil), "Nothing tracked yet")
+
+        // The fetch is in flight (the stub's task cannot run before this synchronous test ends).
+        store.loadInitial(
+            workspaceId: "ws-1", worktreeId: "wt-feature",
+            apiClient: StubGitStatusFetcher(status: makeGitStatus(branch: "feature", dirtyCount: 0)), gitStatusEnabled: true
+        )
+        #expect(store.isLoading)
+        #expect(store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: "wt-feature"), "Own first fetch in flight")
+        #expect(store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: nil), "Another worktree's is the one loading")
+        #expect(store.isAwaitingStatus(workspaceId: "ws-2", worktreeId: "wt-feature"), "Another workspace")
+
+        store.handleGitStatusPush(workspaceId: "ws-1", worktreeId: "wt-feature", status: makeGitStatus(branch: "feature", dirtyCount: 1))
+        #expect(!store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: "wt-feature"), "Loaded")
+        #expect(store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: nil), "The store's status is another checkout's")
+
+        // A tracked checkout whose load finished with no status is missing, not on its way.
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        #expect(!store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: nil))
+        #expect(!store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId))
+    }
+
     // MARK: - loadInitial with gitStatusEnabled=false
 
     @Test func loadInitialWithDisabledGitSetsWorkspaceButNilStatus() {

@@ -307,13 +307,9 @@ extension WorkspaceDetailViewController {
         guard let connection else { return nil }
         let store = connection.gitStatusStore
         let worktreeId = state.selectedWorktreeId
-        let loaded = store.status(workspaceId: workspaceId, worktreeId: worktreeId)
         return WorkspaceContextBarView.Context(
-            gitStatus: loaded,
-            // Another checkout's status in the store means this one's is on
-            // its way, not missing.
-            isLoading: loaded == nil
-                && (store.isLoading || !store.tracks(workspaceId: workspaceId, worktreeId: worktreeId)),
+            gitStatus: store.status(workspaceId: workspaceId, worktreeId: worktreeId),
+            isLoading: store.isAwaitingStatus(workspaceId: workspaceId, worktreeId: worktreeId),
             workspaceId: workspaceId,
             worktreeId: worktreeId,
             serverId: serverId

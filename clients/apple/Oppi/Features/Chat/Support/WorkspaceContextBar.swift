@@ -576,7 +576,7 @@ final class WorkspaceContextBarView: UIView {
             sessionScope: sessionScope
         )
         // A clean repository still shows its branch and commits.
-        let showsContent = !(context.isLoading && context.gitStatus == nil) && context.gitStatus?.isGitRepo == true
+        let showsContent = context.gitStatus?.isGitRepo == true
         contentStack.isHidden = !showsContent
         emptyHeight?.isActive = !showsContent
         guard showsContent else { return }

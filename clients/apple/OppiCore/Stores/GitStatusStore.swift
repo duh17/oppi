@@ -56,6 +56,14 @@ final class GitStatusStore {
             && (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId)
     }
 
+    /// Whether that checkout's status is still on its way: nothing loaded for
+    /// it yet. Another checkout's status in the store counts as on its way (the
+    /// host loads this one when it appears), as does an in-flight fetch of this
+    /// one's first status. False once loaded, or once a fetch ended without one.
+    func isAwaitingStatus(workspaceId: String, worktreeId: String?) -> Bool {
+        !tracks(workspaceId: workspaceId, worktreeId: worktreeId) || (gitStatus == nil && isLoading)
+    }
+
     // MARK: - Handle push from WebSocket
 
     /// Called when a `git_status` ServerMessage arrives.
