@@ -122,7 +122,7 @@ struct ServerResourceAPIClientTests {
             """)
         }
 
-        let catalog = try await client.listServerExtensions()
+        let catalog = try await client.listServerExtensions(plugins: true)
         let detail = try await client.getServerExtension(id: "extension_abc")
 
         #expect(catalog.extensions.map(\.id) == ["extension_abc"])

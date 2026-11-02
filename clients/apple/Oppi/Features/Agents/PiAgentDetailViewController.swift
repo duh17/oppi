@@ -305,7 +305,8 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         }
         async let fetchedPrompt = apiClient.getPiSystemPrompt()
         async let fetchedTools = apiClient.getPiDefaultTools()
-        async let fetchedCatalog = apiClient.listServerExtensions()
+        // Only the tool catalogs: no plugin rows, so the page also loads from an older server.
+        async let fetchedCatalog = apiClient.listServerExtensions(plugins: false)
         let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
         guard !Task.isCancelled else { return }
         prompt = resolvedPrompt

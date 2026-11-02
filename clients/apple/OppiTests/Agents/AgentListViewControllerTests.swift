@@ -382,6 +382,12 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
         case .cancelled: client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
         case .certificateRejected: challengeServerTrust()
         case .available:
+            // The extension list as a server that predates plugins answers it: a query is
+            // refused. Pi's page reads only its tool catalogs, so it must not send one.
+            if request.url?.path.hasSuffix("/server/resources/extensions") == true, request.url?.query != nil {
+                respond(status: 400, body: Data(#"{"error":"This server-global route accepts no query"}"#.utf8))
+                return
+            }
             // Pi's page loads three resources beside the saved Agents.
             respond(status: 200, body: Self.piBody(for: request.url?.path ?? "") ?? Self.agentsBody(id: "reviewer"))
         case .failing: respond(status: 500, body: Data(#"{"error":"agents are down"}"#.utf8))

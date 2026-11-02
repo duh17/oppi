@@ -812,7 +812,7 @@ extension APIClientEndpoint {
         APIClientEndpoint("setServerSkillEnabled") {
             _ = try? await $0.setServerSkillEnabled(id: "sk1", enabled: true)
         },
-        APIClientEndpoint("listServerExtensions") { _ = try? await $0.listServerExtensions() },
+        APIClientEndpoint("listServerExtensions") { _ = try? await $0.listServerExtensions(plugins: true) },
         APIClientEndpoint("getServerExtension") { _ = try? await $0.getServerExtension(id: "ext1") },
         APIClientEndpoint("inspectAgentExtensionTools") {
             _ = try? await $0.inspectAgentExtensionTools(id: "ext1")

@@ -271,7 +271,7 @@ final class ServerResourceStore {
         await load(
             serverId: serverId,
             fetchSkills: { try await api.listServerSkills() },
-            fetchExtensions: { try await api.listServerExtensions() }
+            fetchExtensions: { try await api.listServerExtensions(plugins: true) }
         )
     }
 
