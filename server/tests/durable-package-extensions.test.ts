@@ -888,6 +888,8 @@ describe("plugins on the extension list", () => {
 
   it("serves `oppi extensions list|disable|enable|reload` from the extension routes", async () => {
     writePlugin("probe");
+    // A Pi package linked under a built-in's name: its row carries a warning.
+    writePackage("ask");
     const f = await fixture(callsTool("unused"));
     const cliDir = makeTempDir("oppi-durable-packages-cli-");
     const api = createServer((req, res) => {
@@ -920,6 +922,13 @@ describe("plugins on the extension list", () => {
       expect(listed.data.extensions).toContainEqual(
         expect.objectContaining({ name: "probe", kinds: ["plugin"], source: "owner" }),
       );
+
+      // The human list prints a row's warnings under it, as `--json` carries them.
+      const lines = (await cli("list")).stdout.split("\n");
+      const noted = lines.findIndex((text) => text.includes('"ask" is built into Oppi'));
+      expect(noted).toBeGreaterThan(0);
+      expect(lines[noted]).toMatch(/^\s+\S/);
+      expect(lines[noted - 1]).toMatch(/ask .*pi-extension/);
 
       // A name finds the row by its name or its extension's (`sql-explorer`).
       const off = JSON.parse((await cli("disable", "sql-explorer", "--json")).stdout);

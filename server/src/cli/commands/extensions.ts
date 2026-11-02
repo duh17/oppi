@@ -28,7 +28,13 @@ function listingLine(extension: ServerExtensionSummary): string {
   const tools = extension.plugin?.tools ?? extension.contributedTools ?? [];
   const detail = [origin, kinds, tools.length ? tools.join(", ") : "no tools"].join(" \u00b7 ");
   const line = `${state}  ${extension.name}  ${c.dim(detail)}`;
-  return extension.loadError ? `${line}\n       ${c.red(extension.loadError)}` : line;
+  // Under the row: why it failed, then its warnings (a linked built-in, plugins that could not
+  // load), which `--json` carries as `loadError` and `warnings`.
+  const notes = [
+    ...(extension.loadError ? [c.red(extension.loadError)] : []),
+    ...extension.warnings.map((warning) => c.yellow(warning)),
+  ];
+  return [line, ...notes.map((note) => `       ${note}`)].join("\n");
 }
 
 /**
