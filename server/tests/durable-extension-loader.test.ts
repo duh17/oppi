@@ -73,6 +73,30 @@ describe("durable manifest", () => {
     ).toEqual([{ name: "probe", tools: ["probe_tool"], runtimes: ["host", "sandbox"] }]);
   });
 
+  it("loads a package outside the server that builds its tool schema with pi-schema", async () => {
+    const result = await load(
+      { oppi: { durable: { entry: "./durable.ts" } } },
+      [
+        'import { obj, str } from "@earendil-works/pi-schema";',
+        'import { defineExtension, defineTool } from "@earendil-works/pi-durable";',
+        "export default defineExtension({",
+        '  name: "schema-probe",',
+        "  tools: [defineTool({",
+        '    name: "schema_probe",',
+        '    description: "Probe.",',
+        "    parameters: obj({ url: str({ minLength: 1 }) }),",
+        '    async execute() { return { output: [{ type: "text", text: "ok" }] }; },',
+        "  })],",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.loaded.map((loaded) => loaded.extension.tools?.map((tool) => tool.name))).toEqual([
+      ["schema_probe"],
+    ]);
+  });
+
   it("defaults runtimes to host and loads every extension of an array default export", async () => {
     const result = await load(
       { oppi: { durable: { entry: "./durable.ts" } } },

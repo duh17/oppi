@@ -433,6 +433,9 @@ let aliases: Record<string, string> | undefined;
 function hostModuleAliases(): Record<string, string> {
   if (aliases) return aliases;
   const file = (specifier: string): string => fileURLToPath(import.meta.resolve(specifier));
+  // jiti resolves as from its own file, so a jiti rooted at pi-durable resolves pi-durable's deps.
+  const piDurableFile = (specifier: string): string =>
+    fileURLToPath(createJiti(file("@earendil-works/pi-durable")).esmResolve(specifier));
   // This module's own extension: `.js` when built, `.ts` when run from source in tests.
   const api = fileURLToPath(
     new URL(`./durable-extension-api${extname(fileURLToPath(import.meta.url))}`, import.meta.url),
@@ -454,6 +457,10 @@ function hostModuleAliases(): Record<string, string> {
         "typebox/value",
       ].map((specifier) => [specifier, file(specifier)]),
     ),
+    // pi-durable validates tool arguments against the pi-schema copy it loaded, so extensions get
+    // that copy: resolve it from pi-durable, not from the server's own dependencies.
+    "@earendil-works/pi-schema": piDurableFile("@earendil-works/pi-schema"),
+    "@earendil-works/pi-schema/formats": piDurableFile("@earendil-works/pi-schema/formats"),
   };
   return aliases;
 }
