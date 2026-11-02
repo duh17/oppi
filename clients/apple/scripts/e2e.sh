@@ -171,6 +171,11 @@ if [[ ${#TWO_SERVER_SUITES[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# The QA journeys assert against the strict receipt that only `qa-verify.ts run --lane e2e`
+# writes (`TEST_RUNNER_OPPI_QA_SOURCE_SHA/HASH`), so they are not E2E-lane tests: the groups
+# that take the whole target skip them, and `qa-verify.ts` names the suite itself.
+QA_JOURNEY_SUITES=("OppiE2ETests/QAVerificationJourneysE2ETests")
+
 apply_group_defaults() {
     if $ONLY_TESTING_EXPLICIT; then
         return
@@ -182,11 +187,11 @@ apply_group_defaults() {
             # Preserve broad release coverage. Release wrappers may add their
             # own explicit skip list for labs known to be non-blocking.
             ONLY_TESTING+=("OppiE2ETests")
-            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}")
+            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}" "${QA_JOURNEY_SUITES[@]}")
             ;;
         all)
             ONLY_TESTING+=("OppiE2ETests")
-            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}")
+            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}" "${QA_JOURNEY_SUITES[@]}")
             ;;
         release-gate|gate|release-smoke|smoke)
             E2E_GROUP="gate"
@@ -226,6 +231,7 @@ apply_group_defaults() {
             ONLY_TESTING+=("OppiE2ETests")
             SKIP_TESTING+=(
                 "${TWO_SERVER_SUITES[@]}"
+                "${QA_JOURNEY_SUITES[@]}"
                 "OppiE2ETests/BrowserAutomationVideoToolRowE2ETests"
                 "OppiE2ETests/ExtensionUISnapshotLabE2ETests"
                 "OppiE2ETests/FileBrowserVideoPlaybackE2ETests"
