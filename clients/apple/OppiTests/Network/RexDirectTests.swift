@@ -247,14 +247,21 @@ struct RexDirectTests {
         let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in
             direct.open(sink)
         }
-        let noNc = RexFakeHost { _ in .hold }
+        // A host whose bridge is already gone: the exit status and the close reach the client
+        // on its own first write, in the order SSH reports them, instead of from a task that
+        // races that write.
+        let noNc: @Sendable (@escaping SSHPTYByteSink) -> SSHExecStream = { sink in
+            SSHExecStream(
+                send: { _ in
+                    sink(.exitStatus(126))
+                    sink(.closed)
+                },
+                close: {}
+            )
+        }
         let (link, control) = try await RexLink.connect(
             plan: plan,
-            openStream: { _, _, sink in
-                let stream = noNc.open(sink: sink)
-                Task { noNc.end(status: 126) }
-                return stream
-            },
+            openStream: { _, _, sink in noNc(sink) },
             run: { command in
                 commands.withLock { $0.append(command) }
                 return SSHExecResult(output: Data(Self.status().utf8), errorOutput: Data(), exitStatus: 0)
@@ -270,11 +277,7 @@ struct RexDirectTests {
         await #expect(throws: RexClientError.bridgeMissing) {
             _ = try await RexLink.connect(
                 plan: offPlan,
-                openStream: { _, _, sink in
-                    let stream = noNc.open(sink: sink)
-                    Task { noNc.end(status: 126) }
-                    return stream
-                },
+                openStream: { _, _, sink in noNc(sink) },
                 run: { _ in SSHExecResult(output: Data(Self.status(https: #"{"state":"unavailable"}"#).utf8), errorOutput: Data(), exitStatus: 0) }
             )
         }
