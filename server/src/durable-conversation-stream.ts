@@ -234,6 +234,9 @@ class ConversationRoom implements DocPresenter {
     const pending = this.pending ?? [];
     this.pending = undefined;
     for (const publication of pending) this.apply(publication);
+    // `pi.live` that changed after the read above was only recorded; publications no longer
+    // carry it, so apply the newest one here.
+    this.applyLive();
     await this.settled();
   }
 

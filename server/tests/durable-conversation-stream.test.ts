@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import {
   Harness,
+  LiveDoc,
   createRegistry,
   defineExtension,
   defineTask,
@@ -777,6 +778,47 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const resumed = await attach(f, client.tip, client);
     expect(resumed.entries.find((entry) => entry.inputCard)?.card?.title).toBe("Background job 1");
     await expectConverged(f, resumed);
+  });
+
+  it("shows a run that ended while the room loaded as ended", async () => {
+    const f = await fixture([fauxAssistantMessage("one")]);
+    const id = f.conversation.id;
+    // A user entry, so the load's presentation pass reads input cards: that read is held.
+    await prompt(f.conversation, "first");
+    await f.conversation.commit(async (tx) => {
+      (await tx.doc(LiveDoc, id)).run = { taskId: 999 as never, inputs: [998 as never], turns: 0 };
+    }, context);
+    let entered!: () => void;
+    let release!: () => void;
+    const loading = new Promise<void>((resolve) => (entered = resolve));
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let gated = false;
+    const harness = new Proxy(f.harness, {
+      get(target, key) {
+        if (key === "snapshot")
+          return async (...args: unknown[]) => {
+            if (args[0] === DurableInputCards && !gated) {
+              gated = true;
+              entered();
+              await held;
+            }
+            return (target.snapshot as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const client = new Client();
+    const attaching = attach({ harness, conversation: f.conversation }, undefined, client);
+    await loading;
+    // The run ends after the load read `pi.live` and before it finished.
+    await f.conversation.commit(async (tx) => {
+      delete (await tx.doc(LiveDoc, id)).run;
+    }, context);
+    release();
+    await attaching;
+    await settle();
+    expect(client.live()?.run).toBeUndefined();
   });
 
   it("ends the room when a commit cannot be applied, and a re-attach gets a fresh room", async () => {
