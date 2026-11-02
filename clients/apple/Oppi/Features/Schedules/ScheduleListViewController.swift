@@ -3,23 +3,29 @@ import UIKit
 /// Schedules: the server's schedules as cards, filtered by status, with a
 /// swipe to pause, resume, or restore, and the guided composer to describe a
 /// new one. A card opens the schedule's detail, which reports changes back.
+///
+/// A `ListScreenController`: the base owns the list, the theme, each row's
+/// redraw key, the swipe actions, and the load on appearance and pull to
+/// refresh, with its one state row (loading, failed with one Retry, or empty)
+/// above the cards. This page keeps its cards, its status filter, its composer,
+/// and the sidebar toggle.
 @MainActor
-final class ScheduleListViewController: UIViewController, UICollectionViewDelegate {
+final class ScheduleListViewController: ListScreenController<ScheduleListViewController.Section, ScheduleListViewController.Item> {
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
     }
 
-    private enum Item: Hashable {
-        /// The list's own state: loading its schedules, or why it could not.
-        case state
-        case empty
+    enum Section: Hashable, Sendable {
+        /// The schedules the filter shows. The list's own state is this
+        /// section's first row, where the schedules it already has stay under it.
+        case schedules
+    }
+
+    enum Item: Hashable, Sendable {
         case schedule(String)
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Int, Item>?
-    private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
     private var sidebarToggle: UIBarButtonItem?
     private let filterItem = UIBarButtonItem()
@@ -30,25 +36,16 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
     private var selectedStatus: AgentScheduleStatus = .active {
         didSet { setNeedsUpdateProperties() }
     }
-    private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    /// Why the list could not be read: one state row, over the schedules it has.
-    private(set) var loadError: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
     /// Why the change the person asked for failed: the composer says it, and the
     /// list keeps the rows it shows.
     private(set) var actionError: String? {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
 
     /// The schedules the list shows now, in order: what a test checks stayed on
     /// screen through a failure.
     var shownScheduleIDs: [String] {
-        guard let dataSource else { return [] }
-        return dataSource.snapshot().itemIdentifiers.compactMap { item in
+        shownItems.compactMap { item in
             if case .schedule(let id) = item { return id }
             return nil
         }
@@ -65,10 +62,12 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Schedules",
+            listIdentifier: "schedules.list",
+            dismissesKeyboardOnDrag: true
+        )
         traitOverrides.appRootEnvironment = root
-        title = "Schedules"
-        navigationItem.largeTitleDisplayMode = .never
         filterItem.image = UIImage(systemName: "line.3.horizontal.decrease")
         filterItem.accessibilityIdentifier = "schedules.filter"
     }
@@ -83,35 +82,12 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(ListScreen.layout(
-            appearance: .plain,
-            trailingSwipe: { [weak self] in self?.swipeActions(at: $0) }
-        ), animated: false)
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "schedules.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        // The readable form width, as every kit page holds its list on iPad.
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Like the SwiftUI `.task` it replaces, a load each time it shows.
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.loadSchedules() }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
     }
 
     override func viewDidLayoutSubviews() {
@@ -121,10 +97,8 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         updateBarItems()
         composer.setScreenError(actionError, identifier: "schedules.error")
-        applySnapshot()
     }
 
     private func updateBarItems() {
@@ -146,101 +120,94 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         return [toggle]
     }
 
+    // MARK: - Load
+
+    /// Like the SwiftUI `.task` it replaces, a load each time it shows.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// The active server's schedules: the base runs it on every appearance, on
+    /// pull to refresh, after a Retry, and when the server or its client
+    /// changes. Throws the reason the list's state row shows.
+    override func load() async throws {
+        guard let apiClient = root.coordinator.activeConnection.apiClient else {
+            throw LoadFailure(String(localized: "Server is offline"))
+        }
+        let loaded = try await apiClient.listAgentSchedules()
+        // A load the page cancelled (it left, or another one replaced it) never
+        // replaces what this one shows.
+        guard !Task.isCancelled else { return }
+        schedules = loaded
+        // The list was read again: what an action failed at is old news.
+        actionError = nil
+    }
+
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
-        snapshot.appendSections([0])
-        let visible = visibleSchedules
-        // The list's own state comes first, and the schedules it already has stay
-        // under it: a Retry, or a reload that failed, never hides them.
-        if loadError != nil || (isLoading && schedules.isEmpty) {
-            snapshot.appendItems([.state])
-        }
-        if visible.isEmpty {
-            if loadError == nil, !isLoading { snapshot.appendItems([.empty]) }
-        } else {
-            // A diffable list traps on a repeated item; a repeated schedule id shows once.
-            var seen = Set<String>()
-            snapshot.appendItems(visible.filter { seen.insert($0.id).inserted }.map { .schedule($0.id) })
-        }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+    override func sections() -> [ListSection<Section, Item>] {
+        // A diffable list traps on a repeated item; a repeated schedule id shows once.
+        var seen = Set<String>()
+        let items = visibleSchedules
+            .filter { seen.insert($0.id).inserted }
+            .map { Item.schedule($0.id) }
+        return [ListSection(.schedules, items: items)]
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let stateCell = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            let palette = palette
-            // The card a schedule row is, inset the way the list insets them.
-            var background = UIBackgroundConfiguration.clear()
-            background.backgroundColor = palette.ui.bgHighlight
-            background.cornerRadius = 20
-            background.backgroundInsets = Self.cardInsets
-            cell.backgroundConfiguration = background
-            if let loadError {
-                cell.configure(
-                    .failure(title: String(localized: "Couldn't Load Schedules"), reason: loadError) { [weak self] in
-                        self?.refresh()
-                    },
-                    identifier: "schedules.state"
-                )
-            } else {
-                cell.configure(.loading(String(localized: "Loading schedules…")), identifier: "schedules.state")
-            }
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            if case .state = item {
-                return collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: item)
-            }
-            return collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
+    /// The list's own state is the first row of the section the cards are in: a
+    /// Retry, or a reload that failed, never hides the schedules it already has.
+    override func stateSection() -> Section? { .schedules }
+
+    /// Whether the filter's schedules are here. A status the filter leaves empty
+    /// is not content: the state row says so in that status' own words.
+    override func hasContent() -> Bool { !visibleSchedules.isEmpty }
+
+    override func loadingCaption() -> String? { String(localized: "Loading schedules…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Schedules") }
+
+    override func emptyState() -> LoadState? {
+        .empty(
+            title: selectedStatus.emptyTitle,
+            systemImage: selectedStatus.emptySystemImage,
+            message: selectedStatus.emptyDescription
+        )
     }
 
-    /// The inset a schedule card keeps inside its row, which the state row shares.
-    private static let cardInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`.
+    override var rowStyle: ListRowStyle { .card }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
+        guard case .schedule(let id) = item,
+              let schedule = visibleSchedules.first(where: { $0.id == id }) else { return }
+        let timing = schedule.trigger.scheduleScreenTiming()
+        ListScreen.buttonRow(
+            cell,
+            identifier: "schedules.row.\(schedule.id)",
+            label: "\(schedule.name), \(timing), \(schedule.status.rawValue)"
+        ) { [weak self] in
+            self?.openSchedule(schedule.id)
+        }
         let palette = palette
-        ListScreen.background(cell, grouped: false, palette: palette)
-        let cardInsets = Self.cardInsets
-        switch item {
-        case .state:
-            // The list's own state is the kit's cell; `installDataSource()`
-            // dequeues it for this row.
-            break
-        case .empty:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .empty(
-                    title: selectedStatus.emptyTitle,
-                    systemImage: selectedStatus.emptySystemImage,
-                    message: selectedStatus.emptyDescription
-                ),
-                palette: palette
-            )
-        case .schedule(let id):
-            guard let schedule = visibleSchedules.first(where: { $0.id == id }) else { return }
-            let timing = schedule.trigger.scheduleScreenTiming()
-            ListScreen.buttonRow(
-                cell,
-                identifier: "schedules.row.\(schedule.id)",
-                label: "\(schedule.name), \(timing), \(schedule.status.rawValue)"
-            ) { [weak self] in
-                self?.openSchedule(schedule.id)
-            }
-            cell.contentConfiguration = ControlViewContent(insets: cardInsets, followsLayoutMargins: false) {
-                ScheduleCardView.card(schedule, palette: palette)
-            }
+        cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+            ScheduleCardView.card(schedule, palette: palette)
         }
     }
 
-    private func swipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard case .schedule(let id) = dataSource?.itemIdentifier(for: indexPath),
+    /// A card is keyed by what it draws: a swipe that pauses it, or a load that
+    /// renamed it, redraws that row and leaves the others where they are.
+    override func inputs(of item: Item) -> AnyHashable {
+        guard case .schedule(let id) = item,
+              let schedule = visibleSchedules.first(where: { $0.id == id }) else { return AnyHashable(0) }
+        return AnyHashable([
+            AnyHashable(schedule.name),
+            AnyHashable(schedule.trigger.scheduleScreenCadence),
+            AnyHashable(schedule.trigger.scheduleScreenTiming()),
+            AnyHashable(schedule.status.rawValue),
+        ])
+    }
+
+    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
+        guard case .schedule(let id) = item,
               let schedule = visibleSchedules.first(where: { $0.id == id }) else { return nil }
         let palette = palette
         let action: UIContextualAction
@@ -294,35 +261,6 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         case pause, resume, restore
     }
 
-    func refresh() {
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in
-            await self?.loadSchedules()
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
-    private func loadSchedules() async {
-        guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            loadError = String(localized: "Server is offline")
-            return
-        }
-        isLoading = true
-        // A replaced load leaves the flag to the load that replaced it.
-        defer { if !Task.isCancelled { isLoading = false } }
-        do {
-            let loaded = try await apiClient.listAgentSchedules()
-            guard !Task.isCancelled else { return }
-            schedules = loaded
-            loadError = nil
-            // The list was read again: what an action failed at is old news.
-            actionError = nil
-        } catch {
-            guard !Task.isCancelled else { return }
-            loadError = error.localizedDescription
-        }
-    }
-
     func mutate(_ schedule: AgentScheduleSummary, _ action: SummaryMutation) {
         Task { [weak self] in
             guard let apiClient = self?.root.coordinator.activeConnection.apiClient else { return }
@@ -343,7 +281,8 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
     }
 }
 
-/// A schedule's card in the list: cadence and status, name, and timing.
+/// A schedule's card in the list: cadence and status, name, and timing. The
+/// kit's card row paints the surface, so this is only what the schedule says.
 @MainActor
 enum ScheduleCardView {
     static func card(_ schedule: AgentScheduleSummary, palette: ThemePalette) -> UIView {
@@ -372,25 +311,6 @@ enum ScheduleCardView {
             color: palette.ui.comment,
             lines: 2
         )
-        return surface(
-            ControlRowViews.stack([header, name, ControlRowViews.divider(palette), timing], spacing: 14),
-            palette: palette
-        )
-    }
-
-    private static func surface(_ content: UIView, palette: ThemePalette) -> UIView {
-        let card = UIView()
-        card.backgroundColor = palette.ui.bgHighlight
-        card.layer.cornerRadius = 20
-        card.layer.cornerCurve = .continuous
-        content.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 18),
-            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -18),
-            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
-            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
-        ])
-        return card
+        return ControlRowViews.stack([header, name, ControlRowViews.divider(palette), timing], spacing: 14)
     }
 }

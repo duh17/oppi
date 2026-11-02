@@ -58,7 +58,7 @@ struct ScheduleListPageTests {
             screen.actionError != nil
         }, "a failed pause says why")
         #expect(screen.shownScheduleIDs == ["nightly"], "the failed pause keeps the list")
-        #expect(screen.loadError == nil, "an action's failure is not the list's")
+        #expect(screen.loadFailure == nil, "an action's failure is not the list's")
     }
 
     @Test("a load that fails with schedules on screen keeps them and adds the failure row")
@@ -79,8 +79,8 @@ struct ScheduleListPageTests {
         })
 
         answers.isReachable = false
-        screen.refresh()
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { screen.loadError != nil })
+        screen.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { screen.loadFailure != nil })
         #expect(screen.shownScheduleIDs == ["nightly"], "the refresh that failed keeps what it had")
     }
 

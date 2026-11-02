@@ -65,9 +65,6 @@
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       ".settingsToggle(": 1
     },
-    "clients/apple/Oppi/Features/Schedules/ScheduleListViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
     "clients/apple/Oppi/Features/Servers/ModelProvidersViewController.swift": {
       "UIAlertController(": 1
     },

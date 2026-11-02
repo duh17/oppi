@@ -164,6 +164,7 @@ A UIKit settings page subclasses `ListScreenController` (`clients/apple/Oppi/Fea
 ### The pieces
 
 - `ListScreenController<Section, Item>`: `listIdentifier` is `<feature>.<page>.list` (`settings.<page>.list` in Settings); `sections()` runs inside `updateProperties()`; a reorder stays in its section (`ListSlot`, `pageItem`); a section with no rows, state, header, or footer is not drawn.
+- `ScheduleListViewController` (`Features/Schedules`): a `ListScreenController` whose rows are the kit's cards (`rowStyle` `.card`), its state row the card section's first row, so a failed reload keeps the cards it has.
 - A section that is not a list of rows (the theme gallery's cards, the icon picker's symbols) is laid out by the page through `layoutSection(for:environment:)`, which declares its boundary header item; the kit still fills the heading from `ListSection.header` and lays out every other section.
 - `inputs(of:)`: the default key differs every pass, so an unkeyed row cannot go stale. Key rows that hold selectable text, an open `UIMenu`, a switch in flight, or a text field. The theme is in the key.
 - `SettingsStyle`: title `fg`, value `comment`, action `blue`, destructive `red`, fixable problem `orange`, page `bg`. A dark theme's card is `bgHighlight` (the system card was 1.01 contrast on Dark) unless that is under 1.08 against `bg`. Every list paints cards through `SettingsListStyle.cardProvider`, keeping the pressed look. A title is never `.label` or a one-off colour.
