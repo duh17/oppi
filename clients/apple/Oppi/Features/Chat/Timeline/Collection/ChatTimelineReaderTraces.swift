@@ -17,7 +17,7 @@ import UIKit
 final class ChatTimelineReaderTraces {
     /// One reader's traces. They are held weakly: the reader and the payload it
     /// was opened from own them (`ChatReaderPayloadStore` keeps a payload across
-    /// a split or stack swap, so a rebuilt reader observes the same stream). A
+    /// a split or stack swap, so a rebuilt reader observes the same trace). A
     /// trace with no owner left is a reader nobody can see, and its entry goes.
     private final class Entry {
         weak var thinking: ReaderTrace<ThinkingSnapshot>?

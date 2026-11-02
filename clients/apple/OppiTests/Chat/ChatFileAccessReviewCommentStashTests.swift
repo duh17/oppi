@@ -41,6 +41,36 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(button.accessibilityValue as? String == "1 staged comment")
     }
 
+    /// The stash pops in every reader: a review diff's button springs in when the
+    /// first comment is added, and stays still under Reduce Motion.
+    @Test(arguments: [false, true])
+    func reviewDiffStashPopsWhenACommentIsAddedUnlessReduceMotion(reduceMotion: Bool) throws {
+        let fixture = try makeReviewDetailFixture(stagedCount: 0)
+        defer { fixture.window.isHidden = true }
+        let detail = try #require((fixture.host as? UINavigationController)?.viewControllers.first)
+        #expect(stashButton(in: fixture.host.view) == nil)
+
+        // Other suites set this override too, so the update runs synchronously
+        // while it holds, with no suspension in between.
+        FullScreenReviewCommentStashControl.reduceMotionOverrideForTesting = reduceMotion
+        defer { FullScreenReviewCommentStashControl.reduceMotionOverrideForTesting = nil }
+        #expect(fixture.comments.save(
+            body: "Rename this.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "payload",
+                source: ReviewCommentSourceContext(sessionId: "session-1", surface: .fullScreenDiff)
+            ),
+            localScopeId: "workspace-1",
+            sessionId: "session-1"
+        ) == nil)
+        detail.updatePropertiesIfNeeded()
+        fixture.host.view.layoutIfNeeded()
+
+        let button = try #require(stashButton(in: fixture.host.view))
+        let animations = button.layer.animationKeys() ?? []
+        #expect(animations.isEmpty == reduceMotion, "animations: \(animations)")
+    }
+
     @Test func gitContextReviewFileHidesStashWhenNoCommentsAreStaged() async throws {
         let fixture = try makeReviewDetailFixture(stagedCount: 0)
         defer { fixture.window.isHidden = true }

@@ -911,6 +911,7 @@
 		5FA737713C03075508F021B5 /* FileBrowserMotionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D27150D99B3C650DFFC08F4D /* FileBrowserMotionUITests.swift */; };
 		5FC166A933DDAB6E3409C704 /* MacToolTimelineChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A88485BEE07970790BAF044 /* MacToolTimelineChromeTests.swift */; };
 		5FC6001A997603E757175C72 /* SSHTerminalGlyphRasterCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */; };
+		5FD5955CE0B602F6382E11BC /* ReaderChunkStackLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 579269BA95A073BE136C1F31 /* ReaderChunkStackLayout.swift */; };
 		5FF360E26969FA024CE7468C /* MacSessionPaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78B02D0BD7F4F507002C1B0 /* MacSessionPaneLayout.swift */; };
 		60041A966585E044BB0F6C18 /* OppiTestLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E0745E77AFF2885EAC526F /* OppiTestLaunch.swift */; };
 		600B97B02AB697A1A60FC43B /* MobileOutputGuideSettingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B4DD6B9235D0666446237CD /* MobileOutputGuideSettingTests.swift */; };
@@ -1381,6 +1382,7 @@
 		904AF588541BBCE6808FEF0D /* SessionListPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA71A2BA6D57F78D04EA3FA9 /* SessionListPerf.swift */; };
 		904ED66C8410A0907174B3A9 /* TelemetryEventsUploadContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37242047F07133EEF5AA3C15 /* TelemetryEventsUploadContractTests.swift */; };
 		909AB57FFE15FDB604884E3B /* ChatFileBrowserE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C65DEF9132D02288A61A97 /* ChatFileBrowserE2ETests.swift */; };
+		90C8AB321DCF22E8D96C48D5 /* ReviewCommentStashFloatingButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1049A62EFD7E02A98046D5E3 /* ReviewCommentStashFloatingButton.swift */; };
 		90FC6A8FFEDE3452414D6D5D /* known-good-h264.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = C52A7A25435385872BD3EDB0 /* known-good-h264.mp4 */; };
 		911D0101BF2CA06E1BF7345B /* FileBrowserMotionPreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBF572092BBA00A70FA494F8 /* FileBrowserMotionPreviewSupport.swift */; };
 		91316F2AC75526B3CA5529E1 /* QuickCommentEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDBFEEC725B5A2E1482C6F7F /* QuickCommentEditorViewController.swift */; };
@@ -2740,6 +2742,7 @@
 		0FEDDC70D36B388C1590B283 /* ExtensionNoticeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNoticeViewController.swift; sourceTree = "<group>"; };
 		0FF6746D222A7B263141452D /* TimelineOffsetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineOffsetController.swift; sourceTree = "<group>"; };
 		102D18AD71072B6D8DC4124C /* PushPairingPlaintextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushPairingPlaintextTests.swift; sourceTree = "<group>"; };
+		1049A62EFD7E02A98046D5E3 /* ReviewCommentStashFloatingButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentStashFloatingButton.swift; sourceTree = "<group>"; };
 		108BB8C94EE6FC1E33CB64E9 /* ReviewCommentFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentFormattingTests.swift; sourceTree = "<group>"; };
 		108F85495F7C286E9BDFD05C /* RexTailnetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnetTests.swift; sourceTree = "<group>"; };
 		1096B582B3F2CB854CBB4A89 /* QuickSessionViewController+Pickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "QuickSessionViewController+Pickers.swift"; sourceTree = "<group>"; };
@@ -3313,6 +3316,7 @@
 		5744AA46ED83779CFC64CD07 /* RenderStrategyPerfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderStrategyPerfTests.swift; sourceTree = "<group>"; };
 		5763C2F904C35B1FD4387D15 /* DurableSubagentE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableSubagentE2ETests.swift; sourceTree = "<group>"; };
 		577582711070FCAB57323F39 /* MacModelPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacModelPickerSheet.swift; sourceTree = "<group>"; };
+		579269BA95A073BE136C1F31 /* ReaderChunkStackLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderChunkStackLayout.swift; sourceTree = "<group>"; };
 		5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFocusOwnershipTests.swift; sourceTree = "<group>"; };
 		579D62B4FDE02BFFB4A2E5B2 /* SugiyamaLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugiyamaLayout.swift; sourceTree = "<group>"; };
 		57B127F6C3EDDD11E08BA1F2 /* FileViewerImagePageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerImagePageTests.swift; sourceTree = "<group>"; };
@@ -8044,7 +8048,9 @@
 				1716CC5986A09A38FFB7C07E /* NativeFullScreenSourceBody.swift */,
 				FBBEB94B9F1D46AD9836FD66 /* NativeFullScreenTerminalBody.swift */,
 				DE73B02AAEBCF087359D89F2 /* ReaderBody.swift */,
+				579269BA95A073BE136C1F31 /* ReaderChunkStackLayout.swift */,
 				1D758E717D0D4F4BAC3A75D9 /* ReaderTrace.swift */,
+				1049A62EFD7E02A98046D5E3 /* ReviewCommentStashFloatingButton.swift */,
 			);
 			path = Reader;
 			sourceTree = "<group>";
@@ -10702,6 +10708,7 @@
 				CAF23A1B89A16C0299383E40 /* QuietTimelineProjection.swift in Sources */,
 				9E6ABE453D9A1294ECD1AB5E /* QuietWorkLineTimelineRowContent.swift in Sources */,
 				0BC76C51D3F14F84DB606CC0 /* ReaderBody.swift in Sources */,
+				5FD5955CE0B602F6382E11BC /* ReaderChunkStackLayout.swift in Sources */,
 				A8572A6EB6468377E1A80E69 /* ReaderTrace.swift in Sources */,
 				0EE6C7ED763B7CCD1BCB04EB /* RecordVersionConflict.swift in Sources */,
 				82280F6E55C11E2BC53FE322 /* RemoteTheme.swift in Sources */,
@@ -10709,6 +10716,7 @@
 				EA90D33A5A209A78982A96A5 /* ReviewCommentInlineDraftPresenter.swift in Sources */,
 				AEF1691754003E7327466CEA /* ReviewCommentSelection.swift in Sources */,
 				D546A5E94BCD5BAF22276B1F /* ReviewCommentStashContent.swift in Sources */,
+				90C8AB321DCF22E8D96C48D5 /* ReviewCommentStashFloatingButton.swift in Sources */,
 				4F84EAD93E4FDF4253F26643 /* ReviewCommentStashLocation.swift in Sources */,
 				D71893B3778728A5F5EDD911 /* ReviewCommentStore.swift in Sources */,
 				0D3A55CEE2480CAF46850E81 /* ReviewCommentStripChrome.swift in Sources */,

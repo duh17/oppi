@@ -652,7 +652,7 @@ final class CommitFileDiffViewController: UIViewController {
         stashButton.update(
             on: view,
             presenter: self,
-            scope: configuration.reviewCommentSelectionScope,
+            stash: configuration.reviewCommentSelectionScope?.router.stash,
             leadingAccessoryCount: 0,
             palette: palette
         )

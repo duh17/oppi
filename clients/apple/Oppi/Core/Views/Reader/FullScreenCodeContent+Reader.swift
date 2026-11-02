@@ -398,10 +398,11 @@ extension FullScreenCodeContent {
             }
             return body
         case .liveSource(let trace, let showsSource):
-            let reading = trace.snapshot.readerContent
+            // The reader builds from `bodyContent`, which hands a finished
+            // source over as its final content with the loaded raw text; this
+            // branch only keeps the case total, so it has no raw text to pass.
             guard !trace.snapshot.isDone else {
-                return (showsSource ? reading.sourceContent(completeRaw: nil) ?? reading : reading)
-                    .makeFullScreenBody(context)
+                return bodyContent(showingSource: showsSource, completeRaw: nil).makeFullScreenBody(context)
             }
             return Self.makeStreamingSourceBody(trace, showsSource: showsSource, context)
         case .latex(let text, let filePath):
@@ -552,7 +553,8 @@ extension FullScreenCodeContent {
                 content: snapshot.text,
                 isStreaming: true,
                 palette: context.themeID.palette,
-                readerPreferences: FullScreenReaderPreferencesStore.shared.preferences(for: .source),
+                // HTML's Source reads as code; the family Viewing Options edits.
+                readerPreferences: FullScreenCodeContent.liveSource(trace, showsSource: showsSource).readerPreferences,
                 reviewCommentSelectionRouter: router,
                 reviewCommentSourceContext: context.sourceContext(surface: .fullScreenSource, filePath: snapshot.filePath)
             )
@@ -582,8 +584,9 @@ struct ReaderBodyContext {
     /// Rebuilds the reader's body from its content, restoring the reading
     /// position, while `body` is still the installed one.
     let rebuild: (_ body: any ReaderBody, _ intent: FullScreenMarkdownViewportIntent?) -> Void
-    /// Re-reads the chrome (Source title, Viewing Options) from the content.
-    let refreshChrome: () -> Void
+    /// Re-reads the chrome (Source title, Viewing Options) from the content
+    /// while `body` is still installed; a rebuild already refreshed it.
+    let refreshChrome: (_ body: any ReaderBody) -> Void
 
     /// Feeds `trace`'s news to `body` through `apply`, which shows each snapshot
     /// in place or calls `rebuild` once the trace has outgrown the body: at once,
@@ -600,9 +603,9 @@ struct ReaderBodyContext {
             rebuild(body, intent)
         }
         let refreshChrome = refreshingChrome ? self.refreshChrome : nil
-        adoptTrace(trace.observe { snapshot in
+        adoptTrace(trace.observe { [weak body] snapshot in
             apply(snapshot, rebuildBody)
-            refreshChrome?()
+            if let body { refreshChrome?(body) }
         })
     }
 

@@ -68,7 +68,7 @@ enum ToolTimelineRowFullScreenSupport {
     ) -> TerminalSnapshot {
         let output: String
         if case .text(let text, _) = configuration.expandedContent {
-            // The stream drives full-screen display; keep its ANSI payload and
+            // The trace drives full-screen display; keep its ANSI payload and
             // strip only when the controller builds clipboard text.
             output = text
         } else {

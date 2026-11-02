@@ -2288,6 +2288,78 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(contentController.navigationItem.rightBarButtonItems?.first === copyButton)
     }
 
+    @Test func streamingPlainSourceGrowsInPlaceThenRebuildsAsItsFinalContent() throws {
+        let trace = ReaderTrace(SourceSnapshot(
+            text: "let a = 1",
+            filePath: "Draft.swift",
+            isDone: false,
+            finalContent: nil
+        ), isNews: SourceSnapshot.isNews)
+        let controller = makeController(content: .liveSource(trace))
+        let streaming = try #require(controller.installedBodyViewForTesting as? NativeFullScreenSourceBody)
+
+        trace.update(SourceSnapshot(
+            text: "let a = 1\nlet b = 2",
+            filePath: "Draft.swift",
+            isDone: false,
+            finalContent: nil
+        ))
+        controller.view.layoutIfNeeded()
+        #expect(controller.installedBodyViewForTesting === streaming)
+        #expect(timelineAllTextViews(in: streaming).contains { timelineRenderedText(of: $0).contains("let b = 2") })
+
+        let final = "let a = 1\nlet b = 2\n"
+        trace.update(SourceSnapshot(
+            text: final,
+            filePath: "Draft.swift",
+            isDone: true,
+            finalContent: .code(content: final, language: "swift", filePath: "Draft.swift", startLine: 1)
+        ))
+        controller.view.layoutIfNeeded()
+        #expect(controller.installedBodyViewForTesting is NativeFullScreenCodeBody)
+    }
+
+    @Test func liveSourceWhoseFinalKindTurnsHTMLMidStreamRebuildsAsHTML() throws {
+        let trace = ReaderTrace(SourceSnapshot(
+            text: "<p>hel",
+            filePath: "page.html",
+            isDone: false,
+            finalContent: nil
+        ), isNews: SourceSnapshot.isNews)
+        let controller = makeController(content: .liveSource(trace))
+        #expect(controller.installedBodyViewForTesting is NativeFullScreenSourceBody)
+
+        trace.update(SourceSnapshot(
+            text: "<p>hello",
+            filePath: "page.html",
+            isDone: false,
+            finalContent: .html(content: "", filePath: "page.html")
+        ))
+        controller.view.layoutIfNeeded()
+        #expect(controller.installedBodyViewForTesting is HTMLRenderView)
+    }
+
+    /// Source of a streaming HTML file is HTML code, so its body reads the
+    /// code preferences that Viewing Options edits, not plain text's.
+    @Test func streamingHTMLSourceUsesTheCodePreferencesViewingOptionsOffers() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .source)
+        let trace = ReaderTrace(SourceSnapshot(
+            text: "<p>a long line that would wrap if the body read plain-text preferences</p>",
+            filePath: "page.html",
+            isDone: false,
+            finalContent: .html(content: "", filePath: "page.html")
+        ), isNews: SourceSnapshot.isNews)
+        let controller = makeController(content: .liveSource(trace))
+        _ = controller.perform(Selector("toggleSource"))
+        controller.view.layoutIfNeeded()
+
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenSourceBody)
+        let textView = try #require(timelineFirstView(ofType: UITextView.self, in: body))
+        #expect(!FullScreenReaderContentFamily.code.defaultPreferences.wrapsText)
+        #expect(textView.textContainer.lineBreakMode == .byClipping, "code does not wrap by default")
+    }
+
     @Test func routerForwardsFullscreenPresenterWhenCommentActionDispatches() throws {
         let presenter = UIViewController()
         var forwardedPresenter: UIViewController?
@@ -2878,7 +2950,7 @@ struct FullScreenReviewCommentSelectionTests {
         // The stash sits at the root of a router navigation controller, whose bar holds its title and close.
         let navigation = try #require(fixture.controller.presentedViewController as? RouterNavigationController)
         #expect(navigation.viewControllers.first is ReviewCommentStashViewController)
-        #expect(navigation.modalPresentationStyle == .pageSheet)
+        #expect(navigation.modalPresentationStyle == .formSheet)
     }
 
     /// An embedded viewer is not the controller the router presents from: the

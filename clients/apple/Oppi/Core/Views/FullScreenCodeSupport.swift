@@ -194,39 +194,6 @@ enum FullScreenFloatingControlChrome {
     }
 }
 
-@MainActor
-enum FullScreenReviewCommentStashControl {
-    static let accessibilityIdentifier = "fullscreen-code.review-comments.stash"
-    static let accessibilityLabel = "Staged Comments"
-    static let systemImage = "text.bubble.fill"
-    static let appearanceDuration: TimeInterval = 0.2
-
-    static func accessibilityValue(for count: Int) -> String {
-        count == 1 ? "1 staged comment" : "\(count) staged comments"
-    }
-
-    static func bottomPadding(leadingAccessoryCount: Int = 0) -> CGFloat {
-        FullScreenFloatingControlChrome.bottomPadding
-            + CGFloat(max(0, leadingAccessoryCount)) * (
-                FullScreenFloatingControlChrome.controlSize
-                    + FullScreenFloatingControlChrome.stackSpacing
-            )
-    }
-
-    #if DEBUG
-    static var reduceMotionOverrideForTesting: Bool?
-    #endif
-
-    static var prefersReducedMotion: Bool {
-        #if DEBUG
-        if let override = reduceMotionOverrideForTesting {
-            return override
-        }
-        #endif
-        return UIAccessibility.isReduceMotionEnabled
-    }
-}
-
 /// Direction for navigation-style swipe gestures.
 ///
 /// Keep the gesture direction aligned with the visible navigation glyph:

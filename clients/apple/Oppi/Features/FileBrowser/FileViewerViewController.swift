@@ -957,8 +957,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         stashButton.update(
             on: view,
             presenter: self,
-            scope: configuration.showsReviewCommentStash && !usesReaderStash
-                ? configuration.reviewCommentSelectionScope
+            stash: configuration.showsReviewCommentStash && !usesReaderStash
+                ? configuration.reviewCommentSelectionScope?.router.stash
                 : nil,
             leadingAccessoryCount: leadingAccessoryCount,
             palette: themeID.palette

@@ -96,14 +96,10 @@ final class FullScreenCodeViewController: UIViewController {
     private var commentTopConstraint: NSLayoutConstraint?
     private var markupBottomConstraint: NSLayoutConstraint?
     private var pickBottomConstraint: NSLayoutConstraint?
-    private var stashButton: UIButton?
-    private var stashBadgeLabel: UILabel?
-    private var stashBottomConstraint: NSLayoutConstraint?
+    private let stashButton = ReviewCommentStashFloatingButton()
     private var leadingFloatingAccessoryCount = 0
     private var trailingFloatingAccessoryCount = 0
     private var viewingOptionsBottomConstraint: NSLayoutConstraint?
-    private var lastPresentedStashCount = 0
-    private weak var presentedStashSheet: UIViewController?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
@@ -444,12 +440,7 @@ final class FullScreenCodeViewController: UIViewController {
                 self?.updateContextualCommentPosition()
             }
         }
-        if let stashButton {
-            viewController.view.bringSubviewToFront(stashButton)
-        }
-        if let stashBadgeLabel {
-            viewController.view.bringSubviewToFront(stashBadgeLabel)
-        }
+        stashButton.bringToFront()
         restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
         updateAnnotateAvailability()
@@ -525,8 +516,7 @@ final class FullScreenCodeViewController: UIViewController {
         let sideRail = SystemVerticalBar.isActive(viewController)
         floatingViewingOptionsButton?.isHidden = sideRail
         annotateButton?.isHidden = sideRail
-        stashButton?.isHidden = sideRail
-        stashBadgeLabel?.isHidden = sideRail
+        stashButton.isHidden = sideRail
     }
 
     /// Sole writer of the content host's right bar items. Persistent viewer
@@ -591,17 +581,14 @@ final class FullScreenCodeViewController: UIViewController {
                 annotateBarItem = item
                 rightItems.append(item)
             }
-            if stashButton != nil {
+            if let floatingStash = stashButton.button {
                 let item = railItem(
                     symbol: FullScreenReviewCommentStashControl.systemImage,
                     title: FullScreenReviewCommentStashControl.accessibilityLabel,
                     action: #selector(stashButtonTapped)
                 )
-                let count = reviewCommentStash?.stagedCount ?? 0
-                if count > 0 {
-                    item.badge = .count(count)
-                }
-                item.accessibilityValue = stashButton?.accessibilityValue
+                item.badge = .count(stashButton.count)
+                item.accessibilityValue = floatingStash.accessibilityValue
                 stashBarItem = item
                 rightItems.append(item)
             }
@@ -811,10 +798,10 @@ final class FullScreenCodeViewController: UIViewController {
     private func updateContextualCommentPosition() {
         guard let commentButton, let host = contentHostController?.view else { return }
         let target = installedBodyView?.picker?.selectedTargetRect(in: host)
-        let controls = [pickButton, annotateButton, stashButton, stashBadgeLabel].compactMap { control -> CGRect? in
+        let controls = [pickButton, annotateButton].compactMap { control -> CGRect? in
             guard let control, !control.isHidden else { return nil }
             return control.convert(control.bounds, to: host)
-        }
+        } + [stashButton.frame(in: host)].compactMap { $0 }
         guard let target,
               let origin = FullScreenPickCommentPlacement.origin(
                 for: target, in: host.safeAreaLayoutGuide.layoutFrame, avoiding: controls,
@@ -836,15 +823,11 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionContext?.dispatcher.stash
     }
 
-    /// UIKit tracks the stash reads here and re-runs this when the staged comments
-    /// change. Reads go through the concrete `@Observable` controller; the
-    /// `ReviewCommentStashHandling` existential alone is not observable.
+    /// UIKit tracks the count the stash button reads here and re-runs this when
+    /// it changes, which also refreshes the rail item.
     override func updateProperties() {
         super.updateProperties()
-        guard let comments = reviewCommentStash as? ChatReviewCommentsController else { return }
-        _ = comments.stagedCount
-        _ = comments.stagedComments
-        guard isViewLoaded, let host = contentHostController else { return }
+        guard reviewCommentStash != nil, isViewLoaded, let host = contentHostController else { return }
         configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
         installRightBarItems(on: host, palette: bodyThemeID.palette)
     }
@@ -853,74 +836,18 @@ final class FullScreenCodeViewController: UIViewController {
         on viewController: UIViewController,
         palette: ThemePalette
     ) {
-        let count = reviewCommentStash?.stagedCount ?? 0
-        guard count > 0 else {
-            stashBadgeLabel?.removeFromSuperview()
-            stashButton?.removeFromSuperview()
-            stashButton = nil
-            stashBadgeLabel = nil
-            stashBottomConstraint = nil
-            lastPresentedStashCount = 0
-            updateContextualCommentPosition()
-            return
-        }
-
-        let isNew = stashButton == nil
-        let countIncreased = !isNew && count > lastPresentedStashCount
-        let button: UIButton
-        if let existing = stashButton {
-            button = existing
-            FullScreenFloatingControlChrome.updateStandaloneButton(button, palette: palette)
-            updateStashBadge(count: count, palette: palette)
-            updateStashBottomConstraint(on: viewController.view)
-        } else {
-            button = FullScreenFloatingControlChrome.makeStandaloneButton(
-                systemImage: FullScreenReviewCommentStashControl.systemImage,
-                accessibilityLabel: FullScreenReviewCommentStashControl.accessibilityLabel,
-                accessibilityIdentifier: FullScreenReviewCommentStashControl.accessibilityIdentifier,
-                palette: palette
-            )
-            button.clipsToBounds = false
-            button.isAccessibilityElement = true
-            button.accessibilityTraits = .button
-            button.addTarget(self, action: #selector(stashButtonTapped), for: .touchUpInside)
-            stashButton = button
-            viewController.view.addSubview(button)
-            pinStashButton(button, to: viewController.view)
-            installStashBadge(on: viewController.view, button: button, palette: palette)
-            updateStashBadge(count: count, palette: palette)
-        }
-
-        button.accessibilityValue = FullScreenReviewCommentStashControl.accessibilityValue(for: count)
-        viewController.view.bringSubviewToFront(button)
-        if let stashBadgeLabel {
-            viewController.view.bringSubviewToFront(stashBadgeLabel)
-        }
+        stashButton.update(
+            on: viewController.view,
+            presenter: self,
+            stash: reviewCommentStash,
+            leadingAccessoryCount: stashLeadingAccessoryCount,
+            palette: palette
+        )
         if let annotateButton {
             viewController.view.bringSubviewToFront(annotateButton)
         }
-        playStashMotionIfNeeded(on: button, isNew: isNew, countIncreased: countIncreased)
-        lastPresentedStashCount = count
         viewController.view.layoutIfNeeded()
         updateContextualCommentPosition()
-    }
-
-    private func pinStashButton(_ button: UIButton, to view: UIView) {
-        button.translatesAutoresizingMaskIntoConstraints = false
-        let bottom = button.bottomAnchor.constraint(
-            equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-            constant: -stashBottomPadding
-        )
-        stashBottomConstraint = bottom
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-                constant: FullScreenFloatingControlChrome.leadingPadding
-            ),
-            bottom,
-            button.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-            button.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-        ])
     }
 
     private var markupBottomPadding: CGFloat {
@@ -929,14 +856,9 @@ final class FullScreenCodeViewController: UIViewController {
         )
     }
 
-    private var stashBottomPadding: CGFloat {
-        var accessoryCount = leadingFloatingAccessoryCount
-        if annotateButton?.superview != nil {
-            accessoryCount += 1
-        }
-        return FullScreenReviewCommentStashControl.bottomPadding(
-            leadingAccessoryCount: accessoryCount
-        )
+    /// The stash sits above the host's leading controls and Annotate.
+    private var stashLeadingAccessoryCount: Int {
+        leadingFloatingAccessoryCount + (annotateButton?.superview != nil ? 1 : 0)
     }
 
     func setLeadingFloatingAccessoryCount(_ count: Int) {
@@ -945,7 +867,7 @@ final class FullScreenCodeViewController: UIViewController {
         leadingFloatingAccessoryCount = normalized
         guard isViewLoaded, let host = contentHostController else { return }
         markupBottomConstraint?.constant = -markupBottomPadding
-        updateStashBottomConstraint(on: host.view)
+        configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
     }
 
     private var viewingOptionsBottomPadding: CGFloat {
@@ -964,118 +886,8 @@ final class FullScreenCodeViewController: UIViewController {
         (contentHostController?.view ?? view).layoutIfNeeded()
     }
 
-    private func updateStashBottomConstraint(on view: UIView) {
-        stashBottomConstraint?.constant = -stashBottomPadding
-        view.layoutIfNeeded()
-        updateContextualCommentPosition()
-    }
-
-    private func installStashBadge(on host: UIView, button: UIButton, palette: ThemePalette) {
-        let badge = UILabel()
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        badge.font = .systemFont(ofSize: 11, weight: .bold)
-        badge.textAlignment = .center
-        badge.layer.cornerRadius = 9
-        badge.layer.masksToBounds = true
-        badge.isAccessibilityElement = false
-        badge.accessibilityElementsHidden = true
-        badge.isUserInteractionEnabled = false
-        host.addSubview(badge)
-        NSLayoutConstraint.activate([
-            badge.topAnchor.constraint(equalTo: button.topAnchor, constant: -2),
-            badge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: 2),
-            badge.heightAnchor.constraint(equalToConstant: 18),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
-        ])
-        stashBadgeLabel = badge
-        updateStashBadge(count: reviewCommentStash?.stagedCount ?? 0, palette: palette)
-    }
-
-    private func updateStashBadge(count: Int, palette: ThemePalette) {
-        guard let badge = stashBadgeLabel else { return }
-        badge.text = count > 99 ? "99+" : "\(count)"
-        badge.textColor = palette.ui.bgDark
-        badge.backgroundColor = palette.ui.cyan
-        let horizontalPadding: CGFloat = count >= 10 ? 6 : 5
-        badge.layoutMargins = UIEdgeInsets(
-            top: 0,
-            left: horizontalPadding,
-            bottom: 0,
-            right: horizontalPadding
-        )
-    }
-
-    private func playStashMotionIfNeeded(on button: UIButton, isNew: Bool, countIncreased: Bool) {
-        guard isNew || countIncreased else { return }
-        button.layer.removeAllAnimations()
-        if FullScreenReviewCommentStashControl.prefersReducedMotion {
-            button.transform = .identity
-            return
-        }
-
-        let duration = FullScreenReviewCommentStashControl.appearanceDuration
-        if isNew {
-            button.transform = CGAffineTransform(scaleX: 0.82, y: 0.82)
-            UIView.animate(
-                withDuration: duration,
-                delay: 0,
-                usingSpringWithDamping: 0.72,
-                initialSpringVelocity: 0.9,
-                options: [.allowUserInteraction, .beginFromCurrentState]
-            ) {
-                button.transform = .identity
-            }
-        } else {
-            UIView.animate(
-                withDuration: duration / 2,
-                delay: 0,
-                options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut]
-            ) {
-                button.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
-            } completion: { _ in
-                UIView.animate(
-                    withDuration: duration / 2,
-                    delay: 0,
-                    options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseIn]
-                ) {
-                    button.transform = .identity
-                }
-            }
-        }
-    }
-
     @objc private func stashButtonTapped() {
-        presentReviewCommentStashSheet()
-    }
-
-    /// The router presents from the window's front-most controller, which is
-    /// not this viewer when it is embedded, so the sheet is tracked by its own
-    /// presentation rather than by `presentedViewController`.
-    private var openStashSheet: UIViewController? {
-        guard let sheet = presentedStashSheet, sheet.presentingViewController != nil else { return nil }
-        return sheet
-    }
-
-    private func presentReviewCommentStashSheet() {
-        guard let stash = reviewCommentStash else { return }
-        openStashSheet?.dismiss(animated: false)
-        // The sheet reads the stash itself, so edits and removals show while it is up.
-        let sheet = ReviewCommentStashViewController(stash: stash, onClose: { [weak self] in
-            self?.dismissReviewCommentStashSheet()
-        })
-        Router.present(
-            sheet,
-            presentation: .pageSheet.inNavigation(),
-            from: self
-        )
-        presentedStashSheet = sheet
-    }
-
-    private func dismissReviewCommentStashSheet() {
-        if let open = openStashSheet {
-            Router.finish(open)
-        }
-        presentedStashSheet = nil
+        stashButton.openSheet()
     }
 
     private func makePresentation() -> Presentation {
@@ -1104,8 +916,8 @@ final class FullScreenCodeViewController: UIViewController {
             rebuild: { [weak self] body, intent in
                 self?.rebuildBody(replacing: body, at: intent)
             },
-            refreshChrome: { [weak self] in
-                guard let self, let host = self.contentHostController else { return }
+            refreshChrome: { [weak self] body in
+                guard let self, self.installedBodyView === body, let host = self.contentHostController else { return }
                 self.configureNavigation(on: host, palette: self.bodyThemeID.palette)
             }
         )
@@ -1901,11 +1713,11 @@ extension FullScreenCodeViewController {
     }
 
     var floatingStashButtonForTesting: UIButton? {
-        stashButton
+        stashButton.button
     }
 
     var floatingStashButtonFrameForTesting: CGRect? {
-        guard let button = stashButton,
+        guard let button = stashButton.button,
               let superview = button.superview else { return nil }
         superview.layoutIfNeeded()
         return view.convert(button.frame, from: superview)

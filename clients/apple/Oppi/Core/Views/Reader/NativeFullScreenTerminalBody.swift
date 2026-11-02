@@ -59,41 +59,6 @@ private final class FullScreenTerminalChunkCell: UICollectionViewCell {
     }
 }
 
-private final class FullScreenTerminalVirtualizedLayout: UICollectionViewLayout {
-    var itemSizes: [CGSize] = []
-
-    private var cachedAttributes: [UICollectionViewLayoutAttributes] = []
-    private var cachedContentSize: CGSize = .zero
-
-    override func prepare() {
-        super.prepare()
-        var y: CGFloat = 0
-        var width = collectionView?.bounds.width ?? 0
-        cachedAttributes = itemSizes.enumerated().map { index, size in
-            let attrs = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: index, section: 0))
-            attrs.frame = CGRect(x: 0, y: y, width: size.width, height: size.height)
-            y += size.height
-            width = max(width, size.width)
-            return attrs
-        }
-        cachedContentSize = CGSize(width: width, height: y)
-    }
-
-    override var collectionViewContentSize: CGSize { cachedContentSize }
-
-    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        cachedAttributes.filter { $0.frame.intersects(rect) }
-    }
-
-    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
-        cachedAttributes.indices.contains(indexPath.item) ? cachedAttributes[indexPath.item] : nil
-    }
-
-    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
-        collectionView?.bounds.size != newBounds.size
-    }
-}
-
 final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollectionViewDataSource, UICollectionViewDelegate {
     // VT interpretation is required work, not a deferred color decoration.
     // Keep the synchronous budget small; larger histories build off-main.
@@ -112,7 +77,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private let stack = UIStackView()
     private let commandView = FullScreenReviewCommentTextView()
     private let outputView = FullScreenReviewCommentTextView()
-    private let virtualizedLayout = FullScreenTerminalVirtualizedLayout()
+    private let virtualizedLayout = ReaderChunkStackLayout()
     private lazy var virtualizedCollectionView = UICollectionView(
         frame: .zero,
         collectionViewLayout: virtualizedLayout

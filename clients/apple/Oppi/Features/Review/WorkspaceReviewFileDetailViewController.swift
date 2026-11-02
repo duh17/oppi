@@ -382,7 +382,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         stashButton.update(
             on: view,
             presenter: self,
-            scope: configuration.reviewCommentSelectionScope,
+            stash: configuration.reviewCommentSelectionScope?.router.stash,
             leadingAccessoryCount: leadingAccessoryCount,
             palette: palette
         )

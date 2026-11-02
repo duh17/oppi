@@ -36,7 +36,7 @@ final class DiffReaderView: UIView {
         FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: trailingAccessoryCount)
     }
 
-    private let layout = DiffChunkVirtualizedLayout()
+    private let layout = ReaderChunkStackLayout()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
     private let spinner = UIActivityIndicatorView(style: .medium)
     private var emptyView: UIView?
@@ -824,45 +824,6 @@ private final class DiffReaderRowTintView: UIView {
             rowLayers[base + 2].frame = CGRect(x: 0, y: row.minY, width: 2.5, height: row.height)
         }
         CATransaction.commit()
-    }
-}
-
-// MARK: - Layout
-
-/// Vertical chunk layout that keeps each item's unwrapped width instead of
-/// clamping collection content width to the viewport like flow layout does.
-private final class DiffChunkVirtualizedLayout: UICollectionViewLayout {
-    var itemSizes: [CGSize] = []
-
-    private var cachedAttributes: [UICollectionViewLayoutAttributes] = []
-    private var cachedContentSize: CGSize = .zero
-
-    override func prepare() {
-        super.prepare()
-        var y: CGFloat = 0
-        var width = collectionView?.bounds.width ?? 0
-        cachedAttributes = itemSizes.enumerated().map { index, size in
-            let attributes = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: index, section: 0))
-            attributes.frame = CGRect(x: 0, y: y, width: size.width, height: size.height)
-            y += size.height
-            width = max(width, size.width)
-            return attributes
-        }
-        cachedContentSize = CGSize(width: width, height: y)
-    }
-
-    override var collectionViewContentSize: CGSize { cachedContentSize }
-
-    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        cachedAttributes.filter { $0.frame.intersects(rect) }
-    }
-
-    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
-        cachedAttributes.indices.contains(indexPath.item) ? cachedAttributes[indexPath.item] : nil
-    }
-
-    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
-        collectionView?.bounds.size != newBounds.size
     }
 }
 
