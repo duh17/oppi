@@ -6,28 +6,24 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client.md": {
-      "words": 6330,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 5497 words; headroom max(15%, 100 words)."
+      "words": 5730,
+      "reason": "Client owners and rules: ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
-      "words": 980,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 847 words; headroom max(15%, 100 words)."
+      "words": 1340,
+      "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection, and the Mac adapter path; holds the focused-session rules of the deleted flows doc. 1163 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/change-map.md": {
       "words": 420,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 320 words; headroom max(15%, 100 words)."
+      "reason": "Steps and boundaries for adding a document renderer, plus client cleanup targets. 311 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/code-map.md": {
-      "words": 440,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 334 words; headroom max(15%, 100 words)."
-    },
-    "dev/architecture-client/flows.md": {
-      "words": 1400,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1210 words; headroom max(15%, 100 words)."
+      "words": 420,
+      "reason": "Client entry points: one row of owning files per area. 313 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/media-files.md": {
-      "words": 830,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 716 words; headroom max(15%, 100 words)."
+      "words": 780,
+      "reason": "Content access and current-file routes, workspace file edit sessions and drafts, launch and Quick Session intake. 676 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server.md": {
       "words": 1960,
@@ -42,8 +38,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 386 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-conversation-stream.md": {
-      "words": 1380,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1194 words; headroom max(15%, 100 words)."
+      "words": 1620,
+      "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1402 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-extension-ui.md": {
       "words": 1200,

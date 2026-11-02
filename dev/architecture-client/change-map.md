@@ -1,10 +1,10 @@
 # Oppi client architecture: Renderer change map and cleanup targets
 
-Part of [Oppi client architecture](../architecture-client.md); same standard (owners, boundaries, invariants, entry points).
+Part of [Oppi client architecture](../architecture-client.md).
 
 ## Adding a document renderer
 
-A native document renderer draws a file format itself in the expanded tool row, the full-screen reader, and export (implemented: CSV/TSV, GeoJSON/TopoJSON).
+A native document renderer draws a file format in the expanded tool row, the full-screen reader, and export (CSV/TSV, GeoJSON/TopoJSON).
 
 1. **Classify (only if new to `FileType`):** add the case and detection in `OppiCore/Formatting/FileType.swift`, and a UI-free parser and plan in `OppiCore/Formatting` with bounds and a described failure. The compiler then flags `DocumentFamily.init(fileType:)`, `ToolPresentationBuilder.expandedFileContent`, and the Mac renderer.
 2. **One view:** a `UIView` that takes the plan, conforms to `ReaderBody`, shows its own fallback, and exposes `displays(_:)` for reuse.
@@ -16,7 +16,7 @@ A document renderer does not touch session runtime, transport, the reducer, or t
 ## Cleanup targets
 
 - `APIClient.swift`: split by route domain, keeping one actor and the request helpers.
-- `ServerConnection.swift`: stays the composition root; move capability, reconnect, and extension-UI policy into small coordinators as they grow.
-- `SessionInboxViewController.swift`, `WorkspaceDetailViewController.swift`: shared list behaviour belongs in `SessionListCollection.swift`; extract refresh, worktree, archive, and import state into a small owner as the detail screen grows.
-- `ChatViewController.swift` (+`Bars`, `+Presentations`, `+Leaves`): screen structure only; lifecycle and timeline policy go to `ChatSessionManager`, composer state to `ChatComposerOwner`.
+- `ServerConnection.swift` stays the composition root; capability, reconnect, and extension-UI policy move into small coordinators as they grow.
+- `SessionInboxViewController.swift`, `WorkspaceDetailViewController.swift`: shared list behaviour belongs in `SessionListCollection.swift`; refresh, worktree, archive, and import state move to a small owner as the detail screen grows.
+- `ChatViewController.swift` (and its extensions): screen structure only; lifecycle and timeline policy go to `ChatSessionManager`, composer state to `ChatComposerOwner`.
 - Tool rows: the row orchestrates and calls `ToolExpandedMarkdownSurface` and `ToolExpandedHostedSurface` directly (no shared surface protocol); format dispatch lives in `DocumentFamily`.

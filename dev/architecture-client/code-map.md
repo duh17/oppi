@@ -1,6 +1,6 @@
 # Oppi client architecture: Where to look in code
 
-Part of [Oppi client architecture](../architecture-client.md). Entry points only: one row per area, pointing at the owning files.
+Part of [Oppi client architecture](../architecture-client.md).
 
 ## Where to look in code
 
@@ -13,7 +13,7 @@ Part of [Oppi client architecture](../architecture-client.md). Entry points only
 | Workspace catalog and sidebar | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, shared file index and freshness/health state in `clients/apple/OppiCore/Stores/**`, `WorkspaceSidebarViewController.swift`, `WorkspaceSidebarModels.swift`                             |
 | Server Skills and Extensions  | `clients/apple/Oppi/Core/Services/ServerResourceStore.swift`, `APIClient+ServerResources.swift`, `clients/apple/Oppi/Features/Skills/**`, `clients/apple/Oppi/Features/Extensions/**`                                                   |
 | Global sessions inbox         | `clients/apple/Oppi/Features/Workspaces/SessionInboxViewController.swift`, shared list pieces in `Features/Sessions/SessionListCollection.swift`, `SessionListEntryRow.swift`, `SessionRowView.swift`, `SessionThreadStripView.swift`, `SessionRowPresentation.swift`      |
-| Session status                | One status vocabulary from `Session.programStatus`, lifecycle, and per-device seen state: `clients/apple/OppiCore/Sessions/SessionStatusPresentation.swift` (`SessionStatusKind.resolve`), `SessionStatusRollup.swift` (thread and terminal-tree roll-up), `SessionSeenLedger.swift`; seen state lives in `SessionStore`; iOS palette in `SessionStatusKind+Style.swift`; sections in `SessionListPresentation.swift` |
+| Session status                | `clients/apple/OppiCore/Sessions/SessionStatusPresentation.swift` (`SessionStatusKind.resolve`, the one vocabulary from `Session.programStatus`, lifecycle, and seen state), `SessionStatusRollup.swift`, `SessionSeenLedger.swift` (state in `SessionStore`); iOS palette `SessionStatusKind+Style.swift`; sections `SessionListPresentation.swift` |
 | Workspace detail list         | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailViewController.swift`, `WorkspaceStoppedSessionsSection.swift` (stopped grouping), `Features/Sessions/SessionListCollection.swift`                                              |
 | Session store                 | `clients/apple/Oppi/Core/Services/SessionStore.swift`; shared ask/queue/review state in `clients/apple/OppiCore/Stores/**`                                                                                                              |
 | Chat session lifecycle        | Shared runtime and ports under `clients/apple/OppiCore/Runtime/ChatSessionManager.swift` and `ChatSessionRuntimePorts.swift`; iOS adapter under `clients/apple/Oppi/Core/Networking/`; Mac adapter `MacChatSessionRuntimeAdapter.swift`; `ChatActionHandler.swift` and the focused-session policy types |

@@ -1,12 +1,12 @@
 # Durable conversation stream (experimental)
 
-Part of [Oppi server architecture](../architecture-server.md); same standard (owners, boundaries, invariants, entry points). The wire that replicates one durable conversation's `{ entries, docs }` to a client; the client half is in [client flows](../architecture-client/flows.md#durable-sessions-the-conversation-stream).
+Part of [Oppi server architecture](../architecture-server.md). The wire that replicates one durable conversation's `{ entries, docs }` to a client, and the [Apple client](#apple-client) replica.
 
 ## Gate and transport
 
-- `GET /server/info` advertises `capabilities.conversationStream: { version: 2 }` whenever the server has a durable runtime. Version 2 added [live tails](#live-tails) and `detach`; a client sends neither to a version 1 server, whose `attach` replaced the socket's only stream.
+- `GET /server/info` advertises `capabilities.conversationStream: { version: 2 }` whenever the server has a durable runtime. A client sends version 2's [live tails](#live-tails) and `detach` only to version 2: a version 1 `attach` replaced the socket's only stream.
 - The stream rides the focused session socket (`/workspaces/:workspaceId/sessions/:sessionId/stream`, `/control-sessions/:sessionId/stream`) and its auth, because that socket already owns session open, startup dialogs, auth expiry, and command routing. `attach` is socket-only, not a `ClientMessage` command.
-- Nothing changes until the client sends `attach`. A socket that holds its own conversation in full stops getting the classic events the stream restates (`restatedByConversationStream` in `stream.ts`: text/thinking deltas, `message_end`, tool events, `custom_card`, compaction and retry, broadcast `queue_state`/`queue_item_started`, `entry:<id>` notices); the bootstrap replay and a `queue_state` answering its own `get_queue` still go out. Everything else (`state`, run boundaries, stop feedback, `error`, other notices, `cache_miss`, `session_ended`, `extension_ui_*`, `command_result`, audio, `git_status`) still goes to an attached socket, because no entry or document carries it yet.
+- Nothing changes until the client sends `attach`. A socket holding its own conversation in full stops getting the classic events the stream restates (`restatedByConversationStream` in `stream.ts`); the bootstrap replay and a `queue_state` answering its own `get_queue` still go out. Everything else (`state`, run boundaries, stop feedback, `error`, other notices, `cache_miss`, `session_ended`, `extension_ui_*`, `command_result`, audio, `git_status`) still reaches an attached socket, because no entry or document carries it yet; session status, Live Activity, and screen-awake still follow those events.
 
 ## Messages
 
@@ -28,9 +28,9 @@ Types: `server/src/types/protocol.ts` (`ConversationStreamAttach`, `Conversation
 
 - `attach` targets the socket's bound session; a session not bound to a conversation fails. With a `requestId` the answer is `command_result { command: "attach" }` after the first frame. A socket streams each conversation at most once: a second `attach` replaces the first; `detach` ends it.
 - Frames carry no `seq`: the socket is ordered and lossless, and across reconnects the cursor is the newest entry id the client holds. Clients upsert entries by id.
-- `ConversationEntryView` sends only the fields clients read (`CLIENT_MESSAGE_FIELDS`, `CLIENT_BLOCK_FIELDS` in `durable-conversation-view.ts`); signatures, provider replay state, diagnostics, and usage stay on the server. Tool-call arguments are resolved once by `resolveToolArguments` (`tool-call-arguments.ts`), which the stream, the trace, and Session Outline all read. User images leave as session attachment references (`storeUserMessageImages`, content-addressed). Raw entry `data` never leaves the server (it can hold paths); display entries leave only as a sanitized `card`, and tool details are sanitized like trace history. Codemode script calls become `toolResult.nestedCalls` (`durableNestedCalls`, recognized by shape, not tool name).
-- `snapshot.entries` are the newest `CONVERSATION_SNAPSHOT_LIMIT` (100) active entries, cut only after the head entry; `hasOlder` says more exist. Without the cut, a long uncompacted conversation sent megabytes per attach.
-- `older` pages before `beforeEntryId` (default 100, at most 500) and needs a full `attach` on the same socket. Recovered partials are hidden by the same `isRecoveredPartial`/`readRetryEvidence` rule as trace pages (`durable-history.ts`).
+- `ConversationEntryView` sends only the fields clients read (`CLIENT_MESSAGE_FIELDS`, `CLIENT_BLOCK_FIELDS` in `durable-conversation-view.ts`). Tool-call arguments are resolved once by `resolveToolArguments` (`tool-call-arguments.ts`) for the stream, the trace, and Session Outline. User images leave as session attachment references (`storeUserMessageImages`). Raw entry `data` never leaves the server (it can hold paths); display entries leave only as a sanitized `card`, and tool details are sanitized like trace history. Codemode script calls become `toolResult.nestedCalls` (`durableNestedCalls`, recognized by shape, not tool name).
+- `snapshot.entries` are the newest `CONVERSATION_SNAPSHOT_LIMIT` (100) active entries, cut only after the head entry (uncut, a long conversation sent megabytes per attach); `hasOlder` says more exist.
+- `older` pages before `beforeEntryId` (default 100, at most 500) and needs a full `attach` on the same socket. Recovered partials are hidden by the trace pages' rule (`isRecoveredPartial`/`readRetryEvidence`, `durable-history.ts`).
 
 ## Live tails
 
@@ -47,13 +47,13 @@ The stream uses the trace's helpers (`projectEntries` in `durable-history.ts`), 
 | `oppi.agent-message` input | `agentMessageOrigin` | entry plus `origin` and `textOffset` |
 | Retried attempt's partial | `isRecoveredPartial` | omitted; a sent one is upserted `{ id, kind, hidden: true }` |
 
-Presentation passes run asynchronously and serialized when entries, `oppi.input-cards`, or an attempt's task change; subscribers hold frames until a pass ends, so a new entry never goes out before its presentation is decided. The `pi.inbox` view is decided the same way, so a queued input never leaves with raw content. A pass that fails, or a commit the room cannot apply, closes the room without flushing; `SessionHost` re-attaches the socket from its cursor. A changed presentation is restated in the next `update`, but never below the subscription's window floor, since an entry placed before the client's window would make `older` skip entries.
+Presentation passes run asynchronously and serialized when entries, `oppi.input-cards`, or an attempt's task change; subscribers hold frames until a pass ends, so a new entry (or a queued `pi.inbox` input) never goes out before its presentation is decided. A failed pass, or a commit the room cannot apply, closes the room without flushing; `SessionHost` re-attaches the socket from its cursor. A changed presentation is restated in the next `update`, never below the subscription's window floor (an entry placed before the client's window would make `older` skip entries).
 
 ## Documents
 
-`CONVERSATION_CLIENT_DOCS` lists `{ doc, client: true, view? }` specs; the room never branches on a kind. Client-visible: `pi.live` (messages projected like entries, `toolCalls`, `nestedCalls`; unchanged parts project to identical objects so `diffRevisions` sends small ops), `pi.inbox` (the `get_queue` view), `pi.agent`, `pi.usage`, `oppi.extension-ui` (through the extension UI allowlist). `pi.provider` and everything else stay on the server.
+`CONVERSATION_CLIENT_DOCS` lists `{ doc, client: true, view? }` specs; the room never branches on a kind. Client-visible: `pi.live` (projected like entries; unchanged parts project to identical objects so `diffRevisions` sends small ops), `pi.inbox` (the `get_queue` view), `pi.agent`, `pi.usage`, `oppi.extension-ui` (through the extension UI allowlist); everything else stays on the server.
 
-Documents travel as Chord ops (`@earendil-works/chord/delta`) from `diffRevisions(lastSent, current)`: `["r", value]` replace, `["s", path, value]` set, `["d", path]` delete, `["a", path, text]` append, `["t", path, n]` drop leading characters, `["p", path, index, deleteCount, items]` splice, `["m", path, permutation]` reorder (`new[i] = old[permutation[i]]`). Paths are inline arrays; `null` means the document is gone. Grown text is always `a`; `r` only when a delta would cost more.
+Documents travel as Chord ops (`@earendil-works/chord/delta`) from `diffRevisions(lastSent, current)`, decoded by `OppiCore/Models/ConversationStream.swift`; `null` means the document is gone. Grown text is always `a` (append); `r` (replace) only when a delta would cost more.
 
 ## Delivery
 
@@ -64,13 +64,24 @@ Documents travel as Chord ops (`@earendil-works/chord/delta`) from `diffRevision
 - A head entry (reset or compaction) makes the next flush a `snapshot`.
 - **Resume:** `attach { afterEntryId }` at or after the head answers an `update` with restated presentation, the later entries, and every document whole; any other cursor gets a `snapshot`. Entries come from the room's active set, so the gap never expires.
 
+## Apple client
+
+When the server advertises `capabilities.conversationStream` and the session is `engine: durable`, the timeline comes from this stream, with no flag and no fallback to events; stopped durable sessions are history-only.
+
+- **Attach:** `ConversationStreamDriver` keeps the `ConversationReplica` across reconnects and resumes with `conversationId`/`afterEntryId`. A failed attach retries without a cursor once per socket; a second failure is fatal. A frame the replica cannot apply re-attaches without a cursor and drops frames until the snapshot.
+- **Committed rows:** `ConversationCommittedProjection` projects only entries newer than the replica onto `TimelineReducer.applyConversationCommitted`'s incremental path (a full comparison is linear in the conversation); snapshots, `older` pages, and restated entries re-project. Each new committed user entry consumes the oldest pending optimistic prompt.
+- **Live tail:** `ConversationLiveProjector` reads only `pi.live`. The frame that commits an answer also clears it from `pi.live` and applies in one main-actor turn, so there is no gap or duplicate; live rows keep their ids and `TimelineReducer.timelineItemID(for:)` maps committed ids to them.
+- **Busy:** `ChatSessionManager.isBusy` is the one busy rule (`pi.live.run` from the session's own replica once seen, else session status); a child's tail never feeds it. Each owned apply stamps `isBusy`, so the frame that ends a run clears the working indicator in the same apply. The queue comes from `pi.inbox`.
+- **Classic frames** that still arrive (`notice`, `error`, `cache_miss`, `session_ended`, stop feedback, failed command results) become `TimelineClientRow`s via `ChatSessionManager.routeToConversationTimeline` and survive rebuilds from the replica.
+- **Child tails:** `ConversationChildIndex` finds children from tool `details` (`conversationId`, `sessionId`), never tool or extension names. The manager follows children the parent waits on, others only while a drawer is expanded (`followsReturnedChildren`), and none on a version 1 server. Frames route by `conversationId` (others are dropped); a refused live attach never touches the session's own stream; tails publish at most four times a second.
+- **Paging** is `older { beforeEntryId }`. While the scene is paused, frames update only the replica and the timeline resyncs on resume.
+
 ## Proof
 
-`server/tests/durable-conversation-view.test.ts` (projection), `durable-conversation-stream.test.ts` (real Harness: ops, landing frame, presentation, resume, `older`, live tails), `durable-conversation-stream.integration.test.ts` (real server over WSS). `protocol/conversation-stream-golden.json` is written only by `npm run protocol:fixtures:update` (`server/tests/conversation-stream-golden.ts`); Apple `ConversationStreamTests` replays it into `ConversationReplica` and requires the identical trace, and fails if the fixture stops covering every trace event type and doc op.
+`server/tests/durable-conversation-view.test.ts` (projection), `durable-conversation-stream.test.ts` (real Harness), `durable-conversation-stream.integration.test.ts` (real server over WSS). `protocol/conversation-stream-golden.json` is written only by `npm run protocol:fixtures:update` (`server/tests/conversation-stream-golden.ts`); Apple `ConversationStreamTests` replays it into `ConversationReplica`, requires the identical trace, and fails if the fixture stops covering every trace event type and doc op.
 
 ## Not yet covered
 
-- The classic events above still reach an attached socket; session status, Live Activity, and screen-awake still follow them.
 - The Mac app does not attach.
 - `toolResult.display` cannot restore an MCP server's configured spelling for `mcp__` names (the trace route can).
 - Codemode call arguments over 200 characters arrive as `argumentsBytes` of pi-durable's cut text.
