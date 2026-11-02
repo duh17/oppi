@@ -19,8 +19,8 @@
     "id": "OppiUITests/SSHTerminalBottomBarUITests/testRexPanelSwitchesPaneAndOpensAnotherSession",
     "owner": "lead",
     "backlog": "terminal/rex-panel-switch-ipad",
-    "reason": "iPad: fails once and passes on rerun in three separate gates, including one with no launch reuse, so it is a flake of its own and not a leak from a neighbour.",
+    "reason": "iPad only: fails and passes on rerun in three separate gates, including one with no launch reuse, so it is a flake of its own and not a leak from a neighbour. It fails in under 0.3 s: the test reads the pane pill's position before the layout settles. The test waits for its own layout instead of racing it after the release.",
     "addedAt": "2026-11-02",
-    "expires": "2026-11-16"
+    "expires": "2026-11-30"
   }
 ]
