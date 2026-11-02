@@ -2,7 +2,10 @@ import UIKit
 
 /// Password prompt for Connect and Save Host. Save Password edits the profile
 /// through `onSavesPasswordChange` so the host list round-trips the toggle.
-final class SSHTerminalPasswordViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
+final class SSHTerminalPasswordViewController: ListScreenController<SSHTerminalPasswordViewController.Section, SSHTerminalPasswordViewController.Item>, UITextFieldDelegate {
+    enum Section: Hashable, Sendable { case password, save }
+    enum Item: Hashable, Sendable { case password, savePassword, saveHint }
+
     let endpointLabel: String
     private var savesPassword: Bool
     private let confirmTitle: String
@@ -10,15 +13,11 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     private let onCancel: () -> Void
     private let onConfirm: (String) -> Void
 
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var password = ""
     private weak var passwordField: UITextField?
     private var confirmItem: UIBarButtonItem?
-    private var lastThemeID: ThemeID?
-
-    private enum Section: Hashable { case password, save }
-    private enum Item: Hashable { case password, savePassword, saveHint }
+    /// The row's one switch, kept across redraws so a pass never replaces it.
+    private let saveSwitch = UISwitch()
 
     init(
         endpointLabel: String,
@@ -34,21 +33,16 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
         self.onSavesPasswordChange = onSavesPasswordChange
         self.onCancel = onCancel
         self.onConfirm = onConfirm
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .none
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "SSH Sign In",
+            listIdentifier: "sshTerminal.password.list",
+            headers: true,
+            dismissesKeyboardOnDrag: true
+        )
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "SSH Sign In"
-        navigationItem.largeTitleDisplayMode = .inline
-        applyTheme()
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
         let confirm = UIBarButtonItem(title: confirmTitle, style: .prominent, target: self, action: #selector(confirm))
         confirm.accessibilityLabel = confirmTitle
@@ -57,78 +51,12 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
         confirmItem = confirm
         navigationItem.rightBarButtonItem = confirm
 
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        view.addSubview(collectionView)
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-
-        let fieldCell = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                text: self.password,
-                placeholder: "Password",
-                identifier: "sshTerminal.password",
-                isSecure: true,
-                keyboard: .default,
-                contentType: nil,
-                onChange: { [weak self] value in
-                    self?.password = value
-                    self?.confirmItem?.isEnabled = !value.isEmpty
-                }
-            )
-            cell.textField.delegate = self
-            self.passwordField = cell.textField
-        }
-        let toggleCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            var content = UIListContentConfiguration.valueCell()
-            content.text = "Save Password"
-            content.textProperties.color = self.themePalette.ui.fg
-            cell.contentConfiguration = content
-            let toggle = UISwitch()
-            toggle.isOn = self.savesPassword
-            toggle.accessibilityLabel = "Save Password"
-            toggle.addAction(UIAction { [weak self] action in
-                guard let toggle = action.sender as? UISwitch else { return }
-                self?.savesPassword = toggle.isOn
-                self?.onSavesPasswordChange(toggle.isOn)
-            }, for: .valueChanged)
-            cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
-        }
-        let hintCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
-            var content = UIListContentConfiguration.subtitleCell()
-            content.text = "Saving requires a device passcode. Face ID or passcode approval is required when Oppi reads it, except for 5 minutes after you approve."
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = self?.themePalette.ui.comment ?? ThemeRuntimeState.currentThemeID().palette.ui.comment
-            content.textProperties.numberOfLines = 0
-            cell.contentConfiguration = content
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = indexPath.section == 0 ? self?.endpointLabel : nil
-            cell.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .password: collectionView.dequeueConfiguredReusableCell(using: fieldCell, for: indexPath, item: item)
-            case .savePassword: collectionView.dequeueConfiguredReusableCell(using: toggleCell, for: indexPath, item: item)
-            case .saveHint: collectionView.dequeueConfiguredReusableCell(using: hintCell, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.password, .save])
-        snapshot.appendItems([.password], toSection: .password)
-        snapshot.appendItems([.savePassword, .saveHint], toSection: .save)
-        dataSource?.apply(snapshot, animatingDifferences: false)
+        saveSwitch.accessibilityLabel = "Save Password"
+        saveSwitch.addAction(UIAction { [weak self] action in
+            guard let toggle = action.sender as? UISwitch else { return }
+            self?.savesPassword = toggle.isOn
+            self?.onSavesPasswordChange(toggle.isOn)
+        }, for: .valueChanged)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -136,15 +64,77 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
         passwordField?.becomeFirstResponder()
     }
 
-    override func updateProperties() {
-        super.updateProperties()
-        applyTheme()
-        let themeID = sshTerminalThemeID
-        guard lastThemeID != themeID, let dataSource else { return }
-        lastThemeID = themeID
-        var snapshot = dataSource.snapshot()
-        snapshot.reloadItems(snapshot.itemIdentifiers)
-        dataSource.apply(snapshot, animatingDifferences: false)
+    // MARK: - Rows
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(.password, header: endpointLabel, items: [.password]),
+            ListSection(.save, items: [.savePassword, .saveHint]),
+        ]
+    }
+
+    /// The host's name heads the field; the Save section states itself in its rows.
+    override func showsHeader(for section: Section) -> Bool {
+        section == .password
+    }
+
+    /// The field is keyed by what it draws — nothing — so typing never
+    /// reconfigures it and it keeps focus and selection. The switch is keyed by
+    /// its value, and the hint never changes.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .password, .saveHint: AnyHashable(0)
+        case .savePassword: AnyHashable(savesPassword)
+        }
+    }
+
+    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            text: password,
+            placeholder: "Password",
+            identifier: "sshTerminal.password",
+            isSecure: true,
+            keyboard: .default,
+            contentType: nil,
+            onChange: { [weak self] value in
+                self?.password = value
+                self?.confirmItem?.isEnabled = !value.isEmpty
+            }
+        )
+        cell.textField.delegate = self
+        passwordField = cell.textField
+    }
+
+    override func prepareRegistrations() {
+        _ = fieldRow
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .password: collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .savePassword, .saveHint: super.dequeue(item, at: indexPath)
+        }
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        switch item {
+        case .password:
+            break
+        case .savePassword:
+            var content = content(.info)
+            content.text = "Save Password"
+            cell.contentConfiguration = content
+            saveSwitch.isOn = savesPassword
+            cell.accessories = [.customView(configuration: .init(customView: saveSwitch, placement: .trailing()))]
+        case .saveHint:
+            var content = content(.subtitle)
+            content.text = "Saving requires a device passcode. Face ID or passcode approval is required when Oppi reads it, except for 5 minutes after you approve."
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.color = SettingsStyle.current.value
+            content.textProperties.numberOfLines = 0
+            cell.contentConfiguration = content
+        }
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -162,14 +152,5 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     func submit(_ password: String) {
         self.password = password
         confirm()
-    }
-
-    private var themePalette: ThemePalette { sshTerminalThemeID.palette }
-
-    private func applyTheme() {
-        let themeID = sshTerminalThemeID
-        overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = themeID.palette.ui.bg
-        collectionView.backgroundColor = themeID.palette.ui.bg
     }
 }

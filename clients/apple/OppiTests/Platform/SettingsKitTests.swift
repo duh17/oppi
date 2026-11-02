@@ -255,6 +255,73 @@ struct SettingsKitTests {
         #expect(plain.collectionView.keyboardDismissMode == .none, "a page that does not opt in keeps UIKit's default")
     }
 
+    /// The kit redraws only the rows whose `inputs(of:)` changed, so a page that
+    /// keys its field row by what the row draws (nothing) keeps the field alive
+    /// across the passes a typed notice causes: the row is never configured
+    /// again (the probe below), so focus, text, and selection stay, and the
+    /// notice still arrives and rewrites while it stays.
+    @Test("A typed notice arrives and rewrites without configuring the field again")
+    func typedNoticeKeepsTheFieldFocus() async throws {
+        var connected: ServerCredentials?
+        let page = ManualEntryViewController(deviceModel: "iPhone") { _, credentials in connected = credentials }
+        let window = try show(page)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        var found: UITextField?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            found = Self.textField(withIdentifier: "onboarding.manual.link", in: page.collectionView)
+            return found != nil
+        })
+        let link = try #require(found)
+        #expect(link.becomeFirstResponder())
+        // A field's configure restores its placeholder, so the test stamps its own:
+        // a placeholder that survives a pass is a row the kit left alone.
+        let probe = "typed-row-probe"
+        link.placeholder = probe
+
+        // Text that is not a pairing link at all: the notice arrives under the
+        // field while the keyboard is up.
+        link.text = "hello"
+        link.sendActions(for: .editingChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return Self.notice(in: page) == "This is not an Oppi pairing link."
+        })
+        #expect(link.placeholder == probe, "adding the notice configured the field again")
+        #expect(link.isFirstResponder, "adding the notice took the keyboard from the field")
+        #expect(link.text == "hello")
+
+        // A pass of its own (a theme repaint, artwork landing) leaves the field
+        // where the person left it: the caret's range is still theirs.
+        let start = try #require(link.position(from: link.beginningOfDocument, offset: 1))
+        let end = try #require(link.position(from: link.beginningOfDocument, offset: 4))
+        link.selectedTextRange = try #require(link.textRange(from: start, to: end))
+        page.setNeedsUpdateProperties()
+        try await Task.sleep(for: .milliseconds(150))
+        page.view.layoutIfNeeded()
+        #expect(link.placeholder == probe, "a pass of its own configured the field again")
+        #expect(link.isFirstResponder, "a pass of its own took the keyboard from the field")
+        #expect(link.text == "hello", "a pass of its own rewrote what the person typed")
+        #expect(Self.selection(in: link) == 1..<4, "a pass of its own moved the selection")
+
+        // The same field, now a signed-shaped but unsigned link: the notice
+        // rewrites in place and the field keeps everything it had.
+        let unsigned = "oppi://connect?v=3&payload=%7B%22v%22:3,%22host%22:%22127.0.0.1%22,%22port%22:1,"
+            + "%22token%22:%22%22,%22pairingToken%22:%22pt_none%22,%22name%22:%22Unsigned%22%7D"
+        link.text = unsigned
+        link.sendActions(for: .editingChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return Self.notice(in: page) == OnboardingPairingFailure.message(for: .unsigned)
+        })
+        #expect(link.placeholder == probe, "rewriting the notice configured the field again")
+        #expect(link.isFirstResponder, "rewriting the notice took the keyboard from the field")
+        #expect(link.text == unsigned)
+        #expect(page.indexPath(for: .link) != nil, "the field row stays where it was")
+        #expect(connected == nil, "nothing is paired while the link is unsigned")
+    }
+
     @Test("A page shows a header only on the sections it names")
     func headerPerSection() async throws {
         let page = HeaderPage()
@@ -300,6 +367,29 @@ struct SettingsKitTests {
                 as? UICollectionViewListCell else { return nil }
             return (view.contentConfiguration as? UIListContentConfiguration)?.text
         }
+    }
+
+    /// The notice the page shows under its field, as it reads now.
+    private static func notice(in page: ManualEntryViewController) -> String? {
+        guard let indexPath = page.indexPath(for: .invalidLink),
+              let cell = page.collectionView.cellForItem(at: indexPath) else { return nil }
+        return (cell.contentConfiguration as? UIListContentConfiguration)?.text
+    }
+
+    private static func textField(withIdentifier identifier: String, in view: UIView) -> UITextField? {
+        if let field = view as? UITextField, field.accessibilityIdentifier == identifier { return field }
+        for subview in view.subviews {
+            if let found = textField(withIdentifier: identifier, in: subview) { return found }
+        }
+        return nil
+    }
+
+    /// The field's selected characters, as offsets from the start of its text.
+    private static func selection(in field: UITextField) -> Range<Int>? {
+        guard let range = field.selectedTextRange else { return nil }
+        let start = field.offset(from: field.beginningOfDocument, to: range.start)
+        let end = field.offset(from: field.beginningOfDocument, to: range.end)
+        return start..<end
     }
 
     private static func button(withIdentifier identifier: String, in list: UICollectionView) -> UIButton? {

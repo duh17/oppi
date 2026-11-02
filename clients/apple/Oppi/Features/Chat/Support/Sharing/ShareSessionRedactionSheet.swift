@@ -56,15 +56,18 @@ final class ShareSessionRedactionReview {
 /// (`.inNavigation()`): the redaction switches, remembered for future
 /// shares, and a preview of what the export redacts. It reads `review` live,
 /// so the preview updates while the sheet is up.
-final class ShareSessionRedactionViewController: UIViewController, UICollectionViewDataSource {
-    private enum Section: Int, CaseIterable { case settings, preview }
+final class ShareSessionRedactionViewController: ListScreenController<ShareSessionRedactionViewController.Section, ShareSessionRedactionViewController.Item> {
+    enum Section: Hashable, Sendable { case settings, preview }
 
-    private enum PreviewRow {
+    enum Item: Hashable, Sendable {
+        case secrets
+        /// One redaction switch, by its index in `toggles` (a key path is not `Hashable`).
+        case toggle(Int)
         case analyzing
         case error(String)
         case summary(Int)
         case noFindings
-        case finding(ShareSessionRedactionFinding)
+        case finding(kind: String, count: Int, sample: String?)
         case more(Int)
         case blocked
         case refresh
@@ -85,7 +88,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
     private let onRefresh: () -> Void
     private let onShare: () -> Void
     private let onCancel: () -> Void
-    private let list: UICollectionView
+    /// The seven switches, kept across redraws: each row owns one for the sheet's life.
     private lazy var switches: [UISwitch] = Self.toggles.map { toggle in
         let control = UISwitch()
         control.accessibilityLabel = toggle.title
@@ -95,28 +98,6 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         }, for: .valueChanged)
         return control
     }
-    private var previewRows: [PreviewRow] = []
-    private var refreshEnabled = true
-    private lazy var rowRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, IndexPath> { [weak self] cell, indexPath, _ in
-        self?.configure(cell, at: indexPath)
-    }
-    private lazy var headerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-        elementKind: UICollectionView.elementKindSectionHeader
-    ) { view, _, indexPath in
-        var content = UIListContentConfiguration.header()
-        content.text = Section(rawValue: indexPath.section) == .settings ? "Redaction Settings" : "Redaction Preview"
-        view.contentConfiguration = content
-    }
-    private lazy var footerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-        elementKind: UICollectionView.elementKindSectionFooter
-    ) { view, _, indexPath in
-        var content = UIListContentConfiguration.footer()
-        content.text = Section(rawValue: indexPath.section) == .settings
-            ? "These settings are remembered for future shares."
-            : nil
-        view.contentConfiguration = content
-    }
-    private var palette = ThemeRuntimeState.currentPalette()
     private lazy var shareItem: UIBarButtonItem = {
         let item = UIBarButtonItem(
             title: "Share",
@@ -145,30 +126,16 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         self.onRefresh = onRefresh
         self.onShare = onShare
         self.onCancel = onCancel
-        var configuration = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        configuration.headerMode = .supplementary
-        configuration.footerMode = .supplementary
-        // The theme's page shows behind the system cards, as on the settings pages.
-        configuration.backgroundColor = .clear
-        list = UICollectionView(
-            frame: .zero,
-            collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
+        super.init(
+            title: "Share Session",
+            listIdentifier: "share.redaction.list",
+            headers: true,
+            footers: true
         )
-        super.init(nibName: nil, bundle: nil)
-        title = "Share Session"
-        navigationItem.largeTitleDisplayMode = .never
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Registrations exist before the list asks for a cell.
-        _ = (rowRegistration, headerRegistration, footerRegistration)
-        list.dataSource = self
-        list.delegate = self
-        SettingsListStyle.pin(list, in: view)
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             self?.onCancel()
         })
@@ -179,45 +146,21 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
     /// Observation re-runs this when the review, sharing, or the theme change.
     override func updateProperties() {
         super.updateProperties()
-        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
-        palette = themeID.palette
-        let blue = palette.ui.blue
-        view.backgroundColor = palette.ui.bg
-        list.backgroundColor = palette.ui.bg
         // The theme's accent, as the app root's SwiftUI tint gave the sheet.
-        view.tintColor = blue
-        navigationItem.leftBarButtonItem?.tintColor = blue
-        shareItem.tintColor = blue
+        let style = SettingsStyle.current
+        let accent = style.accent
+        view.tintColor = accent
+        navigationItem.leftBarButtonItem?.tintColor = accent
+        shareItem.tintColor = accent
         let policy = review.policy
         for (index, toggle) in Self.toggles.enumerated() {
-            switches[index].onTintColor = blue
+            switches[index].onTintColor = accent
             if switches[index].isOn != policy[keyPath: toggle.keyPath] {
                 switches[index].setOn(policy[keyPath: toggle.keyPath], animated: true)
             }
         }
-        let sharing = isSharing()
-        let analyzing = review.isAnalyzing
-        shareItem.isEnabled = !analyzing
-        navigationItem.rightBarButtonItem = sharing ? sharingItem : shareItem
-
-        var rows: [PreviewRow] = []
-        if analyzing { rows.append(.analyzing) }
-        if let error = review.errorMessage, !error.isEmpty { rows.append(.error(error)) }
-        if let preflight = review.preflight {
-            let findings = preflight.redaction?.findings ?? []
-            rows.append(.summary(preflight.redaction?.totalReplacements ?? 0))
-            if findings.isEmpty {
-                rows.append(.noFindings)
-            } else {
-                rows.append(contentsOf: findings.prefix(6).map(PreviewRow.finding))
-                if findings.count > 6 { rows.append(.more(findings.count - 6)) }
-            }
-            if preflight.blocked { rows.append(.blocked) }
-        }
-        rows.append(.refresh)
-        previewRows = rows
-        refreshEnabled = !analyzing && !sharing
-        list.reloadData()
+        shareItem.isEnabled = !review.isAnalyzing
+        navigationItem.rightBarButtonItem = isSharing() ? sharingItem : shareItem
     }
 
     private func setPolicy(_ keyPath: WritableKeyPath<ShareSessionRedactionPolicy, Bool>, _ isOn: Bool) {
@@ -229,118 +172,136 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         onRefresh()
     }
 
-    // MARK: List
+    // MARK: - Rows
 
-    func numberOfSections(in collectionView: UICollectionView) -> Int {
-        Section.allCases.count
-    }
-
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        Section(rawValue: section) == .settings ? Self.toggles.count + 1 : previewRows.count
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        viewForSupplementaryElementOfKind kind: String,
-        at indexPath: IndexPath
-    ) -> UICollectionReusableView {
-        collectionView.dequeueConfiguredReusableSupplementary(
-            using: kind == UICollectionView.elementKindSectionHeader ? headerRegistration : footerRegistration,
-            for: indexPath
-        )
-    }
-
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: rowRegistration, for: indexPath, item: indexPath)
-    }
-
-    private func configure(_ cell: UICollectionViewListCell, at indexPath: IndexPath) {
-        cell.accessories = []
-        cell.accessibilityTraits = []
-        cell.accessibilityIdentifier = nil
-        if Section(rawValue: indexPath.section) == .settings {
-            if indexPath.item == 0 {
-                var content = UIListContentConfiguration.valueCell()
-                content.text = "Secrets"
-                content.image = UIImage(systemName: "lock.fill")
-                content.imageProperties.tintColor = palette.ui.blue
-                content.secondaryText = "Always On"
-                content.secondaryTextProperties.color = palette.ui.green
-                cell.contentConfiguration = content
+    override func sections() -> [ListSection<Section, Item>] {
+        var preview: [Item] = []
+        if review.isAnalyzing { preview.append(.analyzing) }
+        if let error = review.errorMessage, !error.isEmpty { preview.append(.error(error)) }
+        if let preflight = review.preflight {
+            let findings = preflight.redaction?.findings ?? []
+            preview.append(.summary(preflight.redaction?.totalReplacements ?? 0))
+            if findings.isEmpty {
+                preview.append(.noFindings)
             } else {
-                var content = UIListContentConfiguration.cell()
-                content.text = Self.toggles[indexPath.item - 1].title
-                cell.contentConfiguration = content
-                cell.accessories = [.customView(configuration: .init(
-                    customView: switches[indexPath.item - 1],
-                    placement: .trailing()
-                ))]
+                preview.append(contentsOf: findings.prefix(6).map {
+                    Item.finding(kind: $0.kind, count: $0.count, sample: $0.samples.first)
+                })
+                if findings.count > 6 { preview.append(.more(findings.count - 6)) }
             }
-            return
+            if preflight.blocked { preview.append(.blocked) }
         }
+        preview.append(.refresh)
+        return [
+            ListSection(
+                .settings,
+                header: "Redaction Settings",
+                footer: "These settings are remembered for future shares.",
+                items: [.secrets] + Self.toggles.indices.map { Item.toggle($0) }
+            ),
+            ListSection(.preview, header: "Redaction Preview", items: preview),
+        ]
+    }
+
+    /// A switch shows the policy's value, and the Refresh row the one thing that
+    /// changes about it while the sheet is up. The rest draw what they carry.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .toggle(let index): AnyHashable(review.policy[keyPath: Self.toggles[index].keyPath])
+        case .secrets, .analyzing, .noFindings, .blocked: AnyHashable(0)
+        case .refresh: AnyHashable(isSelectable(item))
+        case .error, .summary, .finding, .more: AnyHashable(item)
+        }
+    }
+
+    override func isSelectable(_ item: Item) -> Bool {
+        guard item == .refresh else { return false }
+        return !review.isAnalyzing && !isSharing()
+    }
+
+    override func select(_ item: Item) {
+        guard item == .refresh else { return }
+        onRefresh()
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        let palette = ThemeRuntimeState.currentPalette()
         let mono = { (style: UIFont.TextStyle) in UIFont.scaledMonospaced(style, .regular) }
-        var content = UIListContentConfiguration.cell()
-        switch previewRows[indexPath.item] {
+        switch item {
+        case .secrets:
+            var content = content(.info)
+            content.text = "Secrets"
+            content.image = UIImage(systemName: "lock.fill")
+            content.imageProperties.tintColor = palette.ui.blue
+            content.secondaryText = "Always On"
+            content.secondaryTextProperties.color = palette.ui.green
+            cell.contentConfiguration = content
+        case .toggle(let index):
+            var content = content(.plain)
+            content.text = Self.toggles[index].title
+            cell.contentConfiguration = content
+            cell.accessories = [.customView(configuration: .init(
+                customView: switches[index],
+                placement: .trailing()
+            ))]
         case .analyzing:
+            var content = content(.plain)
             content.text = "Scanning session export…"
             content.textProperties.color = palette.ui.comment
+            cell.contentConfiguration = content
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .leading()))]
         case .error(let message):
+            var content = content(.plain)
             content.text = message
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = palette.ui.red
+            cell.contentConfiguration = content
         case .summary(let count):
+            var content = content(.plain)
             content.text = "Detected \(count) replacements"
             content.textProperties.font = UIFont.scaled(.subheadline, .semibold)
+            cell.contentConfiguration = content
             cell.accessibilityIdentifier = "share-redaction-summary"
         case .noFindings:
+            var content = content(.plain)
             content.text = "No configured PII findings detected in this preview."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = palette.ui.comment
-        case .finding(let finding):
-            content = UIListContentConfiguration.subtitleCell()
-            content.text = "\(finding.kind) ×\(finding.count)"
+            cell.contentConfiguration = content
+        case .finding(let kind, let count, let sample):
+            var content = content(.subtitle)
+            content.text = "\(kind) ×\(count)"
             content.textProperties.font = mono(.subheadline)
             content.textToSecondaryTextVerticalPadding = 4
-            if let sample = finding.samples.first, !sample.isEmpty {
+            if let sample, !sample.isEmpty {
                 content.secondaryText = sample
                 content.secondaryTextProperties.font = mono(.caption1)
                 content.secondaryTextProperties.color = palette.ui.comment
             }
+            cell.contentConfiguration = content
         case .more(let count):
+            var content = content(.plain)
             content.text = "+\(count) more categories"
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = palette.ui.comment
+            cell.contentConfiguration = content
         case .blocked:
+            var content = content(.plain)
             content.text = "Sharing is currently blocked because residual secrets were detected."
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = palette.ui.orange
+            cell.contentConfiguration = content
         case .refresh:
             // A button row, as a SwiftUI list draws one: the theme accent,
             // dimmed while a scan or a share runs.
+            let enabled = isSelectable(item)
+            var content = content(.plain)
             content.text = "Refresh Preview"
-            content.textProperties.color = refreshEnabled ? palette.ui.blue : .tertiaryLabel
-            cell.accessibilityTraits = refreshEnabled ? .button : [.button, .notEnabled]
+            content.textProperties.color = enabled ? palette.ui.blue : .tertiaryLabel
+            cell.contentConfiguration = content
+            cell.accessibilityTraits = enabled ? .button : [.button, .notEnabled]
         }
-        cell.contentConfiguration = content
-    }
-}
-
-extension ShareSessionRedactionViewController: UICollectionViewDelegate {
-    private func isRefreshRow(_ indexPath: IndexPath) -> Bool {
-        guard Section(rawValue: indexPath.section) == .preview, previewRows.indices.contains(indexPath.item),
-              case .refresh = previewRows[indexPath.item] else { return false }
-        return true
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        isRefreshRow(indexPath) && refreshEnabled
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        onRefresh()
     }
 }

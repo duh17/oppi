@@ -22,55 +22,29 @@ enum ManualPairingEntry {
 /// link carries the server's signed identity and its certificate pin.
 /// Presented in a navigation sheet; Connect hands the credentials back.
 @MainActor
-final class ManualEntryViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case link }
-    private enum Item: Hashable { case link, invalidLink }
+final class ManualEntryViewController: ListScreenController<ManualEntryViewController.Section, ManualEntryViewController.Item> {
+    enum Section: Hashable, Sendable { case link }
+    enum Item: Hashable, Sendable { case link, invalidLink }
 
-    private let root: AppRootEnvironment
     private let deviceModel: String
     private let onConnect: (ManualEntryViewController, ServerCredentials) -> Void
     private var linkText = ""
-
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var lastThemeID: ThemeID?
+    private var connectItem: UIBarButtonItem?
 
     init(
-        root: AppRootEnvironment,
         deviceModel: String,
         onConnect: @escaping (ManualEntryViewController, ServerCredentials) -> Void
     ) {
-        self.root = root
         self.deviceModel = deviceModel
         self.onConnect = onConnect
-        var list = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        list.headerMode = .supplementary
-        list.footerMode = .supplementary
-        collectionView = UICollectionView(
-            frame: .zero,
-            collectionViewLayout: UICollectionViewCompositionalLayout.list(using: list)
+        super.init(
+            title: String(localized: "Connect Manually"),
+            listIdentifier: "onboarding.manual.list",
+            headers: true,
+            footers: true,
+            dismissesKeyboardOnDrag: true
         )
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Connect Manually")
-        navigationItem.largeTitleDisplayMode = .never
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            systemItem: .cancel,
-            primaryAction: UIAction { [weak self] _ in
-                guard let self else { return }
-                Router.finish(self)
-            }
-        )
-        let connect = UIBarButtonItem(
-            title: String(localized: "Connect"),
-            primaryAction: UIAction { [weak self] _ in self?.connect() }
-        )
-        connect.style = .prominent
-        connect.accessibilityIdentifier = "onboarding.manual.connect"
-        navigationItem.rightBarButtonItem = connect
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     /// Only a signed code can pair (`InviteBootstrapService` refuses the rest),
     /// so an unsigned one is flagged here instead of after Connect.
@@ -93,70 +67,80 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-        applySnapshot()
-        updateConnectItem()
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            systemItem: .cancel,
+            primaryAction: UIAction { [weak self] _ in
+                guard let self else { return }
+                Router.finish(self)
+            }
+        )
+        let connect = UIBarButtonItem(
+            title: String(localized: "Connect"),
+            primaryAction: UIAction { [weak self] _ in self?.connect() }
+        )
+        connect.style = .prominent
+        connect.accessibilityIdentifier = "onboarding.manual.connect"
+        navigationItem.rightBarButtonItem = connect
+        connectItem = connect
     }
 
-    override func updateProperties() {
-        super.updateProperties()
-        // Observation tracking re-runs this when the theme changes.
-        let themeID = root.themeStore.activeThemeID
-        guard lastThemeID != themeID else { return }
-        lastThemeID = themeID
-        SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        if var snapshot = dataSource?.snapshot() {
-            snapshot.reconfigureItems(snapshot.itemIdentifiers)
-            dataSource?.apply(snapshot, animatingDifferences: false)
+    // MARK: - Rows
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(
+                .link,
+                header: String(localized: "Pairing Link"),
+                footer: footerText,
+                items: linkIsInvalid ? [.link, .invalidLink] : [.link]
+            ),
+        ]
+    }
+
+    /// The field is keyed by what it draws — nothing — so a pass that adds the
+    /// notice, rewrites it, or repaints the theme leaves the field alone: it
+    /// keeps focus, text, and selection. The notice is keyed by its words, so it
+    /// rewrites while it stays (not a link, then unsigned).
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .link: AnyHashable(0)
+        case .invalidLink: AnyHashable(linkProblem)
         }
     }
 
-    private func installDataSource() {
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
-            self?.configureLinkField(cell)
+    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
+        self?.configureLinkField(cell)
+    }
+
+    override func prepareRegistrations() {
+        _ = fieldRow
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .link: collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .invalidLink: super.dequeue(item, at: indexPath)
         }
-        let notice = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            var content = UIListContentConfiguration.cell()
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        switch item {
+        case .link:
+            break
+        case .invalidLink:
+            var content = content(.plain)
             content.text = linkProblem
-            content.textProperties.color = root.themeStore.activeThemeID.palette.ui.red
+            content.textProperties.color = ThemeRuntimeState.currentThemeID().palette.ui.red
             content.textProperties.font = .scaled(.footnote)
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "onboarding.manual.invalidLink"
         }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { cell, _, _ in
-            var content = UIListContentConfiguration.header()
-            content.text = String(localized: "Pairing Link")
-            cell.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] cell, _, _ in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.footerText
-            content.textProperties.numberOfLines = 0
-            cell.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .link:
-                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .invalidLink:
-                collectionView.dequeueConfiguredReusableCell(using: notice, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            if kind == UICollectionView.elementKindSectionHeader {
-                return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-            }
-            return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        connectItem?.isEnabled = credentials != nil
     }
 
     private var footerText: String {
@@ -164,52 +148,24 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func configureLinkField(_ cell: SSHTerminalTextFieldCell) {
-        let palette = root.themeStore.activeThemeID.palette
         cell.configure(
             text: linkText,
             placeholder: "oppi://connect?…",
             identifier: "onboarding.manual.link",
             keyboard: .URL,
-            textColor: palette.ui.fg,
+            textColor: SettingsStyle.current.title,
             returnKey: .go,
             onReturn: { [weak self] in self?.connect() }
         ) { [weak self] in
             self?.linkText = $0
-            self?.inputChanged()
+            self?.setNeedsUpdateProperties()
         }
         cell.textField.accessibilityLabel = String(localized: "Pairing Link")
-    }
-
-    private func applySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.link])
-        snapshot.appendItems(linkIsInvalid ? [.link, .invalidLink] : [.link], toSection: .link)
-        dataSource?.apply(snapshot, animatingDifferences: false)
-    }
-
-    /// Typing never reconfigures the field, so it keeps focus and selection.
-    private func inputChanged() {
-        if dataSource?.snapshot().itemIdentifiers.contains(.invalidLink) != linkIsInvalid {
-            applySnapshot()
-        } else if linkIsInvalid, var snapshot = dataSource?.snapshot() {
-            // The problem can change while the notice stays (not a link, then unsigned).
-            snapshot.reconfigureItems([.invalidLink])
-            dataSource?.apply(snapshot, animatingDifferences: false)
-        }
-        updateConnectItem()
-    }
-
-    private func updateConnectItem() {
-        navigationItem.rightBarButtonItem?.isEnabled = credentials != nil
     }
 
     private func connect() {
         guard let credentials else { return }
         view.endEditing(true)
         onConnect(self, credentials)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
     }
 }

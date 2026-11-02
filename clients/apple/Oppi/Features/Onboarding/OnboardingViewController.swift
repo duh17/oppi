@@ -532,7 +532,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
     }
 
     private func presentManualEntry() {
-        let entry = ManualEntryViewController(root: root, deviceModel: deviceModel) { [weak self] entry, credentials in
+        let entry = ManualEntryViewController(deviceModel: deviceModel) { [weak self] entry, credentials in
             Router.finish(entry)
             self?.startPairing(credentials)
         }
