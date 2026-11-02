@@ -7,11 +7,9 @@ Part of [Oppi client architecture](../architecture-client.md).
 | Block | Owns | Does not own |
 | --- | --- | --- |
 | `ServerConnection` | HTTPS/WSS composition, API/WS client wiring, focused and app-event stream startup, shared store updates | per-session timeline state |
-| `SessionContentAccess` | iOS row content reads (attachments, session and host files, Markdown media), bounded readiness waits, origin routing | API-client installation, auth, lifecycle |
 | `ChatTimelineDestinationPresenter` | building and presenting the screens a timeline destination opens | deciding which destination a tap means |
 | `MarkdownResourceAccess` | one document's source identity plus deferred resource providers, carried unchanged row → renderer → reader | routing, readiness, `sourceFilePath` |
 | `ToolExpandedMarkdownSurface` / `ToolExpandedHostedSurface` | a tool row's expanded Markdown viewport / hosted media and document viewport, their constraints and teardown | header, gestures, which surface is active, outer scroll |
-| `DocumentFamily` (`Core/Views/DocumentFamily.swift`) | CSV/TSV and GeoJSON/TopoJSON formats: classification, traits, Source toggle, export, view factory | parsing (`OppiCore`), rendering views, rendered fences |
 | `APIClient` | authenticated HTTP and decoding | UI or store policy |
 | `WebSocketClient` | focused-session transport, reconnect policy | protocol side effects |
 | `SessionRouteScope` | workspace or `/control-sessions/:sessionId` paths, both feeding one `ChatSessionManager` | transport |

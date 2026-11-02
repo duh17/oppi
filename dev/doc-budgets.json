@@ -10,8 +10,8 @@
       "reason": "Client owners and rules: ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
-      "words": 1340,
-      "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection, and the Mac adapter path; holds the focused-session rules of the deleted flows doc. 1163 words; headroom max(15%, 100 words)."
+      "words": 1290,
+      "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection, and the Mac adapter path; holds the focused-session rules of the deleted flows doc. 1115 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/change-map.md": {
       "words": 420,
