@@ -47,6 +47,8 @@ function writeFakeXcrun(bin: string, fakeDir: string): void {
 set -euo pipefail
 dir="${fakeDir}"
 printf '%s\\n' "$*" >> "$dir/xcrun.calls"
+# The tests an xcresult lists: whatever the fixture's fake xcodebuild was told ran.
+if [[ "\${1:-}" == "xcresulttool" && -f "$dir/xcresult.json" ]]; then cat "$dir/xcresult.json"; exit 0; fi
 if [[ "\${1:-}" != "simctl" ]]; then
   echo "fake-xcrun: unexpected $*" >&2
   exit 127
@@ -206,6 +208,8 @@ function runCompletionFixture(text: string, options: {
   /** Replaces the default unit-lane arguments. */
   args?: string[];
   extraArgs?: string[];
+  /** Ids (`Suite/test()`) the run's xcresult records as executed; without it the run leaves no xcresult. */
+  executed?: string[];
   env?: Record<string, string>;
   afterLog?: string;
   failQuery?: boolean;
@@ -229,6 +233,10 @@ function runCompletionFixture(text: string, options: {
   writeFileSync(join(fake, "devices.json"), devicesJson());
   writeFileSync(join(fake, "runtimes.json"), runtimesJson());
   writeFakeXcrun(bin, fake);
+  if (options.executed) {
+    const cases = options.executed.map((nodeIdentifier) => ({ nodeType: "Test Case", result: "Passed", nodeIdentifier }));
+    writeFileSync(join(fake, "xcresult.json"), JSON.stringify({ testNodes: [{ nodeType: "Unit test bundle", children: cases }] }));
+  }
   if (options.eraseSleep) {
     writeFileSync(join(fake, "erase.sleep"), options.eraseSleep);
   }
@@ -236,6 +244,9 @@ function runCompletionFixture(text: string, options: {
 set -eu
 ${FAKE_BUILD_FOR_TESTING}
 echo attempt >> "${fake}/attempts"
+dd=""; prev=""
+for a in "$@"; do [ "$prev" = -derivedDataPath ] && dd="$a"; prev="$a"; done
+[ -f "${fake}/xcresult.json" ] && mkdir -p "$dd/Logs/Test/Run.xcresult"
 cat <<'TEST_LOG'
 ${text}TEST_LOG
 : > "${fake}/started"
@@ -1464,6 +1475,46 @@ sleep 30
     expect(result.run.stderr).toContain(`the run failed with xcodebuild's exit 0: ${swiftFailed.trim()}`);
     expect(result.attempts).toHaveLength(1);
     expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+  });
+
+  test("a passing run fails when any -only-testing selector matched no executed test, whatever else matched", () => {
+    const log = swiftTestPrelude + swiftPassed;
+    const unit = (...selectors: string[]) => ["-scheme", "OppiUnitTests", "test", ...selectors.map((selector) => `-only-testing:${selector}`)];
+    // The file name matches nothing; the type name beside it runs, which is what hid it.
+    const bad = runCompletionFixture(log, {
+      args: unit("OppiTests/FooTests.swift", "OppiTests/FooTests"),
+      executed: ["FooTests/testA()", "FooTests/testB()"],
+      afterLog: "exit 0",
+    });
+    expect(bad.run.status).toBe(65);
+    expect(bad.summary.exit_code).toBe(65);
+    expect(bad.run.stderr).toContain("error: selector OppiTests/FooTests.swift matched no test (a type name, not a file name)");
+    expect(bad.run.stderr).not.toContain("selector OppiTests/FooTests matched");
+    // Target, Type, Type/method (Swift Testing and XCTest ids alike), and -skip-testing, which is never a selector.
+    const good = runCompletionFixture(log, {
+      args: [...unit("OppiTests", "OppiTests/FooTests", "OppiTests/FooTests/testA", "OppiTests/BarTests/testC"), "-skip-testing:OppiTests/Gone"],
+      executed: ["FooTests/testA()", "BarTests/testC"],
+      afterLog: "exit 0",
+    });
+    expect(good.run.status).toBe(0);
+    expect(good.run.stderr).not.toContain("matched no test");
+    // A method selector names one test: the type's other tests do not satisfy it.
+    const method = runCompletionFixture(log, {
+      args: unit("OppiTests/FooTests/testMissing"),
+      executed: ["FooTests/testA()"],
+      afterLog: "exit 0",
+    });
+    expect(method.run.status).toBe(65);
+    expect(method.run.stderr).toContain("selector OppiTests/FooTests/testMissing matched no test");
+  });
+
+  test("selectors are not checked when the run left no readable xcresult, and the pass stands", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
+      args: ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests.swift"],
+      afterLog: "exit 0",
+    });
+    expect(result.run.status).toBe(0);
+    expect(result.run.stderr).toContain("selectors not checked against the executed tests: no .xcresult in");
   });
 
   test("nonzero exit racing completion-hang cleanup is not masked", () => {

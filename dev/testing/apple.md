@@ -64,7 +64,7 @@ Swift Testing for unit tests; XCTest only for `XCUIApplication`. Put `@MainActor
 
 Each of these has cost a false red or a false green.
 
-- **A filter that matches nothing passes in raw xcodebuild** ("0 tests passed"). sim-pool and every gate lane fail it as `zero tests ran for ...`, but a run with several selectors passes when only some match, so name declared types in land-queue `--tests`.
+- **A filter that matches nothing passes in raw xcodebuild** ("0 tests passed"). sim-pool and every gate lane fail it as `zero tests ran for ...`, and sim-pool also fails (exit 65) a passing run in which any one `-only-testing` selector matched no executed test, such as a file name beside a type name. Name declared types in land-queue `--tests`.
 - **A removed cell lingers** one run-loop turn on iOS 27: assert on the data source, not on walking `subviews`.
 - **A first-responder ask lands on a turn, not a deadline** (UIKit can refuse one while another text view is still resigning): await the turn (`nextRunLoopPass()`) or the responder state; a fixed sleep races both.
 - **An anchored confirmation has no Cancel** (iOS 26+ popover action sheets drop `.cancel`): dismiss by tapping outside.
