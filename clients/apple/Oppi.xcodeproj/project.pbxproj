@@ -788,6 +788,7 @@
 		526E41442C0BD0364526D97A /* ToolElapsedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C291A96578A5068670D2BC38 /* ToolElapsedTimeTests.swift */; };
 		52CCAEA420017D7B6B5BEFFE /* ChatReaderViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5B79D892E0CEA19E790811 /* ChatReaderViewControllerTests.swift */; };
 		52D31B50E4FF64EEE978AC10 /* MermaidParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C5B379ED83CA2067BC8BB8 /* MermaidParser.swift */; };
+		52DF041826C38DE5FC0FFECE /* APIClientRouteContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBDE365513FA2BBB3B9FBDF /* APIClientRouteContractTests.swift */; };
 		531AFA05F5469AB9BFB7DA56 /* OrgNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713CA047C458F5A24327E215 /* OrgNode.swift */; };
 		5353F29B3E7482FB22C41117 /* SessionSearchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6126376FFA7532AB2916930F /* SessionSearchStore.swift */; };
 		5369CFE6FC84CFD0D191CF41 /* SSHTerminalRexTailnetSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 614292A447218AA90B3CE59A /* SSHTerminalRexTailnetSettingsViewController.swift */; };
@@ -4246,6 +4247,7 @@
 		CC5457DE50129E7A15ADFB87 /* MessageQueueContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageQueueContainer.swift; sourceTree = "<group>"; };
 		CC816FF544A9F8B0BFCF1BF7 /* MacChatSessionRuntimeAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacChatSessionRuntimeAdapterTests.swift; sourceTree = "<group>"; };
 		CC9DDA0AFDA32F4C2395E74F /* ToolOutputStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutputStore.swift; sourceTree = "<group>"; };
+		CCBDE365513FA2BBB3B9FBDF /* APIClientRouteContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientRouteContractTests.swift; sourceTree = "<group>"; };
 		CCC9E73056927423B46F3E92 /* InAppBrowserPresentationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserPresentationUITests.swift; sourceTree = "<group>"; };
 		CCD4010A18B41B9D870BF4E7 /* FileBrowserVideoPlaybackE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserVideoPlaybackE2ETests.swift; sourceTree = "<group>"; };
 		CCD7AB92907EE13C55EB0B60 /* DocumentEditOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditOwner.swift; sourceTree = "<group>"; };
@@ -4829,6 +4831,7 @@
 			isa = PBXGroup;
 			children = (
 				B2024B81F2A6E0BD319161F9 /* AgentScheduleAPIClientTests.swift */,
+				CCBDE365513FA2BBB3B9FBDF /* APIClientRouteContractTests.swift */,
 				CD388951E26007977DAAA662 /* APIClientTests.swift */,
 				425C05336801043A2E77C18A /* APIClientToolOutputTests.swift */,
 				8B0DC81040E48C8C1573DE42 /* APIClientWorkspaceFileEditingTests.swift */,
@@ -9422,6 +9425,7 @@
 			files = (
 				9A464DBA1625E859308BB2F7 /* AISharingConsentTests.swift in Sources */,
 				BD124360BA6B8BBD88474811 /* ANSIParserTests.swift in Sources */,
+				52DF041826C38DE5FC0FFECE /* APIClientRouteContractTests.swift in Sources */,
 				FDCA1F93848F3CEB59706BCD /* APIClientTests.swift in Sources */,
 				EB460C9B6A669A8093A18465 /* APIClientToolOutputTests.swift in Sources */,
 				1C0A5548DE14E940C35E7425 /* APIClientWorkspaceFileEditingTests.swift in Sources */,

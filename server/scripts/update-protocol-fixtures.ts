@@ -8,6 +8,7 @@ import {
   buildConversationStreamGolden,
   CONVERSATION_STREAM_GOLDEN_FILE,
 } from "../tests/conversation-stream-golden.js";
+import { ROUTES_SNAPSHOT_PATH, serializeRouteFixture } from "../tests/route-fixtures.js";
 
 import {
   APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
@@ -38,6 +39,8 @@ const fixtures = [
       buildCanonicalAppEventMessages(),
     ),
   },
+  // Every route the server answers, for the client's route contract test.
+  { path: ROUTES_SNAPSHOT_PATH, content: serializeRouteFixture() },
 ];
 
 for (const fixture of fixtures) {

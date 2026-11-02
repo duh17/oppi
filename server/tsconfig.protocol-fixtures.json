@@ -5,6 +5,7 @@
   },
   "files": [
     "tests/protocol-fixtures.ts",
+    "tests/route-fixtures.ts",
     "tests/conversation-stream-fixtures.ts",
     "tests/conversation-stream-golden.ts",
     "scripts/update-protocol-fixtures.ts"

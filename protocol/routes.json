@@ -1,0 +1,1971 @@
+{
+  "_meta": {
+    "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
+    "routeCount": 188
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "params": [],
+      "operationId": "getHealth",
+      "surface": "internal",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/pair",
+      "params": [],
+      "operationId": "pairDevice",
+      "surface": "admin",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/pair/tailscale",
+      "params": [],
+      "operationId": "issueTailscalePairingInvite",
+      "surface": "admin",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/pair/approval-status",
+      "params": [],
+      "operationId": "getPairingApprovalStatus",
+      "surface": "admin",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/challenge",
+      "params": [],
+      "operationId": "createDeviceAuthChallenge",
+      "surface": "admin",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "params": [],
+      "operationId": "refreshDeviceAccessToken",
+      "surface": "admin",
+      "auth": "none",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/pairing-approvals",
+      "params": [],
+      "operationId": "listPairingApprovals",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/pairing-approvals/{approvalId}/approve",
+      "params": [
+        "approvalId"
+      ],
+      "operationId": "approvePairing",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/pairing-approvals/{approvalId}/deny",
+      "params": [
+        "approvalId"
+      ],
+      "operationId": "denyPairing",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/devices",
+      "params": [],
+      "operationId": "listDevices",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/auth/devices/{deviceId}",
+      "params": [
+        "deviceId"
+      ],
+      "operationId": "revokeDevice",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/rotate",
+      "params": [],
+      "operationId": "rotateOwnerToken",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/me",
+      "params": [],
+      "operationId": "getCurrentUser",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/info",
+      "params": [],
+      "operationId": "getServerInfo",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/provider-quotas",
+      "params": [],
+      "operationId": "getProviderQuotas",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/stats",
+      "params": [],
+      "operationId": "getServerStats",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/stats/daily/{date}",
+      "params": [
+        "date"
+      ],
+      "operationId": "getDailyServerStats",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/metrics",
+      "params": [],
+      "operationId": "getServerMetrics",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/metrics/settings",
+      "params": [],
+      "operationId": "getServerMetricsSettings",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/metrics/settings",
+      "params": [],
+      "operationId": "setServerMetricsSettings",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/durable-sessions/settings",
+      "params": [],
+      "operationId": "getDurableSessionsSettings",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/durable-sessions/settings",
+      "params": [],
+      "operationId": "setDurableSessionsSettings",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/skills",
+      "params": [],
+      "operationId": "listServerSkills",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/skills/{skillId}",
+      "params": [
+        "skillId"
+      ],
+      "operationId": "getServerSkill",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/skills/{skillId}/file",
+      "params": [
+        "skillId"
+      ],
+      "operationId": "getServerSkillFile",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/resources/skills/{skillId}/enabled",
+      "params": [
+        "skillId"
+      ],
+      "operationId": "setServerSkillEnabled",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/extensions",
+      "params": [],
+      "operationId": "listServerExtensions",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/extensions/{extensionId}",
+      "params": [
+        "extensionId"
+      ],
+      "operationId": "getServerExtension",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/resources/extensions/{extensionId}/enabled",
+      "params": [
+        "extensionId"
+      ],
+      "operationId": "setServerExtensionEnabled",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/server/update",
+      "params": [],
+      "operationId": "updateServer",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/mobile-output-guide",
+      "params": [],
+      "operationId": "getMobileOutputGuide",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/mobile-output-guide",
+      "params": [],
+      "operationId": "setMobileOutputGuide",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/pi/system-prompt",
+      "params": [],
+      "operationId": "getPiSystemPrompt",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/resources/pi/default-tools",
+      "params": [],
+      "operationId": "getPiDefaultTools",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/resources/pi/default-tools",
+      "params": [],
+      "operationId": "setPiDefaultTools",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/pi/resources/enabled",
+      "params": [],
+      "operationId": "setPiResourceEnabled",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/resources/pi/default-model",
+      "params": [],
+      "operationId": "setPiDefaultModel",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/models",
+      "params": [],
+      "operationId": "listModels",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/me/push-registration",
+      "params": [],
+      "operationId": "putPushRegistration",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/me/push-registration",
+      "params": [],
+      "operationId": "deletePushRegistration",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions",
+      "params": [],
+      "operationId": "createControlSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getControlSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/control-sessions/{sessionId}",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "deleteControlSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/trace-page",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getControlSessionTracePage",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/trace-outline",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getControlSessionTraceOutline",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/events",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getControlSessionEvents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/tool-output/{toolCallId}",
+      "params": [
+        "sessionId",
+        "toolCallId"
+      ],
+      "operationId": "getControlSessionToolOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/control-sessions/{sessionId}/tool-output/{toolCallId}",
+      "params": [
+        "sessionId",
+        "toolCallId"
+      ],
+      "operationId": "headControlSessionToolOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/input-card-output/{cardId}",
+      "params": [
+        "sessionId",
+        "cardId"
+      ],
+      "operationId": "getControlSessionInputCardOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions/{sessionId}/command",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "sendControlSessionCommand",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions/{sessionId}/stop",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "stopControlSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions/{sessionId}/resume",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "resumeControlSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions/{sessionId}/attachments",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "createControlSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/control-sessions/{sessionId}/attachments/{attachmentId}/content",
+      "params": [
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "putControlSessionAttachmentContent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/attachments/{attachmentId}",
+      "params": [
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "getControlSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/control-sessions/{sessionId}/attachments/{attachmentId}",
+      "params": [
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "headControlSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/stream",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "openControlSessionStream",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "websocket"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces",
+      "params": [],
+      "operationId": "listWorkspaceCatalog",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces",
+      "params": [],
+      "operationId": "createWorkspace",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspace",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "updateWorkspace",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "deleteWorkspace",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/attention",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceAttention",
+      "surface": "internal",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/paths",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspacePaths",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/contents",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceContentsRoot",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/contents/{path+}",
+      "params": [
+        "workspaceId",
+        "path"
+      ],
+      "operationId": "getWorkspaceContents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/files/current",
+      "params": [],
+      "operationId": "getCurrentFile",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/files/current",
+      "params": [],
+      "operationId": "headCurrentFile",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/files/current",
+      "params": [],
+      "operationId": "putCurrentFile",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/files/current/sidecars",
+      "params": [],
+      "operationId": "listCurrentFileSidecars",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/files/current/media-info",
+      "params": [],
+      "operationId": "getCurrentFileMediaInfo",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/host/contents",
+      "params": [],
+      "operationId": "getHostContentsRoot",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/host/contents/{path+}",
+      "params": [
+        "path"
+      ],
+      "operationId": "getHostContents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/attachments",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "createSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/attachments/{attachmentId}/content",
+      "params": [
+        "workspaceId",
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "putSessionAttachmentContent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "listWorkspaceSessions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/session-buckets",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "listWorkspaceSessionBuckets",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "createWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/trace-page",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getWorkspaceSessionTracePage",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/trace-outline",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getWorkspaceSessionTraceOutline",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "deleteWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/command",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "sendWorkspaceSessionCommand",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/stop",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "stopWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/resume",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "resumeWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/fork",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "forkWorkspaceSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/events",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getSessionEvents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/changes",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "listSessionChanges",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/diff",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getSessionDiff",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/worktree-changes",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getSessionWorktreeChanges",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/worktree-diff",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getSessionWorktreeDiff",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/tool-output/{toolCallId}",
+      "params": [
+        "workspaceId",
+        "sessionId",
+        "toolCallId"
+      ],
+      "operationId": "getSessionToolOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/tool-output/{toolCallId}",
+      "params": [
+        "workspaceId",
+        "sessionId",
+        "toolCallId"
+      ],
+      "operationId": "headSessionToolOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/input-card-output/{cardId}",
+      "params": [
+        "workspaceId",
+        "sessionId",
+        "cardId"
+      ],
+      "operationId": "getSessionInputCardOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/stream",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "openSessionStream",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "websocket"
+    },
+    {
+      "method": "GET",
+      "path": "/app/events/stream",
+      "params": [],
+      "operationId": "openAppEventStream",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "websocket"
+    },
+    {
+      "method": "GET",
+      "path": "/dictation/stream",
+      "params": [],
+      "operationId": "openDictationStream",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "websocket"
+    },
+    {
+      "method": "GET",
+      "path": "/mirror/v1/bridge",
+      "params": [],
+      "operationId": "openMirrorBridge",
+      "surface": "internal",
+      "auth": "none",
+      "transport": "websocket"
+    },
+    {
+      "method": "GET",
+      "path": "/dictation/dictionary/global",
+      "params": [],
+      "operationId": "getGlobalDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/dictation/dictionary/global",
+      "params": [],
+      "operationId": "addToGlobalDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/dictation/dictionary/global",
+      "params": [],
+      "operationId": "replaceGlobalDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/dictation/dictionary/global",
+      "params": [],
+      "operationId": "removeFromGlobalDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/dictation/dictionary/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/dictation/dictionary/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "addToWorkspaceDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/dictation/dictionary/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "replaceWorkspaceDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/dictation/dictionary/workspaces/{workspaceId}",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "removeFromWorkspaceDictationDictionary",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/speech",
+      "params": [],
+      "operationId": "synthesizeSpeech",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/search",
+      "params": [],
+      "operationId": "searchSessions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/recent",
+      "params": [],
+      "operationId": "listRecentSessions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions",
+      "params": [],
+      "operationId": "listSessions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{sessionId}",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{sessionId}/trace",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getSessionTrace",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{sessionId}/events",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getGenericSessionEvents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{sessionId}/dialogs",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getSessionDialogs",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{sessionId}/attachments/{attachmentId}",
+      "params": [
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "getSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/sessions/{sessionId}/attachments/{attachmentId}",
+      "params": [
+        "sessionId",
+        "attachmentId"
+      ],
+      "operationId": "headSessionAttachment",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/{sessionId}/command",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "sendSessionCommand",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/{sessionId}/stop",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "stopSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/local-sessions",
+      "params": [],
+      "operationId": "listLocalSessions",
+      "surface": "internal",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/icon-assets",
+      "params": [],
+      "operationId": "createIconAsset",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/icon-assets/{assetId}",
+      "params": [
+        "assetId"
+      ],
+      "operationId": "getIconAsset",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/icon-assets/{assetId}",
+      "params": [
+        "assetId"
+      ],
+      "operationId": "headIconAsset",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/agents",
+      "params": [],
+      "operationId": "listAgents",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/agents",
+      "params": [],
+      "operationId": "createAgent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/agents/{agentId}",
+      "params": [
+        "agentId"
+      ],
+      "operationId": "getAgent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PATCH",
+      "path": "/agents/{agentId}",
+      "params": [
+        "agentId"
+      ],
+      "operationId": "updateAgent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/agents/{agentId}",
+      "params": [
+        "agentId"
+      ],
+      "operationId": "archiveAgent",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/agents/{agentId}/sessions",
+      "params": [
+        "agentId"
+      ],
+      "operationId": "createAgentSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-conversation",
+      "params": [],
+      "operationId": "openControlConversation",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/durable/extensions",
+      "params": [],
+      "operationId": "listDurableExtensions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/durable/extensions/{name}/enabled",
+      "params": [
+        "name"
+      ],
+      "operationId": "setDurableExtensionEnabled",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/durable/extensions/reload",
+      "params": [],
+      "operationId": "reloadDurableExtensions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/schedules",
+      "params": [],
+      "operationId": "listAgentSchedules",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules",
+      "params": [],
+      "operationId": "createAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/schedules/{scheduleId}",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "getAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PATCH",
+      "path": "/schedules/{scheduleId}",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "updateAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules/{scheduleId}/pause",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "pauseAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules/{scheduleId}/resume",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "resumeAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules/{scheduleId}/archive",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "archiveAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules/{scheduleId}/restore",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "restoreAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/schedules/{scheduleId}/run",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "runAgentSchedule",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/schedules/{scheduleId}/runs",
+      "params": [
+        "scheduleId"
+      ],
+      "operationId": "listAgentScheduleRuns",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/worktrees",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "listWorkspaceWorktrees",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/worktrees",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "createWorkspaceWorktree",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/worktrees/open",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "openWorkspaceWorktree",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/worktrees/{worktreeId}/status",
+      "params": [
+        "workspaceId",
+        "worktreeId"
+      ],
+      "operationId": "getWorkspaceWorktreeStatus",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/worktrees/{worktreeId}/preview",
+      "params": [
+        "workspaceId",
+        "worktreeId"
+      ],
+      "operationId": "previewWorkspaceWorktree",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspaces/{workspaceId}/worktrees/{worktreeId}",
+      "params": [
+        "workspaceId",
+        "worktreeId"
+      ],
+      "operationId": "removeWorkspaceWorktree",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/summary",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceGitSummary",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/status",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceGitStatus",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/diff",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceGitDiff",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/commits",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "listWorkspaceCommits",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/graph",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "getWorkspaceGitGraph",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/commits/{commit}",
+      "params": [
+        "workspaceId",
+        "commit"
+      ],
+      "operationId": "getWorkspaceCommit",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/git/commits/{commit}/diff",
+      "params": [
+        "workspaceId",
+        "commit"
+      ],
+      "operationId": "getWorkspaceCommitDiff",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/quick-actions",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "listWorkspaceQuickActions",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/quick-actions/selection",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "prepareWorkspaceQuickActionSelection",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/quick-actions/session",
+      "params": [
+        "workspaceId"
+      ],
+      "operationId": "createWorkspaceQuickActionSession",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp/scopes/{scopeId}/servers",
+      "params": [
+        "scopeId"
+      ],
+      "operationId": "listMcpServers",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp/scopes/{scopeId}/servers",
+      "params": [
+        "scopeId"
+      ],
+      "operationId": "addMcpServer",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PATCH",
+      "path": "/mcp/scopes/{scopeId}/servers/{name}",
+      "params": [
+        "scopeId",
+        "name"
+      ],
+      "operationId": "patchMcpServer",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/mcp/scopes/{scopeId}/servers/{name}",
+      "params": [
+        "scopeId",
+        "name"
+      ],
+      "operationId": "removeMcpServer",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp/scopes/{scopeId}/servers/{name}/login",
+      "params": [
+        "scopeId",
+        "name"
+      ],
+      "operationId": "startMcpAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp/scopes/{scopeId}/servers/{name}/logout",
+      "params": [
+        "scopeId",
+        "name"
+      ],
+      "operationId": "logoutMcpServer",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp/auth/flows/{flowId}",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "getMcpAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp/auth/flows/{flowId}/manual-code",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "submitMcpCallback",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp/auth/flows/{flowId}/cancel",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "cancelMcpAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/provider-auth/status",
+      "params": [],
+      "operationId": "listProviderAuthStatus",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/provider-auth/flows",
+      "params": [],
+      "operationId": "startProviderAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/provider-auth/flows/{flowId}",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "getProviderAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/provider-auth/flows/{flowId}/prompt-response",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "submitProviderAuthPromptResponse",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/provider-auth/flows/{flowId}/manual-code",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "submitProviderAuthManualCode",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/provider-auth/flows/{flowId}/cancel",
+      "params": [
+        "flowId"
+      ],
+      "operationId": "cancelProviderAuthFlow",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/provider-auth/api-key",
+      "params": [],
+      "operationId": "setProviderApiKey",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "DELETE",
+      "path": "/provider-auth/{providerId}",
+      "params": [
+        "providerId"
+      ],
+      "operationId": "removeProviderCredential",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/skills",
+      "params": [],
+      "operationId": "listSkills",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/skills/{skillName}",
+      "params": [
+        "skillName"
+      ],
+      "operationId": "getSkill",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/skills/{skillName}/file",
+      "params": [
+        "skillName"
+      ],
+      "operationId": "getSkillFile",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/extensions",
+      "params": [],
+      "operationId": "listExtensions",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/host/directories",
+      "params": [],
+      "operationId": "listHostDirectories",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/host/path/status",
+      "params": [],
+      "operationId": "getHostPathStatus",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/host/path/completions",
+      "params": [],
+      "operationId": "completeHostPath",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/host/path/create",
+      "params": [],
+      "operationId": "createHostPath",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/themes",
+      "params": [],
+      "operationId": "listThemes",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/themes/{name}",
+      "params": [
+        "name"
+      ],
+      "operationId": "getTheme",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/telemetry/metrickit",
+      "params": [],
+      "operationId": "uploadMetricKitPayload",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/telemetry/events",
+      "params": [],
+      "operationId": "uploadTelemetryEvents",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/telemetry/client-logs",
+      "params": [],
+      "operationId": "uploadClientLogs",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    }
+  ]
+}
