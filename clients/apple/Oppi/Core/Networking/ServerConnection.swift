@@ -157,11 +157,8 @@ final class ServerConnection {
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
     /// Identity of the current connected app-event window. Equality only.
     private(set) var appEventStreamConnectedAt: Date?
-    var appEventListRepairFollowUpUsed = false
-    var appEventListPendingExternalFailure = false
-    /// Bumped when a repair owner is installed or the stream tears down so a
-    /// cancelled owner's defer cannot clear a newer owner's slot.
-    var appEventListRepairGeneration: UInt64 = 0
+    /// REST list repair for the current app-event window (owner slot, follow-up budget).
+    var appEventListRepair = AppEventListRepair()
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
@@ -3077,11 +3074,7 @@ final class ServerConnection {
     }
 
     func disconnectAppEventStream() {
-        appEventListRepairGeneration &+= 1
-        appEventListRepairTask?.cancel()
-        appEventListRepairTask = nil
-        appEventListRepairFollowUpUsed = false
-        appEventListPendingExternalFailure = false
+        appEventListRepair.streamStopped()
         appEventStreamConnectedAt = nil
         appEventStreamCoordinator.disconnect()
         appEventStreamTransportState = .disconnected
@@ -3095,8 +3088,7 @@ final class ServerConnection {
         }
 
         appEventStreamConnectedAt = Date()
-        appEventListRepairFollowUpUsed = false
-        appEventListPendingExternalFailure = false
+        appEventListRepair.streamConnected()
     }
 
     private func makeAppEventStreamURL(selection: EndpointSelection) -> URL? {
@@ -3119,7 +3111,6 @@ final class ServerConnection {
     /// Shared in-flight tasks to coalesce overlapping refresh requests.
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
-    var appEventListRepairTask: Task<Void, Never>?
     var listRefreshGeneration: UInt64 = 0
 
     var workspaceGitSummaryRefreshTasks: [String: Task<Void, Never>] = [:]

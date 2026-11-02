@@ -909,7 +909,7 @@ struct StickyRefreshReconciliationTests {
 
         #expect(connection.appEventStreamTransportState == .disconnected)
         #expect(connection.appEventStreamCoordinator.isRunning == false)
-        #expect(connection.appEventListRepairTask == nil)
+        #expect(connection.appEventListRepair.task == nil)
     }
 
     @Test func staleWorkspaceRefreshCannotCommitAfterAPIReplacement() async throws {
@@ -1002,7 +1002,7 @@ struct StickyRefreshReconciliationTests {
         await repair.value
 
         #expect(requestCounter.count(path: "/sessions/recent") == 0)
-        #expect(connection.appEventListRepairTask == nil)
+        #expect(connection.appEventListRepair.task == nil)
     }
 
     @Test func refreshFailureTelemetryUsesCoarseErrorMetadata() async throws {

@@ -82,13 +82,7 @@ extension ServerConnection {
 
         // An active owner consumes at most one late external failure after the
         // current pass. Repair-originated failures never enter this path.
-        if appEventListRepairTask != nil {
-            appEventListPendingExternalFailure = true
-            return
-        }
-
-        guard !appEventListRepairFollowUpUsed else { return }
-        appEventListRepairFollowUpUsed = true
+        guard appEventListRepair.noteExternalFailure() == .startRepair else { return }
         let connectedAt = appEventStreamConnectedAt
         Task { @MainActor [weak self] in
             // Let the failed list task unwind its defer before the owner starts.
@@ -397,14 +391,14 @@ extension ServerConnection {
     /// snapshot was required; otherwise whether the stream may stay up.
     @discardableResult
     func reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: Bool) async -> Bool {
-        guard snapshotRequired
-                || workspaceStore.lastSyncFailed
-                || sessionStore.lastSyncFailed
-                || appEventListPendingExternalFailure else {
+        guard appEventListRepair.needsRepair(
+            snapshotRequired: snapshotRequired,
+            listsFailed: workspaceStore.lastSyncFailed || sessionStore.lastSyncFailed
+        ) else {
             return true
         }
 
-        if let inFlight = appEventListRepairTask {
+        if let inFlight = appEventListRepair.task {
             let joinedConnectedAt = appEventStreamConnectedAt
             await inFlight.value
             guard !Task.isCancelled,
@@ -421,20 +415,13 @@ extension ServerConnection {
         let connectedAt = appEventStreamConnectedAt
         // Install the owner slot before the first await so a late external
         // failure during this pass can set the pending follow-up marker.
-        appEventListRepairGeneration &+= 1
-        let repairEpoch = appEventListRepairGeneration
-        appEventListRepairTask = Task { @MainActor [weak self] in
+        appEventListRepair.installOwner { repairEpoch in Task { @MainActor [weak self] in
             guard let self else { return }
             // Owner cleanup and pending consumption happen in one MainActor
             // transition. No await may sit between the final level check and
             // clearing the owner slot. Epoch guards a cancelled owner from
             // clearing a newer repair installed after stream teardown.
-            defer {
-                if self.appEventListRepairGeneration == repairEpoch {
-                    self.appEventListPendingExternalFailure = false
-                    self.appEventListRepairTask = nil
-                }
-            }
+            defer { self.appEventListRepair.ownerFinished(epoch: repairEpoch) }
 
             await self.refreshWorkspaceAndSessionLists(
                 force: true,
@@ -447,20 +434,17 @@ extension ServerConnection {
                 return
             }
 
-            if self.appEventListPendingExternalFailure,
-               !self.appEventListRepairFollowUpUsed {
-                // Consume the one-follow-up budget before awaiting. Failures
-                // from this pass are repair-owned and cannot reschedule.
-                self.appEventListPendingExternalFailure = false
-                self.appEventListRepairFollowUpUsed = true
+            // Consume the one-follow-up budget before awaiting. Failures
+            // from this pass are repair-owned and cannot reschedule.
+            if self.appEventListRepair.takeFollowUp() {
                 await self.refreshWorkspaceAndSessionLists(
                     force: true,
                     retryAfterJoinedFailure: true,
                     origin: .appEventReconciliation
                 )
             }
-        }
-        await appEventListRepairTask?.value
+        } }
+        await appEventListRepair.task?.value
 
         guard !Task.isCancelled,
               appEventStreamTransportState == .connected,
