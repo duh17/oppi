@@ -62,8 +62,13 @@ export async function cmdExtensions(
   const { call, output } = createLocalApiCommandContext(connection, json, signal);
   try {
     if (action === "list" && positional.length === 0) {
-      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(ALL_EXTENSIONS);
-      output({ extensions }, () => {
+      const { extensions, pluginsUnavailable } = await call<{
+        extensions: ServerExtensionSummary[];
+        pluginsUnavailable?: string;
+      }>(ALL_EXTENSIONS);
+      output({ extensions, ...(pluginsUnavailable ? { pluginsUnavailable } : {}) }, () => {
+        if (pluginsUnavailable)
+          writeHumanLine(c.red(`Plugins could not be loaded: ${pluginsUnavailable}`));
         for (const extension of extensions) writeHumanLine(listingLine(extension));
       });
       return;

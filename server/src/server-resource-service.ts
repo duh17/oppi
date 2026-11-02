@@ -259,12 +259,14 @@ export class ServerResourceService {
   /**
    * The extension list. A row that is only a plugin is listed only with `plugins`: a client that
    * predates plugins (an Agent picker) would offer it for an Agent's classic selection, which
-   * cannot select it. Detail and enable by ID reach it either way.
+   * cannot select it. Detail and enable by ID reach it either way. With `plugins`,
+   * `pluginsUnavailable` says why no plugin is listed when the plugins could not be listed.
    */
   async listExtensions({ plugins: withPluginRows = false } = {}): Promise<{
     extensions: ServerExtensionSummary[];
     builtInTools: ServerToolSummary[];
     optionalTools: ServerToolSummary[];
+    pluginsUnavailable?: string;
   }> {
     const context = await this.resolveContext();
     const { entries, optionalTools } = await this.buildExtensionCatalog(context);
@@ -279,6 +281,9 @@ export class ServerResourceService {
       extensions: rows.map(copyExtensionSummary),
       builtInTools: builtInToolSummaries(this.catalogCwd),
       optionalTools: optionalTools.map(copyToolSummary),
+      ...(withPluginRows && plugins.failure !== undefined
+        ? { pluginsUnavailable: boundMessage(plugins.failure) }
+        : {}),
     };
   }
 

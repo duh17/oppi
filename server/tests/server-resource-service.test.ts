@@ -493,7 +493,11 @@ describe("ServerResourceService mutations and skill details", () => {
       },
     });
 
-    const listed = (await service.listExtensions({ plugins: true })).extensions;
+    const catalog = await service.listExtensions({ plugins: true });
+    // A client that asked for plugins learns why there are none.
+    expect(catalog.pluginsUnavailable).toContain("Oppi's built-in plugins failed to load");
+    expect((await service.listExtensions()).pluginsUnavailable).toBeUndefined();
+    const listed = catalog.extensions;
     expect(listed.map((row) => row.name)).toEqual(["classic-only", "with-plugin"]);
     const withPlugin = listed.find((row) => row.name === "with-plugin")!;
     expect(withPlugin).toMatchObject({ state: "on", kinds: ["plugin", "pi-extension"] });
