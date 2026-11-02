@@ -2,15 +2,15 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("ServerConnection Usage Metrics")
+@Suite("Session Usage Metrics")
 @MainActor
 struct ServerConnectionUsageMetricTests {
     @Test func skipsEmptyUsageSnapshot() {
-        let connection = ServerConnection()
+        let reporter = SessionUsageMetricsReporter()
         let session = makeTestSession(id: "s-usage", status: .ready)
-        let snapshot = connection.sessionUsageMetricSnapshot(from: session)
+        let snapshot = SessionUsageMetricsReporter.snapshot(from: session)
 
-        #expect(!connection.shouldEmitSessionUsageMetrics(
+        #expect(!reporter.shouldEmit(
             for: session,
             snapshot: snapshot,
             now: Date(timeIntervalSince1970: 100)
@@ -18,29 +18,28 @@ struct ServerConnectionUsageMetricTests {
     }
 
     @Test func debouncesReadyUsageSnapshots() {
-        let connection = ServerConnection()
+        let reporter = SessionUsageMetricsReporter()
         var session = makeTestSession(id: "s-usage", status: .ready, messageCount: 10)
         session.tokens = TokenUsage(input: 100, output: 20)
 
-        let firstSnapshot = connection.sessionUsageMetricSnapshot(from: session)
-        let firstDate = Date(timeIntervalSince1970: 100)
-        #expect(connection.shouldEmitSessionUsageMetrics(
+        let firstSnapshot = SessionUsageMetricsReporter.snapshot(from: session)
+        #expect(reporter.shouldEmit(
             for: session,
             snapshot: firstSnapshot,
-            now: firstDate
+            now: Date(timeIntervalSince1970: 100)
         ))
 
-        connection.sessionUsageMetricSnapshots[session.id] = firstSnapshot
-        connection.sessionUsageMetricLastEmittedAt[session.id] = firstDate
+        let firstDate = Date()
+        reporter.reportIfNeeded(session)
 
         session.messageCount = 11
-        let changedSnapshot = connection.sessionUsageMetricSnapshot(from: session)
-        #expect(!connection.shouldEmitSessionUsageMetrics(
+        let changedSnapshot = SessionUsageMetricsReporter.snapshot(from: session)
+        #expect(!reporter.shouldEmit(
             for: session,
             snapshot: changedSnapshot,
             now: firstDate.addingTimeInterval(30)
         ))
-        #expect(connection.shouldEmitSessionUsageMetrics(
+        #expect(reporter.shouldEmit(
             for: session,
             snapshot: changedSnapshot,
             now: firstDate.addingTimeInterval(61)
@@ -48,19 +47,17 @@ struct ServerConnectionUsageMetricTests {
     }
 
     @Test func emitsStoppedUsageSnapshotWithoutDebounce() {
-        let connection = ServerConnection()
+        let reporter = SessionUsageMetricsReporter()
         var session = makeTestSession(id: "s-usage", status: .ready, messageCount: 10)
         session.tokens = TokenUsage(input: 100, output: 20)
-        let firstSnapshot = connection.sessionUsageMetricSnapshot(from: session)
-        let firstDate = Date(timeIntervalSince1970: 100)
-        connection.sessionUsageMetricSnapshots[session.id] = firstSnapshot
-        connection.sessionUsageMetricLastEmittedAt[session.id] = firstDate
+        let firstDate = Date()
+        reporter.reportIfNeeded(session)
 
         session.status = .stopped
         session.messageCount = 11
-        let stoppedSnapshot = connection.sessionUsageMetricSnapshot(from: session)
+        let stoppedSnapshot = SessionUsageMetricsReporter.snapshot(from: session)
 
-        #expect(connection.shouldEmitSessionUsageMetrics(
+        #expect(reporter.shouldEmit(
             for: session,
             snapshot: stoppedSnapshot,
             now: firstDate.addingTimeInterval(5)

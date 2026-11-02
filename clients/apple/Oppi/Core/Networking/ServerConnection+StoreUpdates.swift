@@ -158,8 +158,7 @@ extension ServerConnection {
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
-            sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
-            sessionUsageMetricLastEmittedAt.removeValue(forKey: deletedId)
+            sessionUsageMetrics.forget(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityState()
             return StoreUpdateResult(handled: true)
@@ -195,7 +194,7 @@ extension ServerConnection {
             previousSession: previousSession,
             currentSession: currentSession
         )
-        emitSessionUsageMetricsIfNeeded(currentSession)
+        sessionUsageMetrics.reportIfNeeded(currentSession)
 
         if let previousWorkspaceId = previousSession?.workspaceId,
            previousWorkspaceId != currentSession.workspaceId {

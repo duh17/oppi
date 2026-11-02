@@ -17,6 +17,7 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 `ServerConnection` is the facade and cross-store workflow owner; each state machine inside it has its own owner:
 
 - `PairingApprovalList` holds one server's pending pairing approvals and fences stale list reads; `PairingApprovalController` presents them across connections.
+- `SessionUsageMetricsReporter` sends `AppSessionUsage` once per changed session snapshot and forgets a session with its stream.
 
 ## UIKit and SwiftUI ownership
 

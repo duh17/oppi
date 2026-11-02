@@ -449,6 +449,7 @@
 		2DDD504170662AEB0D400B0F /* ScopedLockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2C988FD9D260178EEDF2FE /* ScopedLockTests.swift */; };
 		2DED2009C4740E717244FF7A /* ToolFileFactsFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FD1CF3728EE3BDA7FE53944 /* ToolFileFactsFixture.swift */; };
 		2DF8D7C1DFC35351976F3530 /* SSHTerminalPanePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F8A06E71029A14347ECFFE /* SSHTerminalPanePreview.swift */; };
+		2E0BA39C9170D8F9475CFDCD /* SessionUsageMetricsReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F776FE1A6C1C64087FAC83A2 /* SessionUsageMetricsReporter.swift */; };
 		2E1D00BE0662BE2FDE10285A /* MermaidPieRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */; };
 		2E82D0D834143FAAA2AF0A13 /* FileViewerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51F36ADDF60631121F8C7E3 /* FileViewerPolicies.swift */; };
 		2E85173127F41B85429A720E /* ConnectionTransportPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1558B61485C2084D8B980AF0 /* ConnectionTransportPath.swift */; };
@@ -4621,6 +4622,7 @@
 		F754A8FD275054F2EACFAA62 /* LiveActivitySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivitySettings.swift; sourceTree = "<group>"; };
 		F75E80BAF578255A9EB28C9F /* MacRemoteServerStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteServerStoreTests.swift; sourceTree = "<group>"; };
 		F769F70CE975A88074C2E77F /* TreeSitterGrammarSubstitutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeSitterGrammarSubstitutionTests.swift; sourceTree = "<group>"; };
+		F776FE1A6C1C64087FAC83A2 /* SessionUsageMetricsReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionUsageMetricsReporter.swift; sourceTree = "<group>"; };
 		F78184F38A4FF282245F0DE1 /* MacSessionTraceStoreStopTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTraceStoreStopTests.swift; sourceTree = "<group>"; };
 		F7942205316D2FA12B7A6B8B /* MacInlineOutputFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacInlineOutputFormatterTests.swift; sourceTree = "<group>"; };
 		F7A95F77D3B3281F77B2CDC8 /* MacExtensionSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacExtensionSurfaceTests.swift; sourceTree = "<group>"; };
@@ -6369,6 +6371,7 @@
 				F473C423F334F7F179062477 /* SessionContentAccess.swift */,
 				D85A9C0E29645C43B2AF9402 /* SessionStreamCoordinator.swift */,
 				B745214985773807802D6014 /* SessionToolOutputAccess.swift */,
+				F776FE1A6C1C64087FAC83A2 /* SessionUsageMetricsReporter.swift */,
 				EC9F5CA86714726B2FEE5D49 /* SilenceWatchdog.swift */,
 				E7A6D9C0B48C643CA940DF7B /* SSHApprovalCache.swift */,
 				E552CCBAAE9D0983625EA179 /* SSHConnection.swift */,
@@ -10902,6 +10905,7 @@
 				D58BA0FA961B0941005DF8D6 /* SessionToolOutputAccess.swift in Sources */,
 				EFDF0A3AF5767FF45F497E63 /* SessionTouchedFileRouting.swift in Sources */,
 				243157850174567E4B0F9EFB /* SessionTreeFilterMode.swift in Sources */,
+				2E0BA39C9170D8F9475CFDCD /* SessionUsageMetricsReporter.swift in Sources */,
 				65B7CC6C6C94F524101F4161 /* SettingValue.swift in Sources */,
 				9446A4BA04A1A647556CFB66 /* SettingsActionStateCells.swift in Sources */,
 				11622284BAC80178F23C633F /* SettingsAdapters.swift in Sources */,

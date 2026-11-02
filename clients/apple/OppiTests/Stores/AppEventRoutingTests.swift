@@ -205,8 +205,9 @@ struct AppEventRoutingTests {
         connection.handleAppEvent(cleanupCase.event)
 
         expectAppEventSessionScopedUICleared(connection)
-        #expect(connection.sessionUsageMetricSnapshots["s2"] == nil)
-        #expect(connection.sessionUsageMetricLastEmittedAt["s2"] == nil)
+        // Forgotten: the seeded snapshot and a changed one inside the debounce both emit again.
+        #expect(usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 3))
+        #expect(usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 4))
         #expect(!connection.screenAwakeController.isPreventingSleep)
         cleanupCase.assertStore(connection)
     }
@@ -227,8 +228,9 @@ struct AppEventRoutingTests {
         )
 
         expectAppEventSessionScopedUIPreserved(connection)
-        #expect(connection.sessionUsageMetricSnapshots["s2"] != nil)
-        #expect(connection.sessionUsageMetricLastEmittedAt["s2"] != nil)
+        // Kept: the seeded snapshot is a duplicate and a changed one is still debounced.
+        #expect(!usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 3))
+        #expect(!usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 4))
         #expect(connection.sessionStore.session(id: "s2")?.status == .error)
     }
 
@@ -477,10 +479,18 @@ private func seedSessionScopedState(_ connection: ServerConnection, sessionId: S
         ),
         for: sessionId
     )
-    connection.sessionUsageMetricSnapshots[sessionId] = connection.sessionUsageMetricSnapshot(
-        from: makeTestSession(id: sessionId, workspaceId: "w1", messageCount: 3)
+    connection.sessionUsageMetrics.reportIfNeeded(
+        makeTestSession(id: sessionId, workspaceId: "w1", messageCount: 3)
     )
-    connection.sessionUsageMetricLastEmittedAt[sessionId] = Date(timeIntervalSince1970: 50)
+}
+
+@MainActor
+private func usageMetricsWouldEmit(_ connection: ServerConnection, sessionId: String, messageCount: Int) -> Bool {
+    let session = makeTestSession(id: sessionId, workspaceId: "w1", messageCount: messageCount)
+    return connection.sessionUsageMetrics.shouldEmit(
+        for: session,
+        snapshot: SessionUsageMetricsReporter.snapshot(from: session)
+    )
 }
 
 @MainActor

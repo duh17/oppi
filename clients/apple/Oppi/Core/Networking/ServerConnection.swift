@@ -364,27 +364,6 @@ final class ServerConnection {
     static let deferredQueueSyncTimeout: Duration = .seconds(3)
     static let deferredQueueSyncDelay: Duration = .milliseconds(250)
 
-    struct SessionUsageMetricSnapshot: Equatable {
-        let provider: String
-        let model: String
-        let messageCount: Int
-        let inputTokens: Int
-        let outputTokens: Int
-        let totalTokens: Int
-        let mutatingToolCalls: Int
-        let filesChanged: Int
-        let contextTokens: Int
-        let contextWindow: Int
-
-        var hasUsageSignal: Bool {
-            messageCount > 0
-                || totalTokens > 0
-                || mutatingToolCalls > 0
-                || filesChanged > 0
-                || contextTokens > 0
-        }
-    }
-
     // periphery:ignore - test seam used by ServerConnection*Tests via @testable import
     /// Test seam: override outbound send path without opening a real WebSocket.
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)? {
@@ -503,13 +482,8 @@ final class ServerConnection {
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
     var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
 
-    /// Minimum spacing for repeated per-session usage snapshots. These are
-    /// capacity/cost diagnostics, not live UX counters.
-    static let sessionUsageMetricMinimumInterval: TimeInterval = 60
-
-    /// Last emitted per-session usage snapshot to avoid duplicate metric spam.
-    @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
-    @ObservationIgnored var sessionUsageMetricLastEmittedAt: [String: Date] = [:]
+    /// Per-session `AppSessionUsage` telemetry and its de-duplication state.
+    let sessionUsageMetrics = SessionUsageMetricsReporter()
 
     init(seenStorage: SessionSeenLedgerStorage? = nil) {
         sessionStore = SessionStore(seenStorage: seenStorage)
@@ -1389,8 +1363,7 @@ final class ServerConnection {
             cont.finish()
         }
         sessionEventContinuations.removeAll()
-        sessionUsageMetricSnapshots.removeAll()
-        sessionUsageMetricLastEmittedAt.removeAll()
+        sessionUsageMetrics.forgetAll()
         clearFocusedSessionStreamEndpoint()
         wsClient?.disconnect()
 
@@ -2479,8 +2452,7 @@ final class ServerConnection {
     private func disconnectSessionResources(for sessionId: String) {
         closeSessionStreamContinuations(sessionId)
         messageQueueStore.clear(sessionId: sessionId)
-        sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
-        sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)
+        sessionUsageMetrics.forget(sessionId: sessionId)
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
     }
 

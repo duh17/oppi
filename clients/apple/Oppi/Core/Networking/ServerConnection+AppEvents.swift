@@ -212,8 +212,7 @@ extension ServerConnection {
     private func clearSessionScopedAppEventState(for event: AppEventMessage, sessionId: String) {
         applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
-        sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
-        sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)
+        sessionUsageMetrics.forget(sessionId: sessionId)
     }
 
     private func refreshWorkspaceSidebarGitSummary(
