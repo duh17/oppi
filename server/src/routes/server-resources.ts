@@ -375,10 +375,12 @@ export function createServerResourceRoutes(
       // Durable sessions load a Pi package's plugins when their store opens and on reload, so the
       // toggle reaches them only through a reload, after which the row shows its plugin as it is
       // now. A package without a plugin changes nothing there: its toggle stays a settings write.
+      // Switched on, the plugin that reload loaded is turned on too.
       if (ctx.sessions.durableSessionsAvailable()) {
         try {
           if (await ctx.serverResources.hasPlugin(id)) {
             await ctx.sessions.reloadDurableExtensions();
+            if (body.enabled) await ctx.serverResources.enableAttachedPlugin(id);
             summary = (await ctx.serverResources.getExtensionDetail(id)).summary;
           }
         } catch (reloadError: unknown) {

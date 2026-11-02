@@ -455,6 +455,18 @@ export class ServerResourceService {
     });
   }
 
+  /**
+   * Turns on the plugin attached to classic row `id`, once the reload after switching the row on
+   * has loaded it: while the package was off its plugin was not loaded, so `setExtensionEnabled`
+   * could not tell which extension name a stale config entry holds.
+   */
+  async enableAttachedPlugin(id: string): Promise<void> {
+    await this.withMutationLock(async () => {
+      const name = (await this.pluginRows(await this.resolveContext())).attached.get(id)?.extension;
+      if (name !== undefined) this.plugins?.setPluginEnabled(name, true);
+    });
+  }
+
   private async setPluginEnabled(
     id: string,
     plugin: PluginListing,

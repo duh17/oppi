@@ -827,6 +827,9 @@ describe("plugins on the extension list", () => {
   it("turns a package's plugin back on with its row when the server config had it off", async () => {
     const probe = writePackage("probe");
     const f = await fixture(callsTool("unused"));
+    // One Pi settings file, so switching the row off sticks.
+    const settings = SettingsManager.inMemory({ defaultProvider: "faux", defaultModel: "faux-1" });
+    vi.mocked(SettingsManager.create).mockReturnValue(settings);
     // Turned off for durable sessions only, as `oppi extensions disable probe` used to.
     f.manager.setPluginEnabled("probe", false);
     const row = rowNamed(await f.rows(), "probe");
@@ -835,6 +838,12 @@ describe("plugins on the extension list", () => {
       state: "on",
       plugin: { enabled: false },
     });
+    // Switched off, so its plugin is not loaded when the row is switched back on: only the
+    // reload that follows loads it, and finds the stale config entry.
+    expect(
+      await f.route("PUT", `/server/resources/extensions/${row.id}/enabled`, { enabled: false }),
+    ).toMatchObject({ status: 200, body: { state: "off" } });
+    expect(f.storage.getConfig().experimental?.durableExtensions?.disabled).toEqual(["probe"]);
 
     const on = await f.route("PUT", `/server/resources/extensions/${row.id}/enabled`, {
       enabled: true,
