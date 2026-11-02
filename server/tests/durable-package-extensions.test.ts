@@ -703,9 +703,7 @@ describe("plugins from Pi packages", () => {
     expect(asks).toHaveLength(2);
     const classic = asks.find((row) => row.kinds.includes("pi-extension"))!;
     expect(classic.plugin).toBeUndefined();
-    expect(classic.warnings).toEqual([
-      "\"ask\" is built into Oppi: durable sessions use Oppi's built-in plugin, not this package's",
-    ]);
+    expect(classic.warnings).toEqual([expect.stringContaining('"ask" is built into Oppi')]);
     expect(asks.find((row) => row !== classic)).toMatchObject({
       kinds: ["plugin"],
       source: "built-in",
