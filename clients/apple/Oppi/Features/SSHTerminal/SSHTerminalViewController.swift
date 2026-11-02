@@ -470,6 +470,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateNotice(themeID: chromeID)
         updateCopyAndLive(themeID: chromeID)
         updateComposer()
+        takeTerminalKeyboard()
         updatePasswordFill(connected: connected)
         if let gridView {
             gridView.setKeyActions(keymap.actions)
@@ -1717,23 +1718,19 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // still returns (with the keyboard) when the prompt ends.
         if automaticTerminalTyping {
             refocusAfterSecurePrompt = true
-            DispatchQueue.main.async { [weak self] in
-                _ = self?.gridView?.becomeFirstResponder()
-            }
+            askForTerminalKeyboard()
             return
         }
         manualInputChoice()
         inputMode = .terminal
-        DispatchQueue.main.async { [weak self] in
-            _ = self?.gridView?.becomeFirstResponder()
-        }
-        setNeedsUpdateProperties()
+        askForTerminalKeyboard()
     }
 
     /// The Chat Bar button: the chat bar, with its keyboard up. From the
     /// terminal's keyboard the bar focuses once that keyboard has gone.
     private func focusChatBar() {
         guard !rawKeyboard else { return showChatBar() }
+        wantsTerminalKeyboard = false
         manualInputChoice()
         inputMode = .chat
         composerFocusRequest += 1
@@ -1741,6 +1738,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func showChatBar() {
+        wantsTerminalKeyboard = false
         manualInputChoice()
         inputMode = .chat
         focusComposerAfterRaw = true
@@ -1762,10 +1760,35 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         automaticTerminalTyping = false
     }
 
+    /// The terminal is the input, but the grid has not taken the keyboard yet.
+    /// UIKit refuses an ask that lands while the chat bar's text view is still
+    /// resigning, and the pass that unships the bar ends that editing at the
+    /// same moment, so a dropped ask leaves nothing focused — no keyboard at a
+    /// password prompt. The screen asks again on its next pass until the grid
+    /// holds it. Cleared when typing goes back to the chat bar, and when the
+    /// person sends the keyboard away.
+    private var wantsTerminalKeyboard = false
+
+    private func askForTerminalKeyboard() {
+        wantsTerminalKeyboard = true
+        // Ask now too: a key strip tap or a prompt should not wait a pass.
+        DispatchQueue.main.async { [weak self] in self?.takeTerminalKeyboard() }
+        setNeedsUpdateProperties()
+    }
+
+    private func takeTerminalKeyboard() {
+        guard wantsTerminalKeyboard, inputMode == .terminal,
+              let grid = gridView, grid.window != nil
+        else { return }
+        if !grid.isFirstResponder { _ = grid.becomeFirstResponder() }
+        if grid.isFirstResponder { wantsTerminalKeyboard = false }
+    }
+
     /// The user sent the keyboard away. During an automatic switch for a
     /// password prompt that only keeps the keyboard down when the prompt ends;
     /// the chat bar still comes back there. Any other hide changes nothing.
     private func keyboardWasHidden() {
+        wantsTerminalKeyboard = false
         guard automaticTerminalTyping else { return }
         refocusAfterSecurePrompt = false
     }
@@ -1785,12 +1808,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             automaticTerminalTyping = true
             refocusAfterSecurePrompt = true
             inputMode = .terminal
-            DispatchQueue.main.async { [weak self] in
-                _ = self?.gridView?.becomeFirstResponder()
-            }
+            askForTerminalKeyboard()
         } else {
             guard automaticTerminalTyping else { return }
             automaticTerminalTyping = false
+            wantsTerminalKeyboard = false
             // The prompt only starts from the chat bar, so that is what returns.
             inputMode = .chat
             if refocusAfterSecurePrompt { focusComposerAfterRaw = true }
