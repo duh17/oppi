@@ -562,6 +562,10 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         )
     }
 
+    /// A status and a widget that share a key are one pill (the documented
+    /// `key === widgetKey` attachment): the collapsed pill summarizes with the
+    /// status, and the widget's lines are in its drawer. Clearing either one
+    /// must leave the other on screen.
     func testExtensionUIPersistentSurfaceClears() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
@@ -569,47 +573,70 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         let title = "native surface clear title e2e"
         let status = "native surface clear status e2e"
         let widgetLine = "native surface clear widget e2e"
-        let statusKey = "surface-clear"
-        let widgetKey = "surface-clear"
+        let sharedKey = "surface-clear"
+        let setStatus: [String: Any] = [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": sharedKey,
+            "statusText": status,
+        ]
+        let clearStatus: [String: Any] = [
+            "type": "extension_ui_notification",
+            "method": "setStatus",
+            "statusKey": sharedKey,
+        ]
+        let widgetPill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-\(sharedKey)"]
+        let standaloneStatusPill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-status-\(sharedKey)"]
+        let widgetDrawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-\(sharedKey)"]
 
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setTitle",
             "title": title,
         ])
-        try sendHarnessMessage(sessionId: sessionId, [
-            "type": "extension_ui_notification",
-            "method": "setStatus",
-            "statusKey": statusKey,
-            "statusText": status,
-        ])
+        try sendHarnessMessage(sessionId: sessionId, setStatus)
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setWidget",
-            "widgetKey": widgetKey,
+            "widgetKey": sharedKey,
             "widgetLines": [widgetLine],
         ])
 
         waitForText(title, timeout: 10)
-        waitForText(status, timeout: 5)
-        waitForText(widgetLine, timeout: 5)
+        XCTAssertTrue(widgetPill.waitForExistence(timeout: 5), "Shared-key widget pill did not appear")
+        waitForValue(of: widgetPill, toContain: status, timeout: 5)
+        XCTAssertFalse(standaloneStatusPill.exists, "An attached status must not also show as its own pill")
 
+        // The widget's lines are one tap away, in the pill's drawer.
+        tap(widgetPill, named: "shared-key widget pill")
+        XCTAssertTrue(widgetDrawer.waitForExistence(timeout: 5), "Shared-key widget drawer did not open")
+        waitForText(widgetLine, timeout: 5)
+        try saveLabScreenshot(name: "extension-ui-shared-key-status-and-widget-e2e")
+
+        // Clearing the status keeps the widget; the pill falls back to its first line.
+        try sendHarnessMessage(sessionId: sessionId, clearStatus)
+        waitForTextToDisappear(status, timeout: 5)
+        XCTAssertTrue(widgetDrawer.exists, "Clearing the status closed the widget's drawer")
+        waitForValue(of: widgetPill, toContain: widgetLine, timeout: 5)
+
+        // Clearing the widget keeps the status, now as its own pill.
+        try sendHarnessMessage(sessionId: sessionId, setStatus)
+        waitForValue(of: widgetPill, toContain: status, timeout: 5)
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setWidget",
-            "widgetKey": widgetKey,
+            "widgetKey": sharedKey,
         ])
-        try sendHarnessMessage(sessionId: sessionId, [
-            "type": "extension_ui_notification",
-            "method": "setStatus",
-            "statusKey": statusKey,
-        ])
+        waitForTextToDisappear(widgetLine, timeout: 5)
+        XCTAssertTrue(standaloneStatusPill.waitForExistence(timeout: 5), "Status vanished with its widget")
+        waitForValue(of: standaloneStatusPill, toContain: status, timeout: 5)
+
+        try sendHarnessMessage(sessionId: sessionId, clearStatus)
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setTitle",
         ])
 
-        waitForTextToDisappear(widgetLine, timeout: 5)
         waitForTextToDisappear(status, timeout: 5)
         waitForTextToDisappear(title, timeout: 5)
     }
@@ -1054,6 +1081,25 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             file: file,
             line: line
         )
+    }
+
+    private func waitForValue(
+        of element: XCUIElement,
+        toContain text: String,
+        timeout: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        var last = ""
+        while Date() < deadline {
+            if element.exists {
+                last = String(describing: element.value ?? "")
+                if last.contains(text) { return }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTFail("\(element) value did not show \"\(text)\" (last=\"\(last)\")", file: file, line: line)
     }
 
     private func waitForTextToDisappear(_ text: String, timeout: TimeInterval) {
