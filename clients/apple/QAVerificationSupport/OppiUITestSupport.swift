@@ -8,6 +8,19 @@ import XCTest
 protocol PreviewUITestCase: AnyObject {
     /// The launched app the test's steps drive.
     var app: XCUIApplication! { get set }
+
+    /// `true` in a class whose tests keep one app launch across tests
+    /// (`ReusedHarnessLaunch`): a test whose launch arguments and non-screen
+    /// environment match the running launch gets it back after an in-process
+    /// reset to its own screen (`SCREENSHOT_*`). Everything the launch contract
+    /// resets, the reset clears; what it cannot (a system service, a process-wide
+    /// singleton a preview does not rebuild) is why a class opts in only once its
+    /// tests pass in any order.
+    static var reusesLaunch: Bool { get }
+}
+
+extension PreviewUITestCase {
+    static var reusesLaunch: Bool { false }
 }
 
 extension PreviewUITestCase where Self: XCTestCase {
@@ -19,6 +32,10 @@ extension PreviewUITestCase where Self: XCTestCase {
     /// Waits for `ready`, the preview host's marker
     /// (`PreviewHost.publishScreenshotReady`) by default; pass nil for a screen
     /// whose test waits for its own surface instead.
+    ///
+    /// In a class that `reusesLaunch`, the first launch of a test may be the
+    /// class's running app, reset in process. A second launch in the same test is
+    /// a real relaunch that keeps what the test wrote, as without reuse.
     func launchPreview(
         screen: String,
         environment: [String: String] = [:],
@@ -27,21 +44,37 @@ extension PreviewUITestCase where Self: XCTestCase {
         ready: String? = "screenshot.ready",
         readyTimeout: TimeInterval = 10
     ) {
-        app?.terminate()
-        let application = OppiTestLaunch.makeApp()
+        let relaunch = app != nil
+        let reuses = ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch)
+        let owner = String(describing: Self.self)
+        let application = OppiTestLaunch.makeApp(
+            resetToken: relaunch && reuses ? ReusedHarnessLaunch.appliedResetToken(owner: owner) : nil
+        )
         application.launchArguments += ["--screenshot-preview"] + arguments
         application.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         if let colorScheme { application.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = colorScheme }
         for (key, value) in environment { application.launchEnvironment[key] = value }
-        application.launch()
-        app = application
+        if reuses {
+            app = ReusedHarnessLaunch.app(
+                owner: owner,
+                application: application,
+                readyID: ready,
+                freshProcess: relaunch
+            ) {
+                application.launch()
+            }
+        } else {
+            app?.terminate()
+            application.launch()
+            app = application
+        }
         XCTAssertEqual(
-            application.wait(for: .runningForeground, timeout: readyTimeout), true,
+            app.wait(for: .runningForeground, timeout: readyTimeout), true,
             "Preview \(screen) did not come up"
         )
         guard let ready else { return }
         XCTAssertTrue(
-            application.descendants(matching: .any)[ready].waitUntilExists(timeout: readyTimeout),
+            app.descendants(matching: .any)[ready].waitUntilExists(timeout: readyTimeout),
             "Preview \(screen) did not publish \(ready)"
         )
     }

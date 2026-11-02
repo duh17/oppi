@@ -10,6 +10,7 @@ import XCTest
 @MainActor
 final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
+    static var reusesLaunch: Bool { true }
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)

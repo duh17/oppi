@@ -249,9 +249,14 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
 
 /// What the editors last sent to the stub server, so a save is visible.
 @MainActor @Observable
-private final class RouterRoutesSaves {
+final class RouterRoutesSaves {
     static let shared = RouterRoutesSaves()
     var lastSave = "none"
+
+    /// Back to a fresh process's record (`HarnessLaunchReset`).
+    static func resetForTesting() {
+        shared.lastSave = "none"
+    }
 }
 
 private enum RouterRoutesFixtures {

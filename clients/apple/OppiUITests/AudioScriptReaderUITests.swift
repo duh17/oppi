@@ -13,32 +13,18 @@ final class AudioScriptReaderUITests: XCTestCase {
 
     /// Both tests drive the same preview and the player lives in the preview's view,
     /// so one launch serves the class: the app resets in process between tests.
-    override class func tearDown() {
-        MainActor.assumeIsolated { ReusedHarnessLaunch.discard(owner: "AudioScriptReaderUITests") }
-        super.tearDown()
-    }
-
-    override func tearDownWithError() throws {
-        if (testRun?.totalFailureCount ?? 0) > 0 {
-            ReusedHarnessLaunch.discard(owner: "AudioScriptReaderUITests")
-        }
-        try super.tearDownWithError()
-    }
-
     private func launchScriptReader() {
         let application = OppiTestLaunch.makeApp()
         application.launchArguments.append("--screenshot-preview")
         application.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
-        application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
         app = ReusedHarnessLaunch.app(
-            owner: "AudioScriptReaderUITests",
-            signature: OppiTestLaunch.launchSignature(of: application),
+            owner: String(describing: Self.self),
+            application: application,
             readyID: "audioLyrics.transcript"
         ) {
             application.launch()
             // The notification prompt belongs to the first launch only.
             self.dismissNotificationPrompt()
-            return application
         }
     }
 

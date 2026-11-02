@@ -14,6 +14,12 @@ enum OppiTestLaunch {
     /// Launch environment for a debug harness or preview whose launch a test
     /// class reuses across tests (`ReusedHarnessLaunch`).
     static let reuseLaunchKey = "OPPI_TEST_REUSE_LAUNCH"
+    /// Launch environment of a reused launch: the file holding the next reset's
+    /// screen environment (`HarnessLaunchReset`).
+    static let reuseScreenFileKey = "OPPI_TEST_REUSE_SCREEN_FILE"
+    /// The launch environment a preview reads each time it builds its root (its
+    /// screen, page, site, and theme), which an in-process reset can swap.
+    static let screenEnvironmentPrefix = "SCREENSHOT_"
 
     /// The experiments (Settings → Experiments; `AppPreferences.Experiments`,
     /// keys repeated here). A launch states each one it depends on: a test that
@@ -124,14 +130,30 @@ enum OppiTestLaunch {
         notify_cancel(token)
     }
 
-    /// What makes two launches the same launch: the constructed app's arguments and
-    /// environment without the reset token, which differs per test by design.
+    /// What makes two launches the same process: the constructed app's arguments and
+    /// environment without the reset token, which differs per test by design, and
+    /// without the screen environment, which a reused launch swaps in process.
     static func launchSignature(of app: XCUIApplication) -> String {
         var arguments = app.launchArguments
         if let index = arguments.firstIndex(of: "-\(resetTokenKey)") {
             arguments.removeSubrange(index...min(index + 1, arguments.count - 1))
         }
-        let environment = app.launchEnvironment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let environment = app.launchEnvironment
+            .filter { !$0.key.hasPrefix(screenEnvironmentPrefix) }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
         return (arguments + ["--"] + environment).joined(separator: "\n")
+    }
+
+    /// The launch environment a reused launch swaps in process (`screenEnvironmentPrefix`).
+    static func screenEnvironment(of app: XCUIApplication) -> [String: String] {
+        app.launchEnvironment.filter { $0.key.hasPrefix(screenEnvironmentPrefix) }
+    }
+
+    /// The reset token `app` launches with.
+    static func resetToken(of app: XCUIApplication) -> String? {
+        guard let index = app.launchArguments.firstIndex(of: "-\(resetTokenKey)"),
+              index + 1 < app.launchArguments.count else { return nil }
+        return app.launchArguments[index + 1]
     }
 }

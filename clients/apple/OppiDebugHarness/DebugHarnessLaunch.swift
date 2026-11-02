@@ -14,11 +14,14 @@ enum DebugHarnessLaunch {
     /// The window root for the harness or screenshot preview the launch
     /// arguments chose, or nil for the app.
     static func rootViewController(root: AppRootEnvironment) -> UIViewController? {
-        guard let controller = makeHarnessRoot(root: root, generation: HarnessLaunchReset.isEnabled ? 0 : nil) else { return nil }
-        if HarnessLaunchReset.isEnabled {
+        let reuses = HarnessLaunchReset.isEnabled
+        // Before a preview pins its own values in the argument domain.
+        let launchArguments = reuses ? HarnessLaunchReset.argumentDomain : [:]
+        guard let controller = makeHarnessRoot(root: root, generation: reuses ? 0 : nil) else { return nil }
+        if reuses {
             // Nothing came before this root, so there is nothing to wait for.
             controller.publishResetMarker()
-            HarnessLaunchReset.install(root: root, controller: controller)
+            HarnessLaunchReset.install(root: root, controller: controller, launchArguments: launchArguments)
         }
         return controller
     }
@@ -221,12 +224,17 @@ final class HarnessViewHostController<Content: HarnessDiagnosticsView>: UIViewCo
 
 /// Opt-in launch reuse for debug harnesses and previews: a UI test class sets
 /// `OPPI_TEST_REUSE_LAUNCH=1` and keeps one app launch across its tests. Between
-/// tests it posts the Darwin notification `dev.chenda.Oppi.test.reset` with a
-/// generation as the notification state (`QAVerificationSupport/OppiTestLaunch.swift`
-/// repeats these names). The app then runs the launch contract's reset in process
-/// (`TestLaunchContract.applyInProcessReset`), drops the process-wide caches a
-/// fresh process would not have, puts the persisted theme back, dismisses what is
-/// presented, and swaps the window root for a fresh harness root. It publishes
+/// tests it writes the next test's screen environment (the `SCREENSHOT_*` keys a
+/// preview reads when it builds its root) as a JSON object to the file named by
+/// `OPPI_TEST_REUSE_SCREEN_FILE`, then posts the Darwin notification
+/// `dev.chenda.Oppi.test.reset` with a generation as the notification state
+/// (`QAVerificationSupport/OppiTestLaunch.swift` repeats these names). The app
+/// then swaps its `SCREENSHOT_*` environment for the file's, puts the argument
+/// domain back to the launch's (a preview pins its theme and seeds there), runs
+/// the launch contract's reset in process (`TestLaunchContract.applyInProcessReset`),
+/// drops the process-wide caches and harness fixture records a fresh process would
+/// not have, puts the persisted theme back, dismisses what is presented, and swaps
+/// the window root for a fresh harness root. It publishes
 /// the generation as `harness.reset.generation` only once the previous root and
 /// its content are gone; if they are not, it publishes `harness.reset.failure`
 /// with the reason instead, so a test fails on a leak rather than run on one.
@@ -236,6 +244,8 @@ final class HarnessViewHostController<Content: HarnessDiagnosticsView>: UIViewCo
 @MainActor
 final class HarnessLaunchReset {
     static let launchKey = "OPPI_TEST_REUSE_LAUNCH"
+    static let screenFileKey = "OPPI_TEST_REUSE_SCREEN_FILE"
+    static let screenEnvironmentPrefix = "SCREENSHOT_"
     static let notificationName = "dev.chenda.Oppi.test.reset"
     static let markerID = "harness.reset.generation"
     static let failureID = "harness.reset.failure"
@@ -253,16 +263,24 @@ final class HarnessLaunchReset {
     private static var installed: HarnessLaunchReset?
 
     private let root: AppRootEnvironment
+    private let launchArguments: [String: Any]
     private weak var current: HarnessRootViewController?
     private var token: Int32 = NOTIFY_TOKEN_INVALID
 
-    private init(root: AppRootEnvironment) {
+    private init(root: AppRootEnvironment, launchArguments: [String: Any]) {
         self.root = root
+        self.launchArguments = launchArguments
     }
 
-    static func install(root: AppRootEnvironment, controller: HarnessRootViewController) {
+    /// The argument domain as it stands: the launch arguments, plus whatever the
+    /// harness root pinned there once it was built.
+    static var argumentDomain: [String: Any] {
+        UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+    }
+
+    static func install(root: AppRootEnvironment, controller: HarnessRootViewController, launchArguments: [String: Any]) {
         guard installed == nil else { return }
-        let reset = HarnessLaunchReset(root: root)
+        let reset = HarnessLaunchReset(root: root, launchArguments: launchArguments)
         reset.current = controller
         installed = reset
         reset.listen()
@@ -290,9 +308,17 @@ final class HarnessLaunchReset {
     }
 
     private func reset(generation: UInt64) {
-        guard let window = current?.view.window else { return }
+        guard let current, let window = current.view.window else { return }
+        do {
+            try Self.applyScreenEnvironment()
+        } catch {
+            current.publishResetFailure("screen environment for generation \(generation) unreadable: \(error)")
+            return
+        }
+        UserDefaults.standard.setVolatileDomain(launchArguments, forName: UserDefaults.argumentDomain)
         TestLaunchContract.applyInProcessReset(generation: generation)
         Self.resetProcessCaches()
+        Self.resetHarnessFixtures()
         // The new root's state starts from the theme in effect when it is built, so the
         // last test's theme must be gone first; the old root restores its own on disappear.
         ThemeRuntimeState.setThemeID(ThemeID.loadPersisted())
@@ -301,7 +327,7 @@ final class HarnessLaunchReset {
         let swapRoot = { [self] in
             let old = window.rootViewController as? HarnessRootViewController
             guard let fresh = DebugHarnessLaunch.makeHarnessRoot(root: root, generation: generation) else { return }
-            current = fresh
+            self.current = fresh
             window.rootViewController = fresh
             let released = ReleasedCheck(old: old, content: old?.content)
             confirmReleased(released, fresh: fresh, attempt: 0)
@@ -339,6 +365,28 @@ final class HarnessLaunchReset {
                 }
             }
         }
+    }
+
+    /// The next test's `SCREENSHOT_*` environment, from the file the test wrote
+    /// before it posted the reset. A launch without the file key keeps its own.
+    private static func applyScreenEnvironment() throws {
+        guard let path = ProcessInfo.processInfo.environment[screenFileKey] else { return }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let next = try JSONDecoder().decode([String: String].self, from: data)
+        for key in ProcessInfo.processInfo.environment.keys where key.hasPrefix(screenEnvironmentPrefix) && next[key] == nil {
+            unsetenv(key)
+        }
+        for (key, value) in next where key.hasPrefix(screenEnvironmentPrefix) {
+            setenv(key, value, 1)
+        }
+    }
+
+    /// What a harness or preview's fixture server recorded, kept process-wide
+    /// for its labels: a fresh process starts each one empty.
+    private static func resetHarnessFixtures() {
+        RouterRoutesSaves.resetForTesting()
+        SettingsSweepWrites.resetForTesting()
+        ChatRoutesFixture.resetForTesting()
     }
 
     /// One entry point per cache owner, so a reused test runs as cold as a launched one.

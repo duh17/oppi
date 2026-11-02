@@ -803,6 +803,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
 final class SettingsSweepWrites {
     static let shared = SettingsSweepWrites()
     var lastWrite = "none"
+
+    /// Back to a fresh process's record (`HarnessLaunchReset`).
+    static func resetForTesting() {
+        shared.lastWrite = "none"
+    }
 }
 
 /// Answers `APIClient` requests from a fixed path → JSON table, where a

@@ -12,6 +12,7 @@ import XCTest
 @MainActor
 final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
+    static var reusesLaunch: Bool { true }
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
@@ -499,6 +500,50 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
             },
             title: "Revise release"
         )
+    }
+
+    // MARK: Launch reuse
+
+    // What a reused launch hands the next test (`ReusedHarnessLaunch`): the
+    // state of a fresh process. Both tests run the same journey, so whichever
+    // runs second, in any order, proves the one before left nothing behind:
+    // the fixture server's write record, a presented sheet, or the keyboard.
+
+    func testReusedLaunchStartsCleanFirst() {
+        assertStartsCleanThenLeavesStateBehind()
+    }
+
+    func testReusedLaunchStartsCleanSecond() {
+        assertStartsCleanThenLeavesStateBehind()
+    }
+
+    private func assertStartsCleanThenLeavesStateBehind() {
+        launch(page: "mcp")
+        let add = app.buttons["mcp.add"]
+        XCTAssertTrue(waitFor(add.exists && add.isEnabled, timeout: 10), "MCP list did not load")
+        let sheet = app.navigationBars["Add MCP Server"]
+        XCTAssertEqual(lastWrite, "none", "A test must start with no write recorded")
+        XCTAssertFalse(sheet.exists, "A test must start with no sheet presented")
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "A test must start with the keyboard down")
+
+        add.tap()
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not open")
+        let name = app.textFields["mcp.add.name"]
+        name.tap()
+        name.typeText("leftover")
+        let url = app.textFields["mcp.add.url"]
+        url.tap()
+        url.typeText("https://leftover.example.com/mcp")
+        tapBarButton(app.buttons["mcp.add.save"])
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Add must close the sheet")
+        XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"leftover\""), timeout: 10), "The add did not reach the host: \(lastWrite)")
+
+        // Leave the sheet up with the keyboard in it.
+        add.tap()
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not reopen")
+        name.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "The keyboard did not come up")
+        assertRunning()
     }
 
     // MARK: MCP

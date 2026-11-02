@@ -9,6 +9,7 @@ import XCTest
 @MainActor
 final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
+    static var reusesLaunch: Bool { true }
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)

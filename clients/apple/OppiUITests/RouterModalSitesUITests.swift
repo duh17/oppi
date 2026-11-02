@@ -11,6 +11,11 @@ import XCTest
 @MainActor
 final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
+    // No launch reuse (`PreviewUITestCase.reusesLaunch`) yet. In a random-order
+    // iPhone run, testWorkspaceCreateIconPickerSavesIntoTheForm ran in the process
+    // testNowPlayingPlayerOpensFromTheInboxAndGoesBack had used, tapped the icon
+    // row, and no picker opened. The pair passed in three reruns; until that leak
+    // is found, every test here launches fresh.
 
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)

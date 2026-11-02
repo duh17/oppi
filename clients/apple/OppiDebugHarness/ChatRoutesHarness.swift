@@ -147,7 +147,7 @@ private final class ChatRoutesStubRecord {
     var createdSessions = 0
 }
 
-private enum ChatRoutesFixture {
+enum ChatRoutesFixture {
     static let serverId = "chat-routes-server"
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
@@ -177,11 +177,25 @@ private enum ChatRoutesFixture {
 
     private static var environment: [String: String] { ProcessInfo.processInfo.environment }
 
-    /// Built once per launch, before the chat mounts.
-    @MainActor static let connection: ServerConnection = {
+    /// Built once per launch, before the chat mounts, and again after an
+    /// in-process reset (`resetForTesting`).
+    @MainActor static var connection: ServerConnection {
+        if let built { return built }
         resetLocalState()
-        return makeConnection()
-    }()
+        let connection = makeConnection()
+        built = connection
+        return connection
+    }
+
+    @MainActor private static var built: ServerConnection?
+
+    /// Back to a fresh process's fixture (`HarnessLaunchReset`): the next chat
+    /// gets a new connection and local state, and the probes start empty.
+    @MainActor static func resetForTesting() {
+        built = nil
+        lastArrival = ""
+        ChatRoutesStubRecord.shared.createdSessions = 0
+    }
 
     @MainActor private static func makeConnection() -> ServerConnection {
         let connection = ServerConnection()

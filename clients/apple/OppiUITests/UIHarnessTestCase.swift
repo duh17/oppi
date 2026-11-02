@@ -31,22 +31,6 @@ class UIHarnessTestCase: XCTestCase {
     /// one test of a reusing class can pass `freshProcess: true` to `launchHarness`.
     class var reusesLaunch: Bool { false }
 
-    private static var reuseOwner: String { String(describing: self) }
-
-    override class func tearDown() {
-        MainActor.assumeIsolated { ReusedHarnessLaunch.discard(owner: reuseOwner) }
-        super.tearDown()
-    }
-
-    override func tearDownWithError() throws {
-        // A failed test can leave state a reset does not clear (a stuck gesture,
-        // a hung main thread); the next test launches fresh instead.
-        if ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch), (testRun?.totalFailureCount ?? 0) > 0 {
-            ReusedHarnessLaunch.discard(owner: Self.reuseOwner)
-        }
-        try super.tearDownWithError()
-    }
-
     func launchHarness(
         noStream: Bool,
         includeVisualFixtures: Bool = false,
@@ -75,15 +59,13 @@ class UIHarnessTestCase: XCTestCase {
         application.launchEnvironment.merge(environment) { _, new in new }
 
         if ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch) {
-            application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
             app = ReusedHarnessLaunch.app(
-                owner: Self.reuseOwner,
-                signature: OppiTestLaunch.launchSignature(of: application),
+                owner: String(describing: Self.self),
+                application: application,
                 readyID: "harness.ready",
                 freshProcess: freshProcess
             ) {
                 application.launch()
-                return application
             }
         } else {
             application.launch()
