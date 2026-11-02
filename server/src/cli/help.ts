@@ -2133,7 +2133,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi extensions list [--json]",
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
-      "One row per classic Pi extension and per plugin; a Pi package with both is one row under its classic ID. Oppi Control's own plugin is not listed unless its reload failed.",
+      "One row per classic Pi extension and per plugin; a Pi package with both is one row under its classic ID. Oppi's built-ins are listed, the required ones marked, Oppi Control's included.",
       "JSON data: extensions, the rows of GET /server/resources/extensions?plugins=true (without the flag, rows that are only a plugin are left out): id, name, state (on, off, error), loadError, kinds (plugin, pi-extension), source (built-in, owner), and for a plugin, plugin: extension, required, enabled, runtimes, tools, hooks, sections, wraps, tasks, loadError, kept.",
     ],
     examples: [{ command: "oppi extensions list --json" }],

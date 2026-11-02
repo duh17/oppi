@@ -802,7 +802,7 @@ describe("plugins on the extension list", () => {
       plugin: { extension: "both", tools: ["both_version"], kept: false },
     });
 
-    // Built-ins, the required ones marked; Oppi Control's selection stays off the list.
+    // Built-ins, the required ones marked, Oppi Control's included.
     expect(rowNamed(rows, "oppi-working-words")).toMatchObject({
       kinds: ["plugin"],
       source: "built-in",
@@ -814,7 +814,14 @@ describe("plugins on the extension list", () => {
       plugin: { required: false, tools: ["sqlite_schema", "sqlite_query"] },
     });
     expect(rowNamed(rows, "oppi-file-tools").plugin?.wraps).toContainEqual({ tool: "read" });
-    expect(rows.map((row) => row.name)).not.toContain("oppi-control");
+    expect(rowNamed(rows, "oppi-control")).toMatchObject({
+      kinds: ["plugin"],
+      source: "built-in",
+      state: "on",
+      plugin: { required: true, enabled: true },
+    });
+    // Like every plugin-only row, it is not offered to a client that predates plugins.
+    expect((await f.rows({ plugins: false })).map((row) => row.name)).not.toContain("oppi-control");
   });
 
   it("marks a broken plugin's row as an error, and whether its previous code still runs", async () => {

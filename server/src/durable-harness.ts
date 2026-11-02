@@ -1637,15 +1637,12 @@ export class DurableHarness {
 
   /**
    * Every plugin: the installed ones in install order (built-ins first), each with why its last
-   * load failed if it did, then those that failed and have no code installed. Oppi Control's built-in
-   * is selected only by Control sessions and is left out unless its reload failed. With them, the
+   * load failed if it did, then those that failed and have no code installed. With them, the
    * classic extensions whose package was skipped as one of the built-ins.
    */
   listPlugins(): PluginCatalog {
     return {
-      plugins: (this.pluginHost?.listings((name) => this.isExtensionEnabled(name)) ?? []).filter(
-        (plugin) => plugin.extension !== CONTROL_EXTENSION || plugin.loadError !== undefined,
-      ),
+      plugins: this.pluginHost?.listings((name) => this.isExtensionEnabled(name)) ?? [],
       linkedBuiltIns: this.pluginHost?.classic.linkedBuiltIns ?? new Map(),
     };
   }
