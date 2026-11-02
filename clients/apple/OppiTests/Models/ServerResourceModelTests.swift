@@ -110,6 +110,140 @@ struct ServerResourceModelTests {
         #expect(detail.summary.state == .error)
         #expect(detail.contributedTools == ["review"])
         #expect(detail.contributedCommands == ["/review"])
+        // A server that predates plugins sends no plugin fields.
+        #expect(detail.summary.kinds == nil)
+        #expect(detail.summary.source == nil)
+        #expect(detail.summary.plugin == nil)
+    }
+
+    @Test func decodesPluginRowsWithKindsSourceAndContributions() throws {
+        let catalog = try JSONDecoder().decode(ServerExtensionCatalog.self, from: Data("""
+        {
+          "extensions": [
+            {
+              "id": "extension_durable",
+              "name": "durable-only",
+              "kind": "directory",
+              "provenance": { "kind": "piAgent", "label": "~/.pi/agent/plugins" },
+              "state": "on",
+              "warnings": [],
+              "isRemovable": false,
+              "kinds": ["plugin"],
+              "source": "owner",
+              "plugin": {
+                "extension": "durable-only",
+                "required": false,
+                "enabled": true,
+                "runtimes": ["host", "sandbox"],
+                "tools": ["durable_only_tool"],
+                "hooks": [{ "task": "pi.generation", "handlers": ["beforeRequest", "beforeProviderRequest"] }],
+                "sections": ["durable_only"],
+                "wraps": [{ "tool": "read" }, { "section": "skills" }],
+                "tasks": ["durable.task"],
+                "kept": false
+              }
+            },
+            {
+              "id": "extension_both",
+              "name": "webtools",
+              "kind": "package",
+              "provenance": { "kind": "package", "label": "npm:webtools" },
+              "state": "error",
+              "loadError": "Unexpected end of input",
+              "warnings": [],
+              "isRemovable": false,
+              "kinds": ["plugin", "pi-extension"],
+              "source": "owner",
+              "plugin": {
+                "extension": "webtools",
+                "required": false,
+                "enabled": true,
+                "runtimes": ["host"],
+                "tools": ["web_fetch"],
+                "hooks": [],
+                "sections": [],
+                "wraps": [],
+                "tasks": [],
+                "loadError": "Unexpected end of input",
+                "kept": true
+              }
+            },
+            {
+              "id": "extension_future",
+              "name": "future",
+              "kind": "builtIn",
+              "provenance": { "kind": "builtIn", "label": "Oppi" },
+              "state": "on",
+              "warnings": [],
+              "isRemovable": false,
+              "kinds": ["plugin", "widget"],
+              "source": "marketplace",
+              "plugin": {
+                "required": true,
+                "enabled": true,
+                "runtimes": ["host"],
+                "tools": [],
+                "hooks": [],
+                "sections": [],
+                "wraps": [{ "document": "future" }],
+                "tasks": [],
+                "kept": false
+              }
+            }
+          ],
+          "builtInTools": []
+        }
+        """.utf8))
+
+        let durable = try #require(catalog.extensions.first)
+        #expect(durable.kinds == [.plugin])
+        #expect(durable.source == .owner)
+        let plugin = try #require(durable.plugin)
+        #expect(plugin.extensionName == "durable-only")
+        #expect(!plugin.required)
+        #expect(plugin.enabled)
+        #expect(plugin.runtimes == ["host", "sandbox"])
+        #expect(plugin.tools == ["durable_only_tool"])
+        #expect(plugin.hooks == [
+            ServerPluginHook(task: "pi.generation", handlers: ["beforeRequest", "beforeProviderRequest"]),
+        ])
+        #expect(plugin.sections == ["durable_only"])
+        #expect(plugin.wraps == [ServerPluginWrap(tool: "read"), ServerPluginWrap(section: "skills")])
+        #expect(plugin.tasks == ["durable.task"])
+        #expect(plugin.loadError == nil)
+        #expect(!plugin.kept)
+
+        let both = catalog.extensions[1]
+        #expect(both.kinds == [.plugin, .piExtension])
+        #expect(both.state == .error)
+        #expect(both.plugin?.loadError == "Unexpected end of input")
+        #expect(both.plugin?.kept == true)
+
+        // Values a later server adds decode as unknown instead of failing the catalog.
+        let future = catalog.extensions[2]
+        #expect(future.kinds == [.plugin, .unknown])
+        #expect(future.source == .unknown)
+        #expect(future.plugin?.required == true)
+        #expect(future.plugin?.extensionName == nil)
+        #expect(future.plugin?.wraps == [ServerPluginWrap()])
+    }
+
+    @Test func decodesAPluginReloadReport() throws {
+        let report = try JSONDecoder().decode(ServerPluginReloadReport.self, from: Data("""
+        {
+          "loaded": [{ "name": "probe", "entry": "/p/probe/server.ts", "runtimes": ["host"], "tools": ["probe_version"], "builtIn": false, "required": false }],
+          "kept": [{ "name": "webtools", "entry": "/p/webtools/server.ts", "runtimes": ["host"], "tools": [], "builtIn": false, "required": false }],
+          "removed": ["gone"],
+          "skipped": [{ "entry": "/p/ask", "message": "\\"ask\\" is built into Oppi", "plugin": "ask" }],
+          "errors": [{ "entry": "/p/webtools/server.ts", "message": "Unexpected end of input", "plugin": "webtools" }, { "entry": "/p/broken", "message": "Invalid package.json" }]
+        }
+        """.utf8))
+
+        #expect(report.loaded.map(\.name) == ["probe"])
+        #expect(report.kept.map(\.name) == ["webtools"])
+        #expect(report.removed == ["gone"])
+        #expect(report.skipped.first?.plugin == "ask")
+        #expect(report.errors.map(\.plugin) == ["webtools", nil])
     }
 
     @Test func decodesPiSystemPromptAndNullableDefaultTools() throws {

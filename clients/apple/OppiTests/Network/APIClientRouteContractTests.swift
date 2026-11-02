@@ -820,6 +820,7 @@ extension APIClientEndpoint {
         APIClientEndpoint("setServerExtensionEnabled") {
             _ = try? await $0.setServerExtensionEnabled(id: "ext1", enabled: true)
         },
+        APIClientEndpoint("reloadServerExtensions") { _ = try? await $0.reloadServerExtensions() },
         APIClientEndpoint("getPiSystemPrompt") { _ = try? await $0.getPiSystemPrompt() },
         APIClientEndpoint("getPiDefaultTools") { _ = try? await $0.getPiDefaultTools() },
         APIClientEndpoint("setPiDefaultTools") { _ = try? await $0.setPiDefaultTools(["read"]) },

@@ -48,6 +48,13 @@ extension APIClient {
         return try JSONDecoder().decode(ServerExtensionSummary.self, from: data)
     }
 
+    /// Discovers and loads every plugin again in the running server, without a restart.
+    func reloadServerExtensions() async throws -> ServerPluginReloadReport {
+        struct Request: Encodable {}
+        let data = try await post("/server/resources/extensions/reload", body: Request())
+        return try JSONDecoder().decode(ServerPluginReloadReport.self, from: data)
+    }
+
     func getPiSystemPrompt() async throws -> PiSystemPromptSnapshot {
         let data = try await get(url: serverResourceURL(pathSegments: ["pi", "system-prompt"]))
         return try JSONDecoder().decode(PiSystemPromptSnapshot.self, from: data)

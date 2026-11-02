@@ -424,7 +424,20 @@ struct ServerResourceStoreTests {
             id: "extension-package",
             state: .off,
             packageName: "@scope/cached-extension",
-            path: privatePath
+            path: privatePath,
+            plugin: ServerPluginSummary(
+                extensionName: "cached-extension",
+                required: false,
+                enabled: false,
+                runtimes: ["host"],
+                tools: ["cached_tool"],
+                hooks: [],
+                sections: [],
+                wraps: [],
+                tasks: [],
+                loadError: nil,
+                kept: false
+            )
         )
         let mutationGate = SuspensionGate()
         let store = configuredStore(skills: [])
@@ -445,6 +458,9 @@ struct ServerResourceStoreTests {
 
         let pending = try #require(store.extensions(forServer: "server-a").first { $0.id == cached.id })
         #expect(pending.packageName == "@scope/cached-extension")
+        #expect(pending.kinds == [.plugin, .piExtension])
+        #expect(pending.source == .owner)
+        #expect(pending.plugin == cached.plugin)
         let pendingPresentation = ServerExtensionListPresentation(extensions: [pending], query: "@scope/cached-extension")
         #expect(pendingPresentation.visibleExtensions == [pending])
         #expect(ServerExtensionListPresentation(extensions: [pending], query: privatePath).visibleExtensions.isEmpty)
@@ -707,7 +723,8 @@ struct ServerResourceStoreTests {
         name: String? = nil,
         kind: ServerExtensionKind = .file,
         packageName: String? = nil,
-        path: String? = nil
+        path: String? = nil,
+        plugin: ServerPluginSummary? = nil
     ) -> ServerExtensionSummary {
         ServerExtensionSummary(
             id: id,
@@ -723,7 +740,10 @@ struct ServerResourceStoreTests {
             state: state,
             loadError: nil,
             warnings: [],
-            isRemovable: false
+            isRemovable: false,
+            kinds: plugin == nil ? nil : [.plugin, .piExtension],
+            source: plugin == nil ? nil : .owner,
+            plugin: plugin
         )
     }
 }

@@ -161,6 +161,12 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
     let isRemovable: Bool
     let contributedTools: [String]?
     let contributedToolDetails: [ServerToolSummary]?
+    /// A plugin, a classic Pi extension, or both. Absent from servers that predate plugins.
+    let kinds: [ServerExtensionRowKind]?
+    /// The layer the row loads from. Absent from servers that predate plugins.
+    let source: ServerExtensionSource?
+    /// The row's plugin, when it is one.
+    let plugin: ServerPluginSummary?
 
     init(
         id: String,
@@ -175,7 +181,10 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         warnings: [String],
         isRemovable: Bool,
         contributedTools: [String]? = nil,
-        contributedToolDetails: [ServerToolSummary]? = nil
+        contributedToolDetails: [ServerToolSummary]? = nil,
+        kinds: [ServerExtensionRowKind]? = nil,
+        source: ServerExtensionSource? = nil,
+        plugin: ServerPluginSummary? = nil
     ) {
         self.id = id
         self.name = name
@@ -190,7 +199,114 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         self.isRemovable = isRemovable
         self.contributedTools = contributedTools
         self.contributedToolDetails = contributedToolDetails
+        self.kinds = kinds
+        self.source = source
+        self.plugin = plugin
     }
+}
+
+/// What an extension-list row is: a plugin (durable sessions), a classic Pi extension, or both.
+enum ServerExtensionRowKind: String, Codable, Sendable, Equatable {
+    case plugin
+    case piExtension = "pi-extension"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// The layer an extension-list row loads from.
+enum ServerExtensionSource: String, Codable, Sendable, Equatable {
+    case builtIn = "built-in"
+    case owner
+    case project
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// A plugin as the server's plugin host holds it, and what its extension contributes.
+struct ServerPluginSummary: Codable, Sendable, Equatable {
+    /// Its installed extension's name; nil when it never loaded.
+    let extensionName: String?
+    /// A built-in the server cannot run without: it cannot be disabled.
+    let required: Bool
+    /// Whether workspace sessions select it.
+    let enabled: Bool
+    let runtimes: [String]
+    let tools: [String]
+    let hooks: [ServerPluginHook]
+    let sections: [String]
+    let wraps: [ServerPluginWrap]
+    let tasks: [String]
+    /// Why its last load or reload failed.
+    let loadError: String?
+    /// A failed reload left its previous code running.
+    let kept: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case extensionName = "extension"
+        case required, enabled, runtimes, tools, hooks, sections, wraps, tasks, loadError, kept
+    }
+}
+
+/// A plugin's hook handlers on one task.
+struct ServerPluginHook: Codable, Sendable, Equatable {
+    let task: String
+    let handlers: [String]
+}
+
+/// What one plugin wrap targets: a tool or a prompt section.
+struct ServerPluginWrap: Codable, Sendable, Equatable {
+    let tool: String?
+    let section: String?
+
+    init(tool: String? = nil, section: String? = nil) {
+        self.tool = tool
+        self.section = section
+    }
+}
+
+/// What one plugin reload did (`POST /server/resources/extensions/reload`).
+struct ServerPluginReloadReport: Codable, Sendable, Equatable {
+    struct Plugin: Codable, Sendable, Equatable {
+        let name: String
+        /// Its facet file.
+        let entry: String
+    }
+
+    struct Issue: Codable, Sendable, Equatable {
+        /// The file or folder that failed.
+        let entry: String
+        let message: String
+        let plugin: String?
+    }
+
+    /// Installed from this reload.
+    let loaded: [Plugin]
+    /// Failed this time; their previous code stays installed.
+    let kept: [Plugin]
+    /// Extension names no plugin provides any more: uninstalled.
+    let removed: [String]
+    let skipped: [Issue]
+    let errors: [Issue]
 }
 
 struct ServerExtensionDetail: Codable, Sendable, Equatable {

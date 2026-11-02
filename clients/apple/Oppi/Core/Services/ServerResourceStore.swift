@@ -678,7 +678,10 @@ final class ServerResourceStore {
             warnings: resource.warnings,
             isRemovable: resource.isRemovable,
             contributedTools: resource.contributedTools,
-            contributedToolDetails: resource.contributedToolDetails
+            contributedToolDetails: resource.contributedToolDetails,
+            kinds: resource.kinds,
+            source: resource.source,
+            plugin: resource.plugin
         )
     }
 
