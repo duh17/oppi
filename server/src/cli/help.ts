@@ -2014,7 +2014,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
-      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no durable entry (builtin:codemode among them) and warns, naming them. Every other create stays classic.",
+      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no plugin (builtin:codemode among them) and warns, naming them. Every other create stays classic.",
       "When a managed session is the caller, create prefixes the prompt with `This is a message from session <caller-id>:` so the child can inspect that source session. Do not type the prefix yourself.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",
@@ -2112,13 +2112,13 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "List, enable, disable, and reload the durable extensions of the running server.",
     usage: "oppi extensions <list|enable|disable|reload> [name] [--json]",
     description: [
-      "Durable sessions load Oppi's bundled durable packages and the durable entry of each enabled user-scope Pi package, declared in package.json 'oppi.durable' ({ entry, runtimes }). The server loads them when its durable store opens and again on reload, without a restart.",
+      "Durable sessions load extensions from plugins: Oppi's built-in plugins, then the owner's in ~/.pi/agent/plugins/ and in enabled user-scope Pi packages. A plugin is a folder with a package.json name and a server.ts whose facet contributes one extension through oppi/v1; a package lists several in package.json chord.plugins, and <name>.server.ts in the plugin folder is a plugin too. The server loads them when its durable store opens and again on reload (or /reload in a durable session), without a restart.",
     ],
     subcommands: [
       { name: "list", summary: "show every durable extension and whether it is on" },
       { name: "enable", summary: "let workspace sessions select a durable extension again" },
       { name: "disable", summary: "leave a durable extension out of workspace sessions" },
-      { name: "reload", summary: "re-read every durable entry and replace the installed code" },
+      { name: "reload", summary: "discover and load every plugin again, replacing installed code" },
     ],
     notes: [
       "Works on every server, with or without experimental.serverDurable; extensions load when the server opens its durable store.",
@@ -2132,8 +2132,8 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi extensions list [--json]",
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
-      "Built-ins first, then Pi packages' durable entries. The control conversation's own selection is not listed.",
-      "JSON data: extensions, each with name, entry, runtimes, tools, builtIn, enabled.",
+      "Built-ins first, then the owner's plugins. The control conversation's own selection is not listed.",
+      "JSON data: extensions, each with name, entry, runtimes, tools, builtIn, required, enabled.",
     ],
     examples: [{ command: "oppi extensions list --json" }],
   },
@@ -2156,6 +2156,7 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
       "The extension stays installed so its pending work can finish; sessions just stop selecting it and its tools. A saved Agent that selects it starts without it and gets a session warning.",
+      "A required built-in (required: true in the list) cannot be disabled.",
       "Writes experimental.durableExtensions.disabled in the server config. New sessions follow at once; an open session at its next attach. No restart needed.",
     ],
     examples: [{ command: "oppi extensions disable sql-explorer" }],
@@ -2163,14 +2164,14 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["extensions", "reload"],
     title: "Reload durable extensions",
-    summary: "Re-read durable entries and install them in the running server.",
+    summary: "Discover and load every plugin again in the running server.",
     usage: "oppi extensions reload [--json]",
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
       "A reloaded extension replaces the installed one with the same name: running tool calls finish on the old code, and the next request or call uses the new code.",
-      "A package that fails to load keeps its previous code installed and is listed under errors and kept. A package that is gone is uninstalled.",
+      "A plugin that fails to load keeps its previous code installed and is listed under errors and kept. A plugin that is gone is uninstalled. A new plugin that takes a name, tool, or task another plugin has is an error; built-ins and plugins already loaded keep theirs.",
       "Sessions pick up a newly added extension the next time they attach (open, resume, or server restart).",
-      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools, builtIn (one of Oppi's bundled packages); skipped and errors items have entry and message.",
+      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools, builtIn (one of Oppi's built-in plugins), required; skipped and errors items have entry, message, and plugin when the issue is one plugin's.",
     ],
     examples: [{ command: "oppi extensions reload --json" }],
   },

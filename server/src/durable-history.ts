@@ -25,7 +25,7 @@ import {
 } from "./trace-paging.js";
 import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./trace-outline.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
-import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { sanitizeTranscriptCard } from "./durable-ui.js";
 import { durableNestedCalls } from "./tool-nested-calls.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 

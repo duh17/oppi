@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { Harness, MemoryStorage, createRegistry } from "@earendil-works/pi-durable";
-import { DurableInputCards, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { DurableInputCards, sanitizeTranscriptCard } from "../src/durable-ui.js";
 import { readDurableInputCardOutput, readDurableInputCards } from "../src/durable-input-cards.js";
 import { DurableClassicEvents } from "../src/durable-classic-events.js";
 import {

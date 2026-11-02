@@ -20,8 +20,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { DurableInputCards } from "../extensions/durable/durable-ui.js";
-import { agentMessageEntry } from "../extensions/durable/sessions/agent-message.js";
+import { DurableInputCards } from "../src/durable-ui.js";
+import { agentMessageEntry } from "../plugins/subagents/agent-message.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,

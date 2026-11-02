@@ -12,7 +12,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { DurableUI, type UIState } from "../extensions/durable/durable-ui.js";
+import { DurableUI, type UIState } from "../src/durable-ui.js";
 
 // Matches DurableUI's checkpointWhen. The predicate probe below fails if they drift.
 const THRESHOLD = 500;

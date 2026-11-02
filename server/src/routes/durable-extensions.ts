@@ -1,14 +1,16 @@
 import { safeErrorMessage } from "../log-utils.js";
+import { RequiredExtensionError } from "../sessions.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 /**
  * Durable extension routes (owner only):
- * - `GET /durable/extensions`: the durable extensions workspace sessions may select, built-ins
- *   and Pi packages' durable entries, each with `enabled`.
+ * - `GET /durable/extensions`: the durable extensions workspace sessions may select, from the
+ *   built-in and the owner's plugins, each with `enabled`.
  * - `PUT /durable/extensions/{name}/enabled` `{ enabled }`: enable or disable one by name in the
- *   server config, as `/server/resources/extensions/{id}/enabled` does for classic extensions.
- * - `POST /durable/extensions/reload`: re-read the durable entries of enabled Pi packages and
- *   install them in the running Harness registry, without a server restart.
+ *   server config, as `/server/resources/extensions/{id}/enabled` does for classic extensions; a
+ *   required built-in is 409.
+ * - `POST /durable/extensions/reload`: discover and load every plugin again in the running
+ *   server, without a restart.
  */
 export function createDurableExtensionRoutes(
   ctx: RouteContext,
@@ -57,7 +59,11 @@ export function createDurableExtensionRoutes(
           helpers.error(res, 404, `No durable extension named ${name} is loaded`);
         else helpers.json(res, { extension });
       } catch (error: unknown) {
-        helpers.error(res, 500, safeErrorMessage(error));
+        helpers.error(
+          res,
+          error instanceof RequiredExtensionError ? 409 : 500,
+          safeErrorMessage(error),
+        );
       }
       return true;
     }

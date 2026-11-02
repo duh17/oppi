@@ -58,7 +58,7 @@ function makeRoutes(sessions: ReturnType<typeof makeRouteSessions> = makeRouteSe
       contributedTools: ["review"],
     })),
     setExtensionEnabled: vi.fn(async () => ({ ...extension, state: "off" as const })),
-    hasDurableEntry: vi.fn(async () => true),
+    hasPlugin: vi.fn(async () => true),
     getPiSystemPrompt: vi.fn(async () => ({
       source: "default" as const,
       path: "~/.pi/agent/SYSTEM.md",
@@ -134,13 +134,13 @@ describe("server resource routes", () => {
     expect((await toggle()).statusCode).toBe(200);
   });
 
-  it("leaves durable extensions alone when the toggled package has no durable entry", async () => {
+  it("leaves durable extensions alone when the toggled package has no plugin", async () => {
     const sessions = makeRouteSessions();
     sessions.durableSessionsAvailable = () => true;
     const reload = vi.fn(async () => ({}));
     sessions.reloadDurableExtensions = reload;
     const { routes, serverResources } = makeRoutes(sessions);
-    serverResources.hasDurableEntry.mockResolvedValueOnce(false);
+    serverResources.hasPlugin.mockResolvedValueOnce(false);
 
     const response = await dispatch(
       routes,

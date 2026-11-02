@@ -3,7 +3,7 @@ import {
   NOTIFY_TITLE_MAX,
   type NotifyInput,
   type NotifyOutcome,
-} from "../extensions/durable/notify/contract.js";
+} from "../plugins/notify/contract.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { fitPushBody } from "./push/envelope.js";

@@ -100,6 +100,14 @@ import {
 } from "./session-runtime-capabilities.js";
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 
+/** Disabling a built-in plugin the server cannot run without. */
+export class RequiredExtensionError extends Error {
+  override readonly name = "RequiredExtensionError";
+  constructor(extension: string) {
+    super(`${extension} is required by the server and cannot be disabled`);
+  }
+}
+
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private readonly durableHarness: Promise<DurableHarness>;
   private storage: Storage;
@@ -660,7 +668,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.durableSessionsOn = enabled;
   }
 
-  /** Re-read the durable entries of enabled Pi packages into the Harness registry. */
+  /** Discover and load every plugin again into the Harness registry. */
   async reloadDurableExtensions(): Promise<DurableExtensionReport> {
     return (await this.durableHarness).reloadExtensions();
   }
@@ -675,7 +683,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /**
    * Enable or disable a loaded durable extension by name in the server config
    * (`experimental.durableExtensions.disabled`). New sessions follow at once; a bound session
-   * at its next attach. `null` for an unknown name.
+   * at its next attach. `null` for an unknown name; throws `RequiredExtensionError` for disabling
+   * a built-in the server cannot run without.
    */
   async setDurableExtensionEnabled(
     name: string,
@@ -684,6 +693,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const listing = await this.listDurableExtensions();
     const found = listing.find((extension) => extension.name === name);
     if (!found) return null;
+    if (found.required && !enabled) throw new RequiredExtensionError(name);
     // From the file as it is now: `oppi config set` writes it from another process.
     this.storage.mutateConfig((latest) => {
       const experimental = latest.experimental ?? {};

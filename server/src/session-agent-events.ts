@@ -31,10 +31,7 @@ import {
   translatePiEvent,
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
-import {
-  agentMessageText,
-  type AgentMessageData,
-} from "../extensions/durable/sessions/agent-message.js";
+import { agentMessageText, type AgentMessageData } from "../plugins/subagents/agent-message.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";

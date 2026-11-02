@@ -414,22 +414,31 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(settings.packages[0]?.skills).toEqual([]);
   });
 
-  it("says whether the package behind an extension declares a durable entry", async () => {
+  it("says whether the package behind an extension holds a plugin", async () => {
     const fixture = makeFixture();
-    const packages = ["classic-only", "with-durable", "broken-manifest"].map((name) => {
+    const packages = ["classic-only", "with-plugin", "listed-plugin", "broken-list"].map((name) => {
       const dir = join(fixture.root, name);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "index.ts"), "export default function () {}\n");
-      writeFileSync(join(dir, "durable.ts"), "export default {};\n");
-      const oppi =
-        name === "classic-only"
-          ? undefined
-          : name === "with-durable"
-            ? { durable: { entry: "./durable.ts" } }
-            : { durable: { entry: "durable.ts" } }; // not "./": an invalid manifest
+      if (name === "with-plugin") writeFileSync(join(dir, "server.ts"), "export default {};\n");
+      if (name === "listed-plugin" || name === "broken-list") {
+        // A plugin in a folder its manifest lists.
+        mkdirSync(join(dir, "server"));
+        writeFileSync(
+          join(dir, "server", "package.json"),
+          JSON.stringify({ name: `${name}-facet` }),
+        );
+        writeFileSync(join(dir, "server", "server.ts"), "export default {};\n");
+      }
+      const chord =
+        name === "listed-plugin"
+          ? { plugins: ["./server"] }
+          : name === "broken-list"
+            ? { plugins: "./server" } // not a list: an invalid manifest
+            : undefined;
       writeFileSync(
         join(dir, "package.json"),
-        JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./index.ts"] }, oppi }),
+        JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./index.ts"] }, chord }),
       );
       return dir;
     });
@@ -440,12 +449,13 @@ describe("ServerResourceService mutations and skill details", () => {
 
     const service = makeService(fixture);
     const listed = (await service.listExtensions()).extensions;
-    const durable = async (name: string): Promise<boolean> =>
-      service.hasDurableEntry(listed.find((extension) => extension.name === name)!.id);
+    const hasPlugin = async (name: string): Promise<boolean> =>
+      service.hasPlugin(listed.find((extension) => extension.name === name)!.id);
 
-    expect(await durable("classic-only")).toBe(false);
-    expect(await durable("with-durable")).toBe(true);
-    expect(await durable("broken-manifest")).toBe(false);
+    expect(await hasPlugin("classic-only")).toBe(false);
+    expect(await hasPlugin("with-plugin")).toBe(true);
+    expect(await hasPlugin("listed-plugin")).toBe(true);
+    expect(await hasPlugin("broken-list")).toBe(false);
   });
 
   it("reads skill detail through a symlinked user skill directory", async () => {

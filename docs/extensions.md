@@ -19,7 +19,7 @@ Oppi adds a lifecycle-journal extension and Pi's built-ins to each managed sessi
 | --- | --- |
 | Managed host | `mcp`, `codemode`, `tool-search` |
 | Managed sandbox | `mcp`, `tool-search` (no `codemode`) |
-| Durable (host and sandbox) | Durable versions of `mcp`, `codemode`, and `tool_search`, and native durable extensions instead of Pi's ([Durable extensions](#durable-extensions)). An Agent's exact selection keeps `codemode` only with `builtin:codemode`. |
+| Durable (host and sandbox) | Durable versions of `mcp`, `codemode`, and `tool_search`, and plugins instead of Pi's extensions ([Plugins](#plugins)). An Agent's exact selection keeps `codemode` only with `builtin:codemode`. |
 | Oppi Mirror | None; the terminal's own Pi loads its built-ins |
 
 `-builtin:<name>` in Pi settings, an Agent's exact extension selection, or another extension that registers the same tool, command, or flag can leave a built-in out ([MCP, codemode, and tool search](server-configuration.md#mcp-servers-codemode-and-tool-search)). A Pi extension can register a tool named `oppi`; Oppi does not reserve that name.
@@ -34,7 +34,7 @@ An Oppi Control session is the workspace-less session Oppi opens for **Edit with
 - **Oppi tools:** one tool per Oppi action (`agents_list`, `agents_create`, `schedules_run`, `sessions_send`, `workspaces_get`, …) and `oppi` for any other CLI command. pi-durable's `codemode` runs scripts that call the same tools as `tools.<name>(…)`; a script resumes after a server restart without rerunning finished calls. Read tools only read.
 - **Confirm cards:** every write through the Oppi tools waits for a confirm card that says in plain words what changes: a title with the action and the item by name (`Change Agent “QA reviewer”?`), a one-line summary, each field with its old and new value (long text, and the message a write sends, as a text block or line diff; every value is shown as code, never as formatting; characters a screen cannot show, such as invisible Unicode tag characters, appear as a counted marker like `⟨45 hidden characters⟩`, and a warning says how many it shows that way, while ordinary emoji show whole; a value is never cut short), a plain warning when an update has no expected version or the current record could not be read, and last the method and path. The card comes from the request the server is about to send and the records it read, never from the model's description. A direct call offers the action's own button (**Apply Change**, **Create Agent**, **Run Schedule**, …) or **Cancel**; inside a codemode script the card also offers **Apply All in This Script**. No setting skips it. A cancelled card sends nothing.
 - **Host tools:** `read`, `bash`, `edit`, and `write`, as classic Pi Control had, for Skills, extensions, themes, Pi's global configuration, and `oppi config` and `oppi dictionary`. The session runs as the server's host user. These get no card: the prompt tells the session to say what a file edit changes and to show a command that writes and wait for your yes, which is an instruction to the model, not an enforced confirmation. `bash` can run any command, the `oppi` CLI included.
-- **Not loaded:** Pi extensions, MCP servers, package durable extensions, and the Mobile Output Guide. `ask`, `codemode`, and the tools above are the whole set.
+- **Not loaded:** Pi extensions, MCP servers, your plugins, and the Mobile Output Guide. `ask`, `codemode`, and the tools above are the whole set.
 
 No other session gets the Oppi tools. Pi Control sessions created before this change keep their classic setup: they stay listed and resume on the classic engine with the classic setup prompt and tools (`read`, `bash`, `edit`, `write`, and `ask` when an extension provides it). Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, `intent`, `targetId`, and `targetName` fields and starts an Oppi Control session. An already-installed Mac app must be rebuilt for **Edit with Oppi**: it requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not have.
 
@@ -69,7 +69,7 @@ The workspace **Extensions** picker starts from the extensions Pi resolves for t
 
 `auto-name` is a Pi extension that names an unnamed session from its first message: a small model writes a 2–6 word title and the extension calls Pi's `setSessionName()`, which Oppi lists and shows like any other name. It replaces the built-in **Auto-Name** setting and works in terminal Pi, Oppi sessions, and durable sessions. It never renames a session that has a name (yours, one given at creation such as `oppi session create --name`, or another extension's), titles only a session's first message, and when no title can be made (no model, no credentials, a 15-second timeout) leaves the session unnamed and logs the reason once.
 
-Oppi ships the package in its npm install, at `extensions/pi/auto-name` next to the server's `src`, and lists it in Pi's user settings as an **off** package the first time `oppi serve` starts. It then shows as `auto-name` in the sidebar's **Extensions** page, off until you turn it on. Deleting the entry removes it for good: the server remembers that it offered it.
+Oppi ships the package in its npm install, at `plugins/auto-name` next to the server's `src`, and lists it in Pi's user settings as an **off** package the first time `oppi serve` starts. It then shows as `auto-name` in the sidebar's **Extensions** page, off until you turn it on. Deleting the entry removes it for good: the server remembers that it offered it.
 
 - **On and off:** turn it on or off with the **Enabled** switch on the `auto-name` page, opened from **Extensions** in the sidebar (every session, durable ones included; the server reloads durable extensions for you) or, for classic sessions, in a workspace's **Extensions** list (that workspace only). In terminal Pi it follows `pi config`. Durable sessions load user-scope packages, so a workspace's list does not change them.
 - **Model:** `~/.pi/agent/auto-name.json` holds `{ "model": "provider/model-id" }`, read for each title. Without it the extension uses the cheapest small model of the session's provider: an id with `haiku`, `flash`, `mini`, `nano`, `lite`, or `small` as a whole part, non-reasoning first. On OpenRouter it stays with the session model's vendor, so a Claude session does not title through another vendor's model, and `:batch` variants are skipped. With no small model it uses the session's own. OpenAI Codex subscription models cannot answer a plain completion, so a Codex session names nothing by default and logs once that you should set `auto-name.json` (for example `{ "model": "anthropic/claude-haiku-5-5" }`). A configured model that is not available names nothing too; there is no silent fallback to a model you did not choose. A title is one request of about 30 output tokens to that provider, so it follows the same [privacy boundary](privacy.md#model-providers-and-server-extensions) as the session's other model calls.
@@ -262,7 +262,7 @@ Durable sessions do not use this channel: their background jobs and subagent rep
 
 ## Reference extension examples
 
-`pi-extensions/*` packages are copyable examples, not Oppi product features, and installing Oppi does not enable them. Link a package into `~/.pi/agent/extensions/` or run `pi -e ./pi-extensions/<name>`.
+These packages are copyable classic Pi extensions; installing Oppi does not enable them in classic sessions or terminal Pi. `ask`, `subagents`, `background-jobs`, and `auto-name` live with their durable plugins in `server/plugins/<name>`, the others in `pi-extensions/<name>`. Link a package into `~/.pi/agent/extensions/` or run `pi -e <path>`.
 
 | Package | Registers | Behavior |
 | --- | --- | --- |
@@ -325,53 +325,50 @@ export default {
 
 Mirror mode sends the same semantic request payloads from a terminal Pi process; its first-wins dialog behavior is in the [compatibility matrix](oppi-mirror.md#extension-ui-compatibility-matrix).
 
-## Durable extensions
+## Plugins
 
-Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. A package adds a durable entry and declares it in `package.json`:
+Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. They run plugins, in the layout of upstream Chord's plugin guide: a folder with a `package.json` whose `name` is the plugin's, and a `server.ts` whose default export is a facet. The facet contributes one durable extension to Oppi's `Extensions` registry. One folder can hold both entries of a feature, with shared code next to them:
 
-```json
-{
-  "name": "release-notes",
-  "pi": { "extensions": ["./index.ts"] },
-  "oppi": { "durable": { "entry": "./durable.ts", "runtimes": ["host"] } }
-}
+```text
+release-notes/
+  package.json   { "name": "release-notes", "pi": { "extensions": ["./index.ts"] } }
+  server.ts      the plugin (durable sessions)
+  index.ts       the classic Pi extension (classic sessions, terminal Pi)
 ```
 
-- `entry` is a path inside the package starting with `./`. A `.js` path whose file is missing finds its `.ts` source.
-- `runtimes` lists `"host"`, `"sandbox"`, or both; it defaults to `["host"]`. Add `"sandbox"` only if every command and file access goes through `api.env`.
-- A package without `oppi.durable` has no durable entry. An invalid manifest (unknown keys, a missing file, an unknown runtime) is a load error.
-
-The entry's default export is a plain pi-durable extension, or an array of them:
-
 ```ts
-// ~/.pi/agent/extensions/release-notes/durable.ts
-import { obj } from "@earendil-works/pi-schema";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+// release-notes/server.ts
+import { defineExtension, defineFacet, defineTool, Extensions } from "oppi/v1";
+import { obj } from "oppi/v1/schema";
 
-export default defineExtension({
-  name: "release-notes",
-  tools: [
-    defineTool({
-      name: "release_notes",
-      description: "Read the latest release notes.",
-      parameters: obj({}),
-      replay: "safe", // a read; rerun after a crash
-      async execute(_args, api, context) {
-        const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
-        return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
-      },
-    }),
-  ],
+const releaseNotes = defineTool({
+  name: "release_notes",
+  description: "Read the latest release notes.",
+  parameters: obj({}),
+  replay: "safe", // a read; rerun after a crash
+  async execute(_args, api, context) {
+    const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
+    return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
+  },
+});
+
+export default defineFacet((_host, self) => {
+  self.contribute(Extensions, defineExtension({ name: "release-notes", tools: [releaseNotes], runtimes: ["host", "sandbox"] }));
 });
 ```
 
-An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that only needs the Oppi Session id of its own conversation (for a link, say) reads `(await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId`, with `DurableSessionDoc` from `oppi/durable`. One that also reads or sets the Session's name calls `await oppiHost().sessionName(api, context)` for its `sessionId`, `get()` and `set(name)`, as `auto-name` does from a generation hook. It names the Session of the conversation `api` is for and takes no Session id, so an extension cannot name another Session by mistake; extension code is trusted like the rest of the server process, and the host cannot tell a hand-built `api` from pi-durable's.
+- `oppi/v1` is Oppi's plugin API: `defineFacet`, the `Extensions` registry, pi-durable's authoring API (`defineTool`, `defineTask`, `hook`, `section`, `defineDoc`, …) and Oppi's host API below. `oppi/v1/schema` is pi-schema's builders.
+- `defineExtension` takes `runtimes`: `"host"`, `"sandbox"`, or both; it defaults to `["host"]`. Add `"sandbox"` only if every command and file access goes through `api.env`.
+- A package lists several plugins in `"chord": { "plugins": ["./a", "plugins/*", "!plugins/draft"] }` (paths, globs, `!` exclusions). A file `<name>.server.ts` at the top of the plugin folder is a single-file plugin.
 
-- **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
-- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `@earendil-works/pi-schema`, `typebox`, and `oppi/durable` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
+A plugin that shows Oppi UI imports it from `oppi/v1`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that only needs the Oppi Session id of its own conversation (for a link, say) reads `(await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId`, with `DurableSessionDoc` from `oppi/v1`. One that also reads or sets the Session's name calls `await oppiHost().sessionName(api, context)` for its `sessionId`, `get()` and `set(name)`, as `auto-name` does from a generation hook. It names the Session of the conversation `api` is for and takes no Session id, so an extension cannot name another Session by mistake; extension code is trusted like the rest of the server process, and the host cannot tell a hand-built `api` from pi-durable's.
+
+- **Where Oppi looks:** its built-in plugins first, then yours: `~/.pi/agent/plugins/`, and the enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). A saved Agent that selects a package's classic extension gets its plugin in a durable session. Project `.pi/extensions` packages are never loaded.
+- **Shared modules:** `oppi/v1`, `oppi/v1/schema`, `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `@earendil-works/pi-schema`, and `typebox` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship `server.ts` and every file it imports in the package's `files`.
 - **Tool schemas:** build them with pi-schema's builders (`obj`, `str`, `opt`, ...). An `obj()` rejects arguments it does not declare, and the model sees which field was unknown; pass `{ open: true }` to accept others.
-- **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. Oppi Control sessions select none. A name, tool name, or task name another extension already uses is refused, as are an extension with two tools or two sections of one name and a section key pi-durable does not accept. A package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
-- **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load or install is reported in the server log and the reload output; the others load, and no user package can keep the durable runtime from opening.
-- **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports, Oppi's bundled ones included. An installed extension is replaced in place: a running tool call finishes on its old code, and the next call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
-- **Turn one off:** `oppi extensions list` shows every durable extension, Oppi's built-ins (such as `sql-explorer`) included, and whether it is on. `oppi extensions disable <name>` leaves it out of durable sessions without uninstalling it, and `oppi extensions enable <name>` brings it back (stored as `experimental.durableExtensions.disabled`; no restart). New sessions follow at once and an open session the next time it attaches. A saved Agent session that selected a disabled extension starts without it, shows a session warning, and keeps running without it after you enable it again; start the Agent anew to get it.
+- **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. Oppi Control sessions select none.
+- **Clashes:** an extension name, tool name, or task name another plugin already has is a load error for the newcomer: Oppi's built-ins keep theirs, and a plugin already loaded keeps its own. So are an extension with two tools or two sections of one name, a section key pi-durable does not accept, and a tool of Oppi's own (`read`, `bash`, `codemode`, …). A package named like one of Oppi's built-in plugins (such as `ask`, linked from a checkout) counts as that built-in and is skipped.
+- **Loading:** when the server opens its durable store, on `oppi extensions reload`, and on `/reload` in a durable session. A plugin that fails to load is reported in the server log and the reload output; the others load, and no plugin of yours can keep the durable runtime from opening.
+- **Reload without a restart:** a reload discovers every plugin again and re-reads each `server.ts` and the files it imports, Oppi's built-ins included. Every session on the server shares the new code: an installed extension is replaced in place, so a running tool call finishes on its old code and the next call uses the new code. A plugin that fails to load keeps its previous code, and `/reload` then reports the error. A plugin that is gone is uninstalled. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
+- **Turn one off:** `oppi extensions list` shows every durable extension, Oppi's built-ins included, whether it is on, and whether it is required. Only `sql-explorer` of the built-ins can be turned off; the server needs the others. `oppi extensions disable <name>` leaves it out of durable sessions without uninstalling it, and `oppi extensions enable <name>` brings it back (stored as `experimental.durableExtensions.disabled`; no restart). New sessions follow at once and an open session the next time it attaches. A saved Agent session that selected a disabled extension starts without it, shows a session warning, and keeps running without it after you enable it again; start the Agent anew to get it.
 - **Trust:** the code runs in the Oppi server process with your permissions, like a classic extension. It is not sandboxed, even for sandbox sessions.

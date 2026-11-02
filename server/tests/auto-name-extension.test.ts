@@ -14,10 +14,10 @@ import {
   TITLE_INSTRUCTIONS,
   type AutoNameJob,
   type TitleModels,
-} from "../../pi-extensions/auto-name/core.js";
-import autoNameExtension from "../../pi-extensions/auto-name/index.js";
+} from "../plugins/auto-name/core.js";
+import autoNameExtension from "../plugins/auto-name/index.js";
 
-// ─── The title contract (pi-extensions/auto-name/session-title.json) ───
+// ─── The title contract (plugins/auto-name/session-title.json) ───
 
 interface TitleContract {
   instructions: string;
@@ -27,7 +27,7 @@ interface TitleContract {
 
 const contract = JSON.parse(
   readFileSync(
-    new URL("../../pi-extensions/auto-name/session-title.json", import.meta.url),
+    new URL("../plugins/auto-name/session-title.json", import.meta.url),
     "utf8",
   ),
 ) as TitleContract;

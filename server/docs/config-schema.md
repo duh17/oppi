@@ -175,7 +175,7 @@ There is no Oppi flag for MCP, codemode, or tool search. Managed host sessions a
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
-Extensions own approval behavior. When a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `pi-extensions/ask` example. No Oppi-specific approval config is required.
+Extensions own approval behavior. When a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `server/plugins/ask` example. No Oppi-specific approval config is required.
 
 ## Full example
 

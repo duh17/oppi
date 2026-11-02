@@ -9,7 +9,6 @@ import {
   AgentDoc,
   Harness,
   SessionFailed,
-  createRegistry,
   defineDoc,
   type AnyTask,
   type Extension,
@@ -17,7 +16,7 @@ import {
   type Conversation,
   type ConversationId,
   type EntryId,
-  type Registry,
+  type RegistryReader,
   type ReportInfo,
   type Storage,
   type TaskGraph,
@@ -36,8 +35,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
+import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {
@@ -48,16 +48,9 @@ import {
 } from "./durable-extension-api.js";
 import type { DurableControlCli } from "./durable-control-cli.js";
 import { fileToolsHost } from "./durable-file-tools-host.js";
-import { DurableUI } from "../extensions/durable/durable-ui.js";
-import {
-  BUNDLED_PACKAGES_DIR,
-  bundledDurableExtensionPackages,
-  discoverDurableExtensionPackages,
-  loadDurableExtensions,
-  type DurableExtensionIssue,
-  type DurableExtensionRuntime,
-  type LoadedDurableExtension,
-} from "./durable-extension-loader.js";
+import { DurableUI } from "./durable-ui.js";
+import type { PluginRuntime } from "./oppi-v1.js";
+import { PluginHost, type LoadedPlugin, type PluginIssue } from "./plugin-host.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
 import { OppiAgentDoc, type ClassicExtensionIndex } from "./durable-agent.js";
@@ -75,7 +68,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
-import { LIVE_VOICE_EXTENSION } from "../extensions/durable/live-voice/contract.js";
+import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
@@ -190,13 +183,17 @@ export function durableStoreMetaFromSession(session: Session, cwd: string): Dura
   };
 }
 
+/** A plugin's durable extension, by its extension name. */
 export interface DurableExtensionSummary {
   name: string;
+  /** The plugin's facet file. */
   entry: string;
-  runtimes: readonly DurableExtensionRuntime[];
+  runtimes: readonly PluginRuntime[];
   tools: string[];
-  /** One of Oppi's bundled packages rather than a user's Pi package. */
+  /** One of Oppi's built-in plugins rather than one of the owner's. */
   builtIn: boolean;
+  /** A built-in the server cannot run without: it cannot be disabled. */
+  required: boolean;
 }
 
 /** A durable extension workspace sessions may select, and whether the server enables it. */
@@ -204,27 +201,66 @@ export interface DurableExtensionListing extends DurableExtensionSummary {
   enabled: boolean;
 }
 
-/** What one load of the bundled and Pi packages' durable entries did to the registry. */
+/** A plugin, folder, or file that failed to load, or was left out on purpose. */
+export interface DurableExtensionIssue {
+  /** The file or folder that failed. */
+  entry: string;
+  message: string;
+  /** The plugin's name, when the issue is one plugin's. */
+  plugin?: string;
+}
+
+/** What one load of the plugins did to the registry. */
 export interface DurableExtensionReport {
   /** Installed from this load; a name that was already installed was replaced in place. */
   loaded: DurableExtensionSummary[];
   /** Failed to load this time; the previously loaded code stays installed. */
   kept: DurableExtensionSummary[];
-  /** Installed before, and no longer provided by any enabled package: uninstalled. */
+  /** Installed before, and no longer provided by any plugin: uninstalled. */
   removed: string[];
   skipped: DurableExtensionIssue[];
   errors: DurableExtensionIssue[];
 }
 
-function summarize(loaded: LoadedDurableExtension, builtIn: boolean): DurableExtensionSummary {
+function summarize(loaded: LoadedPlugin): DurableExtensionSummary {
   return {
     name: loaded.extension.name,
-    entry: loaded.entry,
+    entry: loaded.facet,
     runtimes: loaded.runtimes,
     tools: (loaded.extension.tools ?? []).map((tool) => tool.name),
-    builtIn,
+    builtIn: loaded.source === "built-in",
+    required: loaded.required,
   };
 }
+
+function issueOf(issue: PluginIssue): DurableExtensionIssue {
+  return {
+    entry: issue.path,
+    message: issue.message,
+    ...(issue.plugin ? { plugin: issue.plugin } : {}),
+  };
+}
+
+/** Oppi's built-in plugins (`server/plugins`), next to `src/` in the source tree and the build. */
+export const BUILT_IN_PLUGINS_DIR = fileURLToPath(new URL("../plugins/", import.meta.url));
+
+/**
+ * The built-in plugins the server cannot run without, by plugin name: its code names their
+ * extensions (Oppi Control's selection, `subagent`, `notify`, `speak`, the background-jobs and
+ * working-words documents), or a durable session needs them to match a classic one (file tools,
+ * project context). They load first or the runtime does not open, and cannot be disabled.
+ */
+const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
+  "oppi-file-tools",
+  "ask",
+  "oppi-working-words",
+  "background-jobs",
+  "subagents",
+  "oppi-project-context",
+  "oppi-notify",
+  "oppi-live-voice",
+  "oppi-control",
+]);
 
 /** Selected only by Oppi Control sessions, never by default. */
 const CONTROL_EXTENSION = "oppi.control";
@@ -1415,23 +1451,17 @@ export class DurableHarness {
   private runSettings?: HarnessSettings;
   /** The manager `runSettings` reads live. Writes reach every conversation and persist to user settings. */
   private runPolicy?: SettingsManager;
-  private registry?: Registry;
+  /** The plugin host; set when the runtime opens. */
+  private pluginHost?: PluginHost;
   private threads?: DurableThreads;
   private control?: DurableControlCli;
   private notifyBinding?: SessionNotifyPort;
   private liveVoiceBinding?: LiveVoiceRuntimePort;
   private sessionBinding?: DurableSessionBinding;
-  /** Extensions from Oppi's bundled packages, in install order. */
-  private bundled: readonly LoadedDurableExtension[] = [];
-  /** Extensions from the durable entries of enabled Pi packages, in load order. */
-  private packageExtensions: readonly LoadedDurableExtension[] = [];
-  private classic: ClassicExtensionIndex = { bundled: new Set(), names: new Map() };
   private disabledExtensions: () => readonly string[] = () => [];
-  /** One load or reload at a time. */
-  private extensionLoad: Promise<unknown> = Promise.resolve();
   private shared?: Promise<{
     models: ModelRuntime;
-    registry: Registry;
+    registry: RegistryReader;
     settings: HarnessSettings;
   }>;
   private readonly hosts = new Map<string, SessionHost>();
@@ -1505,12 +1535,22 @@ export class DurableHarness {
   }
 
   /**
-   * @param bundledDir Where Oppi's bundled packages are; a test points it at a copy to reload.
+   * @param builtInDir Oppi's built-in plugin root; a test points it at a copy to reload.
    */
   constructor(
     readonly dataDir: string,
-    private readonly bundledDir = BUNDLED_PACKAGES_DIR,
+    private readonly builtInDir = BUILT_IN_PLUGINS_DIR,
   ) {}
+
+  /** Installed built-in plugins, in install order. */
+  private get bundled(): readonly LoadedPlugin[] {
+    return (this.pluginHost?.plugins ?? []).filter((plugin) => plugin.source === "built-in");
+  }
+
+  /** Installed owner plugins, in install order. */
+  private get packageExtensions(): readonly LoadedPlugin[] {
+    return (this.pluginHost?.plugins ?? []).filter((plugin) => plugin.source === "owner");
+  }
 
   private builtIn(name: string): Extension {
     const found = this.bundled.find((builtIn) => builtIn.extension.name === name);
@@ -1567,7 +1607,7 @@ export class DurableHarness {
    * What a new session of `runtime` starts from: CodingTools, the enabled built-ins it allows, and
    * codemode. Which of their Pi tools it offers is the Pi Tools setting's (`toolAllowed`).
    */
-  builtInsFor(runtime: DurableExtensionRuntime): Extension[] {
+  builtInsFor(runtime: PluginRuntime): Extension[] {
     return [
       CodingTools,
       ...this.bundled
@@ -1586,9 +1626,12 @@ export class DurableHarness {
    * Whether workspace sessions select the durable extension `name`, built-in or from a Pi package
    * (`experimental.durableExtensions.disabled`, read at each use). A disabled extension stays
    * installed, so its pending tasks still find their definition; new sessions leave it out and a
-   * bound one drops it at its next attach. Oppi Control sessions keep their exact selection.
+   * bound one drops it at its next attach. Oppi Control sessions keep their exact selection. A
+   * required built-in is always on.
    */
   isExtensionEnabled(name: string): boolean {
+    if (this.bundled.some((plugin) => plugin.required && plugin.extension.name === name))
+      return true;
     return !this.disabledExtensions().includes(name);
   }
 
@@ -1597,8 +1640,8 @@ export class DurableHarness {
     return [
       ...this.bundled
         .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
-        .map((builtIn) => summarize(builtIn, true)),
-      ...this.packageExtensions.map((loaded) => summarize(loaded, false)),
+        .map(summarize),
+      ...this.packageExtensions.map(summarize),
     ].map((summary) => ({ ...summary, enabled: this.isExtensionEnabled(summary.name) }));
   }
 
@@ -1691,7 +1734,7 @@ export class DurableHarness {
    * Extensions loaded from Pi packages that a session of this runtime selects next to the
    * built-ins. Oppi Control sessions select none of them.
    */
-  packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
+  packageExtensionsFor(runtime: PluginRuntime): Extension[] {
     return this.packageExtensions
       .filter(
         (loaded) =>
@@ -1700,189 +1743,64 @@ export class DurableHarness {
       .map((loaded) => loaded.extension);
   }
 
-  /** Every loaded Pi package durable extension, with the classic IDs saved Agents select it by. */
-  get loadedPackages(): readonly LoadedDurableExtension[] {
+  /** Every loaded owner plugin, with the classic IDs saved Agents select it by. */
+  get loadedPackages(): readonly LoadedPlugin[] {
     return this.packageExtensions;
   }
 
   /** The classic Extension IDs a saved Agent may select that the built-ins cover, and every ID's name. */
   get classicExtensions(): ClassicExtensionIndex {
-    return this.classic;
+    return this.pluginHost?.classic ?? { bundled: new Set(), names: new Map() };
   }
 
   /**
-   * Re-read Oppi's bundled packages and the durable entries of enabled Pi packages, and install
-   * them in the open registry. Installing an extension under an installed name replaces it in
-   * place: running tool calls finish on their old code, and the next task phase, request, or
-   * call uses the new code. A package that fails to load, bundled or not, keeps its previous code
-   * installed; a Pi package that is gone is uninstalled, and conversations that selected it stop
-   * getting it.
+   * Discover and load every plugin again (`PluginHost.reload`): a plugin's new code replaces its
+   * extension in place, so running tool calls finish on their old code and the next task phase,
+   * request, or call uses the new code. A plugin that fails to load keeps its previous code; an
+   * owner plugin that is gone is uninstalled, and conversations that selected it stop getting it.
+   * One registry serves every session, so the reload reaches all of them.
    */
   async reloadExtensions(): Promise<DurableExtensionReport> {
-    const { registry } = await this.ensureShared();
-    return this.loadExtensions(registry, false);
-  }
-
-  private loadExtensions(registry: Registry, first: boolean): Promise<DurableExtensionReport> {
-    const run = this.extensionLoad.then(() => this.loadExtensionsOnce(registry, first));
-    this.extensionLoad = run.catch(() => undefined);
-    return run;
-  }
-
-  private async loadExtensionsOnce(
-    registry: Registry,
-    first: boolean,
-  ): Promise<DurableExtensionReport> {
-    const builtIns = await this.loadBuiltIns(registry, first);
-    if (first) registry.install(this.codemode);
-    const packages = await this.loadPackages(registry);
-    const report: DurableExtensionReport = {
-      loaded: [...builtIns.loaded, ...packages.loaded],
-      kept: [...builtIns.kept, ...packages.kept],
-      removed: packages.removed,
-      skipped: packages.skipped,
-      errors: [...builtIns.errors, ...packages.errors],
+    await this.ensureShared();
+    if (!this.pluginHost) throw new Error("Server durable runtime is not open");
+    const report = await this.pluginHost.reload();
+    return {
+      loaded: report.loaded.map(summarize),
+      kept: report.kept.map(summarize),
+      removed: [...report.removed],
+      skipped: report.skipped.map(issueOf),
+      errors: report.errors.map(issueOf),
     };
-    this.logExtensionReport(report);
-    return report;
   }
 
   /**
-   * Load Oppi's bundled packages. The first load installs every built-in in order and fails the
-   * runtime when one is broken; a reload replaces the ones that load and keeps the previous code
-   * of the others. A built-in is never uninstalled.
+   * `/reload` in a durable session: `reloadExtensions`, which reaches every session on the server,
+   * then a failure naming each plugin that did not load (any previous code of it stays).
    */
-  private async loadBuiltIns(
-    registry: Registry,
-    first: boolean,
-  ): Promise<Pick<DurableExtensionReport, "loaded" | "kept" | "errors">> {
-    const previous = this.bundled;
-    const found = bundledDurableExtensionPackages(this.bundledDir);
-    // Names only: built-ins may offer a tool CodingTools has, as background-jobs does with `bash`.
-    const result = await loadDurableExtensions(found.packages, {
-      names: reservedBy([CodingTools, this.codemode]).names,
-      tools: new Set(),
-      tasks: installedTasks(registry),
-    });
-    const errors = [...found.errors, ...result.errors, ...result.skipped];
-    const failed = (): Error =>
-      new Error(
-        `Oppi's bundled durable extensions failed to load: ${errors
-          .map((issue) => `${issue.entry}: ${issue.message}`)
+  async reloadPluginsOrThrow(): Promise<void> {
+    const { errors } = await this.reloadExtensions();
+    if (errors.length > 0)
+      throw new Error(
+        `Plugins failed to load (any previous code stays): ${errors
+          .map((issue) => `${issue.plugin ?? issue.entry}: ${issue.message}`)
           .join("; ")}`,
       );
-    if (first && errors.length) throw failed();
-    const installed = installPackages(registry, result.loaded, previous);
-    errors.push(...installed.errors);
-    if (first && errors.length) throw failed();
-    const fresh = new Map(installed.loaded.map((loaded) => [loaded.extension.name, loaded]));
-    const kept = previous.filter((old) => !fresh.has(old.extension.name));
-    this.bundled = [
-      ...previous.map((old) => fresh.get(old.extension.name) ?? old),
-      ...installed.loaded.filter(
-        (loaded) => !previous.some((old) => old.extension.name === loaded.extension.name),
-      ),
-    ];
-    return {
-      loaded: installed.loaded.map((loaded) => summarize(loaded, true)),
-      kept: kept.map((old) => summarize(old, true)),
-      errors,
-    };
-  }
-
-  private async loadPackages(registry: Registry): Promise<DurableExtensionReport> {
-    const previous = this.packageExtensions;
-    let discovered: Awaited<ReturnType<typeof discoverDurableExtensionPackages>>;
-    try {
-      discovered = await discoverDurableExtensionPackages(getAgentDir());
-    } catch (error) {
-      // Discovery itself failed: change nothing, so a settings typo cannot unload everything.
-      return {
-        loaded: [],
-        kept: previous.map((old) => summarize(old, false)),
-        removed: [],
-        skipped: [],
-        errors: [
-          { entry: getAgentDir(), message: `Package discovery failed: ${safeErrorMessage(error)}` },
-        ],
-      };
-    }
-    const result = await loadDurableExtensions(discovered.packages, {
-      // Every built-in, enabled or not: a package must not take a disabled built-in's name.
-      ...reservedBy([
-        CodingTools,
-        ...this.bundled.map((builtIn) => builtIn.extension),
-        this.codemode,
-      ]),
-      // This load replaces or removes the previous packages' extensions, and their tasks with them.
-      tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
-    });
-    // A package skipped because Oppi bundles its extensions (a link to `pi-extensions/ask`)
-    // stands for that built-in when a saved Agent selects it.
-    const bundledRoots = new Set(result.skipped.map((issue) => issue.root));
-    this.classic = {
-      bundled: new Set(
-        discovered.packages
-          .filter((found) => bundledRoots.has(found.root))
-          .flatMap((found) => found.extensionIds),
-      ),
-      names: discovered.names,
-    };
-    // Packages no longer discovered go first, so a new package may take over a name or task
-    // they held in this same reload. A package still discovered stays installed until its new
-    // code installs, so a broken update of it rolls back to its previous code.
-    // A package whose manifest failed is still on disk: it keeps its code, as an import failure does.
-    const discoveredRoots = new Set([
-      ...discovered.packages.map((found) => found.root),
-      ...discovered.errors.flatMap((issue) => (issue.root ? [issue.root] : [])),
-    ]);
-    const gone = previous.filter((old) => !discoveredRoots.has(old.root));
-    for (const old of gone) registry.uninstall(old.extension);
-    const remaining = previous.filter((old) => discoveredRoots.has(old.root));
-    const installed = installPackages(registry, result.loaded, remaining);
-    const loadedNames = new Set(installed.loaded.map((loaded) => loaded.extension.name));
-    const errors = [...discovered.errors, ...result.errors, ...installed.errors];
-    const failedRoots = new Set(errors.flatMap((issue) => (issue.root ? [issue.root] : [])));
-    const kept = remaining.filter(
-      (old) => failedRoots.has(old.root) && !loadedNames.has(old.extension.name),
-    );
-    const next = [...installed.loaded, ...kept];
-    const nextNames = new Set(next.map((loaded) => loaded.extension.name));
-    const removed = previous.filter((old) => !nextNames.has(old.extension.name));
-    for (const old of removed) if (!gone.includes(old)) registry.uninstall(old.extension);
-    this.packageExtensions = next;
-    return {
-      loaded: installed.loaded.map((loaded) => summarize(loaded, false)),
-      kept: kept.map((old) => summarize(old, false)),
-      removed: removed.map((old) => old.extension.name),
-      skipped: result.skipped,
-      errors,
-    };
-  }
-
-  private logExtensionReport(report: DurableExtensionReport): void {
-    if (report.loaded.length || report.removed.length)
-      log.info("durable_extensions.loaded", {
-        loaded: report.loaded.map((loaded) => loaded.name),
-        removed: report.removed,
-      });
-    for (const issue of report.errors)
-      log.error("durable_extensions.load_failed", { entry: issue.entry, message: issue.message });
   }
 
   /** The installed definition of task `name`; pi-durable resolves tasks by name, so the current code. */
   installedTask(name: string): AnyTask {
-    const task = this.registry?.snapshot().task(name);
+    const task = this.pluginHost?.registry().snapshot().task(name);
     if (!task) throw new Error(`Durable task ${name} is not installed`);
     return task;
   }
 
+  /** Install a session's own extension (its MCP) next to the plugins, outside them. */
   installExtension(extension: Extension): void {
-    if (!this.registry) throw new Error("Server durable runtime is not open");
-    this.registry.install(extension);
+    if (!this.pluginHost) throw new Error("Server durable runtime is not open");
+    this.pluginHost.install(extension);
   }
   uninstallExtension(extension: Extension): void {
-    this.registry?.uninstall(extension);
+    this.pluginHost?.uninstall(extension);
   }
 
   /** Production open must not invent a runtime that skipped extension provider discovery. */
@@ -1903,7 +1821,7 @@ export class DurableHarness {
 
   async ensureShared(): Promise<{
     models: ModelRuntime;
-    registry: Registry;
+    registry: RegistryReader;
     settings: HarnessSettings;
   }> {
     if (this.closed) throw new Error("Server durable runtime is closed");
@@ -1912,7 +1830,7 @@ export class DurableHarness {
 
   private async ensureSharedInner(): Promise<{
     models: ModelRuntime;
-    registry: Registry;
+    registry: RegistryReader;
     settings: HarnessSettings;
   }> {
     const agentDir = getAgentDir();
@@ -1929,16 +1847,22 @@ export class DurableHarness {
       }));
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
     this.runPolicy = settings;
-    const registry = createRegistry();
-    registry.install(CodingTools);
-    // Once per process, before any package loads: built-ins read the host when their entry is
-    // evaluated, and the slot cannot be bound again, so no package can replace it.
+    // Once per process, before any plugin loads: built-ins read the host when their facet is
+    // evaluated, and the slot cannot be bound again, so no plugin can replace it.
     if (!durableHostBound) {
       bindOppiHost(durableHost);
       durableHostBound = true;
     }
-    await this.loadExtensions(registry, true);
-    this.registry = registry;
+    const plugins = new PluginHost({
+      builtInDir: this.builtInDir,
+      agentDir,
+      required: REQUIRED_PLUGINS,
+      // Built-ins may offer a tool CodingTools has, as background-jobs does with `bash`.
+      core: { first: [CodingTools], afterBuiltIns: [this.codemode] },
+    });
+    await plugins.load();
+    this.pluginHost = plugins;
+    const registry = plugins.registry();
     this.runSettings = harnessSettings(settings, () => this.defaultExtensions);
     return { models, registry, settings: this.runSettings };
   }
@@ -2067,6 +1991,7 @@ export class DurableHarness {
     const hosts = [...this.hosts.values()];
     await Promise.all(hosts.map((host) => host.close()));
     await this.codemodeSandbox.close();
+    await this.pluginHost?.close();
   }
 }
 
@@ -2096,81 +2021,6 @@ function offeredSectionsOnly(extension: Extension, tool: string): Extension {
           : undefined,
     })),
   };
-}
-
-/** Names and tool names a loaded package must not take from `extensions`. */
-function reservedBy(extensions: readonly Extension[]): {
-  names: Set<string>;
-  tools: Set<string>;
-} {
-  return {
-    names: new Set(extensions.map((extension) => extension.name)),
-    tools: new Set(
-      extensions.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
-    ),
-  };
-}
-
-/**
- * The task names `registry` holds, each with the extension holding it (undefined for
- * pi-durable's own tasks), leaving out the tasks of the extensions named in `except`.
- */
-function installedTasks(
-  registry: Registry,
-  except: ReadonlySet<string> = new Set(),
-): Map<string, string | undefined> {
-  const snapshot = registry.snapshot();
-  const tasks = new Map<string, string | undefined>(
-    snapshot.tasks().map((task) => [task.definition.name, undefined]),
-  );
-  for (const extension of snapshot.installed())
-    for (const task of extension.tasks ?? [])
-      if (except.has(extension.name)) tasks.delete(task.definition.name);
-      else tasks.set(task.definition.name, extension.name);
-  return tasks;
-}
-
-/**
- * Install `loaded` package by package. The loader already refused what pi-durable's install
- * rejects; should one still throw, its package keeps its `previous` code (or stays out) and is a
- * load error, so a bad package never stops the load halfway or fails the runtime.
- */
-function installPackages(
-  registry: Registry,
-  loaded: readonly LoadedDurableExtension[],
-  previous: readonly LoadedDurableExtension[],
-): { loaded: LoadedDurableExtension[]; errors: DurableExtensionIssue[] } {
-  const byRoot = new Map<string, { entry: string; extensions: LoadedDurableExtension[] }>();
-  for (const one of loaded) {
-    const known = byRoot.get(one.root);
-    if (known) known.extensions.push(one);
-    else byRoot.set(one.root, { entry: one.entry, extensions: [one] });
-  }
-  const installed: LoadedDurableExtension[] = [];
-  const errors: DurableExtensionIssue[] = [];
-  for (const [root, { entry, extensions }] of byRoot) {
-    const done: LoadedDurableExtension[] = [];
-    try {
-      for (const one of extensions) {
-        registry.install(one.extension);
-        done.push(one);
-      }
-      installed.push(...extensions);
-    } catch (error) {
-      // pi-durable's install publishes nothing when it throws; undo the ones before it.
-      for (const one of done.reverse()) {
-        const old = previous.find((before) => before.extension.name === one.extension.name);
-        if (old) registry.install(old.extension);
-        else registry.uninstall(one.extension);
-      }
-      errors.push({
-        root,
-        entry,
-        message: `Install failed: ${safeErrorMessage(error)}`,
-      });
-    }
-  }
-  return { loaded: installed, errors };
 }
 
 /**

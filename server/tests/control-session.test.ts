@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
 
-import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
+import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { isControlConversation } from "../src/control-session.js";
 import { controlConversationTools } from "../src/durable-control-conversation.js";
 import type { DurableHarness } from "../src/durable-harness.js";

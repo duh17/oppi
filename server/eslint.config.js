@@ -102,8 +102,7 @@ const localPlugin = {
         },
         schema: [],
         messages: {
-          useStructuredLogs:
-            "Use structured logging. See AGENTS.md (TypeScript).",
+          useStructuredLogs: "Use structured logging. See AGENTS.md (TypeScript).",
         },
       },
       create(context) {
@@ -182,10 +181,25 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
-    ignores: ["dist/", "node_modules/"],
+    ignores: [
+      "dist/",
+      "node_modules/",
+      // Classic Pi entries of the built-in plugins, still in Pi's own style.
+      "plugins/ask/extensions/",
+      "plugins/auto-name/core.ts",
+      "plugins/auto-name/index.ts",
+      "plugins/background-jobs/delivery.ts",
+      "plugins/background-jobs/index.ts",
+      "plugins/background-jobs/jobs.ts",
+      "plugins/background-jobs/*.test.ts",
+      "plugins/subagents/index.ts",
+      "plugins/subagents/subagents.ts",
+      "plugins/subagents/supervise.ts",
+      "plugins/subagents/*.test.ts",
+    ],
   },
   {
-    files: ["src/**/*.ts", "extensions/**/*.ts"],
+    files: ["src/**/*.ts", "plugins/**/*.ts"],
     plugins: {
       local: localPlugin,
     },
@@ -239,7 +253,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.test.ts", "src/**/__tests__/**/*.ts", "extensions/**/*.test.ts"],
+    files: ["src/**/*.test.ts", "src/**/__tests__/**/*.ts", "plugins/**/*.test.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",
       "no-console": "off",

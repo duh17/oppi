@@ -363,16 +363,14 @@ export class ServerResourceService {
   }
 
   /**
-   * Whether the Pi package behind extension `id` declares a durable entry, so toggling it
-   * changes what durable sessions load. A classic-only extension does not.
+   * Whether the Pi package behind extension `id` holds a plugin, so toggling it changes what
+   * durable sessions load. A classic-only extension does not.
    */
-  async hasDurableEntry(id: string): Promise<boolean> {
+  async hasPlugin(id: string): Promise<boolean> {
     const context = await this.resolveContext();
     const resource = this.findResourceById("extension", context.extensions, id);
-    // Loaded on demand: the durable loader pulls in pi-durable, which a server with durable
-    // sessions off (and the CLI) must never load.
-    const { packageHasDurableEntry } = await import("./durable-extension-loader.js");
-    return packageHasDurableEntry(resource.path, resource.metadata);
+    const { packageHasPlugin } = await import("./plugin-discovery.js");
+    return packageHasPlugin(resource.path, resource.metadata);
   }
 
   private async resolveContext(): Promise<ResolutionContext> {

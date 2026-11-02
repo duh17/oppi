@@ -14,8 +14,14 @@ describe("extensionScopeFromPath", () => {
     });
   });
 
-  it("attributes repo pi-extensions directories", () => {
-    expect(extensionScopeFromPath("/Users/me/oppi/pi-extensions/ask/index.ts")).toEqual({
+  it("attributes repo pi-extensions directories and built-in plugins' classic entries", () => {
+    expect(
+      extensionScopeFromPath("/Users/me/oppi/pi-extensions/browser-automation-video/index.ts"),
+    ).toEqual({
+      extensionScopeId: "repo:browser-automation-video",
+      extensionDisplayName: "Browser Automation Video",
+    });
+    expect(extensionScopeFromPath("/Users/me/oppi/server/plugins/ask/extensions/ask.ts")).toEqual({
       extensionScopeId: "repo:ask",
       extensionDisplayName: "Ask",
     });
@@ -121,9 +127,7 @@ describe("extensionScopeFromPath", () => {
 
   it("attributes helper files inside a git package by repo name", () => {
     expect(
-      extensionScopeFromPath(
-        "/Users/me/.pi/agent/git/github.com/acme/web-search/src/run.ts",
-      ),
+      extensionScopeFromPath("/Users/me/.pi/agent/git/github.com/acme/web-search/src/run.ts"),
     ).toEqual({
       extensionScopeId: "git:web-search",
       extensionDisplayName: "Web Search",

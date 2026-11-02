@@ -87,17 +87,17 @@ import {
   runFailureText,
   recordTaskFailure,
 } from "./durable-failure-cards.js";
-import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { sanitizeTranscriptCard } from "./durable-ui.js";
 import {
   WORKING_WORDS_EXTENSION,
   WORKING_WORDS_TASK,
   ensureWorkingWords,
-} from "../extensions/durable/working-words/contract.js";
+} from "../plugins/working-words/contract.js";
 import {
   SUBAGENT_WIDGET_TASK,
   Subagents,
   ensureSubagentWidget,
-} from "../extensions/durable/sessions/contract.js";
+} from "../plugins/subagents/contract.js";
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
@@ -109,7 +109,7 @@ import {
   renderSkills,
   type DurableProjectResources,
 } from "./durable-project-resources.js";
-import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
+import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
@@ -491,7 +491,7 @@ export class DurableBackend implements AgentBackend {
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
     const control = isControlConversation(session);
-    // Extensions from Pi packages' durable entries allowed in this runtime, or the exact
+    // Owner plugins' extensions allowed in this runtime, or the exact
     // selection the session launched with; never on control.
     const exact = launched?.doc?.extensions?.packages;
     const packageExtensions = control
@@ -1328,7 +1328,7 @@ export class DurableBackend implements AgentBackend {
     this.assertOpen();
     return this.ui.respond(response);
   }
-  /** Reload AGENTS files and Skills; the next request sends the changed sections. */
+  /** Reload AGENTS files, Skills, then every session's plugins (`reloadPluginsOrThrow`). */
   async reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }> {
     this.assertOpen();
     reloadRuntimeConfig?.();
@@ -1336,6 +1336,7 @@ export class DurableBackend implements AgentBackend {
     this.assertOpen();
     await syncProjectContext(this.conversation, resources);
     this.resources = resources;
+    await this.host.runtime.reloadPluginsOrThrow();
     return { success: true };
   }
   /**
@@ -1377,7 +1378,7 @@ export class DurableBackend implements AgentBackend {
       commands: [
         {
           name: "reload",
-          description: "Reload skills and context files",
+          description: "Reload plugins, skills and context files",
           source: "builtin",
         },
         ...this.resources.skills.map((skill) => ({

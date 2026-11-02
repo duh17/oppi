@@ -17,8 +17,8 @@ import {
 import { shouldShadowSandboxWorkspacePath } from "./gondolin-manager.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 
-// The host side of the `oppi.file-tools` built-in (`extensions/durable/file-tools`), bound through
-// `oppi/durable`. Schemas and descriptions are Pi's. Each call runs where the invocation's env
+// The host side of the `oppi.file-tools` built-in (`plugins/file-tools`), bound through
+// `oppi/v1`. Schemas and descriptions are Pi's. Each call runs where the invocation's env
 // runs: Pi's own tools (host rg and fd) in a host session's cwd, operations over the VM in a
 // sandbox session, never host rg/fd there. Any other env is refused.
 const ls = createLsTool("/");

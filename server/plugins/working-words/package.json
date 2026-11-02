@@ -1,0 +1,16 @@
+{
+  "name": "oppi-working-words",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oppi built-in: randomized working phrases while a durable session works.",
+  "type": "module",
+  "keywords": [
+    "oppi"
+  ],
+  "files": [
+    "server.ts",
+    "contract.ts",
+    "README.md",
+    "package.json"
+  ]
+}

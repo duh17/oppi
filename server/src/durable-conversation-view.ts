@@ -19,8 +19,8 @@ import {
   type ToolSlot,
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
-import { DurableUIClientDoc, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
-import { agentMessageOrigin } from "../extensions/durable/sessions/agent-message.js";
+import { DurableUIClientDoc, sanitizeTranscriptCard } from "./durable-ui.js";
+import { agentMessageOrigin } from "../plugins/subagents/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";

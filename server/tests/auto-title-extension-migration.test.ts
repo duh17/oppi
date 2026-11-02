@@ -21,7 +21,7 @@ import {
   readAutoTitleCarryover,
 } from "../src/storage/auto-title-extension-migration.js";
 
-const AUTO_NAME = join(import.meta.dirname, "../extensions/pi/auto-name");
+const AUTO_NAME = join(import.meta.dirname, "../plugins/auto-name");
 const KEY = "auto_title_to_extension_v1";
 
 let dataDir: string;

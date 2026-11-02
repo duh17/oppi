@@ -14,7 +14,7 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage } from "../src/types.js";
 
-const AUTO_NAME = join(import.meta.dirname, "../../pi-extensions/auto-name");
+const AUTO_NAME = join(import.meta.dirname, "../plugins/auto-name");
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,20 +24,20 @@ import {
   type TaskId,
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
-import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
+import { createDurableSessions } from "../plugins/subagents/server.js";
 import {
   SUBAGENT_WIDGET_TASK,
   Subagents,
   ensureSubagentWidget,
-} from "../extensions/durable/sessions/contract.js";
-import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
+} from "../plugins/subagents/contract.js";
+import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import {
   ACTIVITY_INTERVAL_MS,
   WAITING_ACTIVITY,
   WATCH_INVOCATION_MS,
-} from "../extensions/durable/sessions/widget.js";
+} from "../plugins/subagents/widget.js";
 import { collected } from "./helpers/collected.js";
-import { DurableUI } from "../extensions/durable/durable-ui.js";
+import { DurableUI } from "../src/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
 import {
@@ -47,7 +47,7 @@ import {
   durableStoreDir,
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
-import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
+import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { AgentLaunchService, DelegationPolicyError } from "../src/agent-launch-service.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
@@ -3513,23 +3513,20 @@ describe("durable engine on create requests", () => {
     // A selection the durable engine cannot fully honor still starts: MCP and tool search
     // come with `builtin:mcp`, codemode with `builtin:codemode`, a Pi package whose durable
     // version Oppi bundles is that built-in, and classic-only Extensions are named as skipped.
+    // The twin is a link to a checkout of the built-in `ask` plugin: a package of its name.
     const agentDir = process.env.PI_CODING_AGENT_DIR!;
     const twin = join(agentDir, "extensions", "my-ask");
     mkdirSync(twin, { recursive: true });
     writeFileSync(
       join(twin, "package.json"),
-      JSON.stringify({
-        name: "my-ask",
-        pi: { extensions: ["./index.ts"] },
-        oppi: { durable: { entry: "./durable.ts" } },
-      }),
+      JSON.stringify({ name: "ask", pi: { extensions: ["./index.ts"] } }),
     );
     writeFileSync(join(twin, "index.ts"), "export default function () {}\n");
-    writeFileSync(join(twin, "durable.ts"), 'export default { name: "ask" };\n');
+    writeFileSync(join(twin, "server.ts"), "export default {};\n");
     const classicOnly = join(agentDir, "extensions", "commit-trailer.ts");
     writeFileSync(classicOnly, "export default function () {}\n");
     expect((await f.manager.reloadDurableExtensions())?.skipped).toEqual([
-      expect.objectContaining({ root: twin }),
+      expect.objectContaining({ entry: realpathSync(twin), plugin: "ask" }),
     ]);
     const plugged = agents.createAgent({
       name: "Plugged",

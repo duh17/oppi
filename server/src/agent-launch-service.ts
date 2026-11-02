@@ -594,7 +594,7 @@ export class AgentLaunchService {
     session: Session,
   ): Promise<void> {
     const extensionIds = request.agent.resources?.extensionIds;
-    // A durable session runs durable entries, not classic extension factories, and starts
+    // A durable session runs plugins, not classic extension factories, and starts
     // without the selected Extensions that have none (`resolveDurableExtensionSelection`).
     if (extensionIds === undefined || extensionIds.length === 0 || request.engine === "durable")
       return;

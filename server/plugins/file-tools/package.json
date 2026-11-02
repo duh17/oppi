@@ -1,0 +1,7 @@
+{
+  "name": "oppi-file-tools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: Pi's ls, find, and grep over the host or a sandbox session's Gondolin VM, and image read in a sandbox.",
+  "type": "module"
+}

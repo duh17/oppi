@@ -33,7 +33,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
+import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import type { Session, Workspace } from "./types.js";
 import {

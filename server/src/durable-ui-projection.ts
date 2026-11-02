@@ -7,7 +7,7 @@ import {
   sanitizeUINotification,
   type UIResponse,
   type UIState,
-} from "../extensions/durable/durable-ui.js";
+} from "./durable-ui.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 
 /** Committed documents → the same events as SdkUiBridge, through the shared sanitizer/state owner. */

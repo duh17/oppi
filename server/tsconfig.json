@@ -12,9 +12,10 @@
     "declaration": true,
     "resolveJsonModule": true,
     "paths": {
-      "oppi/durable": ["./src/durable-extension-api.ts"]
+      "oppi/v1": ["./src/oppi-v1.ts"],
+      "oppi/v1/schema": ["./src/oppi-v1-schema.ts"]
     }
   },
-  "include": ["src/**/*", "extensions/**/*"],
+  "include": ["src/**/*", "plugins/*/server.ts", "plugins/auto-name/index.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/__tests__/**"]
 }

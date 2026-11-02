@@ -13,7 +13,7 @@ import { apiStatus } from "../resources.js";
 
 function listingLine(extension: DurableExtensionListing): string {
   const state = extension.enabled ? c.green("on ") : c.dim("off");
-  const origin = extension.builtIn ? "built-in" : "package";
+  const origin = extension.required ? "required" : extension.builtIn ? "built-in" : "plugin";
   const tools = extension.tools.length ? extension.tools.join(", ") : "no tools";
   return `${state}  ${extension.name}  ${c.dim(`${origin} \u00b7 ${tools}`)}`;
 }
@@ -76,7 +76,7 @@ export async function cmdExtensions(
         !report.removed.length &&
         !report.errors.length
       )
-        writeHumanLine("No durable extensions found in enabled Pi packages.");
+        writeHumanLine("No plugins found.");
     });
     // JSON callers read `errors` from the ok envelope; a terminal gets a failing exit code.
     if (report.errors.length && !json) setCapturedCliExitCode(1);

@@ -195,7 +195,7 @@ Blocking prompts are not native-surface blocks. They stay Pi-shaped in `extensio
 | `select`, `confirm`, `input` | Inline AskCard-style prompt card |
 | `editor` | Native editor sheet |
 
-`ask` is Oppi-defined, because Pi's standard dialog API has no portable multi-select or multi-question form; it adds `questions`, `options`, `multiSelect`, and `allowCustom`. The reference package `pi-extensions/ask` uses `ctx.ui.ask()` when available and falls back to `ctx.ui.custom()`, `select()`, and `input()` in plain Pi.
+`ask` is Oppi-defined, because Pi's standard dialog API has no portable multi-select or multi-question form; it adds `questions`, `options`, `multiSelect`, and `allowCustom`. The reference package `server/plugins/ask` uses `ctx.ui.ask()` when available and falls back to `ctx.ui.custom()`, `select()`, and `input()` in plain Pi.
 
 Responses return through `extension_ui_response`:
 

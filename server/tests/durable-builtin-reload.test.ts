@@ -1,10 +1,9 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { DurableHarness } from "../src/durable-harness.js";
-import { BUNDLED_PACKAGES_DIR } from "../src/durable-extension-loader.js";
+import { BUILT_IN_PLUGINS_DIR, DurableHarness } from "../src/durable-harness.js";
 
 const runtimes: DurableHarness[] = [];
 const dirs: string[] = [];
@@ -13,14 +12,14 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("bundled durable packages", () => {
+describe("built-in plugins", () => {
   it("reloads a built-in in place, and keeps its running code when the reload fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-builtin-reload-"));
     dirs.push(dir);
-    // A copy of Oppi's bundled packages with real files, so one can change under the runtime.
+    // A copy of Oppi's built-in plugins, so one can change under the runtime.
     const bundled = join(dir, "bundled");
-    cpSync(BUNDLED_PACKAGES_DIR, bundled, { recursive: true, dereference: true });
-    const entry = join(bundled, "project-context", "durable.ts");
+    cpSync(BUILT_IN_PLUGINS_DIR, bundled, { recursive: true, dereference: true });
+    const entry = join(bundled, "project-context", "server.ts");
     const original = readFileSync(entry, "utf8");
 
     const runtime = new DurableHarness(join(dir, "data"), bundled);
@@ -58,7 +57,7 @@ describe("bundled durable packages", () => {
     writeFileSync(entry, "export default {\n");
     const broken = await runtime.reloadExtensions();
     expect(broken.errors).toEqual([
-      expect.objectContaining({ root: join(bundled, "project-context") }),
+      expect.objectContaining({ plugin: "oppi-project-context", entry: realpathSync(entry) }),
     ]);
     expect(broken.kept).toEqual([
       expect.objectContaining({ name: "project-context", builtIn: true }),
@@ -71,12 +70,12 @@ describe("bundled durable packages", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-builtin-broken-"));
     dirs.push(dir);
     const bundled = join(dir, "bundled");
-    cpSync(BUNDLED_PACKAGES_DIR, bundled, { recursive: true, dereference: true });
-    writeFileSync(join(bundled, "sessions", "durable.ts"), "export default 42;\n");
+    cpSync(BUILT_IN_PLUGINS_DIR, bundled, { recursive: true, dereference: true });
+    writeFileSync(join(bundled, "subagents", "server.ts"), "export default 42;\n");
     const runtime = new DurableHarness(join(dir, "data"), bundled);
     runtimes.push(runtime);
     await expect(runtime.ensureShared()).rejects.toThrow(
-      /bundled durable extensions failed to load: .*sessions.*The default export must be a pi-durable Extension/,
+      /built-in plugins failed to load: subagents .*The default export must be a facet/,
     );
   });
 });

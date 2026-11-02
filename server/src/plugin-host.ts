@@ -31,7 +31,7 @@ import * as piDurableTools from "@earendil-works/pi-durable/tools";
 import * as piSchema from "@earendil-works/pi-schema";
 import { createJiti } from "jiti";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import * as typebox from "typebox";
 import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
@@ -43,6 +43,7 @@ import * as oppiV1Schema from "./oppi-v1-schema.js";
 import {
   discoverPackage,
   discoverRoot,
+  piPackageRoot,
   type DiscoveredPlugin,
   type DiscoveryProblem,
 } from "./plugin-discovery.js";
@@ -346,11 +347,15 @@ export class PluginHost {
         if (old) candidates.push({ ...old, fresh: false });
       }
     }
-    // Plugins not found again: a required built-in, or any plugin of a root that could not be
-    // read, keeps its code; the others are uninstalled.
+    // Plugins not found again: a required built-in, any plugin of a root that could not be read,
+    // and a plugin whose folder has a problem now (a broken package.json: still on disk) keep their
+    // code; the others are uninstalled.
+    const problemPaths = errors.map((issue) => issue.path);
     for (const old of previous.values()) {
       if (seen.has(old.loaded.name)) continue;
-      const unread = old.loaded.source === "built-in" ? !builtIns : !owners;
+      const unread =
+        (old.loaded.source === "built-in" ? !builtIns : !owners) ||
+        problemPaths.some((path) => path === old.loaded.dir || isInside(path, old.loaded.dir));
       if (unread || old.loaded.required) {
         if (!unread)
           errors.push({
@@ -548,6 +553,12 @@ function take(taken: Taken, plugin: LoadedPlugin): void {
   for (const task of plugin.extension.tasks ?? []) taken.tasks.set(task.definition.name, holder);
 }
 
+/** Whether `dir` lies inside `path`. */
+function isInside(path: string, dir: string): boolean {
+  const rest = relative(path, dir);
+  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
+}
+
 function issueOf(problem: DiscoveryProblem): PluginIssue {
   return { path: problem.path, message: problem.error };
 }
@@ -736,7 +747,7 @@ async function discoverOwnerPlugins(agentDir: string): Promise<{
   const packages = new Map<string, string[]>();
   for (const resource of resolved.extensions) {
     const id = serverResourceId("extension", resource.path);
-    const packageDir = packageRoot(resource.path, resource.metadata);
+    const packageDir = piPackageRoot(resource.path, resource.metadata);
     names.set(id, basename(packageDir ?? resource.path).replace(/\.[cm]?[jt]s$/, ""));
     if (!resource.enabled || !packageDir) continue;
     const ids = packages.get(packageDir) ?? [];
@@ -769,18 +780,4 @@ async function discoverOwnerPlugins(agentDir: string): Promise<{
     }
   }
   return { plugins, problems, names };
-}
-
-function packageRoot(
-  path: string,
-  metadata: { packageRoot?: string; baseDir?: string } | undefined,
-): string | undefined {
-  if (metadata?.packageRoot) return metadata.packageRoot;
-  if (!metadata?.baseDir) return undefined;
-  // A top-level extension directory: `<agentDir>/extensions/<name>/…/index.ts`.
-  const extensionsDir = join(metadata.baseDir, "extensions");
-  const inside = relative(extensionsDir, path);
-  if (!inside || inside.startsWith("..") || isAbsolute(inside)) return undefined;
-  const [first, ...rest] = inside.split(sep);
-  return first && rest.length > 0 ? join(extensionsDir, first) : undefined;
 }

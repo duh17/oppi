@@ -15,7 +15,7 @@ import {
   SPEAK_GUIDELINES,
   SPEAK_TEXT,
   SPEAK_TOOL_NAME,
-} from "../extensions/durable/live-voice/contract.js";
+} from "../plugins/live-voice/contract.js";
 import type { VoiceCallController, VoiceDelegation } from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
 import type { SessionBackendEvent } from "./pi-events.js";

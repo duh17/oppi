@@ -1,1 +1,0 @@
-../../../pi-extensions/transcript-card.ts

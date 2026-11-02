@@ -45,7 +45,7 @@ import {
 import {
   AGENT_MESSAGE_ENTRY_KIND,
   agentMessageOrigin,
-} from "../extensions/durable/sessions/agent-message.js";
+} from "../plugins/subagents/agent-message.js";
 import { continuesAfter } from "./durable-failure-cards.js";
 import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";

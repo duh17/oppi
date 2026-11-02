@@ -96,7 +96,7 @@ export default function buildCliOnce(): () => void {
         stdio: "inherit",
       },
     );
-    for (const script of ["copy-oppi-docs.mjs", "copy-durable-packages.mjs"])
+    for (const script of ["copy-oppi-docs.mjs", "copy-plugins.mjs"])
       execFileSync(process.execPath, [join(serverRoot, "scripts", script)], {
         cwd: serverRoot,
         env: { ...process.env, OPPI_BUILD_DIR: buildRoot },

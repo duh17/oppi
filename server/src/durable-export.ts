@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { sanitizeTranscriptCard } from "./durable-ui.js";
 import type { SessionEntry } from "./trace.js";
 
 export interface DurableExportState {

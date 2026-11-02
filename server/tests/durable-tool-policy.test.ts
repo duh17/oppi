@@ -13,7 +13,7 @@ import { DurableMcp } from "../src/durable-mcp.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
 import { fileToolsHost } from "../src/durable-file-tools-host.js";
 import type { Session } from "../src/types.js";
-import { DurableAsk } from "../extensions/durable/ask/durable.js";
+import { DurableAsk } from "../plugins/ask/server.js";
 
 // The file tools' entry reads the host when it is evaluated, as the loader's import does.
 bindOppiHost({
@@ -22,7 +22,7 @@ bindOppiHost({
   control: () => undefined,
   notify: () => undefined,
 });
-const { default: DurableFileTools } = await import("../extensions/durable/file-tools/durable.js");
+const { DurableFileTools } = await import("../plugins/file-tools/server.js");
 
 type Policy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 

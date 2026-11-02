@@ -64,10 +64,10 @@ import {
   recordLiveSessionsForRestart,
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
-import { DurableAsk } from "../extensions/durable/ask/durable.js";
-import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
-import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
-import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
+import { DurableAsk } from "../plugins/ask/server.js";
+import { DurableWorkingWords } from "../plugins/working-words/server.js";
+import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
+import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
@@ -76,7 +76,7 @@ import {
   requestUI,
   type UIResponse,
   type UINotification,
-} from "../extensions/durable/durable-ui.js";
+} from "../src/durable-ui.js";
 import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";

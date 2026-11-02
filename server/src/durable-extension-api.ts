@@ -9,22 +9,17 @@ import type {
   Tx,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { Job } from "../extensions/durable/background-jobs/contract.js";
-import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
-import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
+import type { Job } from "../plugins/background-jobs/contract.js";
+import type { SubagentWorktree } from "../plugins/subagents/contract.js";
+import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 
 /**
- * `oppi/durable`: the host API a durable extension imports for what only Oppi provides. The
- * extension itself is plain pi-durable (`export default defineExtension(...)`), and its package
- * declares the entry in `package.json` `oppi.durable`. The loader aliases this module, and
- * pi-durable, chord, pi-ai, and pi-schema, to the server's own copies, as upstream's plugin
- * loader resolved its plugin API. Tool schemas use pi-schema's builders; this API offers no
- * TypeBox.
+ * The host API a plugin reaches through `oppi/v1` (`oppi-v1.ts` re-exports this module) for what
+ * only Oppi provides. Tool schemas use pi-schema's builders; this API offers no TypeBox.
  *
- * Every package entry gets its own evaluation of this module (the loader keeps no module cache,
- * so a reload re-reads everything), so nothing here may keep state: documents are matched by
- * kind, not by object, and the host the server binds lives in one process-wide slot that is
- * written once and never replaced.
+ * The host the server binds lives in one process-wide slot that is written once and never
+ * replaced, so the built-ins' contracts the server imports directly and the plugin code the plugin
+ * host evaluates read the same host. Documents are matched by kind, not by object.
  * @public
  */
 
@@ -41,7 +36,7 @@ export {
   type UIRequest,
   type UIResponse,
   type UIState,
-} from "../extensions/durable/durable-ui.js";
+} from "./durable-ui.js";
 
 /** The Oppi Session a conversation belongs to: `snapshot(DurableSessionDoc, id)`, for a hook or task with no env. */
 export { DurableSessionDoc } from "./durable-session-doc.js";
@@ -114,18 +109,18 @@ type HostSlot = { [HOST]?: OppiDurableHost };
 /** The host the Oppi server bound. Throws outside a server that loads durable extensions. */
 export function oppiHost(): OppiDurableHost {
   const host = (globalThis as HostSlot)[HOST];
-  if (!host) throw new Error("oppi/durable: no Oppi server has bound its durable host");
+  if (!host) throw new Error("oppi/v1: no Oppi server has bound its durable host");
   return host;
 }
 
 /**
- * Server only: bind the host once, before any package loads. The slot cannot be written,
- * deleted, or bound again, and the host's objects are frozen, so package code cannot replace
+ * Server only: bind the host once, before any plugin loads. The slot cannot be written,
+ * deleted, or bound again, and the host's objects are frozen, so plugin code cannot replace
  * the host or wrap one of its functions (`control`, a file tool's `execute`).
  */
 export function bindOppiHost(host: OppiDurableHost): void {
   if (Object.hasOwn(globalThis, HOST))
-    throw new Error("oppi/durable: the Oppi durable host is already bound");
+    throw new Error("oppi/v1: the Oppi durable host is already bound");
   // Freeze is shallow: freeze each object a built-in calls through.
   for (const tool of [host.files.ls, host.files.find, host.files.grep]) Object.freeze(tool);
   Object.freeze(host.files);

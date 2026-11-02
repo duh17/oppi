@@ -8,13 +8,13 @@ import type {
   ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import { DurableUIProjection } from "../src/durable-ui-projection.js";
-import { requestUI, type UIRequest, type UIState } from "../extensions/durable/durable-ui.js";
+import { requestUI, type UIRequest, type UIState } from "../src/durable-ui.js";
 import {
   deriveView,
   DurableWorkingWords,
   pickPhrase,
   workingLine,
-} from "../extensions/durable/working-words/durable.js";
+} from "../plugins/working-words/server.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 
 const empty = (): UIState => ({ requests: {}, notifications: {} });

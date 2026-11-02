@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { NotifyInput } from "../extensions/durable/notify/contract.js";
+import type { NotifyInput } from "../plugins/notify/contract.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import type { SessionNotifyPort } from "../src/session-push-notifier.js";
 import type { Session, Workspace } from "../src/types.js";

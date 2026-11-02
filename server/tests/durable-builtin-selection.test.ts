@@ -9,7 +9,7 @@ import {
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import type { NotifyInput } from "../extensions/durable/notify/contract.js";
+import type { NotifyInput } from "../plugins/notify/contract.js";
 import { AgentDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
 import { ensureControlConversationSession } from "../src/control-conversation-service.js";
 import { SessionHost } from "../src/durable-harness.js";
@@ -21,8 +21,8 @@ import { Storage } from "../src/storage.js";
 import type { ServerMessage, Session } from "../src/types.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
-import DurableNotify from "../extensions/durable/notify/durable.js";
-import DurableLiveVoice from "../extensions/durable/live-voice/durable.js";
+import { DurableNotify } from "../plugins/notify/server.js";
+import { DurableLiveVoice } from "../plugins/live-voice/server.js";
 
 // What each kind of durable session selects, pinned by name: the built-in extensions, the tools
 // offered, and the prompt sections, in order, when the conversation is created and after it

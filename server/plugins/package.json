@@ -1,0 +1,19 @@
+{
+  "name": "oppi-built-in-plugins",
+  "private": true,
+  "description": "Oppi's built-in plugins, in install order: the order of their prompt sections. auto-name is not listed: it loads as an opt-in Pi package.",
+  "chord": {
+    "plugins": [
+      "./file-tools",
+      "./ask",
+      "./working-words",
+      "./background-jobs",
+      "./subagents",
+      "./project-context",
+      "./sql-explorer",
+      "./notify",
+      "./live-voice",
+      "./control"
+    ]
+  }
+}

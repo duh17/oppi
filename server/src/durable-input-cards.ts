@@ -6,11 +6,7 @@ import type {
   SubmissionId,
   Tx,
 } from "@earendil-works/pi-durable";
-import {
-  DurableInputCards,
-  sanitizeTranscriptCard,
-  type TranscriptCard,
-} from "../extensions/durable/durable-ui.js";
+import { DurableInputCards, sanitizeTranscriptCard, type TranscriptCard } from "./durable-ui.js";
 
 /** A card as `sanitizeTranscriptCard` returns it. */
 type InputCard = TranscriptCard & { kind: "custom" };

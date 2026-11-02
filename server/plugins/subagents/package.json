@@ -1,0 +1,38 @@
+{
+  "name": "subagents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Subagents: in terminal Pi and classic sessions a reference extension that launches Oppi subagents; in durable sessions Oppi's built-in subagent tool (oppi.sessions).",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi"
+  ],
+  "files": [
+    "index.ts",
+    "subagents.ts",
+    "supervise.ts",
+    "server.ts",
+    "contract.ts",
+    "agent-message.ts",
+    "wakers.ts",
+    "widget.ts",
+    "README.md",
+    "package.json"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

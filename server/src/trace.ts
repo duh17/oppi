@@ -17,12 +17,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { sanitizeTranscriptCard } from "../extensions/durable/transcript-card.js";
+import { sanitizeTranscriptCard } from "./transcript-card.js";
 import {
   agentMessageOrigin,
   agentMessageText,
   type MessageOrigin,
-} from "../extensions/durable/sessions/agent-message.js";
+} from "../plugins/subagents/agent-message.js";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {

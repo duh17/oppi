@@ -364,12 +364,12 @@ export function createServerResourceRoutes(
           error: refreshError instanceof Error ? refreshError.message : String(refreshError),
         });
       }
-      // Durable sessions load a Pi package's durable entry when their store opens and on reload,
-      // so the toggle reaches them only through a reload (`oppi extensions reload`). A package
-      // with no durable entry changes nothing there: its toggle stays a settings write.
+      // Durable sessions load a Pi package's plugins when their store opens and on reload, so the
+      // toggle reaches them only through a reload (`oppi extensions reload`). A package without a
+      // plugin changes nothing there: its toggle stays a settings write.
       if (ctx.sessions.durableSessionsAvailable()) {
         try {
-          if (await ctx.serverResources.hasDurableEntry(id)) {
+          if (await ctx.serverResources.hasPlugin(id)) {
             await ctx.sessions.reloadDurableExtensions();
           }
         } catch (reloadError: unknown) {

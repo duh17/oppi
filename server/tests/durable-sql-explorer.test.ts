@@ -13,8 +13,8 @@ import {
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { DurableUI } from "../extensions/durable/durable-ui.js";
-import { DurableSqlExplorer, parseSqliteJson } from "../extensions/durable/sql-explorer/durable.js";
+import { DurableUI } from "../src/durable-ui.js";
+import { DurableSqlExplorer, parseSqliteJson } from "../plugins/sql-explorer/server.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 

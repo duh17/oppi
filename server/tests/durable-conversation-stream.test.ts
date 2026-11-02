@@ -32,7 +32,7 @@ import {
   DurableInputCards,
   DurableUI,
   DurableUIClientDoc,
-} from "../extensions/durable/durable-ui.js";
+} from "../src/durable-ui.js";
 import {
   CONVERSATION_SNAPSHOT_LIMIT,
   attachConversationStream,

@@ -4,7 +4,7 @@ import { defineDoc } from "@earendil-works/pi-durable";
  * The Oppi Session a conversation belongs to. Hooks and tasks of a durable extension know their
  * conversation id, which is only unique within its store; this is how they reach the Session:
  * `snapshot(DurableSessionDoc, conversationId, context)?.sessionId`, with the doc exported from
- * `oppi/durable`. Written when the server binds the conversation.
+ * `oppi/v1`. Written when the server binds the conversation.
  */
 export const DurableSessionDoc = defineDoc<{ sessionId?: string }>({
   kind: "oppi.session",

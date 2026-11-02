@@ -14,7 +14,7 @@ const log = createLogger({ base: { component: "auto_name_package" } });
 
 /** Oppi's copy of the auto-name Pi package: the source tree in development, the build when built. */
 export const AUTO_NAME_PACKAGE_DIR = fileURLToPath(
-  new URL("../extensions/pi/auto-name", import.meta.url),
+  new URL("../plugins/auto-name", import.meta.url),
 );
 
 /** Ledger key (`app_state_migrations`): the shipped package was offered in Pi's settings. */
@@ -23,14 +23,20 @@ export const AUTO_NAME_PACKAGE_REGISTERED_KEY = "auto_name_package_registered_v1
 type Packages = ReturnType<SettingsManager["getPackages"]>;
 type PackageEntry = Packages[number];
 
-/** Where a shipped install keeps the package, whatever the prefix of the install. */
-const SOURCE_SUFFIX = "/extensions/pi/auto-name";
+/**
+ * Where a shipped install keeps the package, whatever the prefix of the install: in its plugins,
+ * or in `extensions/pi/` before the package moved there. An entry of an older install is gone
+ * once the install updates, so `repointed` moves it here with its filter.
+ */
+const SOURCE_SUFFIXES = ["/plugins/auto-name", "/extensions/pi/auto-name"];
 
 const sourceOf = (entry: PackageEntry): string =>
   typeof entry === "string" ? entry : entry.source;
 
-const isShipped = (entry: PackageEntry): boolean =>
-  sourceOf(entry).replace(/\/+$/, "").endsWith(SOURCE_SUFFIX);
+const isShipped = (entry: PackageEntry): boolean => {
+  const source = sourceOf(entry).replace(/\/+$/, "");
+  return SOURCE_SUFFIXES.some((suffix) => source.endsWith(suffix));
+};
 
 /**
  * The package as Pi's settings list it. Off is an empty `extensions` filter, which keeps the

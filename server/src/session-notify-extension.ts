@@ -8,13 +8,13 @@ import {
   NOTIFY_TOOL_NAME,
   notifyOutcomeText,
   type NotifyOutcome,
-} from "../extensions/durable/notify/contract.js";
+} from "../plugins/notify/contract.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 
 /**
  * The agent `notify` tool for a classic session. Registered on each resource load only while
  * the server offers it to this session (top-level, push on), so a reload after push turns on
- * or off adds or drops it. The durable built-in (`extensions/durable/notify`) is the same tool.
+ * or off adds or drops it. The durable built-in (`plugins/notify`) is the same tool.
  */
 export function createNotifyExtension(sessionId: string, port: SessionNotifyPort): InlineExtension {
   return {

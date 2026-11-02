@@ -167,9 +167,11 @@ export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope 
     }
   }
 
-  const repoExtensionMarker = "/pi-extensions/";
-  const repoExtensionIndex = decodedPath.indexOf(repoExtensionMarker);
-  if (repoExtensionIndex >= 0) {
+  // Oppi's own classic extensions: example packages in `pi-extensions/`, and the classic entries of
+  // the built-in plugins in `server/plugins/`.
+  for (const repoExtensionMarker of ["/pi-extensions/", "/server/plugins/"]) {
+    const repoExtensionIndex = decodedPath.indexOf(repoExtensionMarker);
+    if (repoExtensionIndex < 0) continue;
     const directoryName = firstPathSegment(
       decodedPath.slice(repoExtensionIndex + repoExtensionMarker.length),
     );

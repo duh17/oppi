@@ -1,0 +1,124 @@
+import { arr, bool, obj, opt, str } from "@earendil-works/pi-schema";
+import { defineDoc, defineTool, section } from "@earendil-works/pi-durable";
+import { defineExtension, defineFacet, Extensions, requestUI } from "oppi/v1";
+import { buildAskToolResult } from "./extensions/ask-shared.js";
+
+const AskTurn = defineDoc<{ assistant?: number; task?: number }>({
+  kind: "oppi.ask-turn",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({}),
+  // Written by every ask call for the conversation's lifetime; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
+});
+const ask = defineTool({
+  name: "ask",
+  description:
+    "Ask the user one or more clarifying questions with predefined options. " +
+    "Call ONCE per turn — bundle all questions into a single call. " +
+    "The user can select multiple options, type a custom answer, or ignore any question. " +
+    "Prefer asking over guessing when intent is ambiguous.",
+  parameters: obj({
+    questions: arr(
+      obj(
+        {
+          id: str({ description: "Stable key for the answer map" }),
+          question: str({ description: "Full question text" }),
+          options: arr(
+            obj({
+              value: str({ description: "Return value when selected" }),
+              label: str({ description: "Display label" }),
+              description: opt(str({ description: "Short description below label" })),
+            }),
+          ),
+          multiSelect: opt(
+            bool({
+              description: "Allow selecting multiple options. Default: false",
+            }),
+          ),
+        },
+        // Open: models sometimes put the call's `allowCustom` on a question, and such a call
+        // must still reach the user.
+        { open: true },
+      ),
+      { minItems: 1 },
+    ),
+    allowCustom: opt(
+      bool({
+        description: "Allow typing a custom answer per question. Default: true",
+      }),
+    ),
+  }),
+  executionMode: "sequential",
+  replay: "safe",
+  async execute(args, api, context) {
+    const own = await api.getTask(api.taskId, context);
+    const assistant = (own?.input as { assistant: number }).assistant;
+    await api.commit(async (tx) => {
+      const turn = await tx.doc(AskTurn, api.conversationId);
+      if (turn.assistant === assistant && turn.task !== api.taskId)
+        throw new Error("Only one ask call per turn. Bundle all questions into a single call.");
+      turn.assistant = assistant;
+      turn.task = api.taskId;
+    }, context);
+    const response = await requestUI(
+      api,
+      {
+        id: `durable-ui:${api.taskId}`,
+        method: "ask",
+        questions: args.questions,
+        allowCustom: args.allowCustom ?? true,
+        extensionScopeId: "repo:ask",
+        extensionDisplayName: "Ask",
+      },
+      context,
+    );
+    const answers: Record<string, string | string[]> = {};
+    if (!response.cancelled && response.value) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(response.value);
+      } catch (error) {
+        throw new Error(
+          `Malformed ask response: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new Error("Malformed ask response: expected a JSON object");
+      for (const [key, value] of Object.entries(parsed)) {
+        if (
+          typeof value === "string" ||
+          (Array.isArray(value) && value.every((v) => typeof v === "string"))
+        )
+          answers[key] = value;
+        else throw new Error(`Malformed ask response: expected string or string[] for "${key}"`);
+      }
+    }
+    // ask-shared builds the classic Pi result shape; Durable names its model content `output`.
+    const { content, details } = buildAskToolResult(args.questions, answers);
+    return { output: content, details };
+  },
+});
+export const DurableAsk = defineExtension({
+  name: "ask",
+  runtimes: ["host", "sandbox"],
+  tools: [ask],
+  sections: [
+    section(
+      "ask-guidelines",
+      () =>
+        "Call ask at most ONCE per turn. Bundle all questions. Explore discoverable facts with tools first; " +
+        "ask early for preferences and tradeoffs. Provide 2-6 clear options, recommended first. " +
+        "Use multiSelect when several options can apply. If ignored, use your best judgment; do not re-ask.",
+    ),
+  ],
+});
+
+/**
+ * The plugin facet. A built-in: the plugin host skips the owner's copy of this package (a link
+ * in `~/.pi/agent/extensions`) and lets its classic ID stand for this one.
+ */
+export default defineFacet((_host, self) => self.contribute(Extensions, DurableAsk));

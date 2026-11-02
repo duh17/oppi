@@ -4,7 +4,7 @@ Part of [Oppi server architecture](../architecture-server.md). The convention fo
 
 ## Requests
 
-- Native implementations live at `pi-extensions/<name>/durable.ts`, declared by `package.json` `oppi.durable`. Inside a replay-safe tool, call `requestUI(api, request, context)` from `oppi/durable` (resolved to `server/src/durable-extension-api.ts`, re-exporting `pi-extensions/durable-ui.ts`) with a stable id such as `durable-ui:${api.taskId}`; a replayed tool must reuse it. Methods: `ask`, `select`, `confirm`, `input`, `editor`. A relative `timeout` becomes an absolute `timeoutAt` on first publication.
+- Native implementations are plugins (`server/plugins/<name>/server.ts`). Inside a replay-safe tool, call `requestUI(api, request, context)` from `oppi/v1` (`server/src/oppi-v1.ts`, re-exporting `durable-extension-api.ts` and `durable-ui.ts`) with a stable id such as `durable-ui:${api.taskId}`; a replayed tool must reuse it. Methods: `ask`, `select`, `confirm`, `input`, `editor`. A relative `timeout` becomes an absolute `timeoutAt` on first publication.
 - Each request is one `oppi.extension-ui` document entry (`taskId`, `request`, optional `response`). Writers are trusted in-process code; use `requestUI`, never direct `tx.doc` writes. The field allowlist guards against accidents, not hostile writers.
 - `DurableUIProjection` watches the document (`watchDoc`; custom documents are not in `viewState`) and emits the same backend events as `SdkUiBridge`; the extension UI state owner sanitizes and bounds them. No relay code tests extension, tool, status, or widget identities.
 - `respondToExtensionUIRequest` commits the first answer before returning success and rejects unknown, answered, terminal-owner, and abort-marked requests. The tool moves the answer into a task memo, so a crash on either side of the memo replays the same answer without a second dialog.
@@ -24,9 +24,9 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 
 ## Build and loading
 
-- `server/extensions/durable/<name>/` holds bundled packages with a `package.json` `oppi.durable` manifest; ask, working-words, and background-jobs are symlinks to `pi-extensions/<name>/`. TypeScript emits them to `dist/extensions/durable/` and `scripts/copy-durable-packages.mjs` copies the manifests; the Dockerfile copies the native ports to `/opt/pi-extensions/` so relative symlinks resolve.
-- Every entry loads through `durable-extension-loader.ts`, never a static import, because only the loader resolves `oppi/durable`. What the server reads of a built-in lives in its `contract.ts`, which imports nothing from `oppi/durable`. Tests import entries through the `oppi/durable` alias in `vitest.config.ts`.
-- Source mode needs `--preserve-symlinks` (`npm run dev` sets it). The durable import graph stays behind the lazy backend boundary: `SessionManager` loads the Harness only when `experimental.serverDurable` is on or a stored session is bound to a conversation.
+- `server/plugins/` is the built-in plugin root: its `package.json` `chord.plugins` lists the built-ins in install (prompt section) order, and each folder holds a feature's facet (`server.ts`), its classic entry when it has one, and shared code. `auto-name` is not listed: it loads as an opt-in Pi package. TypeScript emits `dist/plugins/`, and `scripts/copy-plugins.mjs` copies every `package.json` and the TypeScript of Pi packages, never a `server.ts` beside the emitted `server.js`.
+- Every facet loads through the plugin host (`plugin-host.ts`), never a static import, because only it resolves `oppi/v1`. What the server reads of a built-in lives in its `contract.ts`, which imports nothing from `oppi/v1`. Tests import facets through the `oppi/v1` alias in `vitest.config.ts`.
+- The durable import graph stays behind the lazy backend boundary: `SessionManager` loads the Harness only when `experimental.serverDurable` is on or a stored session is bound to a conversation.
 
 ## Background jobs
 

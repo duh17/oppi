@@ -17,7 +17,7 @@ import {
   durableStoreLockPath,
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
-import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { DurableInputCards } from "../src/durable-ui.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SANDBOX_RESOURCE_MAX_BYTES } from "../src/gondolin-ops.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";

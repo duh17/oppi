@@ -36,7 +36,7 @@ import {
   type InboxState,
   type JsonObject,
 } from "@earendil-works/pi-durable";
-import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { DurableInputCards } from "./durable-ui.js";
 import { readQueuedInput, type QueuedInput } from "./durable-agent-controller.js";
 import {
   CONVERSATION_CLIENT_DOCS,

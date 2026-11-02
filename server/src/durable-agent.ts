@@ -7,12 +7,12 @@ import {
 } from "@earendil-works/pi-durable";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
-import type { LoadedDurableExtension } from "./durable-extension-loader.js";
+import type { LoadedPlugin } from "./plugin-host.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { Session } from "./types.js";
-import { LIVE_VOICE_EXTENSION } from "../extensions/durable/live-voice/contract.js";
+import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 
 type DurableToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
@@ -46,7 +46,7 @@ export type OppiAgentState = {
   /** False when the Agent's instructions replace the prompt: no `project_context` section. */
   projectContext?: false;
   /**
-   * An exact Extension selection: Pi package durable extensions by name, MCP and codemode or not,
+   * An exact Extension selection: owner plugins' extensions by name, MCP and codemode or not,
    * and the names of selected Extensions the session runs without (no durable version), for its
    * warning.
    */
@@ -177,20 +177,20 @@ const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
  * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
  * `builtin:tool-search` needs `builtin:mcp`), and `builtin:codemode` is pi-durable's codemode, as
  * in classic. An ID whose durable version Oppi bundles is in every session already. Any other ID
- * must belong to a Pi package whose durable entry is loaded for this runtime and enabled. The rest
+ * must belong to a Pi package whose plugin is loaded for this runtime and enabled. The rest
  * are `skipped` by name: the session starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
   extensionIds: readonly string[],
-  loaded: readonly LoadedDurableExtension[],
+  loaded: readonly LoadedPlugin[],
   classic: ClassicExtensionIndex,
   runtime: "host" | "sandbox",
   enabled: (name: string) => boolean,
-): { packages: LoadedDurableExtension[]; mcp: boolean; codemode: boolean; skipped: string[] } {
+): { packages: LoadedPlugin[]; mcp: boolean; codemode: boolean; skipped: string[] } {
   const ids = new Set(extensionIds);
   const mcp = ids.has(MCP_EXTENSION_ID);
   const codemode = ids.has(CODEMODE_EXTENSION_ID);
-  const packages: LoadedDurableExtension[] = [];
+  const packages: LoadedPlugin[] = [];
   // By name: two IDs of one package are one skipped Extension.
   const skipped = new Set<string>();
   for (const id of ids) {
@@ -307,12 +307,12 @@ interface DurableAgentInput {
   runtime: "host" | "sandbox";
   /**
    * The extensions to start from: the parent's for a child, Oppi's defaults (built-ins and every
-   * Pi package durable extension of the runtime) for a top-level session. MCP extensions are
+   * owner plugin's extension of the runtime) for a top-level session. MCP extensions are
    * per session and are dropped; the session attaches its own.
    */
   base: readonly Extension[];
-  /** Every loaded Pi package durable extension. */
-  loaded: readonly LoadedDurableExtension[];
+  /** Every loaded owner plugin. */
+  loaded: readonly LoadedPlugin[];
   classic: ClassicExtensionIndex;
   /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
   enabled: (name: string) => boolean;

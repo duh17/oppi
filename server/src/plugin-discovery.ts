@@ -82,6 +82,41 @@ export async function discoverPackage(dir: string): Promise<Discovery> {
   return unique(plugins, problems);
 }
 
+/**
+ * Whether the Pi package of the classic extension at `path` holds a plugin with a server facet, so
+ * enabling or disabling it changes what durable sessions load. A manifest problem counts as none.
+ */
+export async function packageHasPlugin(
+  path: string,
+  metadata: { packageRoot?: string; baseDir?: string } | undefined,
+): Promise<boolean> {
+  const root = piPackageRoot(path, metadata);
+  if (!root) return false;
+  try {
+    return (await discoverPackage(root)).plugins.some((plugin) => plugin.facet !== undefined);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The package directory of the classic extension Pi resolved at `path`: its package root, or for
+ * a top-level extension directory `<agentDir>/extensions/<name>/…/index.ts`, that directory. A
+ * single-file extension has none.
+ */
+export function piPackageRoot(
+  path: string,
+  metadata: { packageRoot?: string; baseDir?: string } | undefined,
+): string | undefined {
+  if (metadata?.packageRoot) return metadata.packageRoot;
+  if (!metadata?.baseDir) return undefined;
+  const extensionsDir = join(metadata.baseDir, "extensions");
+  const inside = relative(extensionsDir, path);
+  if (!inside || inside.startsWith("..") || isAbsolute(inside)) return undefined;
+  const [first, ...rest] = inside.split(sep);
+  return first && rest.length > 0 ? join(extensionsDir, first) : undefined;
+}
+
 type Found = DiscoveredPlugin | DiscoveryProblem;
 
 /** `plugins` with every name once, the later ones reported. */

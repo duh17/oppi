@@ -35,15 +35,23 @@ export default defineConfig({
     // before any test file imports local-sessions discovery (avoids scanning the developer
     // home Pi sessions root).
     setupFiles: ["./vitest.temp-guard.ts", "./vitest.setup.ts"],
-    exclude: ["dist/**", "node_modules/**", "e2e/**", "proxy-review/**"],
+    exclude: [
+      "dist/**",
+      "node_modules/**",
+      "e2e/**",
+      "proxy-review/**",
+      // Classic entries' own tests, written for `bun test` (run it in the plugin's folder).
+      "plugins/background-jobs/*.test.ts",
+      "plugins/subagents/*.test.ts",
+    ],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.ts", "extensions/**/*.ts"],
+      include: ["src/**/*.ts", "plugins/**/*.ts"],
       exclude: [
         "src/cli.ts", // CLI entry point — not unit-testable
         "src/server-metric-registry.ts", // const registry + types — no logic to test
         "src/routes/types.ts", // type-only exports — no runtime code
-        "extensions/**/*.test.ts",
+        "plugins/**/*.test.ts",
       ],
       reporter: ["text", "json-summary"],
       reportsDirectory: "coverage",
@@ -57,11 +65,15 @@ export default defineConfig({
   },
   resolve: {
     alias: [
-      // Tests import durable package entries directly; production loads them only through
-      // the extension loader, which aliases `oppi/durable` the same way.
+      // Tests import plugin facets directly; production evaluates them only through the plugin
+      // host, which hands them the server's `oppi/v1` the same way.
       {
-        find: /^oppi\/durable$/,
-        replacement: fileURLToPath(new URL("./src/durable-extension-api.ts", import.meta.url)),
+        find: /^oppi\/v1$/,
+        replacement: fileURLToPath(new URL("./src/oppi-v1.ts", import.meta.url)),
+      },
+      {
+        find: /^oppi\/v1\/schema$/,
+        replacement: fileURLToPath(new URL("./src/oppi-v1-schema.ts", import.meta.url)),
       },
       // Resolve .js imports to .ts sources (NodeNext moduleResolution)
       { find: /^(\..+)\.js$/, replacement: "$1.ts" },

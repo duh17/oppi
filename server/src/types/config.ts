@@ -131,8 +131,8 @@ export interface ServerConfig {
     /** Counts saves made through `PUT /server/durable-sessions/settings`; absent reads as 0. */
     serverDurableRevision?: number;
     /**
-     * Durable extensions workspace sessions leave out, by name (built-ins and Pi packages'
-     * durable entries). Read at each use, no restart; a bound session drops one at its next
+     * Durable extensions workspace sessions leave out, by name (of built-in and owner plugins;
+     * a required built-in stays on). Read at each use, no restart; a bound session drops one at its next
      * attach. Write it with `oppi extensions enable|disable`, which the running server sees.
      */
     durableExtensions?: { disabled?: string[] };

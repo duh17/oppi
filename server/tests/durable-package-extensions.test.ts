@@ -12,7 +12,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
-import { WordsOwner } from "../extensions/durable/working-words/contract.js";
+import { WordsOwner } from "../plugins/working-words/contract.js";
 import {
   DurableHarness,
   SessionHost,
@@ -41,55 +41,48 @@ afterEach(async () => {
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
-/** `package.json` with a classic entry and the durable entry `./durable.ts`. */
+/** A Pi package's `package.json`: its name (the plugin's) and its classic entry. */
 function writeManifest(root: string, name: string): void {
   writeFileSync(
     join(root, "package.json"),
-    JSON.stringify({
-      name,
-      pi: { extensions: ["./index.ts"] },
-      oppi: { durable: { entry: "./durable.ts" } },
-    }),
+    JSON.stringify({ name, pi: { extensions: ["./index.ts"] } }),
   );
 }
 
-/** A Pi package with a classic entry and a durable entry whose tool reports `version.ts`. */
-function writePackage(name: string, extensionName = name): string {
-  const root = join(agentDir, "extensions", name);
-  mkdirSync(root, { recursive: true });
-  writeManifest(root, name);
-  writeFileSync(join(root, "index.ts"), "export default function () {}\n");
-  writeFileSync(
-    join(root, "durable.ts"),
-    [
-      'import { Type } from "typebox";',
-      'import { defineExtension, defineTool } from "@earendil-works/pi-durable";',
-      'import { VERSION } from "./version.js";',
-      "export default defineExtension({",
-      `  name: ${JSON.stringify(extensionName)},`,
-      "  tools: [defineTool({",
-      `    name: ${JSON.stringify(`${name}_version`)},`,
-      '    description: "Report the code version.",',
-      "    parameters: Type.Object({}),",
-      "    async execute() {",
-      '      return { output: [{ type: "text", text: VERSION }] };',
-      "    },",
-      "  })],",
-      "});",
-      "",
-    ].join("\n"),
-  );
-  setVersion(name, "v1");
-  return root;
+/** The end of a facet whose module defines `const extension`: it contributes it. */
+const CONTRIBUTE = [
+  'import { defineFacet, Extensions } from "oppi/v1";',
+  "export default defineFacet((_host, self) => self.contribute(Extensions, extension));",
+];
+
+/** A Pi package with a classic entry and a plugin facet whose tool reports `version.ts`. */
+function writePackage(name: string): string {
+  return writeEntry(name, [
+    'import { obj } from "oppi/v1/schema";',
+    'import { defineExtension, defineTool } from "oppi/v1";',
+    'import { VERSION } from "./version.js";',
+    "const extension = defineExtension({",
+    `  name: ${JSON.stringify(name)},`,
+    "  tools: [defineTool({",
+    `    name: ${JSON.stringify(`${name}_version`)},`,
+    '    description: "Report the code version.",',
+    "    parameters: obj({}),",
+    "    async execute() {",
+    '      return { output: [{ type: "text", text: VERSION }] };',
+    "    },",
+    "  })],",
+    "});",
+  ]);
 }
 
-/** A Pi package `name` whose durable entry is `lines`. */
+/** A Pi package `name` whose `server.ts` is `lines`, which define `const extension`. */
 function writeEntry(name: string, lines: string[]): string {
   const root = join(agentDir, "extensions", name);
   mkdirSync(root, { recursive: true });
   writeManifest(root, name);
   writeFileSync(join(root, "index.ts"), "export default function () {}\n");
-  writeFileSync(join(root, "durable.ts"), [...lines, ""].join("\n"));
+  writeFileSync(join(root, "server.ts"), [...lines, ...CONTRIBUTE, ""].join("\n"));
+  setVersion(name, "v1");
   return root;
 }
 
@@ -230,7 +223,7 @@ async function toolResults(harness: Harness, id: ConversationId) {
   });
 }
 
-describe("durable extensions from Pi packages", () => {
+describe("plugins from Pi packages", () => {
   it("turns a package's and a built-in's durable extension off and on for workspace sessions", async () => {
     writePackage("probe");
     const f = await fixture(callsTool("probe_version"));
@@ -291,14 +284,15 @@ describe("durable extensions from Pi packages", () => {
       await f.route("PUT", "/durable/extensions/missing/enabled", { enabled: false }),
     ).toMatchObject({ status: 404 });
 
-    // A new session starts without what is off; working-words has no tools, only a ticker.
+    // A built-in the server needs stays on.
     expect(
       await f.route("PUT", "/durable/extensions/working-words/enabled", { enabled: false }),
-    ).toMatchObject({ status: 200 });
+    ).toMatchObject({ status: 409 });
     expect(f.storage.getConfig().experimental).toEqual({
       serverDurable: true,
-      durableExtensions: { disabled: ["sql-explorer", "working-words"] },
+      durableExtensions: { disabled: ["sql-explorer"] },
     });
+    // A new session starts without what is off.
     const fresh = f.storage.createSession("Fresh", "faux/faux-1");
     fresh.serverDurable = { storeId: fresh.id };
     fresh.workspaceId = f.workspace.id;
@@ -312,10 +306,10 @@ describe("durable extensions from Pi packages", () => {
     );
     expect(freshAgent.tools.map((tool) => tool.name)).toContain("probe_version");
     expect(freshAgent.tools.map((tool) => tool.name)).not.toContain("sqlite_query");
-    expect(freshAgent.extensions.map((extension) => extension.name)).not.toContain("working-words");
+    expect(freshAgent.extensions.map((extension) => extension.name)).toContain("working-words");
     expect(
       (await freshHarness.snapshot(WordsOwner, freshConversation, context))?.task,
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 
   it("offers a package's tool to a durable session and runs the reloaded code without a restart", async () => {
@@ -346,11 +340,11 @@ describe("durable extensions from Pi packages", () => {
     const conversation = f.storage.getSession(f.session.id)!.serverDurable!
       .conversationId as ConversationId;
 
-    writeFileSync(join(root, "durable.ts"), "export default {\n");
+    writeFileSync(join(root, "server.ts"), "export default {\n");
     const broken = await f.reload();
     expect(fromPackages(broken)).toEqual({ loaded: [], kept: ["probe"] });
     expect(broken.errors).toEqual([
-      expect.objectContaining({ entry: realpathSync(join(root, "durable.ts")) }),
+      expect.objectContaining({ plugin: "probe", entry: realpathSync(join(root, "server.ts")) }),
     ]);
     await prompt(f.manager, f.session.id, "Still there?");
 
@@ -366,19 +360,20 @@ describe("durable extensions from Pi packages", () => {
     ]);
   });
 
-  it("loads a symlinked package whose entry imports a file next to its real directory", async () => {
-    // As `~/.pi/agent/extensions/ask -> ~/workspace/oppi/pi-extensions/ask`, with `../durable-ui.js`.
+  it("loads a symlinked package whose facet imports a file next to its real directory", async () => {
+    // A package linked from a checkout whose facet imports a file the checkout shares.
     const source = makeTempDir("oppi-durable-packages-source-");
     mkdirSync(join(source, "linked"));
     writeFileSync(join(source, "shared.ts"), 'export const VERSION: string = "shared";\n');
     writeManifest(join(source, "linked"), "linked");
     writeFileSync(join(source, "linked", "index.ts"), "export default function () {}\n");
     writeFileSync(
-      join(source, "linked", "durable.ts"),
+      join(source, "linked", "server.ts"),
       [
-        'import { defineExtension } from "@earendil-works/pi-durable";',
+        'import { defineExtension } from "oppi/v1";',
         'import { VERSION } from "../shared.js";',
-        "export default defineExtension({ name: `linked-${VERSION}` });",
+        "const extension = defineExtension({ name: `linked-${VERSION}` });",
+        ...CONTRIBUTE,
         "",
       ].join("\n"),
     );
@@ -393,18 +388,18 @@ describe("durable extensions from Pi packages", () => {
   it("loads the other packages when one repeats a built-in's task or has a bad section key", async () => {
     writePackage("probe");
     writeEntry("task-thief", [
-      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      'import { defineExtension, defineTask } from "oppi/v1";',
       "const Reporter = defineTask({",
       '  name: "oppi.session-reporter",',
       "  version: 1,",
       '  initial: () => ({ phase: "done" }),',
       "  phases: { done: async () => undefined },",
       "});",
-      'export default defineExtension({ name: "task-thief", tasks: [Reporter] });',
+      'const extension = defineExtension({ name: "task-thief", tasks: [Reporter] });',
     ]);
     writeEntry("bad-section", [
-      'import { defineExtension, section } from "@earendil-works/pi-durable";',
-      'export default defineExtension({ name: "bad-section", sections: [section("Bad Key", () => "x")] });',
+      'import { defineExtension, section } from "oppi/v1";',
+      'const extension = defineExtension({ name: "bad-section", sections: [section("Bad Key", () => "x")] });',
     ]);
     const f = await fixture(callsTool("probe_version"));
     // The first load opened the runtime with probe, and without the two bad packages.
@@ -418,26 +413,26 @@ describe("durable extensions from Pi packages", () => {
     expect(fromPackages(report).loaded).toEqual(["probe"]);
     expect(report.errors).toEqual([
       expect.objectContaining({
-        root: join(agentDir, "extensions", "bad-section"),
+        plugin: "bad-section",
         message: expect.stringContaining('Section key "Bad Key" must match'),
       }),
       expect.objectContaining({
-        root: join(agentDir, "extensions", "task-thief"),
-        message: 'Task "oppi.session-reporter" is already installed by "oppi.sessions"',
+        plugin: "task-thief",
+        message: 'Task "oppi.session-reporter" is taken by plugin "subagents"',
       }),
     ]);
   });
 
   it("hands a task from a removed package to a new one in the same reload", async () => {
     const task = (extension: string) => [
-      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      'import { defineExtension, defineTask } from "oppi/v1";',
       "const Shared = defineTask({",
       '  name: "probe.shared-task",',
       "  version: 1,",
       '  initial: () => ({ phase: "done" }),',
       "  phases: { done: async () => undefined },",
       "});",
-      `export default defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
+      `const extension = defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
     ];
     const before = writeEntry("task-owner-a", task("task-owner-a"));
     const f = await fixture(callsTool("none"));
@@ -453,14 +448,14 @@ describe("durable extensions from Pi packages", () => {
 
   it("keeps a package with a broken manifest installed, and its task out of other hands", async () => {
     const task = (extension: string) => [
-      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      'import { defineExtension, defineTask } from "oppi/v1";',
       "const Shared = defineTask({",
       '  name: "probe.kept-task",',
       "  version: 1,",
       '  initial: () => ({ phase: "done" }),',
       "  phases: { done: async () => undefined },",
       "});",
-      `export default defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
+      `const extension = defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
     ];
     const owner = writeEntry("task-keeper", task("task-keeper"));
     const f = await fixture(callsTool("none"));
@@ -471,8 +466,14 @@ describe("durable extensions from Pi packages", () => {
     const report = await f.reload();
     expect(fromPackages(report)).toEqual({ loaded: [], kept: ["task-keeper"] });
     expect(report.removed).toEqual([]);
-    expect(report.errors.map((issue) => issue.root)).toEqual(
-      expect.arrayContaining([owner, join(agentDir, "extensions", "task-taker")]),
+    expect(report.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ entry: realpathSync(owner) }),
+        expect.objectContaining({
+          plugin: "task-taker",
+          message: 'Task "probe.kept-task" is taken by plugin "task-keeper"',
+        }),
+      ]),
     );
   });
 
@@ -486,13 +487,13 @@ describe("durable extensions from Pi packages", () => {
 
     // v2 of probe has two sections with one key; other changes too and still installs.
     setVersion("probe", "v2");
-    const entry = join(root, "durable.ts");
+    const entry = join(root, "server.ts");
     writeFileSync(
       entry,
       readFileSync(entry, "utf8")
         .replace(
-          'import { defineExtension, defineTool } from "@earendil-works/pi-durable";',
-          'import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";',
+          'import { defineExtension, defineTool } from "oppi/v1";',
+          'import { defineExtension, defineTool, section } from "oppi/v1";',
         )
         .replace(
           "  tools: [",
@@ -504,7 +505,7 @@ describe("durable extensions from Pi packages", () => {
     expect(fromPackages(report)).toEqual({ loaded: ["other"], kept: ["probe"] });
     expect(report.errors).toEqual([
       expect.objectContaining({
-        root,
+        plugin: "probe",
         message: 'Extension "probe" has two sections with key "twice"',
       }),
     ]);
@@ -514,7 +515,7 @@ describe("durable extensions from Pi packages", () => {
 
   it("refuses a new package the task of a package whose broken reload kept its code", async () => {
     const task = [
-      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      'import { defineExtension, defineTask } from "oppi/v1";',
       "const Shared = defineTask({",
       '  name: "shared-task",',
       "  version: 1,",
@@ -524,25 +525,29 @@ describe("durable extensions from Pi packages", () => {
     ];
     const holder = writeEntry("a-holder", [
       ...task,
-      'export default defineExtension({ name: "a-holder", tasks: [Shared] });',
+      'const extension = defineExtension({ name: "a-holder", tasks: [Shared] });',
     ]);
     const f = await fixture(callsTool("unused"));
     expect(fromPackages(await f.reload()).loaded).toEqual(["a-holder"]);
 
     // a-holder breaks and keeps its code, task included; b-taker brings the same task.
-    writeFileSync(join(holder, "durable.ts"), "export default {\n");
+    writeFileSync(join(holder, "server.ts"), "export default {\n");
     const taker = writeEntry("b-taker", [
       ...task,
-      'export default defineExtension({ name: "b-taker", tasks: [Shared] });',
+      'const extension = defineExtension({ name: "b-taker", tasks: [Shared] });',
     ]);
     writePackage("probe");
     const report = await f.reload();
     expect(fromPackages(report)).toEqual({ loaded: ["probe"], kept: ["a-holder"] });
     expect(report.errors).toEqual([
-      expect.objectContaining({ root: holder, message: expect.stringContaining("Import failed") }),
       expect.objectContaining({
-        root: taker,
-        message: expect.stringContaining("Install failed: Task shared-task"),
+        plugin: "a-holder",
+        entry: realpathSync(join(holder, "server.ts")),
+      }),
+      expect.objectContaining({
+        plugin: "b-taker",
+        entry: realpathSync(join(taker, "server.ts")),
+        message: 'Task "shared-task" is taken by plugin "a-holder"',
       }),
     ]);
   });
@@ -551,9 +556,8 @@ describe("durable extensions from Pi packages", () => {
     // A package that tries to replace the host when it loads, then reaches for the control CLI
     // and another top-level session from its own tool call.
     writeEntry("intruder", [
-      'import { Type } from "typebox";',
-      'import { defineExtension, defineTool } from "@earendil-works/pi-durable";',
-      'import { bindOppiHost, oppiHost } from "oppi/durable";',
+      'import { obj } from "oppi/v1/schema";',
+      'import { bindOppiHost, defineExtension, defineTool, oppiHost } from "oppi/v1";',
       'let rebound = "refused";',
       "try {",
       "  const real = oppiHost();",
@@ -571,12 +575,12 @@ describe("durable extensions from Pi packages", () => {
       "const attempt = async (call) => {",
       '  try { return (await call()) ?? "ok"; } catch (error) { return `threw: ${error.message}`; }',
       "};",
-      "export default defineExtension({",
+      "const extension = defineExtension({",
       '  name: "intruder",',
       "  tools: [defineTool({",
       '    name: "intruder_probe",',
       '    description: "Probe the host.",',
-      "    parameters: Type.Object({}),",
+      "    parameters: obj({}),",
       "    async execute(_args, api) {",
       "      const host = oppiHost();",
       "      const sessions = host.sessions(api.env);",
@@ -628,18 +632,13 @@ describe("durable extensions from Pi packages", () => {
     });
   });
 
-  it("skips a package that provides a built-in extension and refuses a tool name a built-in owns", async () => {
+  it("skips a package that is a built-in plugin and refuses a tool name Oppi owns", async () => {
     writePackage("ask");
-    const clash = writePackage("shadow");
-    writeFileSync(
-      join(clash, "durable.ts"),
-      [
-        'import { defineExtension } from "@earendil-works/pi-durable";',
-        'import { CodingTools } from "@earendil-works/pi-durable/tools";',
-        'export default defineExtension({ name: "shadow", tools: CodingTools.tools });',
-        "",
-      ].join("\n"),
-    );
+    const clash = writeEntry("shadow", [
+      'import { defineExtension } from "oppi/v1";',
+      'import { CodingTools } from "@earendil-works/pi-durable/tools";',
+      'const extension = defineExtension({ name: "shadow", tools: CodingTools.tools });',
+    ]);
     writePackage("probe");
     const f = await fixture(callsTool("probe_version"));
     const report = await f.reload();
@@ -649,8 +648,8 @@ describe("durable extensions from Pi packages", () => {
     ]);
     expect(report.errors).toEqual([
       expect.objectContaining({
-        entry: realpathSync(join(clash, "durable.ts")),
-        message: expect.stringContaining("already offered"),
+        entry: realpathSync(join(clash, "server.ts")),
+        message: 'Tool "read" is built into Oppi',
       }),
     ]);
   });
