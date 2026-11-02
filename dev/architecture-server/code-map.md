@@ -1,18 +1,16 @@
 # Oppi server architecture: Cleanup targets and code map
 
-Part of [Oppi server architecture](../architecture-server.md). Cleanup targets and entry points only: one row per area, pointing at the owning files.
+Part of [Oppi server architecture](../architecture-server.md).
 
 ## Server cleanup targets
 
-Keep these high-churn modules small and explicit:
-
-- `server/src/routes/sessions.ts` — keep as a transport adapter. Put lifecycle, list, trace, diff, and file-read policy in the session application services.
-- `server/src/stream.ts` and `server/src/ws-message-handler.ts` — keep WebSocket framing and client-message mapping separate from runtime ownership decisions.
-- `server/src/session-lifecycle-service.ts`, `server/src/session-list-service.ts`, and `server/src/session-trace-service.ts` — keep the services separate; do not merge lifecycle, list, and trace behavior into one controller.
-- `server/src/server.ts` — keep as composition root; move local policy helpers out when they grow beyond startup/transport wiring.
-- `server/src/sessions.ts` and `session-*` — continue pushing managed-runtime behavior into coordinators rather than adding new facade logic.
-- `server/src/sdk-backend.ts` — keep SDK and sandbox setup isolated from HTTP and route concerns.
-- `server/src/pi-tui-mirror-runtime.ts` — preserve shared projection with managed sessions; avoid creating a second projection path.
+- `server/src/routes/sessions.ts` — a transport adapter; lifecycle, list, trace, diff, and file-read policy belong in the session services.
+- `server/src/stream.ts` and `server/src/ws-message-handler.ts` — WebSocket framing and client-message mapping stay apart from runtime ownership decisions.
+- `server/src/session-lifecycle-service.ts`, `server/src/session-list-service.ts`, and `server/src/session-trace-service.ts` — stay separate services, never one controller.
+- `server/src/server.ts` — stays the composition root; policy helpers move out when they grow beyond startup and transport wiring.
+- `server/src/sessions.ts` and `session-*` — managed-runtime behaviour goes into coordinators, not new facade logic.
+- `server/src/sdk-backend.ts` — SDK and sandbox setup stay isolated from HTTP and routes.
+- `server/src/pi-tui-mirror-runtime.ts` — shares the managed sessions' projection; never a second projection path.
 
 ## Where to look in code
 

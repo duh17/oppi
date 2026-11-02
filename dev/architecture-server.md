@@ -1,8 +1,6 @@
 # Oppi server architecture
 
-> **What belongs here:** owners (which module owns what), boundaries (what may depend on what), invariants and rules (with the bug that taught them, in one clause), and entry points. Feature behaviour, flows, and history belong in code comments at the owner and in tests. Standard and budgets: [`dev/README.md`](README.md#what-belongs-in-dev).
-
-The server owns sessions, workspace access, runtime configuration, and the mobile projection of Pi session state; it never renders the timeline. It serves authenticated HTTP and the bearer-free mirror bridge on an owner-only Unix socket, and authenticated HTTPS/WSS to iPhone and iPad. The Mac app uses the Unix socket for HTTP and live WebSockets and never sends `sk_` over HTTPS/WSS.
+The server owns sessions, workspace access, runtime configuration, and the mobile projection of Pi session state; it never renders the timeline. It serves authenticated HTTP and the bearer-free mirror bridge on an owner-only Unix socket, and authenticated HTTPS/WSS to iPhone and iPad ([Listeners](architecture-server/blocks-and-boundaries.md#listeners)).
 
 ## Detail map
 
@@ -38,45 +36,33 @@ graph TD
 
 `Session.programStatus` is the one status vocabulary for every session (OSC 7501: `idle`, `working`, `done`, `blocked` with a `kind`, `error`), owned by `server/src/program-status.ts`: `trackProgramRunEvent` folds Pi events, `deriveProgramStatus` derives, `syncProgramStatus` stores. Managed and mirrored sessions call the same sync (`SessionEventProcessor`, `SessionBroadcaster`, the mirror's bridge-state path).
 
-- `Storage.saveSession` re-derives every `stopped` and `error` row from the stored outcome, so a stop of a disconnected mirror never leaves `working`/`blocked`; `starting` rows are excluded so a stop mid-start keeps the last outcome. The value persists (`program_status_json`).
+- `Storage.saveSession` re-derives every `stopped` and `error` row from the stored outcome (persisted as `program_status_json`), so a stop of a disconnected mirror never leaves `working`/`blocked`; `starting` rows are excluded so a stop mid-start keeps the last outcome.
 - Lifecycle `Session.status` stays for controls; list summaries, pushes, and `oppi session wait` read program status. The `message` is never a prompt. `editor` dialogs count as blocking replies (`isPendingUserReplyRequest`).
 - `session.pendingWake` (`SessionManager.awaitsNextTurn`) is derived per request on the live events snapshot and never stored.
 
 ## Push
 
-Push is relay-only and end-to-end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key. `server/src/push/` owns sealing and delivery; the two notifiers live in `server/src/`:
+Push is relay-only and end-to-end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key. `server/src/push/` owns sealing and delivery:
 
-- `envelope.ts` is the only way to make a `SealedPushEnvelope`. `hpke.ts` implements RFC 9180 from `node:crypto` only; push uses no third-party crypto package.
-- `relay-client.ts` tries `[primary, standby]` and prunes a registration only on a primary `410`. `push-sender.ts` keeps no per-push state and never writes config; the phone deduplicates on the envelope's HPKE `enc`.
-- `registration.ts`: the device's enrolled P-256 key signs the push key and send token. `relay-origin.ts`: relays are HTTPS (HTTP only on loopback), no path or credentials.
-- `SessionPushNotifier` (`session-push-notifier.ts`) is the one owner of session alerts (pairing alerts stay in `device-pairing.ts`): `blocked` skips devices holding a stream, `error` goes to all, at most once a minute per session; it also decides who is offered the agent `notify` tool, whose contract (`extensions/durable/notify/contract.ts`) both engines share. `PushSender` sends a device only the events its registration lists.
-- `live-activity-notifier.ts` drives the counts-only Live Activity: one send a minute, starts a card only when it knows none exists, restarts by Apple's 8 hours.
+- `envelope.ts` is the only way to make a `SealedPushEnvelope`; `hpke.ts` implements RFC 9180 from `node:crypto` only (no third-party crypto package).
+- `relay-client.ts` prunes a registration only on a primary `410`. `push-sender.ts` keeps no per-push state and never writes config; the phone deduplicates on the envelope's HPKE `enc`.
+- `registration.ts`: the device's enrolled P-256 key signs the push key and send token. `relay-origin.ts`: relays are HTTPS (HTTP only on loopback), with no path or credentials.
+- `SessionPushNotifier` (`server/src/session-push-notifier.ts`) is the one owner of session alerts (pairing alerts stay in `device-pairing.ts`) and of who is offered the agent `notify` tool, whose contract (`extensions/durable/notify/contract.ts`) both engines share. `PushSender` sends a device only the events its registration lists.
+- `live-activity-notifier.ts` owns the counts-only Live Activity.
 - `PushRegistration` records live on `ServerConfig.pushRegistrations`; revoking a device or rotating the owner token removes them in the same write.
 - `relay/` imports nothing from `server/` or `clients/` and no HPKE/KEM package (`check-architecture-boundaries.ts --scope relay`). `protocol/push/vectors/` change only through `protocol/push/scripts/generate-vectors.sh` and `npm run push:canary -- --write-capture`.
 
 ## Live Voice
 
-A call belongs to one ordinary session over a second focused stream (`voice_call_*` frames plus binary PCM: 16 kHz in, 24 kHz out). Playback PCM is sent with `compress: false`: speech PCM deflates only to ~89% at a zlib pass per frame on both ends.
+A call belongs to one ordinary session over a second focused stream (`voice_call_*` frames plus binary PCM: 16 kHz in, 24 kHz out; playback PCM skips permessage-deflate, see `stream.ts`).
 
 - Owners: `VoiceCallController` (`continuous-voice-call.ts`: identity, controller lease, status), `VoiceCallMediaCoordinator` (`continuous-voice-media.ts`: one media adapter per connection), `TranscriptionVoiceMediaAdapter` (local and OpenRouter routes), `LiveVoiceSessionLink` and `LiveVoiceSpeech` (`live-voice-speech.ts`).
 - What the caller says reaches the session through `sendPrompt` with steering. The reply's opening paragraph is what gets spoken (`SpokenOpening`); `speak` is only a heads-up tool. Call guidance and spoken-style rules live in `extensions/durable/live-voice/contract.ts`, shared by both engines.
-- Classic sessions learn the call mode from hidden `display: false` messages sent with `triggerTurn: false`, reconciled against the model's context on `session_start`, `session_compact`, and `session_tree`. Durable sessions get `oppi.live-voice` selected only while a call is attached (`LiveVoiceSpeech.attachRuntime`); a child spawned during a call never inherits it.
+- Classic sessions learn the call mode from hidden `display: false` messages sent with `triggerTurn: false`, reconciled on `session_start`, `session_compact`, and `session_tree`. Durable sessions get `oppi.live-voice` only while a call is attached (`LiveVoiceSpeech.attachRuntime`); a child spawned during a call never inherits it.
 - A paired device is the only voice principal; owner tokens never control a call. A call socket kept past its access token carries only that call. Terminal mirrors refuse calls.
 - `voice_media.*` telemetry carries counts, durations, reasons, and ids only, never transcript or spoken text, and nothing per frame.
-
-### Local Live Voice listening
-
-`RealtimeTranscriptionClient` (`realtime-transcription.ts`) opens one WebSocket per call to `{asr.sttEndpoint}/v1/realtime?intent=transcription` (wire: `server/docs/asr.md`) and forwards 16 kHz frames without resampling. The server's VAD, not Oppi, ends turns.
-
-- Items finish in commit order only; a `failed` item is an empty turn and never stalls the rest.
-- A socket that fails before `session.updated` fails the call's start; after it, the call ends (`voice_media.asr_closed`). There is no reconnect.
-- Stalled audio: the VAD ends an item only on arriving frames, and the phone sends none while muted or on hold, so with an item open and no frame for `silence_duration_ms` the client sends one `input_audio_buffer.commit` (`audio_stalled`).
-- Yuwp closes a socket idle for 15 minutes, so the client pings every 60 s. Over ~5 s of buffered audio, frames are dropped (`realtime_transcription.audio_backpressure`).
-- Dictation keeps the HTTP session API (`stt-provider.ts`).
-
-### OpenRouter Live Voice
-
-`asr.liveVoiceBackend: openrouter` uses OpenRouter's HTTP audio endpoints. OpenRouter has no realtime transcription, so `OpenRouterLiveTranscription` (`openrouter-live-voice.ts`) is the one place the server detects turns itself; results are handed over in cut order and a failed request is an empty turn. Details: `server/docs/asr.md`.
+- Listening: `RealtimeTranscriptionClient` (`realtime-transcription.ts`, wire in `server/docs/asr.md`) opens one realtime WebSocket per call to `asr.sttEndpoint`; the ASR server's VAD ends turns, items finish in commit order, and a `failed` item is an empty turn. A socket that fails before `session.updated` fails the start; after it, the call ends, with no reconnect. Stall, keepalive, and backpressure rules live at the owner. Dictation keeps the HTTP session API (`stt-provider.ts`).
+- `asr.liveVoiceBackend: openrouter` has no realtime transcription, so `OpenRouterLiveTranscription` (`openrouter-live-voice.ts`) is the one place the server detects turns itself; results go out in cut order and a failed request is an empty turn.
 
 ### Barge-in
 

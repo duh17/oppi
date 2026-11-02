@@ -1,6 +1,6 @@
 # Oppi server architecture: Server blocks and HTTP/WebSocket boundaries
 
-Part of [Oppi server architecture](../architecture-server.md); same standard (owners, boundaries, invariants, entry points).
+Part of [Oppi server architecture](../architecture-server.md).
 
 ## Main server blocks
 
@@ -26,18 +26,18 @@ Part of [Oppi server architecture](../architecture-server.md); same standard (ow
 ## Listeners
 
 - The local listener is mandatory: HTTP over an owner-only Unix socket at `$OPPI_DATA_DIR/run/oppi.sock` (deep data paths use a deterministic socket in the user's temp runtime dir). Directory `0700`, socket and startup lock `0600`, stale paths ownership-checked, concurrent owners refused.
-- The network listener serves HTTPS and scoped WebSockets. TLS preparation runs off the main thread after the local socket listens. An expected Tailscale availability failure disables the remote listener; unexpected errors are fatal; TLS failure never falls back to plaintext.
-- The mirror bridge (`/mirror/v1/bridge`) is bearer-free and lives only on the Unix socket, whose ownership is the trust boundary; the network listener answers 404 for it and rejects owner `sk_` tokens. The socket is the CLI and Mac API, never a remote transport; remote access is HTTPS/WSS with per-device P-256 keys and short-lived tokens.
+- The network listener serves HTTPS and scoped WebSockets; TLS preparation runs off the main thread after the local socket listens. An expected Tailscale availability failure disables the remote listener; unexpected errors are fatal; TLS failure never falls back to plaintext.
+- The mirror bridge (`/mirror/v1/bridge`) is bearer-free and lives only on the Unix socket, whose ownership is the trust boundary; the network listener answers 404 for it and rejects owner `sk_` tokens.
 
 ## Routes
 
-`RouteHandler` dispatches to domain files: `identity.ts`, `workspaces.ts`, `sessions.ts` (workspace and control scopes; policy delegated to the session services), `agents.ts`, `schedules.ts`, `server-resources.ts`, `uploads.ts`, `workspace-files.ts`, `host-files.ts`, `themes.ts`, `skills.ts`, `provider-auth.ts`, `telemetry.ts`, and E2E harness routes. Every route also needs a [registry row](../architecture-server.md#route-registry).
+`RouteHandler` dispatches to the domain files in `server/src/routes/`; `sessions.ts` serves workspace and control scopes and delegates policy to the session services. Every route also needs a [registry row](../architecture-server.md#route-registry).
 
 **Current files** (`host-files.ts`, writes in `workspace-file-edit.ts`):
 
 - Workspace-, skill-, and pi-origin reads advertise a strong `ETag` of the exact bytes. `origin=skill` resolves through `ServerResourceService.skillEditRoot` (editable Skills only, a single-file Skill limited to its file). `origin=pi` is allowlisted in `pi-agent-files.ts` (`SYSTEM.md`, `prompts/*.md`), re-checked on the canonical path so a link cannot reach another agent file.
 - A missing allowlisted pi file answers an empty body, no `ETag`, and `X-Oppi-Creatable: 1`; one `PUT` with `If-None-Match: *` creates it via an fsynced temp `link`ed into place (a file that appeared first is 412). Workspace and Skill files are never created.
-- Writes serialize per canonical file in-process only. The last recheck proves the target tag and the temp's inode and bytes, then renames by path; a same-host writer that swaps the temp after that check can still win, an accepted race of the same class as an agent or git writing during the save. A 200 means "the editor's bytes were renamed into place", not a no-clobber guarantee.
+- Writes serialize per canonical file in-process only. The last recheck proves the target tag and the temp's inode and bytes, then renames by path; a same-host writer that swaps the temp after that check can still win (an accepted race, like an agent or git writing during the save). A 200 means "the editor's bytes were renamed into place", not a no-clobber guarantee.
 
 ## WebSocket upgrades
 

@@ -1,12 +1,12 @@
 # Oppi server architecture: Tool inspection
 
-Part of [Oppi server architecture](../architecture-server.md); same standard (owners, boundaries, invariants, entry points).
+Part of [Oppi server architecture](../architecture-server.md). Client side: [Tool inspection](../architecture-client/blocks.md#tool-inspection).
 
 ## Tool inspection facts
 
 - `MobileRendererRegistry` owns tool identity, matching Pi's exact tool name; modules own segments (`mobile-renderer-segments.ts`), facts (`mobile-renderer-facts.ts`), display (`mobile-renderer-display.ts`), and availability (`mobile-renderer-availability.ts`). There is no second registry. Built-ins and sidecars declare facts (`inputPresentation.fields` roles, `outputPresentation.kind`); projection and trace replay consume them and keep no shell-name list. History resolves facts from the current registry.
 - File roles: `filePath`, `fileContent`, `edits`, `lineOffset`/`lineLimit`; outputs `fileContent`/`diffOfEdits` carry `provenance: requested | result` (write content and args-derived previews are requested). Apple models tolerate unknown fields.
-- Explicit result `details.outputPresentation` and `details.expandedText` override the declaration; unknown kinds degrade to structured output. With no producer facts at all, only the client's compatibility resolver synthesizes facts for exact `bash`, `read`, `write`, `edit`, `ask`, and never availability or setting authority.
+- Explicit result `details.outputPresentation` and `details.expandedText` override the declaration; unknown kinds degrade to structured output. With no producer facts at all, only the client's compatibility resolver (`BuiltInToolFacts`) synthesizes facts.
 - `outputPresentation.settingEffect: "voiceReplyMode"` is declaration-owned: result details cannot grant themselves a setting effect. `statusHeader` is a declared regex (≤200 chars) clients anchor at the start and search only in the first 512 characters; copy and raw keep the header.
 
 ## Full output and snapshot lifetime

@@ -1,6 +1,6 @@
 # Durable extension UI
 
-Part of [Oppi server architecture](../architecture-server.md); same standard (owners, boundaries, invariants, entry points). The convention for durable extensions' dialogs, persistent UI, and transcript cards. It adds no slash commands, terminal components, or protocol fields.
+Part of [Oppi server architecture](../architecture-server.md). The convention for durable extensions' dialogs, persistent UI, and transcript cards; it adds no slash commands, terminal components, or protocol fields.
 
 ## Requests
 
@@ -15,8 +15,8 @@ Part of [Oppi server architecture](../architecture-server.md); same standard (ow
 
 `notifications` in the same document is a map of replacement slots (`setStatus`, `setWidget`, `setWorkingMessage`, `setWorkingIndicator`, `setWorkingVisible`), one per key. Clear a slot by replacing it with an empty notification of the same method and key, never by removing it, so reconnect also clears stale client state. Storage follows pi-durable's `pi.live` rule (a complete base whenever no working message shows).
 
-- **Working words:** a background task watches `pi.live` and publishes only a working message (activity plus elapsed time), cleared while idle; the host ensures one task per attachment.
-- **Subagent pill:** `oppi.sessions`' conversation-scoped task (`oppi.subagent-widget`, `widget.ts`) owns the children's activity-list widget, built with the classic `subagents.ts` helpers. It follows documents (`oppi.subagents`, each child's `pi.live` and `oppi.extension-ui`), never a polling timer, writes only when derived state changes, and writes activity at most every 2 s (`ACTIVITY_INTERVAL_MS`). Its invocation ends every five minutes (`WATCH_INVOCATION_MS`) because an invocation keeps the registry snapshot it was reserved with, including extensions of sessions stopped since. Attach calls `ensureSubagentWidget` (`sessions/contract.ts`). A blocked waker keeps a row Working, since a commit cannot see the scheduler's blocked set.
+- **Working words:** a background task watches `pi.live` and publishes only a working message, cleared while idle; the host ensures one task per attachment.
+- **Subagent pill:** `oppi.sessions`' conversation-scoped task (`oppi.subagent-widget`, `widget.ts`) owns the children's activity-list widget. It follows documents (`oppi.subagents`, each child's `pi.live` and `oppi.extension-ui`), never a polling timer, and writes only when derived state changes; attach calls `ensureSubagentWidget` (`sessions/contract.ts`). Write cadence and invocation lifetime are explained in `widget.ts`.
 
 ## Transcript cards
 
@@ -30,11 +30,11 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 
 ## Background jobs
 
-- The native extension replaces CodingTools bash (durable later-wins rule) and offers `background_job start/cancel`. Bash runs in the foreground up to 15 s, then returns a job notice; a trailing `&` backgrounds at once; a timeout of 1 s or less stays foreground.
-- Each execution is a conversation-owned task; a memo claims it before the shell starts, so after a restart or shutdown a claimed, unfinished execution reports `interrupted` and never reruns (the report warns the old process may still run). SIGKILL cannot run cleanup.
-- Reporting follows pi-durable's `23-subagent-background` example: persist the result, submit a follow-up under the stable `background-job:<id>` request id, finish once admitted. Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
+- The native extension replaces CodingTools bash (durable later-wins rule) and offers `background_job start/cancel`; bash backgrounds itself after 15 s in the foreground.
+- Each execution is a conversation-owned task; a memo claims it before the shell starts, so after a restart or shutdown a claimed, unfinished execution reports `interrupted` and never reruns (the report warns the old process may still run; SIGKILL cannot run cleanup).
+- Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pi-durable's `23-subagent-background` pattern). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
 - A compact card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as a generated input: excluded from the editable queue, preserved by queue replacement, rendered as a card in history, omitted from `get_messages`.
-- Output is capped at the last 64,000 characters and saved at completion in the task-scoped `oppi.background-job-output` document, retired with its stored revisions when the runner settles, so output stays only in the transcript. Ordinary Stop preserves background jobs.
+- Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. Ordinary Stop preserves background jobs.
 - Crash smoke: `node --import tsx scripts/durable-background-jobs-smoke.ts` after `npm run build`, through the credential-approved tool.
 
 ## Input-card output
@@ -43,7 +43,7 @@ An input card may advertise `output: { kind: "terminal", offset, length, command
 
 ## SQLite explorer
 
-`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite. On `SQLITE_CANTOPEN` it retries once with a `file:` URI plus `?immutable=1`.
+`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite.
 
 ## Proof commands
 

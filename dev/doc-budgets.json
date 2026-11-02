@@ -26,36 +26,36 @@
       "reason": "Content access and current-file routes, workspace file edit sessions and drafts, launch and Quick Session intake. 676 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server.md": {
-      "words": 1960,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1698 words; headroom max(15%, 100 words)."
+      "words": 1700,
+      "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1476 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/blocks-and-boundaries.md": {
-      "words": 800,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 693 words; headroom max(15%, 100 words)."
+      "words": 750,
+      "reason": "Server block owners, listener trust boundaries, current-file read and write rules, and WebSocket upgrade owners. 648 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/code-map.md": {
-      "words": 490,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 386 words; headroom max(15%, 100 words)."
+      "words": 450,
+      "reason": "Server cleanup targets and entry points: one row of owning files per area. 347 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-conversation-stream.md": {
       "words": 1670,
       "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1451 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-extension-ui.md": {
-      "words": 1200,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1037 words; headroom max(15%, 100 words)."
+      "words": 1090,
+      "reason": "Durable extension UI convention: request and answer rules, persistent notification slots, transcript cards, build and loading, background jobs, input-card output, SQLite explorer, proof commands. 944 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/read-models.md": {
-      "words": 650,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 546 words; headroom max(15%, 100 words)."
+      "words": 580,
+      "reason": "Session list and history read models, touched-file and worktree change views with their git budget, and the app-event allowlist. 477 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/runtime.md": {
       "words": 3260,
       "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/tool-inspection.md": {
-      "words": 500,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 393 words; headroom max(15%, 100 words)."
+      "words": 480,
+      "reason": "Server tool inspection: registry ownership, producer facts, full-output and snapshot lifetime, outline budgets. 378 words; headroom max(15%, 100 words)."
     },
     "dev/architecture.md": {
       "words": 1030,
