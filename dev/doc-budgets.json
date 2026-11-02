@@ -1,0 +1,29 @@
+{
+  "reason": "Doc diet, 2026-11-02 (approved by Chen): dev/ had grown into per-slice changelogs (88,771 words). Each budget is the doc's rewritten size plus about 15%, counted outside generated regions. A doc that outgrows it is drifting back into feature behaviour, flows, or history: move those into code comments at the owner and into tests (dev/README.md, \"What belongs in dev/\"). Raise a budget only for real new rules, and say why in the commit.",
+  "maxParagraphChars": 1200,
+  "words": {
+    "dev/README.md": 320,
+    "dev/architecture-client.md": 6140,
+    "dev/architecture-client/blocks.md": 980,
+    "dev/architecture-client/change-map.md": 370,
+    "dev/architecture-client/code-map.md": 390,
+    "dev/architecture-client/flows.md": 1400,
+    "dev/architecture-client/media-files.md": 790,
+    "dev/architecture-server.md": 1870,
+    "dev/architecture-server/blocks-and-boundaries.md": 800,
+    "dev/architecture-server/code-map.md": 450,
+    "dev/architecture-server/durable-conversation-stream.md": 1380,
+    "dev/architecture-server/durable-extension-ui.md": 1200,
+    "dev/architecture-server/read-models.md": 630,
+    "dev/architecture-server/runtime.md": 3220,
+    "dev/architecture-server/tool-inspection.md": 460,
+    "dev/architecture.md": 1030,
+    "dev/networking.md": 1400,
+    "dev/telemetry.md": 2240,
+    "dev/testing/README.md": 1930,
+    "dev/testing/apple.md": 2440,
+    "dev/testing/ios-accessibility-testability.md": 880,
+    "dev/testing/mac.md": 220,
+    "dev/testing/qa-verification.md": 460
+  }
+}

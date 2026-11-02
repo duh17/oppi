@@ -44,6 +44,8 @@ scripts/*
 !scripts/batch-gate-health.test.ts
 !scripts/gate-report.ts
 !scripts/gate-report.test.ts
+!scripts/dev-docs-guard.ts
+!scripts/dev-docs-guard.test.ts
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh

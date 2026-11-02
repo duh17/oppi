@@ -59,7 +59,7 @@ run_self_test() {
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
       "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
-      "$REPO_ROOT/scripts/gate-report.test.ts"
+      "$REPO_ROOT/scripts/gate-report.test.ts" "$REPO_ROOT/scripts/dev-docs-guard.test.ts"
     (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
       --reporter=dot --silent=passed-only)
     "$SIM_POOL" self-test
@@ -473,6 +473,7 @@ SERVER_MODE="none"
 APPLE_MODE="none"
 MAC_CHANGED=0
 HARNESS_CHANGED=0
+DOCS_CHANGED=0
 CHANGED_COUNT=0
 PLAN_OUTPUT=""
 if ! PLAN_OUTPUT="$(bun "$PLANNER" --paths0-file "$PATHS_FILE" --format shell)"; then
@@ -485,13 +486,14 @@ while IFS='=' read -r key value; do
     APPLE_MODE) APPLE_MODE="$value" ;;
     MAC_CHANGED) MAC_CHANGED="$value" ;;
     HARNESS_CHANGED) HARNESS_CHANGED="$value" ;;
+    DOCS_CHANGED) DOCS_CHANGED="$value" ;;
     CHANGED_COUNT) CHANGED_COUNT="$value" ;;
   esac
 done <<< "$PLAN_OUTPUT"
 
 case "$SERVER_MODE" in none|changed|full) ;; *) echo "pre-push: invalid server plan." >&2; exit 1 ;; esac
 case "$APPLE_MODE" in none|unit|all) ;; *) echo "pre-push: invalid Apple plan." >&2; exit 1 ;; esac
-[[ "$MAC_CHANGED" =~ ^[01]$ && "$HARNESS_CHANGED" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
+[[ "$MAC_CHANGED" =~ ^[01]$ && "$HARNESS_CHANGED" =~ ^[01]$ && "$DOCS_CHANGED" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
   echo "pre-push: incomplete planner output." >&2
   exit 1
 }
@@ -808,7 +810,7 @@ run_mac_gate() {
     CODE_SIGNING_ALLOWED=NO)
 }
 
-echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
+echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED docs=$DOCS_CHANGED"
 
 # Cheap repo-wide invariant that no lane owns: tracked source and configuration
 # must not record an absolute home directory. It runs on every push because an
@@ -818,6 +820,16 @@ echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_M
 if ! run_without_git_local_env bun "$REPO_ROOT/server/scripts/check-home-paths.ts"; then
   echo "pre-push: absolute home paths in tracked files; see the list above." >&2
   exit 1
+fi
+
+# Contributor docs stay to the standard in dev/README.md ("What belongs in dev/"): word budgets
+# (dev/doc-budgets.json) and a paragraph limit. A doc-only push plans no lane, so it runs here,
+# like the home-path check: a second or so, whenever a dev/ doc, the budgets, or the guard changed.
+if [[ "$DOCS_CHANGED" -eq 1 ]]; then
+  if ! run_without_git_local_env bun "$REPO_ROOT/scripts/dev-docs-guard.ts"; then
+    echo "pre-push: dev/ docs outside their budgets; see the list above." >&2
+    exit 1
+  fi
 fi
 
 # The Apple build runs the server's architecture rules in a build phase, so it needs them too.

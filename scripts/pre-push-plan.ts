@@ -10,6 +10,8 @@ export type PrePushPlan = {
   apple: AppleGateMode;
   mac: boolean;
   harness: boolean;
+  /** A `dev/` doc, its budgets, or their guard changed: the hook runs scripts/dev-docs-guard.ts. */
+  docs: boolean;
   changedPaths: string[];
 };
 
@@ -24,7 +26,15 @@ const gatePolicyPaths = new Set([
   "server/scripts/testing-gates.ts",
   "server/tests/testing-policy-gate.test.ts",
   "dev/testing/README.md",
+  "scripts/dev-docs-guard.ts",
+  "scripts/dev-docs-guard.test.ts",
 ]);
+
+function affectsDevDocs(path: string): boolean {
+  return (path.startsWith("dev/") && path.endsWith(".md"))
+    || path === "dev/doc-budgets.json"
+    || path === "scripts/dev-docs-guard.ts";
+}
 
 // Gate code that is also executable product-adjacent tooling: its own tests run in the hook's
 // self-test (harness), and it keeps the lanes of an unclassified path (no `continue` below).
@@ -105,8 +115,10 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
   let apple: AppleGateMode = "none";
   let mac = false;
   let harness = false;
+  let docs = false;
 
   for (const path of changedPaths) {
+    if (affectsDevDocs(path)) docs = true;
     if (harnessTestedPaths.has(path)) harness = true;
 
     if (gatePolicyPaths.has(path) || path.startsWith(".github/workflows/")) {
@@ -177,7 +189,7 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     mac = true;
   }
 
-  return { server, apple, mac, harness, changedPaths };
+  return { server, apple, mac, harness, docs, changedPaths };
 }
 
 function usage(): never {
@@ -207,6 +219,7 @@ if (import.meta.main) {
     console.log(`APPLE_MODE=${plan.apple}`);
     console.log(`MAC_CHANGED=${plan.mac ? 1 : 0}`);
     console.log(`HARNESS_CHANGED=${plan.harness ? 1 : 0}`);
+    console.log(`DOCS_CHANGED=${plan.docs ? 1 : 0}`);
     console.log(`CHANGED_COUNT=${plan.changedPaths.length}`);
   }
 }

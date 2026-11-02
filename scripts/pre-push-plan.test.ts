@@ -55,6 +55,23 @@ describe("pre-push gate planning", () => {
     expect(plan.mac).toBe(false);
   });
 
+  test.each([
+    ["architecture doc", ["dev/architecture-client.md"], true],
+    ["nested testing doc", ["dev/testing/apple.md"], true],
+    ["doc budgets", ["dev/doc-budgets.json"], true],
+    ["docs guard", ["scripts/dev-docs-guard.ts"], true],
+    ["testing data beside the docs", ["dev/testing/lane-budgets.json"], false],
+    ["public docs", ["docs/usage.md", "README.md"], false],
+    ["server source", ["server/src/server.ts"], false],
+  ] as const)("runs the dev docs guard for %s: %p", (_name, paths, expected) => {
+    expect(planForPaths(paths).docs).toBe(expected);
+  });
+
+  test("a docs guard change runs its tests in the harness lane and no product lane", () => {
+    const plan = planForPaths(["scripts/dev-docs-guard.ts", "scripts/dev-docs-guard.test.ts"]);
+    expect([plan.server, plan.apple, plan.mac, plan.harness, plan.docs]).toEqual(["none", "none", false, true, true]);
+  });
+
   test("deduplicates and sorts paths for deterministic cache input", () => {
     const plan = planForPaths(["server/src/z.ts", "server/src/a.ts", "server/src/z.ts"]);
     expect(plan.changedPaths).toEqual(["server/src/a.ts", "server/src/z.ts"]);
