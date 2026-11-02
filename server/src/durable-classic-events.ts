@@ -37,6 +37,7 @@ import {
   type NestedToolExecutionResult,
   type NestedToolSlot,
   type RunFailure,
+  type SubmissionId,
   type SubmissionRecord,
   type TaskId,
   type ToolSlot,
@@ -303,7 +304,10 @@ export class DurableClassicEvents {
     const events: AgentSessionEvent[] = [];
     if (live.run) events.push(pi({ type: "agent_start" }));
     const message = live.generation?.message as AssistantMessage | undefined;
-    if (message && !recovering) events.push(...this.streamed(message));
+    // A recovering attach never shows the old partial: startup resends its request. It is
+    // recorded as shown, so a later value that still holds it does not stream it either.
+    if (message && recovering) this.shown = message;
+    else if (message) events.push(...this.streamed(message));
     for (const slot of slotsOf(live).values()) {
       if (slot.status !== "running") continue;
       events.push(this.toolStart(slot, this.current.entries), ...this.toolUpdate(slot));
@@ -369,7 +373,8 @@ export class DurableClassicEvents {
       if (
         change.type === "document" &&
         change.kind === "change" &&
-        change.record.kind === NESTED_CALL_KIND
+        change.record.kind === NESTED_CALL_KIND &&
+        change.conversationId === this.conversation.id
       ) {
         const state = change.value as { taskId?: TaskId; result?: NestedToolExecutionResult };
         if (state.taskId !== undefined && state.result !== undefined)
@@ -433,29 +438,31 @@ export class DurableClassicEvents {
         hidden.add(entry.id);
     }
     const compactionEnds = await this.compactionEnds(was, now, appended, frame.inboxChanged);
-    const nestedEnds = await this.nestedEnds(was, now);
+    const nestedEnds = await this.nestedEnds(was, now, next.entries);
     const runChanged = now.run?.inputs[0] !== was.run?.inputs[0];
-    const ended = runChanged ? was.run : undefined;
-    const runEnded = ended !== undefined;
     const runStarted = now.run !== undefined && runChanged;
-    frame.runEnded = runEnded;
-    frame.runStarted = runStarted;
+    const runs = await this.endedRuns(was, now, runChanged, runStarted, appended, hidden);
+    frame.runEnded = runs.length > 0;
+    frame.runStarted = runStarted || runs.some((run) => run.folded);
     frame.placed = await this.placedInputs(prev, next);
-    if (ended) frame.runFailure = await this.failureOf(ended, now, runStarted);
+    frame.runFailure = [...runs].reverse().find((run) => run.failure)?.failure;
 
-    // Progress: tool starts, the streamed answer, tool updates, retry backoff.
+    // 1.5.0 folds the commits made while this listener runs into one value, so one value can
+    // end a tool round and stream the next answer, or hold a whole run. Progress of what was
+    // already shown goes first; then entries and ends, turn and run boundaries, and last the
+    // progress of what began.
+    if (runs[0]?.folded && !was.run)
+      out.push(pi({ type: "agent_start" }), pi({ type: "turn_start" }));
     const before = slotsOf(was);
     const after = slotsOf(now);
-    for (const [key, slot] of after) {
-      if (slot.status !== "running" || before.get(key)?.status === "running") continue;
-      out.push(this.toolStart(slot, next.entries), ...this.toolUpdate(slot));
-    }
     const message = now.generation?.message as AssistantMessage | undefined;
-    if (message && message !== this.shown) {
-      if (this.shown?.timestamp === message.timestamp)
-        out.push(...this.updates(this.shown, message));
-      else out.push(...this.streamed(message));
-    }
+    if (
+      message &&
+      this.shown &&
+      message !== this.shown &&
+      this.shown.timestamp === message.timestamp
+    )
+      out.push(...this.updates(this.shown, message));
     for (const [key, slot] of after) {
       const previous = before.get(key);
       if (slot.status !== "running" || previous?.status !== "running") continue;
@@ -494,7 +501,8 @@ export class DurableClassicEvents {
         ends.push({ slot, entry: appended.find((entry) => entry.id === slot.entry) });
     for (const end of nestedEnds) out.push(end);
     for (const entry of appended) {
-      for (const end of ends) if (end.entry === entry) out.push(this.toolEnd(end.slot, entry));
+      for (const end of ends)
+        if (end.entry === entry) out.push(...this.endTool(end.slot, next.entries, entry));
       out.push(...(compactionEnds.placed.get(entry.id) ?? []));
       const message = entry.model?.[0];
       if (!message) continue;
@@ -503,7 +511,7 @@ export class DurableClassicEvents {
         continue;
       }
       // A streamed answer already started with its first partial; one that landed whole (no
-      // partial was ever shown) streams its content now, as Pi's start is empty then deltas.
+      // partial of it was shown) streams its content now, as Pi's start is empty then deltas.
       if (message.role !== "assistant") out.push(pi({ type: "message_start", message }));
       else if (!this.shown) out.push(...this.streamed(message));
       if (message.role === "assistant") this.shown = undefined;
@@ -534,13 +542,19 @@ export class DurableClassicEvents {
         this.retry = undefined;
       }
     }
-    for (const end of ends) if (end.entry === undefined) out.push(this.toolEnd(end.slot));
+    for (const end of ends)
+      if (end.entry === undefined) out.push(...this.endTool(end.slot, next.entries));
     out.push(...compactionEnds.unplaced);
 
     // Turn and run ends, then what began.
     if (was.run !== undefined && was.run.taskId !== now.run?.taskId)
       out.push(pi({ type: "turn_end", message: this.shown ?? dummyAssistant(), toolResults: [] }));
-    if (ended) {
+    for (const [index, run] of runs.entries()) {
+      // A run that began after another ended in this value starts here.
+      if (run.folded && index > 0)
+        out.push(pi({ type: "agent_start" }), pi({ type: "turn_start" }));
+      if (run.folded)
+        out.push(pi({ type: "turn_end", message: dummyAssistant(), toolResults: [] }));
       if (this.retry) {
         out.push(
           pi({
@@ -560,13 +574,16 @@ export class DurableClassicEvents {
       this.shown = undefined;
       this.toolArgs.clear();
       this.nestedResults.clear();
-      // Classic settles once no run follows: hold it when the next run starts here, when a
-      // failed run left inputs queued, which a continue submission starts once its failure card
+      // Classic settles once no run follows: hold it when another run starts in this value, when
+      // a failed run left inputs queued, which a continue submission starts once its failure card
       // is written, or when a host stop cut the run off (`interrupted`), which a continue picks up
       // where it was, as 1.4.0's resend did (`DurableAgentController.continueAfterFailedRun`).
-      const failure = frame.runFailure;
-      if (runStarted) this.settleHeld = false;
-      else if (failure && (await continuesAfter(this.harness, failure, inboxOf(next)))) {
+      if (index < runs.length - 1 || runStarted) {
+        this.settleHeld = false;
+        continue;
+      }
+      const failure = run.failure;
+      if (failure && (await continuesAfter(this.harness, failure, inboxOf(next)))) {
         this.settleHeld = true;
         frame.continuation = failure;
       } else out.push(pi({ type: "agent_settled" }));
@@ -579,7 +596,53 @@ export class DurableClassicEvents {
     }
     if (now.run !== undefined && now.run.taskId !== was.run?.taskId)
       out.push(pi({ type: "turn_start" }));
+    // What began: calls that started running, and an answer not shown before.
+    for (const [key, slot] of after) {
+      if (slot.status !== "running" || before.get(key)?.status === "running") continue;
+      out.push(this.toolStart(slot, next.entries), ...this.toolUpdate(slot));
+    }
+    const streaming = now.generation?.message as AssistantMessage | undefined;
+    if (streaming && streaming !== this.shown && this.shown?.timestamp !== streaming.timestamp)
+      out.push(...this.streamed(streaming));
     return frame;
+  }
+
+  /**
+   * The runs this value ended, in order: the run shown before (`pi.live.run` left or changed),
+   * then one that began and ended inside the value, which 1.5.0's folding hides from `run`.
+   * Such a run shows as a new `runFailure`, or, when it answered, as an assistant entry
+   * appended with no run before or after.
+   */
+  private async endedRuns(
+    was: LiveState,
+    now: LiveState,
+    runChanged: boolean,
+    runStarted: boolean,
+    appended: readonly EntryRecord[],
+    hidden: ReadonlySet<number>,
+  ): Promise<Array<{ inputs: readonly SubmissionId[]; failure?: RunFailure; folded: boolean }>> {
+    const runs: Array<{ inputs: readonly SubmissionId[]; failure?: RunFailure; folded: boolean }> =
+      [];
+    const ended = runChanged ? was.run : undefined;
+    if (ended) {
+      const failure = await this.failureOf(ended, now, runStarted);
+      runs.push({ inputs: ended.inputs, folded: false, ...(failure ? { failure } : {}) });
+    }
+    const failure = now.runFailure;
+    if (
+      failure &&
+      failure.taskId !== was.runFailure?.taskId &&
+      failure.inputs[0] !== ended?.inputs[0]
+    )
+      runs.push({ inputs: failure.inputs, failure, folded: true });
+    else if (
+      runs.length === 0 &&
+      !was.run &&
+      !now.run &&
+      appended.some((entry) => entry.model?.[0]?.role === "assistant" && !hidden.has(entry.id))
+    )
+      runs.push({ inputs: [], folded: true });
+    return runs;
   }
 
   /** A first partial: an empty start, then its content as deltas, as Pi streams it. */
@@ -640,6 +703,21 @@ export class DurableClassicEvents {
     ];
   }
 
+  /**
+   * A call's end, after its start when none was told: a call that went from pending to done
+   * inside one value (a fast call, or an unoffered one, which never runs). Change stats and git
+   * status follow the start.
+   */
+  private endTool(
+    slot: Slot,
+    entries: readonly EntryRecord[],
+    entry?: EntryRecord,
+    nested?: NestedToolExecutionResult,
+  ): AgentSessionEvent[] {
+    const start = this.toolArgs.has(slot.callId) ? [] : [this.toolStart(slot, entries)];
+    return [...start, this.toolEnd(slot, entry, nested)];
+  }
+
   private toolEnd(
     slot: Slot,
     entry?: EntryRecord,
@@ -684,7 +762,11 @@ export class DurableClassicEvents {
    * holds parents first). Their result is in the caller's `NestedCallDoc`, which retires with the
    * caller, so a publication's copy is used first.
    */
-  private async nestedEnds(was: LiveState, now: LiveState): Promise<AgentSessionEvent[]> {
+  private async nestedEnds(
+    was: LiveState,
+    now: LiveState,
+    entries: readonly EntryRecord[],
+  ): Promise<AgentSessionEvent[]> {
     const current = new Map((now.nestedTools ?? []).map((slot) => [slot.taskId, slot]));
     const previous = new Map((was.nestedTools ?? []).map((slot) => [slot.taskId, slot]));
     const ending: NestedToolSlot[] = [];
@@ -704,7 +786,7 @@ export class DurableClassicEvents {
         result = (state?.result as NestedToolExecutionResult | undefined) ?? undefined;
       }
       this.nestedResults.delete(slot.taskId);
-      events.push(this.toolEnd(slot, undefined, result));
+      events.push(...this.endTool(slot, entries, undefined, result));
     }
     return events;
   }

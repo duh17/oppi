@@ -1682,6 +1682,9 @@ describe("server durable managed runtime", () => {
     raw.start(async (call) => {
       if (call.kind === "value") values.push(call.value);
     });
+    // The held run: the placement must end it.
+    const heldRun = (raw.value.docs["pi.live"] as LiveState | undefined)?.run;
+    expect(heldRun).toBeDefined();
     const compactEnd = observed.next((message) => message.type === "compaction_end");
     const id = await conversation.compact(undefined, context);
     const task = await harness.waitForTask(id, context);
@@ -1713,7 +1716,18 @@ describe("server durable managed runtime", () => {
     expect(
       placement!.entries.some((entry) => entry.kind === "pi.user" && entry.id > summary.id),
     ).toBe(true);
-    expect((placement!.docs["pi.live"] as LiveState | undefined)?.run).toBeDefined();
+    // The held run ended in that same value: the run there is the follow-up's.
+    const run = (placement!.docs["pi.live"] as LiveState | undefined)?.run;
+    expect(run).toBeDefined();
+    expect(run!.inputs[0]).not.toBe(heldRun!.inputs[0]);
+    // No value between the held run and the placement shows the conversation idle.
+    const before = values.slice(0, values.indexOf(placement!));
+    expect(
+      before.every(
+        (value) =>
+          (value.docs["pi.live"] as LiveState | undefined)?.run?.inputs[0] === heldRun!.inputs[0],
+      ),
+    ).toBe(true);
     const messages = observed.messages.slice(placementStart);
     const compactIndex = messages.findIndex((message) => message.type === "compaction_end");
     const followUpIndex = messages.findIndex(
