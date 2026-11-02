@@ -529,7 +529,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         // Argument-domain values only: no persistent defaults and no Keychain are written.
         let catalog = SSHTerminalCatalog(profiles: [
             SSHTerminalProfile(host: "mac-studio.tail1234.ts.net", username: "chenda", startupCommand: "herdr"),
-            SSHTerminalProfile(host: "devbox.local", port: 2222, username: "dev", authentication: .deviceKey),
+            SSHTerminalProfile(host: "devbox.invalid", port: 2222, username: "dev", authentication: .deviceKey),
         ])
         var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)

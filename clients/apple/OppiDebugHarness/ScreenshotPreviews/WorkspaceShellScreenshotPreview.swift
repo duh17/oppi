@@ -25,7 +25,7 @@ final class WorkspaceShellPreviewController: PreviewRootController {
     /// server's own badge beside the one it is on.
     private static let otherServer = pairedServer(
         name: "mac-mini",
-        host: "mac-mini.local",
+        host: "mac-mini.invalid",
         fingerprint: "sha256:rail-inbox-preview-mini",
         badge: .macMini
     )
@@ -58,7 +58,7 @@ final class WorkspaceShellPreviewController: PreviewRootController {
 
     private static func pairedServer(
         name: String = "mac-studio",
-        host: String = "mac-studio.local",
+        host: String = "mac-studio.invalid",
         fingerprint: String = "sha256:rail-inbox-preview",
         badge: ServerBadgeIcon? = nil
     ) -> PairedServer {
