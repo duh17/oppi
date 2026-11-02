@@ -1759,9 +1759,6 @@ final class ServerConnection {
         wsClient?.prepareForBackground()
     }
 
-    /// Network transports have no process-local tunnel state to tear down.
-    func shutdownTransport() async {}
-
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {
         let message = frameEvent.message
         // Conversation stream frames carry no sessionId: they belong to the session the

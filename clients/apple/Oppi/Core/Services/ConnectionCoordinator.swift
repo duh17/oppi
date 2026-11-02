@@ -1281,7 +1281,6 @@ final class ConnectionCoordinator {
             conn.disconnectSession()
             conn.disconnectStream()
             conn.disconnectAppEventStream()
-            await conn.shutdownTransport()
         }
 
         logger.warning("Removed server \(id.prefix(16), privacy: .public)")
