@@ -6,9 +6,9 @@ import Foundation
 @MainActor
 struct ServerConnectionLifecycleTests {
 
-    @Test func configureWithValidCredentials() {
+    @Test func configureWithValidCredentials() async {
         let conn = ServerConnection()
-        let result = conn.configure(credentials: ServerCredentials(
+        let result = await configureTestConnection(conn, credentials: ServerCredentials(
             host: "192.168.1.10", port: 7749, token: "sk_abc", name: "Test"
         ))
         #expect(result == true)
@@ -281,13 +281,17 @@ struct ServerConnectionLifecycleTests {
             throw WebSocketError.notConnected
         }
         conn.sender._onTurnRetryDelayForTesting = {
-            _ = conn.configure(credentials: ServerCredentials(
-                host: "replacement.ts.net",
-                port: 7749,
-                token: "dt_replacement",
-                name: "Replacement",
-                scheme: .https
-            ))
+            // configureForUse advances the transport generation before its first
+            // await, so the replacement fences the retry while its delay runs.
+            Task { @MainActor in
+                _ = await configureTestConnection(conn, credentials: ServerCredentials(
+                    host: "replacement.ts.net",
+                    port: 7749,
+                    token: "dt_replacement",
+                    name: "Replacement",
+                    scheme: .https
+                ))
+            }
         }
 
         await #expect(throws: CancellationError.self) {
@@ -413,7 +417,7 @@ struct ServerConnectionLifecycleTests {
             reachableHost: "192.168.1.43",
             firstProbeResult: true
         )
-        #expect(conn.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(conn, credentials: credentials) == true)
         #expect(await conn.configureForUse(
             credentials: credentials,
             serverInfoBootstrap: { client, _ in
@@ -527,8 +531,8 @@ struct ServerConnectionLifecycleTests {
         #expect(attempts == 1)
     }
 
-    @Test func disconnectSessionClearsActiveId() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func disconnectSessionClearsActiveId() async {
+        let scenario = await EventFlowServerConnectionScenario()
         let conn = scenario.connection
 
         conn.disconnectSession()
@@ -538,8 +542,8 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.sessionStore.sessions.isEmpty)
     }
 
-    @Test func flushAndSuspendDelivers() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func flushAndSuspendDelivers() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .whenHandle(.agentStart)
@@ -568,68 +572,9 @@ struct ServerConnectionLifecycleTests {
         #expect(!conn.isConnected)
     }
 
-    @Test func switchServerConfiguresNewServer() {
-        let conn = ServerConnection()
-        let creds = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_studio",
-            name: "studio", serverFingerprint: "sha256:studio-fp"
-        )
-        guard let server = PairedServer(from: creds) else {
-            Issue.record("Expected PairedServer to be created from credentials")
-            return
-        }
-
-        let result = conn.switchServer(to: server)
-        #expect(result == true)
-        #expect(conn.currentServerId == "sha256:studio-fp")
-        #expect(conn.serverResourceStore.activeServerId == "sha256:studio-fp")
-        #expect(conn.apiClient != nil)
-    }
-
-    @Test func switchServerSkipsIfAlreadyTargeting() {
-        let conn = ServerConnection()
-        let creds = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_a",
-            name: "studio", serverFingerprint: "sha256:same-fp"
-        )
-        guard let server = PairedServer(from: creds) else {
-            Issue.record("Expected PairedServer to be created from credentials")
-            return
-        }
-
-        _ = conn.switchServer(to: server)
-        let result = conn.switchServer(to: server)
-        #expect(result == true)
-        #expect(conn.currentServerId == "sha256:same-fp")
-    }
-
-    @Test func switchServerChangesTarget() {
-        let conn = ServerConnection()
-        let creds1 = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_a",
-            name: "studio", serverFingerprint: "sha256:fp-a"
-        )
-        let creds2 = ServerCredentials(
-            host: "mini.ts.net", port: 7749, token: "sk_b",
-            name: "mini", serverFingerprint: "sha256:fp-b"
-        )
-        guard let server1 = PairedServer(from: creds1),
-              let server2 = PairedServer(from: creds2)
-        else {
-            Issue.record("Expected PairedServer values to be created from credentials")
-            return
-        }
-
-        _ = conn.switchServer(to: server1)
-        #expect(conn.currentServerId == "sha256:fp-a")
-
-        _ = conn.switchServer(to: server2)
-        #expect(conn.currentServerId == "sha256:fp-b")
-    }
-
     @Test func ordinarySessionListWaitersJoinOnceAndNeverRetry() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = try makeSessionListJoinConnection(
+        let conn = try await makeSessionListJoinConnection(
             failNetwork: true,
             onSessionListStart: { startCount.increment() }
         )
@@ -658,7 +603,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func recoveryOwnerJoinsFailedPassAndPerformsExactlyOneRefresh() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = try makeSessionListJoinConnection(
+        let conn = try await makeSessionListJoinConnection(
             failNetwork: false,
             onSessionListStart: { startCount.increment() }
         )
@@ -692,7 +637,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func recoveryOwnerJoinsPeerReplacementInsteadOfOverwriting() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = try makeSessionListJoinConnection(
+        let conn = try await makeSessionListJoinConnection(
             failNetwork: false,
             onSessionListStart: { startCount.increment() }
         )
@@ -740,16 +685,17 @@ struct ServerConnectionLifecycleTests {
     private func makeSessionListJoinConnection(
         failNetwork: Bool,
         onSessionListStart: @escaping @MainActor () -> Void
-    ) throws -> ServerConnection {
+    ) async throws -> ServerConnection {
         let conn = ServerConnection()
-        precondition(conn.configure(credentials: ServerCredentials(
+        let configured = await configureTestConnection(conn, credentials: ServerCredentials(
             host: "join.example.test",
             port: 443,
             token: "sk_join",
             name: "Join",
             scheme: .https,
             serverFingerprint: "sha256:join"
-        )))
+        ))
+        precondition(configured)
 
         let configuration = URLSessionConfiguration.ephemeral
         TestURLProtocol.install(in: configuration)

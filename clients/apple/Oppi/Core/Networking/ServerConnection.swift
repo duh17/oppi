@@ -54,7 +54,6 @@ final class ServerConnection {
     private var httpAuthSession: DeviceAuthSession?
     private var configuredDeviceCredentialObserver: ServerConnectionDeviceCredentialObserver?
     private var deviceKeyProvider = DeviceKeyProvider.shared
-    private var usesSynchronousCompatibilityConfiguration = false
     private var configuredHTTPBootstrapDeadlineFactory: ServerConnectionBootstrapDeadlineFactory = {
         .after(ServerConnection.httpCandidateTimeoutDefault)
     }
@@ -499,38 +498,6 @@ final class ServerConnection {
 
     // MARK: - Setup
 
-    // periphery:ignore - used by ServerConnectionTests via @testable import
-    /// Reconfigure to target a different server.
-    ///
-    /// Tears down any active session stream and WebSocket, then configures
-    /// the new server's credentials. Returns `false` on policy/URL failure.
-    @discardableResult
-    func switchServer(to server: PairedServer) -> Bool {
-        guard server.id != currentServerId else { return true } // Already targeting this server
-        disconnectSession()
-        disconnectStream()
-        disconnectAppEventStream()
-        discoveredLANEndpoint = nil
-        endpointSelection = nil
-        transportPath = .paired
-        return configure(credentials: server.credentials)
-    }
-
-    /// Synchronous entry point for already-known HTTPS credentials and tests.
-    @discardableResult
-    func configure(credentials: ServerCredentials) -> Bool {
-        usesSynchronousCompatibilityConfiguration = true
-        sender.advanceTransportGeneration()
-        guard let selection = LANEndpointSelection.select(
-            credentials: credentials,
-            discoveredEndpoint: discoveredLANEndpoint
-        ) else {
-            logger.error("Invalid HTTPS credentials: host=\(credentials.host) port=\(credentials.port)")
-            return false
-        }
-        return configureHTTP(credentials: credentials, selection: selection)
-    }
-
     /// Update the in-memory device-credential snapshot for the same device ID.
     /// Does not disconnect, reconfigure, bump generations, or replace sessions.
     @discardableResult
@@ -603,7 +570,6 @@ final class ServerConnection {
         tailnetRestartsUsed: Int = 0,
         lanDeferredForActiveWork: Bool? = nil
     ) async -> Bool {
-        usesSynchronousCompatibilityConfiguration = false
         self.tailnetRestartsUsed = tailnetRestartsUsed
         self.lanDeferredForActiveWork = lanDeferredForActiveWork ?? (pendingLANPromotion && hasActiveWork)
         transportConfigurationGeneration &+= 1
@@ -823,36 +789,6 @@ final class ServerConnection {
             return rebuilt
         }
         return result
-    }
-
-    private func configureHTTP(
-        credentials: ServerCredentials,
-        selection: EndpointSelection? = nil
-    ) -> Bool {
-        guard let selection = selection ?? LANEndpointSelection.select(
-            credentials: credentials,
-            discoveredEndpoint: discoveredLANEndpoint
-        ) else {
-            logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
-            return false
-        }
-        let prepared = makeCandidateAPIClient(
-            credentials: credentials,
-            selection: selection,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
-            configurationGeneration: transportConfigurationGeneration,
-            apiClientFactory: configuredAPIClientFactory
-        )
-        configureClients(
-            credentials: credentials,
-            selection: selection,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
-            apiClient: prepared.client,
-            apiIdentity: prepared.identity,
-            serverInfo: nil,
-            configurationGeneration: transportConfigurationGeneration
-        )
-        return true
     }
 
     private func makeCandidateAPIClient(
@@ -1083,16 +1019,6 @@ final class ServerConnection {
             pendingLANPromotion = false
         }
 
-        if usesSynchronousCompatibilityConfiguration, endpoint == nil, transportPath == .lan {
-            guard let paired = LANEndpointSelection.select(
-                credentials: credentials,
-                discoveredEndpoint: nil
-            ) else { return nil }
-            sender.advanceTransportGeneration()
-            _ = configureHTTP(credentials: credentials, selection: paired)
-            return nil
-        }
-
         if let endpoint,
            let candidate = LANEndpointSelection.select(
                credentials: credentials,
@@ -1199,14 +1125,7 @@ final class ServerConnection {
             // This boundary invalidates the old advertisement; fresh Bonjour
             // results on the new path may be eligible again.
             lanDemoted = false
-            if transition == nil {
-                if transportPath != .lan, apiClient != nil {
-                    // Only an actual synchronous route commit completed rebind.
-                    isTransportDemoting = false
-                } else {
-                    _ = scheduleLANDemotion()
-                }
-            }
+            if transition == nil { _ = scheduleLANDemotion() }
             return
         }
 

@@ -24,8 +24,8 @@ struct ScheduleListPageTests {
         )
     }
 
-    private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(
+    private func makeRoot() async throws -> AppRootEnvironment {
+        try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
@@ -42,7 +42,7 @@ struct ScheduleListPageTests {
             return (try JSONEncoder().encode(SchedulesBody(schedules: [schedule("nightly")])), Self.status(200, for: request))
         })
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let screen = ScheduleListViewController(root: root)
         let window = try show(screen)
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -69,7 +69,7 @@ struct ScheduleListPageTests {
             return try answers.answer(for: request)
         })
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let screen = ScheduleListViewController(root: root)
         let window = try show(screen)
         defer { window.isHidden = true; window.rootViewController = nil }

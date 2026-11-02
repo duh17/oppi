@@ -81,7 +81,7 @@ struct ServerExtensionListPresentationTests {
             try answers.answer(for: request)
         })
         defer { routes.end() }
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: ExtensionDetailAnswers.serverId,
             apiClient: makeTestURLProtocolClient(host: ExtensionDetailAnswers.host)
         )
@@ -156,7 +156,7 @@ struct ServerExtensionListPresentationTests {
             try answers.answer(for: request)
         })
         defer { routes.end() }
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: ExtensionDetailAnswers.serverId,
             apiClient: makeTestURLProtocolClient(host: ExtensionDetailAnswers.host)
         )

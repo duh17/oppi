@@ -659,7 +659,7 @@ struct AppEventStreamCoordinatorTests {
             return true
         }
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: makeTestCredentials(
+        #expect(await configureTestConnection(connection, credentials: makeTestCredentials(
             host: "snapshot.example",
             fingerprint: "sha256:snapshot"
         )))
@@ -703,7 +703,7 @@ struct AppEventStreamCoordinatorTests {
 
     @Test func serverReconfigurationCancelsOldStreamAndIgnoresItsStaleEvents() async throws {
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: makeTestCredentials(
+        #expect(await configureTestConnection(connection, credentials: makeTestCredentials(
             host: "server-a.example",
             fingerprint: "sha256:server-a"
         )))
@@ -728,7 +728,7 @@ struct AppEventStreamCoordinatorTests {
             connection.appEventStreamTransportState == .connected
         })
 
-        #expect(connection.configure(credentials: makeTestCredentials(
+        #expect(await configureTestConnection(connection, credentials: makeTestCredentials(
             host: "server-b.example",
             fingerprint: "sha256:server-b"
         )))
@@ -750,7 +750,7 @@ struct StickyRefreshReconciliationTests {
     // whole unit shard.
     @Test(.timeLimit(.minutes(1)), arguments: ["workspace", "session"])
     func connectedWithoutSnapshotRepairsPreexistingListFailure(_ failedProjection: String) async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
 
         if failedProjection == "workspace" {
@@ -783,7 +783,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func snapshotRequiredRefreshesBothProjectionsBeforeQueuedEvent() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
 
@@ -817,7 +817,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func lateRefreshFailureAfterAppEventConnectionGetsOneFullFollowUp() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         let requestGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
@@ -858,7 +858,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func failedLateRepairIsBoundedWithoutNetworkFanOut() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         let requestGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
@@ -900,7 +900,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func installingAPIClientDisconnectsAppEventStream() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
         #expect(connection.appEventStreamTransportState == .connected)
@@ -913,7 +913,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func staleWorkspaceRefreshCannotCommitAfterAPIReplacement() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         connection.workspaceStore.workspaces = [
             makeTestWorkspace(id: "kept", name: "Kept")
@@ -950,7 +950,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func staleSessionRefreshBalancesSyncingAfterAPIReplacement() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         connection.sessionStore.upsert(makeTestSession(id: "kept", workspaceId: "w1"))
 
@@ -977,7 +977,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func cancelingRepairPreventsStartingTheNextListLeg() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         let workspaceGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
@@ -1006,7 +1006,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func refreshFailureTelemetryUsesCoarseErrorMetadata() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         var endMetadata: [String: String] = [:]
         connection._onRefreshEventForTesting = { message, metadata, _ in
@@ -1028,7 +1028,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func workspaceURLErrorTelemetryOmitsRawFailureDetails() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         var endMetadata: [String: String] = [:]
         connection._onRefreshEventForTesting = { message, metadata, _ in
@@ -1058,7 +1058,7 @@ struct StickyRefreshReconciliationTests {
     }
 
     @Test func workspaceHTTPStatusTelemetryUsesStatusWithoutRawBody() async throws {
-        let connection = makeReconciliationConnection()
+        let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         var endMetadata: [String: String] = [:]
         connection._onRefreshEventForTesting = { message, metadata, _ in
@@ -1086,9 +1086,9 @@ struct StickyRefreshReconciliationTests {
         #expect(endMetadata.values.allSatisfy { !$0.contains("sk_secret") })
     }
 
-    private func makeReconciliationConnection() -> ServerConnection {
+    private func makeReconciliationConnection() async -> ServerConnection {
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: ServerCredentials(
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
             host: "reconcile.example.test",
             port: 7749,
             token: "sk_reconcile",

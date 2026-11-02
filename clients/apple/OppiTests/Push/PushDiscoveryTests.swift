@@ -77,9 +77,9 @@ struct PushDiscoveryTests {
     // MARK: - Live events
 
     /// A connection to a server with its own id, so the stage it records is this test's.
-    private func makeConnection() throws -> (conn: ServerConnection, serverId: String) {
+    private func makeConnection() async throws -> (conn: ServerConnection, serverId: String) {
         let conn = ServerConnection()
-        conn.configure(credentials: makeTestCredentials(fingerprint: "sha256:push-discovery-\(UUID().uuidString)"))
+        await configureTestConnection(conn, credentials: makeTestCredentials(fingerprint: "sha256:push-discovery-\(UUID().uuidString)"))
         let serverId = try #require(conn.currentServerId)
         PushDiscovery.forget(serverId: serverId)
         return (conn, serverId)
@@ -87,8 +87,8 @@ struct PushDiscoveryTests {
 
     /// A turn that ends on a running session, and a question it waits on, are the two
     /// first moments; both come through the connection the app already runs.
-    @Test func aSessionFinishingMakesTheCardDue() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func aSessionFinishingMakesTheCardDue() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         conn.sessionStore.switchServer(to: serverId)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
@@ -98,8 +98,8 @@ struct PushDiscoveryTests {
         #expect(PushDiscovery.stage(serverId: serverId) == .ready)
     }
 
-    @Test func aSessionAskingForInputMakesTheCardDue() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func aSessionAskingForInputMakesTheCardDue() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         let ask = AskRequest(id: "ask-1", sessionId: "s1", questions: [], allowCustom: false, timeout: nil)
 
@@ -108,8 +108,8 @@ struct PushDiscoveryTests {
         #expect(PushDiscovery.stage(serverId: serverId) == .ready)
     }
 
-    @Test func aSessionThatIsStillWorkingLeavesTheCardAlone() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func aSessionThatIsStillWorkingLeavesTheCardAlone() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         conn.sessionStore.switchServer(to: serverId)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
@@ -119,8 +119,8 @@ struct PushDiscoveryTests {
         #expect(PushDiscovery.stage(serverId: serverId) == nil)
     }
 
-    @Test func aBackgroundSessionFinishingThroughAnAppEventMakesTheCardDue() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func aBackgroundSessionFinishingThroughAnAppEventMakesTheCardDue() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         conn.sessionStore.switchServer(to: serverId)
         var session = makeTestSession(id: "background", workspaceId: "w1", status: .busy)
@@ -134,8 +134,8 @@ struct PushDiscoveryTests {
         #expect(PushDiscovery.stage(serverId: serverId) == .ready)
     }
 
-    @Test func anAppEventForASessionThatWasNotRunningLeavesTheCardAlone() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func anAppEventForASessionThatWasNotRunningLeavesTheCardAlone() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         conn.sessionStore.switchServer(to: serverId)
         let session = makeTestSession(id: "background", workspaceId: "w1", status: .ready)
@@ -150,14 +150,14 @@ struct PushDiscoveryTests {
 
     /// A session that stops running because it ended, was stopped, or hit a fatal error is
     /// as much a first moment as one that settled; a session that was not running is not.
-    @Test func aBackgroundSessionEndingStoppingOrFailingMakesTheCardDue() throws {
+    @Test func aBackgroundSessionEndingStoppingOrFailingMakesTheCardDue() async throws {
         let events: [(String, AppEventMessage)] = [
             ("ended", .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done")),
             ("stop confirmed", .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil)),
             ("error", .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true)),
         ]
         for (name, event) in events {
-            let (conn, serverId) = try makeConnection()
+            let (conn, serverId) = try await makeConnection()
             defer { PushDiscovery.forget(serverId: serverId) }
             conn.sessionStore.switchServer(to: serverId)
             // Stop confirmation only applies to a session that was stopping.
@@ -170,8 +170,8 @@ struct PushDiscoveryTests {
         }
     }
 
-    @Test func aStopRequestOrAnEventForAnIdleSessionLeavesTheCardAlone() throws {
-        let (conn, serverId) = try makeConnection()
+    @Test func aStopRequestOrAnEventForAnIdleSessionLeavesTheCardAlone() async throws {
+        let (conn, serverId) = try await makeConnection()
         defer { PushDiscovery.forget(serverId: serverId) }
         conn.sessionStore.switchServer(to: serverId)
         conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: .busy))

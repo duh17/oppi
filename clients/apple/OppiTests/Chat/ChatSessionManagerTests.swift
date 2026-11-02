@@ -44,7 +44,7 @@ struct ChatSessionManagerTests {
             (makeTestSession(id: sessionId, workspaceId: "w1", status: .busy), [])
         }
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let store = SessionStore()
         store.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
         defer { AppPreferenceStore.Voice.setSessionReplyMode(nil, for: sessionId) }
@@ -143,7 +143,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -197,7 +197,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -239,7 +239,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
@@ -286,7 +286,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
@@ -382,7 +382,7 @@ struct ChatSessionManagerTests {
             return (eventCount: 4, lastEventId: "evt-4")
         }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: false)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
@@ -401,17 +401,21 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
-    @Test func connectRetriesTemporaryStreamSetupWithoutErrorThenBinds() async {
+    @Test(.timeLimit(.minutes(1)))
+    func connectRetriesTemporaryStreamSetupWithoutErrorThenBinds() async {
         let sessionId = "stream-retry-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
         manager._loadHistoryForTesting = { _, _ in
             (eventCount: 2, lastEventId: "evt-2")
         }
+        let routes = TestURLProtocol.routeScope { _ in throw URLError(.notConnectedToInternet) }
+        defer { routes.end() }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
-        connection.setAPIClientForTesting(nil)
+        // No route yet: the first setup failed the way an unreachable server does.
+        let connection = ServerConnection()
+        await failTestConnectionSetupTemporarily(connection)
+        connection._setActiveSessionIdForTesting(sessionId)
         connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
-        connection.wsClient?._setStatusForTesting(.disconnected)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
 
@@ -445,7 +449,8 @@ struct ChatSessionManagerTests {
             return false
         })
 
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        // The route commits; the same connect binds on it.
+        #expect(await configureTestConnection(connection, apiClient: makeTestURLProtocolClient(host: "localhost")))
         let bound = await waitForMainActorCondition(timeout: .seconds(2)) {
             if case .awaitingConnected = manager.entryState { return true }
             return manager.entryState == .streaming
@@ -470,7 +475,7 @@ struct ChatSessionManagerTests {
             (eventCount: 1, lastEventId: "evt-1")
         }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: nil))
@@ -491,16 +496,26 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
-    @Test func connectTemporaryStreamSetupExhaustionDoesNotEmitFatalError() async {
+    @Test(.timeLimit(.minutes(1)))
+    func connectTemporaryStreamSetupExhaustionDoesNotEmitFatalError() async {
         let sessionId = "stream-exhaust-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
         manager._loadHistoryForTesting = { _, _ in
             (eventCount: 2, lastEventId: "evt-2")
         }
         manager._focusedStreamSetupRetryDelayForTesting = .zero
+        let routes = TestURLProtocol.routeScope { _ in throw URLError(.notConnectedToInternet) }
+        defer { routes.end() }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
-        connection.setAPIClientForTesting(nil)
+        // The route never commits: the first setup failed the way an unreachable
+        // server does, and no socket exists to open.
+        let connection = ServerConnection()
+        await failTestConnectionSetupTemporarily(connection)
+        connection._setActiveSessionIdForTesting(sessionId)
+        connection._connectStreamForTesting = {
+            Issue.record("A route that never committed has no socket to open")
+            return AsyncStream { $0.finish() }
+        }
         connection._focusedStreamReadinessPollForTesting = .milliseconds(1)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
@@ -522,6 +537,7 @@ struct ChatSessionManagerTests {
         #expect(await waitForMainActorCondition {
             manager.connectionGeneration >= 1
         })
+        #expect(connection.wsClient == nil, "The route never committed, so no socket exists")
         manager.cleanup()
         connection.disconnectSession()
     }
@@ -533,7 +549,7 @@ struct ChatSessionManagerTests {
             (eventCount: 1, lastEventId: "evt-1")
         }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         // Avoid a real localhost:7749 probe; availability teardown would drop
         // the claim before connect() can observe it.
         connection.setAPIClientForTesting(nil)
@@ -645,7 +661,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
 
@@ -672,7 +688,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
 
@@ -701,7 +717,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = connection.sessionStore
         sessionStore.upsert(makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
@@ -745,7 +761,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
@@ -782,7 +798,7 @@ struct ChatSessionManagerTests {
             return nil
         }
 
-        let (connection, _) = makeTestConnection(sessionId: staleId)
+        let (connection, _) = await makeTestConnection(sessionId: staleId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: staleId, workspaceId: "w1", status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: targetId, workspaceId: "w1", status: .busy))
@@ -824,7 +840,7 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: [makeTraceEvent(id: "cached-1")])
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
 
@@ -873,7 +889,7 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.saveTrace(sessionId, serverId: testTraceCacheServerId, events: openToolTrace)
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -1122,7 +1138,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(
@@ -1182,7 +1198,7 @@ struct ChatSessionManagerTests {
             return (session, [])
         }
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(session)
         let connectTask = Task { @MainActor in
@@ -1252,7 +1268,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(
@@ -1356,7 +1372,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
 
@@ -1411,7 +1427,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
 
@@ -1490,7 +1506,7 @@ struct ChatSessionManagerTests {
 
         let (screenAwakeController, updates) = makeImmediateReleaseScreenAwakeController()
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.screenAwakeController = screenAwakeController
 
         let sessionStore = SessionStore()
@@ -1571,7 +1587,7 @@ struct ChatSessionManagerTests {
 
         let (screenAwakeController, updates) = makeImmediateReleaseScreenAwakeController()
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.screenAwakeController = screenAwakeController
 
         let sessionStore = SessionStore()
@@ -1803,7 +1819,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -1872,7 +1888,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -2254,7 +2270,7 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
@@ -3051,7 +3067,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
 
         let sessionStore = SessionStore()
 

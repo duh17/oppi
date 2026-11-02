@@ -32,7 +32,7 @@ struct ServerSettingsRouteTests {
     }
 
     /// Two paired servers, `server-a` active, whose requests the test answers by host.
-    private func makeHarness() throws -> Harness {
+    private func makeHarness() async throws -> Harness {
         let servers = [try makeServer("server-a", order: 0), try makeServer("server-b", order: 1)]
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview(servers)
@@ -45,7 +45,7 @@ struct ServerSettingsRouteTests {
                 token: "sk_test",
                 configuration: configuration
             )
-            coordinator.ensureConnection(for: server).setAPIClientForTesting(client)
+            await coordinator.ensureTestConnectionReady(for: server).setAPIClientForTesting(client)
         }
         #expect(coordinator.restoreActiveServer("server-a"))
         let root = makeTestAppRoot(coordinator: coordinator)
@@ -74,7 +74,7 @@ struct ServerSettingsRouteTests {
 
     @Test("Opens on the visible server, not the one the route was made for")
     func opensOnTheVisibleServer() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         _ = h.root.coordinator.restoreActiveServer("server-b")
         let route = ServerSettingsRouteViewController(target: ServerDetailsNavTarget(serverId: "server-a"), root: h.root)
@@ -117,7 +117,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A switch closes the pages Server Settings pushed and shows the new server's page")
     func switchClosesItsPushedPagesAndSwaps() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -146,7 +146,7 @@ struct ServerSettingsRouteTests {
 
     @Test("The pages the page itself opens are tracked, pinned to its server, and closed by a switch")
     func openedPagesAreTrackedAndClosed() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -174,7 +174,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A routed screen above Server Settings survives a switch, with or without a pushed page below it")
     func routedScreenSurvivesASwitch() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -197,7 +197,7 @@ struct ServerSettingsRouteTests {
 
     @Test("What a pushed page pushed in turn closes with it, up to the next routed screen")
     func pagesPushedByPushedPagesCloseToo() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -215,7 +215,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A page nobody asked about stays when nothing of Server Settings' is below it")
     func unrelatedPushedPageStays() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let other = pushUntrackedPage(in: h.navigation, title: "Something else")
@@ -228,7 +228,7 @@ struct ServerSettingsRouteTests {
 
     @Test("In a split view, a switch made from the primary column closes About in the detail and shows the new server")
     func switchFromThePrimaryColumnClosesAboutInTheDetail() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         // The detail column is the harness's stack; the primary column is another one, as on iPad.
         // Its switch runs `HostSwitcherModel.switchHost`, the activation every server menu ends in.
@@ -261,7 +261,7 @@ struct ServerSettingsRouteTests {
 
     @Test("Nothing changes while the visible server stays the same")
     func sameServerKeepsThePage() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -279,7 +279,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A route that is closing gives the server the removal makes active no page")
     func closingRouteDoesNotSwap() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
@@ -294,7 +294,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A switch cancels the page it replaced, and the new page's load is its own")
     func switchCancelsTheReplacedPagesLoad() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let pageA = try #require(h.route.page)
@@ -332,7 +332,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A load the page left while it waited asks nothing when the answer lands")
     func leavingStopsALoadThatIsWaiting() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let page = try #require(h.route.page)
@@ -365,7 +365,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A load the page cancelled before it asked starts no request and writes nothing")
     func cancelledLoadBeforeItAsksStartsNothing() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let page = try #require(h.route.page)
@@ -394,7 +394,7 @@ struct ServerSettingsRouteTests {
 
     @Test("A load the page cancels on its way out leaves the model's facts alone")
     func cancelledLoadLeavesTheModelsOwnFactsAlone() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let page = try #require(h.route.page)

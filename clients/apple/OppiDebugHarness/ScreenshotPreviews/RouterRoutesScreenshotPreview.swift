@@ -44,8 +44,7 @@ final class RouterRoutesPreviewController: PreviewRootController {
         let server = RouterRoutesFixtures.server
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        guard coordinator.switchToServer(server),
-              let connection = coordinator.connection(for: server.id) else { return coordinator }
+        let connection = coordinator.activatePreviewServer(server)
         for workspace in RouterRoutesFixtures.workspaces {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }

@@ -82,7 +82,7 @@ struct SessionContentAccessTests {
     @Test("Connection supplies its current client and server-scoped workspace catalog")
     func connectionSuppliesCurrentClientAndCatalog() async throws {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: "server-a"))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: "server-a"))
         connection.setAPIClientForTesting(try makeClient(host: "old-server.test"))
         connection.setAPIClientForTesting(try makeClient(host: "new-server.test"))
         // Only the connected server's partition knows this sandbox workspace.

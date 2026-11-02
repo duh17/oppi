@@ -259,7 +259,7 @@ struct ServerHealthTests {
         #expect(ServerBadgeConnectionState(presentation) == .connecting)
     }
 
-    @Test func focusedStreamRecoveryOverlaysBadgeWithoutChangingAppEventGreenHealth() throws {
+    @Test func focusedStreamRecoveryOverlaysBadgeWithoutChangingAppEventGreenHealth() async throws {
         let health = ServerHealth.derive(
             freshnessState: .offline,
             freshnessLabel: "Updated never",
@@ -287,7 +287,7 @@ struct ServerHealthTests {
         )
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: credentials))
+        #expect(await configureTestConnection(connection, credentials: credentials))
         connection.setFocusedSessionStreamRecovering(true, sessionId: "focused-stream")
 
         #expect(ServerConnectionLanePresentation.title(
@@ -298,7 +298,7 @@ struct ServerHealthTests {
         ) == FocusedSessionStreamRecoveryPresentation.message)
     }
 
-    @Test func focusedStreamRecoveryDoesNotMaskOfflineSyncFailedOrDisconnectedLane() throws {
+    @Test func focusedStreamRecoveryDoesNotMaskOfflineSyncFailedOrDisconnectedLane() async throws {
         let offline = WorkspaceServerStatusPresentation.derive(
             freshnessState: .offline,
             freshnessLabel: "Updated never",
@@ -332,7 +332,7 @@ struct ServerHealthTests {
         )
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: credentials))
+        #expect(await configureTestConnection(connection, credentials: credentials))
         connection.setFocusedSessionStreamRecovering(true, sessionId: "focused-stream")
 
         #expect(ServerConnectionLanePresentation.title(
@@ -552,7 +552,7 @@ struct ServerBadgeConnectionStateTests {
         }
     }
 
-    @Test func connectedStatusUsesActiveLaneBeforePairedHostAndProxy() throws {
+    @Test func connectedStatusUsesActiveLaneBeforePairedHostAndProxy() async throws {
         let originalProxy = TailnetTransportRoute.proxy
         let originalGeneration = TailnetTransportRoute.generation
         defer { TailnetTransportRoute.publish(originalProxy, generation: originalGeneration) }
@@ -573,7 +573,7 @@ struct ServerBadgeConnectionStateTests {
             let credentials = laneCredentials(host: host)
             let server = try #require(PairedServer(from: credentials, sortOrder: 0))
             let connection = ServerConnection()
-            try #require(connection.configure(credentials: credentials))
+            try #require(await configureTestConnection(connection, credentials: credentials))
             if usesLAN {
                 connection._adoptVerifiedLANEndpointForTesting(LANDiscoveredEndpoint(
                     host: "192.168.1.42",

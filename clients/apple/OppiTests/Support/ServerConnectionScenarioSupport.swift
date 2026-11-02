@@ -10,8 +10,8 @@ final class ServerConnectionScenario {
     /// Per-session pipeline for tests — mirrors ChatSessionManager ownership.
     var reducer: TimelineReducer { pipe.reducer }
 
-    init(sessionId: String = "s1") {
-        let testConnection = makeTestConnection(sessionId: sessionId)
+    init(sessionId: String = "s1") async {
+        let testConnection = await makeTestConnection(sessionId: sessionId)
         self.connection = testConnection.conn
         self.pipe = testConnection.pipe
         self.activeSessionId = sessionId

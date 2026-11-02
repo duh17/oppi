@@ -578,7 +578,7 @@ struct UserTimelineRowContentTests {
 
     @MainActor
     @Test("user rows get a session-file reader only while a client and workspace exist")
-    func userRowSessionFileReaderNeedsClientAndWorkspaceAtBuildTime() throws {
+    func userRowSessionFileReaderNeedsClientAndWorkspaceAtBuildTime() async throws {
         let sessionId = "user-row-file-reader"
         let item = ChatItem.userMessage(id: "user-1", text: "look at this", timestamp: Date())
 
@@ -605,7 +605,7 @@ struct UserTimelineRowContentTests {
         #expect(connection.apiClient == nil)
         #expect(try !hasFileReader(connection: connection, workspaceId: "ws-test"))
 
-        #expect(connection.configure(credentials: ServerCredentials(
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
             host: "127.0.0.1",
             port: 7749,
             token: "test-token",

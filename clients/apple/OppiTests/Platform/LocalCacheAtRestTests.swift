@@ -112,9 +112,11 @@ struct LocalCacheAtRestTests {
         let kept = makeServer(id: "sha256:cache-kept")
         coordinator.serverStore.addOrUpdate(gone)
         coordinator.serverStore.addOrUpdate(kept)
-        coordinator.switchToServer(gone)
+        // Both pairings set up through a server that answers `/server/info`.
+        coordinator._serverInfoBootstrapForTesting = { _, _ in makeTestServerInfo() }
+        await coordinator.switchToTestServer(gone)
         let goneConnection = coordinator.activeConnection
-        coordinator.switchToServer(kept)
+        await coordinator.switchToTestServer(kept)
 
         await timeline.saveWorkspaces([makeTestWorkspace(id: "w-disk", name: "Disk")], serverId: gone.id)
         await timeline.saveTrace("s1", serverId: gone.id, events: [makeTraceEvent()])
@@ -168,7 +170,9 @@ struct LocalCacheAtRestTests {
         #expect(!fileManager.fileExists(atPath: base.appending(path: "timeline/servers/\(server.id)").path))
         #expect(!fileManager.fileExists(atPath: base.appending(path: "timeline/traces/\(server.id)").path))
 
-        coordinator.addServer(server, switchTo: false)
+        // Paired again through a server that answers `/server/info`.
+        coordinator._serverInfoBootstrapForTesting = { _, _ in makeTestServerInfo() }
+        #expect(await coordinator.addTestServer(server, switchTo: false) == .pairedWithoutSelection)
 
         await timeline.saveSessionList([makeTestSession(id: "s1", name: "Again")], serverId: server.id)
         await files.cacheFileIndex(["again"], workspaceId: "w1", serverId: server.id)

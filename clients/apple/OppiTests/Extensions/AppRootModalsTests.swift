@@ -150,7 +150,7 @@ struct AppRootModalsTests {
 
         // The other server already has a dialog under the same request id.
         let beta = try #require(coordinator.serverStore.server(for: betaId))
-        let betaConnection = coordinator.ensureConnection(for: beta)
+        let betaConnection = await coordinator.ensureTestConnectionReady(for: beta)
         _ = betaConnection.focusedSessionStore.focus(sessionId: "s")
         betaConnection.activeExtensionDialog = ExtensionUIRequest(id: "same-id", sessionId: "s", method: "custom", title: "Beta")
 

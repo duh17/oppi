@@ -13,7 +13,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectIfNeededReentrancyGuard() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         await conn.reconnectIfNeeded()
         #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
@@ -81,7 +81,7 @@ struct ServerConnectionForegroundRecoveryTests {
     @Test func reconnectDoesNotTouchReducerTimeline() async {
         // With per-session reducers, the connection has no reducer to touch.
         // This test verifies foreground recovery doesn't crash without one.
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         await conn.reconnectIfNeeded()
@@ -91,13 +91,13 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectRefreshesWithoutActiveSession() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
         await conn.reconnectIfNeeded()
         #expect(!conn.foregroundRecoveryInFlight)
     }
 
     @Test func reconnectSkipsFullListRefreshWhenRecentSyncIsFresh() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -113,7 +113,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func reconnectPerformsFullListRefreshWhenCachedDataIsStale() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let stale = Date().addingTimeInterval(-600)
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -129,7 +129,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -141,7 +141,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipEmitsStructuredRefreshEvent() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -162,7 +162,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListForceRefreshesEvenWhenFresh() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -174,7 +174,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         let now = Date()
         conn.workspaceStore.workspaces = [makeTestWorkspace()]
@@ -187,7 +187,7 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogForceEmitsEndRefreshEventWithCounts() async {
-        let conn = makeForegroundRecoveryConnection()
+        let conn = await makeForegroundRecoveryConnection()
 
         var endMetadata: [String: String] = [:]
         var endLevel: ClientLogLevel?
@@ -213,7 +213,7 @@ struct ServerConnectionForegroundRecoveryTests {
     /// the speaker goes away with its backend and comes back with it.
     @Test func voiceCapabilitiesReloadOnForegroundAndAfterFailedReadAloud() async throws {
         let backend = VoiceBackendScript(host: "voice-reload.test", speechStates: ["ready"])
-        let conn = makeVoiceCapabilityConnection(backend)
+        let conn = await makeVoiceCapabilityConnection(backend)
         defer { backend.unregister() }
         conn.setSplitStreamCapabilitiesForTesting(speech: true)
 
@@ -244,7 +244,7 @@ struct ServerConnectionForegroundRecoveryTests {
             speechStates: ["unreachable", "ready"],
             reportsVoiceBackends: true
         )
-        let conn = makeVoiceCapabilityConnection(backend)
+        let conn = await makeVoiceCapabilityConnection(backend)
         defer { backend.unregister() }
         conn._voiceBackendFollowUpDelayForTesting = .milliseconds(50)
         conn.setSplitStreamCapabilitiesForTesting(speech: false)
@@ -263,9 +263,9 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(!conn.speechAvailable)
     }
 
-    private func makeVoiceCapabilityConnection(_ backend: VoiceBackendScript) -> ServerConnection {
+    private func makeVoiceCapabilityConnection(_ backend: VoiceBackendScript) async -> ServerConnection {
         let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
+        await configureTestConnection(conn, credentials: ServerCredentials(
             host: backend.host, port: 7749, token: "sk_test", name: "Test"
         ))
         let config = URLSessionConfiguration.ephemeral
@@ -278,9 +278,9 @@ struct ServerConnectionForegroundRecoveryTests {
         return conn
     }
 
-    private func makeForegroundRecoveryConnection() -> ServerConnection {
+    private func makeForegroundRecoveryConnection() async -> ServerConnection {
         let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
+        await configureTestConnection(conn, credentials: ServerCredentials(
             host: "test.local", port: 7749, token: "sk_test", name: "Test",
             serverFingerprint: "sha256:foreground-recovery"
         ))

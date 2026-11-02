@@ -10,7 +10,7 @@ struct ChatActionHandlerRecoveryTests {
         let sessionId = "slow-model-send"
         let handler = ChatActionHandler()
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let pipe = TestEventPipeline(sessionId: sessionId, connection: connection)
         connection._sendAckTimeoutForTesting = .milliseconds(25)
         connection._turnSendRetryDelayForTesting = .milliseconds(1)

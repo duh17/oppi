@@ -184,7 +184,7 @@ private struct Fixture {
     init(serverId: String, workspaceId: String) async throws {
         self.workspaceId = workspaceId
         connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials(fingerprint: serverId))
+        await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: serverId))
         connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
         draftsURL = FileManager.default.temporaryDirectory
             .appending(path: "live-voice-lifetime-\(UUID().uuidString).json", directoryHint: .notDirectory)

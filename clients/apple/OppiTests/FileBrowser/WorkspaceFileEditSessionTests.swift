@@ -1938,7 +1938,7 @@ struct WorkspaceFileEditEntryTests {
         _ = try await client.serverInfo()
         let serverId = "sha256:files-lock-\(UUID().uuidString)"
         let workspaceId = "w-files-lock"
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client)
         defer { ScopedLockService.shared.forgetServer(serverId) }
         let files = FileBrowserViewController(
             root: root,

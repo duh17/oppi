@@ -30,14 +30,14 @@ struct ServerMetricsEnableTests {
         return (page, window)
     }
 
-    private func makeHarness(revision: Int? = 4) throws -> Harness {
+    private func makeHarness(revision: Int? = 4) async throws -> Harness {
         // The app's own refreshes once a server is connected are not what these tests are
         // about; they answer as an unreachable server does, and anything else fails.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: revision)
         let serverId = serverId
         let client = makeTestURLProtocolClient(host: "ready-server.test")
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client)
         Self.useStores(on: root.coordinator) { _ in transport }
         // Known off: the page shows its Turn On state without asking for history.
         root.coordinator.setServerMetricsEnabledCache(false, for: serverId)
@@ -148,7 +148,7 @@ struct ServerMetricsEnableTests {
 
     @Test("Turning on saves through the store against the loaded revision and updates the cached flag")
     func turnOnSucceeds() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
 
         try await turnOn(h)
@@ -160,7 +160,7 @@ struct ServerMetricsEnableTests {
 
     @Test("A failed save rolls back: the flag stays off and the page says why")
     func turnOnFailureRollsBack() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.transport.failNextSave(with: SettingsTestError())
 
@@ -176,7 +176,7 @@ struct ServerMetricsEnableTests {
 
     @Test("A change that lands between the page's read and its save is a conflict: reloaded, and the page says so")
     func turnOnConflictReloads() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         // Another device saves (and leaves it off) after the page fetched the document.
         h.transport.beforeNextSave { h.transport.changeElsewhere([:]) }
@@ -194,7 +194,7 @@ struct ServerMetricsEnableTests {
 
     @Test("Coming back to Server Settings shows a change another device made meanwhile")
     func returningReloadsTheServerSettings() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         let (settings, window) = try makeServerSettings(h.root, serverId: serverId)
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -215,7 +215,7 @@ struct ServerMetricsEnableTests {
 
     @Test("A conflict that brings another device's value updates the pill's cached flag too")
     func conflictUpdatesTheCachedFlag() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         let metrics = SettingsCatalog.serverMetricsEnabled
         let store = h.root.coordinator.settings(for: serverId)
@@ -234,7 +234,7 @@ struct ServerMetricsEnableTests {
 
     @Test("A change made elsewhere before the tap is fetched first, so the save is not a false conflict")
     func turnOnAfterAChangeElsewhere() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         _ = await h.root.coordinator.settings(for: serverId).reload(SettingsCatalog.serverMetricsEnabled)
         h.transport.changeElsewhere([:])
@@ -248,7 +248,7 @@ struct ServerMetricsEnableTests {
 
     @Test("Turn On from Metrics, off from Server Settings, Turn On from Metrics again: no conflict")
     func metricsThenServerSettingsThenMetrics() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         let coordinator = h.root.coordinator
 
@@ -275,7 +275,7 @@ struct ServerMetricsEnableTests {
 
     @Test("Server Settings' switch saves through the store too: a failure puts it back and says why")
     func serverSettingsFailureRollsBack() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         let (settings, window) = try makeServerSettings(h.root, serverId: serverId)
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -308,9 +308,9 @@ struct ServerMetricsEnableTests {
         var coordinator: ConnectionCoordinator { root.coordinator }
     }
 
-    private func makeTwoServers() throws -> TwoServers {
+    private func makeTwoServers() async throws -> TwoServers {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
-        let root = try makeTestAppRoot(readyServers: ["server-a", "server-b"].map { id in
+        let root = try await makeTestAppRoot(readyServers: ["server-a", "server-b"].map { id in
             TestReadyServer(
                 id: id, name: id, host: "\(id).test",
                 client: makeTestURLProtocolClient(host: "\(id).test")
@@ -324,7 +324,7 @@ struct ServerMetricsEnableTests {
 
     @Test("Two servers' Server Settings at once: B's save in flight while A saves; each page, store and pill cache is its own")
     func twoServersAtOnce() async throws {
-        let two = try makeTwoServers()
+        let two = try await makeTwoServers()
         defer { two.routes.end() }
         let coordinator = two.coordinator
         let root = two.root
@@ -360,7 +360,7 @@ struct ServerMetricsEnableTests {
 
     @Test("A server's store is made once, is its own, and a removed server's is dropped and never cached again")
     func storeLifecycle() async throws {
-        let two = try makeTwoServers()
+        let two = try await makeTwoServers()
         defer { two.routes.end() }
         let coordinator = two.coordinator
 

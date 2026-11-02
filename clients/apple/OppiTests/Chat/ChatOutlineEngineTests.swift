@@ -12,9 +12,9 @@ import UIKit
 struct ChatOutlineEngineTests {
     @Test("A classic chat's outline offers Timeline and Tree; a durable chat's outline is the timeline with no switch",
           arguments: [(SessionEngine.classic, true), (.durable, false)])
-    func theTreeSwitchFollowsTheEngine(engine: SessionEngine, offersTree: Bool) throws {
+    func theTreeSwitchFollowsTheEngine(engine: SessionEngine, offersTree: Bool) async throws {
         let sessionId = "outline-\(engine)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setAPIClientForTesting(nil)
         var session = makeTestSession(id: sessionId, workspaceId: "ws-outline", status: .ready)
         session.engine = engine

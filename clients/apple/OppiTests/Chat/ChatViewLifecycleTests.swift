@@ -33,7 +33,7 @@ struct ChatViewLifecycleTests {
     @Test func onAppearPreparesSessionReentryBeforeAsyncConnectLoop() async {
         let parentId = "parent-\(UUID().uuidString)"
         let childId = "child-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: childId)
+        let (connection, _) = await makeTestConnection(sessionId: childId)
 
         connection.sessionStore.upsert(makeTestSession(id: parentId, status: .ready))
 
@@ -66,7 +66,7 @@ struct ChatViewLifecycleTests {
     @Test func stoppedSessionBecomingBusyReconnectsFocusedStream() async {
         let sessionId = "parent-\(UUID().uuidString)"
         let workspaceId = "w1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: nil, status: .stopped))
         connection.disconnectSession()
@@ -109,7 +109,7 @@ struct ChatViewLifecycleTests {
     @Test func alreadyBusySessionShowsStopAndWorkingRowFromTheFirstLayout() async throws {
         let sessionId = "session-\(UUID().uuidString)"
         let workspaceId = "w1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(
             makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)
@@ -174,7 +174,7 @@ struct ChatViewLifecycleTests {
 
     @Test func onDisappearWithoutPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let host = makeHost(connection: connection, sessionId: sessionId)
@@ -197,7 +197,7 @@ struct ChatViewLifecycleTests {
 
     @Test func coveredNavigationPushRetainsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let appNavigation = AppNavigation()
@@ -241,7 +241,7 @@ struct ChatViewLifecycleTests {
     @Test func destroyingCoveredChatViewDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let workspaceId = "w1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(
             makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
@@ -297,7 +297,7 @@ struct ChatViewLifecycleTests {
 
     @Test func destroyingCoveredStoppedChatViewDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
         connection.disconnectSession()
@@ -355,7 +355,7 @@ struct ChatViewLifecycleTests {
         let previousSessionId = "previous-\(UUID().uuidString)"
         let targetSessionId = "target-\(UUID().uuidString)"
         let workspaceId = "w1"
-        let (connection, _) = makeTestConnection(sessionId: previousSessionId)
+        let (connection, _) = await makeTestConnection(sessionId: previousSessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: previousSessionId, workspaceId: workspaceId, status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: targetSessionId, workspaceId: workspaceId, status: .busy))
@@ -389,7 +389,7 @@ struct ChatViewLifecycleTests {
         let staleSessionId = "stale-\(UUID().uuidString)"
         let targetSessionId = "target-\(UUID().uuidString)"
         let workspaceId = "w1"
-        let (connection, _) = makeTestConnection(sessionId: staleSessionId)
+        let (connection, _) = await makeTestConnection(sessionId: staleSessionId)
         connection.setAPIClientForTesting(nil)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: staleSessionId, workspaceId: workspaceId, status: .busy))
@@ -427,7 +427,7 @@ struct ChatViewLifecycleTests {
 
     @Test func onDisappearDuringLocalPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let host = makeHost(connection: connection, sessionId: sessionId)
@@ -455,7 +455,7 @@ struct ChatViewLifecycleTests {
 
     @Test func onDisappearDuringLiveAudioStreamDefersDisconnectUntilStreamDone() async {
         let sessionId = "session-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let host = makeHost(connection: connection, sessionId: sessionId)
@@ -513,7 +513,7 @@ struct ChatViewLifecycleTests {
         )
 
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:draft-lifetime"))
+        await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: "sha256:draft-lifetime"))
         connection._setActiveSessionIdForTesting(sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection._sendAckTimeoutForTesting = .milliseconds(300)

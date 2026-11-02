@@ -166,7 +166,7 @@ struct AppOpenerTests {
     // MARK: - Warm and cold
 
     @Test func pushTapOpensTheSessionAndItsAskCard() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.setAskDialog(sessionId: "child", on: "server-a")
 
@@ -184,7 +184,7 @@ struct AppOpenerTests {
     }
 
     @Test func coldLaunchParksTheRequestUntilLaunchFinishes() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("child", workspaceId: "w1", to: "server-a")
 
         harness.opener.open(.session(SessionOpen(
@@ -207,7 +207,7 @@ struct AppOpenerTests {
     @Test func aRequestParkedBeforeThePairingListIsReadStillOpens() async throws {
         // A locked launch has not read the pairing list yet: its server is
         // unread, not removed, however often the root redraws.
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false, loadsServers: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false, loadsServers: false)
         harness.addSession("child", workspaceId: "w1", to: "server-a")
 
         harness.opener.open(.session(SessionOpen(
@@ -228,7 +228,7 @@ struct AppOpenerTests {
     }
 
     @Test func twoRequestsBeforeLaunchOpenOnlyTheLast() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("first", workspaceId: "w1", to: "server-a")
         harness.addSession("second", workspaceId: "w1", to: "server-a")
 
@@ -252,7 +252,7 @@ struct AppOpenerTests {
     }
 
     @Test func workspaceURLAtColdLaunchOpensTheCreateFormOnItsServer() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         let url = try #require(URL(string: "oppi://workspace?path=/tmp/project&name=Project"))
 
         harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
@@ -272,7 +272,7 @@ struct AppOpenerTests {
     }
 
     @Test func inAppSessionLinkAtColdLaunchParksUntilLaunch() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("source", workspaceId: "w1", to: "server-a")
         harness.addSession("target", workspaceId: "w1", to: "server-a")
         harness.navigation.openWorkspaceSession(.init(
@@ -296,7 +296,7 @@ struct AppOpenerTests {
     }
 
     @Test func sceneSessionURLWaitsForUnlock() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately
         )
@@ -315,7 +315,7 @@ struct AppOpenerTests {
     // MARK: - In-app links
 
     @Test func timelineSessionLinkKeepsTheBackStackAndPreparesTheTarget() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("source", workspaceId: "w1", to: "server-a")
         harness.addSession("target", workspaceId: "w1", to: "server-a")
         harness.setAskDialog(sessionId: "target", on: "server-a")
@@ -338,7 +338,7 @@ struct AppOpenerTests {
     }
 
     @Test func extensionSurfaceSessionLinkNavigatesLikeATimelineLink() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("source", workspaceId: "chat-workspace", to: "server-a")
         harness.addSession("target", workspaceId: "chat-workspace", to: "server-a")
         harness.navigation.openWorkspaceSession(.init(
@@ -363,7 +363,7 @@ struct AppOpenerTests {
     }
 
     @Test func selfLinkToTheVisibleChatDoesNothing() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("source", workspaceId: "w1", to: "server-a")
         harness.navigation.openWorkspaceSession(.init(
             serverId: "server-a",
@@ -385,7 +385,7 @@ struct AppOpenerTests {
     }
 
     @Test func staleInAppLinkIsDroppedInsteadOfGuessed() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("other", workspaceId: "w1", to: "server-b")
         harness.addSession("target", workspaceId: "w1", to: "server-b")
 
@@ -403,7 +403,7 @@ struct AppOpenerTests {
     }
 
     @Test func inAppLinkWithoutASourceUsesTheUniqueMatch() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("target", workspaceId: "w1", to: "server-b")
 
         harness.opener.open(.session(SessionOpen(
@@ -418,7 +418,7 @@ struct AppOpenerTests {
     // MARK: - Servers
 
     @Test func pushForAnotherServerSwitchesAndRoutesThere() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("child", workspaceId: "workspace-b", to: "server-b")
         #expect(harness.coordinator.activeServerId == "server-a")
 
@@ -436,7 +436,7 @@ struct AppOpenerTests {
     @Test func sceneSessionURLResolvesThroughTheCachedStores() async throws {
         // A session created by the share extension is not in memory until the
         // app asks its server for it.
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.coordinator._getSessionRecordForTesting = { _, id in
             makeTestSession(id: id, workspaceId: "w1", status: .busy)
         }
@@ -451,7 +451,7 @@ struct AppOpenerTests {
     }
 
     @Test func unknownServerShowsAToastAndDropsTheRequest() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
 
         harness.opener.open(.session(SessionOpen(
             serverId: "unpaired-server",
@@ -487,7 +487,7 @@ struct AppOpenerTests {
     }
 
     @Test func aThreadLinkToADescendantOpensItsRootsThreadInTheList() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("root", workspaceId: "w1", to: "server-a")
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
         harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
@@ -507,7 +507,7 @@ struct AppOpenerTests {
     }
 
     @Test func aThreadLinkReadsAncestorsThatAreNotLoadedToFindTheRoot() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
         harness.connection("server-a")._getSessionRecordForTesting = { id in
             var session = makeTestSession(id: id, workspaceId: "w1", status: .stopped)
@@ -522,7 +522,7 @@ struct AppOpenerTests {
     }
 
     @Test func aThreadLinkSwitchesToTheServerThatHasTheSession() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("root", workspaceId: "w1", to: "server-b")
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-b")
 
@@ -534,7 +534,7 @@ struct AppOpenerTests {
     }
 
     @Test func aThreadLinkToAnUnknownSessionShowsTheListAndANotice() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         // The server answers 404: it does not have the session.
         harness.connection("server-a")._getSessionRecordForTesting = { _ in throw APIError.server(status: 404, message: "Not found") }
         harness.coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
@@ -556,7 +556,7 @@ struct AppOpenerTests {
     /// A server that did not answer is not a session that does not exist: no "not found" notice, the list
     /// stays where it was, and the request waits for the next foreground like an unreachable session link.
     @Test func aThreadLinkThatCouldNotAskTheServerIsNotANotFound() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.connection("server-a")._getSessionRecordForTesting = { _ in throw URLError(.notConnectedToInternet) }
         harness.coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.notConnectedToInternet) }
         harness.navigation.openWorkspaceSession(.init(serverId: "server-a", sessionId: "current", workspaceId: "w1"))
@@ -579,7 +579,7 @@ struct AppOpenerTests {
     /// A newer open supersedes a thread link that is still reading an ancestor: the older link must not
     /// open its thread when the read returns.
     @Test func aNewerLinkWinsOverAThreadLinkStillReadingAnAncestor() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
         harness.addSession("other-root", workspaceId: "w1", to: "server-a")
         var release: CheckedContinuation<Void, Never>?
@@ -606,7 +606,7 @@ struct AppOpenerTests {
 
     /// The lock gate is the session link's: a record that names a locked workspace is refused after it loads.
     @Test func aThreadLinkToASessionInALockedWorkspaceIsRefusedAndRestoresTheServer() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -630,7 +630,7 @@ struct AppOpenerTests {
     /// A slow network (Tailscale SOCKS) must not hold a link to a session the phone already has: the
     /// route is up while the record refresh is still out, and the refresh lands behind it.
     @Test func aLoadedSessionLinkPushesBeforeTheRecordRefreshReturns() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         let connection = harness.connection("server-a")
         var release: CheckedContinuation<Void, Never>?
@@ -666,7 +666,7 @@ struct AppOpenerTests {
     /// Only a record that names its workspace gives the lock scope; any other session still waits for
     /// the record before it is pushed, so a locked workspace can never be shown early.
     @Test func aSessionThatIsNotLoadedStillWaitsForItsRecordBeforeTheRoute() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         let connection = harness.connection("server-a")
         var release: CheckedContinuation<Void, Never>?
         connection._getSessionRecordForTesting = { id in
@@ -691,7 +691,7 @@ struct AppOpenerTests {
     /// The cached record names a locked workspace: the prompt comes before the route and before the
     /// refresh, and a cancel leaves focus, the claim, and the route untouched.
     @Test func aLoadedSessionInALockedWorkspaceAsksBeforeItOpensAndCancelLeavesNothing() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
         harness.addSession("locked", workspaceId: "w2", to: "server-a")
         let connection = harness.connection("server-a")
         var refreshes = 0
@@ -716,7 +716,7 @@ struct AppOpenerTests {
 
     /// A successful unlock opens the loaded session without waiting for the network either.
     @Test func aLoadedSessionInALockedWorkspaceOpensAfterUnlockBeforeTheRefreshReturns() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.success])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.success])
         harness.addSession("locked", workspaceId: "w2", to: "server-a")
         let connection = harness.connection("server-a")
         var release: CheckedContinuation<Void, Never>?
@@ -743,7 +743,7 @@ struct AppOpenerTests {
     /// the prompt is cancelled, the server the open switched away from comes back, and nothing else
     /// about the session loads.
     @Test func aLockDiscoveredOnlyByTheRefreshTakesTheOpenedSessionBackOffScreen() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -779,7 +779,7 @@ struct AppOpenerTests {
     /// its refresh still lands: the store must hold the session's new workspace for that gate, and for
     /// Back to the chat later. A real request is cancelled with its task, so the stub fails when it is.
     @Test func aSupersededLoadedOpenStillLandsItsRefreshButNeverPrompts() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.addSession("other", workspaceId: "w1", to: "server-a")
         let connection = harness.connection("server-a")
@@ -812,7 +812,7 @@ struct AppOpenerTests {
     /// session's route off the stack, so Back from the newer screen never reaches its chat, and it
     /// leaves the newer screen (and the server it is on) alone.
     @Test func aRefusedLockTakesTheSessionOffTheStackEvenIfAnotherOpenReplacedItWhileAsking() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -847,7 +847,7 @@ struct AppOpenerTests {
     /// The person tapped another screen themselves (the opener never heard of it) before the refused
     /// prompt: the locked session's route goes, the screen they chose and its server stay.
     @Test func aRefusedLockAfterTheUserNavigatedOnLeavesTheirScreenAndServerAlone() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -876,7 +876,7 @@ struct AppOpenerTests {
     }
 
     @Test func aLoadedThreadLinkOpensBeforeTheRecordRefreshReturns() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("root", workspaceId: "w1", to: "server-a")
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
         let connection = harness.connection("server-a")
@@ -899,7 +899,7 @@ struct AppOpenerTests {
 
     /// The thread is already open when the refresh says the session is gone: a notice, not a silent miss.
     @Test func aLoadedThreadLinkToASessionTheRefreshSaysIsGoneToastsAfterOpening() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("root", workspaceId: "w1", to: "server-a")
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
         harness.connection("server-a")._getSessionRecordForTesting = { _ in
@@ -918,7 +918,7 @@ struct AppOpenerTests {
     /// to another screen, nothing of theirs moves.
     @Test(arguments: [false, true])
     func aRefusedLockAfterAThreadOpensRestoresTheServerOnlyWhileTheListIsShowing(navigatedOn: Bool) async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -950,7 +950,7 @@ struct AppOpenerTests {
     }
 
     @Test func unreachableServerKeepsTheRequestAndRetriesOnTheNextForeground() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.unreachableServers = ["server-a"]
 
@@ -979,7 +979,7 @@ struct AppOpenerTests {
     }
 
     @Test func aNewerRequestReplacesTheParkedOne() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("first", workspaceId: "w1", to: "server-a")
         harness.addSession("second", workspaceId: "w1", to: "server-a")
         harness.unreachableServers = ["server-a"]
@@ -1012,7 +1012,7 @@ struct AppOpenerTests {
         AppLockUnlockOutcome.backgrounded,
     ])
     func lockedOpenWaitsForUnlock(_ outcome: AppLockUnlockOutcome) async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             authOutcomes: outcome == .success ? [.success] : [.cancelled]
@@ -1044,7 +1044,7 @@ struct AppOpenerTests {
     }
 
     @Test func aLockedOpenNeverPairsOrNavigatesBehindTheCover() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately
         )
@@ -1063,7 +1063,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancelledScopedUnlockLeavesServerAndRouteAlone() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -1091,7 +1091,7 @@ struct AppOpenerTests {
     // MARK: - Invites
 
     @Test func inviteRunsDuringLaunchWithoutWaiting() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         let url = try #require(URL(string: "oppi://connect?v=3&invite=bogus"))
 
         harness.opener.open(.invite(url))
@@ -1103,7 +1103,7 @@ struct AppOpenerTests {
     @Test func sessionRequestDuringInviteBootstrapOpensAfterItFinishes() async throws {
         // The invite holds the app; a session tap that arrives then must not be
         // lost. This is the regression for the one-shot launch consume.
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
 
         let attempt = harness.opener.invitePairingGate.beginIncoming()
@@ -1125,7 +1125,7 @@ struct AppOpenerTests {
     }
 
     @Test func workspaceLinkWaitsForUnlock() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately
         )
@@ -1143,7 +1143,7 @@ struct AppOpenerTests {
     }
 
     @Test func inviteWaitsForThePairingList() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         var releaseLoad: CheckedContinuation<Void, Never>?
         harness.opener.awaitPairedServers = {
             await withCheckedContinuation { releaseLoad = $0 }
@@ -1162,7 +1162,7 @@ struct AppOpenerTests {
     }
 
     @Test func inviteWaitsForUnlock() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             launch: false
@@ -1177,7 +1177,7 @@ struct AppOpenerTests {
     }
 
     @Test func quickSessionWaitsForUnlock() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             launch: false
@@ -1198,7 +1198,7 @@ struct AppOpenerTests {
     // MARK: - Siri and Quick Session
 
     @Test func siriReceiptOpensWithTheCreatedRowAndDraft() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         let receipt = IntentSessionOpenTrigger.Receipt(
             requestID: harness.intentTrigger.issueRequestID(),
             serverId: "server-a",
@@ -1230,7 +1230,7 @@ struct AppOpenerTests {
     }
 
     @Test func leftoverSiriReceiptOpensAtLaunch() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("created", workspaceId: "w1", to: "server-a")
         harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
             requestID: harness.intentTrigger.issueRequestID(),
@@ -1249,7 +1249,7 @@ struct AppOpenerTests {
     }
 
     @Test func quickSessionWaitsForLaunchAndDropsWhenOneIsShowing() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.navigation.launchPhase = .ready
         harness.navigation.showOnboarding = false
 
@@ -1272,7 +1272,7 @@ struct AppOpenerTests {
     // MARK: - Repair: App Lock, lock scope, lifetime
 
     @Test func parkedRequestWaitsForUnlockBeforeDraining() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled, .success],
             launch: false
@@ -1307,7 +1307,7 @@ struct AppOpenerTests {
     }
 
     @Test func scopedLockedTargetBehindAppLockStillAsks() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             authOutcomes: [.success, .success]
@@ -1334,7 +1334,7 @@ struct AppOpenerTests {
     }
 
     @Test func urlWorkspaceHintCannotChooseTheScopedLockScope() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -1361,7 +1361,7 @@ struct AppOpenerTests {
     }
 
     @Test func quickSessionParkedDuringOnboardingOpensWhenItClears() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.navigation.launchPhase = .ready
         harness.navigation.showOnboarding = true
 
@@ -1376,7 +1376,7 @@ struct AppOpenerTests {
     }
 
     @Test func staleParkedRequestIsDropped() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.unreachableServers = ["server-a"]
 
@@ -1399,7 +1399,7 @@ struct AppOpenerTests {
     }
 
     @Test func removingTheServerDropsAParkedRequest() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.unreachableServers = ["server-a"]
 
@@ -1420,7 +1420,7 @@ struct AppOpenerTests {
     }
 
     @Test func aNewerOpenAbandonsTheParkedSiriReceipt() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("created", workspaceId: "w1", to: "server-a")
         harness.opener._browserLinkPreferenceForTesting = .inApp
         let receipt = IntentSessionOpenTrigger.Receipt(
@@ -1456,7 +1456,7 @@ struct AppOpenerTests {
     }
 
     @Test func aReceiptForAnUnpairedServerIsTakenAndForgotten() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
             requestID: harness.intentTrigger.issueRequestID(),
             serverId: "server-gone",
@@ -1477,7 +1477,7 @@ struct AppOpenerTests {
     // MARK: - Repair 2: deferred opens, receipts, destination scope
 
     @Test func aLockedReceiptDoesNotTakeTheUsersTap() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             launch: false
@@ -1515,7 +1515,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancelledUnlockThenUnlockStillDrainsTheParkedRequest() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled, .cancelled, .success],
             launch: false
@@ -1554,7 +1554,7 @@ struct AppOpenerTests {
     // MARK: - Repair 3: dropped unlocks, stale choices, loaded scope, old receipts
 
     @Test func aCancelledUnlockKeepsTheDeferredSiriReceiptAndPrompt() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately,
             authOutcomes: [.cancelled],
@@ -1584,7 +1584,7 @@ struct AppOpenerTests {
     }
 
     @Test func aStaleResourceChoiceCannotCancelANewerOpen() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("shared-id", workspaceId: "w1", to: "server-a")
         harness.addSession("shared-id", workspaceId: "w2", to: "server-b")
         harness.addSession("child", workspaceId: "w1", to: "server-a")
@@ -1607,7 +1607,7 @@ struct AppOpenerTests {
     }
 
     @Test func aChosenMatchOnAnUnreachableServerParksForTheNextForeground() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
         harness.addSession("shared-id", workspaceId: "w1", to: "server-a")
         harness.addSession("shared-id", workspaceId: "w2", to: "server-b")
         let reference = ambiguousSessionReference("shared-id")
@@ -1628,7 +1628,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancellingTheLoadedWorkspaceLockRestoresTheServerAndActiveSession() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
@@ -1664,7 +1664,7 @@ struct AppOpenerTests {
     }
 
     @Test func aSiriReceiptOlderThanAParkedRequestKeepsItsPromptButDoesNotOpen() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("created", workspaceId: "w1", to: "server-a")
         harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
             requestID: harness.intentTrigger.issueRequestID(),
@@ -1693,7 +1693,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancellingTheWorkspaceLockOnTheSameServerKeepsTheVisibleChatFocused() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled]
         )
@@ -1729,7 +1729,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancellingALockOnlyDialogsRevealReturnsFocusToTheVisibleChat() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled]
         )
@@ -1758,7 +1758,7 @@ struct AppOpenerTests {
     }
 
     @Test func cancellingALockOnlyDialogsRevealClosesTheLockedStream() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled]
         )
@@ -1808,7 +1808,7 @@ struct AppOpenerTests {
     }
 
     @Test func aReceiptForAnUnreadableServerSurvivesLaunchAndParks() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             unreadableServerIds: ["server-b"],
             launch: false
@@ -1847,7 +1847,7 @@ struct AppOpenerTests {
     }
 
     @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
-        let harness = OpenerHarness(
+        let harness = await OpenerHarness(
             servers: [makeServer("server-a")],
             authOutcomes: [.cancelled]
         )
@@ -1883,7 +1883,7 @@ struct AppOpenerTests {
     // MARK: - Web and system links
 
     @Test func webLinkFollowsTheBrowserPreference() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
         let url = try #require(URL(string: "https://example.com/docs"))
 
         harness.opener._browserLinkPreferenceForTesting = .inApp
@@ -1899,7 +1899,7 @@ struct AppOpenerTests {
     }
 
     @Test func webLinkAndSystemLinkNeverWaitForLaunch() async throws {
-        let harness = OpenerHarness(servers: [], launch: false)
+        let harness = await OpenerHarness(servers: [], launch: false)
         let web = try #require(URL(string: "https://example.com/docs"))
         let mail = try #require(URL(string: "mailto:support@example.com"))
         harness.opener._browserLinkPreferenceForTesting = .external
@@ -1982,6 +1982,8 @@ private final class OpenerHarness {
     let authenticator: StubAuthenticator
     var unreachableServers: Set<String> = []
     private var connections: [String: ServerConnection] = [:]
+    /// Configured connections of the servers paired at init, not yet seeded.
+    private var configuredConnections: [String: ServerConnection] = [:]
     private let traceRequests = OSAllocatedUnfairLock(initialState: 0)
     /// The fixture's network: every request fails, and the handler ends with the harness.
     private let networkRoutes: TestURLProtocol.RouteScope
@@ -1996,7 +1998,7 @@ private final class OpenerHarness {
         authOutcomes: [DeviceOwnerAuthentication.Outcome] = [.success],
         launch: Bool = true,
         loadsServers: Bool = true
-    ) {
+    ) async {
         let recorder = LinkRecorder()
         self.recorder = recorder
         let lockDefaults = UserDefaults(suiteName: "AppOpenerTests-lock-\(UUID().uuidString)")!
@@ -2054,6 +2056,14 @@ private final class OpenerHarness {
                 traceRequests.withLock { $0 += 1 }
             }
             throw URLError(.notConnectedToInternet)
+        }
+        // Each paired server's connection is configured now, through the production
+        // setup path; seeding still installs it on first use.
+        for server in servers {
+            guard let stored = serverStore.server(for: server.id) else { continue }
+            let connection = ServerConnection()
+            await configureTestConnection(connection, credentials: stored.credentials)
+            configuredConnections[server.id] = connection
         }
         opener._serverReadyForTesting = { [weak self] serverId in
             guard let self else { return false }
@@ -2153,10 +2163,7 @@ private final class OpenerHarness {
         if let existing = connections[serverId] {
             connection = existing
         } else {
-            connection = ServerConnection()
-            if let server = serverStore.server(for: serverId) {
-                connection.configure(credentials: server.credentials)
-            }
+            connection = configuredConnections.removeValue(forKey: serverId) ?? ServerConnection()
             connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
             // The network is down for every fixture, so the timeline prefetch
             // fails without touching the session row a test seeded.

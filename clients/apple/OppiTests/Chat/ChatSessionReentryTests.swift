@@ -80,7 +80,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
@@ -154,7 +154,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
@@ -355,7 +355,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))
 
@@ -424,7 +424,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
@@ -469,7 +469,7 @@ struct ChatSessionReentryTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
 
         // First connect
@@ -548,7 +548,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
@@ -607,7 +607,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped))
 
@@ -644,7 +644,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped))
 
@@ -712,7 +712,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
@@ -786,7 +786,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: testTraceCacheServerId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
 
@@ -839,7 +839,7 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
 

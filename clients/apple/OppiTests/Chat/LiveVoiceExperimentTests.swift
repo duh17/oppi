@@ -30,7 +30,7 @@ struct LiveVoiceExperimentTests {
 
     @Test("The chat composer offers Live Voice only with the experiment on and the server advertising it")
     func chatEntryNeedsExperimentAndCapability() async {
-        let (connection, _) = makeTestConnection(sessionId: "live-voice-entry")
+        let (connection, _) = await makeTestConnection(sessionId: "live-voice-entry")
         let chat = ChatViewController(
             sessionId: "live-voice-entry",
             connection: connection,
@@ -57,7 +57,7 @@ struct LiveVoiceExperimentTests {
 
     @Test("Quick Session offers Live Voice only with the experiment on and the server advertising it")
     func quickSessionEntryNeedsExperimentAndCapability() async throws {
-        let (root, routes) = try makeQuickSessionRoot(liveVoice: true)
+        let (root, routes) = try await makeQuickSessionRoot(liveVoice: true)
         defer { routes.end() }
         let model = QuickSessionModel(root: root)
 
@@ -77,7 +77,7 @@ struct LiveVoiceExperimentTests {
         )
         await store.load()
         store.setQuickSessionDraftText("half-typed thought")
-        let (root, routes) = try makeQuickSessionRoot(liveVoice: true, composerDraftStore: store)
+        let (root, routes) = try await makeQuickSessionRoot(liveVoice: true, composerDraftStore: store)
         defer { routes.end() }
         let model = QuickSessionModel(root: root)
         root.navigation.pendingQuickSessionStart = QuickSessionStart(mode: .liveVoice)
@@ -93,7 +93,7 @@ struct LiveVoiceExperimentTests {
 
     @Test("A Live Voice start with the experiment on is not refused for the experiment")
     func requestedStartWithExperimentOnIsNotRefusedForIt() async throws {
-        let (root, routes) = try makeQuickSessionRoot(liveVoice: true)
+        let (root, routes) = try await makeQuickSessionRoot(liveVoice: true)
         defer { routes.end() }
         let model = QuickSessionModel(root: root)
         root.navigation.pendingQuickSessionStart = QuickSessionStart(mode: .liveVoice)
@@ -111,11 +111,11 @@ struct LiveVoiceExperimentTests {
     private func makeQuickSessionRoot(
         liveVoice: Bool,
         composerDraftStore: ComposerDraftStore? = nil
-    ) throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
+    ) async throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
         // The server's own work is not what these tests are about: it answers as an
         // unreachable server does, and a route it did not plan fails the test.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
-        let ready = try makeTestAppRoot(
+        let ready = try await makeTestAppRoot(
             readyServerId: "sha256:live-voice-\(UUID().uuidString)",
             apiClient: makeTestURLProtocolClient(host: "live-voice-experiment.test")
         )

@@ -22,14 +22,14 @@ struct ChatRouteLockGateTests {
         let routes: TestURLProtocol.RouteScope
     }
 
-    private func makeFixture() throws -> Fixture {
+    private func makeFixture() async throws -> Fixture {
         let serverId = "sha256:chat-route-lock-\(UUID().uuidString)"
         // The chat route starts the app's own refreshes (git status, the file index, the
         // session's trace page); they answer as an unreachable server does, and a route the
         // test did not plan fails it.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         let client = makeTestURLProtocolClient(host: "ready-server.test")
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let connection = try #require(root.coordinator.connection(for: serverId))
         let locks = ScopedLockService.shared
         let restoreLookup = locks.sessionLookup
@@ -84,7 +84,7 @@ struct ChatRouteLockGateTests {
 
     @Test("a session that moves into a locked workspace after its route is up is covered at once")
     func movedSessionIsCoveredAtOnce() async throws {
-        let fixture = try makeFixture()
+        let fixture = try await makeFixture()
         defer { tearDown(fixture) }
         fixture.connection.sessionStore.upsert(makeTestSession(id: "child", workspaceId: "w1", status: .stopped))
         let route = push("child", workspaceId: "w1", in: fixture)
@@ -111,7 +111,7 @@ struct ChatRouteLockGateTests {
     /// never updated while hidden. Back must not show the chat: it comes up covered.
     @Test("Back to a route whose session moved into a locked workspace shows the cover, not the chat")
     func backDoesNotRevealAMovedSession() async throws {
-        let fixture = try makeFixture()
+        let fixture = try await makeFixture()
         defer { tearDown(fixture) }
         fixture.connection.sessionStore.upsert(makeTestSession(id: "child", workspaceId: "w1", status: .stopped))
         fixture.connection.sessionStore.upsert(makeTestSession(id: "other", workspaceId: "w1", status: .stopped))
@@ -136,7 +136,7 @@ struct ChatRouteLockGateTests {
 
     @Test("a covered moved session shows its chat again once the new workspace is unlocked")
     func unlockingTheNewWorkspaceRevealsTheChat() async throws {
-        let fixture = try makeFixture()
+        let fixture = try await makeFixture()
         defer { tearDown(fixture) }
         fixture.connection.sessionStore.upsert(makeTestSession(id: "child", workspaceId: "w1", status: .stopped))
         let route = push("child", workspaceId: "w1", in: fixture)

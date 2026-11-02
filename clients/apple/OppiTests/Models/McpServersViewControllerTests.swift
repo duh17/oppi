@@ -18,7 +18,7 @@ struct McpServersViewControllerTests {
         let firstClient = server.client(host: "first.mcp-list.test", serverNames: ["alpha"], holdsAnswers: false)
         let otherClient = server.client(host: "other.mcp-list.test", serverNames: ["beta"], holdsAnswers: true)
 
-        let root = try makeTestAppRoot(readyServers: [
+        let root = try await makeTestAppRoot(readyServers: [
             TestReadyServer(id: firstId, name: "First", host: "first.mcp-list.test", client: firstClient),
             TestReadyServer(id: otherId, name: "Other", host: "other.mcp-list.test", client: otherClient),
         ])

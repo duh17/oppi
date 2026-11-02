@@ -67,7 +67,7 @@ struct ServerConnectionReconnectTests {
     // MARK: - handleStreamReconnected cancels deferred queue sync
 
     @Test func reconnectCancelsDeferredQueueSync() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
         let staleTask = makeCancellableNeverCompletingTaskForTesting()
@@ -89,7 +89,7 @@ struct ServerConnectionReconnectTests {
     // MARK: - Reconnect schedules new queue sync
 
     @Test func reconnectSchedulesQueueSyncAfterBoundStreamReconnect() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         let getQueueCounter = MessageCounter()
 
@@ -121,7 +121,7 @@ struct ServerConnectionReconnectTests {
     // MARK: - Transition table: streamConnected accepted while streaming
 
     @Test func coordinatorAcceptsRepeatedStreamConnectedForBoundStream() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         let getQueueCounter = MessageCounter()
 
@@ -165,7 +165,7 @@ struct ServerConnectionReconnectTests {
     // MARK: - Stale queue sync doesn't race after reconnect
 
     @Test func staleQueueSyncCancelledBeforeBoundReconnectSync() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         let getQueueCounter = MessageCounter()
 
@@ -206,7 +206,7 @@ struct ServerConnectionReconnectTests {
     }
 
     @Test func freshConnectSchedulesOneQueueRefreshFromStreamConnected() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
@@ -263,7 +263,7 @@ struct ServerConnectionReconnectTests {
     }
 
     @Test func alreadyConnectedStreamStillRefreshesQueue() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         // A parked `connected` bootstrap keeps attach from tearing the socket
         // down. Without it, reopening waits for a new stream_connected.

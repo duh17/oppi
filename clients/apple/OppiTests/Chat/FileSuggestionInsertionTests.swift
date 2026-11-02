@@ -107,8 +107,8 @@ struct FileSuggestionInsertionTests {
 
     // MARK: - ServerConnection state management
 
-    @Test func clearFileSuggestionsEmptiesItems() {
-        let (conn, _) = makeTestConnection()
+    @Test func clearFileSuggestionsEmptiesItems() async {
+        let (conn, _) = await makeTestConnection()
         conn.chatState.fileSuggestions = [
             FileSuggestion(path: "README.md", isDirectory: false),
         ]
@@ -116,8 +116,8 @@ struct FileSuggestionInsertionTests {
         #expect(conn.chatState.fileSuggestions.isEmpty)
     }
 
-    @Test func clearFileSuggestionsCancelsTask() {
-        let (conn, _) = makeTestConnection()
+    @Test func clearFileSuggestionsCancelsTask() async {
+        let (conn, _) = await makeTestConnection()
         let task = makeCancellableNeverCompletingTaskForTesting()
         conn.chatState.fileSuggestionTask = task
         conn.clearFileSuggestions()
@@ -125,8 +125,8 @@ struct FileSuggestionInsertionTests {
         #expect(conn.chatState.fileSuggestionTask == nil)
     }
 
-    @Test func fetchFileSuggestionsCancelsPreviousTask() {
-        let (conn, _) = makeTestConnection()
+    @Test func fetchFileSuggestionsCancelsPreviousTask() async {
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         let oldTask = makeCancellableNeverCompletingTaskForTesting()
@@ -137,8 +137,8 @@ struct FileSuggestionInsertionTests {
         #expect(oldTask.isCancelled, "Previous task must be cancelled when a new query starts")
     }
 
-    @Test func fetchFileSuggestionsReplacesTask() {
-        let (conn, _) = makeTestConnection()
+    @Test func fetchFileSuggestionsReplacesTask() async {
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "first")
@@ -153,8 +153,8 @@ struct FileSuggestionInsertionTests {
         #expect(task1?.isCancelled == true)
     }
 
-    @Test func fetchWithNoFileIndexReturnsEmpty() {
-        let (conn, _) = makeTestConnection()
+    @Test func fetchWithNoFileIndexReturnsEmpty() async {
+        let (conn, _) = await makeTestConnection()
         // fileIndex not loaded — search should return empty immediately
         conn.fetchFileSuggestions(query: "src")
         #expect(conn.chatState.fileSuggestions.isEmpty)
@@ -162,7 +162,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchRemembersPendingQueryUntilRankerInstallsAndNewerQueryWins() async {
-        let (pendingConn, _) = makeTestConnection()
+        let (pendingConn, _) = await makeTestConnection()
         pendingConn.fetchFileSuggestions(query: "src")
         #expect(pendingConn.chatState.fileSuggestions.isEmpty)
         #expect(pendingConn.chatState.pendingFileSuggestionQuery == "src")
@@ -176,7 +176,7 @@ struct FileSuggestionInsertionTests {
         })
         #expect(pendingConn.chatState.pendingFileSuggestionQuery == nil)
 
-        let (newerConn, _) = makeTestConnection()
+        let (newerConn, _) = await makeTestConnection()
         newerConn.fetchFileSuggestions(query: "src")
         newerConn.fetchFileSuggestions(query: "read")
         #expect(newerConn.chatState.pendingFileSuggestionQuery == "read")
@@ -193,7 +193,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchPopulatesSuggestionsFromLocalIndex() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "ios/Oppi/Features/Chat/ChatView.swift",
             "ios/Oppi/Core/Models/FuzzyMatch.swift",
@@ -211,7 +211,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchRanksServerTsHighestForServerTsQuery() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "server/src/server.ts",
             "server/src/event-ring.ts",
@@ -230,7 +230,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchPrefersFilenamePrefixOverDockerCompose() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "server/docker-compose.yml",
             "clients/apple/Oppi/Features/Chat/Composer/ComposerAutocomplete.swift",
@@ -245,7 +245,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchDemotesMediaForCodeLikeQuery() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "docs/images/app-icon.png",
             "server/tests/api-routes.test.ts",
@@ -260,7 +260,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchPrefersImplementationOverTestsWhenQueryIsNotTest() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "clients/apple/OppiTests/Network/ServerConnectionTests.swift",
             "clients/apple/Oppi/Core/Networking/ServerConnection.swift",
@@ -275,7 +275,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchPrefersExactBasenameOverTestVariant() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "server/src/routes/workspace-files.ts",
             "server/src/routes/workspace-files.test.ts",
@@ -289,7 +289,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func fetchFallsBackToFuzzyWhenNoLiteralMatchExists() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "server/src/routes/workspace-files.ts",
             "server/src/routes/workspace-files.test.ts",
@@ -303,8 +303,8 @@ struct FileSuggestionInsertionTests {
         #expect(conn.chatState.fileSuggestions[0].path.contains("workspace-files"))
     }
 
-    @Test func fetchEmptyQueryReturnsFilesByLength() {
-        let (conn, _) = makeTestConnection()
+    @Test func fetchEmptyQueryReturnsFilesByLength() async {
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "ios/Oppi/Features/Chat/ChatView.swift",
             "README.md",
@@ -353,7 +353,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func newerKeystrokeDiscardsStaleRankingResults() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "zzzz-unique-stale-token.swift",
             "a.md",
@@ -370,8 +370,8 @@ struct FileSuggestionInsertionTests {
         })
     }
 
-    @Test func invalidateMarksIndexDirty() {
-        let (conn, _) = makeTestConnection()
+    @Test func invalidateMarksIndexDirty() async {
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["README.md"])
 
         // Index is loaded and clean
@@ -385,7 +385,7 @@ struct FileSuggestionInsertionTests {
     }
 
     @Test func clearAfterFetchDropsResults() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "src")

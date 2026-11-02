@@ -393,7 +393,7 @@ final class BusyReentryBench {
 
         // 4. Connect
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: serverId))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: serverId))
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
         let scrollController = ChatScrollController()

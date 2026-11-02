@@ -20,9 +20,9 @@ struct GuidedControlComposerModelTests {
         )
     }
 
-    private func makeConnection(workspaces: [Workspace]) -> ServerConnection {
+    private func makeConnection(workspaces: [Workspace]) async -> ServerConnection {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.workspaceStore.workspaces = workspaces
         return connection
     }
@@ -38,9 +38,9 @@ struct GuidedControlComposerModelTests {
     @Test(arguments: [
         ControlSessionDomain.agents, .extensions, .schedules, .skills, .themes, .workspaces,
     ])
-    func workspacePillShowsOnlyForAgentsAndSchedulesWithAServerWorkspace(domain: ControlSessionDomain) {
-        let withWorkspace = makeModel(domain: domain, connection: makeConnection(workspaces: [makeTestWorkspace()]))
-        let withoutWorkspace = makeModel(domain: domain, connection: makeConnection(workspaces: []))
+    func workspacePillShowsOnlyForAgentsAndSchedulesWithAServerWorkspace(domain: ControlSessionDomain) async {
+        let withWorkspace = makeModel(domain: domain, connection: await makeConnection(workspaces: [makeTestWorkspace()]))
+        let withoutWorkspace = makeModel(domain: domain, connection: await makeConnection(workspaces: []))
         let takesWorkspace = domain == .agents || domain == .schedules
 
         #expect(withWorkspace.showsWorkspacePicker == takesWorkspace)
@@ -48,7 +48,7 @@ struct GuidedControlComposerModelTests {
     }
 
     @Test func agentsComposerWithNoSelectedWorkspaceStillAcceptsInputAndLaunchesWithoutWorkspace() async throws {
-        let connection = makeConnection(workspaces: [])
+        let connection = await makeConnection(workspaces: [])
         let model = makeModel(domain: .agents, connection: connection)
         try await appear(model)
         // Workspaces arrive after setup: the pill appears, nothing is selected.
@@ -65,7 +65,7 @@ struct GuidedControlComposerModelTests {
     @Test func agentsComposerLaunchNamesItsWorkspace() async throws {
         // No shared preference: other suites write the last-used workspace key, so this
         // test relies only on the first-workspace fallback, with IDs no other suite uses.
-        let connection = makeConnection(workspaces: [
+        let connection = await makeConnection(workspaces: [
             makeTestWorkspace(id: "composer-only-ws", name: "Composer Only"),
         ])
         let model = makeModel(domain: .agents, connection: connection)
@@ -77,7 +77,7 @@ struct GuidedControlComposerModelTests {
     }
 
     @Test func themesComposerSendsNoWorkspaceEvenWithServerWorkspaces() async throws {
-        let connection = makeConnection(workspaces: [
+        let connection = await makeConnection(workspaces: [
             makeTestWorkspace(id: "composer-only-ws", name: "Composer Only"),
         ])
         let model = makeModel(domain: .themes, connection: connection)

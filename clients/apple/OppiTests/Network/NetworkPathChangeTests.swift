@@ -12,17 +12,19 @@ struct ServerConnectionNetworkPathChangeTests {
     // MARK: - Endpoint Clearing
 
     @Test func pathChangeClearsLANEndpointAndFallsToPaired() async {
-        let (conn, pipe) = makeConnectionOnLAN()
+        let (conn, pipe) = await makeConnectionOnLAN()
         #expect(conn.transportPath == .lan)
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         #expect(conn.transportPath == .paired)
         #expect(await conn.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 
     @Test func pathChangeWhenAlreadyPairedStaysPaired() async {
-        let conn = makeConnectionPaired()
+        let conn = await makeConnectionPaired()
         #expect(conn.transportPath == .paired)
 
         conn.handleNetworkPathChange()
@@ -33,11 +35,13 @@ struct ServerConnectionNetworkPathChangeTests {
 
     // MARK: - Reconnect Decisions by WS Status
 
-    @Test func reconnecting_forcesImmediateReconnect() {
-        let (conn, pipe) = makeConnectionOnLAN()
+    @Test func reconnecting_forcesImmediateReconnect() async {
+        let (conn, pipe) = await makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.reconnecting(attempt: 5))
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         // cancelReconnectBackoff sets status to .disconnected, then connectStream()
         // starts a fresh connection. The WS client should exist and not be in
@@ -50,12 +54,14 @@ struct ServerConnectionNetworkPathChangeTests {
         }
     }
 
-    @Test func connectedViaLAN_forcesReconnect() {
-        let (conn, pipe) = makeConnectionOnLAN()
+    @Test func connectedViaLAN_forcesReconnect() async {
+        let (conn, pipe) = await makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.connected)
         #expect(conn.transportPath == .lan)
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         // After path change, endpoint should be paired and WS should be
         // reconnecting or connecting (not still .connected to dead LAN IP)
@@ -64,8 +70,8 @@ struct ServerConnectionNetworkPathChangeTests {
                 "Should not remain connected to the stale LAN IP")
     }
 
-    @Test func connectedViaPaired_noReconnect() {
-        let conn = makeConnectionPaired()
+    @Test func connectedViaPaired_noReconnect() async {
+        let conn = await makeConnectionPaired()
         conn.wsClient?._setStatusForTesting(.connected)
         #expect(conn.transportPath == .paired)
 
@@ -77,19 +83,21 @@ struct ServerConnectionNetworkPathChangeTests {
         #expect(conn.transportPath == .paired)
     }
 
-    @Test func disconnected_triggersReconnect() {
-        let (conn, pipe) = makeConnectionOnLAN()
+    @Test func disconnected_triggersReconnect() async {
+        let (conn, pipe) = await makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.disconnected)
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         // Should attempt to reconnect with the updated (paired) endpoint
         #expect(conn.transportPath == .paired)
         #expect(conn.wsClient != nil)
     }
 
-    @Test func connecting_noForceReconnect() {
-        let conn = makeConnectionPaired()
+    @Test func connecting_noForceReconnect() async {
+        let conn = await makeConnectionPaired()
         conn.wsClient?._setStatusForTesting(.connecting)
 
         conn.handleNetworkPathChange()
@@ -101,19 +109,21 @@ struct ServerConnectionNetworkPathChangeTests {
 
     // MARK: - Session Preservation
 
-    @Test func pathChangePreservesFocusedSessionId() {
-        let (conn, pipe) = makeConnectionOnLAN()
+    @Test func pathChangePreservesFocusedSessionId() async {
+        let (conn, pipe) = await makeConnectionOnLAN()
         conn._setActiveSessionIdForTesting("s1")
         conn.wsClient?._setStatusForTesting(.connected)
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         #expect(conn.focusedSessionId == "s1",
                 "Focused session must survive network path change")
     }
 
-    @Test func pathChangePreservesReducerTimeline() {
-        let (conn, pipe) = makeConnectionOnLAN()
+    @Test func pathChangePreservesReducerTimeline() async {
+        let (conn, pipe) = await makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.connected)
 
         pipe.reducer.process(.agentStart(sessionId: "s1"))
@@ -123,6 +133,8 @@ struct ServerConnectionNetworkPathChangeTests {
         #expect(countBefore > 0)
 
         conn.handleNetworkPathChange()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         #expect(pipe.reducer.items.count == countBefore,
                 "Timeline must not be cleared by network path change")
@@ -152,10 +164,10 @@ struct ServerConnectionNetworkPathChangeTests {
         )
     }
 
-    private func makeConnectionOnLAN() -> (conn: ServerConnection, pipe: TestEventPipeline) {
+    private func makeConnectionOnLAN() async -> (conn: ServerConnection, pipe: TestEventPipeline) {
         let conn = ServerConnection()
         let creds = makeLANCredentials()
-        conn.configure(credentials: creds)
+        await configureTestConnection(conn, credentials: creds)
         conn._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
@@ -171,10 +183,10 @@ struct ServerConnectionNetworkPathChangeTests {
         return (conn, pipe)
     }
 
-    private func makeConnectionPaired() -> ServerConnection {
+    private func makeConnectionPaired() async -> ServerConnection {
         let conn = ServerConnection()
         let creds = makeLANCredentials()
-        conn.configure(credentials: creds)
+        await configureTestConnection(conn, credentials: creds)
         // No LAN endpoint — stays on paired/Tailscale
         return conn
     }
@@ -275,7 +287,7 @@ struct NetworkPathRecoveryBoundaryTests {
 @MainActor
 struct ConnectionCoordinatorPathChangeTests {
 
-    @Test func applyNetworkPathChangeClearsLANOnAllConnections() {
+    @Test func applyNetworkPathChangeClearsLANOnAllConnections() async {
         let (coordinator, _) = makeCoordinator()
 
         let server = makeServer(
@@ -286,7 +298,7 @@ struct ConnectionCoordinatorPathChangeTests {
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         coordinator.serverStore.addOrUpdate(server)
-        let conn = coordinator.ensureConnection(for: server)
+        let conn = await coordinator.ensureTestConnectionReady(for: server)
 
         // Put connection on LAN
         coordinator._applyLANDiscoveryForTesting([
@@ -301,12 +313,14 @@ struct ConnectionCoordinatorPathChangeTests {
 
         // Simulate network path change (calls handleNetworkPathChange on all connections)
         coordinator._applyNetworkPathChangeForTesting()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         #expect(conn.transportPath == .paired,
                 "LAN endpoint should be cleared after network path change")
     }
 
-    @Test func applyNetworkPathChangeAffectsMultipleServers() {
+    @Test func applyNetworkPathChangeAffectsMultipleServers() async {
         let (coordinator, _) = makeCoordinator()
 
         let serverA = makeServer(
@@ -326,8 +340,8 @@ struct ConnectionCoordinatorPathChangeTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        let connA = coordinator.ensureConnection(for: serverA)
-        let connB = coordinator.ensureConnection(for: serverB)
+        let connA = await coordinator.ensureTestConnectionReady(for: serverA)
+        let connB = await coordinator.ensureTestConnectionReady(for: serverB)
 
         // Put server A on LAN, server B stays paired
         coordinator._applyLANDiscoveryForTesting([
@@ -342,6 +356,8 @@ struct ConnectionCoordinatorPathChangeTests {
         #expect(connB.transportPath == .paired)
 
         coordinator._applyNetworkPathChangeForTesting()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { connA.transportPath == .paired && !connA.isTransportDemoting })
 
         #expect(connA.transportPath == .paired, "Server A should fall back to paired")
         #expect(connB.transportPath == .paired, "Server B should remain paired")
@@ -369,7 +385,7 @@ struct ConnectionCoordinatorPathChangeTests {
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         coordinator.serverStore.addOrUpdate(server)
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
         coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
@@ -402,7 +418,7 @@ struct ConnectionCoordinatorPathChangeTests {
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
 
         let conn = coordinator.activeConnection
 
@@ -429,6 +445,8 @@ struct ConnectionCoordinatorPathChangeTests {
         // NWPathMonitor fires → coordinator calls handleNetworkPathChange on all connections.
         // (In real code, this goes through the debounce; we call directly for test.)
         coordinator._applyNetworkPathChangeForTesting()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         // Step 5: Verify recovery
         #expect(conn.transportPath == .paired,
@@ -454,7 +472,7 @@ struct ConnectionCoordinatorPathChangeTests {
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
 
         let conn = coordinator.activeConnection
 
@@ -474,6 +492,8 @@ struct ConnectionCoordinatorPathChangeTests {
 
         // NWPathMonitor fires
         coordinator._applyNetworkPathChangeForTesting()
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition { conn.transportPath == .paired && !conn.isTransportDemoting })
 
         // Should have cancelled the stale backoff and started fresh
         #expect(conn.transportPath == .paired)
@@ -495,7 +515,7 @@ struct ConnectionCoordinatorPathChangeTests {
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
 
         let conn = coordinator.activeConnection
         #expect(conn.transportPath == .paired)

@@ -656,7 +656,7 @@ struct WorkspaceDetailsAndListTests {
             if request.url?.path.hasSuffix("/workspaces") == true { reads.count += 1 }
             return try self.response(json: "{\"workspaces\":[]}")
         }
-        let (list, connection, window) = try mountReadyList([makeTestWorkspace(id: "w1", name: "Notes")])
+        let (list, connection, window) = try await mountReadyList([makeTestWorkspace(id: "w1", name: "Notes")])
         defer { window.isHidden = true; window.rootViewController = nil }
 
         // The page's first load reads the catalog.
@@ -678,8 +678,8 @@ struct WorkspaceDetailsAndListTests {
     private func mountReadyList(
         _ workspaces: [Workspace],
         size: CGSize = CGSize(width: 390, height: 1200)
-    ) throws -> (WorkspaceListViewController, ServerConnection, UIWindow) {
-        let root = try makeTestAppRoot(
+    ) async throws -> (WorkspaceListViewController, ServerConnection, UIWindow) {
+        let root = try await makeTestAppRoot(
             readyServerId: Self.serverId,
             apiClient: makeTestURLProtocolClient(host: "studio.test")
         )
@@ -775,7 +775,7 @@ struct WorkspaceDetailsAndListTests {
         // workspaces it was made with.
         TestURLProtocol.handler = { _ in throw URLError(.cannotConnectToHost) }
         let workspaces = (0..<40).map { makeTestWorkspace(id: "w\($0)", name: "Workspace \($0)") }
-        let (list, _, window) = try mountReadyList(workspaces, size: CGSize(width: 1024, height: 700))
+        let (list, _, window) = try await mountReadyList(workspaces, size: CGSize(width: 1024, height: 700))
         defer { window.isHidden = true; window.rootViewController = nil }
         // Scroll only once the page's load has settled and the list has stopped
         // sizing its rows: a pass that lands while the load is out reconfigures

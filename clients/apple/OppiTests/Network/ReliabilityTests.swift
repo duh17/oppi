@@ -186,8 +186,8 @@ struct ReliabilityTests {
 
     // MARK: - Fix 2: Extension Dialog Persistence
 
-    @Test func extensionDialogSetOnRequest() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogSetOnRequest() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor",
@@ -198,8 +198,8 @@ struct ReliabilityTests {
         #expect(conn.extensionDialogs.requests(for: "s1").first?.id == "ext1")
     }
 
-    @Test func extensionDialogQueuesNewRequestBehindActiveRequest() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogQueuesNewRequestBehindActiveRequest() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let req1 = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "First", timeout: 30
@@ -219,7 +219,7 @@ struct ReliabilityTests {
     }
 
     @Test func extensionUIResponseClearsOnlyAnsweredSheetDialog() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         conn._sendMessageForTesting = { _ in }
 
         let req1 = ExtensionUIRequest(
@@ -242,7 +242,7 @@ struct ReliabilityTests {
     }
 
     @Test func extensionDialogDoesNotAutoDismissBeforeServerSettlement() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "Confirm?", timeout: 25
@@ -259,8 +259,8 @@ struct ReliabilityTests {
         #expect(conn.extensionToast == nil)
     }
 
-    @Test func extensionDialogRestoredAfterFocusRoundTrip() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogRestoredAfterFocusRoundTrip() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "Test"
@@ -279,8 +279,8 @@ struct ReliabilityTests {
 
     // MARK: - Fix 3: Extension Dialog Cleared on Disconnect
 
-    @Test func extensionDialogClearedOnDisconnect() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogClearedOnDisconnect() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "Confirm?"
@@ -294,8 +294,8 @@ struct ReliabilityTests {
             "Extension dialog should be cleared when session disconnects")
     }
 
-    @Test func extensionDialogClearedOnSessionSwitch() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogClearedOnSessionSwitch() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "Test"
@@ -311,8 +311,8 @@ struct ReliabilityTests {
             "Extension dialog should be cleared on session switch")
     }
 
-    @Test func extensionDialogSurvivedWhenStreamAlive() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func extensionDialogSurvivedWhenStreamAlive() async {
+        let (conn, pipe) = await makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "editor", title: "Test"
@@ -328,8 +328,8 @@ struct ReliabilityTests {
 
     // MARK: - Thinking lifecycle recovery
 
-    @Test func stopConfirmedWithoutAgentEndFinalizesTerminalThinking() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func stopConfirmedWithoutAgentEndFinalizesTerminalThinking() async {
+        let (conn, pipe) = await makeTestConnection()
         pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
         pipe.handle(.agentStart, sessionId: "s1")
@@ -355,8 +355,8 @@ struct ReliabilityTests {
         #expect(thinkingStates[0])
     }
 
-    @Test func stateReadyWithoutAgentEndFinalizesTerminalThinking() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func stateReadyWithoutAgentEndFinalizesTerminalThinking() async {
+        let (conn, pipe) = await makeTestConnection()
         pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
         pipe.handle(.agentStart, sessionId: "s1")

@@ -164,8 +164,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
 
+        // A LAN host, not a tailnet name: activating a tailnet server would start the
+        // in-app Tailscale node and wait for its proxy.
         let credentials = ServerCredentials(
-            host: "mac-studio.tail1234.ts.net",
+            host: "mac-studio.local",
             port: 7749,
             token: "sk_preview",
             name: "mac-studio",
@@ -182,7 +184,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SettingsSweepFixtureURLProtocol.self]
         let client = APIClient(
-            baseURL: URL(string: "https://mac-studio.tail1234.ts.net:7749") ?? URL(fileURLWithPath: "/"),
+            baseURL: URL(string: "https://mac-studio.local:7749") ?? URL(fileURLWithPath: "/"),
             token: "sk_preview",
             configuration: configuration
         )
@@ -211,9 +213,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // The MCP and provider screens wait for `apiClientReady`, so their
             // connection is a ready one whose requests the fixture answers, as
             // the Router and Metrics previews build theirs.
-            if coordinator.switchToServer(server) {
-                coordinator.connection(for: server.id)?.setAPIClientForTesting(client)
-            }
+            coordinator.activatePreviewServer(server, apiClient: client)
         } else {
             coordinator.installPreviewConnection(connection, serverId: server.id)
         }

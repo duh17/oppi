@@ -357,7 +357,7 @@ struct FileBrowserReviewCommentSelectionTests {
     @Test func lockedLinkedFileShowsOnlyTheCover() async throws {
         let serverId = "sha256:linked-locked-\(UUID().uuidString)"
         let workspaceId = FileBrowserTextMountURLProtocol.workspaceId
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
         ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
         defer { ScopedLockService.shared.forgetServer(serverId) }
         let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
@@ -387,7 +387,7 @@ struct FileBrowserReviewCommentSelectionTests {
     @Test func lockEngagingOverLinkedFileRemovesTheViewerAndItsBar() async throws {
         let serverId = "sha256:linked-locking-\(UUID().uuidString)"
         let workspaceId = FileBrowserTextMountURLProtocol.workspaceId
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
         defer { ScopedLockService.shared.forgetServer(serverId) }
         let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
         let navigation = UINavigationController(rootViewController: route)

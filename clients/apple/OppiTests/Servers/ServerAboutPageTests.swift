@@ -138,7 +138,7 @@ struct ServerAboutPageTests {
         })
         defer { routes.end() }
         let serverId = "about-update-server"
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "about-update.test")
         )

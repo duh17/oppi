@@ -102,7 +102,7 @@ struct AskSilenceWatchdogTests {
 
     @Test func foregroundRecoveryPreservesFocusedAskInCanonicalStore() async {
         let conn = ServerConnection()
-        conn.configure(credentials: makeTestCredentials())
+        await configureTestConnection(conn, credentials: makeTestCredentials())
         conn._setActiveSessionIdForTesting("s1")
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
 

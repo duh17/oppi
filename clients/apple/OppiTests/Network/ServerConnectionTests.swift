@@ -10,8 +10,8 @@ struct ServerConnectionTests {
 
     // MARK: - Message routing (via TestEventPipeline)
 
-    @Test func routeConnected() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeConnected() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .ready)
 
         pipe.handle(.connected(session: session), sessionId: "s1")
@@ -20,8 +20,8 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions[0].status == .ready)
     }
 
-    @Test func routeState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeState() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .busy)
 
         pipe.handle(.state(session: session), sessionId: "s1")
@@ -30,8 +30,8 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
-    @Test func routeStopRequestedMarksStopping() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStopRequestedMarksStopping() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(
@@ -49,8 +49,8 @@ struct ServerConnectionTests {
         #expect(system.count == 1)
     }
 
-    @Test func routeStopFailedRestoresBusyAndEmitsError() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStopFailedRestoresBusyAndEmitsError() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
         pipe.handle(
@@ -68,8 +68,8 @@ struct ServerConnectionTests {
         #expect(errors.count == 1)
     }
 
-    @Test func routeStopConfirmedRestoresReady() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStopConfirmedRestoresReady() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
         pipe.handle(
@@ -81,8 +81,8 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
 
-    @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() async {
+        let (conn, pipe) = await makeTestConnection()
         #expect(conn.chatState.thinkingLevel == .medium)
 
         pipe.handle(
@@ -99,7 +99,7 @@ struct ServerConnectionTests {
     }
 
     @Test func routeConnectedRequestsSlashCommands() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
@@ -112,7 +112,7 @@ struct ServerConnectionTests {
     }
 
     @Test func routeStateWorkspaceChangeRequestsSlashCommands() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
@@ -136,8 +136,8 @@ struct ServerConnectionTests {
         #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 2 })
     }
 
-    @Test func routeGetCommandsResultUpdatesSlashCommandCache() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetCommandsResultUpdatesSlashCommandCache() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .ready)
         pipe.handle(.connected(session: session), sessionId: "s1")
 
@@ -159,8 +159,8 @@ struct ServerConnectionTests {
         #expect(conn.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
     }
 
-    @Test func routeAgentStartAndTextAndEnd() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeAgentStartAndTextAndEnd() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.flushNow()
@@ -180,8 +180,8 @@ struct ServerConnectionTests {
         #expect(text == "Hello")
     }
 
-    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .ready))
 
         pipe.handle(.agentStart, sessionId: "s1")
@@ -189,8 +189,8 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions.first?.status == .busy)
     }
 
-    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(.agentEnd, sessionId: "s1")
@@ -200,8 +200,8 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
 
-    @Test func routeThinkingDelta() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeThinkingDelta() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.handle(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
@@ -215,8 +215,8 @@ struct ServerConnectionTests {
         #expect(thinking.count == 1)
     }
 
-    @Test func routeToolStartOutputEnd() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeToolStartOutputEnd() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.handle(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
@@ -241,8 +241,8 @@ struct ServerConnectionTests {
         #expect(isDone)
     }
 
-    @Test func routeSessionEnded() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeSessionEnded() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(.sessionEnded(reason: "stopped"), sessionId: "s1")
@@ -257,8 +257,8 @@ struct ServerConnectionTests {
         #expect(system.count == 1)
     }
 
-    @Test func routeError() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeError() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(.error(message: "Something failed", code: nil, fatal: false), sessionId: "s1")
         pipe.flushNow()
@@ -270,8 +270,8 @@ struct ServerConnectionTests {
         #expect(errors.count == 1)
     }
 
-    @Test func routeExtensionUIRequest() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionUIRequest() async {
+        let (conn, pipe) = await makeTestConnection()
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
@@ -285,8 +285,8 @@ struct ServerConnectionTests {
         #expect(conn.activeExtensionDialog?.id == "ext1")
     }
 
-    @Test func routeExtensionUINotification() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionUINotification() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -310,8 +310,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
-    @Test func routeExtensionSetStatusStoresSurfaceState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionSetStatusStoresSurfaceState() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -334,8 +334,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["review"]?.text == "running")
     }
 
-    @Test func routeExtensionSetStatusClearsEmptyText() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionSetStatusClearsEmptyText() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -375,8 +375,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["working-words"] == nil)
     }
 
-    @Test func routeExtensionWorkingNotificationsStoreTimelineState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionWorkingNotificationsStoreTimelineState() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -440,8 +440,8 @@ struct ServerConnectionTests {
     }
 
     /// The chat screen reads `layout`; an elapsed-time tick must not rerun it.
-    @Test func workingTextTickLeavesTheChatLayoutUntouched() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func workingTextTickLeavesTheChatLayoutUntouched() async {
+        let (conn, pipe) = await makeTestConnection()
         let surface = conn.extensionSurfaces.surface(for: "s1")
         func notification(_ method: String, message: String? = nil, statusText: String? = nil) -> ServerMessage {
             .extensionUINotification(ExtensionUINotification(
@@ -472,8 +472,8 @@ struct ServerConnectionTests {
         #expect(layoutChanges(notification("setStatus", statusText: "running")) == true)
     }
 
-    @Test func routeExtensionHiddenThinkingLabelStoresAndClearsTimelineState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionHiddenThinkingLabelStoresAndClearsTimelineState() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -517,8 +517,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1") == nil)
     }
 
-    @Test func routeExtensionToolsExpandedStoresTimelineState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionToolsExpandedStoresTimelineState() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -563,8 +563,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.toolsExpanded == false)
     }
 
-    @Test func routeExtensionNativeWidgetStoresPlacement() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionNativeWidgetStoresPlacement() async {
+        let (conn, pipe) = await makeTestConnection()
         let nativeSurface = ExtensionUINativeSurface(
             version: 1,
             id: "widget:below",
@@ -615,8 +615,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.widgets["below"] == nil)
     }
 
-    @Test func routeMixedNativeAndTextWidgetsPreservesPiTUIOrder() throws {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeMixedNativeAndTextWidgetsPreservesPiTUIOrder() async throws {
+        let (conn, pipe) = await makeTestConnection()
         let nativeSurface = ExtensionUINativeSurface(
             version: 1,
             id: "widget:jobs",
@@ -678,8 +678,8 @@ struct ServerConnectionTests {
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["native:jobs", "widget:goal"])
     }
 
-    @Test func routeReplacingWidgetMovesItToLatestPiTUIPosition() throws {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeReplacingWidgetMovesItToLatestPiTUIPosition() async throws {
+        let (conn, pipe) = await makeTestConnection()
         let nativeSurface = ExtensionUINativeSurface(
             version: 1,
             id: "widget:jobs",
@@ -747,8 +747,8 @@ struct ServerConnectionTests {
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal", "native:jobs"])
     }
 
-    @Test func routeStatusDoesNotBecomeWidgetEntry() throws {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStatusDoesNotBecomeWidgetEntry() async throws {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -896,8 +896,8 @@ struct ServerConnectionTests {
         #expect(entry.text == "running Oppi install")
     }
 
-    @Test func routeDefocusedTerminalStateKeepsFocusedExtensionSurface() {
-        let (conn, pipe) = makeTestConnection(sessionId: "focused")
+    @Test func routeDefocusedTerminalStateKeepsFocusedExtensionSurface() async {
+        let (conn, pipe) = await makeTestConnection(sessionId: "focused")
         conn.extensionSurfaces.surface(for: "focused").replace(with: ExtensionSurfaceState(
             widgets: [
                 "goal": ExtensionWidgetState(
@@ -914,8 +914,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "focused")?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
-    @Test func routeReadyStateKeepsPersistentExtensionSurface() {
-        let (conn, pipe) = makeTestConnection(sessionId: "s1")
+    @Test func routeReadyStateKeepsPersistentExtensionSurface() async {
+        let (conn, pipe) = await makeTestConnection(sessionId: "s1")
         conn.extensionSurfaces.surface(for: "s1").replace(with: ExtensionSurfaceState(
             widgets: [
                 "goal": ExtensionWidgetState(
@@ -931,8 +931,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
-    @Test func routeExtensionStatusWithAnyKeyStoresChatSurfaceEntry() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionStatusWithAnyKeyStoresChatSurfaceEntry() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -955,8 +955,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["extension-status"]?.text == "live")
     }
 
-    @Test func routeExtensionStatusWithAnyKeyUpdatesExistingChatSurfaceEntry() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionStatusWithAnyKeyUpdatesExistingChatSurfaceEntry() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.extensionSurfaces.surface(for: "s1").replace(with: ExtensionSurfaceState(
             statuses: [
                 "extension-status": ExtensionStatusState(key: "extension-status", text: "live"),
@@ -984,8 +984,8 @@ struct ServerConnectionTests {
         #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["extension-status"]?.text == "updated")
     }
 
-    @Test func routeExtensionSetEditorTextUpdatesComposerState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionSetEditorTextUpdatesComposerState() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -1009,8 +1009,8 @@ struct ServerConnectionTests {
         #expect(conn.chatState.extensionEditorTextUpdate?.text == "Act on the review findings")
     }
 
-    @Test func routeUnknownIsNoOp() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeUnknownIsNoOp() async {
+        let (conn, pipe) = await makeTestConnection()
         let preCount = pipe.reducer.items.count
 
         pipe.handle(.unknown(type: "future_type"), sessionId: "s1")
@@ -1020,8 +1020,8 @@ struct ServerConnectionTests {
 
     // MARK: - Stale session guard
 
-    @Test func staleSessionMessageIgnored() {
-        let (conn, pipe) = makeTestConnection(sessionId: "s1")
+    @Test func staleSessionMessageIgnored() async {
+        let (conn, pipe) = await makeTestConnection(sessionId: "s1")
 
         // Send message for a different session
         let session = makeTestSession(id: "s2", status: .busy)
@@ -1033,8 +1033,8 @@ struct ServerConnectionTests {
 
     // MARK: - Pipeline flush
 
-    @Test func pipelineFlushDelivers() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func pipelineFlushDelivers() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.handle(.textDelta(delta: "buffered"), sessionId: "s1")
@@ -1070,57 +1070,6 @@ struct ServerConnectionTests {
     @Test func isConnectedDefaultFalse() {
         let conn = ServerConnection()
         #expect(!conn.isConnected)
-    }
-
-    // MARK: - switchServer
-
-    @Test func switchServerConfiguresNewServer() {
-        let conn = ServerConnection()
-        let creds = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_studio",
-            name: "studio", serverFingerprint: "sha256:studio-fp"
-        )
-        let server = PairedServer(from: creds)!
-
-        let result = conn.switchServer(to: server)
-        #expect(result == true)
-        #expect(conn.currentServerId == "sha256:studio-fp")
-        #expect(conn.apiClient != nil)
-    }
-
-    @Test func switchServerSkipsIfAlreadyTargeting() {
-        let conn = ServerConnection()
-        let creds = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_a",
-            name: "studio", serverFingerprint: "sha256:same-fp"
-        )
-        let server = PairedServer(from: creds)!
-
-        _ = conn.switchServer(to: server)
-        // Switch to the same server again — should return true immediately
-        let result = conn.switchServer(to: server)
-        #expect(result == true)
-        #expect(conn.currentServerId == "sha256:same-fp")
-    }
-
-    @Test func switchServerChangesTarget() {
-        let conn = ServerConnection()
-        let creds1 = ServerCredentials(
-            host: "studio.ts.net", port: 7749, token: "sk_a",
-            name: "studio", serverFingerprint: "sha256:fp-a"
-        )
-        let creds2 = ServerCredentials(
-            host: "mini.ts.net", port: 7749, token: "sk_b",
-            name: "mini", serverFingerprint: "sha256:fp-b"
-        )
-        let server1 = PairedServer(from: creds1)!
-        let server2 = PairedServer(from: creds2)!
-
-        _ = conn.switchServer(to: server1)
-        #expect(conn.currentServerId == "sha256:fp-a")
-
-        _ = conn.switchServer(to: server2)
-        #expect(conn.currentServerId == "sha256:fp-b")
     }
 
     @Test func currentServerIdNilByDefault() {
@@ -1171,7 +1120,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectIfNeededReentrancyGuard() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         // Simulate the flag being set (as if another call is in progress)
         // by calling reconnectIfNeeded and checking the flag is reset after.
@@ -1180,7 +1129,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectDoesNotTouchReducerTimeline() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
         conn._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
@@ -1201,7 +1150,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectRefreshesWithoutActiveSession() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
         // No activeSessionId set — should still attempt session list refresh
         // (API calls fail to unreachable host, but no crash)
         await conn.reconnectIfNeeded()
@@ -1209,7 +1158,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectSkipsFullListRefreshWhenRecentSyncIsFresh() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1226,7 +1175,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func reconnectPerformsFullListRefreshWhenCachedDataIsStale() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let stale = Date().addingTimeInterval(-600)
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1242,7 +1191,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1254,7 +1203,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListSkipEmitsStructuredRefreshEvent() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1275,7 +1224,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshSessionListForceRefreshesEvenWhenFresh() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
@@ -1287,7 +1236,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogSkipsNetworkWhenFreshAndNotForced() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let now = Date()
         conn.workspaceStore.workspaces = [makeTestWorkspace()]
@@ -1299,8 +1248,8 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.lastSyncFailed == false)
     }
 
-    @Test func syncWorkspaceSummaryFallsBackToLocalProjectionWhenNoStoredSnapshot() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncWorkspaceSummaryFallsBackToLocalProjectionWhenNoStoredSnapshot() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         let rootBusy = makeTestSession(
             id: "root-busy",
@@ -1332,8 +1281,8 @@ struct ForegroundRecoveryTests {
         #expect(summary?.latestActivity == errorSession.lastActivity)
     }
 
-    @Test func syncWorkspaceSummaryPreservesStoredCountsAndUsesLiveAttentionOverlay() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncWorkspaceSummaryPreservesStoredCountsAndUsesLiveAttentionOverlay() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1365,8 +1314,8 @@ struct ForegroundRecoveryTests {
 
     }
 
-    @Test func syncWorkspaceSummaryUsesPendingExtensionDialogAttention() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncWorkspaceSummaryUsesPendingExtensionDialogAttention() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
         let session = makeTestSession(id: "ready-root", workspaceId: "w1", status: .ready)
         conn.sessionStore.applyServerSnapshot([session])
 
@@ -1392,8 +1341,8 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 
-    @Test func syncWorkspaceSummaryUsesListProjectionAttentionCounts() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncWorkspaceSummaryUsesListProjectionAttentionCounts() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
         var summary = SessionSummary(from: makeTestSession(id: "ready-root", workspaceId: "w1", status: .ready))
         summary.pendingAskCount = 1
 
@@ -1407,8 +1356,8 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 
-    @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncWorkspaceSummaryClearsLocalErrorOverlayOnceLiveStateRecovers() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1434,8 +1383,8 @@ struct ForegroundRecoveryTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 
-    @Test func syncAllWorkspaceSummariesRemovesFallbackOnlyWorkspaceWhenLocalStateDisappears() {
-        let conn = makeLegacyForegroundRecoveryConnection()
+    @Test func syncAllWorkspaceSummariesRemovesFallbackOnlyWorkspaceWhenLocalStateDisappears() async {
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         conn.sessionStore.applyServerSnapshot([
             makeTestSession(id: "root", workspaceId: "w1", status: .ready)
@@ -1449,7 +1398,7 @@ struct ForegroundRecoveryTests {
     }
 
     @Test func refreshWorkspaceCatalogForceEmitsEndRefreshEventWithCounts() async {
-        let conn = makeLegacyForegroundRecoveryConnection()
+        let conn = await makeLegacyForegroundRecoveryConnection()
 
         var endMetadata: [String: String] = [:]
         var endLevel: ClientLogLevel?
@@ -1472,9 +1421,9 @@ struct ForegroundRecoveryTests {
 }
 
 @MainActor
-private func makeLegacyForegroundRecoveryConnection() -> ServerConnection {
+private func makeLegacyForegroundRecoveryConnection() async -> ServerConnection {
     let conn = ServerConnection()
-    conn.configure(credentials: ServerCredentials(
+    await configureTestConnection(conn, credentials: ServerCredentials(
         host: "test.local", port: 7749, token: "sk_test", name: "Test",
         serverFingerprint: "sha256:legacy-foreground-recovery"
     ))
@@ -1514,8 +1463,8 @@ struct StreamLifecycleTests {
 
     // MARK: - connectStream idempotency
 
-    @Test func connectStreamIsIdempotentWhileActive() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func connectStreamIsIdempotentWhileActive() async {
+        let (conn, pipe) = await makeTestConnection()
 
         // Simulate an active consumption task by setting it directly
         let sentinel = Task<Void, Never> { }
@@ -1529,8 +1478,8 @@ struct StreamLifecycleTests {
                 "Should not cancel existing task when one is active and WS is connected")
     }
 
-    @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() async {
+        let (conn, pipe) = await makeTestConnection()
 
         // Simulate a zombie consumption task (completed but non-nil)
         // with a disconnected WS
@@ -1544,8 +1493,8 @@ struct StreamLifecycleTests {
                 "Should create new task when WS is disconnected")
     }
 
-    @Test func connectStreamCreatesTaskWhenNil() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func connectStreamCreatesTaskWhenNil() async {
+        let (conn, pipe) = await makeTestConnection()
 
         #expect(conn.streamConsumptionTask == nil)
 
@@ -1558,7 +1507,7 @@ struct StreamLifecycleTests {
     // MARK: - streamConsumptionTask self-cleanup
 
     @Test func consumptionTaskNilsItselfWhenStreamEnds() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         // Create a stream that immediately ends
         let (stream, continuation) = AsyncStream<StreamMessage>.makeStream()
@@ -1583,8 +1532,8 @@ struct StreamLifecycleTests {
 
     // MARK: - disconnectStream cleanup
 
-    @Test func disconnectStreamCleansUpEverything() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func disconnectStreamCleansUpEverything() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.streamConsumptionTask = Task { }
 
         // Add a session continuation
@@ -1601,8 +1550,8 @@ struct StreamLifecycleTests {
 
     // MARK: - stream_connected refresh handling
 
-    @Test func streamConnectedMessageTriggersRefresh() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func streamConnectedMessageTriggersRefresh() async {
+        let (conn, pipe) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         // Track that routeStreamMessage correctly identifies stream_connected
@@ -1635,7 +1584,7 @@ struct StreamLifecycleTests {
     // MARK: - routeStreamMessage routing
 
     @Test func routeStreamMessageYieldsToSessionContinuation() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedMessages: [ServerMessage] = []
@@ -1670,7 +1619,7 @@ struct StreamLifecycleTests {
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadBoundSessionStream() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
         conn.sessionStore.markSyncSucceeded(at: now)
@@ -1705,7 +1654,7 @@ struct StreamLifecycleTests {
     }
 
     @Test func reconnectIfNeededSkipsFocusedSessionWithoutBoundStreamEndpoint() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
         conn.sessionStore.markSyncSucceeded(at: now)
@@ -1726,7 +1675,7 @@ struct StreamLifecycleTests {
     }
 
     @Test func reconnectIfNeededSkipsAliveStream() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         // Fresh stores and loaded capabilities keep recovery HTTP-free; a live
         // request failure would trigger route recovery and cancel the sentinel.
         let now = Date()
@@ -1752,7 +1701,7 @@ struct StreamLifecycleTests {
     // MARK: - routeStreamMessage resolves command waiters at stream boundary
 
     @Test func routeStreamMessageResolvesCommandResultsAtBoundary() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         let pending = PendingCommand(command: "set_model", requestId: "req-m")
@@ -1780,8 +1729,8 @@ struct StreamLifecycleTests {
 
     // MARK: - Workspace summary attention sync
 
-    @Test func workspaceAttentionSnapshotClearsStaleWorkspaceBadge() {
-        let (conn, _) = makeTestConnection()
+    @Test func workspaceAttentionSnapshotClearsStaleWorkspaceBadge() async {
+        let (conn, _) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1811,8 +1760,8 @@ struct StreamLifecycleTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == false)
     }
 
-    @Test func workspaceAttentionSnapshotPreservesRootErrorAttention() {
-        let (conn, _) = makeTestConnection()
+    @Test func workspaceAttentionSnapshotPreservesRootErrorAttention() async {
+        let (conn, _) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(
@@ -1841,8 +1790,8 @@ struct StreamLifecycleTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == true)
     }
 
-    @Test func askLifecycleSyncsWorkspaceSummaryAttention() {
-        let (conn, _) = makeTestConnection()
+    @Test func askLifecycleSyncsWorkspaceSummaryAttention() async {
+        let (conn, _) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
         conn.workspaceStore.setStoredWorkspaceSummariesForTesting([
             "w1": WorkspaceListSummary(

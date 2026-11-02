@@ -14,7 +14,7 @@ import UIKit
 @MainActor
 struct ChatViewOutlineColdStateTests {
     @Test func contentOnlyStreamingDoesNotIncrementHostUpdateUIView() async {
-        let fixture = makeMountedChat()
+        let fixture = await makeMountedChat()
         defer { fixture.tearDown() }
 
         let settled = await settleMountedChat(fixture)
@@ -57,7 +57,7 @@ struct ChatViewOutlineColdStateTests {
     /// Telemetry, crash context, and system classes write `UserDefaults` at
     /// any moment; none of that is chat state.
     @Test func unrelatedDefaultsWriteDoesNotRebuildTimelineHost() async {
-        let fixture = makeMountedChat()
+        let fixture = await makeMountedChat()
         defer { fixture.tearDown() }
 
         let settled = await settleMountedChat(fixture)
@@ -83,7 +83,7 @@ struct ChatViewOutlineColdStateTests {
     @Test func sessionRebindIsolatesOldReducerFromHostUpdates() async throws {
         let sessionA = "cold-a-\(UUID().uuidString)"
         let sessionB = "cold-b-\(UUID().uuidString)"
-        let fixture = makeMountedChat(sessionId: sessionA)
+        let fixture = await makeMountedChat(sessionId: sessionA)
         defer { fixture.tearDown() }
 
         let settledA = await settleMountedChat(fixture)
@@ -243,8 +243,8 @@ private final class MountedChatFixture {
 @MainActor
 private func makeMountedChat(
     sessionId: String = "cold-\(UUID().uuidString)"
-) -> MountedChatFixture {
-    let (connection, _) = makeTestConnection(sessionId: sessionId)
+) async -> MountedChatFixture {
+    let (connection, _) = await makeTestConnection(sessionId: sessionId)
     connection.setAPIClientForTesting(nil)
     connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 

@@ -11,7 +11,7 @@
       "reason": "Endpoint families and transport mechanics in one actor; the transport split follows the route contract."
     },
     "clients/apple/Oppi/Core/Networking/ServerConnection.swift": {
-      "budget": 3300,
+      "budget": 3200,
       "owner": "SC1-SC3 ServerConnection state owners",
       "reason": "Facade plus eight extension files that share its state; the owners are still landing."
     },
@@ -21,7 +21,7 @@
       "reason": "The voice consolidation plan owns playback."
     },
     "clients/apple/Oppi/Core/Services/ConnectionCoordinator.swift": {
-      "budget": 1700,
+      "budget": 1600,
       "owner": "SC2 route controller",
       "reason": "Route selection is split with ServerConnection; LAN ranking moves to the route controller."
     },

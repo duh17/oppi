@@ -26,7 +26,7 @@ struct DurableSessionsSettingTests {
         var store: SettingsStore { root.coordinator.settings(for: page.server.id) }
     }
 
-    private func makeHarness() throws -> Harness {
+    private func makeHarness() async throws -> Harness {
         // The app's own refreshes once a server is connected are not what these tests are
         // about; they answer as an unreachable server does, and anything else fails.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
@@ -34,7 +34,7 @@ struct DurableSessionsSettingTests {
         let client = makeTestURLProtocolClient(host: "ready-server.test")
         let defaults = try makeSettingsDefaults()
         let deviceStore = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: deviceStore)
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: deviceStore)
         let coordinator = root.coordinator
         coordinator.makeServerSettings = { [unowned coordinator] id in
             SettingsStore(
@@ -93,7 +93,7 @@ struct DurableSessionsSettingTests {
 
     @Test("Turning it on saves the server's setting, offers durable sessions, and shows this device's default")
     func turnOnWritesTheServerSetting() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         #expect(h.connection?.durableSessionsAvailable == false)
 
@@ -122,7 +122,7 @@ struct DurableSessionsSettingTests {
 
     @Test("A failed save puts the switch back, says why, and leaves durable sessions off")
     func failedSaveRollsBack() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.transport.failNextSave(with: SettingsTestError())
 
@@ -143,7 +143,7 @@ struct DurableSessionsSettingTests {
 
     @Test("A 409 conflict reloads the server's value, says so, and the capability follows it")
     func conflictReloads() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         // Another device turns it on after this page loaded; this save is against the old revision.
         h.transport.beforeNextSave { h.transport.changeElsewhere(["enabled": true]) }
@@ -162,7 +162,7 @@ struct DurableSessionsSettingTests {
 
     @Test("A page that loads again as it appears does not take a refused save's reason away")
     func loadingAgainKeepsTheRefusal() async throws {
-        let h = try makeHarness()
+        let h = try await makeHarness()
         defer { hide(h) }
         h.transport.failNextSave(with: SettingsTestError())
         try await flip(serverSwitch, on: h.page, to: true)

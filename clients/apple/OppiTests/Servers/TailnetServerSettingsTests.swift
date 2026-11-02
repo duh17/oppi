@@ -15,13 +15,13 @@ struct TailnetServerSettingsTests {
     }
 
     @Test("The peer's server becomes the active one before Server Settings opens, so it never shows the active server's")
-    func opensThePeersServerNotTheActiveOne() throws {
+    func opensThePeersServerNotTheActiveOne() async throws {
         let active = try makeServer("mac-a.tail1234.ts.net", order: 0)
         let peerServer = try makeServer("mac-b.tail1234.ts.net", order: 1)
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview([active, peerServer])
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        for server in [active, peerServer] { coordinator.ensureConnection(for: server) }
+        for server in [active, peerServer] { await coordinator.ensureTestConnectionReady(for: server) }
         #expect(coordinator.restoreActiveServer(active.id))
         let root = makeTestAppRoot(coordinator: coordinator)
         let page = TailnetSettingsViewController(coordinator: coordinator)
@@ -43,7 +43,7 @@ struct TailnetServerSettingsTests {
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview([paired])
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        coordinator.ensureConnection(for: paired)
+        await coordinator.ensureTestConnectionReady(for: paired)
         let peer = TailnetPeer(
             id: "peer-b", hostName: "mac-b", dnsName: "mac-b.tail1234.ts.net", os: "macOS",
             tailscaleIPs: ["100.64.0.2"], isOnline: true

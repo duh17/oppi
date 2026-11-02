@@ -2495,7 +2495,7 @@ struct VoiceInputManagerTests {
             )
             manager.setServerCredentials(credentials)
             let conn = ServerConnection()
-            _ = conn.configure(credentials: credentials)
+            _ = await configureTestConnection(conn, credentials: credentials)
             // Connected, but the server reports its dictation backend down.
             conn.setSplitStreamCapabilitiesForTesting(dictationStream: false)
             manager.setServerConnection(conn)
@@ -2531,7 +2531,7 @@ struct VoiceInputManagerTests {
         )
         manager.setServerCredentials(credentials)
         let conn = ServerConnection()
-        _ = conn.configure(credentials: credentials)
+        _ = await configureTestConnection(conn, credentials: credentials)
         conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         manager.setServerConnection(conn)
 

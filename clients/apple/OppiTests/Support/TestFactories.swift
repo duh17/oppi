@@ -86,8 +86,8 @@ func makeTestAppRoot(
     apiClient: APIClient,
     settings: SettingsStore? = nil,
     serverSettings: ((String) -> SettingsStore)? = nil
-) throws -> AppRootEnvironment {
-    try makeTestAppRoot(
+) async throws -> AppRootEnvironment {
+    try await makeTestAppRoot(
         readyServers: [TestReadyServer(id: serverId, client: apiClient)],
         settings: settings,
         serverSettings: serverSettings
@@ -103,8 +103,8 @@ func makeTestTwoServerRoot(
     otherId: String,
     otherName: String = "Other",
     otherHost: String = "other-server.test"
-) throws -> AppRootEnvironment {
-    try makeTestAppRoot(readyServers: [
+) async throws -> AppRootEnvironment {
+    try await makeTestAppRoot(readyServers: [
         TestReadyServer(id: firstId, client: makeTestURLProtocolClient(host: "ready-server.test")),
         TestReadyServer(
             id: otherId, name: otherName, host: otherHost,
@@ -130,7 +130,7 @@ func makeTestAppRoot(
     readyServers: [TestReadyServer],
     settings: SettingsStore? = nil,
     serverSettings: ((String) -> SettingsStore)? = nil
-) throws -> AppRootEnvironment {
+) async throws -> AppRootEnvironment {
     let servers = try readyServers.enumerated().map { index, setup in
         try #require(PairedServer(
             from: ServerCredentials(
@@ -148,7 +148,7 @@ func makeTestAppRoot(
     serverStore.replaceServersForPreview(servers)
     let coordinator = ConnectionCoordinator(serverStore: serverStore)
     for (server, setup) in zip(servers, readyServers) {
-        coordinator.ensureConnection(for: server).setAPIClientForTesting(setup.client)
+        await coordinator.ensureTestConnectionReady(for: server).setAPIClientForTesting(setup.client)
     }
     let first = try #require(servers.first)
     #expect(coordinator.restoreActiveServer(first.id))
@@ -167,13 +167,127 @@ extension ExtensionSurfaceStore {
 /// so a connection (or session store) that reads or writes one needs a server id.
 let testTraceCacheServerId = "sha256:test-trace-cache"
 
+/// `/server/info` of a server that streams sessions: what a test connection's
+/// setup reads in memory instead of over the network.
+func makeTestServerInfo(appEventStream: Bool = false) -> ServerInfo {
+    ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: appEventStream ? .init(version: 1) : nil,
+            extensionNativeUI: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
+    )
+}
+
+/// Configure `connection` through the production setup path (`configureForUse`),
+/// answering its authenticated `/server/info` bootstrap in memory. `apiClient`,
+/// when given, is the client the setup installs (a `TestURLProtocol` client keeps
+/// every later request off the network).
+@MainActor
+@discardableResult
+func configureTestConnection(
+    _ connection: ServerConnection,
+    credentials: ServerCredentials = makeTestCredentials(),
+    serverInfo: ServerInfo = makeTestServerInfo(),
+    apiClient: APIClient? = nil
+) async -> Bool {
+    if let apiClient {
+        return await connection.configureForUse(
+            credentials: credentials,
+            apiClientFactory: { _, _ in apiClient },
+            serverInfoBootstrap: { _, _ in serverInfo }
+        )
+    }
+    return await connection.configureForUse(
+        credentials: credentials,
+        serverInfoBootstrap: { _, _ in serverInfo }
+    )
+}
+
+/// A first setup that fails the way an unreachable server does (`/server/info`
+/// times out): no route is committed and the failure stays retryable, so a
+/// focused-stream bind waits for the route instead of failing.
+@MainActor
+func failTestConnectionSetupTemporarily(
+    _ connection: ServerConnection,
+    credentials: ServerCredentials = makeTestCredentials()
+) async {
+    let configured = await connection.configureForUse(
+        credentials: credentials,
+        apiClientFactory: { _, _ in makeTestURLProtocolClient(host: credentials.host) },
+        serverInfoBootstrap: { _, _ in throw URLError(.timedOut) }
+    )
+    #expect(!configured)
+    #expect(connection.canRetryInitialTransportOnTimer)
+}
+
+extension ConnectionCoordinator {
+    /// Prepare `server` through `ensureConnectionReady`, the path navigation uses,
+    /// with its `/server/info` bootstrap answered in memory and no wait for Bonjour.
+    /// A coordinator whose test already set those answers keeps them.
+    @discardableResult
+    func ensureTestConnectionReady(for server: PairedServer) async -> ServerConnection {
+        answerTestSetupInMemory()
+        return await ensureConnectionReady(for: server)
+    }
+
+    /// `switchToServerReady` with the setup answers of `ensureTestConnectionReady`.
+    @discardableResult
+    func switchToTestServer(_ server: PairedServer) async -> Bool {
+        answerTestSetupInMemory()
+        return await switchToServerReady(server)
+    }
+
+    @discardableResult
+    func switchToTestServer(_ serverId: String) async -> Bool {
+        answerTestSetupInMemory()
+        return await switchToServerReady(serverId)
+    }
+
+    /// `addServerReady` with the setup answers of `ensureTestConnectionReady`.
+    @discardableResult
+    func addTestServer(_ server: PairedServer, switchTo: Bool = true) async -> ServerPairingOutcome {
+        answerTestSetupInMemory()
+        return await addServerReady(server, switchTo: switchTo)
+    }
+
+    private func answerTestSetupInMemory() {
+        if _serverInfoBootstrapForTesting == nil {
+            _serverInfoBootstrapForTesting = { _, _ in makeTestServerInfo() }
+        }
+        if _initialLANEndpointForTesting == nil {
+            _initialLANEndpointForTesting = { _ in nil }
+        }
+    }
+}
+
 @MainActor
 func makeTestConnection(
     sessionId: String = "s1",
     fingerprint: String? = nil
-) -> (conn: ServerConnection, pipe: TestEventPipeline) {
+) async -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()
-    connection.configure(credentials: makeTestCredentials(fingerprint: fingerprint))
+    await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: fingerprint))
     connection._setActiveSessionIdForTesting(sessionId)
     let pipeline = TestEventPipeline(sessionId: sessionId, connection: connection)
     return (connection, pipeline)

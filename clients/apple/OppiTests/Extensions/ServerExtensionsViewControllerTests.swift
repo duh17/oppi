@@ -11,7 +11,7 @@ struct ServerExtensionsViewControllerTests {
     func rowOpensDetailRoute() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceExtensions(
             [
@@ -48,7 +48,7 @@ struct ServerExtensionsViewControllerTests {
     func reloadsWhenActiveServerChanges() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let root = try makeTestTwoServerRoot(firstId: serverId, otherId: "extensions-list-other")
+        let root = try await makeTestTwoServerRoot(firstId: serverId, otherId: "extensions-list-other")
         let coordinator = root.coordinator
         let servers = coordinator.serverStore.servers
         let first = try #require(servers.first)
@@ -133,7 +133,7 @@ struct ServerExtensionsViewControllerTests {
             return try catalog.answer(for: request)
         })
         defer { routes.end() }
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
@@ -186,8 +186,8 @@ struct ServerExtensionsViewControllerTests {
         await TimelineCache.shared.removeServer(serverId)
     }
 
-    private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(
+    private func makeRoot() async throws -> AppRootEnvironment {
+        try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )

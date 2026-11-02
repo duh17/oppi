@@ -309,7 +309,7 @@ struct MarkdownInlineVideoNativePlayTests {
         defer { InlineVideoStillFrameStore.installForTesting(previousStore) }
 
         let sessionId = "s-video-close-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         // The media server is the chat's server: it answers the history fetch with
         // the clip, which fails to decode, so the timeline keeps what this test adds.
         connection.setAPIClientForTesting(APIClient(baseURL: base, token: "sk_test", configuration: .ephemeral))

@@ -302,7 +302,7 @@ struct WorkspaceSettingsLockTests {
     @Test func unlockingSwitchesToTheWorkspacesServerAndShowsTheList() async throws {
         let locks = try makeLocks()
         let routes = appRoutes()
-        let root = try makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
+        let root = try await makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
         let workspace = makeTestWorkspace(id: "w1", name: "oppi-dev")
         let locked = try mountLive(root: root, routes: routes, locks: locks, workspace: workspace, locked: true)
         defer { hideWindow(locked) }
@@ -342,7 +342,7 @@ struct WorkspaceSettingsLockTests {
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview([active, pending])
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        coordinator.ensureConnection(for: active).setAPIClientForTesting(
+        await coordinator.ensureTestConnectionReady(for: active).setAPIClientForTesting(
             makeTestURLProtocolClient(host: "active.test")
         )
         #expect(coordinator.restoreActiveServer(active.id))
@@ -385,7 +385,7 @@ struct WorkspaceSettingsLockTests {
     @Test func theWorkspaceSettingsListOffersNoPullToRefresh() async throws {
         let locks = try makeLocks()
         let routes = appRoutes()
-        let root = try makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
+        let root = try await makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
         let workspace = makeTestWorkspace(id: "w1", name: "oppi-dev")
         let live = try mountLive(root: root, routes: routes, locks: locks, workspace: workspace, locked: false)
         defer { hideWindow(live) }

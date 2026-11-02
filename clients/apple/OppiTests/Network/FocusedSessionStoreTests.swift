@@ -16,8 +16,8 @@ struct FocusedSessionStoreTests {
         #expect(store.focused == second)
     }
 
-    @Test func serverConnectionFocusSetsCommandTarget() {
-        let (conn, _) = makeTestConnection()
+    @Test func serverConnectionFocusSetsCommandTarget() async {
+        let (conn, _) = await makeTestConnection()
 
         conn.focusSession("s2")
 
@@ -25,8 +25,8 @@ struct FocusedSessionStoreTests {
         #expect(conn.focusedSessionStore.isFocused("s2"))
     }
 
-    @Test func disconnectClearsFocusedSession() {
-        let (conn, _) = makeTestConnection()
+    @Test func disconnectClearsFocusedSession() async {
+        let (conn, _) = await makeTestConnection()
         conn._sendMessageForTesting = { _ in }
         conn.focusSession("s1")
 

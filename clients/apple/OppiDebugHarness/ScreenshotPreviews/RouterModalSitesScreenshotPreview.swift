@@ -200,9 +200,7 @@ private enum RouterModalSitesFixtures {
             tlsCertFingerprint: "sha256:router-modal-sites-leaf"
         )) else { return coordinator }
         coordinator.serverStore.replaceServersForPreview([server])
-        guard coordinator.switchToServer(server),
-              let connection = coordinator.connection(for: server.id) else { return coordinator }
-        connection.setAPIClientForTesting(api)
+        let connection = coordinator.activatePreviewServer(server, apiClient: api)
         for workspace in workspaces {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }

@@ -395,7 +395,7 @@ struct ScopedLockSurfaceTests {
     @Test func aWorkspaceAttentionRefreshNeverPutsALockedQuestionInANotification() async throws {
         let harness = ScopedHarness(appLock: .off, outcomes: [])
         let conn = ServerConnection()
-        _ = conn.configure(credentials: makeTestCredentials(fingerprint: "sha256:scoped-srv"))
+        _ = await configureTestConnection(conn, credentials: makeTestCredentials(fingerprint: "sha256:scoped-srv"))
         let serverId = try #require(conn.currentServerId)
         conn.scopedLocks = harness.locks
         conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1"))

@@ -620,7 +620,7 @@ struct ChatActionHandlerTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        _ = connection.configure(credentials: .init(host: "localhost", port: 7749, token: "sk_test", name: "Test"))
+        _ = await configureTestConnection(connection, credentials: .init(host: "localhost", port: 7749, token: "sk_test", name: "Test"))
 
         var reconnectCalls = 0
 
@@ -646,7 +646,7 @@ struct ChatActionHandlerTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let sessionId = "s1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, model: "anthropic/old-model"))
 
@@ -713,7 +713,7 @@ struct ChatActionHandlerTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let sessionId = "s1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, model: "anthropic/old-model", runtime: .piTui))
 
@@ -743,7 +743,7 @@ struct ChatActionHandlerTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let sessionId = "s1"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, runtime: .piTui))
 
         var sent = false

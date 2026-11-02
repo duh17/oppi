@@ -99,7 +99,7 @@ struct MobileOutputGuideSettingTests {
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: 4)
         let serverId = "guide-switch-server"
         let client = makeTestURLProtocolClient(host: "ready-server.test")
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: client,
             serverSettings: { id in SettingsStore(serverId: id, server: ServerAdapter { _ in transport }) }

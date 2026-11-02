@@ -6,8 +6,8 @@ import Foundation
 @MainActor
 struct ServerConnectionRoutingTests {
 
-    @Test func routeConnected() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeConnected() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .ready)
 
         pipe.handle(.connected(session: session), sessionId: "s1")
@@ -16,8 +16,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .ready)
     }
 
-    @Test func reconnectAcceptsQueueVersionFromRestartedBackend() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func reconnectAcceptsQueueVersionFromRestartedBackend() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(version: 9, steering: [MessageQueueItem(id: "old", message: "old", createdAt: 1)], followUp: []),
             for: "s1"
@@ -31,8 +31,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.messageQueueStore.queue(for: "s1").steering.map(\.id) == ["new"])
     }
 
-    @Test func routeState() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeState() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .busy)
 
         pipe.handle(.state(session: session), sessionId: "s1")
@@ -41,8 +41,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
-    @Test func agentLifecycleTracksCurrentTurnStart() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func agentLifecycleTracksCurrentTurnStart() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
         pipe.handle(.agentStart, sessionId: "s1")
@@ -56,8 +56,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
     }
 
-    @Test func sessionSummaryTransitionInterruptsOpenTools() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func sessionSummaryTransitionInterruptsOpenTools() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
         pipe.handle(.agentStart, sessionId: "s1")
@@ -92,8 +92,8 @@ struct ServerConnectionRoutingTests {
         #expect(pipe.reducer.isToolInterrupted("uv"))
     }
 
-    @Test func readyStateRebroadcastDoesNotInterruptOpenTools() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func readyStateRebroadcastDoesNotInterruptOpenTools() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
         // Seed an open tool while already ready (stale timeline projection).
@@ -114,8 +114,8 @@ struct ServerConnectionRoutingTests {
         #expect(!pipe.reducer.isToolInterrupted("uv"))
     }
 
-    @Test func backgroundSessionThatSettlesShowsDoneUntilOpened() {
-        let (conn, _) = makeTestConnection(sessionId: "focused")
+    @Test func backgroundSessionThatSettlesShowsDoneUntilOpened() async {
+        let (conn, _) = await makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
         conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy, messageCount: 2, firstMessage: "go"))
 
@@ -129,8 +129,8 @@ struct ServerConnectionRoutingTests {
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "background")) == .idle)
     }
 
-    @Test func focusedSessionThatSettlesIsSeenWhileFocusedAndAfter() {
-        let (conn, pipe) = makeTestConnection(sessionId: "focused")
+    @Test func focusedSessionThatSettlesIsSeenWhileFocusedAndAfter() async {
+        let (conn, pipe) = await makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
         conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready, messageCount: 2, firstMessage: "go"))
 
@@ -146,8 +146,8 @@ struct ServerConnectionRoutingTests {
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "focused")) == .idle)
     }
 
-    @Test func stateUpdateCarriesPreviousContextAndReleasesSleepPrevention() {
-        let (conn, _) = makeTestConnection()
+    @Test func stateUpdateCarriesPreviousContextAndReleasesSleepPrevention() async {
+        let (conn, _) = await makeTestConnection()
         var idleTimerUpdates: [Bool] = []
         conn.screenAwakeController = ScreenAwakeController(
             timeoutProvider: { nil },
@@ -176,8 +176,8 @@ struct ServerConnectionRoutingTests {
         #expect(idleTimerUpdates.last == false)
     }
 
-    @Test func applyFetchedReadySessionStatePreservesPendingAskAndStopsRecoveryEffects() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func applyFetchedReadySessionStatePreservesPendingAskAndStopsRecoveryEffects() async {
+        let (conn, pipe) = await makeTestConnection()
         var idleTimerUpdates: [Bool] = []
         conn.screenAwakeController = ScreenAwakeController(
             timeoutProvider: { nil },
@@ -212,8 +212,8 @@ struct ServerConnectionRoutingTests {
         #expect(idleTimerUpdates.last == false)
     }
 
-    @Test func routeQueueStateUpdatesQueueStore() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeQueueStateUpdatesQueueStore() async {
+        let (conn, pipe) = await makeTestConnection()
         let state = MessageQueueState(
             version: 7,
             steering: [MessageQueueItem(id: "q1", message: "steer one", createdAt: 1)],
@@ -228,8 +228,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.followUp.count == 1)
     }
 
-    @Test func routeQueueStateIgnoresStaleVersion() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeQueueStateIgnoresStaleVersion() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 9,
@@ -255,8 +255,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.steering.map(\.message) == ["latest"])
     }
 
-    @Test func routeQueueItemStartedRemovesItemAndAppendsUserMessage() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeQueueItemStartedRemovesItemAndAppendsUserMessage() async {
+        let (conn, pipe) = await makeTestConnection()
         let initial = MessageQueueState(
             version: 2,
             steering: [MessageQueueItem(id: "q1", message: "steer one", createdAt: 1)],
@@ -287,7 +287,7 @@ struct ServerConnectionRoutingTests {
     }
 
     @Test func boundaryResolvedGetQueueCommandResultStillAppliesSemanticQueueEffectOnce() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         let pending = PendingCommand(command: "get_queue", requestId: "req-boundary")
         conn.commands.registerCommand(pending)
 
@@ -326,8 +326,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.steering.map(\.message) == ["from boundary"])
     }
 
-    @Test func routeCorrelatedNonSemanticCommandResultDoesNotLeakToTimeline() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeCorrelatedNonSemanticCommandResultDoesNotLeakToTimeline() async {
+        let (conn, pipe) = await makeTestConnection()
         _ = conn
 
         pipe.handle(
@@ -345,8 +345,8 @@ struct ServerConnectionRoutingTests {
         #expect(pipe.reducer.items.isEmpty, "Correlated control-plane command_result should not leak to timeline")
     }
 
-    @Test func routeGetQueueCommandResultUpdatesQueueStore() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetQueueCommandResultUpdatesQueueStore() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .commandResult(
@@ -402,8 +402,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.followUp.count == 1)
     }
 
-    @Test func routeGetQueueCommandResultWithMalformedQueueDoesNotReplaceStore() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetQueueCommandResultWithMalformedQueueDoesNotReplaceStore() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 12,
@@ -438,8 +438,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.steering.map(\.message) == ["fresh steer"])
     }
 
-    @Test func routeGetQueueCommandResultIgnoresStaleVersion() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetQueueCommandResultIgnoresStaleVersion() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 12,
@@ -475,8 +475,8 @@ struct ServerConnectionRoutingTests {
         #expect(stored.followUp.map(\.message) == ["fresh follow"])
     }
 
-    @Test func routeGetQueueFailureDoesNotProduceTimelineError() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetQueueFailureDoesNotProduceTimelineError() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .commandResult(
@@ -497,8 +497,8 @@ struct ServerConnectionRoutingTests {
         #expect(errors.isEmpty, "Failed get_queue command_result should not leak to timeline")
     }
 
-    @Test func routeSetQueueFailureDoesNotProduceTimelineError() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeSetQueueFailureDoesNotProduceTimelineError() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .commandResult(
@@ -519,8 +519,8 @@ struct ServerConnectionRoutingTests {
         #expect(errors.isEmpty, "Failed remove_queued_message command_result should not leak to timeline")
     }
 
-    @Test func routeStopRequestedMarksStopping() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeStopRequestedMarksStopping() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .givenStoredSession(status: .busy)
@@ -533,8 +533,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 
-    @Test func routeStopFailedRestoresBusyAndEmitsError() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeStopFailedRestoresBusyAndEmitsError() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .givenStoredSession(status: .stopping)
@@ -547,8 +547,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.timelineItemCount(of: .error) == 1)
     }
 
-    @Test func routeStopConfirmedRestoresReady() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeStopConfirmedRestoresReady() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .givenStoredSession(status: .stopping)
@@ -557,8 +557,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.firstSessionStatus() == .ready)
     }
 
-    @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() async {
+        let (conn, pipe) = await makeTestConnection()
         #expect(conn.chatState.thinkingLevel == .medium)
 
         pipe.handle(
@@ -575,7 +575,7 @@ struct ServerConnectionRoutingTests {
     }
 
     @Test func routeConnectedRequestsSlashCommands() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
@@ -588,7 +588,7 @@ struct ServerConnectionRoutingTests {
     }
 
     @Test func routeStateWorkspaceChangeRequestsSlashCommands() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
@@ -612,8 +612,8 @@ struct ServerConnectionRoutingTests {
         #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 2 })
     }
 
-    @Test func routeGetCommandsResultUpdatesSlashCommandCache() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeGetCommandsResultUpdatesSlashCommandCache() async {
+        let (conn, pipe) = await makeTestConnection()
         let session = makeTestSession(status: .ready)
         pipe.handle(.connected(session: session), sessionId: "s1")
 
@@ -635,8 +635,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
     }
 
-    @Test func routeAgentStartAndTextAndEnd() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeAgentStartAndTextAndEnd() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .whenHandle(.agentStart)
@@ -657,8 +657,8 @@ struct ServerConnectionRoutingTests {
         #expect(text == "Hello")
     }
 
-    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .ready))
 
         pipe.handle(.agentStart, sessionId: "s1")
@@ -666,8 +666,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions.first?.status == .busy)
     }
 
-    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() async {
+        let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(.agentEnd, sessionId: "s1")
@@ -677,8 +677,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
 
-    @Test func routeThinkingDelta() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeThinkingDelta() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .whenHandle(.agentStart)
@@ -689,8 +689,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.timelineItemCount(of: .thinking) == 1)
     }
 
-    @Test func routeToolStartOutputEnd() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeToolStartOutputEnd() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .whenHandle(.agentStart)
@@ -716,8 +716,8 @@ struct ServerConnectionRoutingTests {
         #expect(isDone)
     }
 
-    @Test func routeSessionEnded() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeSessionEnded() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .givenStoredSession(status: .busy)
@@ -727,8 +727,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 
-    @Test func routeError() {
-        let scenario = EventFlowServerConnectionScenario()
+    @Test func routeError() async {
+        let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .whenHandle(.error(message: "Something failed", code: nil, fatal: false), flushAfter: true)
@@ -736,8 +736,8 @@ struct ServerConnectionRoutingTests {
         #expect(scenario.timelineItemCount(of: .error) == 1)
     }
 
-    @Test func routeExtensionUIRequest() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionUIRequest() async {
+        let (conn, pipe) = await makeTestConnection()
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
@@ -751,8 +751,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.activeExtensionDialog?.id == "ext1")
     }
 
-    @Test func routeExtensionUINotification() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeExtensionUINotification() async {
+        let (conn, pipe) = await makeTestConnection()
 
         pipe.handle(
             .extensionUINotification(
@@ -776,8 +776,8 @@ struct ServerConnectionRoutingTests {
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
-    @Test func routeUnknownIsNoOp() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func routeUnknownIsNoOp() async {
+        let (conn, pipe) = await makeTestConnection()
         let preCount = pipe.reducer.items.count
 
         pipe.handle(.unknown(type: "future_type"), sessionId: "s1")
@@ -785,8 +785,8 @@ struct ServerConnectionRoutingTests {
         #expect(pipe.reducer.items.count == preCount)
     }
 
-    @Test func staleSessionMessageIgnored() {
-        let (conn, pipe) = makeTestConnection(sessionId: "s1")
+    @Test func staleSessionMessageIgnored() async {
+        let (conn, pipe) = await makeTestConnection(sessionId: "s1")
 
         // Send message for a different session
         let session = makeTestSession(id: "s2", status: .busy)
@@ -808,8 +808,8 @@ final class EventFlowServerConnectionScenario {
 
     var reducer: TimelineReducer { pipe.reducer }
 
-    init(sessionId: String = "s1") {
-        let testConnection = makeTestConnection(sessionId: sessionId)
+    init(sessionId: String = "s1") async {
+        let testConnection = await makeTestConnection(sessionId: sessionId)
         self.connection = testConnection.conn
         self.pipe = testConnection.pipe
         self.activeSessionId = sessionId

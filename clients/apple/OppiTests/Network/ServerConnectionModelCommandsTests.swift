@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct ServerConnectionModelCommandsTests {
     @Test func setModelSendsCorrectClientMessage() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         let sink = CapturedClientMessages()
@@ -43,7 +43,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func setModelPersistSendsPersistFlag() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         let sink = CapturedClientMessages()
@@ -73,7 +73,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func setModelSurfacesAuthoritativeRejection() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         connection._sendMessageForTesting = { message in
@@ -98,7 +98,7 @@ struct ServerConnectionModelCommandsTests {
     /// A reconnect sends `stream_connected`, then the runtime fails to start and
     /// `connected` never follows. The switch must go over HTTP, not into the dropped stream.
     @Test func setModelUsesHTTPWhenTheSessionNeverBootstraps() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         connection._sessionBootstrapWaitTimeoutForTesting = .milliseconds(200)
         await markFocusedSessionFullySubscribed(connection)
         defer {
@@ -156,7 +156,7 @@ struct ServerConnectionModelCommandsTests {
     /// A rename can finish after the user opened another session. Renaming an
     /// unfocused session must address it over HTTP, not ride the focused stream.
     @Test func setSessionNameForUnfocusedSessionUsesItsHTTPCommandRoute() async throws {
-        let (connection, _) = makeTestConnection(sessionId: "s2")
+        let (connection, _) = await makeTestConnection(sessionId: "s2")
         defer { ModelSwitchURLProtocol.handler = nil }
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
         connection.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1"))
@@ -197,7 +197,7 @@ struct ServerConnectionModelCommandsTests {
     /// Socket N's `connected` can finish downstream handling after socket N+1's
     /// `stream_connected`. Only the new socket's own `connected` may mark readiness.
     @Test func lateConnectedHandlingDoesNotRestoreBootstrapAfterReconnect() async {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         let session = makeTestSession(workspaceId: "w1")
@@ -222,7 +222,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func thinkingCommandsSendCorrectClientMessages() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         let sink = CapturedClientMessages()
@@ -257,7 +257,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func sessionCommandsSendCorrectClientMessages() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)
@@ -308,8 +308,8 @@ struct ServerConnectionModelCommandsTests {
         }
     }
 
-    @Test func syncsMaxThinkingLevelFromSessionState() {
-        let connection = makeTestConnection().conn
+    @Test func syncsMaxThinkingLevelFromSessionState() async {
+        let connection = await makeTestConnection().conn
         let session = makeTestSession(thinkingLevel: "max")
 
         connection.syncThinkingLevel(from: session)
@@ -317,8 +317,8 @@ struct ServerConnectionModelCommandsTests {
         #expect(connection.chatState.thinkingLevel == .max)
     }
 
-    @Test func syncThinkingLevelUpdatesOnlyForValidChangedValues() {
-        let (connection, _) = makeTestConnection()
+    @Test func syncThinkingLevelUpdatesOnlyForValidChangedValues() async {
+        let (connection, _) = await makeTestConnection()
         var session = makeTestSession(thinkingLevel: "high")
 
         connection.syncThinkingLevel(from: session)
@@ -338,7 +338,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func refreshSlashCommandsSkipsWarmMatchingCache() async {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.chatState.slashCommands = [
             Self.slashCommand(name: "compact", description: nil, source: .prompt)
@@ -357,7 +357,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func refreshSlashCommandsSendsCommandAndTracksRequestId() async {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
@@ -377,7 +377,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func refreshSlashCommandsClearsRequestIdWhenSendFails() async {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         struct SendFailure: Error {}
 
@@ -390,8 +390,8 @@ struct ServerConnectionModelCommandsTests {
         #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
-    @Test func handleSlashCommandsResultIgnoresMismatchedRequestId() {
-        let (connection, _) = makeTestConnection()
+    @Test func handleSlashCommandsResultIgnoresMismatchedRequestId() async {
+        let (connection, _) = await makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.sessionStore.upsert(session)
         connection.chatState.slashCommandsRequestId = "expected"
@@ -411,8 +411,8 @@ struct ServerConnectionModelCommandsTests {
         #expect(connection.chatState.slashCommandsRequestId == "expected")
     }
 
-    @Test func handleSlashCommandsResultUpdatesCommandsAndCacheKey() {
-        let (connection, _) = makeTestConnection()
+    @Test func handleSlashCommandsResultUpdatesCommandsAndCacheKey() async {
+        let (connection, _) = await makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.sessionStore.upsert(session)
         connection.chatState.slashCommandsRequestId = "expected"
@@ -430,8 +430,8 @@ struct ServerConnectionModelCommandsTests {
         #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
-    @Test func handleSlashCommandsFailureClearsOnlyRequestTracking() {
-        let (connection, _) = makeTestConnection()
+    @Test func handleSlashCommandsFailureClearsOnlyRequestTracking() async {
+        let (connection, _) = await makeTestConnection()
         connection.chatState.slashCommandsRequestId = "expected"
         connection.chatState.slashCommands = [Self.slashCommand(name: "existing", description: nil, source: .prompt)]
 
@@ -752,7 +752,7 @@ struct ServerConnectionModelCommandsTests {
     }
 
     @Test func getSessionStatsResolvesCommandResultPayload() async throws {
-        let (connection, _) = makeTestConnection()
+        let (connection, _) = await makeTestConnection()
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)

@@ -8,9 +8,9 @@ import UIKit
 @Suite("Guided control composer presentation", .serialized)
 @MainActor
 struct GuidedControlComposerPresentationTests {
-    private func makeModel(presentation: GuidedControlComposerPresentation) -> GuidedControlComposerModel {
+    private func makeModel(presentation: GuidedControlComposerPresentation) async -> GuidedControlComposerModel {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.workspaceStore.workspaces = [makeTestWorkspace()]
         return GuidedControlComposerModel(
             configuration: GuidedControlComposerConfiguration(
@@ -26,14 +26,14 @@ struct GuidedControlComposerPresentationTests {
         )
     }
 
-    @Test func compactIsOneLineAtRest() {
-        let model = makeModel(presentation: .compact)
+    @Test func compactIsOneLineAtRest() async {
+        let model = await makeModel(presentation: .compact)
 
         #expect(!model.isExpanded)
     }
 
-    @Test func compactOpensWithFocusAndClosesWhenEmptyAndUnfocused() {
-        let model = makeModel(presentation: .compact)
+    @Test func compactOpensWithFocusAndClosesWhenEmptyAndUnfocused() async {
+        let model = await makeModel(presentation: .compact)
 
         model.inputFocusDidChange(true)
         #expect(model.isExpanded)
@@ -42,8 +42,8 @@ struct GuidedControlComposerPresentationTests {
         #expect(!model.isExpanded)
     }
 
-    @Test func compactStaysOpenWhileItHoldsText() {
-        let model = makeModel(presentation: .compact)
+    @Test func compactStaysOpenWhileItHoldsText() async {
+        let model = await makeModel(presentation: .compact)
         model.request = "Make it terser"
 
         model.inputFocusDidChange(true)
@@ -52,8 +52,8 @@ struct GuidedControlComposerPresentationTests {
         #expect(model.isExpanded, "a draft must keep the model and thinking pills in reach")
     }
 
-    @Test func compactTreatsWhitespaceAsEmpty() {
-        let model = makeModel(presentation: .compact)
+    @Test func compactTreatsWhitespaceAsEmpty() async {
+        let model = await makeModel(presentation: .compact)
         model.request = " \n "
 
         #expect(!model.isExpanded)
@@ -68,8 +68,8 @@ struct GuidedControlComposerPresentationTests {
         ))
     }
 
-    @Test func fullPresentationAlwaysShowsItsPills() {
-        let model = makeModel(presentation: .full)
+    @Test func fullPresentationAlwaysShowsItsPills() async {
+        let model = await makeModel(presentation: .full)
 
         #expect(model.isExpanded)
         model.inputFocusDidChange(true)
@@ -107,8 +107,8 @@ struct GuidedControlComposerPresentationTests {
         #expect(!compact.composerContent.alwaysShowActionRow)
     }
 
-    @Test func aPageCanRetargetTheBarWithoutLosingTheDraft() {
-        let model = makeModel(presentation: .compact)
+    @Test func aPageCanRetargetTheBarWithoutLosingTheDraft() async {
+        let model = await makeModel(presentation: .compact)
         model.request = "Keep this"
 
         model.updateTarget(id: "agent-1", name: "Renamed", path: nil)

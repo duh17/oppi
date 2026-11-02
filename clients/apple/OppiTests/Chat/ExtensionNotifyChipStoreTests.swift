@@ -5,8 +5,8 @@ import Testing
 @MainActor
 @Suite("Extension notify chip")
 struct ExtensionNotifyChipStoreTests {
-    @Test func unknownMethodFeedsTheChipNotTheSheet() {
-        let (conn, _) = makeTestConnection()
+    @Test func unknownMethodFeedsTheChipNotTheSheet() async {
+        let (conn, _) = await makeTestConnection()
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(
@@ -29,8 +29,8 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test(arguments: ["notify", "future_method"])
-    func sessionStreamNotifyDoesNotInsertChip(method: String) {
-        let (conn, pipe) = makeTestConnection()
+    func sessionStreamNotifyDoesNotInsertChip(method: String) async {
+        let (conn, pipe) = await makeTestConnection()
         pipe.handle(
             .extensionUINotification(
                 notifyNotification(
@@ -47,8 +47,8 @@ struct ExtensionNotifyChipStoreTests {
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
-    @Test func focusedAppEventInsertsOneChip() {
-        let (conn, _) = makeTestConnection()
+    @Test func focusedAppEventInsertsOneChip() async {
+        let (conn, _) = await makeTestConnection()
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(
@@ -69,8 +69,8 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test(arguments: ["notify", "future_method"])
-    func sessionStreamAndAppEventInsertOneChip(method: String) {
-        let (conn, pipe) = makeTestConnection()
+    func sessionStreamAndAppEventInsertOneChip(method: String) async {
+        let (conn, pipe) = await makeTestConnection()
         let notification = notifyNotification(
             method: method,
             message: "Task complete",
@@ -96,8 +96,8 @@ struct ExtensionNotifyChipStoreTests {
     /// Surfaces belong to the session stream. An older server still copies
     /// them onto the app stream; applying those would redraw every chat for
     /// any session's per-second working text.
-    @Test func appEventWorkingMessageChangesNothing() {
-        let (conn, _) = makeTestConnection(sessionId: "s1")
+    @Test func appEventWorkingMessageChangesNothing() async {
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(method: "setWorkingMessage", message: "Busy \u{00B7} 3s", notifyType: nil),
@@ -111,8 +111,8 @@ struct ExtensionNotifyChipStoreTests {
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
-    @Test func backgroundSessionAppEventInsertsOneChip() {
-        let (conn, _) = makeTestConnection(sessionId: "s1")
+    @Test func backgroundSessionAppEventInsertsOneChip() async {
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(
@@ -248,8 +248,8 @@ struct ExtensionNotifyChipStoreTests {
         store.dismiss(sessionId: "s1")
     }
 
-    @Test func clearingExtensionSurfaceLeavesChip() {
-        let (conn, _) = makeTestConnection()
+    @Test func clearingExtensionSurfaceLeavesChip() async {
+        let (conn, _) = await makeTestConnection()
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(message: "Task complete", notifyType: "info"),
@@ -266,8 +266,8 @@ struct ExtensionNotifyChipStoreTests {
         conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
     }
 
-    @Test func stopConfirmedLeavesChip() {
-        let (conn, _) = makeTestConnection()
+    @Test func stopConfirmedLeavesChip() async {
+        let (conn, _) = await makeTestConnection()
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(message: "Task complete", notifyType: "info"),
@@ -291,8 +291,8 @@ struct ExtensionNotifyChipStoreTests {
         conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
     }
 
-    @Test func sessionEndedRemovesChip() {
-        let (conn, _) = makeTestConnection()
+    @Test func sessionEndedRemovesChip() async {
+        let (conn, _) = await makeTestConnection()
         conn.handleAppEvent(
             .extensionUINotification(
                 notification: notifyNotification(message: "Task complete", notifyType: "info"),

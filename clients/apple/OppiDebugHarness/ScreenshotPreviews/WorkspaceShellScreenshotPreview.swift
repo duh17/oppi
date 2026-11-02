@@ -44,8 +44,7 @@ final class WorkspaceShellPreviewController: PreviewRootController {
     private static func makeCoordinator() -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server, otherServer])
-        guard coordinator.switchToServer(server),
-              let connection = coordinator.connection(for: server.id) else { return coordinator }
+        let connection = coordinator.activatePreviewServer(server)
         connection.workspaceStore.upsert(workspace, serverId: server.id)
         // Sampling on, so the host pill offers Server Metrics (its route smoke).
         connection.serverMetricsEnabled = true

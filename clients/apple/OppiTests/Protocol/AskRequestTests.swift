@@ -1018,7 +1018,7 @@ struct AskRequestTests {
     }
 
     @Test @MainActor func externalSessionOpenRefreshesBusyJSONConnectsStreamAndShowsAsk() async {
-        let (conn, _) = makeTestConnection(sessionId: "parent")
+        let (conn, _) = await makeTestConnection(sessionId: "parent")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "child", workspaceId: "w1", status: .stopped))
         var streamConnects = 0
@@ -1068,7 +1068,7 @@ struct AskRequestTests {
     @Test @MainActor func externalSessionOpenPrefetchesTimelineForChatViewCache() async throws {
         defer { TestURLProtocol.handler = nil }
         let sessionId = "child-trace"
-        let (conn, _) = makeTestConnection(sessionId: "parent", fingerprint: testTraceCacheServerId)
+        let (conn, _) = await makeTestConnection(sessionId: "parent", fingerprint: testTraceCacheServerId)
         conn.setAPIClientForTesting(makeTestURLProtocolClient(host: "localhost", scheme: "http"))
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))

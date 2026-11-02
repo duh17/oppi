@@ -8,8 +8,8 @@ struct ServerConnectionStreamTests {
 
     // MARK: - connectStream idempotency
 
-    @Test func connectStreamIsIdempotentWhileActive() {
-        let (conn, _) = makeTestConnection()
+    @Test func connectStreamIsIdempotentWhileActive() async {
+        let (conn, _) = await makeTestConnection()
 
         let sentinel = Task<Void, Never> { }
         conn.streamConsumptionTask = sentinel
@@ -21,8 +21,8 @@ struct ServerConnectionStreamTests {
                 "Should not cancel existing task when one is active and WS is connected")
     }
 
-    @Test func connectStreamSkipsWhenWSAlreadyConnectedAndNoTask() {
-        let (conn, _) = makeTestConnection()
+    @Test func connectStreamSkipsWhenWSAlreadyConnectedAndNoTask() async {
+        let (conn, _) = await makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
         // No consumption task — would normally trigger wsClient.connect()
         conn.streamConsumptionTask = nil
@@ -35,8 +35,8 @@ struct ServerConnectionStreamTests {
                 "connectStream should not tear down a healthy WS")
     }
 
-    @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() {
-        let (conn, _) = makeTestConnection()
+    @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() async {
+        let (conn, _) = await makeTestConnection()
 
         conn.streamConsumptionTask = Task { }
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -47,8 +47,8 @@ struct ServerConnectionStreamTests {
                 "Should create new task when WS is disconnected")
     }
 
-    @Test func connectStreamCreatesTaskWhenNil() {
-        let (conn, _) = makeTestConnection()
+    @Test func connectStreamCreatesTaskWhenNil() async {
+        let (conn, _) = await makeTestConnection()
 
         #expect(conn.streamConsumptionTask == nil)
 
@@ -58,11 +58,12 @@ struct ServerConnectionStreamTests {
                 "Should create task when none exists")
     }
 
-    @Test func prepareForSessionReentryRestoresFocusWithoutOpeningStream() {
-        let (conn, _) = makeTestConnection(sessionId: "child")
+    @Test func prepareForSessionReentryRestoresFocusWithoutOpeningStream() async {
+        // No route yet: the first setup failed the way an unreachable server does.
+        let conn = ServerConnection()
+        await failTestConnectionSetupTemporarily(conn)
+        conn._setActiveSessionIdForTesting("child")
         conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1"))
-        conn.wsClient?._setStatusForTesting(.disconnected)
-        conn.streamConsumptionTask = nil
 
         conn.disconnectSession()
         #expect(conn.focusedSessionId == nil)
@@ -72,24 +73,28 @@ struct ServerConnectionStreamTests {
         #expect(conn.focusedSessionId == "parent",
                 "Re-entry should restore the parent as the focused command target before async connect runs")
         #expect(conn.streamConsumptionTask == nil,
-                "Without split-stream capability metadata, re-entry should stay HTTP-only until the chat connect task binds the stream")
-        #expect(conn.wsClient?.status == .disconnected)
+                "Without a route, re-entry stays HTTP-only until the chat connect task binds the stream")
+        #expect(conn.wsClient == nil)
     }
 
-    @Test func prepareForSessionReentryKeepsWorkspaceHintForUncachedSession() {
-        let (conn, _) = makeTestConnection(sessionId: "parent")
-        conn.wsClient?._setStatusForTesting(.disconnected)
-        conn.streamConsumptionTask = nil
+    @Test func prepareForSessionReentryBindsAnUncachedSessionThroughItsWorkspaceHint() async {
+        let (conn, _) = await makeTestConnection(sessionId: "parent")
+        var opens = 0
+        conn._connectStreamForTesting = {
+            opens += 1
+            return AsyncStream { $0.finish() }
+        }
+        defer { conn.disconnectStream() }
 
         conn.prepareForSessionReentry("new-child", workspaceIdHint: " ws-1 ")
 
         #expect(conn.focusedSessionId == "new-child")
-        #expect(conn.streamConsumptionTask == nil,
-                "Unknown sessions should not eagerly open a stream until ChatSessionManager binds it with history context")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/ws-1/sessions/new-child/stream")
+        #expect(opens == 1)
     }
 
-    @Test func prepareForSessionReentryReconnectsStreamWhenCapabilitiesAreReady() {
-        let (conn, _) = makeTestConnection(sessionId: "child")
+    @Test func prepareForSessionReentryReconnectsStreamWhenCapabilitiesAreReady() async {
+        let (conn, _) = await makeTestConnection(sessionId: "child")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1", status: .busy))
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -106,8 +111,8 @@ struct ServerConnectionStreamTests {
                 "Re-entry should eagerly reopen the bound session transport so session actions work before ChatSessionManager.connect finishes")
     }
 
-    @Test func prepareForSessionReentryUsesPendingAskWorkspaceForUncachedSession() {
-        let (conn, _) = makeTestConnection(sessionId: "old")
+    @Test func prepareForSessionReentryUsesPendingAskWorkspaceForUncachedSession() async {
+        let (conn, _) = await makeTestConnection(sessionId: "old")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.askRequestStore.set(
             AskRequest(
@@ -136,7 +141,7 @@ struct ServerConnectionStreamTests {
     // MARK: - streamConsumptionTask self-cleanup
 
     @Test func consumptionTaskNilsItselfWhenStreamEnds() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
 
         let (stream, continuation) = AsyncStream<StreamMessage>.makeStream()
         continuation.finish()
@@ -159,8 +164,8 @@ struct ServerConnectionStreamTests {
 
     // MARK: - disconnectStream cleanup
 
-    @Test func disconnectStreamCleansUpEverything() {
-        let (conn, _) = makeTestConnection()
+    @Test func disconnectStreamCleansUpEverything() async {
+        let (conn, _) = await makeTestConnection()
         conn.streamConsumptionTask = Task { }
 
         let (_, continuation) = AsyncStream<SessionStreamEvent>.makeStream()
@@ -176,8 +181,8 @@ struct ServerConnectionStreamTests {
 
     // MARK: - stream_connected refresh handling
 
-    @Test func streamConnectedMessageTriggersRefresh() {
-        let (conn, _) = makeTestConnection()
+    @Test func streamConnectedMessageTriggersRefresh() async {
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var yieldedToSession = false
@@ -206,7 +211,7 @@ struct ServerConnectionStreamTests {
     // MARK: - routeStreamMessage routing
 
     @Test func routeStreamMessageYieldsToSessionContinuation() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedMessages: [ServerMessage] = []
@@ -237,8 +242,8 @@ struct ServerConnectionStreamTests {
         #expect(received, "Message should be yielded to session continuation")
     }
 
-    @Test func routeStreamMessageDefersNonFocusedSharedStoreUpdateWhenLiveConsumerExists() {
-        let (conn, _) = makeTestConnection(sessionId: "focused")
+    @Test func routeStreamMessageDefersNonFocusedSharedStoreUpdateWhenLiveConsumerExists() async {
+        let (conn, _) = await makeTestConnection(sessionId: "focused")
         conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
         conn.sessionStore.upsert(makeTestSession(id: "background", status: .ready))
 
@@ -263,8 +268,8 @@ struct ServerConnectionStreamTests {
         conn.sessionEventContinuations.removeValue(forKey: "background")
     }
 
-    @Test func routeStreamMessageAppliesNonFocusedSharedStoreUpdateWithoutLiveConsumer() {
-        let (conn, _) = makeTestConnection(sessionId: "focused")
+    @Test func routeStreamMessageAppliesNonFocusedSharedStoreUpdateWithoutLiveConsumer() async {
+        let (conn, _) = await makeTestConnection(sessionId: "focused")
         conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
         conn.sessionStore.upsert(makeTestSession(id: "background", status: .ready))
 
@@ -279,7 +284,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func routeStreamMessageYieldsSessionEventWithMetadata() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedEvents: [SessionStreamEvent] = []
@@ -318,7 +323,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func routeStreamMessageCarriesSessionSeqMetadata() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedEvents: [SessionStreamEvent] = []
@@ -355,7 +360,7 @@ struct ServerConnectionStreamTests {
     /// drain in order when `streamSession` attaches.
     @Test func focusedBootstrapFramesParkUntilStreamSessionAttaches() async {
         let sessionId = "s1"
-        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        let (conn, _) = await makeTestConnection(sessionId: sessionId)
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
         conn.sessionStore.upsert(session)
@@ -431,7 +436,7 @@ struct ServerConnectionStreamTests {
     @Test(arguments: ["absent", "oldConsumer", "stateOnly"])
     func connectedSocketWithoutDeliverableBootstrapReopensForNewConsumer(bootstrap: String) async throws {
         let sessionId = "s1"
-        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        let (conn, _) = await makeTestConnection(sessionId: sessionId)
         defer { conn.disconnectStream() }
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
@@ -491,7 +496,7 @@ struct ServerConnectionStreamTests {
 
     @Test func focusedParkedFrameBoundKeepsConnectedAndState() async {
         let sessionId = "s1"
-        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        let (conn, _) = await makeTestConnection(sessionId: sessionId)
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
         conn.sessionStore.upsert(session)
@@ -551,7 +556,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func nonFocusedFramesAreNotParkedForLaterAttach() async {
-        let (conn, _) = makeTestConnection(sessionId: "focused")
+        let (conn, _) = await makeTestConnection(sessionId: "focused")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "focused", workspaceId: "w1", status: .ready))
         conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: .busy))
@@ -601,7 +606,7 @@ struct ServerConnectionStreamTests {
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadBoundSessionStream() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
         conn.sessionStore.markSyncSucceeded(at: now)
@@ -632,7 +637,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func reconnectIfNeededSkipsFocusedSessionWithoutBoundStreamEndpoint() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         let now = Date()
         conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
         conn.sessionStore.markSyncSucceeded(at: now)
@@ -652,7 +657,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func reconnectIfNeededSkipsAliveStream() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         // Fresh stores and loaded capabilities keep recovery HTTP-free; a live
         // request failure would trigger route recovery and cancel the sentinel.
         let now = Date()
@@ -676,7 +681,7 @@ struct ServerConnectionStreamTests {
     // MARK: - routeStreamMessage resolves command waiters at stream boundary
 
     @Test func routeStreamMessageResolvesGetQueueWaiterEagerly() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         let pending = PendingCommand(command: "get_queue", requestId: "req-q")
@@ -704,7 +709,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func routeStreamMessageResolvesNonSetupCommandAtBoundary() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         let pending = PendingCommand(command: "set_model", requestId: "req-m")
@@ -740,7 +745,7 @@ struct ServerConnectionStreamTests {
     /// The mock simulates instant server responses — any delay beyond a
     /// few hundred ms means the setup path is blocking on something it shouldn't.
     @Test func splitSessionStreamCompletesWithinTimeBudget() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
         ))
@@ -764,7 +769,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func modelAndThinkingCommandsProceedAfterBoundStreamMarksFull() async throws {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
         ))
@@ -812,7 +817,7 @@ struct ServerConnectionStreamTests {
     /// Regression gate: if get_queue never returns command_result, split stream
     /// setup must still return quickly while queue sync retries in background.
     @Test func splitSessionStreamDoesNotBlockOnMissingGetQueueAck() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
         ))
@@ -841,7 +846,7 @@ struct ServerConnectionStreamTests {
 
     @Test func streamSessionReplacesInFlightBoundStreamForNewSession() async {
         for status in [WebSocketClient.Status.connecting, .reconnecting(attempt: 1)] {
-            let (conn, _) = makeTestConnection(sessionId: "old")
+            let (conn, _) = await makeTestConnection(sessionId: "old")
             conn.setSplitStreamCapabilitiesForTesting()
             conn.sessionStore.applyServerSnapshot([
                 makeTestSession(id: "old", workspaceId: "w1"),
@@ -879,7 +884,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func cancelledSplitSessionConnectDoesNotStartQueueSync() async {
-        let (conn, _) = makeTestConnection()
+        let (conn, _) = await makeTestConnection()
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
@@ -933,7 +938,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func streamSessionRequiresRequiredSplitCapabilities() async {
-        let (conn, _) = makeTestConnection(sessionId: "s1")
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
         conn.wsClient?._setStatusForTesting(.connected)
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: false)
 
@@ -945,7 +950,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
-        let (conn, _) = makeTestConnection(sessionId: "s1")
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
         conn.routeStreamMessage(StreamMessage(
             sessionId: "s1", seq: nil, currentSeq: nil, message: .connected(session: makeTestSession())
         ))
@@ -971,14 +976,14 @@ struct ServerConnectionStreamTests {
         conn.streamConsumptionTask?.cancel()
     }
 
-    @Test func dictationClientUsesServerBoundStreamWithoutCapabilityPreflight() {
-        let (conn, _) = makeTestConnection(sessionId: "s1")
+    @Test func dictationClientUsesServerBoundStreamWithoutCapabilityPreflight() async {
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
 
         #expect(conn.makeDictationStreamClient() != nil)
     }
 
-    @Test func controlSessionStreamUsesControlURL() {
-        let (conn, _) = makeTestConnection(sessionId: "control-1")
+    @Test func controlSessionStreamUsesControlURL() async {
+        let (conn, _) = await makeTestConnection(sessionId: "control-1")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
 
         conn.prepareFocusedSessionStreamEndpointForTesting(
@@ -990,7 +995,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func mismatchedSteerRebindsBeforeEmittingFrame() async throws {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
         conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
@@ -1018,7 +1023,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func matchingSteerDoesNotPrepareEndpointAgain() async throws {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-a", workspaceId: "w1")
@@ -1042,7 +1047,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func mismatchedSteerWithoutRouteFailsBeforeEmittingFrame() async {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
@@ -1063,7 +1068,7 @@ struct ServerConnectionStreamTests {
 
     @Test func everyOverriddenTurnCommandRepairsMismatchedBinding() async throws {
         for command in BindingGuardCommand.allCases {
-            let (conn, _) = makeTestConnection(sessionId: "session-a")
+            let (conn, _) = await makeTestConnection(sessionId: "session-a")
             conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
             conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
             conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
@@ -1101,8 +1106,8 @@ struct ServerConnectionStreamTests {
         }
     }
 
-    @Test func focusArbitrationTelemetryRecordsRequestedCancelledAndWon() {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+    @Test func focusArbitrationTelemetryRecordsRequestedCancelledAndWon() async {
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
         conn.wsClient?._setStatusForTesting(.connecting)
@@ -1121,7 +1126,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func webSocketRejectsFrameWhenBoundSessionChangesBeforeSend() async {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
         guard let wsClient = conn.wsClient else {
@@ -1142,8 +1147,8 @@ struct ServerConnectionStreamTests {
 
     // MARK: - External open claim (notification / oppi://session tap)
 
-    private func makeExternalOpenConnection() -> ServerConnection {
-        let (conn, _) = makeTestConnection(sessionId: "stale")
+    private func makeExternalOpenConnection() async -> ServerConnection {
+        let (conn, _) = await makeTestConnection(sessionId: "stale")
         // CI has no server on localhost:7749. A real APIClient request can trip
         // availability teardown and wipe the test transport before bind.
         conn.setAPIClientForTesting(nil)
@@ -1155,7 +1160,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func externalOpenKeepsItsStreamWhenStaleSessionReenters() async {
-        let conn = makeExternalOpenConnection()
+        let conn = await makeExternalOpenConnection()
         var streamConnects = 0
         conn._connectStreamForTesting = {
             streamConnects += 1
@@ -1180,7 +1185,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func externalOpenRefusesStaleStreamBind() async {
-        let conn = makeExternalOpenConnection()
+        let conn = await makeExternalOpenConnection()
         await conn.prepareExternalSessionOpen(sessionId: "target")
 
         let staleStream = await conn.streamSession("stale", routeScope: .workspace("w1"))
@@ -1193,7 +1198,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func externalOpenClaimReleasesAfterTargetViewBinds() async {
-        let conn = makeExternalOpenConnection()
+        let conn = await makeExternalOpenConnection()
         conn._connectedStreamWaitTimeoutForTesting = .milliseconds(200)
         await conn.prepareExternalSessionOpen(sessionId: "target")
 
@@ -1216,7 +1221,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func externalOpenClaimExpiresSoUnboundTargetCannotPinFocus() async {
-        let conn = makeExternalOpenConnection()
+        let conn = await makeExternalOpenConnection()
         conn._externalSessionOpenClaimWindowForTesting = .milliseconds(20)
 
         await conn.prepareExternalSessionOpen(sessionId: "target")
@@ -1231,7 +1236,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func externalOpenRefusalIsRecordedInFocusArbitrationTelemetry() async {
-        let conn = makeExternalOpenConnection()
+        let conn = await makeExternalOpenConnection()
         await conn.prepareExternalSessionOpen(sessionId: "target")
 
         var events: [(outcome: String, metadata: [String: String])] = []
@@ -1247,7 +1252,7 @@ struct ServerConnectionStreamTests {
     }
 
     @Test func webSocketRejectsFrameWhenBoundSessionChangesWhileWaitingToSend() async {
-        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        let (conn, _) = await makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-a", workspaceId: "w1")
         guard let wsClient = conn.wsClient else {

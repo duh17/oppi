@@ -91,7 +91,7 @@ struct RemotePushTests {
     /// still holds its streams must not add a second alert of its own.
     @Test func aStoppedRunPostsNoLocalBanner() async {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:push-srv"))
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: "sha256:push-srv"))
         connection.setSplitStreamCapabilitiesForTesting(
             appEventStream: true,
             pushRelay: URL(string: "https://push.example.test")

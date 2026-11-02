@@ -254,6 +254,7 @@
 		1AC1D62C38442B0949EB6C79 /* ConversationStreamSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F19E55143E8D14987DC263 /* ConversationStreamSessionTests.swift */; };
 		1AD276ADFCF2FA6AEB3E3535 /* AudioTranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD2A4A0A9D0DE73CFF36902B /* AudioTranscriptView.swift */; };
 		1B0A4C6425439BDED577072E /* APIClient+SettingsTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB1A02C2BA3D7725394025B /* APIClient+SettingsTransport.swift */; };
+		1B4431E2A3175C02DC7307D5 /* PreviewServerActivation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D45BECE748C8D9B96D7AC60 /* PreviewServerActivation.swift */; };
 		1B4AA95C11464FE54190311F /* ChatViewController+Timeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 408A11BF56CA8AEEF5F79FE5 /* ChatViewController+Timeline.swift */; };
 		1B6D756C404FFF42440BE9CA /* QuickSessionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5F4E6E207705EE2A6217C9 /* QuickSessionModel.swift */; };
 		1B7CB0EA3B7EB615FA95E60B /* PhotoLibraryMediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FB1ADC4F9301F7E86D7CE5 /* PhotoLibraryMediaImporter.swift */; };
@@ -3754,6 +3755,7 @@
 		8D12D6AD3BBD46626AA6941B /* RecentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentModelsTests.swift; sourceTree = "<group>"; };
 		8D1B51EE7EDC8B2E28C37914 /* VoiceInputAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputAudioEngine.swift; sourceTree = "<group>"; };
 		8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidSequenceRenderer.swift; sourceTree = "<group>"; };
+		8D45BECE748C8D9B96D7AC60 /* PreviewServerActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewServerActivation.swift; sourceTree = "<group>"; };
 		8D4B5C724040CE0DDA7DB7FE /* MacHTMLPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacHTMLPreview.swift; sourceTree = "<group>"; };
 		8D4ED5F6D7342021B60F0C49 /* ServerConnectionLANTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionLANTransportTests.swift; sourceTree = "<group>"; };
 		8D8AD55B015A2C4A1FDF71DD /* ScheduleEditDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditDraft.swift; sourceTree = "<group>"; };
@@ -6470,6 +6472,7 @@
 				6C690BCB7DB5ED460BE52B2E /* AudioScreenshotPreview.swift */,
 				BBF572092BBA00A70FA494F8 /* FileBrowserMotionPreviewSupport.swift */,
 				35750EA103C3BAE8B56699EE /* PreviewComposerController.swift */,
+				8D45BECE748C8D9B96D7AC60 /* PreviewServerActivation.swift */,
 				1D992CD9B2CF9E99CAB16C0A /* RexFakeSession.swift */,
 				A69C8476A4FC7953C528A2B2 /* RexFakeWorld.swift */,
 				377BE397339D1A6E74469486 /* RouterModalSitesScreenshotPreview.swift */,
@@ -10656,6 +10659,7 @@
 				7152681E402F3680FA24C011 /* Preferences.swift in Sources */,
 				FD2528347F010184F5F431E8 /* PreviewComposerController.swift in Sources */,
 				ADAB6EE4501FC496E62550DB /* PreviewHosts.swift in Sources */,
+				1B4431E2A3175C02DC7307D5 /* PreviewServerActivation.swift in Sources */,
 				88472516365C3E521D83BAAA /* PromptEditTransports.swift in Sources */,
 				5ECB6958F2C19EF63469EFF4 /* ProviderAuth.swift in Sources */,
 				FA7F94452AD16F1144A4274B /* ProviderAuthFlow.swift in Sources */,

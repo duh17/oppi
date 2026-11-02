@@ -236,7 +236,7 @@ struct RestorationStateTests {
             serverFingerprint: "sha256:test-restore"
         )
         if let server = PairedServer(from: creds) {
-            coordinator.addServer(server, switchTo: true)
+            await coordinator.addTestServer(server, switchTo: true)
         }
 
         let nav = AppNavigation()

@@ -165,8 +165,8 @@ struct DictationHintWiringTests {
         )
         manager.setEngineMode(.onDevice)
 
-        let chat = testDictationServer(host: "chat.example")
-        let editor = testDictationServer(host: "editor.example")
+        let chat = await testDictationServer(host: "chat.example")
+        let editor = await testDictationServer(host: "editor.example")
         manager.activateTestChat(
             serverId: "server-a",
             sessionId: "session-a",
@@ -543,7 +543,7 @@ struct DictationHintWiringTests {
             systemAccess: MockVoiceInputSystemAccess()
         )
         manager.setEngineMode(.onDevice)
-        let previous = testDictationServer(host: "old.example")
+        let previous = await testDictationServer(host: "old.example")
         manager.activateTestChat(
             serverId: "old",
             sessionId: "session-old",
@@ -584,8 +584,8 @@ struct DictationHintWiringTests {
         )
         manager.setEngineMode(.remote)
 
-        let original = testDictationServer(host: "frozen.example")
-        let mutated = testDictationServer(host: "mutated.example")
+        let original = await testDictationServer(host: "frozen.example")
+        let mutated = await testDictationServer(host: "mutated.example")
         manager.activateTestChat(
             serverId: "frozen",
             sessionId: "s1",
@@ -773,10 +773,10 @@ private func testCredentials(host: String) -> ServerCredentials {
 }
 
 @MainActor
-private func testDictationServer(host: String) -> (credentials: ServerCredentials, connection: ServerConnection) {
+private func testDictationServer(host: String) async -> (credentials: ServerCredentials, connection: ServerConnection) {
     let credentials = testCredentials(host: host)
     let connection = ServerConnection()
-    _ = connection.configure(credentials: credentials)
+    _ = await configureTestConnection(connection, credentials: credentials)
     connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
     return (credentials, connection)
 }

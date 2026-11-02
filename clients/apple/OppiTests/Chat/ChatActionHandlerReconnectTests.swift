@@ -272,7 +272,7 @@ struct ChatActionHandlerReconnectTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials())
+        await configureTestConnection(connection, credentials: makeTestCredentials())
         // Deliberately do NOT set focus — simulates the nil window
         connection._setActiveSessionIdForTesting(nil)
         connection._sendAckTimeoutForTesting = .milliseconds(100)
@@ -316,7 +316,7 @@ struct ChatActionHandlerReconnectTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials())
+        await configureTestConnection(connection, credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
@@ -368,7 +368,7 @@ struct ChatActionHandlerReconnectTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials())
+        await configureTestConnection(connection, credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
@@ -427,7 +427,7 @@ struct ChatActionHandlerReconnectTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials())
+        await configureTestConnection(connection, credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting(nil) // nil window
 
         var restoredText: String?
@@ -472,7 +472,7 @@ struct ChatActionHandlerReconnectTests {
         // subscription level. Server-side command rejections should surface
         // directly instead of being hidden behind a stale subscription retry.
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("parent")
 
         var attempts = 0
@@ -567,7 +567,7 @@ struct ChatActionHandlerReconnectTests {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         // Don't set activeSessionId → wsClient.send() will throw notConnected
 
         var reconnectCalled = false

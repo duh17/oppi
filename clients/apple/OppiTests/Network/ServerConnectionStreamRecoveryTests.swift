@@ -6,33 +6,8 @@ import Testing
 @Suite("ServerConnection Stream Recovery", .serialized)
 @MainActor
 struct ServerConnectionStreamRecoveryTests {
-    @Test func transientCapabilityRefreshFailureIsRetryable() async {
-        let connection = makeConnection()
-        connection.setAPIClientForTesting(makeMockAPIClient())
-        defer { cleanup(connection) }
-
-        var calls = 0
-        TestURLProtocol.handler = { request in
-            #expect(request.url?.path == "/server/info")
-            calls += 1
-            if calls == 1 {
-                throw URLError(.networkConnectionLost)
-            }
-            return try self.mockServerInfoResponse(for: request)
-        }
-
-        await connection.refreshStreamCapabilitiesIfNeeded()
-        #expect(!connection.hasRequiredSplitStreamCapabilities)
-        #expect(connection.requiredSplitStreamCapabilitiesStatusForDiagnostics == "refreshFailed")
-
-        await connection.refreshStreamCapabilitiesIfNeeded()
-        #expect(connection.hasRequiredSplitStreamCapabilities)
-        #expect(connection.requiredSplitStreamCapabilitiesStatusForDiagnostics == "ready")
-        #expect(calls == 2)
-    }
-
     @Test func onlyAPushingServerTheUserOptedInForGetsAPushKeyOncePerConfiguration() async throws {
-        let connection = makeConnection()
+        let connection = await makeConnection()
         connection.setAPIClientForTesting(makeMockAPIClient())
         let serverId = try #require(connection.currentServerId)
         let push = PushRegistration.shared
@@ -61,7 +36,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(!connection.pushNotificationsAvailable)
 
         PushRegistration.setEnabled(true, serverId: serverId)
-        let reconnected = makeConnection()
+        let reconnected = await makeConnection()
         reconnected.setAPIClientForTesting(makeMockAPIClient())
         defer { cleanup(reconnected) }
         await reconnected.refreshStreamCapabilities()
@@ -72,7 +47,7 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     @Test func knownGoodCapabilitiesSurviveTransientRefreshFailure() async {
-        let connection = makeConnection()
+        let connection = await makeConnection()
         connection.setAPIClientForTesting(makeMockAPIClient())
         defer { cleanup(connection) }
 
@@ -93,42 +68,6 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.hasRequiredSplitStreamCapabilities)
         #expect(connection.requiredSplitStreamCapabilitiesStatusForDiagnostics == "ready:refreshFailed")
         #expect(calls == 2)
-    }
-
-    @Test func coldSessionListRefreshDiscoversAndStartsAppEventStream() async {
-        let connection = makeConnection()
-        connection.setAPIClientForTesting(makeMockAPIClient())
-        connection.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
-        connection.workspaceStore.isLoaded = true
-        connection.sessionStore.upsert(makeTestSession(id: "seed", workspaceId: "w1"))
-        defer { cleanup(connection) }
-
-        var requestedPaths: [String] = []
-        var startedStreamURL: URL?
-        connection._startAppEventStreamForTesting = { url in
-            startedStreamURL = url
-        }
-
-        TestURLProtocol.handler = { request in
-            let path = request.url?.path ?? ""
-            requestedPaths.append(path)
-            switch path {
-            case "/server/info":
-                return try self.mockServerInfoResponse(for: request, appEventStream: true)
-            case "/sessions/recent":
-                return try mockJSONResponse(json: #"{"sessions":[]}"#, for: request)
-            default:
-                Issue.record("Unexpected request path: \(path)")
-                return try mockJSONResponse(status: 404, json: "{}", for: request)
-            }
-        }
-
-        await connection.refreshSessionList(force: true)
-
-        #expect(requestedPaths.first == "/server/info")
-        #expect(requestedPaths.contains("/sessions/recent"))
-        #expect(connection.appEventStreamAvailable)
-        #expect(startedStreamURL?.path == "/app/events/stream")
     }
 
     @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async throws {
@@ -387,8 +326,8 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connectCalls >= 1)
     }
 
-    @Test func applyPersistedDeviceCredentialUpdatesSnapshotWithoutRecomposing() {
-        let connection = makeConnection()
+    @Test func applyPersistedDeviceCredentialUpdatesSnapshotWithoutRecomposing() async {
+        let connection = await makeConnection()
         defer { cleanup(connection) }
         let original = DeviceCredential(
             deviceId: "dev_1",
@@ -396,7 +335,7 @@ struct ServerConnectionStreamRecoveryTests {
             expiresAt: 1_000_000,
             refreshChallenge: nil
         )
-        #expect(connection.configure(credentials: ServerCredentials(
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
             host: "studio.example.test",
             port: 7749,
             token: "",
@@ -437,8 +376,8 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
     }
 
-    @Test func applyPersistedSameRouteCredentialsKeepsTheCompleteIncomingSnapshot() {
-        let connection = makeConnection()
+    @Test func applyPersistedSameRouteCredentialsKeepsTheCompleteIncomingSnapshot() async {
+        let connection = await makeConnection()
         defer { cleanup(connection) }
         let original = ServerCredentials(
             host: "studio.example.test",
@@ -456,7 +395,7 @@ struct ServerConnectionStreamRecoveryTests {
                 refreshChallenge: nil
             )
         )
-        #expect(connection.configure(credentials: original))
+        #expect(await configureTestConnection(connection, credentials: original))
         let wsBefore = connection.wsClient
         let streamGeneration = connection.persistentStreamGenerationForTesting
 
@@ -488,8 +427,8 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
     }
 
-    @Test func focusedStreamRecoveryIsOwnedByTheFocusedSession() {
-        let connection = makeConnection()
+    @Test func focusedStreamRecoveryIsOwnedByTheFocusedSession() async {
+        let connection = await makeConnection()
         defer { cleanup(connection) }
         connection._setActiveSessionIdForTesting("session-a")
 
@@ -515,10 +454,20 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(!connection.isFocusedSessionStreamRecovering)
     }
 
-    @Test func streamSessionWaitsForCapabilitiesThenBinds() async {
-        let connection = makeConnection()
+    @Test func streamSessionWaitsForTheRouteThenBinds() async {
+        TestURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        let credentials = ServerCredentials(
+            host: "127.0.0.1",
+            port: 7749,
+            token: "sk_test",
+            name: "Test",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF"
+        )
+        // No route yet: the first setup failed the way an unreachable server does.
+        let connection = ServerConnection()
+        await failTestConnectionSetupTemporarily(connection, credentials: credentials)
         defer { cleanup(connection) }
-        connection.setAPIClientForTesting(nil)
         connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
         connection._connectedStreamWaitTimeoutForTesting = .milliseconds(200)
         var connectCalls = 0
@@ -538,7 +487,12 @@ struct ServerConnectionStreamRecoveryTests {
         })
         #expect(connection.isFocusedSessionStreamRecovering)
 
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        // The route commits while the open waits.
+        #expect(await configureTestConnection(
+            connection,
+            credentials: credentials,
+            apiClient: makeTestURLProtocolClient()
+        ))
         let opened = await stream
         #expect(opened != nil)
         #expect(connectCalls >= 1)
@@ -550,7 +504,7 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     @Test func streamSessionDoesNotWaitForLoadedMissingCapabilityOrFailClosed() async {
-        let missing = makeConnection()
+        let missing = await makeConnection()
         defer { cleanup(missing) }
         missing.setSplitStreamCapabilitiesForTesting(sessionStream: false)
         missing.wsClient?._setStatusForTesting(.connected)
@@ -561,7 +515,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(missingStream == nil)
         #expect(!missingWaitStarted)
 
-        let closed = makeConnection()
+        let closed = await makeConnection()
         defer { cleanup(closed) }
         closed.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         closed.failTransportTerminallyForTesting()
@@ -574,7 +528,9 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     @Test func cancelledReadinessWaitDoesNotSpinAndClearsRecovery() async {
-        let connection = makeConnection()
+        // No route yet: the first setup failed the way an unreachable server does.
+        let connection = ServerConnection()
+        await failTestConnectionSetupTemporarily(connection)
         defer { cleanup(connection) }
         connection._focusedStreamReadinessPollForTesting = .milliseconds(20)
         var waitStarted = false
@@ -608,9 +564,9 @@ struct ServerConnectionStreamRecoveryTests {
         host: String = "127.0.0.1",
         scheme: ServerScheme = .https,
         tlsFingerprint: String? = nil
-    ) -> ServerConnection {
+    ) async -> ServerConnection {
         let connection = ServerConnection()
-        let configured = connection.configure(credentials: ServerCredentials(
+        let configured = await configureTestConnection(connection, credentials: ServerCredentials(
             host: host,
             port: 7749,
             token: "sk_test",

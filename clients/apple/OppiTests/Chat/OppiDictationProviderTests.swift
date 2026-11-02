@@ -546,10 +546,10 @@ struct OppiDictationProviderLifecycleTests {
         )
     }
 
-    private static func makeContextWithConnection() -> (VoiceProviderContext, ServerConnection) {
+    private static func makeContextWithConnection() async -> (VoiceProviderContext, ServerConnection) {
         let connection = ServerConnection()
         let credentials = makeCredentials()
-        _ = connection.configure(credentials: credentials)
+        _ = await configureTestConnection(connection, credentials: credentials)
         connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         connection.focusedSessionStore.focus(sessionId: "s1")
         let context = VoiceProviderContext(
@@ -605,7 +605,7 @@ struct OppiDictationProviderLifecycleTests {
     @Test func prepareSessionUsesServerBoundStreamWithoutCapabilityPreflight() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
-        _ = connection.configure(credentials: credentials)
+        _ = await configureTestConnection(connection, credentials: credentials)
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
             source: "test",
@@ -624,7 +624,7 @@ struct OppiDictationProviderLifecycleTests {
     @Test func prepareSessionOmitsEmptyContextualStrings() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
-        _ = connection.configure(credentials: credentials)
+        _ = await configureTestConnection(connection, credentials: credentials)
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
             source: "test",
@@ -650,7 +650,7 @@ struct OppiDictationProviderLifecycleTests {
     @Test func prepareSessionSendsPreparedContextualStringsFromContext() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
-        _ = connection.configure(credentials: credentials)
+        _ = await configureTestConnection(connection, credentials: credentials)
         let context = VoiceProviderContext(
             locale: Locale(identifier: "en-US"),
             source: "test",
@@ -674,7 +674,7 @@ struct OppiDictationProviderLifecycleTests {
     }
 
     @Test func prepareSessionReturnsPreparationWithCorrectPathTag() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)
@@ -690,7 +690,7 @@ struct OppiDictationProviderLifecycleTests {
     }
 
     @Test func makeSessionSucceedsAfterPrepare() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)
@@ -710,7 +710,7 @@ struct OppiDictationProviderLifecycleTests {
     }
 
     @Test func cancelledTakeCanBeRepreparedWithFreshTransport() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
         let firstTransport = installTestDictationTransport(on: provider)
         let firstPreparation = try await provider.prepareSession(context: context)
@@ -733,7 +733,7 @@ struct OppiDictationProviderLifecycleTests {
 
     @Test(arguments: [false, true])
     func upstreamEndFinishesRecordingAndReadiness(beforeReady: Bool) async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
         let incoming = AsyncStream<ServerMessage>.makeStream()
         let transport = installTestDictationTransport(on: provider, messages: incoming.stream)
@@ -764,7 +764,7 @@ struct OppiDictationProviderLifecycleTests {
     }
 
     @Test func makeSessionThrowsWhenConnectionMissing() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)
@@ -788,7 +788,7 @@ struct OppiDictationProviderLifecycleTests {
     // MARK: - invalidateCache after prepare
 
     @Test func invalidateCacheClearsActiveState() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)
@@ -806,7 +806,7 @@ struct OppiDictationProviderLifecycleTests {
     // MARK: - cancelPreparation after prepare
 
     @Test func cancelPreparationClearsActiveState() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)
@@ -822,7 +822,7 @@ struct OppiDictationProviderLifecycleTests {
     // MARK: - metricTags
 
     @Test func backendIsUnknownUntilTheServerReportsReadiness() async throws {
-        let (context, _) = Self.makeContextWithConnection()
+        let (context, _) = await Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
         _ = installTestDictationTransport(on: provider)

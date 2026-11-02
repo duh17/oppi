@@ -7,8 +7,8 @@ import UIKit
 @MainActor
 struct ReviewCommentStripChromeTests {
     @Test("Opening review closes now playing and collapses extension drawers; an extension drawer closes review")
-    func reviewAndExtensionDrawersAreExclusive() {
-        let (connection, _) = makeTestConnection(sessionId: "drawers")
+    func reviewAndExtensionDrawersAreExclusive() async {
+        let (connection, _) = await makeTestConnection(sessionId: "drawers")
         let chat = ChatViewController(sessionId: "drawers", connection: connection, navigation: AppNavigation())
         chat.model.nowPlayingDrawerExpanded = true
         let collapseRequest = chat.model.extensionDrawerCollapseRequestID
@@ -28,8 +28,8 @@ struct ReviewCommentStripChromeTests {
     }
 
     @Test("Live subagent tails keep streaming while any extension drawer stays expanded")
-    func liveTailsFollowTheDrawersTogether() {
-        let (connection, _) = makeTestConnection(sessionId: "drawer-tails")
+    func liveTailsFollowTheDrawersTogether() async {
+        let (connection, _) = await makeTestConnection(sessionId: "drawer-tails")
         let chat = ChatViewController(sessionId: "drawer-tails", connection: connection, navigation: AppNavigation())
 
         chat.handleExtensionDrawerExpansion(true, in: .aboveEditor)

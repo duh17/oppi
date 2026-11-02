@@ -317,40 +317,6 @@ final class ConnectionCoordinator {
             && serverStore.server(for: serverId) != nil
     }
 
-    #if DEBUG
-    /// Synchronous HTTP-only seam retained for tests that exercise LAN endpoint
-    /// mutation. Production navigation never calls this path.
-    @discardableResult
-    func ensureConnection(for server: PairedServer) -> ServerConnection {
-        return ensureHTTPConnectionForTesting(for: server)
-    }
-
-    private func ensureHTTPConnectionForTesting(for server: PairedServer) -> ServerConnection {
-        let serverId = server.id
-        if let existing = connections[serverId] {
-            if existing.hasSameTransportIdentity(as: server.credentials) {
-                existing.applyPersistedSameRouteCredentials(server.credentials)
-                if existing.hasViableConfiguredTransport {
-                    return existing
-                }
-            }
-            if existing.credentials != server.credentials || !existing.hasViableConfiguredTransport {
-                existing.disconnectStream()
-                existing.disconnectAppEventStream()
-                existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
-                guard existing.configure(credentials: server.credentials) else { return disconnectedSentinel }
-            }
-            return existing
-        }
-
-        let connection = ServerConnection(seenStorage: seenStorage)
-        guard connection.configure(credentials: server.credentials) else { return disconnectedSentinel }
-        initializeStores(for: connection, serverId: serverId)
-        connections[serverId] = connection
-        return connection
-    }
-    #endif
-
     /// Publish the paired server's stores and make them active before its
     /// network transport is ready. Cold launch can render cached content from
     /// this connection while `ensureConnectionReady` performs bounded HTTPS/LAN
@@ -1102,39 +1068,6 @@ final class ConnectionCoordinator {
         MetricKitService.shared.setUploadClient(connection.apiClient)
         logger.warning("Switched to server \(server.name, privacy: .public) (\(server.id.prefix(16), privacy: .public))")
     }
-
-    #if DEBUG
-    /// Test-only synchronous switch for HTTP fixtures. HTTPS fixtures must use
-    /// `switchToServerReady` to cover production behavior.
-    @discardableResult
-    func switchToServer(_ serverId: String) -> Bool {
-        guard let server = serverStore.server(for: serverId) else { return false }
-        return switchToServer(server)
-    }
-
-    @discardableResult
-    func switchToServer(_ server: PairedServer) -> Bool {
-        let connection = ensureConnection(for: server)
-        guard connection !== disconnectedSentinel, connection.apiClient != nil else { return false }
-        activatePreparedConnection(connection, server: server)
-        return true
-    }
-
-    func addServer(_ server: PairedServer, switchTo: Bool = true) {
-        serverStore.addOrUpdate(server)
-        resumeCaches(for: server.id)
-        let connection = ensureConnection(for: server)
-        if switchTo, connection !== disconnectedSentinel {
-            activatePreparedConnection(connection, server: server)
-        }
-    }
-
-    func prepareAllConnections() {
-        for server in serverStore.servers {
-            _ = ensureConnection(for: server)
-        }
-    }
-    #endif
 
     // MARK: - API Clients
 

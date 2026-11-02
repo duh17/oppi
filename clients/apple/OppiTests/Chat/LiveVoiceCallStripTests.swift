@@ -91,7 +91,7 @@ struct LiveVoiceCallStripTests {
         // unreachable server does, and a route it did not plan fails the test.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let ready = try makeTestAppRoot(
+        let ready = try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "live-voice-strip.test")
         )

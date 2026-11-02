@@ -10,7 +10,7 @@ struct SessionListLifecycleDeleteTests {
     private let serverId = "delete-server"
     private let workspaceId = "w1"
 
-    private func makeConnection(sessions: [Session]) -> ServerConnection {
+    private func makeConnection(sessions: [Session]) async -> ServerConnection {
         let config = URLSessionConfiguration.ephemeral
         TestURLProtocol.install(in: config)
         let client = APIClient(
@@ -18,7 +18,7 @@ struct SessionListLifecycleDeleteTests {
             configuration: config
         )
         let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials(fingerprint: serverId))
+        await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: serverId))
         connection.setAPIClientForTesting(client)
         for session in sessions { connection.sessionStore.upsert(session) }
         return connection
@@ -94,7 +94,7 @@ struct SessionListLifecycleDeleteTests {
 
     @Test func aRefusedDeleteKeepsTheSessionItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let connection = makeConnection(sessions: [])
+        let connection = await makeConnection(sessions: [])
         let seeded = await seed(connection, sessionId: "refused-\(UUID().uuidString)")
         defer { Task { await TimelineCache.shared.removeTrace(seeded.session.id, serverId: serverId) } }
         TestURLProtocol.handler = { _ in self.response(status: 500, json: "{\"error\":\"disk full\"}") }
@@ -108,7 +108,7 @@ struct SessionListLifecycleDeleteTests {
 
     @Test func aDeleteTheServerAcceptsDropsTheSessionItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let connection = makeConnection(sessions: [])
+        let connection = await makeConnection(sessions: [])
         let seeded = await seed(connection, sessionId: "deleted-\(UUID().uuidString)")
         TestURLProtocol.handler = { _ in self.response(status: 200, json: "{}") }
 
@@ -121,7 +121,7 @@ struct SessionListLifecycleDeleteTests {
 
     @Test func aSessionTheServerAlreadyLostIsDroppedWithItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let connection = makeConnection(sessions: [])
+        let connection = await makeConnection(sessions: [])
         let seeded = await seed(connection, sessionId: "gone-\(UUID().uuidString)")
         TestURLProtocol.handler = { _ in self.response(status: 404, json: "{\"error\":\"not found\"}") }
 

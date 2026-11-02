@@ -9,7 +9,7 @@ struct ServerConnectionLANTransportTests {
         let connection = ServerConnection()
         let credentials = makeCredentials()
 
-        let configured = connection.configure(credentials: credentials)
+        let configured = await configureTestConnection(connection, credentials: credentials)
 
         #expect(configured == true)
         #expect(connection.transportPath == .paired)
@@ -19,7 +19,7 @@ struct ServerConnectionLANTransportTests {
     @Test func verifiedLANDiscoveryUpdatesTransportClients() async {
         let connection = ServerConnection()
         let credentials = makeCredentials()
-        #expect(connection.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
         connection._adoptVerifiedLANEndpointForTesting(
             LANDiscoveredEndpoint(
@@ -41,7 +41,7 @@ struct ServerConnectionLANTransportTests {
         session.status = .busy
         connection.sessionStore.upsert(session)
         let credentials = makeCredentials()
-        #expect(connection.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
         let initialWebSocketClient = connection.wsClient
         connection.wsClient?._setStatusForTesting(.connected)
@@ -63,7 +63,7 @@ struct ServerConnectionLANTransportTests {
     @Test func removingLANDiscoveryRebuildsPairedComposition() async {
         let connection = ServerConnection()
         let credentials = makeCredentials()
-        #expect(connection.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
         connection._adoptVerifiedLANEndpointForTesting(
             LANDiscoveredEndpoint(
@@ -77,7 +77,7 @@ struct ServerConnectionLANTransportTests {
 
         let activeWebSocketClient = connection.wsClient
 
-        connection.setDiscoveredLANEndpoint(nil)
+        await connection.setDiscoveredLANEndpoint(nil)?.value
 
         #expect(connection.transportPath == .paired)
         #expect(connection.wsClient !== activeWebSocketClient)
@@ -87,7 +87,7 @@ struct ServerConnectionLANTransportTests {
     @Test func mismatchedLANDiscoveryKeepsPairedTransport() async {
         let connection = ServerConnection()
         let credentials = makeCredentials()
-        #expect(connection.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
         connection.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
@@ -105,7 +105,7 @@ struct ServerConnectionLANTransportTests {
     @Test func unpinnedTailscaleCertificateUsesSignedNameOverLANIP() async {
         let connection = ServerConnection()
         let credentials = makeCredentials(tlsFingerprint: nil)
-        #expect(connection.configure(credentials: credentials) == true)
+        #expect(await configureTestConnection(connection, credentials: credentials) == true)
         #expect(connection.wsClient?.configuredTLSServerName == nil)
 
         connection._adoptVerifiedLANEndpointForTesting(

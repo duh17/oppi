@@ -6,9 +6,9 @@ import Testing
 @MainActor
 struct ServerConnectionInvariantTests {
 
-    @Test func stopLifecycleFollowsStateMachineAcrossDeterministicSequences() {
+    @Test func stopLifecycleFollowsStateMachineAcrossDeterministicSequences() async {
         for sequence in stopLifecycleSequences(length: 4) {
-            let scenario = ServerConnectionScenario(sessionId: "s-stop")
+            let scenario = await ServerConnectionScenario(sessionId: "s-stop")
                 .givenStoredSession(status: .busy)
 
             var expected: SessionStatus = .busy
@@ -24,8 +24,8 @@ struct ServerConnectionInvariantTests {
         }
     }
 
-    @Test func nonActiveSessionMessagesDoNotMutateLocalState() {
-        let scenario = ServerConnectionScenario(sessionId: "s-active")
+    @Test func nonActiveSessionMessagesDoNotMutateLocalState() async {
+        let scenario = await ServerConnectionScenario(sessionId: "s-active")
             .givenStoredSession(id: "s-active", status: .ready)
 
         let beforeStatus = scenario.firstSessionStatus()

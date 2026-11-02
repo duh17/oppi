@@ -28,8 +28,8 @@ struct ModelProvidersPageTests {
         )
     }
 
-    private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(
+    private func makeRoot() async throws -> AppRootEnvironment {
+        try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
@@ -50,7 +50,7 @@ struct ModelProvidersPageTests {
             "second-providers.test": ProviderHostAnswers(providers: [provider("gemini", name: "Gemini", authenticated: true)]),
         ])
         defer { routes.end() }
-        let root = try makeTestAppRoot(readyServers: [
+        let root = try await makeTestAppRoot(readyServers: [
             TestReadyServer(
                 id: "providers-first", name: "First", host: "first-providers.test",
                 client: makeTestURLProtocolClient(host: "first-providers.test")
@@ -84,7 +84,7 @@ struct ModelProvidersPageTests {
         let answers = ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)])
         let routes = Self.useAnswers(["ready-server.test": answers])
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
         defer { hide(window) }
@@ -122,7 +122,7 @@ struct ModelProvidersPageTests {
         )
         let routes = Self.useAnswers(["ready-server.test": answers])
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
         defer { hide(window) }
@@ -150,7 +150,7 @@ struct ModelProvidersPageTests {
     func apiKeySheetSavesTheTrimmedKey() async throws {
         let routes = Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [])])
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         var saved: String?
         let sheet = ProviderAPIKeyViewController(
             provider: provider("claude", name: "Claude", authenticated: true), root: root

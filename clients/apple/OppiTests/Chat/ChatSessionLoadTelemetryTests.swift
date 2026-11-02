@@ -38,7 +38,7 @@ struct ChatSessionLoadTelemetryTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))
 

@@ -28,8 +28,8 @@ struct WorkspaceNavigationServerScopeTests {
         serverStore.addOrUpdate(serverA)
         serverStore.addOrUpdate(serverB)
 
-        coordinator.switchToServer(serverA)
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverA)
+        await coordinator.switchToTestServer(serverB)
 
         guard let connectionA = coordinator.connection(for: serverA.id),
               let connectionB = coordinator.connection(for: serverB.id) else {
@@ -39,7 +39,7 @@ struct WorkspaceNavigationServerScopeTests {
 
         connectionA.setAPIClientForTesting(try Self.makeAPIClient(host: "server-a.test"))
         connectionB.setAPIClientForTesting(try Self.makeAPIClient(host: "server-b.test"))
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
 
         let host = makeHost(
             coordinator: coordinator,

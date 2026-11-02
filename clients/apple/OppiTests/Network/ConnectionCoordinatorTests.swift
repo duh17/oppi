@@ -146,12 +146,12 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Server Switching
 
-    @Test func switchToServerUpdatesActiveServer() {
+    @Test func switchToServerUpdatesActiveServer() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:switch-test", name: "Studio")
 
         coordinator.serverStore.addOrUpdate(server)
-        let result = coordinator.switchToServer(server)
+        let result = await coordinator.switchToTestServer(server)
 
         #expect(result == true)
         #expect(coordinator.activeServerId == "sha256:switch-test")
@@ -159,9 +159,9 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeConnection.sessionStore.activeServerId == "sha256:switch-test")
     }
 
-    @Test func switchToUnknownServerReturnsFalse() {
+    @Test func switchToUnknownServerReturnsFalse() async {
         let (coordinator, _) = makeCoordinator()
-        let result = coordinator.switchToServer("sha256:unknown")
+        let result = await coordinator.switchToTestServer("sha256:unknown")
         #expect(result == false)
     }
 
@@ -187,7 +187,7 @@ struct ConnectionCoordinatorTests {
         let offline = makeServer(id: "sha256:offline", name: "Offline")
         coordinator.serverStore.addOrUpdate(healthy)
         coordinator.serverStore.addOrUpdate(offline)
-        coordinator.switchToServer(healthy)
+        await coordinator.switchToTestServer(healthy)
         coordinator._serverInfoBootstrapForTesting = { _, _ in throw URLError(.timedOut) }
 
         #expect(coordinator.restoreActiveServer(offline.id))
@@ -227,7 +227,7 @@ struct ConnectionCoordinatorTests {
         let target = makeServer(id: "sha256:pending-target", name: "Target")
         coordinator.serverStore.addOrUpdate(current)
         coordinator.serverStore.addOrUpdate(target)
-        coordinator.switchToServer(current)
+        await coordinator.switchToTestServer(current)
         let gate = CoordinatorPreparationGate()
         coordinator._initialLANEndpointForTesting = { id in
             if id == target.id { await gate.suspendPreparation() }
@@ -248,7 +248,7 @@ struct ConnectionCoordinatorTests {
         let target = makeServer(id: "sha256:pending-rejected", name: "Target")
         coordinator.serverStore.addOrUpdate(current)
         coordinator.serverStore.addOrUpdate(target)
-        coordinator.switchToServer(current)
+        await coordinator.switchToTestServer(current)
         let gate = CoordinatorPreparationGate()
         coordinator._initialLANEndpointForTesting = { id in
             if id == target.id { await gate.suspendPreparation() }
@@ -410,14 +410,14 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId != removed.id)
     }
 
-    @Test func switchToSameServerIsNoOp() {
+    @Test func switchToSameServerIsNoOp() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:same-test", name: "Studio")
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
 
         // Second switch should return true immediately
-        let result = coordinator.switchToServer(server)
+        let result = await coordinator.switchToTestServer(server)
         #expect(result == true)
     }
 
@@ -427,7 +427,7 @@ struct ConnectionCoordinatorTests {
         let staleServer = makeServer(id: "sha256:stale-server", name: "Stale")
         coordinator.serverStore.addOrUpdate(newerServer)
         coordinator.serverStore.addOrUpdate(staleServer)
-        coordinator.switchToServer(newerServer)
+        await coordinator.switchToTestServer(newerServer)
 
         let navigation = AppNavigation()
         navigation.openWorkspaceSession(.init(
@@ -913,7 +913,7 @@ struct ConnectionCoordinatorTests {
         #expect(shell.apiClient == nil)
     }
 
-    @Test func eachServerGetsOwnConnection() {
+    @Test func eachServerGetsOwnConnection() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:iso-a", name: "Server A")
         let serverB = makeServer(id: "sha256:iso-b", name: "Server B")
@@ -921,10 +921,10 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         let connA = coordinator.activeConnection
 
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         let connB = coordinator.activeConnection
 
         // Different connection instances
@@ -933,7 +933,7 @@ struct ConnectionCoordinatorTests {
         #expect(connB.currentServerId == "sha256:iso-b")
     }
 
-    @Test func sessionsAreIsolatedBetweenServers() {
+    @Test func sessionsAreIsolatedBetweenServers() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:iso-a", name: "Server A")
         let serverB = makeServer(id: "sha256:iso-b", name: "Server B")
@@ -942,11 +942,11 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         // Add sessions to server A
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Session A"))
 
         // Switch to server B — should see empty sessions
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         #expect(coordinator.activeConnection.sessionStore.sessions.isEmpty)
 
         // Add sessions to server B
@@ -955,7 +955,7 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session B")
 
         // Switch back to server A — session A should still be there
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         #expect(coordinator.activeConnection.sessionStore.sessions.count == 1)
         #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session A")
     }
@@ -967,7 +967,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:remove-test", name: "Victim")
 
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Doomed"))
 
         await coordinator.removeServer(id: "sha256:remove-test")
@@ -1014,7 +1014,7 @@ struct ConnectionCoordinatorTests {
 
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
 
         await coordinator.removeServer(id: "sha256:auto-switch-a")
 
@@ -1024,11 +1024,11 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - API Client Per Connection
 
-    @Test func apiClientIsFromConnectionForServer() {
+    @Test func apiClientIsFromConnectionForServer() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:api-cache", name: "Cache")
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
 
         let client1 = coordinator.apiClient(for: "sha256:api-cache")
         let client2 = coordinator.apiClient(for: "sha256:api-cache")
@@ -1038,7 +1038,7 @@ struct ConnectionCoordinatorTests {
         #expect(client1 === client2)
     }
 
-    @Test func allSessionsSpansServers() {
+    @Test func allSessionsSpansServers() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:cross-a", name: "A")
         let serverB = makeServer(id: "sha256:cross-b", name: "B")
@@ -1046,47 +1046,47 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "A1"))
 
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s2", name: "B1"))
 
         let allSessions = coordinator.allSessions
         #expect(allSessions.count == 2)
     }
 
-    @Test func backgroundActivityIncludesInactiveBusyServer() {
+    @Test func backgroundActivityIncludesInactiveBusyServer() async {
         let (coordinator, _) = makeCoordinator()
         let selected = makeServer(id: "sha256:bg-selected", name: "Selected")
         let inactive = makeServer(id: "sha256:bg-inactive", name: "Inactive")
         coordinator.serverStore.addOrUpdate(selected)
         coordinator.serverStore.addOrUpdate(inactive)
 
-        coordinator.switchToServer(selected)
+        await coordinator.switchToTestServer(selected)
         coordinator.activeConnection.sessionStore.upsert(
             makeTestSession(id: "selected-idle", status: .ready)
         )
-        coordinator.switchToServer(inactive)
+        await coordinator.switchToTestServer(inactive)
         coordinator.activeConnection.sessionStore.upsert(
             makeTestSession(id: "inactive-busy", status: .busy)
         )
-        coordinator.switchToServer(selected)
+        await coordinator.switchToTestServer(selected)
 
         #expect(coordinator.hasActiveAgentTransport)
         #expect(BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
     }
 
-    @Test func backgroundActivityIsFalseWhenAllServersIdle() {
+    @Test func backgroundActivityIsFalseWhenAllServersIdle() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:bg-idle-a", name: "A")
         let serverB = makeServer(id: "sha256:bg-idle-b", name: "B")
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "idle-a", status: .ready))
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "idle-b", status: .stopped))
 
         #expect(!coordinator.hasActiveAgentTransport)
@@ -1130,10 +1130,10 @@ struct ConnectionCoordinatorTests {
         let inactive = makeServer(id: "sha256:fg-inactive", name: "Inactive")
         coordinator.serverStore.addOrUpdate(selected)
         coordinator.serverStore.addOrUpdate(inactive)
-        coordinator.switchToServer(selected)
-        coordinator.switchToServer(inactive)
+        await coordinator.switchToTestServer(selected)
+        await coordinator.switchToTestServer(inactive)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "busy", status: .busy))
-        coordinator.switchToServer(selected)
+        await coordinator.switchToTestServer(selected)
 
         var refreshed: [String] = []
         coordinator._onRefreshInactiveServerForTesting = { refreshed.append($0) }
@@ -1142,12 +1142,12 @@ struct ConnectionCoordinatorTests {
         #expect(refreshed == [inactive.id])
     }
 
-    @Test func audioTransportPlaybackOnlyTracksLiveStreams() {
+    @Test func audioTransportPlaybackOnlyTracksLiveStreams() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:audio-transport", name: "A")
 
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.switchToServer(server)
+        await coordinator.switchToTestServer(server)
         let connection = coordinator.activeConnection
 
         connection.audioPlayer._setPlaybackStateForTesting(playing: "voice-local", loading: nil)
@@ -1160,7 +1160,7 @@ struct ConnectionCoordinatorTests {
         #expect(!coordinator.hasActiveAudioTransportPlayback)
     }
 
-    @Test func findSessionAcrossServers() {
+    @Test func findSessionAcrossServers() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:find-a", name: "A")
         let serverB = makeServer(id: "sha256:find-b", name: "B")
@@ -1168,10 +1168,10 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s-on-a", name: "On A"))
 
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         // Currently on B, find session that lives on A
         let result = coordinator.findSession(id: "s-on-a")
         #expect(result != nil)
@@ -1183,7 +1183,7 @@ struct ConnectionCoordinatorTests {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:fetch-a", name: "A")
         coordinator.serverStore.addOrUpdate(serverA)
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "cached", name: "Cached"))
 
         var fetchedIds: [String] = []
@@ -1201,7 +1201,7 @@ struct ConnectionCoordinatorTests {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:fetch-miss", name: "A")
         coordinator.serverStore.addOrUpdate(serverA)
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
 
         coordinator._getSessionRecordForTesting = { _, sessionId in
             makeTestSession(id: sessionId, workspaceId: "w1", name: "Fetched", status: .busy)
@@ -1217,7 +1217,7 @@ struct ConnectionCoordinatorTests {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:lookup-a", name: "A")
         coordinator.serverStore.addOrUpdate(serverA)
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
 
         coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
         guard case .notFound = await coordinator.lookupSession(id: "gone") else {
@@ -1234,7 +1234,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Push Navigation
 
-    @Test func pushNavigationSwitchesServerForCrossServerSession() {
+    @Test func pushNavigationSwitchesServerForCrossServerSession() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:push-a", name: "A")
         let serverB = makeServer(id: "sha256:push-b", name: "B")
@@ -1243,16 +1243,16 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         // Session lives on server A
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s-push-target", name: "Target"))
 
         // Switch to server B (simulate user looking at different server)
-        coordinator.switchToServer(serverB)
+        await coordinator.switchToTestServer(serverB)
         #expect(coordinator.activeServerId == "sha256:push-b")
 
         // Push notification arrives for session on server A — find and switch
         if let found = coordinator.findSession(id: "s-push-target") {
-            coordinator.switchToServer(found.serverId)
+            await coordinator.switchToTestServer(found.serverId)
             found.connection.sessionStore.activeSessionId = "s-push-target"
         }
 
@@ -1262,7 +1262,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Connection Pool
 
-    @Test func prepareAllConnectionsCreatesConnectionsForAllServersWithoutOpeningStreams() {
+    @Test func prepareInactiveConnectionsCreatesConnectionsForAllServersWithoutOpeningStreams() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:pool-a", name: "A")
         let serverB = makeServer(id: "sha256:pool-b", name: "B")
@@ -1271,11 +1271,11 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         // Before connecting, only the switched-to server has a connection
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
         #expect(coordinator.connections.count == 1)
 
-        // Prepare all creates connections for remaining servers without opening startup sockets.
-        coordinator.prepareAllConnections()
+        // Preparing the inactive servers creates their connections without opening startup sockets.
+        await coordinator.prepareInactiveConnectionsReady(excluding: serverA.id)
         #expect(coordinator.connections.count == 2)
         #expect(coordinator.connections["sha256:pool-a"] != nil)
         #expect(coordinator.connections["sha256:pool-b"] != nil)
@@ -1301,11 +1301,11 @@ struct ConnectionCoordinatorTests {
         )
 
         coordinator.serverStore.addOrUpdate(original)
-        let connection = coordinator.ensureConnection(for: original)
+        let connection = await coordinator.ensureTestConnectionReady(for: original)
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://old.tail00000.ts.net:7749")
 
         coordinator.serverStore.addOrUpdate(repaired)
-        let repairedConnection = coordinator.ensureConnection(for: repaired)
+        let repairedConnection = await coordinator.ensureTestConnectionReady(for: repaired)
 
         #expect(repairedConnection === connection)
         #expect(repairedConnection.credentials == repaired.credentials)
@@ -1322,10 +1322,10 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        // No connections exist yet (we skip switchToServer/prepareAllConnections)
+        // No connections exist yet: nothing has switched to or prepared either server.
         #expect(coordinator.connections.isEmpty)
 
-        // refreshAllServers should create connections via ensureConnection
+        // refreshAllServers prepares a connection for each server through ensureConnectionReady.
         await coordinator.refreshAllServers()
 
         #expect(coordinator.connections.count == 2)
@@ -1338,7 +1338,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:coalesce", name: "Studio")
 
         coordinator.serverStore.addOrUpdate(server)
-        coordinator.ensureConnection(for: server)
+        await coordinator.ensureTestConnectionReady(for: server)
 
         // Launch two concurrent refreshes
         async let refresh1: Void = coordinator.refreshAllServers()
@@ -1360,8 +1360,8 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        let connectionA = coordinator.ensureConnection(for: serverA)
-        let connectionB = coordinator.ensureConnection(for: serverB)
+        let connectionA = await coordinator.ensureTestConnectionReady(for: serverA)
+        let connectionB = await coordinator.ensureTestConnectionReady(for: serverB)
         connectionA.setAPIClientForTesting(try makeTestAPIClient(host: "server-a.test"))
         connectionB.setAPIClientForTesting(try makeTestAPIClient(host: "server-b.test"))
         connectionA.setSplitStreamCapabilitiesForTesting()
@@ -1429,7 +1429,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:refresh-failed-catalog", name: "Unavailable", host: "failed.test")
         coordinator.serverStore.addOrUpdate(server)
 
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
         connection.setAPIClientForTesting(try makeTestAPIClient(host: "failed.test"))
         connection.setSplitStreamCapabilitiesForTesting()
 
@@ -1482,7 +1482,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:refresh-no-api", name: "Unavailable")
         coordinator.serverStore.addOrUpdate(server)
 
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
         connection.setAPIClientForTesting(nil)
 
         await coordinator.refreshServer(server.id, force: true)
@@ -1500,7 +1500,7 @@ struct ConnectionCoordinatorTests {
         let server = makeServer(id: "sha256:retry-no-api", name: "Unavailable")
         coordinator.serverStore.addOrUpdate(server)
 
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
         connection.setAPIClientForTesting(nil)
 
         await coordinator.retryServerConnection(server.id)
@@ -1512,7 +1512,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - LAN Discovery Integration
 
-    @Test func lanDiscoveryUpdatesMatchingConnectionAndFallsBackWhenMissing() {
+    @Test func lanDiscoveryUpdatesMatchingConnectionAndFallsBackWhenMissing() async {
         let (coordinator, _) = makeCoordinator()
 
         let lanServer = makeServer(
@@ -1533,8 +1533,8 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(lanServer)
         coordinator.serverStore.addOrUpdate(otherServer)
 
-        let lanConnection = coordinator.ensureConnection(for: lanServer)
-        let otherConnection = coordinator.ensureConnection(for: otherServer)
+        let lanConnection = await coordinator.ensureTestConnectionReady(for: lanServer)
+        let otherConnection = await coordinator.ensureTestConnectionReady(for: otherServer)
 
         #expect(lanConnection.transportPath == .paired)
         #expect(otherConnection.transportPath == .paired)
@@ -1552,6 +1552,10 @@ struct ConnectionCoordinatorTests {
         #expect(otherConnection.transportPath == .paired)
 
         coordinator._applyLANDiscoveryForTesting([])
+        // Demotion rebuilds the paired route asynchronously, as in production.
+        #expect(await waitForMainActorCondition {
+            lanConnection.transportPath == .paired && !lanConnection.isTransportDemoting
+        })
 
         #expect(lanConnection.transportPath == .paired)
         #expect(otherConnection.transportPath == .paired)
@@ -1572,7 +1576,7 @@ struct ConnectionCoordinatorTests {
         )
 
         coordinator.serverStore.addOrUpdate(server)
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
 
         coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
@@ -1607,7 +1611,7 @@ struct ConnectionCoordinatorTests {
         )
 
         coordinator.serverStore.addOrUpdate(server)
-        let connection = coordinator.ensureConnection(for: server)
+        let connection = await coordinator.ensureTestConnectionReady(for: server)
 
         coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
@@ -1642,14 +1646,14 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Workspace Store Order
 
-    @Test func workspaceServerOrderMatchesServerStore() {
+    @Test func workspaceServerOrderMatchesServerStore() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:order-a", name: "A")
         let serverB = makeServer(id: "sha256:order-b", name: "B")
 
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
-        coordinator.switchToServer(serverA)
+        await coordinator.switchToTestServer(serverA)
 
         coordinator.activeConnection.workspaceStore.serverOrder = coordinator.serverStore.servers.map(\.id)
 

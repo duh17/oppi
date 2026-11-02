@@ -16,13 +16,13 @@ import UIKit
 @MainActor
 struct ServerListRepeatedIdTests {
     @Test("Workspace sidebar shows one row for a workspace id the server repeats")
-    func workspaceSidebarShowsRepeatedIdOnce() throws {
+    func workspaceSidebarShowsRepeatedIdOnce() async throws {
         let serverId = "sha256:repeat-ws-\(UUID().uuidString)"
         // The server's own work is not what this test is about: it answers as an
         // unreachable server does, and a route it did not plan fails the test.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "repeat-workspace.test")
         )
@@ -48,7 +48,7 @@ struct ServerListRepeatedIdTests {
     @Test("Schedule list shows one row for a schedule id the server repeats")
     func scheduleListShowsRepeatedIdOnce() async throws {
         let serverId = "sha256:repeat-sch-\(UUID().uuidString)"
-        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: RepeatedScheduleURLProtocol.makeClient())
+        let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: RepeatedScheduleURLProtocol.makeClient())
 
         let controller = ScheduleListViewController(root: root)
         let window = try makeWindow(controller)

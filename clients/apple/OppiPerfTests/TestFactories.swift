@@ -51,6 +51,48 @@ func makeTestCredentials(
     )
 }
 
+/// Configure `connection` through the production setup path (`configureForUse`),
+/// answering its authenticated `/server/info` bootstrap in memory with a server
+/// that streams sessions.
+@MainActor
+@discardableResult
+func configureTestConnection(
+    _ connection: ServerConnection,
+    credentials: ServerCredentials = makeTestCredentials()
+) async -> Bool {
+    let info = ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: nil,
+            extensionNativeUI: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
+    )
+    return await connection.configureForUse(
+        credentials: credentials,
+        serverInfoBootstrap: { _, _ in info }
+    )
+}
+
 func makeTestWorkspace(
     id: String = "w1",
     name: String = "Workspace",

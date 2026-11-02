@@ -94,8 +94,8 @@ struct WorkspaceCreateTests {
     }
 
     @Test("A deep link opens the review step with its name and folder")
-    func prefillOpensConfigure() throws {
-        let fixture = try Fixture()
+    func prefillOpensConfigure() async throws {
+        let fixture = try await Fixture()
         let linked = WorkspaceCreateModel(
             server: fixture.second, coordinator: fixture.coordinator, prefillName: "Deep", prefillPath: "/tmp"
         )
@@ -112,8 +112,8 @@ struct WorkspaceCreateTests {
     }
 
     @Test("The sandbox footer names the folder Oppi will create from the name")
-    func sandboxFolderPreview() throws {
-        let fixture = try Fixture()
+    func sandboxFolderPreview() async throws {
+        let fixture = try await Fixture()
         let model = WorkspaceCreateModel(server: fixture.second, coordinator: fixture.coordinator)
         model.sandboxMode = true
         model.name = "My Project"
@@ -123,8 +123,8 @@ struct WorkspaceCreateTests {
     }
 
     @Test("Picking a project fills the form and skips the folder check's suggestions")
-    func selectProjectFillsForm() throws {
-        let fixture = try Fixture()
+    func selectProjectFillsForm() async throws {
+        let fixture = try await Fixture()
         let model = WorkspaceCreateModel(server: fixture.second, coordinator: fixture.coordinator)
         model.selectProject(Fixture.project)
         #expect(model.step == .configure)
@@ -143,7 +143,7 @@ struct WorkspaceCreateTests {
 
     @Test("Oppi and create work on the sheet's server, not the active one")
     func createsOnTheSheetsServer() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         #expect(fixture.coordinator.activeServerId == fixture.first.id)
         let model = WorkspaceCreateModel(server: fixture.second, coordinator: fixture.coordinator)
         #expect(model.oppiConnection === fixture.coordinator.connection(for: fixture.second.id))
@@ -160,7 +160,7 @@ struct WorkspaceCreateTests {
 
     @Test("A typed folder is checked on the server before Create is allowed")
     func typedFolderIsChecked() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let model = WorkspaceCreateModel(server: fixture.second, coordinator: fixture.coordinator)
         model.start()
         defer { model.stop() }
@@ -181,7 +181,7 @@ struct WorkspaceCreateTests {
 
     @Test("With no workspaces, Create with Oppi sends from the guided composer, closes both sheets, and opens the control session")
     func createWithOppiSendsWithNoWorkspaces() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         for server in [fixture.first, fixture.second] {
             let store = try #require(fixture.coordinator.connection(for: server.id)).workspaceStore
             #expect(store.workspaces.isEmpty)
@@ -232,7 +232,7 @@ struct WorkspaceCreateTests {
 
     @Test("Both steps offer Create with Oppi, and a server with no connection does not")
     func createWithOppiShowsInBothSteps() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let pick = WorkspaceCreateViewController(root: fixture.root, server: fixture.second)
         let configure = WorkspaceCreateViewController(
             root: fixture.root, server: fixture.second, prefillName: "A", prefillPath: "/tmp"
@@ -253,7 +253,7 @@ struct WorkspaceCreateTests {
 
     @Test("Tapping a suggestion replaces the text being typed, in the field and in the model")
     func suggestionReplacesTypedText() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let screen = WorkspaceCreateViewController(
             root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
         )
@@ -277,7 +277,7 @@ struct WorkspaceCreateTests {
 
     @Test("Return in Name moves to the folder field; Return in the folder field closes the keyboard")
     func returnKeyMovesThroughFields() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let screen = WorkspaceCreateViewController(
             root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
         )
@@ -305,7 +305,7 @@ struct WorkspaceCreateTests {
     /// what the probe below fails on.
     @Test("Typing in a field never configures its row again, and the form still follows it")
     func typingInAFieldLeavesItsRowAlone() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let screen = WorkspaceCreateViewController(
             root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
         )
@@ -352,7 +352,7 @@ struct WorkspaceCreateTests {
     /// short new step would be clamped to the top by the list itself.
     @Test("Changing the step puts the form back at its top")
     func changingTheStepScrollsToTheTop() async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         let screen = WorkspaceCreateViewController(root: fixture.root, server: fixture.second)
         let window = try showInWindow(screen, height: 600)
         defer { hide(window) }
@@ -455,7 +455,7 @@ struct WorkspaceCreateTests {
         let first: PairedServer
         let second: PairedServer
 
-        init() throws {
+        init() async throws {
             WorkspaceCreateURLProtocol.reset()
             func server(_ host: String, _ order: Int) throws -> PairedServer {
                 let credentials = makeTestCredentials(host: host, name: host, fingerprint: "sha256:\(host)")
@@ -467,7 +467,7 @@ struct WorkspaceCreateTests {
             serverStore.replaceServersForPreview([first, second])
             coordinator = ConnectionCoordinator(serverStore: serverStore)
             for server in [first, second] {
-                coordinator.ensureConnection(for: server).setAPIClientForTesting(
+                await coordinator.ensureTestConnectionReady(for: server).setAPIClientForTesting(
                     WorkspaceCreateURLProtocol.makeClient(host: server.credentials.host)
                 )
             }

@@ -17,7 +17,7 @@ struct ChatFocusOwnershipTests {
     @Test func staleSameSessionReleaseKeepsNewerRuntimeStream() async {
         let sessionId = "same-session-\(UUID().uuidString)"
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -76,7 +76,7 @@ struct ChatFocusOwnershipTests {
     @Test func supersededStreamTailLeavesNewerOwnerSharedStateIntact() async {
         let sessionId = "tail-\(UUID().uuidString)"
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -127,8 +127,8 @@ struct ChatFocusOwnershipTests {
         connection.disconnectStream()
     }
 
-    @Test func releaseOnlyHonorsTheCurrentClaimOnce() {
-        let (connection, _) = makeTestConnection(sessionId: "other")
+    @Test func releaseOnlyHonorsTheCurrentClaimOnce() async {
+        let (connection, _) = await makeTestConnection(sessionId: "other")
         connection._sendMessageForTesting = { _ in }
 
         let first = connection.claimFocusedSession("s1")
@@ -156,10 +156,13 @@ struct ChatFocusOwnershipTests {
     /// session) is refused before the endpoint is rebound or the socket opened.
     @Test(arguments: [true, false])
     func staleOpenAfterAwaitNeverConnectsTheSharedSocket(sameSession: Bool) async {
+        let routes = TestURLProtocol.routeScope { _ in throw URLError(.notConnectedToInternet) }
+        defer { routes.end() }
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        // No route yet: the first setup failed the way an unreachable server does,
+        // so the bind waits for one.
+        await failTestConnectionSetupTemporarily(connection)
         defer { connection.disconnectStream() }
-        connection.setAPIClientForTesting(nil)
         connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
         var connectCalls = 0
         connection._connectStreamForTesting = {
@@ -177,7 +180,8 @@ struct ChatFocusOwnershipTests {
         #expect(await waitForMainActorCondition { waiting })
 
         let holder = connection.claimFocusedSession(sameSession ? "s1" : "s2")
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        // The route commits while the stale open still waits.
+        #expect(await configureTestConnection(connection, apiClient: makeTestURLProtocolClient(host: "localhost")))
 
         #expect(await opened == nil)
         #expect(connectCalls == 0, "Stale open must not reconnect the shared socket")
@@ -191,7 +195,7 @@ struct ChatFocusOwnershipTests {
     @Test(arguments: [true, false])
     func claimLostInsideBindStretchNeverRetargetsSocketOrConsumer(sameSession: Bool) async {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         defer { connection.disconnectStream() }
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         var connectCalls = 0
@@ -242,7 +246,7 @@ struct ChatFocusOwnershipTests {
 
     @Test func deferredLiveAudioReleaseSparesNewerSameSessionOwner() async {
         let sessionId = "audio-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: "other")
+        let (connection, _) = await makeTestConnection(sessionId: "other")
         connection._sendMessageForTesting = { _ in }
 
         guard let stale = connection.claimFocusedSession(sessionId) else {
@@ -280,7 +284,7 @@ struct ChatFocusOwnershipTests {
     func transientSameSessionChatLeavingHandsStreamBackToVisibleChat(transientBound: Bool) async {
         let sessionId = "remount-\(UUID().uuidString)"
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -403,7 +407,7 @@ struct ChatFocusOwnershipTests {
     @Test(arguments: [true, false])
     func chatReleasedDuringLiveAudioIsNeverHandedFocusBack(audioEndsFirst: Bool) async {
         let sessionId = "audio-holder-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: "other")
+        let (connection, _) = await makeTestConnection(sessionId: "other")
         connection._sendMessageForTesting = { _ in }
         var regained: [String] = []
         let releasedRuntime = NSObject()
@@ -450,7 +454,7 @@ struct ChatFocusOwnershipTests {
     @Test(arguments: [false, true])
     func readinessRebindsALiveLoopThatMissedConnectedWithoutLeavingChat(superseded: Bool) async throws {
         let sessionId = "missed-bootstrap-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.setAPIClientForTesting(nil)
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
@@ -516,7 +520,7 @@ struct ChatFocusOwnershipTests {
     /// claim. Releasing the old load after the replacement binds must be inert.
     @Test func cancelledCacheLoadCannotOverwriteSendReadinessReplacement() async throws {
         let sessionId = "cancelled-cache-\(UUID().uuidString)"
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.setAPIClientForTesting(nil)
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
@@ -580,12 +584,15 @@ struct ChatFocusOwnershipTests {
     }
 
     /// Readiness cancellation is distinct from focus supersession: the same
-    /// claim can remain current, but the cancelled opener must not attach and
-    /// trigger the missing-bootstrap socket reopen.
-    @Test func cancelledReadinessWaitCannotReopenTheStillOwnedSocket() async throws {
-        let (connection, _) = makeTestConnection(sessionId: "s1")
+    /// claim can remain current, but the cancelled opener must not bind, attach,
+    /// or open the route that commits while it waits.
+    @Test func cancelledReadinessWaitCannotOpenTheRouteThatCommitsLater() async throws {
+        let routes = TestURLProtocol.routeScope { _ in throw URLError(.notConnectedToInternet) }
+        defer { routes.end() }
+        let connection = ServerConnection()
+        // No route yet: the first setup failed the way an unreachable server does.
+        await failTestConnectionSetupTemporarily(connection)
         defer { connection.disconnectStream() }
-        connection.setAPIClientForTesting(nil)
         connection._focusedStreamReadinessPollForTesting = .seconds(10)
         var waiting = false
         connection._onFocusedStreamReadinessWaitForTesting = { waiting = true }
@@ -595,21 +602,16 @@ struct ChatFocusOwnershipTests {
             return AsyncStream { $0.finish() }
         }
         let claim = try #require(connection.claimFocusedSession("s1"))
-        let sentinel = Task<Void, Never> { }
-        connection.streamConsumptionTask = sentinel
-        connection.wsClient?._setStatusForTesting(.connected)
         let oldOpen = Task {
             await connection.streamSession("s1", routeScope: .workspace("w1"), claim: claim)
         }
         #expect(await waitForMainActorCondition { waiting })
         oldOpen.cancel()
-        // Route becomes ready before the cancelled waiter resumes; claim and
-        // socket are unchanged, and no connected bootstrap is parked.
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        // The route commits before the cancelled waiter resumes; the claim is
+        // unchanged, the new socket is never opened, and nothing is bound or attached.
+        #expect(await configureTestConnection(connection, apiClient: makeTestURLProtocolClient(host: "localhost")))
         #expect(await oldOpen.value == nil)
         #expect(opens == 0)
-        #expect(!sentinel.isCancelled)
-        #expect(connection.wsClient?.status == .connected)
         #expect(connection.focusedSessionStreamURLForTesting == nil)
         #expect(connection.sessionEventContinuations["s1"] == nil)
         #expect(connection.focusedSessionStore.focused == claim)
@@ -718,7 +720,7 @@ struct ChatFocusOwnershipTests {
     @Test func ownerStreamEndNeverVacatesFocus() async {
         let sessionId = "vacancy-\(UUID().uuidString)"
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.setAPIClientForTesting(nil)
         connection._focusedStreamReadinessPollForTesting = .milliseconds(1)
         let sessionStore = SessionStore()
@@ -823,7 +825,7 @@ struct ChatFocusOwnershipTests {
         }
         manager._loadHistoryForTesting = { _, _ in nil }
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
         manager.markAppeared()
@@ -943,7 +945,7 @@ struct ChatFocusOwnershipTests {
     @Test func unconfirmedResendReusesTheSameTurnOnlyForIdenticalContent() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
-        let (connection, _) = makeTestConnection(sessionId: "s1")
+        let (connection, _) = await makeTestConnection(sessionId: "s1")
         connection._sendAckTimeoutForTesting = .milliseconds(60)
         connection._turnSendRetryDelayForTesting = .milliseconds(1)
         var turnIdsByText: [String: Set<String>] = [:]
@@ -1042,7 +1044,7 @@ struct ChatFocusOwnershipTests {
         manager._loadHistoryForTesting = { _, _ in nil }
         manager._focusedStreamLivenessForTesting = { .connected }
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
         manager.markAppeared()

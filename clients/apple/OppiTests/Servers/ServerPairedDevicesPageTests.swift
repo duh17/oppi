@@ -43,7 +43,7 @@ struct ServerPairedDevicesPageTests {
         serverStore.replaceServersForPreview([serverA, serverB])
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         for server in [serverA, serverB] {
-            coordinator.ensureConnection(for: server).setAPIClientForTesting(
+            await coordinator.ensureTestConnectionReady(for: server).setAPIClientForTesting(
                 makeTestURLProtocolClient(host: "\(server.id).devices.test")
             )
         }

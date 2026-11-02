@@ -341,7 +341,7 @@ struct SSCStateMachineTests {
     }
 
     @Test func streamSessionPreservesExplicitThinkingLevelFromSessionSnapshot() async throws {
-        let (connection, _) = makeTestConnection(sessionId: "s1")
+        let (connection, _) = await makeTestConnection(sessionId: "s1")
         connection.sessionStore.upsert(makeTestSession(
             id: "s1",
             workspaceId: "w1",
@@ -368,7 +368,7 @@ struct SSCStateMachineTests {
 
     @Test func staleContinuationTerminationCannotRemoveReplacementForSameSession() async throws {
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials())
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
         connection.wsClient?._setStatusForTesting(.connected)
         connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
         connection.setFocusedSessionStreamEndpointKindForTesting("split_session")

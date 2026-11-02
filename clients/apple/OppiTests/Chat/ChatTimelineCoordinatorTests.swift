@@ -113,7 +113,7 @@ struct ChatTimelineCoordinatorTests {
         #expect(rowConfig.sessionAttachmentFetcher != nil)
         let sourceProvider = try #require(rowConfig.sessionAttachmentMediaSourceProvider)
 
-        #expect(connection.configure(credentials: ServerCredentials(
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
             host: "127.0.0.1",
             port: 7749,
             token: "test-token",
@@ -170,7 +170,7 @@ struct ChatTimelineCoordinatorTests {
             id: "session-video",
             workspaceId: "workspace-video"
         ))
-        #expect(connection.configure(credentials: ServerCredentials(
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
             host: "127.0.0.1",
             port: 7749,
             token: "test-token",

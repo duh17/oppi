@@ -396,7 +396,7 @@ struct ServerConnectionSendAckTests {
     // MARK: - Session Tree
 
     @Test func getSessionTreeParsesCommandResultPayload() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         conn._sendMessageForTesting = { message in
             switch message {
@@ -475,7 +475,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func getSessionTreeRejectsMalformedPayload() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         conn._sendMessageForTesting = { message in
             switch message {
@@ -516,7 +516,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func navigateTreeParsesSuccessResult() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         var capturedTargetId: String?
         var capturedSummarize: Bool?
         var capturedInstructions: String?
@@ -583,7 +583,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func navigateTreeRejectsMalformedPayload() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         conn._sendMessageForTesting = { message in
             switch message {
@@ -624,7 +624,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func navigateTreeSurfacesCommandFailure() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
 
         conn._sendMessageForTesting = { message in
             switch message {
@@ -663,7 +663,7 @@ struct ServerConnectionSendAckTests {
     // MARK: - Fork
 
     @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -715,7 +715,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func forkFromTimelineEntryParsesForkMessageIdField() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -767,7 +767,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func forkFromTimelineEntryNormalizesTraceSyntheticIDs() async throws {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -819,7 +819,7 @@ struct ServerConnectionSendAckTests {
     }
 
     @Test func forkFromTimelineEntryRejectsNonForkableEntry() async {
-        let (conn, pipe) = makeTestConnection()
+        let (conn, pipe) = await makeTestConnection()
         var sentTypes: [String] = []
 
         conn._sendMessageForTesting = { message in

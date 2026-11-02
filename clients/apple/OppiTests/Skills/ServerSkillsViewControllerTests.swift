@@ -19,7 +19,7 @@ struct ServerSkillsViewControllerTests {
     func rowOpensDetailRoute() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill()], serverId: serverId)
 
@@ -47,7 +47,7 @@ struct ServerSkillsViewControllerTests {
     func reloadsWhenActiveServerChanges() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
-        let root = try makeTestTwoServerRoot(firstId: serverId, otherId: "skills-list-other")
+        let root = try await makeTestTwoServerRoot(firstId: serverId, otherId: "skills-list-other")
         let coordinator = root.coordinator
         let servers = coordinator.serverStore.servers
         let first = try #require(servers.first)
@@ -108,7 +108,7 @@ struct ServerSkillsViewControllerTests {
 
     @Test("the Enabled switch snaps back and saves nothing while the server is offline")
     func offlineSwitchSnapsBack() async throws {
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill()], serverId: serverId)
         connection.setAPIClientForTesting(nil)
@@ -141,8 +141,8 @@ struct ServerSkillsViewControllerTests {
     }
 
     @Test("A Skill the server could not classify says so in Validation, not as a failed load")
-    func unknownStateSkillIsAValidationFact() throws {
-        let root = try makeRoot()
+    func unknownStateSkillIsAValidationFact() async throws {
+        let root = try await makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill(state: .unknown)], serverId: serverId)
 
@@ -183,7 +183,7 @@ struct ServerSkillsViewControllerTests {
             return try catalog.answer(for: request)
         })
         defer { routes.end() }
-        let root = try makeTestAppRoot(
+        let root = try await makeTestAppRoot(
             readyServerId: retryServerId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )
@@ -245,7 +245,7 @@ struct ServerSkillsViewControllerTests {
             )
         })
         defer { routes.end() }
-        let root = try makeRoot()
+        let root = try await makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         // The Skill's page read the detail just before it opened the tree.
         connection.serverResourceStore.rememberSkillDetail(detail, serverId: serverId)
@@ -317,8 +317,8 @@ struct ServerSkillsViewControllerTests {
            """)
     }
 
-    private func makeRoot() throws -> AppRootEnvironment {
-        try makeTestAppRoot(
+    private func makeRoot() async throws -> AppRootEnvironment {
+        try await makeTestAppRoot(
             readyServerId: serverId,
             apiClient: makeTestURLProtocolClient(host: "ready-server.test")
         )

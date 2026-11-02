@@ -21,7 +21,7 @@ struct ServerConnectionSessionCacheTests {
 
         let connection = ServerConnection()
         let serverId = "sha256:mini"
-        let configured = connection.configure(credentials: ServerCredentials(
+        let configured = await configureTestConnection(connection, credentials: ServerCredentials(
             host: "127.0.0.1",
             port: 7749,
             token: "sk_test",
@@ -66,7 +66,7 @@ struct ServerConnectionSessionCacheTests {
         )
 
         let connection = ServerConnection()
-        let configured = connection.configure(credentials: ServerCredentials(
+        let configured = await configureTestConnection(connection, credentials: ServerCredentials(
             host: "127.0.0.1",
             port: 7749,
             token: "sk_test",

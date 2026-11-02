@@ -19,7 +19,7 @@ struct UsagePageTests {
     /// whose own loads must end. `routes` is the scope the test ends.
     private func makeRoot(
         servers: [PairedServer]
-    ) throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
+    ) async throws -> (root: AppRootEnvironment, routes: TestURLProtocol.RouteScope) {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
             try mockJSONResponse(status: 500, json: #"{"error":"refused"}"#, for: request)
         })
@@ -27,7 +27,7 @@ struct UsagePageTests {
         serverStore.replaceServersForPreview(servers)
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         for server in servers {
-            coordinator.ensureConnection(for: server).setAPIClientForTesting(
+            await coordinator.ensureTestConnectionReady(for: server).setAPIClientForTesting(
                 makeTestURLProtocolClient(host: "\(server.id).usage.test")
             )
         }
@@ -67,7 +67,7 @@ struct UsagePageTests {
     @Test("The range control and the totals pick the range and the metric of the pinned model")
     func controlsDriveTheModel() async throws {
         let server = try makeServer("server-a", order: 0)
-        let (root, routes) = try makeRoot(servers: [server])
+        let (root, routes) = try await makeRoot(servers: [server])
         defer { routes.end() }
         let client = ScriptedUsageClient()
         client.statsByRange = [.week: stats(), .month: stats()]
@@ -101,7 +101,7 @@ struct UsagePageTests {
     func providerSetupOpensTheServersProviders() async throws {
         let server = try makeServer("server-a", order: 0)
         let other = try makeServer("server-b", order: 1)
-        let (root, routes) = try makeRoot(servers: [server, other])
+        let (root, routes) = try await makeRoot(servers: [server, other])
         defer { routes.end() }
         let client = ScriptedUsageClient()
         client.statsByRange = [.week: stats()]
@@ -157,7 +157,7 @@ struct UsagePageTests {
     @Test("A switch replaces the page with the new server's own, and the old page's late answer stays there")
     func routeReplacesThePage() async throws {
         let servers = [try makeServer("server-a", order: 0), try makeServer("server-b", order: 1)]
-        let (root, routes) = try makeRoot(servers: servers)
+        let (root, routes) = try await makeRoot(servers: servers)
         defer { routes.end() }
         let route = UsageRouteViewController(root: root)
         let window = try present(route)
@@ -179,8 +179,8 @@ struct UsagePageTests {
     }
 
     @Test("With no server paired the route offers Add Server instead of a page")
-    func noServers() throws {
-        let (root, routes) = try makeRoot(servers: [])
+    func noServers() async throws {
+        let (root, routes) = try await makeRoot(servers: [])
         defer { routes.end() }
         let route = UsageRouteViewController(root: root)
         let window = try present(route)
