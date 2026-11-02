@@ -244,6 +244,9 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
         content.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.alwaysBounceVertical = false
+        // `.automatic` insets only a scrollable axis, so cards that fit would
+        // start under the status bar; keep the safe-area inset either way.
+        scrollView.contentInsetAdjustmentBehavior = .always
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(content)
 
