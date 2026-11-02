@@ -344,3 +344,232 @@ struct SSHTerminalHostRowActionTests {
         }
     }
 }
+
+/// The three terminal setup screens on the list kit: the host form's fields, the
+/// color picker's read of the host's themes, and Set Up a Computer's result rows.
+@Suite("Terminal setup pages", .serialized, .timeLimit(.minutes(1)))
+@MainActor
+struct SSHTerminalSetupPageTests {
+    /// A host form is long: its actions sit under sections of footer text.
+    private static let tall: CGFloat = 2600
+
+    // MARK: - The host form
+
+    /// The base redraws only the rows whose inputs changed, and a field's inputs
+    /// are what it draws, never its text: a pass the typing itself caused — and a
+    /// pass of its own — leaves the field, its caret, and the keyboard alone while
+    /// the rows after it follow the form.
+    ///
+    /// A field's configure restores its placeholder, so the test stamps its own
+    /// and asks whether that survived: focus alone proves nothing, because it
+    /// survives a reconfigure too.
+    @Test func typingLeavesTheFieldItIsTypedInAndRedrawsTheRowsAfterIt() async throws {
+        let page = try mountPage(
+            SSHTerminalSetupViewController(host: "devbox.local"),
+            height: Self.tall,
+            wrappingInNavigation: false
+        )
+        defer { hideTestWindow(page.window) }
+        #expect(page.page.view.window === page.window, "the page is not in its window")
+
+        #expect(page.page.items(in: .host).first == .host, "the form lists its host rows: \(page.page.items(in: .host))")
+        // The field takes focus once its row is on screen and the window is key.
+        var found: UITextField?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.page.view.layoutIfNeeded()
+            found = page.element("sshTerminal.host") as? UITextField
+            return found != nil
+        }, "the form has no host field")
+        let host = try #require(found)
+        #expect(host.becomeFirstResponder())
+        let probe = "typed-row-probe"
+        host.placeholder = probe
+
+        host.text = "devbox"
+        host.sendActions(for: .editingChanged)
+        page.reload()
+        #expect(host.placeholder == probe, "typing configured the field it was typed in")
+        #expect(host.isFirstResponder, "typing took the keyboard from the field")
+        #expect(host.text == "devbox", "a pass rewrote what the person typed")
+
+        // A pass of its own (a theme repaint, artwork landing) leaves the field
+        // where the person left it: the caret's range is still theirs.
+        let start = try #require(host.position(from: host.beginningOfDocument, offset: 1))
+        let end = try #require(host.position(from: host.beginningOfDocument, offset: 4))
+        host.selectedTextRange = try #require(host.textRange(from: start, to: end))
+        page.reload()
+        #expect(host.placeholder == probe, "a pass of its own configured the field")
+        #expect(host.isFirstResponder, "a pass of its own took the keyboard from the field")
+        #expect(Self.selection(in: host) == 1..<4, "a pass of its own moved the selection")
+
+        // The rows after the field are keyed by what they draw: a username makes
+        // the form connectable, and the Connect row says so.
+        #expect(try #require(page.element("sshTerminal.connect.list") as? UIButton).isEnabled == false,
+                "a host alone cannot connect")
+        let username = try #require(page.element("sshTerminal.username") as? UITextField, "the form has no username field")
+        username.text = "chen"
+        username.sendActions(for: .editingChanged)
+        page.reload()
+        #expect(try #require(page.element("sshTerminal.connect.list") as? UIButton).isEnabled,
+                "the Connect row did not follow the filled form")
+        #expect(host.placeholder == probe, "typing in another field configured this one")
+    }
+
+    // MARK: - Set Up a Computer
+
+    /// A settled check is its result rows, each with what it found, and one
+    /// action: an invite to pair with when Oppi answers, Install & Start when it
+    /// does not.
+    @Test func thePreviewReportShowsItsChecksAndWhatSetupOffersNext() async throws {
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        let page = try mountPage(
+            SSHPreflightViewController(coordinator: coordinator, previewReport: Self.readyReport, host: "mac-studio.tail1234.ts.net"),
+            height: Self.tall
+        )
+        defer { hideTestWindow(page.window) }
+
+        #expect(page.identifiers.contains("sshPreflight.list"), "the list kept its own identifier")
+        #expect(page.page.items(in: .result).first == .signedInAs, "the result rows are \(page.page.items(in: .result))")
+        let system = try #require(page.element("sshPreflight.result.System"), "the check's rows are on screen")
+        #expect(system.accessibilityLabel?.contains("macOS 26.1") == true, "the row reads \(system.accessibilityLabel ?? "nothing")")
+        #expect(page.element("sshPreflight.result.Oppi") != nil)
+        #expect(page.element("sshPreflight.result.Node.js") != nil)
+        // Oppi answers, so the next step is an invite to pair with.
+        #expect(page.element("sshPreflight.pair") != nil)
+        #expect(page.element("sshPreflight.install") == nil, "an answering computer needs no install")
+
+        // A computer without Oppi offers Install & Start instead.
+        let installPage = try mountPage(
+            SSHPreflightViewController(coordinator: coordinator, previewReport: Self.bareReport, host: "mac-mini.tail1234.ts.net"),
+            height: Self.tall
+        )
+        defer { hideTestWindow(installPage.window) }
+        #expect(installPage.element("sshPreflight.install") != nil)
+        #expect(installPage.element("sshPreflight.pair") == nil)
+    }
+
+    /// A first connection is the trust decision: the message, and the one action
+    /// that sends the password, under the ids the screen has always used.
+    @Test func thePreviewFailureShowsTheMessageAndTrustKey() async throws {
+        let page = try mountPage(
+            SSHPreflightViewController(
+                coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+                previewFailure: .unknownHostKey(Self.key),
+                host: "newbox.tail1234.ts.net"
+            ),
+            height: Self.tall
+        )
+        defer { hideTestWindow(page.window) }
+
+        let failure = try #require(page.element("sshPreflight.failure"), "the failure row is missing")
+        #expect(failure.accessibilityLabel == SSHPreflightFailure.unknownHostKey(Self.key).message)
+        #expect(page.element("sshPreflight.trustKey") != nil, "trusting the key is the way on")
+        #expect(page.element("sshPreflight.forgetKey") == nil, "nothing is trusted yet")
+    }
+
+    // MARK: - Terminal Colors
+
+    /// The names the host offers are rows, the search field narrows them, and a
+    /// read that did not come back is the section's own state with one Retry.
+    @Test func theColorPickerNarrowsTheThemeRowsAndRetriesAFailedRead() async throws {
+        /// What the host offers: nothing until the test lets the Retry answer.
+        var offered: [String]?
+        let page = try mountPage(
+            SSHTerminalColorPickerViewController(
+                selected: .oppi, hostSummary: "Paper", readThemes: { offered }
+            ) { _ in },
+            height: Self.tall
+        )
+        defer { hideTestWindow(page.window) }
+
+        #expect(page.identifiers.contains("sshTerminal.colors.list"), "the list kept its own identifier")
+        #expect(page.identifiers.contains("sshTerminal.colors.option.oppi"))
+        #expect(page.identifiers.contains("sshTerminal.colors.option.host"))
+
+        // The read did not come back: the section's own state row says so, and
+        // its Retry is the way on.
+        var state: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.reload()
+            state = page.element("sshTerminal.colors.state") as? UIButton
+            return state?.accessibilityLabel == "Couldn’t read the host’s themes"
+                && state?.isUserInteractionEnabled == true
+        }, "a failed read shows the state row, not \(state?.accessibilityLabel ?? "one")")
+        let retry = try #require(state)
+
+        // The host answers now; the row's one Retry reads its themes again.
+        offered = ["Paper", "Nord", "Gruvbox"]
+        retry.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.reload()
+            return page.page.items(in: .themes) == [.theme("Paper"), .theme("Nord"), .theme("Gruvbox")]
+        }, "the Retry did not read the themes again: \(page.page.items(in: .themes))")
+
+        // The search field narrows the rows to the names it matches.
+        let search = try #require(page.page.navigationItem.searchController?.searchBar, "the picker has no search field")
+        #expect(search.accessibilityIdentifier == "sshTerminal.colors.search")
+        search.text = "nor"
+        let searchController = try #require(page.page.navigationItem.searchController)
+        searchController.searchResultsUpdater?.updateSearchResults(for: searchController)
+        page.reload()
+        #expect(page.page.items(in: .themes) == [.theme("Nord")], "the search left \(page.page.items(in: .themes))")
+    }
+
+    // MARK: - Fixtures
+
+    private static let key = SSHHostKey(
+        openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICEmPT4AwDDNF/jRkCvAZ/TxlKB3mSudmbMh+spP47nX"
+    )
+
+    /// A Mac whose Oppi answers: the next step is an invite to pair with.
+    private static var readyReport: SSHPreflightReport {
+        SSHPreflightReport(
+            user: "chen",
+            kernel: "Darwin",
+            release: "25.1.0",
+            arch: "arm64",
+            macOSVersion: "26.1",
+            osRelease: nil,
+            nodePath: "/opt/homebrew/bin/node",
+            nodeVersion: "v22.19.0",
+            oppiNodeVersion: nil,
+            gitPath: "/usr/bin/git",
+            oppiPath: "/Users/chen/.oppi/bin/oppi",
+            tailscalePath: "/opt/homebrew/bin/tailscale",
+            oppiStatus: SSHOppiStatus(
+                json: #"{"data":{"status":{"paired":true,"server":{"transport":"https","tlsMode":"selfSigned","port":7443}}}}"#
+            ),
+            oppiAnswers: true,
+            hasCommandLineTools: true
+        )
+    }
+
+    /// The same Mac before Oppi is installed: the next step is Install & Start.
+    private static var bareReport: SSHPreflightReport {
+        SSHPreflightReport(
+            user: "chen",
+            kernel: "Darwin",
+            release: "25.1.0",
+            arch: "arm64",
+            macOSVersion: "26.1",
+            osRelease: nil,
+            nodePath: nil,
+            nodeVersion: nil,
+            oppiNodeVersion: nil,
+            gitPath: "/usr/bin/git",
+            oppiPath: nil,
+            tailscalePath: nil,
+            oppiStatus: nil,
+            oppiAnswers: false,
+            hasCommandLineTools: true
+        )
+    }
+
+    /// The field's selected characters, as offsets from the start of its text.
+    private static func selection(in field: UITextField) -> Range<Int>? {
+        guard let range = field.selectedTextRange else { return nil }
+        let start = field.offset(from: field.beginningOfDocument, to: range.start)
+        let end = field.offset(from: field.beginningOfDocument, to: range.end)
+        return start..<end
+    }
+}

@@ -4,131 +4,138 @@ import UIKit
 /// theme, the app's theme, or one theme by name. The names come from the host
 /// over a live terminal's side channel when the screen opens, so a host with no
 /// open terminal offers the first two and the one already chosen.
-final class SSHTerminalColorPickerViewController: UIViewController, UICollectionViewDelegate, UISearchResultsUpdating {
-    private enum Section: Hashable { case choices, themes }
-    private enum Item: Hashable {
+///
+/// A `ListScreenController`: the base paints the rows, runs the page's one read
+/// (`readThemes`), and draws what the read found in the themes section — its
+/// loading row, and a failure with one Retry.
+final class SSHTerminalColorPickerViewController: ListScreenController<
+    SSHTerminalColorPickerViewController.Section, SSHTerminalColorPickerViewController.Item
+> {
+    enum Section: Hashable, Sendable { case choices, themes }
+
+    enum Item: Hashable, Sendable {
         case host, oppi
         case theme(String)
-        case loading, unavailable
-    }
-
-    private enum ThemeList {
-        case offline
-        case loading
-        case failed
-        case loaded([String])
     }
 
     private let selected: SSHTerminalColorChoice
     private let hostSummary: String
-    private let channel: SSHTerminalChannel?
+    /// Reads the theme names over a live terminal; nil when this host has none
+    /// open, which the section's footer says.
+    private let readThemes: (@MainActor () async -> [String]?)?
     private let onSelect: (SSHTerminalColorChoice) -> Void
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var themes: ThemeList
-    private var query = ""
-    private var loadTask: Task<Void, Never>?
-    private var lastThemeID: ThemeID?
+    private let search = ScreenSearchController(prompt: String(localized: "Search themes"))
+    /// The names the host offered, once they came back.
+    private var names: [String]? {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var query = "" {
+        didSet { setNeedsUpdateProperties() }
+    }
 
-    /// `channel` is a connected terminal of this host, or nil when there is none.
-    init(selected: SSHTerminalColorChoice, hostSummary: String, channel: SSHTerminalChannel?,
-         onSelect: @escaping (SSHTerminalColorChoice) -> Void) {
+    /// `readThemes` is a connected terminal of this host, or nil when there is none.
+    init(
+        selected: SSHTerminalColorChoice,
+        hostSummary: String,
+        readThemes: (@MainActor () async -> [String]?)?,
+        onSelect: @escaping (SSHTerminalColorChoice) -> Void
+    ) {
         self.selected = selected
         self.hostSummary = hostSummary
-        self.channel = channel
+        self.readThemes = readThemes
         self.onSelect = onSelect
-        themes = channel == nil ? .offline : .loading
-        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: true)
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = "Terminal Colors"
+        super.init(
+            title: "Terminal Colors",
+            listIdentifier: "sshTerminal.colors.list",
+            headers: false,
+            footers: true,
+            largeTitle: false
+        )
         navigationItem.largeTitleDisplayMode = .never
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit { loadTask?.cancel() }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.delegate = self
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-        let search = UISearchController(searchResultsController: nil)
-        search.searchResultsUpdater = self
-        search.obscuresBackgroundDuringPresentation = false
-        search.searchBar.autocapitalizationType = .none
-        search.searchBar.accessibilityIdentifier = "sshTerminal.colors.search"
-        navigationItem.searchController = search
-        navigationItem.hidesSearchBarWhenScrolling = false
-        definesPresentationContext = true
-        applySnapshot()
-        setNeedsUpdateProperties()
-        loadThemes()
-    }
-
-    override func updateProperties() {
-        super.updateProperties()
-        let themeID = sshTerminalThemeID
-        if lastThemeID != themeID {
-            lastThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-            applySnapshot(reconfigure: true)
+        search.install(on: self, alwaysVisible: true)
+        search.searchController.searchBar.accessibilityIdentifier = "sshTerminal.colors.search"
+        // Theme names are file names: no sentence capital, no "correcting" them.
+        search.searchController.searchBar.autocapitalizationType = .none
+        search.onTextChange = { [weak self] text in
+            guard let self else { return }
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            guard trimmed != query else { return }
+            query = trimmed
         }
     }
 
-    private func loadThemes() {
-        guard let channel else { return }
-        loadTask = Task { [weak self] in
-            let names = await SSHTerminalColorLoader.listThemes { try await channel.run($0) }
-            guard !Task.isCancelled, let self else { return }
-            themes = names.map { .loaded($0) } ?? .failed
-            applySnapshot()
-        }
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        search.hostDidAppear(self)
     }
 
-    func updateSearchResults(for searchController: UISearchController) {
-        query = searchController.searchBar.text?.trimmingCharacters(in: .whitespaces) ?? ""
-        applySnapshot()
+    // MARK: - Load
+
+    /// The names are the same until the terminal is another one, and a read that
+    /// failed is tried again when the page appears: an offline host offers no
+    /// read at all.
+    override var loadPolicy: LoadPolicy { readThemes == nil ? .none : .onceUntilSubjectChanges }
+
+    override func load() async throws {
+        guard let readThemes else { return }
+        guard let offered = await readThemes() else {
+            throw LoadFailure(String(localized: "Couldn’t read the host’s themes"))
+        }
+        guard !Task.isCancelled else { return }
+        names = offered
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.footerText(at: indexPath)
-            content.textProperties.numberOfLines = 0
-            cell.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        })
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
+    // MARK: - Rows
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(.choices, footer: choicesFooter, items: [.host, .oppi]),
+            ListSection(.themes, footer: themesFooter, items: shownThemes.map(Item.theme)),
+        ]
     }
 
-    private func choice(for item: Item) -> SSHTerminalColorChoice? {
-        switch item {
-        case .host: .host
-        case .oppi: .oppi
-        case let .theme(name): .named(name)
-        case .loading, .unavailable: nil
+    /// The themes the section shows: the host's, narrowed by the search field,
+    /// or the saved one alone when there is no terminal to list its folders.
+    private var shownThemes: [String] {
+        guard let names else {
+            if case let .named(name) = selected { return [name] }
+            return []
         }
+        guard !query.isEmpty else { return names }
+        return names.filter { $0.localizedCaseInsensitiveContains(query) }
     }
 
-    private func configure(_ cell: UICollectionViewListCell, item: Item) {
-        let palette = sshTerminalThemeID.palette
-        var content = UIListContentConfiguration.valueCell()
-        content.textProperties.color = palette.ui.fg
-        content.secondaryTextProperties.color = palette.ui.comment
-        cell.accessories = []
-        cell.accessibilityIdentifier = nil
+    private var choicesFooter: String {
+        String(localized: "The host’s theme is read from its Ghostty config each time you connect. Oppi uses its own theme where the host has none.")
+    }
+
+    private var themesFooter: String? {
+        guard readThemes != nil else {
+            return String(localized: "Connect to this host to choose from the themes it has.")
+        }
+        // Nothing to add while the read is on its way, or after it failed: the
+        // section's own state row says what happened.
+        guard let names else { return nil }
+        return names.isEmpty ? String(localized: "This host has no Ghostty themes.") : nil
+    }
+
+    /// The list's own state row sits in the themes section, where the names go.
+    override func stateSection() -> Section? { .themes }
+
+    override func hasContent() -> Bool { !(names ?? []).isEmpty }
+
+    override func loadingCaption() -> String? { String(localized: "Reading the host’s themes…") }
+
+    /// A row is keyed by whether it is the chosen one: choosing another moves the
+    /// check and leaves every other row as it was.
+    override func inputs(of item: Item) -> AnyHashable {
+        guard let value = choice(for: item) else { return AnyHashable(0) }
+        return AnyHashable(value == selected)
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        let style = SettingsStyle.current
+        var content = content(.info)
         switch item {
         case .host:
             content.text = SSHTerminalColorChoice.host.title
@@ -140,75 +147,29 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         case let .theme(name):
             content.text = name
             cell.accessibilityIdentifier = "sshTerminal.colors.theme.\(name)"
-        case .loading:
-            content.text = "Loading themes…"
-            content.textProperties.color = palette.ui.comment
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.startAnimating()
-            cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
-        case .unavailable:
-            content.text = "Couldn’t read the host’s themes"
-            content.textProperties.color = palette.ui.comment
         }
         if let value = choice(for: item) {
             let isSelected = value == selected
-            cell.accessories = isSelected
-                ? [.checkmark(options: .init(tintColor: palette.ui.blue))] : []
+            cell.accessories = isSelected ? [.checkmark(options: .init(tintColor: style.accent))] : []
             cell.accessibilityTraits.insert(.button)
             if isSelected { cell.accessibilityTraits.insert(.selected) } else { cell.accessibilityTraits.remove(.selected) }
         }
         cell.contentConfiguration = content
     }
 
-    private func footerText(at indexPath: IndexPath) -> String? {
-        switch dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] {
-        case .choices:
-            return "The host’s theme is read from its Ghostty config each time you connect. Oppi uses its own theme where the host has none."
-        case .themes:
-            switch themes {
-            case .offline: return "Connect to this host to choose from the themes it has."
-            case let .loaded(names) where names.isEmpty: return "This host has no Ghostty themes."
-            default: return nil
-            }
-        case nil: return nil
-        }
-    }
+    override func isSelectable(_ item: Item) -> Bool { choice(for: item) != nil }
 
-    private func applySnapshot(reconfigure: Bool = false) {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.choices])
-        snapshot.appendItems([.host, .oppi], toSection: .choices)
-        snapshot.appendSections([.themes])
-        switch themes {
-        case .offline:
-            if case let .named(name) = selected { snapshot.appendItems([.theme(name)], toSection: .themes) }
-        case .loading:
-            snapshot.appendItems([.loading], toSection: .themes)
-        case .failed:
-            snapshot.appendItems([.unavailable], toSection: .themes)
-        case let .loaded(names):
-            let shown = query.isEmpty ? names : names.filter { $0.localizedCaseInsensitiveContains(query) }
-            snapshot.appendItems(shown.map(Item.theme), toSection: .themes)
-        }
-        if reconfigure { snapshot.reconfigureItems(snapshot.itemIdentifiers) }
-        dataSource.apply(snapshot, animatingDifferences: false)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        dataSource?.itemIdentifier(for: indexPath).flatMap(choice(for:)) != nil
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard let value = dataSource?.itemIdentifier(for: indexPath).flatMap(choice(for:)) else { return }
+    override func select(_ item: Item) {
+        guard let value = choice(for: item) else { return }
         onSelect(value)
         Router.finish(self)
     }
-}
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
+    private func choice(for item: Item) -> SSHTerminalColorChoice? {
+        switch item {
+        case .host: .host
+        case .oppi: .oppi
+        case let .theme(name): .named(name)
+        }
     }
 }

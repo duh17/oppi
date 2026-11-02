@@ -48,13 +48,22 @@ struct MountedPage<Page: UIViewController> {
 }
 
 
+/// `height` makes room for a page longer than a phone: a row that is not on
+/// screen is not dequeued, so a test that reads one down a long form mounts it
+/// in a window tall enough to show it. `wrappingInNavigation` is for a page that
+/// has to take focus: a field takes it only in a window that installed its view,
+/// and a page made the window's own root is.
 @MainActor
-func mountPage<Page: UIViewController>(_ page: Page) throws -> MountedPage<Page> {
+func mountPage<Page: UIViewController>(
+    _ page: Page,
+    height: CGFloat = 844,
+    wrappingInNavigation: Bool = true
+) throws -> MountedPage<Page> {
     let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let window = UIWindow(windowScene: scene)
-    window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+    window.frame = CGRect(x: 0, y: 0, width: 390, height: height)
     window.traitOverrides.appRootEnvironment = makeTestAppRoot()
-    window.rootViewController = RouterNavigationController(rootViewController: page)
+    window.rootViewController = wrappingInNavigation ? RouterNavigationController(rootViewController: page) : page
     window.makeKeyAndVisible()
     page.beginAppearanceTransition(true, animated: false)
     page.endAppearanceTransition()

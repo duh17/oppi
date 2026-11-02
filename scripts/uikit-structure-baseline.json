@@ -65,14 +65,6 @@
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       ".settingsToggle(": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalColorPickerViewController.swift": {
-      "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
-      "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1
-    },
     "clients/apple/Oppi/Features/Schedules/ScheduleListViewController.swift": {
       "SettingsListStyle.pin(": 1
     },
@@ -100,10 +92,6 @@
     },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryViewController.swift": {
       "toggleRow(": 1
-    },
-    "clients/apple/Oppi/Features/Settings/SSHPreflightViewController.swift": {
-      "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsChatTopBarViewController.swift": {
       "AppPreferences.*.set": 2,

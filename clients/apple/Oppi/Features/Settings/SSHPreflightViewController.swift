@@ -11,7 +11,24 @@ import UIKit
 /// Leaving the screen cancels whatever is running, which closes the SSH
 /// connection. While Install & Start runs, the back button and sheet swipe
 /// are held so a stray gesture does not stop it; Cancel is explicit.
-final class SSHPreflightViewController: UIViewController, UICollectionViewDelegate {
+///
+/// A `ListScreenController`: the base owns the sections, the headings, and the
+/// redraw that leaves a row alone until what it draws changes. Nobody loads: a
+/// check, a pair, and an install are actions, so the states are its own rows.
+final class SSHPreflightViewController: ListScreenController<
+    SSHPreflightViewController.Section, SSHPreflightViewController.Item
+> {
+    enum Section: Hashable, Sendable { case machine, signIn, action, failure, forget, result, next }
+
+    enum Item: Hashable, Sendable {
+        case machine, manualHost, username, password
+        case checkButton, checking
+        case failureMessage, fingerprint(String), trustKey, forgetKey
+        case signedInAs, result(String)
+        case installStep(SSHInstallStep), installStatus, installCancel, installError, installRetry
+        case pair, pairing, install
+    }
+
     private enum Phase {
         case idle
         case checking(SSHSetupAddress)
@@ -49,17 +66,6 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private enum Section: Hashable { case machine, signIn, action, result, failure, forget, next }
-
-    private enum Item: Hashable {
-        case machine, manualHost, username, password
-        case checkButton, checking
-        case failureMessage, fingerprint(String), trustKey, forgetKey
-        case signedInAs, result(String)
-        case installStep(SSHInstallStep), installStatus, installCancel, installError, installRetry
-        case pair, pairing, install
-    }
-
     private static let manualSelection = "\u{0}manual"
 
     private let coordinator: ConnectionCoordinator
@@ -89,21 +95,19 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     private var keepAwake: SetupKeepAwake?
     private var heldNavigation: UINavigationController?
 
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var machineRow = ChangedRows<Item>()
-
     /// `initialPeer` preselects a machine from the tailnet list; the picker
     /// still allows changing it.
     init(coordinator: ConnectionCoordinator, initialPeer: TailnetPeer? = nil, onPaired: (() -> Void)? = nil) {
         self.coordinator = coordinator
         self.onPaired = onPaired
         selection = initialPeer?.dialHost ?? ""
-        var config = SettingsListStyle.layoutConfiguration(headers: true, footers: true)
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Set Up a Computer")
+        super.init(
+            title: String(localized: "Set Up a Computer"),
+            listIdentifier: "sshPreflight.list",
+            headers: true,
+            footers: true,
+            dismissesKeyboardOnDrag: true
+        )
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -137,21 +141,10 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        collectionView.accessibilityIdentifier = "sshPreflight.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         tailnet.startIfEnabled()
         selectDefaultMachine()
-        setNeedsUpdateProperties()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -163,19 +156,15 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
     override func updateProperties() {
         super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
         // Read here so a change to the online machines or the node redraws.
         _ = (tailnet.state, tailnet.onlinePeers)
-        applySnapshot()
     }
+
+    /// Every change is its own row redrawn, not a move: a list that animates an
+    /// installer's steps would move the row the person is reading.
+    override var animatesUpdates: Bool { false }
 
     // MARK: - State
 
@@ -225,94 +214,62 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     /// "iPhone" or "iPad": this device, in setup copy.
     private var deviceName: String { UIDevice.current.model }
 
-    private func installStateChanged(from old: Install) {
-        announceInstallChange(from: old)
-        let active = install.isActive
-        if active, keepAwake == nil {
-            keepAwake = SetupKeepAwake()
-        } else if !active, let keepAwake {
-            keepAwake.end()
-            self.keepAwake = nil
-        }
-        // Back and swipe-to-dismiss would cancel a long install; Cancel says so.
-        navigationItem.hidesBackButton = active
-        isModalInPresentation = active
-        if active, let navigationController {
-            heldNavigation = navigationController
-            navigationController.isModalInPresentation = true
-        } else if !active, let heldNavigation {
-            heldNavigation.isModalInPresentation = false
-            self.heldNavigation = nil
-        }
-        setNeedsUpdateProperties()
-    }
-
-    // MARK: - Snapshot
+    private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
 
     private var currentReport: (SSHPreflightReport, SSHSetupAddress)? {
         if case .finished(let report, let address) = phase { return (report, address) }
         return nil
     }
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.machine])
-        snapshot.appendItems(selection == Self.manualSelection ? [.machine, .manualHost] : [.machine], toSection: .machine)
-        snapshot.appendSections([.signIn])
-        snapshot.appendItems([.username, .password], toSection: .signIn)
-        snapshot.appendSections([.action])
-        snapshot.appendItems([isChecking ? .checking : .checkButton], toSection: .action)
+    // MARK: - Rows
 
-        switch phase {
-        case .idle, .checking:
-            break
-        case .failed(let failure, _):
-            snapshot.appendSections([.failure])
-            var items: [Item] = [.failureMessage]
-            switch failure {
-            case .unknownHostKey:
-                items += [.fingerprint("Fingerprint"), .trustKey]
-            case .hostKeyMismatch:
-                items += [.fingerprint("Trusted"), .fingerprint("Presented")]
-            default:
-                break
-            }
-            snapshot.appendItems(items, toSection: .failure)
-            if case .hostKeyMismatch = failure {
-                snapshot.appendSections([.forget])
-                snapshot.appendItems([.forgetKey], toSection: .forget)
-            }
-        case .finished(let report, _):
-            snapshot.appendSections([.result])
-            snapshot.appendItems([.signedInAs] + report.checks.map { .result($0.title) }, toSection: .result)
-            let next = nextItems(report)
-            if !next.isEmpty {
-                snapshot.appendSections([.next])
-                snapshot.appendItems(next, toSection: .next)
-            }
-        }
-
-        // Rows already shown are reconfigured in place, never reloaded, so a
-        // text field keeps its cursor and VoiceOver focus stays on its row.
-        // The machine menu only when its choices change, so an open menu stays.
-        let shown = dataSource.snapshot()
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter {
-            $0 != .machine && shown.itemIdentifiers.contains($0)
-        })
-        let machineChanged = machineRow.changed(in: [.machine]) { _ in
-            AnyHashable([AnyHashable(setupPeers.map(\.dialHost)), AnyHashable(selection), AnyHashable(isBusy), AnyHashable(appliedThemeID)])
-        }
-        if !machineChanged.isEmpty, shown.itemIdentifiers.contains(.machine) {
-            snapshot.reconfigureItems([.machine])
-        }
-        dataSource.apply(snapshot, animatingDifferences: false)
-        SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
-        }
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(
+                .machine,
+                header: header(.machine),
+                footer: footer(.machine),
+                items: selection == Self.manualSelection ? [.machine, .manualHost] : [.machine]
+            ),
+            ListSection(.signIn, header: header(.signIn), footer: footer(.signIn), items: [.username, .password]),
+            ListSection(.action, footer: footer(.action), items: [isChecking ? .checking : .checkButton]),
+            ListSection(.failure, header: header(.failure), footer: footer(.failure), items: failureItems),
+            ListSection(.forget, items: forgetItems),
+            ListSection(.result, header: header(.result), footer: footer(.result), items: resultItems),
+            ListSection(.next, header: header(.next), footer: footer(.next), items: nextItems),
+        ]
     }
 
-    private func nextItems(_ report: SSHPreflightReport) -> [Item] {
+    /// A heading is shown where the section has one to show: the checked
+    /// computer's name, and the installer's.
+    override func showsHeader(for section: Section) -> Bool { header(section) != nil }
+
+    private var failureItems: [Item] {
+        guard case .failed(let failure, _) = phase else { return [] }
+        var items: [Item] = [.failureMessage]
+        switch failure {
+        case .unknownHostKey:
+            items += [.fingerprint("Fingerprint"), .trustKey]
+        case .hostKeyMismatch:
+            items += [.fingerprint("Trusted"), .fingerprint("Presented")]
+        default:
+            break
+        }
+        return items
+    }
+
+    private var forgetItems: [Item] {
+        guard case .failed(.hostKeyMismatch, _) = phase else { return [] }
+        return [.forgetKey]
+    }
+
+    private var resultItems: [Item] {
+        guard let report = currentReport?.0 else { return [] }
+        return [.signedInAs] + report.checks.map { .result($0.title) }
+    }
+
+    private var nextItems: [Item] {
+        guard let report = currentReport?.0 else { return [] }
         var items: [Item] = []
         if install.progress != nil {
             items += SSHInstallStep.allCases.map(Item.installStep)
@@ -337,67 +294,111 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         return items
     }
 
-    // MARK: - Cells
-
-    private func installDataSource() {
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
-            self?.configureField(cell, item: item)
-        }
-        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
-            self?.configureAction(cell, item: item)
-        }
-        let row = UICollectionView.CellRegistration<SetupRowCell, Item> { [weak self] cell, _, item in
-            guard let self, let model = setupRow(item) else { return }
-            cell.configure(model)
-        }
-        let value = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureValue(cell, item: item)
-        }
-        let machine = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
-            self?.configureMachine(cell)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
-            switch item {
-            case .manualHost, .username, .password:
-                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .checkButton, .trustKey, .forgetKey, .pair, .install, .installCancel, .installRetry:
-                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            case .machine:
-                collectionView.dequeueConfiguredReusableCell(using: machine, for: indexPath, item: item)
-            case .signedInAs:
-                collectionView.dequeueConfiguredReusableCell(using: value, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-            }
-        })
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            if kind == UICollectionView.elementKindSectionHeader {
-                return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-            }
-            return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    /// What a row is drawn from: never a field's text, so typing redraws the
+    /// actions that follow it and leaves the field, its caret, and the keyboard
+    /// where the person left them.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .machine:
+            AnyHashable([AnyHashable(setupPeers.map(\.dialHost)), AnyHashable(selection), AnyHashable(isBusy)])
+        case .manualHost, .username, .password:
+            AnyHashable(isBusy)
+        case .checkButton, .trustKey:
+            AnyHashable(canCheck)
+        case .checking, .forgetKey, .installCancel, .pairing:
+            AnyHashable(0)
+        case .failureMessage:
+            AnyHashable(phaseFailure?.message)
+        case .fingerprint(let label):
+            AnyHashable(fingerprintKey(label)?.fingerprint)
+        case .signedInAs:
+            AnyHashable(currentReport?.0.user)
+        case .result(let title):
+            resultKey(title)
+        case .installStep(let step):
+            installStepKey(step)
+        case .installStatus:
+            AnyHashable(installStatusText)
+        case .installError:
+            AnyHashable(installErrorText)
+        case .installRetry, .pair, .install:
+            AnyHashable([AnyHashable(canSignIn), AnyHashable(isBusy)])
         }
     }
 
-    private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
+    /// A result row's symbol and words come from its status and its detail.
+    private func resultKey(_ title: String) -> AnyHashable {
+        let check = check(titled: title)
+        return AnyHashable([AnyHashable(check?.detail), AnyHashable(check.map { String(describing: $0.status) })])
+    }
 
-    private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {
-        let section = dataSource?.sectionIdentifier(for: indexPath.section)
-        var content: UIListContentConfiguration
-        if kind == UICollectionView.elementKindSectionHeader {
-            content = .header()
-            content.text = section.flatMap(header)
-        } else {
-            content = .footer()
-            content.text = section.flatMap(footer)
-            content.textProperties.numberOfLines = 0
+    /// An installer step's row is its name, detail, and the word VoiceOver says.
+    private func installStepKey(_ step: SSHInstallStep) -> AnyHashable {
+        let shown = presentation(of: step, install.progress?.state(of: step) ?? .pending)
+        return AnyHashable([AnyHashable(shown.title), AnyHashable(shown.detail), AnyHashable(shown.word)])
+    }
+
+    private var phaseFailure: SSHPreflightFailure? {
+        if case .failed(let failure, _) = phase { return failure }
+        return nil
+    }
+
+    private func check(titled title: String) -> SSHPreflightCheck? {
+        currentReport?.0.checks.first { $0.title == title }
+    }
+
+    private var installStatusText: String? {
+        switch install {
+        case .pairing: String(localized: "Pairing this \(deviceName)…")
+        case .running: String(localized: "Checking that Oppi answers…")
+        default: nil
         }
-        view.contentConfiguration = content
+    }
+
+    private var installErrorText: String? {
+        switch install {
+        case .failed(_, let failure): failure.message
+        case .stopped: String(localized: "Setup was stopped. Try again to finish; it picks up where it stopped.")
+        default: nil
+        }
+    }
+
+    // MARK: - Cells
+
+    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
+        self?.configureField(cell, item: item)
+    }
+
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
+        self?.configureAction(cell, item: item)
+    }
+
+    private lazy var rowCell = UICollectionView.CellRegistration<SetupRowCell, Item> { [weak self] cell, _, item in
+        guard let self, let model = setupRow(item) else { return }
+        cell.configure(model)
+    }
+
+    private lazy var machineRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        self?.configureMachine(cell)
+    }
+
+    override func prepareRegistrations() {
+        _ = (fieldRow, actionRow, rowCell, machineRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .manualHost, .username, .password:
+            collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .checkButton, .trustKey, .forgetKey, .pair, .install, .installCancel, .installRetry:
+            collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        case .machine:
+            collectionView.dequeueConfiguredReusableCell(using: machineRow, for: indexPath, item: item)
+        case .signedInAs:
+            super.dequeue(item, at: indexPath)
+        default:
+            collectionView.dequeueConfiguredReusableCell(using: rowCell, for: indexPath, item: item)
+        }
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
@@ -502,16 +503,12 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         )
     }
 
-    private func configureValue(_ cell: UICollectionViewListCell, item: Item) {
-        var content = SettingsStyle.content(.info)
-        cell.accessories = []
-        switch item {
-        case .signedInAs:
-            content.text = String(localized: "Signed In As")
-            content.secondaryText = currentReport?.0.user
-        default:
-            break
-        }
+    /// The signed-in user is a read-only fact: its row is the kit's value row.
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        guard item == .signedInAs else { return }
+        var content = content(.info)
+        content.text = String(localized: "Signed In As")
+        content.secondaryText = currentReport?.0.user
         cell.contentConfiguration = content
     }
 
@@ -528,7 +525,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 }
             )
         case .failureMessage:
-            guard case .failed(let failure, _) = phase else { return nil }
+            guard let failure = phaseFailure else { return nil }
             return SetupRow(title: failure.message, titleColor: red, identifier: "sshPreflight.failure")
         case .fingerprint(let label):
             guard let key = fingerprintKey(label) else { return nil }
@@ -537,7 +534,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 lines: [.init(text: key.fingerprint, color: fg, font: .scaledMonospaced(.footnote))]
             )
         case .result(let title):
-            guard let check = currentReport?.0.checks.first(where: { $0.title == title }) else { return nil }
+            guard let check = check(titled: title) else { return nil }
             let symbol: (String, UIColor, String) = switch check.status {
             case .ok: ("checkmark.circle.fill", palette.ui.green, String(localized: "OK"))
             case .installs: ("arrow.down.circle", palette.ui.blue, String(localized: "Install & Start adds it"))
@@ -553,12 +550,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         case .installStep(let step):
             return installStepRow(step)
         case .installStatus:
-            let text: String
-            if case .pairing = install {
-                text = String(localized: "Pairing this \(deviceName)\u{2026}")
-            } else {
-                text = String(localized: "Checking that Oppi answers\u{2026}")
-            }
+            guard let text = installStatusText else { return nil }
             return SetupRow(leading: .spinner, title: text, titleColor: comment, identifier: "sshPreflight.install.status")
         case .installError:
             switch install {
@@ -787,6 +779,28 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
+    private func installStateChanged(from old: Install) {
+        announceInstallChange(from: old)
+        let active = install.isActive
+        if active, keepAwake == nil {
+            keepAwake = SetupKeepAwake()
+        } else if !active, let keepAwake {
+            keepAwake.end()
+            self.keepAwake = nil
+        }
+        // Back and swipe-to-dismiss would cancel a long install; Cancel says so.
+        navigationItem.hidesBackButton = active
+        isModalInPresentation = active
+        if active, let navigationController {
+            heldNavigation = navigationController
+            navigationController.isModalInPresentation = true
+        } else if !active, let heldNavigation {
+            heldNavigation.isModalInPresentation = false
+            self.heldNavigation = nil
+        }
+        setNeedsUpdateProperties()
+    }
+
     private func check(trusting key: SSHHostKey? = nil, address: SSHSetupAddress? = nil) {
         guard canCheck, let address = address ?? target else { return }
         let request: SSHPreflightClient.Request
@@ -979,35 +993,16 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         return algorithm.hasPrefix("ecdsa") ? "ecdsa" : algorithm
     }
 
-    // MARK: - Selection and copy
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
-    }
+    // MARK: - Copy
 
     /// Fingerprints, the signed-in user, and check details can be copied, as
     /// their text was selectable before.
-    func collectionView(
-        _ collectionView: UICollectionView,
-        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let indexPath = indexPaths.first, let item = dataSource?.itemIdentifier(for: indexPath),
-              let text = copyText(item) else { return nil }
-        return UIContextMenuConfiguration(actionProvider: { _ in
-            UIMenu(children: [UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
-                UIPasteboard.general.string = text
-            }])
-        })
-    }
-
-    private func copyText(_ item: Item) -> String? {
+    override func copyText(of item: Item) -> String? {
         switch item {
         case .fingerprint(let label): fingerprintKey(label)?.fingerprint
         case .signedInAs: currentReport?.0.user
-        case .result(let title): currentReport?.0.checks.first { $0.title == title }?.detail
-        case .failureMessage:
-            if case .failed(let failure, _) = phase { failure.message } else { nil }
+        case .result(let title): check(titled: title)?.detail
+        case .failureMessage: phaseFailure?.message
         case .installError:
             if case .failed(_, let failure) = install { failure.message } else { nil }
         default: nil

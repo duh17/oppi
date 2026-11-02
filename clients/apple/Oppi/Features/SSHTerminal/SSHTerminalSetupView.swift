@@ -5,7 +5,26 @@ import UIKit
 /// Opened from a workspace's or chat's Terminal, the form starts with the
 /// workspace's server host and `folderTerminal` set: saving it then continues
 /// into that folder's terminal, and Connect opens it instead of the host's own.
-final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDelegate {
+///
+/// A `ListScreenController`: the base owns the list, its sections and headings,
+/// and the redraw that leaves a row alone until what it draws changes. The form
+/// has no load of its own: every row is the draft in `profile`, `portText`, and
+/// `sudoPasswordText`, and the session's state says what the actions do.
+final class SSHTerminalSetupViewController: ListScreenController<
+    SSHTerminalSetupViewController.Section, SSHTerminalSetupViewController.Item
+> {
+    enum Section: Hashable, Sendable {
+        case host, multiplexer, startup, colors, identity, actions, delete
+    }
+
+    enum Item: Hashable, Sendable {
+        case host, port, username, authentication, savePassword, sudoPassword, removeSudoPassword
+        case multiplexer, startup, colors
+        case publicKey, copyKey, backing, identityStatus, replaceKey
+        case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
+        case deleteHost
+    }
+
     private let profileID: UUID?
     private var profile: SSHTerminalProfile
     private var portText: String
@@ -23,19 +42,14 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     /// Edit Host from a terminal the switcher changed: that host's form opens
     /// once the terminal has closed over this one.
     private var editAfterTerminal: UUID?
-
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var lastThemeID: ThemeID?
-
-    private enum Section: Hashable { case host, multiplexer, startup, colors, identity, actions, delete }
-    private enum Item: Hashable {
-        case host, port, username, authentication, savePassword, sudoPassword, removeSudoPassword
-        case multiplexer, startup, colors
-        case publicKey, copyKey, backing, identityStatus, replaceKey
-        case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
-        case deleteHost
-    }
+    /// How often the form refilled its fields from a saved host. The field rows
+    /// are keyed by it, never by their text, so typing never reconfigures the
+    /// field it is typed in and a pass that changes nothing else leaves the
+    /// caret, the selection, and the keyboard where the person left them.
+    private var formRevision = 0
+    /// The Save Password row's one switch, kept across redraws so a pass never
+    /// replaces it.
+    private let saveSwitch = UISwitch()
 
     /// `host` prefills a new host (the server's address); a saved host always
     /// shows its own. `folderTerminal` makes this form the first step of
@@ -49,10 +63,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         profile = stored
         portText = String(stored.port)
         colorChoice = SSHTerminalColorStore().choice(for: stored.id)
-        var config = SettingsListStyle.layoutConfiguration(headers: true, footers: true)
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = "Terminal"
+        super.init(
+            title: "Terminal",
+            listIdentifier: "sshTerminal.setup.list",
+            headers: true,
+            footers: true,
+            dismissesKeyboardOnDrag: true
+        )
         navigationItem.largeTitleDisplayMode = .inline
     }
 
@@ -65,12 +82,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         !target.isEmpty && !profile.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port != nil && port != 0
     }
 
+    private var style: SettingsStyle { .current }
+    private var isConnecting: Bool { session.connecting }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
         chrome = SSHTerminalConnectChrome(
             host: self,
             session: session,
@@ -83,9 +99,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             },
             onSaved: { [weak self] in self?.applySaved($0) }
         )
+        saveSwitch.accessibilityLabel = "Save Password"
+        saveSwitch.addAction(UIAction { [weak self] action in
+            guard let self, let toggle = action.sender as? UISwitch else { return }
+            profile.savesPassword = toggle.isOn
+        }, for: .valueChanged)
         loadIdentityIfSelected()
         updateConnectBarItem()
-        setNeedsUpdateProperties()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -94,7 +114,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     override func updateProperties() {
-        super.updateProperties()
+        // Read, and record what the session says, before the pass draws: the
+        // session's own changes (a connect, a prompt, the terminal it pushed)
+        // and the device key's are what the form shows.
         _ = session.connecting
         _ = session.failure
         _ = session.hostFailure
@@ -110,12 +132,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         }
         _ = AppScenePhase.shared.isBackground
         deviceKey.observePasscodeChanged(session.devicePasscodeChanged, failure: session.failure)
-        let themeID = sshTerminalThemeID
-        if lastThemeID != themeID {
-            lastThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        applySnapshot()
+        super.updateProperties()
         updateConnectBarItem()
         chrome?.sync()
     }
@@ -126,113 +143,259 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private func updateConnectBarItem() {
         let item = UIBarButtonItem(title: "Connect", style: .prominent, target: self, action: #selector(barConnect))
         item.accessibilityIdentifier = "sshTerminal.connect"
-        item.isEnabled = canConnect && !session.connecting
+        item.isEnabled = canConnect && !isConnecting
         navigationItem.rightBarButtonItem = item
     }
 
-    private func installDataSource() {
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
-            self?.configureField(cell, item: item)
+    // MARK: - Rows
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(
+                .host,
+                header: String(localized: "Host"),
+                footer: hostFooter,
+                items: hostItems
+            ),
+            ListSection(
+                .multiplexer,
+                header: String(localized: "Multiplexer"),
+                footer: multiplexerFooter,
+                items: [.multiplexer]
+            ),
+            ListSection(
+                .startup,
+                header: String(localized: "Run on Connect"),
+                footer: startupFooter,
+                items: profile.opensRexSessions ? [] : [.startup]
+            ),
+            ListSection(.colors, header: String(localized: "Colors"), items: [.colors]),
+            ListSection(
+                .identity,
+                header: String(localized: "This Device’s SSH Identity"),
+                footer: identityFooter,
+                items: identityItems
+            ),
+            ListSection(.actions, footer: actionsFooter, items: actionItems),
+            ListSection(.delete, items: SSHTerminalProfileStore().contains(profile.id) ? [.deleteHost] : []),
+        ]
+    }
+
+    /// A page whose headings sit on every section but the actions and the delete.
+    override func showsHeader(for section: Section) -> Bool {
+        switch section {
+        case .actions, .delete: false
+        default: true
         }
-        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
-            self?.configureAction(cell, item: item)
+    }
+
+    private var hostItems: [Item] {
+        var items: [Item] = [.host, .port, .username, .authentication]
+        if profile.authentication == .password { items.append(.savePassword) }
+        if profile.authentication == .deviceKey {
+            items.append(.sudoPassword)
+            if hasSavedSudoPassword { items.append(.removeSudoPassword) }
         }
-        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
-            if item == .multiplexer { self?.configureMultiplexer(cell) } else { self?.configureAuthentication(cell) }
+        return items
+    }
+
+    private var identityItems: [Item] {
+        guard profile.authentication == .deviceKey else { return [] }
+        if deviceKey.identity != nil { return [.publicKey, .copyKey, .backing] }
+        return deviceKey.identityNeedsReplacement ? [.identityStatus, .replaceKey] : [.identityStatus]
+    }
+
+    private var actionItems: [Item] {
+        var items: [Item] = isConnecting ? [.connecting] : [.connect, .saveHost]
+        if session.failure != nil { items.append(.failure) }
+        switch session.hostFailure {
+        case .unknownHostKey: items.append(.trustUnknown)
+        case .hostKeyMismatch: items.append(.trustMismatch)
+        default: break
         }
-        let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                title: "Terminal Colors",
-                image: nil,
-                value: colorSummary,
-                identifier: "sshTerminal.colors"
-            ) { [weak self] in self?.presentColorPicker() }
+        return items
+    }
+
+    private var hostFooter: String {
+        var text = String(localized: "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network.")
+        if profile.authentication == .deviceKey {
+            text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, Touch ID, or your passcode, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
         }
-        let list = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureList(cell, item: item)
+        return text
+    }
+
+    private var multiplexerFooter: String {
+        let access = SSHTerminalExperimentAccess.current
+        var parts = [access.herdr
+            ? String(localized: "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect.")
+            : String(localized: "tmux runs in this host’s terminal: choosing it sets Run on Connect.")]
+        if access.rex {
+            parts.append(String(localized: "With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell."))
         }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.headerTitle(at: indexPath)
-            cell.contentConfiguration = content
+        return parts.joined(separator: " ")
+    }
+
+    private var startupFooter: String {
+        // The Herdr note only while the form offers Herdr.
+        let exits = SSHTerminalExperimentAccess.current.herdr
+            ? String(localized: "The connection ends when the command exits (for Herdr, detach with Ctrl-B Q).")
+            : String(localized: "The connection ends when the command exits.")
+        var text = String(localized: "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. \(exits) The command must be on the PATH that SSH commands see.")
+        if folderTerminal != nil {
+            text += "\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
         }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.footerTitle(at: indexPath)
-            content.textProperties.numberOfLines = 0
-            cell.contentConfiguration = content
+        return text
+    }
+
+    private var identityFooter: String {
+        var text = String(localized: "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
+        if deviceKey.identityNeedsReplacement {
+            text += "\nReplace the old entry in ~/.ssh/authorized_keys with the new public key before connecting."
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
-            switch item {
-            case .host, .port, .username, .startup, .sudoPassword:
-                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .authentication, .multiplexer:
-                collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
-            case .colors:
-                collectionView.dequeueConfiguredReusableCell(using: index, for: indexPath, item: item)
-            case .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
-                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
-            }
-        })
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            if kind == UICollectionView.elementKindSectionHeader {
-                return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-            }
-            return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+        return text
+    }
+
+    private var actionsFooter: String {
+        String(localized: "Saved passwords stay only in this device’s private Keychain and require Face ID or passcode at connect. Unsaved passwords are used for one attempt only. Keyboard-interactive and private-key import are not supported. Reconnect opens a fresh shell; use tmux to preserve work. Input is never replayed.")
+    }
+
+    /// What each row is drawn from. A field is keyed by everything a pass may
+    /// change about it and never by its text, so typing redraws the rows that
+    /// follow it and leaves the field itself untouched.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .host, .port, .username, .startup:
+            AnyHashable([AnyHashable(isConnecting), AnyHashable(formRevision)])
+        case .sudoPassword:
+            AnyHashable([AnyHashable(isConnecting), AnyHashable(formRevision), AnyHashable(hasSavedSudoPassword)])
+        case .authentication:
+            AnyHashable([AnyHashable(profile.authentication), AnyHashable(isConnecting)])
+        case .multiplexer:
+            AnyHashable([AnyHashable(profile.multiplexerChoice), AnyHashable(isConnecting), experimentKey])
+        case .savePassword:
+            AnyHashable([AnyHashable(profile.savesPassword), AnyHashable(isConnecting)])
+        case .colors:
+            AnyHashable(colorSummary)
+        case .publicKey:
+            AnyHashable(deviceKey.identity?.publicKeyOpenSSH ?? "")
+        case .backing:
+            AnyHashable(deviceKey.identity?.backingDescription ?? "")
+        case .identityStatus:
+            AnyHashable(deviceKey.identityFailure ?? String(localized: "Loading identity…"))
+        case .copyKey:
+            AnyHashable(copied)
+        case .replaceKey, .removeSudoPassword:
+            AnyHashable(isConnecting)
+        case .connecting:
+            AnyHashable(session.savingHostOnly)
+        case .connect, .saveHost:
+            AnyHashable([AnyHashable(canConnect), AnyHashable(isConnecting)])
+        case .failure:
+            AnyHashable(session.failure)
+        case .trustUnknown, .trustMismatch, .deleteHost:
+            AnyHashable(0)
+        }
+    }
+
+    /// The experiments decide which choices the Multiplexer row offers.
+    private var experimentKey: AnyHashable {
+        let access = SSHTerminalExperimentAccess.current
+        return AnyHashable([AnyHashable(access.herdr), AnyHashable(access.rex)])
+    }
+
+    // MARK: - Cells
+
+    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
+        self?.configureField(cell, item: item)
+    }
+
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
+        if item == .multiplexer { self?.configureMultiplexer(cell) } else { self?.configureAuthentication(cell) }
+    }
+
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            title: "Terminal Colors",
+            image: nil,
+            value: colorSummary,
+            identifier: "sshTerminal.colors"
+        ) { [weak self] in self?.presentColorPicker() }
+    }
+
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
+        self?.configureAction(cell, item: item)
+    }
+
+    override func prepareRegistrations() {
+        _ = (fieldRow, menuRow, indexRow, actionRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .host, .port, .username, .startup, .sudoPassword:
+            collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .authentication, .multiplexer:
+            collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
+        case .colors:
+            collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
+        case .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
+            collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        default:
+            super.dequeue(item, at: indexPath)
         }
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
-        let palette = sshTerminalThemeID.palette
-        let enabled = !session.connecting
+        let fg = style.title
+        let enabled = !isConnecting
         switch item {
         case .host:
             cell.configure(
                 text: profile.host, placeholder: "Hostname or IP", identifier: "sshTerminal.host",
-                keyboard: .URL, textColor: palette.ui.fg, enabled: enabled
+                keyboard: .URL, textColor: fg, enabled: enabled
             ) { [weak self] in
                 self?.profile.host = $0
                 self?.session.hostFailure = nil
                 self?.session.failure = nil
-                self?.reloadActionItems()
+                self?.setNeedsUpdateProperties()
             }
         case .port:
             cell.configure(
                 text: portText, placeholder: "Port", identifier: "sshTerminal.port",
-                keyboard: .numberPad, textColor: palette.ui.fg, enabled: enabled
+                keyboard: .numberPad, textColor: fg, enabled: enabled
             ) { [weak self] in
                 self?.portText = $0
                 self?.session.hostFailure = nil
                 self?.session.failure = nil
-                self?.reloadActionItems()
+                self?.setNeedsUpdateProperties()
             }
         case .username:
             cell.configure(
                 text: profile.username, placeholder: "Username", identifier: "sshTerminal.username",
-                keyboard: .default, textColor: palette.ui.fg, enabled: enabled
+                keyboard: .default, textColor: fg, enabled: enabled
             ) { [weak self] in
                 self?.profile.username = $0
-                self?.reloadActionItems()
+                self?.setNeedsUpdateProperties()
             }
         case .sudoPassword:
             cell.configure(
                 text: sudoPasswordText,
                 placeholder: hasSavedSudoPassword ? "Sudo Password: saved, type to replace" : "Sudo Password (optional)",
                 identifier: "sshTerminal.sudoPassword",
-                isSecure: true, textColor: palette.ui.fg, enabled: enabled
+                isSecure: true, textColor: fg, enabled: enabled
             ) { [weak self] in
                 self?.sudoPasswordText = $0
             }
         case .startup:
             cell.configure(
                 text: profile.startupCommand ?? "", placeholder: "Login shell", identifier: "sshTerminal.startupCommand",
-                monospaced: true, textColor: palette.ui.fg, enabled: enabled
+                monospaced: true, textColor: fg, enabled: enabled
             ) { [weak self] in
-                self?.profile.startupCommand = $0
-                self?.reconfigure(.multiplexer)
+                guard let self else { return }
+                profile.startupCommand = $0
+                // The Multiplexer row shows what Run on Connect starts.
+                setNeedsUpdateProperties()
             }
         default:
             break
@@ -252,25 +415,18 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         cell.configure(
             title: "Multiplexer",
             identifier: "sshTerminal.multiplexer",
-            isEnabled: !session.connecting,
+            isEnabled: !isConnecting,
             value: current.label,
             menu: {
                 SSHTerminalMultiplexerChoice.offered(in: access).map { choice in
                     SettingsMenuOption(title: choice.label, selected: choice == current) { [weak self] in
                         guard choice != current else { return }
                         self?.profile.choose(choice)
-                        self?.applySnapshot()
+                        self?.setNeedsUpdateProperties()
                     }
                 }
             }
         )
-    }
-
-    /// Redraws one row in place, leaving the field being typed in alone.
-    private func reconfigure(_ item: Item) {
-        guard var snapshot = dataSource?.snapshot(), snapshot.itemIdentifiers.contains(item) else { return }
-        snapshot.reconfigureItems([item])
-        dataSource?.apply(snapshot, animatingDifferences: false)
     }
 
     private func configureAuthentication(_ cell: SettingsMenuRowCell) {
@@ -278,7 +434,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         cell.configure(
             title: "Sign In",
             identifier: "sshTerminal.authentication",
-            isEnabled: !session.connecting,
+            isEnabled: !isConnecting,
             value: authentication == .deviceKey ? "This Device’s Key" : "Password",
             menu: {
                 [
@@ -308,7 +464,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 title: "Remove Saved Sudo Password",
                 tint: .destructive,
                 identifier: "sshTerminal.removeSudoPassword",
-                isEnabled: !session.connecting
+                isEnabled: !isConnecting
             ) { [weak self] in self?.removeSavedSudoPassword() }
         case .copyKey:
             cell.configure(
@@ -320,19 +476,19 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.configure(
                 title: "Device passcode changed — create a new key",
                 identifier: "sshTerminal.replaceKey",
-                isEnabled: !session.connecting
+                isEnabled: !isConnecting
             ) { [weak self] in self?.loadIdentityIfSelected(createReplacement: true) }
         case .connect:
             cell.configure(
                 title: "Connect",
                 identifier: "sshTerminal.connect.list",
-                isEnabled: canConnect && !session.connecting
+                isEnabled: canConnect && !isConnecting
             ) { [weak self] in self?.connect() }
         case .saveHost:
             cell.configure(
                 title: "Save Host",
                 identifier: "sshTerminal.saveHost",
-                isEnabled: canConnect && !session.connecting
+                isEnabled: canConnect && !isConnecting
             ) { [weak self] in self?.saveHost() }
         case .deleteHost:
             cell.configure(
@@ -346,47 +502,30 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         }
     }
 
-    private func configureList(_ cell: UICollectionViewListCell, item: Item) {
-        let palette = sshTerminalThemeID.palette
-        cell.accessories = []
-        cell.accessibilityIdentifier = nil
-        var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = palette.ui.fg
-        content.secondaryTextProperties.color = palette.ui.comment
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        let style = self.style
+        var content = content(.subtitle)
         switch item {
         case .savePassword:
-            content = UIListContentConfiguration.valueCell()
+            content = self.content(.info)
             content.text = "Save Password"
-            content.textProperties.color = palette.ui.fg
-            let toggle = UISwitch()
-            toggle.isOn = profile.savesPassword
-            toggle.isEnabled = !session.connecting
-            toggle.accessibilityIdentifier = "sshTerminal.savePassword"
-            toggle.addAction(UIAction { [weak self] action in
-                guard let toggle = action.sender as? UISwitch else { return }
-                self?.profile.savesPassword = toggle.isOn
-            }, for: .valueChanged)
-            cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
+            saveSwitch.isOn = profile.savesPassword
+            saveSwitch.isEnabled = !isConnecting
+            saveSwitch.accessibilityIdentifier = "sshTerminal.savePassword"
+            cell.accessories = [.customView(configuration: .init(customView: saveSwitch, placement: .trailing()))]
             cell.accessibilityIdentifier = "sshTerminal.savePassword"
         case .publicKey:
             content.text = deviceKey.identity?.publicKeyOpenSSH ?? ""
             content.textProperties.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.publicKey"
-        case .copyKey:
-            content.text = copied ? "Copied Public Key" : "Copy Public Key"
-            content.image = UIImage(systemName: copied ? "checkmark" : "doc.on.doc")
-            cell.accessibilityIdentifier = "sshTerminal.copyKey"
         case .backing:
             content.text = deviceKey.identity?.backingDescription ?? ""
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = palette.ui.comment
+            content.textProperties.color = style.value
         case .identityStatus:
-            content.text = deviceKey.identityFailure ?? "Loading identity…"
-            content.textProperties.color = palette.ui.comment
-        case .replaceKey:
-            content.text = "Device passcode changed — create a new key"
-            content.textProperties.color = palette.ui.blue
+            content.text = deviceKey.identityFailure ?? String(localized: "Loading identity…")
+            content.textProperties.color = style.value
         case .connecting:
             content.text = session.savingHostOnly ? "Saving Host…" : "Connecting…"
             let cancel = UIButton(type: .system)
@@ -397,21 +536,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cancel.addAction(UIAction { [weak self] _ in self?.session.cancel() }, for: .touchUpInside)
             cell.accessories = [.customView(configuration: .init(customView: cancel, placement: .trailing()))]
             cell.accessibilityIdentifier = "sshTerminal.connecting"
-        case .connect:
-            content.text = "Connect"
-            content.textProperties.color = canConnect ? palette.ui.blue : palette.ui.comment
-            cell.accessibilityIdentifier = "sshTerminal.connect"
-            cell.accessibilityTraits.insert(.button)
-            if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
-        case .saveHost:
-            content.text = "Save Host"
-            content.textProperties.color = canConnect ? palette.ui.blue : palette.ui.comment
-            cell.accessibilityIdentifier = "sshTerminal.saveHost"
-            cell.accessibilityTraits.insert(.button)
-            if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
         case .failure:
             content.text = "Disconnected — \(session.failure ?? "")"
-            content.textProperties.color = palette.ui.red
+            content.textProperties.color = style.destructive
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.failure"
         case .trustUnknown:
@@ -420,112 +547,15 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.accessibilityIdentifier = "sshTerminal.trustPrompt"
         case .trustMismatch:
             content.text = "Host key changed — connection blocked."
-            content.textProperties.color = palette.ui.red
+            content.textProperties.color = style.destructive
             content.secondaryText = "Forget the trusted key only after you verify why it changed."
-        case .deleteHost:
-            content.text = "Delete Host"
-            content.textProperties.color = palette.ui.red
-            cell.accessibilityIdentifier = "sshTerminal.deleteHost"
         default:
             break
         }
         cell.contentConfiguration = content
     }
 
-    private func applySnapshot() {
-        guard dataSource != nil else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.host])
-        var hostItems: [Item] = [.host, .port, .username, .authentication]
-        if profile.authentication == .password { hostItems.append(.savePassword) }
-        if profile.authentication == .deviceKey {
-            hostItems.append(.sudoPassword)
-            if hasSavedSudoPassword { hostItems.append(.removeSudoPassword) }
-        }
-        snapshot.appendItems(hostItems, toSection: .host)
-
-        snapshot.appendSections([.multiplexer])
-        snapshot.appendItems([.multiplexer], toSection: .multiplexer)
-        if !profile.opensRexSessions {
-            snapshot.appendSections([.startup])
-            snapshot.appendItems([.startup], toSection: .startup)
-        }
-
-        snapshot.appendSections([.colors])
-        snapshot.appendItems([.colors], toSection: .colors)
-
-        if profile.authentication == .deviceKey {
-            snapshot.appendSections([.identity])
-            if deviceKey.identity != nil {
-                snapshot.appendItems([.publicKey, .copyKey, .backing], toSection: .identity)
-            } else {
-                var items: [Item] = [.identityStatus]
-                if deviceKey.identityNeedsReplacement { items.append(.replaceKey) }
-                snapshot.appendItems(items, toSection: .identity)
-            }
-        }
-
-        snapshot.appendSections([.actions])
-        var actions: [Item] = []
-        if session.connecting {
-            actions.append(.connecting)
-        } else {
-            actions.append(contentsOf: [.connect, .saveHost])
-        }
-        if session.failure != nil { actions.append(.failure) }
-        switch session.hostFailure {
-        case .unknownHostKey: actions.append(.trustUnknown)
-        case .hostKeyMismatch: actions.append(.trustMismatch)
-        default: break
-        }
-        snapshot.appendItems(actions, toSection: .actions)
-
-        if SSHTerminalProfileStore().contains(profile.id) {
-            snapshot.appendSections([.delete])
-            snapshot.appendItems([.deleteHost], toSection: .delete)
-        }
-        // Rows that stay are redrawn in place, whether or not the list around
-        // them changed: Sign In shows the choice just made even when it adds or
-        // removes the rows below it.
-        let shown = Set(dataSource?.snapshot().itemIdentifiers ?? [])
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(shown.contains))
-        dataSource?.apply(snapshot, animatingDifferences: false)
-    }
-
-    private func reloadActionItems() {
-        guard var snapshot = dataSource?.snapshot() else { return }
-        let items = snapshot.itemIdentifiers.filter {
-            switch $0 {
-            case .connect, .saveHost, .authentication, .sudoPassword: return true
-            default: return false
-            }
-        }
-        guard !items.isEmpty else { return }
-        snapshot.reloadItems(items)
-        dataSource?.apply(snapshot, animatingDifferences: false)
-        updateConnectBarItem()
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
-        switch item {
-        case .trustUnknown, .trustMismatch:
-            return true
-        default:
-            return false
-        }
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
-        switch item {
-        case .trustUnknown, .trustMismatch:
-            chrome?.reopenTrust()
-        default:
-            break
-        }
-    }
+    // MARK: - Actions
 
     /// What the host's last read found, or what was chosen.
     private var colorSummary: String {
@@ -540,14 +570,26 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private func presentColorPicker() {
         let live = SSHTerminalRegistry.shared.terminals(for: profile.id).first { $0.channel.connected }?.channel
         let summary = SSHTerminalColorStore().cached(for: profile.id, choice: .host)?.summary ?? "Read when you connect"
-        let picker = SSHTerminalColorPickerViewController(selected: colorChoice, hostSummary: summary, channel: live) { [weak self] choice in
+        // A live terminal of this host reads its theme folders; without one the
+        // picker offers the two built-in choices and the one already chosen.
+        let readThemes: (@MainActor () async -> [String]?)?
+        if let live {
+            readThemes = { await SSHTerminalColorLoader.listThemes { try await live.run($0) } }
+        } else {
+            readThemes = nil
+        }
+        let picker = SSHTerminalColorPickerViewController(
+            selected: colorChoice,
+            hostSummary: summary,
+            readThemes: readThemes
+        ) { [weak self] choice in
             guard let self else { return }
             self.colorChoice = choice
             // A saved host's terminal follows at once; a new host's choice is kept with the host.
             if SSHTerminalProfileStore().contains(self.profile.id) {
                 SSHTerminalColorStore().setChoice(choice, for: self.profile.id)
             }
-            self.applySnapshot()
+            self.setNeedsUpdateProperties()
         }
         Router.push(picker, from: self)
     }
@@ -556,66 +598,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         guard let identity = deviceKey.identity else { return }
         UIPasteboard.general.string = identity.publicKeyOpenSSH
         copied = true
-        applySnapshot()
-    }
-
-    private func headerTitle(at indexPath: IndexPath) -> String? {
-        guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
-        switch section {
-        case .host: return "Host"
-        case .multiplexer: return "Multiplexer"
-        case .startup: return "Run on Connect"
-        case .colors: return "Colors"
-        case .identity: return "This Device’s SSH Identity"
-        default: return nil
-        }
-    }
-
-    private func footerTitle(at indexPath: IndexPath) -> String? {
-        guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
-        switch section {
-        case .host:
-            var text = "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
-            if profile.authentication == .deviceKey {
-                text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, Touch ID, or your passcode, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
-            }
-            return text
-        case .multiplexer:
-            let access = SSHTerminalExperimentAccess.current
-            var parts = [access.herdr
-                ? "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect."
-                : "tmux runs in this host’s terminal: choosing it sets Run on Connect."]
-            if access.rex {
-                parts.append("With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell.")
-            }
-            return parts.joined(separator: " ")
-        case .startup:
-            // The Herdr note only while the form offers Herdr.
-            let exits = SSHTerminalExperimentAccess.current.herdr
-                ? "The connection ends when the command exits (for Herdr, detach with Ctrl-B Q)."
-                : "The connection ends when the command exits."
-            var text = "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. \(exits) The command must be on the PATH that SSH commands see."
-            if folderTerminal != nil {
-                text += "\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
-            }
-            return text
-        case .identity:
-            var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
-            if deviceKey.identityNeedsReplacement {
-                text += "\nReplace the old entry in ~/.ssh/authorized_keys with the new public key before connecting."
-            }
-            return text
-        case .actions:
-            return "Saved passwords stay only in this device’s private Keychain and require Face ID or passcode at connect. Unsaved passwords are used for one attempt only. Keyboard-interactive and private-key import are not supported. Reconnect opens a fresh shell; use tmux to preserve work. Input is never replayed."
-        default:
-            return nil
-        }
+        setNeedsUpdateProperties()
     }
 
     private func loadIdentityIfSelected(createReplacement: Bool = false) {
         guard profile.authentication == .deviceKey else {
             deviceKey.applyLoadResult(identity: nil, needsReplacement: false, failure: nil)
-            applySnapshot()
+            setNeedsUpdateProperties()
             return
         }
         do {
@@ -631,7 +620,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 failure: error.localizedDescription
             )
         }
-        applySnapshot()
+        setNeedsUpdateProperties()
     }
 
     private func normalizedProfile() -> SSHTerminalProfile {
@@ -663,6 +652,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         session.showsTerminal = false
     }
 
+    /// The form now shows what a connect or a save wrote, so its fields are
+    /// refilled: the revision is what the field rows are keyed by.
     private func applySaved(_ saved: SSHTerminalProfile) {
         profile = saved
         portText = String(saved.port)
@@ -670,8 +661,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             sudoPasswordText = ""
             view.endEditing(true)
         }
+        formRevision &+= 1
         SSHTerminalColorStore().setChoice(colorChoice, for: saved.id)
-        applySnapshot()
+        setNeedsUpdateProperties()
     }
 
     private func removeSavedSudoPassword() {
@@ -684,7 +676,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             profile.savesSudoPassword = false
             sudoPasswordText = ""
             view.endEditing(true)
-            applySnapshot()
+            formRevision &+= 1
+            setNeedsUpdateProperties()
         } catch {
             session.failure = error.localizedDescription
         }
@@ -744,11 +737,5 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         } catch {
             session.failure = error.localizedDescription
         }
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }
