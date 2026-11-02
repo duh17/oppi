@@ -225,16 +225,21 @@ final class GuidedControlComposerModel {
     // MARK: - Lifecycle
 
     /// The composer came on screen: set it up once (draft, workspace, the
-    /// microphone, the model catalog).
-    func appear() {
-        guard !isInitialized, initializeTask == nil else { return }
-        initializeTask = Task { [weak self] in
-            await self?.initialize()
-            // `disappear()` already dropped a cancelled task's handle; the
-            // field may hold the newer task that replaced it.
-            guard !Task.isCancelled else { return }
-            self?.initializeTask = nil
+    /// microphone, the model catalog). Returns the setup it started, or the one
+    /// still running, so an owner that must not leave it running can await it;
+    /// nil once there is nothing left to wait for.
+    @discardableResult
+    func appear() -> Task<Void, Never>? {
+        if !isInitialized, initializeTask == nil {
+            initializeTask = Task { [weak self] in
+                await self?.initialize()
+                // `disappear()` already dropped a cancelled task's handle; the
+                // field may hold the newer task that replaced it.
+                guard !Task.isCancelled else { return }
+                self?.initializeTask = nil
+            }
         }
+        return initializeTask
     }
 
     /// The composer left the screen: stop setting up and hand the microphone

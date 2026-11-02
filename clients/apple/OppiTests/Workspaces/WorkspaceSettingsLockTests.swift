@@ -287,6 +287,16 @@ struct WorkspaceSettingsLockTests {
     /// Waits for what the switch set going, then takes the window and the scope
     /// down: a request that outlived its handler would be nobody's answer.
     private func close(_ live: Live) async {
+        // The page's load is the switch, and the work it starts hangs off it: the Pi
+        // resources it reads for the server it switched to, and the bar's setup, which
+        // refreshes the model catalog. Await both while this test's handler still
+        // answers them, because `settle` only sees requests that reached URLSession: a
+        // load still waiting its turn when the scope ends asks afterwards, and the double
+        // records an issue that belongs to no test.
+        _ = await waitForMainActorCondition(timeout: .seconds(5)) { !live.screen.isLoading }
+        if let bar = live.screen.children.compactMap({ $0 as? GuidedControlComposerController }).first {
+            await bar.model.appear()?.value
+        }
         #expect(await live.routes.settle(), "a request outlived the test that answered it")
         hideWindow(live)
         live.routes.end()
