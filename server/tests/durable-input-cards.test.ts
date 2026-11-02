@@ -2,10 +2,10 @@ import { afterEach, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { Harness, MemoryStorage, createRegistry, watchEvents } from "@earendil-works/pi-durable";
+import { Harness, MemoryStorage, createRegistry } from "@earendil-works/pi-durable";
 import { DurableInputCards, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import { readDurableInputCardOutput, readDurableInputCards } from "../src/durable-input-cards.js";
-import { DurableEventProjection } from "../src/durable-event-projection.js";
+import { DurableClassicEvents } from "../src/durable-classic-events.js";
 import {
   readDurableTrace,
   readDurableTracePage,
@@ -47,16 +47,15 @@ it("projects arbitrary extension input by receipt identity, preserving model byt
     (await tx.doc(DurableInputCards, root.id)).requests["arbitrary:report"] = card;
   }, context);
   const raw = "RAW-RESULT\n".repeat(200);
-  const projection = new DurableEventProjection(harness, () => ({}));
-  const stream = await watchEvents(harness, root.id, context);
+  const projection = await DurableClassicEvents.open(harness, root, () => ({}));
   const projected: unknown[] = [];
   let delivered!: () => void;
   const seen = new Promise<void>((resolve) => {
     delivered = resolve;
   });
-  stream.start(async (events) => {
-    projected.push(...(await projection.batch(events)));
-    if (events.some((event) => event.type === "run_end")) delivered();
+  projection.start(async (frame) => {
+    projected.push(...frame.events);
+    if (frame.runEnded) delivered();
   });
   const receipt = await root.submit(
     { type: "input", content: raw, requestId: "arbitrary:report" },
@@ -65,7 +64,7 @@ it("projects arbitrary extension input by receipt identity, preserving model byt
   await receipt.wait(context);
   await root.waitForIdle(context);
   await seen;
-  await stream.stop();
+  await projection.stop();
   const entry = (await receipt.status(context)).entry!;
   expect(projection.inputCards.entries.get(entry)).toMatchObject(card);
   expect(JSON.stringify(projected)).not.toContain("RAW-RESULT");

@@ -25,11 +25,11 @@ import {
   CompactionEntry,
   InboxDoc,
   LiveDoc,
-  watchEvents,
   defineExtension,
   defineTask,
-  type AgentEvent,
   type ConversationId,
+  type ConversationView,
+  type LiveState,
   type EntryId,
   type Storage as DurableStorage,
   type ToolRegistration,
@@ -1653,10 +1653,10 @@ describe("server durable managed runtime", () => {
       f.storage.getSession(f.session.id)!.serverDurable!.conversationId,
       context,
     );
-    const raw = await watchEvents(harness, conversation.id, context);
-    const batches: AgentEvent[][] = [];
-    raw.start(async (events) => {
-      batches.push([...events]);
+    const raw = await conversation.watch(context);
+    const values: ConversationView[] = [];
+    raw.start(async (value) => {
+      values.push(value);
     });
     const compactEnd = observed.next((message) => message.type === "compaction_end");
     const id = await conversation.compact(undefined, context);
@@ -1680,15 +1680,16 @@ describe("server durable managed runtime", () => {
     });
     await followUpAnswer;
     await raw.stop();
-    const placement = batches.find((batch) =>
-      batch.some((event) => event.type === "message_end" && event.entry.kind === "pi.compaction"),
+    // The summary, the follow-up, and the next run land in one commit.
+    const placement = values.find((value) =>
+      value.entries.some((entry) => entry.kind === "pi.compaction"),
     );
     expect(placement).toBeDefined();
-    expect(placement!.some((event) => event.type === "run_end")).toBe(true);
-    expect(placement!.some((event) => event.type === "run_start")).toBe(true);
+    const summary = placement!.entries.find((entry) => entry.kind === "pi.compaction")!;
     expect(
-      placement!.some((event) => event.type === "message_end" && event.entry.kind === "pi.user"),
+      placement!.entries.some((entry) => entry.kind === "pi.user" && entry.id > summary.id),
     ).toBe(true);
+    expect((placement!.docs["pi.live"] as LiveState | undefined)?.run).toBeDefined();
     const messages = observed.messages.slice(placementStart);
     const compactIndex = messages.findIndex((message) => message.type === "compaction_end");
     const followUpIndex = messages.findIndex(
@@ -3825,15 +3826,13 @@ describe("server durable managed runtime", () => {
       f.session.serverDurable!.conversationId! as ConversationId,
       context,
     ))!;
-    const events = await import("@earendil-works/pi-durable").then(({ watchEvents }) =>
-      watchEvents(harness, conversation.id, context),
-    );
+    const events = await conversation.watch(context);
     let partial!: () => void;
     const started = new Promise<void>((resolve) => {
       partial = resolve;
     });
-    events.start(async (batch) => {
-      if (batch.some((event) => event.type === "message_update")) partial();
+    events.start(async (value) => {
+      if ((value.docs["pi.live"] as LiveState | undefined)?.generation?.message) partial();
     });
     await first.prompt("Continue exactly this original turn", { clientTurnId: "restart-turn" });
     await expect(

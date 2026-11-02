@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
   ModelRegistry,
   SettingsManager,
@@ -11,15 +10,12 @@ import {
   type CompactionResult,
 } from "@earendil-works/pi-coding-agent";
 import {
-  watchEvents,
   AgentDoc,
   InboxDoc,
   LiveDoc,
   type AgentChange,
-  type AgentEventStream,
   type ModelRef,
   type Conversation,
-  type ConversationView,
   type Harness,
   type ConversationId,
   type AgentState,
@@ -60,7 +56,7 @@ import { DurableRuntime, type SessionHost } from "./durable-harness.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
-import { DurableEventProjection } from "./durable-event-projection.js";
+import { DurableClassicEvents } from "./durable-classic-events.js";
 import { exportDurableToHtml } from "./durable-export.js";
 import { isRecoveredPartial, readDurableSessionEntries } from "./durable-history.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
@@ -288,7 +284,6 @@ async function syncProjectContext(
  */
 export class DurableBackend implements AgentBackend {
   private readonly transactions = new SessionRuntimeTransaction();
-  private readonly projection: DurableEventProjection;
   private ui!: DurableUIProjection;
   private disposed = false;
   /** Aborted on detach: admission still waiting in the controller's chain is refused. */
@@ -317,8 +312,8 @@ export class DurableBackend implements AgentBackend {
     private readonly conversation: Conversation,
     models: ModelRuntime,
     private readonly session: Session,
-    private readonly view: AttachedReplicatedState<ConversationView>,
-    private readonly events: AgentEventStream,
+    /** The conversation's state and the classic events it tells; its view backs the getters. */
+    private readonly events: DurableClassicEvents,
     private readonly onEvent: (event: SessionBackendEvent) => void,
     private readonly mcp: DurableMcp | undefined,
     private resources: DurableProjectResources,
@@ -328,7 +323,6 @@ export class DurableBackend implements AgentBackend {
     private readonly readSkillFile: (path: string) => Promise<string>,
   ) {
     this.registry = new ModelRegistry(models);
-    this.projection = new DurableEventProjection(harness, () => host.runtime.retrySettings ?? {});
   }
 
   static async create(options: DurableBackendOptions): Promise<DurableBackend> {
@@ -661,20 +655,22 @@ export class DurableBackend implements AgentBackend {
       );
     }
     mcp?.attach(conversation);
-    const view = await conversation.viewState(BACKGROUND_CONTEXT);
+    const events = await DurableClassicEvents.open(
+      harness,
+      conversation,
+      () => host.runtime.retrySettings ?? {},
+    );
     try {
       // A run in progress resumes after this attachment; its MCP tool calls must find
       // their tools, so let the servers connect first (bounded).
-      if (mcp && (view.value.docs["pi.live"] as LiveState | undefined)?.run !== undefined)
+      if (mcp && (events.view.docs["pi.live"] as LiveState | undefined)?.run !== undefined)
         await mcp.waitForStartup();
-      const events = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
       const backend = new DurableBackend(
         harness,
         options.host,
         conversation,
         models,
         session,
-        view,
         events,
         options.onEvent,
         mcp,
@@ -684,10 +680,6 @@ export class DurableBackend implements AgentBackend {
         readInView,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
-      await backend.projection.refreshInputCards([
-        conversation.id,
-        ...events.snapshot.entries.map((entry) => entry.conversationId),
-      ]);
       // Last, so nothing after it can fail with the toggle registered. The attach's `{ add }`
       // edit above dropped any `oppi.live-voice` a previous attachment left; this puts it back
       // when a call is attached now. An Oppi Control session never takes calls.
@@ -698,7 +690,7 @@ export class DurableBackend implements AgentBackend {
         );
       return backend;
     } catch (error) {
-      view.dispose();
+      await events.stop();
       throw error;
     }
   }
@@ -736,18 +728,13 @@ export class DurableBackend implements AgentBackend {
         });
     });
     if (!this.host.isResumeHeld) this.harness.resume();
-    for (const event of this.projection.snapshot(this.events.snapshot, this.host.isResumeHeld))
-      this.onEvent(event);
-    this.events.start(async (events) => {
+    for (const event of this.events.snapshot(this.host.isResumeHeld)) this.onEvent(event);
+    this.events.start(async (frame) => {
       if (this.disposed) return;
-      // A new run starts with nothing shown, also after an idle task's failure. A batch
+      // A new run starts with nothing shown, also after an idle task's failure. A frame
       // that also ends a run keeps that run's texts until its settlement is handled below.
-      if (
-        events.some((event) => event.type === "run_start") &&
-        !events.some((event) => event.type === "run_end")
-      )
-        this.shownRunErrors.clear();
-      for (const pi of await this.projection.batch(events)) {
+      if (frame.runStarted && !frame.runEnded) this.shownRunErrors.clear();
+      for (const pi of frame.events) {
         if (this.disposed) return;
         // The protocol already shows an assistant error as the live error row.
         const ended = pi.type === "message_end" ? asErrorText(pi.message) : undefined;
@@ -758,108 +745,90 @@ export class DurableBackend implements AgentBackend {
           this.shownRunErrors.add(`Compaction failed: ${pi.errorMessage}`);
         this.onEvent(pi);
       }
-      for (const event of events) {
-        if (event.type === "message_end") {
-          const card = this.projection.inputCards.entries.get(event.entry.id);
+      for (const entry of frame.appended) {
+        const card = this.events.inputCards.entries.get(entry.id);
+        if (entry.model?.length) {
           if (card)
             this.onEvent({
               type: "notice",
-              id: `entry:${event.entry.id}`,
+              id: `entry:${entry.id}`,
               message: `${card.title}${card.status ? ` · ${card.status}` : ""}${card.body ? ` — ${card.body}` : ""}`,
             });
+          continue;
         }
+        if (entry.kind === DURABLE_FAILURE_ENTRY_KIND) continue;
+        const data = entry.data;
+        const display = sanitizeTranscriptCard(
+          data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
+        );
+        if (display)
+          this.onEvent({
+            type: "notice",
+            id: `entry:${entry.id}`,
+            message: display.body ? `${display.title} — ${display.body}` : display.title,
+          });
+      }
+      // Native placement carries identity. Recover display metadata by request,
+      // never by matching user text or keeping an Oppi queue shadow.
+      for (const record of frame.placed) {
+        if (!record.requestId) continue;
+        const display = await readRequestDisplay(
+          this.harness,
+          this.conversation.id,
+          record.requestId,
+        );
         if (
-          event.type === "entry_appended" &&
-          !event.entry.model?.length &&
-          event.entry.kind !== DURABLE_FAILURE_ENTRY_KIND
-        ) {
-          const data = event.entry.data;
-          const card = sanitizeTranscriptCard(
-            data && typeof data === "object" && !Array.isArray(data) ? data.card : undefined,
-          );
-          if (card)
-            this.onEvent({
-              type: "notice",
-              id: `entry:${event.entry.id}`,
-              message: card.body ? `${card.title} — ${card.body}` : card.title,
-            });
+          display &&
+          (display.kind === "steer" || display.kind === "followUp") &&
+          !this.events.inputCards.submissions.has(record.id)
+        )
+          this.onEvent({
+            type: "queue_item_started",
+            kind: display.kind === "steer" ? "steer" : "follow_up",
+            item: {
+              id: String(record.id),
+              message: display.message,
+              createdAt: display.createdAt,
+              ...(display.attachments.length ? { attachments: display.attachments } : {}),
+            },
+            queueVersion: this.inboxVersion(),
+          });
+      }
+      // Inputs from any source (a background job's follow-up, a reporter) get their card
+      // here; the request id makes the controller's own write for its prompts a no-op.
+      // The live error is the card's text, written or not, once per run.
+      for (const record of frame.unanswered) {
+        this.showRunError(inputFailureText(record));
+        try {
+          await recordInputFailure(this.conversation, record);
+        } catch (error) {
+          log.warn("durable_failure.input_card_failed", {
+            submissionId: record.id,
+            error: safeErrorMessage(error),
+          });
         }
-        // Native placement carries identity. Recover display metadata by request,
-        // never by matching user text or keeping an Oppi queue shadow.
-        if (
-          event.type === "submission" &&
-          event.record.type === "input" &&
-          event.record.status === "placed" &&
-          event.record.requestId
-        ) {
-          const display = await readRequestDisplay(
-            this.harness,
-            this.conversation.id,
-            event.record.requestId,
-          );
-          if (
-            display &&
-            (display.kind === "steer" || display.kind === "followUp") &&
-            !this.projection.inputCards.submissions.has(event.record.id)
-          ) {
-            this.onEvent({
-              type: "queue_item_started",
-              kind: display.kind === "steer" ? "steer" : "follow_up",
-              item: {
-                id: String(event.record.id),
-                message: display.message,
-                createdAt: display.createdAt,
-                ...(display.attachments.length ? { attachments: display.attachments } : {}),
-              },
-              queueVersion: this.inboxVersion(),
-            });
-          }
-        }
-        if (event.type === "inbox_update")
-          this.onEvent({ type: "queue_update", ...this.queuedMessages() });
-        // Inputs from any source (a background job's follow-up, a reporter) get their card
-        // here; the request id makes the controller's own write for its prompts a no-op.
-        // The live error is the card's text, written or not, once per run.
-        if (
-          event.type === "submission" &&
-          event.record.type === "input" &&
-          event.record.status === "unanswered"
-        ) {
-          this.showRunError(inputFailureText(event.record));
-          try {
-            await recordInputFailure(this.conversation, event.record);
-          } catch (error) {
-            log.warn("durable_failure.input_card_failed", {
-              submissionId: event.record.id,
-              error: safeErrorMessage(error),
-            });
-          }
-        }
-        // A generation fault also settles its inputs, which record the card; a compaction
-        // failure shows on its compaction row.
-        if (
-          event.type === "task_failed" &&
-          event.kind !== "pi.compaction" &&
-          event.kind !== "pi.generation"
-        ) {
-          this.showRunError(event.message.trim() || event.kind);
-          try {
-            await recordTaskFailure(this.conversation, {
-              id: event.taskId,
-              kind: event.kind,
-              message: event.message,
-            });
-          } catch (error) {
-            log.warn("durable_failure.task_card_failed", {
-              taskId: event.taskId,
-              error: safeErrorMessage(error),
-            });
-          }
+      }
+      if (frame.inboxChanged) this.onEvent({ type: "queue_update", ...this.queuedMessages() });
+      // A generation fault also settles its inputs, which record the card; a compaction
+      // failure shows on its compaction row.
+      for (const failure of frame.taskFailures) {
+        this.showRunError(failure.message.trim() || failure.kind);
+        try {
+          await recordTaskFailure(this.conversation, {
+            id: failure.taskId,
+            kind: failure.kind,
+            message: failure.message,
+          });
+        } catch (error) {
+          log.warn("durable_failure.task_card_failed", {
+            taskId: failure.taskId,
+            error: safeErrorMessage(error),
+          });
         }
       }
       // A run that failed with inputs queued behind it: its card is written above, so start them
-      // now, behind it. The projection held the run's `agent_settled`; send it if none starts.
-      const failed = this.projection.takeContinuation();
+      // now, behind it. The frame held the run's `agent_settled`; send it if none starts.
+      const failed = frame.continuation;
       if (failed !== undefined && !this.disposed) {
         let next: "running" | "idle" = "idle";
         try {
@@ -870,11 +839,11 @@ export class DurableBackend implements AgentBackend {
             error: safeErrorMessage(error),
           });
         }
-        if (next === "idle") for (const pi of this.projection.settle()) this.onEvent(pi);
+        if (next === "idle") for (const pi of this.events.settle()) this.onEvent(pi);
       }
-      // A run's settlement commits with its end, so its errors are in this batch or earlier.
+      // A run's settlement commits with its end, so its errors are in this frame or earlier.
       // A later run starts with nothing shown.
-      if (events.some((event) => event.type === "run_end")) this.shownRunErrors.clear();
+      if (frame.runEnded) this.shownRunErrors.clear();
     });
     // After the listener is attached. A commit, not Conversation.submit, so a
     // held startup scheduler stays held. A crash between settlement and the
@@ -896,10 +865,10 @@ export class DurableBackend implements AgentBackend {
   }
 
   private get agent(): AgentState {
-    return (this.view.value.docs["pi.agent"] as AgentState) ?? {};
+    return (this.events.view.docs["pi.agent"] as AgentState) ?? {};
   }
   private get live(): LiveState {
-    return (this.view.value.docs["pi.live"] as LiveState) ?? {};
+    return (this.events.view.docs["pi.live"] as LiveState) ?? {};
   }
   get isDisposed(): boolean {
     return this.disposed;
@@ -1067,7 +1036,6 @@ export class DurableBackend implements AgentBackend {
       this.lifetime.abort(new Error("Session backend is disposed"));
       await this.ui.stop();
       await this.events.stop();
-      this.view.dispose();
     })());
   }
   captureEmergencyDisposalForStop(): (timeoutMs: number) => Promise<SdkBackendDisposeResult> {
@@ -1103,7 +1071,7 @@ export class DurableBackend implements AgentBackend {
 
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] } {
     const items = (this.currentInbox()?.items ?? []).filter(
-      (item) => !this.projection.inputCards.submissions.has(item.id),
+      (item) => !this.events.inputCards.submissions.has(item.id),
     );
     const text = (content: string | readonly { type: string; text?: string }[]): string =>
       typeof content === "string"
@@ -1158,7 +1126,7 @@ export class DurableBackend implements AgentBackend {
   async getSessionStats(): Promise<Awaited<ReturnType<AgentBackend["getSessionStats"]>>> {
     const entries = await this.contextEntries();
     const messages = await this.visibleMessages(entries);
-    const usage = this.view.value.docs["pi.usage"] as UsageState | undefined;
+    const usage = this.events.view.docs["pi.usage"] as UsageState | undefined;
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
     let cost = 0;
     const byModel = new Map<string, SessionModelUsageSnapshot>();
@@ -1323,7 +1291,7 @@ export class DurableBackend implements AgentBackend {
   }
 
   private currentInbox(): InboxState | undefined {
-    return this.view.value.docs["pi.inbox"] as InboxState | undefined;
+    return this.events.view.docs["pi.inbox"] as InboxState | undefined;
   }
 
   async withdrawNativeQueue(
