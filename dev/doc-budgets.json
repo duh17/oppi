@@ -38,8 +38,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 386 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-conversation-stream.md": {
-      "words": 1620,
-      "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1402 words; headroom max(15%, 100 words)."
+      "words": 1670,
+      "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1451 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-extension-ui.md": {
       "words": 1200,
@@ -51,7 +51,7 @@
     },
     "dev/architecture-server/runtime.md": {
       "words": 3260,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 2827 words; headroom max(15%, 100 words)."
+      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/tool-inspection.md": {
       "words": 500,
