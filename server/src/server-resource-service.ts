@@ -432,15 +432,20 @@ export class ServerResourceService {
   /**
    * A classic row (a plugin of its package included) is turned on or off in Pi's settings, which
    * a durable session follows after a plugin reload. A plugin's own row is turned on or off in the
-   * server config, which sessions follow without a reload.
+   * server config, which sessions follow without a reload. Turning a classic row on also turns its
+   * loaded plugin on there, so a plugin the config had off (an older `oppi extensions disable`)
+   * does not stay off under a row that shows on.
    */
   async setExtensionEnabled(id: string, enabled: boolean): Promise<ServerExtensionSummary> {
     return this.withMutationLock(async () => {
       const context = await this.resolveContext();
-      const plugin = (await this.pluginRows(context)).own.get(id);
+      const rows = await this.pluginRows(context);
+      const plugin = rows.own.get(id);
       if (plugin) return this.setPluginEnabled(id, plugin, enabled);
       const resource = this.findResourceById("extension", context.extensions, id);
       this.writeResourceEnabled(context, resource, "extensions", enabled);
+      const attached = rows.attached.get(id)?.extension;
+      if (enabled && attached !== undefined) this.plugins?.setPluginEnabled(attached, true);
       await this.finishSettingsWrite(context.settingsManager);
       const latest = await this.resolveContext();
       const authoritative = await this.buildExtensionCatalog(latest);

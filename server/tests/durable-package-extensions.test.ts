@@ -824,6 +824,25 @@ describe("plugins on the extension list", () => {
     expect((await f.rows({ plugins: false })).map((row) => row.name)).not.toContain("oppi-control");
   });
 
+  it("turns a package's plugin back on with its row when the server config had it off", async () => {
+    const probe = writePackage("probe");
+    const f = await fixture(callsTool("unused"));
+    // Turned off for durable sessions only, as `oppi extensions disable probe` used to.
+    f.manager.setPluginEnabled("probe", false);
+    const row = rowNamed(await f.rows(), "probe");
+    expect(row).toMatchObject({
+      id: serverResourceId("extension", join(probe, "index.ts")),
+      state: "on",
+      plugin: { enabled: false },
+    });
+
+    const on = await f.route("PUT", `/server/resources/extensions/${row.id}/enabled`, {
+      enabled: true,
+    });
+    expect(on).toMatchObject({ status: 200, body: { state: "on", plugin: { enabled: true } } });
+    expect(f.storage.getConfig().experimental?.durableExtensions?.disabled ?? []).toEqual([]);
+  });
+
   it("marks a broken plugin's row as an error, and whether its previous code still runs", async () => {
     const probe = writePackage("probe");
     const newcomer = writePlugin("newcomer");
