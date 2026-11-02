@@ -1,6 +1,6 @@
 # Oppi client architecture: Where to look in code
 
-Part of [Oppi client architecture](../architecture-client.md). File pointers by area.
+Part of [Oppi client architecture](../architecture-client.md). Entry points only: one row per area, pointing at the owning files.
 
 ## Where to look in code
 

@@ -794,6 +794,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             control.onEvent { [weak connection] frame in
                 if let event = RexEvent(frame: frame) { connection?.receive(event) }
             }
+            // Attach, then take, each awaited: Rex does not process one connection's
+            // requests in order, so a request sent right behind the attach (a take, a
+            // `data.connect`) can be answered as if the stream were not attached.
             let attached = try await control.call("session.attach", ["session_id": target.sessionID])
             // Read apart: a view this client cannot read must not lose who it is.
             struct Attached: Decodable { let client_id: String? }
