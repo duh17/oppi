@@ -19,7 +19,7 @@ import {
   type UserInput,
 } from "@earendil-works/pi-durable";
 import { resolveDurableInputCards } from "./durable-input-cards.js";
-import { continuesAfter, recordRunFailure } from "./durable-failure-cards.js";
+import { continuesAfter, recordRunFailureCard } from "./durable-failure-cards.js";
 import { DURABLE_CONTINUE_REQUEST_ID_PREFIX } from "./durable-request-ids.js";
 import type { SessionHost } from "./durable-harness.js";
 import { createLogger } from "./logger.js";
@@ -212,7 +212,8 @@ export class DurableAgentController {
         const failure = (
           await this.harness.snapshot(LiveDoc, this.conversation.id, BACKGROUND_CONTEXT)
         )?.runFailure;
-        if (failure?.inputs.includes(record.id)) await recordRunFailure(this.conversation, failure);
+        if (failure?.inputs.includes(record.id))
+          await recordRunFailureCard(this.harness, this.conversation, failure);
       } catch (error) {
         log.warn("durable_failure.run_card_failed", {
           submissionId: record.id,
@@ -316,7 +317,7 @@ export class DurableAgentController {
   async continueAfterFailedRun(failed: RunFailure): Promise<"running" | "idle"> {
     const id = this.conversation.id;
     const inbox = await this.harness.snapshot(InboxDoc, id, BACKGROUND_CONTEXT);
-    if (continuesAfter(failed, inbox?.items ?? []))
+    if (await continuesAfter(this.harness, failed, inbox?.items ?? []))
       try {
         await this.conversation.submit(
           { type: "continue", requestId: `${DURABLE_CONTINUE_REQUEST_ID_PREFIX}${failed.taskId}` },

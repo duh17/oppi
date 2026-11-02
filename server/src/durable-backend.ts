@@ -83,7 +83,7 @@ import {
 import {
   DURABLE_FAILURE_ENTRY_KIND,
   reconcileFailureCards,
-  recordRunFailure,
+  recordRunFailureCard,
   runFailureText,
   recordTaskFailure,
 } from "./durable-failure-cards.js";
@@ -797,11 +797,13 @@ export class DurableBackend implements AgentBackend {
       // A run that ended without an answer gets its card here, whoever submitted its inputs (a
       // background job's follow-up, a reporter); the request id makes the controller's own write
       // for its prompts a no-op. The live error is the card's text, written or not, once per run.
+      // A host stop Oppi continues is no failure the user sees: no error, no card.
       const failure = frame.runFailure;
-      if (failure) {
+      const continued = failure?.reason === "interrupted" && frame.continuation !== undefined;
+      if (failure && !continued) {
         this.showRunError(runFailureText(failure));
         try {
-          await recordRunFailure(this.conversation, failure);
+          await recordRunFailureCard(this.harness, this.conversation, failure);
         } catch (error) {
           log.warn("durable_failure.run_card_failed", {
             taskId: failure.taskId,

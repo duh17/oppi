@@ -210,6 +210,36 @@ async function openHarness(
   return harness;
 }
 
+/**
+ * Once `conversationId`'s request is in flight in storage, the store's files as a dead process
+ * leaves them, in a new directory: no close, which would resend the request instead.
+ */
+async function crashImage(
+  harness: Harness,
+  conversationId: ConversationId,
+  dir: string,
+): Promise<string> {
+  await vi.waitFor(
+    async () => {
+      const live = await harness.snapshot(LiveDoc, conversationId, context);
+      const task = live?.run && (await harness.getTask(live.run.taskId, context));
+      expect((task?.state as { checkpoint?: { phase?: string } })?.checkpoint?.phase).toBe(
+        "request",
+      );
+      expect(live?.generation?.message).toBeDefined();
+    },
+    { timeout: 5_000 },
+  );
+  const crashed = makeTempDir("oppi-server-durable-crash-");
+  for (const suffix of ["", "-wal", "-shm"])
+    if (existsSync(join(dir, `restart.sqlite${suffix}`)))
+      writeFileSync(
+        join(crashed, `restart.sqlite${suffix}`),
+        readFileSync(join(dir, `restart.sqlite${suffix}`)),
+      );
+  return crashed;
+}
+
 /** Enrolled as an `engine: "durable"` create leaves it: durable, not yet bound. */
 function createDurableSession(storage: Storage, name: string): Session {
   const session = storage.createSession(name, "faux/faux-1");
@@ -3897,26 +3927,7 @@ describe("server durable managed runtime", () => {
       const id = f.session.serverDurable!.conversationId! as ConversationId;
       const conversation = (await harness.conversation(id, context))!;
       await first.prompt("Answer this once", { clientTurnId: "crash-turn" });
-      // Wait until the stored task has its request in flight, then take the store's files as
-      // a dead process leaves them: no close, which would resend instead.
-      await vi.waitFor(
-        async () => {
-          const live = await harness.snapshot(LiveDoc, conversation.id, context);
-          const task = live?.run && (await harness.getTask(live.run.taskId, context));
-          expect((task?.state as { checkpoint?: { phase?: string } })?.checkpoint?.phase).toBe(
-            "request",
-          );
-          expect(live?.generation?.message).toBeDefined();
-        },
-        { timeout: 5_000 },
-      );
-      const crashed = makeTempDir("oppi-server-durable-crash-");
-      for (const suffix of ["", "-wal", "-shm"])
-        if (existsSync(join(f.dir, `restart.sqlite${suffix}`)))
-          writeFileSync(
-            join(crashed, `restart.sqlite${suffix}`),
-            readFileSync(join(f.dir, `restart.sqlite${suffix}`)),
-          );
+      const crashed = await crashImage(harness, conversation.id, f.dir);
       await first.dispose();
       f.faux.setResponses([fauxAssistantMessage("ANSWERED_AFTER_CRASH")]);
       const reopened = await openHarness(crashed, f.models, undefined, retry);
@@ -3944,6 +3955,94 @@ describe("server durable managed runtime", () => {
     },
     20_000,
   );
+
+  /** A store whose run a crash cut off and pi-durable then ended `interrupted`, with nothing attached. */
+  async function interruptedWithoutSession(
+    f: Awaited<ReturnType<typeof fixture>>,
+    id: ConversationId,
+    crashed: string,
+  ): Promise<Harness> {
+    const reopened = await openHarness(crashed, f.models, undefined, { enabled: false });
+    reopened.resume();
+    await vi.waitFor(
+      async () => {
+        const live = await reopened.snapshot(LiveDoc, id, context);
+        expect(live?.run).toBeUndefined();
+        expect(live?.runFailure?.reason).toBe("interrupted");
+      },
+      { timeout: 10_000 },
+    );
+    return reopened;
+  }
+
+  it("continues a run a crash cut off before any session attached, once one attaches", async () => {
+    const f = await fixture(
+      [fauxAssistantMessage("A long answer the host dies in the middle of. ".repeat(20))],
+      { slow: true },
+    );
+    const harness = await openHarness(f.dir, f.models);
+    const first = await backend(harness, f.models, f.session, f.dir);
+    const id = f.session.serverDurable!.conversationId! as ConversationId;
+    await first.prompt("Answer this once", { clientTurnId: "attach-crash-turn" });
+    const crashed = await crashImage(harness, id, f.dir);
+    await first.dispose();
+    f.faux.setResponses([fauxAssistantMessage("ANSWERED_ON_ATTACH")]);
+    const reopened = await interruptedWithoutSession(f, id, crashed);
+    const resumed = await backend(reopened, f.models, f.session, crashed);
+    await vi.waitFor(
+      async () => expect(JSON.stringify(await resumed.messages())).toContain("ANSWERED_ON_ATTACH"),
+      { timeout: 10_000 },
+    );
+    const conversation = (await reopened.conversation(id, context))!;
+    await conversation.waitForIdle(context);
+    const entries = (await conversation.entries({}, 50, undefined, context)).items;
+    expect(entries.some((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND)).toBe(false);
+    await resumed.dispose();
+  }, 20_000);
+
+  it("continues a crash-cut run once, then shows a card when its continue is cut off too", async () => {
+    const long = "A long answer the host dies in the middle of. ".repeat(20);
+    const f = await fixture([fauxAssistantMessage(long)], { slow: true });
+    const harness = await openHarness(f.dir, f.models);
+    const first = await backend(harness, f.models, f.session, f.dir);
+    const id = f.session.serverDurable!.conversationId! as ConversationId;
+    await first.prompt("Answer this once", { clientTurnId: "twice-crash-turn" });
+    const crashedOnce = await crashImage(harness, id, f.dir);
+    await first.dispose();
+    // The continue streams slowly too, and the host dies in the middle of it as well.
+    f.faux.setResponses([fauxAssistantMessage(long)]);
+    const second = await openHarness(crashedOnce, f.models, undefined, { enabled: false });
+    const continuing = await backend(second, f.models, f.session, crashedOnce);
+    const crashedTwice = await crashImage(second, id, crashedOnce);
+    await continuing.dispose();
+    const calls = f.faux.state.callCount;
+    f.faux.setResponses([fauxAssistantMessage("MUST_NOT_RUN")]);
+    const third = await interruptedWithoutSession(f, id, crashedTwice);
+    const failure = (await third.snapshot(LiveDoc, id, context))!.runFailure!;
+    const records = await Promise.all(
+      failure.inputs.map(async (input) =>
+        (await third.submission(input, context))!.status(context),
+      ),
+    );
+    // The run the second crash ended was Oppi's continue.
+    expect(records.some((record) => record.type === "continue")).toBe(true);
+    const resumed = await backend(third, f.models, f.session, crashedTwice);
+    const conversation = (await third.conversation(id, context))!;
+    await vi.waitFor(
+      async () => {
+        const entries = (await conversation.entries({}, 50, undefined, context)).items;
+        const cards = entries.filter((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND);
+        expect(cards).toHaveLength(1);
+        expect(JSON.stringify(cards[0]!.data)).toContain("interrupted");
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await third.snapshot(LiveDoc, id, context))?.run).toBeUndefined();
+    expect(f.faux.state.callCount).toBe(calls);
+    expect(JSON.stringify(await resumed.messages())).not.toContain("MUST_NOT_RUN");
+    await resumed.dispose();
+  }, 30_000);
 
   it("marks two crashed stopped conversations while paused before the third runs its tool", async () => {
     const f = await fixture([]);

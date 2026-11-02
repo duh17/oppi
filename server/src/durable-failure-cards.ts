@@ -15,7 +15,10 @@ import {
   type TaskRecord,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { DURABLE_FAILURE_REQUEST_ID_PREFIX } from "./durable-request-ids.js";
+import {
+  DURABLE_CONTINUE_REQUEST_ID_PREFIX,
+  DURABLE_FAILURE_REQUEST_ID_PREFIX,
+} from "./durable-request-ids.js";
 
 /** Display-only transcript row. Not a model message, and not `oppi-` (that prefix is hidden). */
 export const DURABLE_FAILURE_ENTRY_KIND = "oppi.failure";
@@ -37,26 +40,62 @@ export const FailureCardsDoc = defineDoc<{ taskId: number; open: number[] }>({
 });
 
 /**
- * Run ends that are no failure: an explicit Stop, a continue that found nothing to answer, and
- * a host stop mid-request, which Oppi continues (`continuesAfter`). Withdrawn queued inputs
- * settle without a run, so they never reach `runFailure`.
+ * Run ends that are no failure: an explicit Stop, and a continue that found nothing to answer.
+ * Withdrawn queued inputs settle without a run, so they never reach `runFailure`.
  */
 const QUIET_RUN_FAILURES: ReadonlySet<RunFailure["reason"]> = new Set([
   "aborted",
   "nothing_to_answer",
-  "interrupted",
 ]);
 
 /** The unanswered reasons of a failed run: pi-durable keeps the inputs queued behind it. */
 const FAILED_RUN_REASONS: ReadonlySet<RunFailure["reason"]> = new Set(["model_error", "no_model"]);
 
 /**
- * Whether Oppi continues after `failure`: a run a host stop cut off with no retry left
- * (`interrupted`) always, a failed one when inputs wait queued behind it.
+ * Whether the failed run was itself Oppi's continue: its inputs hold a continue submission
+ * under the reserved request id. A continue's run has a new task and a fresh retry budget, so
+ * this is what bounds continuing after a host stop to once per chain.
  */
-export function continuesAfter(failure: RunFailure, inbox: InboxState["items"]): boolean {
-  if (failure.reason === "interrupted") return true;
+async function continuedAlready(harness: Harness, failure: RunFailure): Promise<boolean> {
+  for (const id of failure.inputs) {
+    const record = await (await harness.submission(id, context))?.status(context);
+    if (
+      record?.type === "continue" &&
+      record.requestId?.startsWith(DURABLE_CONTINUE_REQUEST_ID_PREFIX) === true
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
+ * Whether Oppi continues after `failure`: a failed run (`model_error`, `no_model`) when inputs
+ * wait queued behind it; a run a host stop cut off with no retry left (`interrupted`) once, as
+ * pi-durable 1.4.0 resent such a request, but not when that run was the continue: a request
+ * that keeps stopping the host would otherwise loop.
+ */
+export async function continuesAfter(
+  harness: Harness,
+  failure: RunFailure,
+  inbox: InboxState["items"],
+): Promise<boolean> {
+  if (failure.reason === "interrupted") return !(await continuedAlready(harness, failure));
   return FAILED_RUN_REASONS.has(failure.reason) && inbox.some((item) => item.mode !== "write");
+}
+
+/**
+ * Write `failure`'s card unless Oppi continues it (an `interrupted` run not continued yet), or it
+ * is quiet. Other failures queue their commit before returning, as `recordRunFailure`.
+ */
+export function recordRunFailureCard(
+  harness: Harness,
+  conversation: Conversation,
+  failure: RunFailure,
+): Promise<void> {
+  if (failure.reason !== "interrupted") return recordRunFailure(conversation, failure);
+  return continuedAlready(harness, failure).then((continued) =>
+    continued ? recordRunFailure(conversation, failure) : undefined,
+  );
 }
 
 const PAGE = 100;
@@ -184,13 +223,41 @@ export function recordTaskFailure(
   );
 }
 
-function taskFailureBody(task: TaskRecord<JsonValue, JsonValue, JsonValue>): string | undefined {
-  if (task.kind === "pi.compaction" || task.kind === "pi.generation") return undefined;
-  if (task.state.status !== "terminal") return undefined;
+type TaskCard = { requestId: string; title: string; body: string; status?: string };
+
+/**
+ * The card a terminal task's record calls for. A generation that ended its run without an
+ * answer gets the run's card under the key the live path uses (`runFailure.taskId` is that
+ * generation), so a card that landed is not written twice; `interrupted` is left to the
+ * continue, which decides whether it gets one. Other faulted or orphaned tasks get a task card.
+ */
+function taskFailureCard(task: TaskRecord<JsonValue, JsonValue, JsonValue>): TaskCard | undefined {
+  if (task.kind === "pi.compaction" || task.state.status !== "terminal") return undefined;
   const outcome = task.state.outcome;
-  if (outcome.status === "faulted") return outcome.error.message.trim() || task.kind;
-  if (outcome.status === "orphaned") return outcome.reason.trim() || task.kind;
-  return undefined;
+  if (task.kind === "pi.generation") {
+    // Version 1 generations ran on pi-durable 1.4.0, whose failures got a card per input.
+    if (outcome.status !== "failed" || task.version < 2) return undefined;
+    const detail = outcome.error.detail;
+    const reason =
+      detail && typeof detail === "object" && !Array.isArray(detail) ? detail.reason : undefined;
+    if (typeof reason !== "string" || reason === "interrupted") return undefined;
+    if (QUIET_RUN_FAILURES.has(reason as RunFailure["reason"])) return undefined;
+    return {
+      requestId: failureRunRequestId(task.id),
+      title: "Run failed",
+      body: outcome.error.message.trim() || reason,
+      status: reason,
+    };
+  }
+  const body =
+    outcome.status === "faulted"
+      ? outcome.error.message.trim() || task.kind
+      : outcome.status === "orphaned"
+        ? outcome.reason.trim() || task.kind
+        : undefined;
+  return body === undefined
+    ? undefined
+    : { requestId: failureTaskRequestId(task.id), title: "Task failed", body };
 }
 
 /** `{ after }` is the continuation `scanTasks` returns. A stored task id resumes the same scan. */
@@ -248,7 +315,7 @@ export async function reconcileFailureCards(
   storage: Storage,
 ): Promise<void> {
   const failure = (await harness.snapshot(LiveDoc, conversation.id, context))?.runFailure;
-  if (failure) await recordRunFailure(conversation, failure);
+  if (failure) await recordRunFailureCard(harness, conversation, failure);
   await reconcileTaskCards(conversation, storage);
 }
 
@@ -294,26 +361,26 @@ async function reconcileTaskCards(conversation: Conversation, storage: Storage):
     examinedThrough !== mark.taskId ||
     openIds.length !== mark.open.length ||
     openIds.some((id, index) => id !== mark.open[index]);
-  const cardTasks = candidates.filter((task) => taskFailureBody(task) !== undefined);
-  if (!watermarkMoved && cardTasks.length === 0) return;
+  const cards = candidates.flatMap((task) => taskFailureCard(task) ?? []);
+  if (!watermarkMoved && cards.length === 0) return;
 
   await conversation.commit(async (tx) => {
     // Resolve every request id before the first append. A table read after a
     // table write is rejected, so the second card would roll this commit back
     // and the watermark would never advance.
-    const missing: Array<{ requestId: string; body: string; at: number }> = [];
-    for (const task of cardTasks) {
-      const body = taskFailureBody(task);
-      if (!body) continue;
-      const requestId = failureTaskRequestId(task.id);
-      if (await tx.submissionByRequest(conversation.id, requestId)) continue;
-      missing.push({ requestId, body, at: Date.now() });
+    const missing: TaskCard[] = [];
+    for (const card of cards) {
+      if (await tx.submissionByRequest(conversation.id, card.requestId)) continue;
+      if (card.status && (await assistantFailureAlreadyVisible(tx, conversation.id, card.body)))
+        continue;
+      missing.push(card);
     }
     for (const card of missing) {
       await appendFailureCard(tx, conversation.id, card.requestId, {
-        title: "Task failed",
+        title: card.title,
         body: card.body,
-        at: card.at,
+        at: Date.now(),
+        ...(card.status ? { status: card.status } : {}),
       });
     }
     const doc = await tx.doc(FailureCardsDoc, conversation.id);

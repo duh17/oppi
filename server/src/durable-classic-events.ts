@@ -566,7 +566,7 @@ export class DurableClassicEvents {
       // where it was, as 1.4.0's resend did (`DurableAgentController.continueAfterFailedRun`).
       const failure = frame.runFailure;
       if (runStarted) this.settleHeld = false;
-      else if (failure && continuesAfter(failure, inboxOf(next))) {
+      else if (failure && (await continuesAfter(this.harness, failure, inboxOf(next)))) {
         this.settleHeld = true;
         frame.continuation = failure;
       } else out.push(pi({ type: "agent_settled" }));
