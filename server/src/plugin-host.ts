@@ -149,8 +149,8 @@ export class PluginHost {
   private host?: Host;
   /** Installed plugins in install order: built-ins, then owner plugins. */
   private entries: Entry[] = [];
-  /** Composition order of the installed plugins, read by the core facet's `compose`. */
-  private order = new Map<string, number>();
+  /** What the core facet's `compose` orders by: the plugin set Chord is committing or holds. */
+  private composition: Composition = { order: new Map(), builtIns: new Set() };
   private classicIndex: ClassicPluginIndex = { bundled: new Set(), names: new Map() };
   private sync: Promise<unknown> = Promise.resolve();
   private reader?: RegistryReader;
@@ -252,11 +252,11 @@ export class PluginHost {
       }
     };
     for (const extension of this.options.core.first) install(extension);
+    const { order, builtIns } = this.composition;
     const sorted = [...table].sort(
-      (a, b) => (this.order.get(a.plugin) ?? Infinity) - (this.order.get(b.plugin) ?? Infinity),
+      (a, b) => (order.get(a.plugin) ?? Infinity) - (order.get(b.plugin) ?? Infinity),
     );
-    const builtIn = (plugin: string): boolean =>
-      this.entries.find((entry) => entry.loaded.name === plugin)?.loaded.source === "built-in";
+    const builtIn = (plugin: string): boolean => builtIns.has(plugin);
     for (const { plugin, value } of sorted) if (builtIn(plugin)) install(value, plugin);
     for (const extension of this.options.core.afterBuiltIns) install(extension);
     for (const { plugin, value } of sorted) if (!builtIn(plugin)) install(value, plugin);
@@ -416,60 +416,61 @@ export class PluginHost {
       { name: CORE_PLUGIN, facet: this.core },
       ...accepted.map((entry) => ({ name: entry.loaded.name, facet: entry.facet })),
     ];
-    const committed = (list: readonly Candidate[]): void => {
-      this.entries = [
-        ...list.filter((entry) => entry.loaded.source === "built-in"),
-        ...list.filter((entry) => entry.loaded.source === "owner"),
-      ].map(({ loaded, facet }) => ({ loaded, facet }));
-      this.order = new Map(this.entries.map((entry, index) => [entry.loaded.name, index]));
-    };
+    // `compose` runs inside Chord's commit, so it orders by the set being committed; the plugin
+    // list itself changes only once Chord took it, and a load or reload that rejects (before its
+    // commit) leaves both as they were.
+    this.composition = compositionOf(arranged(accepted));
     let result = accepted;
-    if (!this.host) {
-      const host = createHost({ onError: reportHostError });
-      committed(accepted);
-      const report = await host.load(facets, BACKGROUND_CONTEXT);
-      this.host = host;
-      if (report.failed.length > 0) {
-        const failed = new Set(report.failed.map((failure) => failure.plugin));
-        for (const failure of report.failed)
-          errors.push({
-            path: this.options.builtInDir,
-            plugin: failure.plugin,
-            message: safeErrorMessage(failure.error),
+    try {
+      if (!this.host) {
+        const host = createHost({ onError: reportHostError });
+        const report = await host.load(facets, BACKGROUND_CONTEXT);
+        this.host = host;
+        if (report.failed.length > 0) {
+          const failed = new Set(report.failed.map((failure) => failure.plugin));
+          for (const failure of report.failed)
+            errors.push({
+              path: this.options.builtInDir,
+              plugin: failure.plugin,
+              message: safeErrorMessage(failure.error),
+            });
+          if ([...failed].some((name) => this.options.required.has(name))) throw fatal(errors);
+          result = accepted.filter((entry) => !failed.has(entry.loaded.name));
+        }
+        const value = await host.registry(Extensions, BACKGROUND_CONTEXT);
+        this.reader = withOverlay(registryReader(value, BACKGROUND_CONTEXT), this.overlay);
+      } else {
+        const failed = accepted
+          .filter((entry) => !entry.fresh)
+          .map((entry) => ({
+            plugin: entry.loaded.name,
+            error: new Error("Its new code failed to load"),
+          }));
+        const report = await this.host.reload(facets, BACKGROUND_CONTEXT, { failed });
+        // Chord kept the old code of a plugin whose setup failed in its staging.
+        const known = new Set(failed.map((failure) => failure.plugin));
+        const chordFailed = report.failed.filter((failure) => !known.has(failure.plugin));
+        if (chordFailed.length > 0) {
+          result = accepted.flatMap((entry) => {
+            if (!chordFailed.some((failure) => failure.plugin === entry.loaded.name))
+              return [entry];
+            const old = previous.get(entry.loaded.name);
+            return old ? [{ ...old, fresh: false }] : [];
           });
-        if ([...failed].some((name) => this.options.required.has(name))) throw fatal(errors);
-        result = accepted.filter((entry) => !failed.has(entry.loaded.name));
-        committed(result);
+          for (const failure of chordFailed)
+            errors.push({
+              path: this.options.builtInDir,
+              plugin: failure.plugin,
+              message: safeErrorMessage(failure.error),
+            });
+        }
       }
-      const value = await host.registry(Extensions, BACKGROUND_CONTEXT);
-      this.reader = withOverlay(registryReader(value, BACKGROUND_CONTEXT), this.overlay);
-    } else {
-      const failed = accepted
-        .filter((entry) => !entry.fresh)
-        .map((entry) => ({
-          plugin: entry.loaded.name,
-          error: new Error("Its new code failed to load"),
-        }));
-      committed(accepted);
-      const report = await this.host.reload(facets, BACKGROUND_CONTEXT, { failed });
-      // Chord kept the old code of a plugin whose setup failed in its staging.
-      const known = new Set(failed.map((failure) => failure.plugin));
-      const chordFailed = report.failed.filter((failure) => !known.has(failure.plugin));
-      if (chordFailed.length > 0) {
-        result = accepted.flatMap((entry) => {
-          if (!chordFailed.some((failure) => failure.plugin === entry.loaded.name)) return [entry];
-          const old = previous.get(entry.loaded.name);
-          return old ? [{ ...old, fresh: false }] : [];
-        });
-        for (const failure of chordFailed)
-          errors.push({
-            path: this.options.builtInDir,
-            plugin: failure.plugin,
-            message: safeErrorMessage(failure.error),
-          });
-        committed(result);
-      }
+    } catch (error) {
+      this.composition = compositionOf(this.entries);
+      throw error;
     }
+    this.entries = arranged(result);
+    this.composition = compositionOf(this.entries);
 
     const names = new Set(result.map((entry) => entry.loaded.extension.name));
     const pluginReport: PluginReport = {
@@ -553,6 +554,29 @@ function take(taken: Taken, plugin: LoadedPlugin): void {
   for (const tool of plugin.extension.tools ?? []) taken.tools.set(tool.name, holder);
   for (const task of plugin.extension.tasks ?? []) taken.tasks.set(task.definition.name, holder);
 }
+
+/** `list` in install order, built-ins first. */
+function arranged(list: readonly Entry[]): Entry[] {
+  return [
+    ...list.filter((entry) => entry.loaded.source === "built-in"),
+    ...list.filter((entry) => entry.loaded.source === "owner"),
+  ].map(({ loaded, facet }) => ({ loaded, facet }));
+}
+
+/** What `compose` orders by: each plugin's place, and which are built-ins. */
+function compositionOf(entries: readonly Entry[]): Composition {
+  return {
+    order: new Map(entries.map((entry, index) => [entry.loaded.name, index])),
+    builtIns: new Set(
+      entries.filter((entry) => entry.loaded.source === "built-in").map((e) => e.loaded.name),
+    ),
+  };
+}
+
+type Composition = {
+  readonly order: ReadonlyMap<string, number>;
+  readonly builtIns: ReadonlySet<string>;
+};
 
 /** Whether `dir` lies inside `path`. */
 function isInside(path: string, dir: string): boolean {
