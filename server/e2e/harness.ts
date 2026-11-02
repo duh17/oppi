@@ -6,8 +6,8 @@
  * - Docker mode (default): spins up oppi-e2e container
  * - Native mode (E2E_NATIVE=1): starts server as child process (faster iteration)
  *
- * Model-backed suites run Claude Haiku through the developer's Pi Anthropic
- * login (see model-lane.ts).
+ * Model-backed suites run DeepSeek V4.1 Flash through the developer's Pi
+ * OpenCode Go credential (see model-lane.ts).
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
@@ -28,7 +28,7 @@ import { basename, join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
-import { E2E_MODEL, resolveE2EAnthropicToken, writeE2EModelLane } from "./model-lane.ts";
+import { E2E_MODEL, resolveE2EModelToken, writeE2EModelLane } from "./model-lane.ts";
 
 export { E2E_MODEL } from "./model-lane.ts";
 
@@ -133,10 +133,10 @@ function applySelfSignedTlsBypass(): void {
 
 // ── Model lane check ──
 
-/** True when the developer's Pi Anthropic login can serve the Haiku lane. */
+/** True when the developer's Pi credential can serve the DeepSeek lane. */
 export async function ensureE2EModelReady(): Promise<boolean> {
   try {
-    await resolveE2EAnthropicToken();
+    await resolveE2EModelToken();
     console.log(`[e2e] Model lane ready: ${E2E_MODEL}`);
     return true;
   } catch (err) {
@@ -252,11 +252,9 @@ async function startDockerServer(): Promise<void> {
   }
 
   dockerPiAgentDir = mkdtempSync(join(tmpdir(), "oppi-e2e-pi-agent-"));
-  // The container cannot follow a host extension link.
-  await writeE2EModelLane(dockerPiAgentDir, undefined, "");
-  console.warn(
-    "[e2e] Docker cannot load an Anthropic subscription extension; a subscription login is billed as extra usage. Use E2E_NATIVE=1.",
-  );
+  // An API key needs no host path inside the container: the compose file mounts
+  // these two generated files read-only.
+  await writeE2EModelLane(dockerPiAgentDir);
 
   execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 300`, {
     cwd: HARNESS_SERVER_DIR,
@@ -338,8 +336,8 @@ async function startNativeServer(): Promise<void> {
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
-  // A self-contained Pi agent dir: the Haiku lane only, never the developer's
-  // models, settings, or refresh tokens.
+  // A self-contained Pi agent dir: the DeepSeek lane only, never the developer's
+  // models, settings, or other provider credentials.
   await writeE2EModelLane(join(nativeDataDir, "pi-agent"));
 
   await launchNativeServerProcess();
@@ -432,7 +430,7 @@ async function stopNativeServer(): Promise<void> {
 
   if (nativeDataDir) {
     if (process.env.E2E_KEEP_NATIVE_DATA_DIR === "1") {
-      // Keep logs and state, not the Anthropic access token.
+      // Keep logs and state, not the provider API key.
       rmSync(join(nativeDataDir, "pi-agent", "auth.json"), { force: true });
       console.warn(`[e2e] Preserving native data dir for debugging: ${nativeDataDir}`);
     } else {

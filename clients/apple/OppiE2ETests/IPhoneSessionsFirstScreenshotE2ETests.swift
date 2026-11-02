@@ -717,11 +717,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let modelSearch = app.searchFields["Search models…"]
         if !modelSearch.exists { app.swipeDown() }
         tap(modelSearch, named: "search schedule models")
-        modelSearch.typeText("Haiku 5.5")
-        let selectedModel = "anthropic/claude-haiku-5-5"
+        modelSearch.typeText("DeepSeek V4.1")
+        let selectedModel = "opencode-go/deepseek-v4.1-flash"
         let modelRow = app.buttons["model.picker.row.\(selectedModel)"]
-        XCTAssertTrue(modelRow.waitForExistence(timeout: 20), "Schedule model picker had no Haiku model")
-        XCTAssertEqual(modelRow.label, "Claude Haiku 5.5")
+        XCTAssertTrue(modelRow.waitForExistence(timeout: 20), "Schedule model picker had no DeepSeek model")
+        XCTAssertEqual(modelRow.label, "DeepSeek V4.1 Flash")
         tap(modelRow, named: "schedule model")
         tap(app.buttons["session.toolbar.thinking"], named: "schedule thinking picker")
         tap(app.buttons["session.toolbar.thinking.option.high"], named: "High schedule thinking")

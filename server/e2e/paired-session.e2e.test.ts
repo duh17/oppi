@@ -11,7 +11,7 @@
  *   7. Verifies tool_start → tool_output → tool_end lifecycle
  *   8. Reconnects the split session stream and receives fresh state
  *
- * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
+ * Requires: Docker or native server, a Pi OpenCode Go credential for the DeepSeek model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";

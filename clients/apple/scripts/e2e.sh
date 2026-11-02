@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Orchestrates iOS E2E tests:
 # 1. Starts server (Docker by default, or native process with --native)
-# 2. Runs model-backed sessions on Claude Haiku via your Pi Anthropic login
-#    (server/e2e/model-lane.ts)
+# 2. Runs model-backed sessions on DeepSeek V4.1 Flash via your Pi OpenCode Go
+#    credential (server/e2e/model-lane.ts)
 # 3. Generates invite URL for pairing
 # 4. Runs XCUITests with invite URL passed via temp file
 # 5. Tears down server
@@ -39,7 +39,7 @@ Options:
   --durable             Set experimental.serverDurable on the E2E server and have
                         E2ETestCase create sessions with engine "durable". Needs --native.
   --faux-model          Serve the scripted test-only model oppi-e2e-faux/oppi-e2e-faux-1
-                        instead of Haiku (no Anthropic login needed). Needs --durable.
+                        instead of DeepSeek (no provider credential needed). Needs --durable.
   --group GROUP         E2E target group: gate (default), extended, recovery, history, quick-session, extension-attention, all, smoke, regression, full-regression, media, or screenshot.
                         all, regression, and full-regression skip the two-server suites (they need server/scripts/e2e-two-server.ts).
   --only-testing TARGET Run one XCTest bundle, suite, or test target. May be repeated.
@@ -58,9 +58,7 @@ Environment:
   OPPI_E2E_FAUX_MODEL   1 = --faux-model.
   E2E_ARTIFACT_DIR      Absolute or repo-relative directory for E2E run artifacts.
   E2E_DOCKER_LOG_DIR    Absolute or repo-relative Docker log directory.
-  E2E_SOURCE_PI_AGENT_DIR  Pi agent dir with the Anthropic login (default: ~/.pi/agent).
-  E2E_ANTHROPIC_EXTENSION  Pi extension for Anthropic subscription requests
-                        (native mode only; unset by default).
+  E2E_SOURCE_PI_AGENT_DIR  Pi agent dir with the OpenCode Go credential (default: ~/.pi/agent).
   E2E_PORT              Local E2E server port.
 
 Examples:
@@ -308,7 +306,7 @@ else
 fi
 
 echo "[e2e] Session engine: $E2E_SESSION_ENGINE"
-$FAUX_MODEL && echo "[e2e] Model: scripted faux model (no Haiku)"
+$FAUX_MODEL && echo "[e2e] Model: scripted faux model (no provider calls)"
 echo "[e2e] E2E group: $E2E_GROUP"
 echo "[e2e] XCTest only-testing: ${ONLY_TESTING[*]}"
 if [[ ${#SKIP_TESTING[@]} -gt 0 ]]; then
@@ -348,7 +346,7 @@ RUN_DIR=$(mktemp -d /tmp/oppi-e2e-run-XXXXXX)
 INVITE_FILE="$RUN_DIR/invite.txt"
 DEVICE_TOKEN_FILE="$RUN_DIR/device-token.txt"
 BOOTSTRAP_CREDENTIAL_FILE="$RUN_DIR/bootstrap-device.json"
-# Isolated Pi auth.json + settings.json for the Haiku lane (inside RUN_DIR).
+# Isolated Pi auth.json + settings.json for the DeepSeek lane (inside RUN_DIR).
 MODEL_LANE_DIR=""
 SERVER_PID=""
 APPROVER_PID=""
@@ -371,7 +369,7 @@ cleanup() {
             if [ "$exit_code" -eq 0 ]; then
                 rm -rf "$DATA_DIR"
             else
-                # Keep logs and state, not the Anthropic access token.
+                # Keep logs and state, not the provider API key.
                 rm -f "$DATA_DIR/pi-agent/auth.json"
                 echo "[e2e] Preserving native data dir for failure debugging: $DATA_DIR"
             fi
@@ -391,7 +389,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── 1. Prepare the Haiku model lane ──
+# ── 1. Prepare the DeepSeek model lane ──
 
 # A fresh worktree has no server/node_modules; this is a no-op once they match package-lock.json.
 node "$REPO_ROOT/server/scripts/ensure-installed-deps.mjs"
@@ -402,21 +400,16 @@ if $FAUX_MODEL; then
         echo "[e2e] ERROR: --faux-model needs OPPI_E2E_UI_HARNESS=1" >&2
         exit 1
     fi
-    echo "[e2e] Skipping the Haiku lane: using the faux model"
+    echo "[e2e] Skipping the DeepSeek lane: using the faux model"
 else
-    # Only a current Anthropic access token and enabledModels; the refresh
-    # token stays in the source Pi login.
+    # Only the lane provider's API key and enabledModels; the rest of the
+    # developer's Pi login stays in ~/.pi/agent.
     MODEL_LANE_DIR="$RUN_DIR/pi-agent"
-    # Subscription OAuth through Pi's built-in provider bills as extra usage;
-    # a subscription login needs E2E_ANTHROPIC_EXTENSION (native mode only).
     E2E_MODEL=$(node "$REPO_ROOT/server/e2e/model-lane.ts" write "$MODEL_LANE_DIR") || {
-        echo "[e2e] ERROR: could not prepare the Haiku model lane"
+        echo "[e2e] ERROR: could not prepare the DeepSeek model lane"
         exit 1
     }
     echo "[e2e] Model: $E2E_MODEL"
-    if $NATIVE_MODE && [ -z "${E2E_ANTHROPIC_EXTENSION:-}" ]; then
-        echo "[e2e] WARNING: E2E_ANTHROPIC_EXTENSION is not set. A Pi subscription login sent through Pi's built-in Anthropic provider bills as extra usage. Set E2E_ANTHROPIC_EXTENSION to the Pi extension that owns subscription requests (see server/e2e/README.md), or use --durable --faux-model for no model calls." >&2
-    fi
 fi
 
 # Remove stale E2E listeners/containers so health checks cannot accidentally
@@ -475,7 +468,7 @@ EOF
         echo "[e2e] Generated faux-model settings.json at $PI_AGENT_DIR/settings.json"
     else
         node "$REPO_ROOT/server/e2e/model-lane.ts" write "$PI_AGENT_DIR" >/dev/null
-        echo "[e2e] Installed the Haiku lane in $PI_AGENT_DIR"
+        echo "[e2e] Installed the DeepSeek lane in $PI_AGENT_DIR"
     fi
 
     # Start server as background process
@@ -491,8 +484,7 @@ EOF
     SERVER_PID=$!
     echo "[e2e] Server PID: $SERVER_PID"
 else
-    # Start Docker server with the Haiku lane mounted as the container's Pi auth/settings
-    echo "[e2e] WARNING: Docker cannot load the Anthropic subscription extension; a subscription login is billed as extra usage. Use --native." >&2
+    # Start Docker server with the DeepSeek lane mounted as the container's Pi auth/settings
     echo "[e2e] Starting Docker server on port $E2E_PORT ..."
     E2E_PORT="$E2E_PORT" OPPI_E2E_UI_HARNESS="$OPPI_E2E_UI_HARNESS" \
         E2E_PI_AUTH_JSON="$MODEL_LANE_DIR/auth.json" E2E_PI_SETTINGS_JSON="$MODEL_LANE_DIR/settings.json" \

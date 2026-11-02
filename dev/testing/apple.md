@@ -368,7 +368,7 @@ cd clients/apple
 
 Prerequisites:
 
-- a Pi Anthropic login in `~/.pi/agent/auth.json` (`pi`, then `/login`). E2E sessions run `anthropic/claude-haiku-5-5`; the server gets only a current access token, never the refresh token. A subscription login also needs `E2E_ANTHROPIC_EXTENSION` (see `server/e2e/README.md`). See `server/e2e/model-lane.ts`.
+- an OpenCode Go credential in `~/.pi/agent/auth.json` (`pi`, then `/login`), or `OPENCODE_API_KEY`. E2E sessions run `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash); the server gets only that provider's API key, never the rest of your Pi login. The lane needs no Pi extension. See `server/e2e/model-lane.ts` and `server/e2e/README.md`.
 
 #### Writing order-independent E2E cases
 
@@ -386,12 +386,12 @@ The case owns the rest:
 
 #### Durable sessions and the faux model
 
-Two opt-in `e2e.sh` switches, both native-only. Without them every E2E keeps classic sessions on Haiku.
+Two opt-in `e2e.sh` switches, both native-only. Without them every E2E keeps classic sessions on DeepSeek V4.1 Flash.
 
 | Switch | Effect |
 | --- | --- |
 | `--durable` (`OPPI_E2E_DURABLE=1`) | Sets `experimental.serverDurable` on the E2E server and passes `TEST_RUNNER_OPPI_E2E_SESSION_ENGINE=durable`, so `E2ETestCase.createSession()` creates sessions with `engine: "durable"`. Sessions the app creates itself, such as the launch auto-create, stay classic. |
-| `--faux-model` (`OPPI_E2E_FAUX_MODEL=1`) | Needs `--durable`. Skips the Haiku model lane, starts the server with `OPPI_E2E_FAUX_PROVIDER=1`, and writes Pi `settings.json` defaulting to `oppi-e2e-faux/oppi-e2e-faux-1`. |
+| `--faux-model` (`OPPI_E2E_FAUX_MODEL=1`) | Needs `--durable`. Skips the DeepSeek model lane, starts the server with `OPPI_E2E_FAUX_PROVIDER=1`, and writes Pi `settings.json` defaulting to `oppi-e2e-faux/oppi-e2e-faux-1`. |
 
 The faux model is pi-ai's faux provider with a fixed script (`server/src/e2e-faux-provider.ts`). Every request gets the same reply for the same prompt: it echoes the last user text and ends with `End of faux reply.`, streamed at 4 tokens per second (about 17 seconds), so a test can observe the live row, queue inputs, stop, or drop the connection before the reply lands. The server registers it only when both `OPPI_E2E_UI_HARNESS=1` and `OPPI_E2E_FAUX_PROVIDER=1` are in its environment. No config key, route, or app request turns it on. It is registered on the server-wide model runtime, which only durable sessions use; classic sessions cannot select it.
 

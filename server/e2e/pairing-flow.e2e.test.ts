@@ -9,7 +9,7 @@
  *   5. Device token authenticates all subsequent API calls
  *   6. Device can list workspaces, create sessions, and access split streams
  *
- * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
+ * Requires: Docker or native server, a Pi OpenCode Go credential for the DeepSeek model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";

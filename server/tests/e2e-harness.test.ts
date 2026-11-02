@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -6,11 +7,13 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -30,7 +33,13 @@ import {
   refreshE2EAccessToken,
   resetE2EAuthSessions,
 } from "../e2e/harness.js";
-import { E2E_MODEL, writeE2EModelLane } from "../e2e/model-lane.js";
+import {
+  E2E_MODEL,
+  E2E_MODEL_ID,
+  E2E_MODEL_PROVIDER,
+  isEntrypoint,
+  writeE2EModelLane,
+} from "../e2e/model-lane.js";
 
 function requestPath(url: string | URL): string {
   return new URL(String(url), "http://127.0.0.1").pathname;
@@ -64,7 +73,7 @@ describe("E2E harness helpers", () => {
     vi.unstubAllEnvs();
   });
 
-  it("gives the isolated E2E agent only the Anthropic token and scopes it to Haiku", async () => {
+  it("gives the isolated E2E agent only the DeepSeek lane key and scopes it to that model", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-e2e-lane-"));
     try {
       const source = join(root, "source");
@@ -73,33 +82,94 @@ describe("E2E harness helpers", () => {
       writeFileSync(
         join(source, "auth.json"),
         JSON.stringify({
-          anthropic: { type: "api_key", key: "sk-ant-test-key" },
+          [E2E_MODEL_PROVIDER]: { type: "api_key", key: "oc-go-test-key" },
           xai: { type: "api_key", key: "xai-secret" },
         }),
       );
 
-      const extension = join(root, "anthropic-provider");
-      mkdirSync(extension);
-      await writeE2EModelLane(isolated, source, extension);
+      await writeE2EModelLane(isolated, source);
 
       expect(JSON.parse(readFileSync(join(isolated, "auth.json"), "utf8"))).toEqual({
-        anthropic: { type: "api_key", key: "sk-ant-test-key" },
+        [E2E_MODEL_PROVIDER]: { type: "api_key", key: "oc-go-test-key" },
       });
       expect(statSync(join(isolated, "auth.json")).mode & 0o777).toBe(0o600);
       expect(JSON.parse(readFileSync(join(isolated, "settings.json"), "utf8"))).toEqual({
         enabledModels: [E2E_MODEL],
       });
-      expect(realpathSync(join(isolated, "extensions", "anthropic-provider"))).toBe(
-        realpathSync(extension),
-      );
+      // OpenCode Go is a built-in Pi provider resolved from an API key: the lane
+      // links no extension, so the isolated dir has none.
+      expect(E2E_MODEL).toBe(`${E2E_MODEL_PROVIDER}/${E2E_MODEL_ID}`);
+      expect(existsSync(join(isolated, "extensions"))).toBe(false);
 
       writeFileSync(
         join(source, "auth.json"),
         JSON.stringify({ xai: { type: "api_key", key: "x" } }),
       );
-      await expect(writeE2EModelLane(join(root, "other"), source, undefined)).rejects.toThrow(
-        /Anthropic login/,
+      await expect(writeE2EModelLane(join(root, "other"), source)).rejects.toThrow(
+        new RegExp(`No ${E2E_MODEL_PROVIDER} credential`),
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the lane CLI as the entrypoint through a symlinked checkout path", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-e2e-entry-"));
+    try {
+      // A checkout under /tmp reaches this file through a symlink, so argv[1] and
+      // import.meta.url spell the same file differently.
+      const real = join(root, "real");
+      const linked = join(root, "linked");
+      mkdirSync(real);
+      writeFileSync(join(real, "model-lane.ts"), "// placeholder\n");
+      symlinkSync(real, linked);
+
+      expect(realpathSync(join(linked, "model-lane.ts"))).toBe(
+        realpathSync(join(real, "model-lane.ts")),
+      );
+      expect(
+        isEntrypoint(
+          join(linked, "model-lane.ts"),
+          pathToFileURL(join(real, "model-lane.ts")).href,
+        ),
+      ).toBe(true);
+      // A lexical compare, the shape of the old bug, would answer false here.
+      expect(join(linked, "model-lane.ts")).not.toBe(join(real, "model-lane.ts"));
+      expect(isEntrypoint(undefined, pathToFileURL(join(real, "model-lane.ts")).href)).toBe(false);
+      expect(
+        isEntrypoint(join(real, "harness.ts"), pathToFileURL(join(real, "model-lane.ts")).href),
+      ).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the lane from a symlinked script path instead of exiting without auth", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-e2e-lane-cli-"));
+    try {
+      const source = join(root, "source");
+      const isolated = join(root, "isolated");
+      mkdirSync(source);
+      writeFileSync(
+        join(source, "auth.json"),
+        JSON.stringify({ [E2E_MODEL_PROVIDER]: { type: "api_key", key: "oc-go-cli-key" } }),
+      );
+
+      const script = join(dirname(fileURLToPath(import.meta.url)), "../e2e/model-lane.ts");
+      const linkedDir = join(root, "linked");
+      symlinkSync(dirname(script), linkedDir);
+      const run = spawnSync(
+        process.execPath,
+        [join(linkedDir, "model-lane.ts"), "write", isolated],
+        { encoding: "utf8", env: { ...process.env, E2E_SOURCE_PI_AGENT_DIR: source } },
+      );
+
+      expect(run.stderr).toBe("");
+      expect(run.status).toBe(0);
+      expect(run.stdout.trim()).toBe(E2E_MODEL);
+      expect(JSON.parse(readFileSync(join(isolated, "auth.json"), "utf8"))).toEqual({
+        [E2E_MODEL_PROVIDER]: { type: "api_key", key: "oc-go-cli-key" },
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

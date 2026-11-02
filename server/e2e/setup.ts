@@ -10,7 +10,7 @@ import { startServer, stopServer, ensureE2EModelReady, E2E_MODEL } from "./harne
 
 export default async function setup({ provide }: GlobalSetupContext): Promise<() => Promise<void>> {
   if (!(await ensureE2EModelReady())) {
-    const message = `[e2e] Anthropic login for ${E2E_MODEL} unavailable`;
+    const message = `[e2e] Pi credential for the model lane ${E2E_MODEL} is unavailable`;
     if (process.env.E2E_STRICT === "1") {
       throw new Error(`${message}; refusing to skip because E2E_STRICT=1`);
     }

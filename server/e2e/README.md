@@ -4,7 +4,7 @@ End-to-end tests exercise the HTTP/TLS compatibility path against native or cont
 
 ## Prerequisites
 
-- Model-backed suites run `anthropic/claude-haiku-5-5` through your Pi Anthropic login in `~/.pi/agent/auth.json` (override with `E2E_SOURCE_PI_AGENT_DIR`). Run `pi` and `/login` first. In strict mode the harness fails when that login is missing.
+- Model-backed suites run `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash) through the OpenCode Go API key in your Pi login (`~/.pi/agent/auth.json`, or `OPENCODE_API_KEY`; override the dir with `E2E_SOURCE_PI_AGENT_DIR`). Run `pi` and `/login` to OpenCode Go first. In strict mode the harness fails when that credential is missing. The lane used to be Anthropic Claude Haiku, which bills a subscription token sent through Pi's built-in provider as extra usage; the DeepSeek lane needs no extension and has no Anthropic fallback.
 - Explicit Docker Compose mode requires Docker (OrbStack recommended).
 - The Tailscale benchmark requires local `tailscale`, `ssh`, `rsync`, and `scp` commands, plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer requires Node.js, npm, Tailscale, and npm registry access. The runner installs locked dependencies in a unique `/tmp` directory, then removes it.
 
@@ -76,15 +76,14 @@ cd server && \
   npm run bench:tailscale-network
 ```
 
-On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts the generated Haiku-lane `auth.json` and `settings.json` (see `model-lane.ts`), and stores server state in a named volume. Use native mode for normal local iteration.
+On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts the generated model-lane `auth.json` and `settings.json` (see `model-lane.ts`), and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 
 | Env var                    | Default       | Description                                                                                               |
 | -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------- |
 | `E2E_PORT`                 | `17760`       | Server port                                                                                               |
-| `E2E_SOURCE_PI_AGENT_DIR`  | `~/.pi/agent` | Pi agent dir whose Anthropic login supplies the E2E access token                                          |
-| `E2E_ANTHROPIC_EXTENSION`  | unset         | Pi extension linked into the isolated agent dir to send subscription requests (native mode only)          |
+| `E2E_SOURCE_PI_AGENT_DIR`  | `~/.pi/agent` | Pi agent dir whose OpenCode Go credential supplies the E2E provider API key                               |
 | `E2E_NATIVE`               | `0`           | `1` to skip Docker, run server natively                                                                   |
 | `E2E_KEEP_NATIVE_DATA_DIR` | unset         | `1` to preserve the isolated native data dir and `server.log` after a test run                            |
 | `E2E_SERVER_DIR`           | unset         | Override native server package dir for tarball/install validation                                         |
@@ -105,7 +104,7 @@ Tailscale benchmark-only variables:
 e2e/
 ├── harness.ts                         # Shared: Docker/native/package lifecycle, API/WS/bootstrap helpers
 ├── harness-cli.ts                     # Thin CLI wrapper for non-Vitest harness callers
-├── model-lane.ts                      # Haiku model lane: isolated Pi auth + settings
+├── model-lane.ts                      # DeepSeek model lane: isolated Pi auth + settings
 ├── pairing-flow.e2e.test.ts           # Suite 1: pairing flow
 ├── paired-session.e2e.test.ts         # Suite 2: already-paired session flow
 ├── docker-compose.e2e.yml             # HTTP/TLS Docker server config
@@ -122,6 +121,6 @@ The harness supports two modes:
 - **Native mode** (`E2E_NATIVE=1`): builds the server locally, starts it as a child process in a temp directory, and skips Docker cleanup
 - **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
-Both modes give the server an isolated Pi agent dir from `model-lane.ts`: `auth.json` holds only a current Anthropic access token (Pi refreshes your login first if it expired), and `settings.json` sets `enabledModels` to Haiku so sessions created without a model use it. Your refresh token never leaves `~/.pi/agent`. Anthropic bills a subscription token sent through Pi's built-in provider as extra usage, so a subscription login also needs `E2E_ANTHROPIC_EXTENSION` pointing at a Pi extension that sends those requests the way Claude Code does. Shell wrappers call `node server/e2e/model-lane.ts write <pi-agent-dir>`. Model-backed test workspaces use a server-visible main checkout: an isolated directory under the native data dir or Docker's `/root/workspace` tmpfs.
+Both modes give the server an isolated Pi agent dir from `model-lane.ts`: `auth.json` holds only the OpenCode Go API key, read through `ModelRuntime` and never logged, and `settings.json` sets `enabledModels` to `opencode-go/deepseek-v4.1-flash` so sessions created without a model use it. Nothing else from your Pi login is copied, and OpenCode Go is a built-in Pi provider, so the lane links no extension and works the same in Docker and native mode. Shell wrappers call `node server/e2e/model-lane.ts write <pi-agent-dir>`. Model-backed test workspaces use a server-visible main checkout: an isolated directory under the native data dir or Docker's `/root/workspace` tmpfs.
 
 Apple E2E scripts remain responsible for Xcode and simulator orchestration. Server-bootstrap details should flow through this harness shape: the model lane, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.

@@ -8,7 +8,7 @@
  *   4. Send a simple prompt
  *   5. Verify assistant response contains E2E_QUICK_SESSION_SEND_OK
  *
- * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
+ * Requires: Docker or native server, a Pi OpenCode Go credential for the DeepSeek model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, afterAll, inject } from "vitest";

@@ -3,7 +3,7 @@ import XCTest
 /// Focused Quick Session coverage kept outside the release gate.
 final class QuickSessionE2ETests: E2ETestCase {
     /// The E2E server's model lane (server/e2e/model-lane.ts).
-    private static let e2eModel = "anthropic/claude-haiku-5-5"
+    private static let e2eModel = "opencode-go/deepseek-v4.1-flash"
 
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
 
@@ -28,15 +28,15 @@ final class QuickSessionE2ETests: E2ETestCase {
         let modelSearch = app.searchFields["Search models\u{2026}"]
         if !modelSearch.exists { app.swipeDown() }
         tap(modelSearch, named: "search models")
-        modelSearch.typeText("Haiku 5.5")
+        modelSearch.typeText("DeepSeek V4.1")
         let selectedModel = Self.e2eModel
         let modelRow = app.descendants(matching: .any)["model.picker.row.\(selectedModel)"].firstMatch
-        XCTAssertTrue(waitForElementToExist(modelRow, timeout: 20), "Model picker did not show the E2E Haiku model")
-        tap(modelRow, named: "E2E Haiku model row", timeout: 1)
+        XCTAssertTrue(waitForElementToExist(modelRow, timeout: 20), "Model picker did not show the E2E DeepSeek model")
+        tap(modelRow, named: "E2E DeepSeek model row", timeout: 1)
         XCTAssertTrue(waitForElementToExist(input, timeout: 10), "Quick Session input did not return after model selection")
 
         tap(app.buttons["session.toolbar.thinking"], named: "quick session thinking menu", timeout: 5)
-        assertThinkingMenuRunsFromMaxToOff()
+        assertThinkingMenuRunsFromMaxToLow()
         tap(thinkingOption("high"), named: "High thinking option", timeout: 5)
 
         let marker = "E2E_QUICK_SESSION_SEND_OK"
@@ -55,7 +55,7 @@ final class QuickSessionE2ETests: E2ETestCase {
             "Normal chat keyboard did not appear before opening the thinking picker"
         )
         tap(app.buttons["session.toolbar.thinking"], named: "normal chat thinking menu", timeout: 5)
-        assertThinkingMenuRunsFromMaxToOff()
+        assertThinkingMenuRunsFromMaxToLow()
         tap(thinkingOption("high"), named: "current High thinking option", timeout: 5)
 
         let session = try e2eSession(sessionId: sessionId)
@@ -74,7 +74,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         let initialModels = try e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]] ?? []
         let modelId = try XCTUnwrap(
             initialModels.compactMap { $0["id"] as? String }.first { $0 == Self.e2eModel },
-            "The isolated E2E server must expose the Haiku model lane"
+            "The isolated E2E server must expose the DeepSeek model lane"
         )
         let originalPiDefault = initialModels.first(where: { $0["isDefault"] as? Bool == true })?["id"] as? String
         XCTAssertNil(originalPiDefault, "The isolated E2E Pi settings must have no default before this test")
@@ -91,8 +91,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         tap(app.buttons["session.toolbar.model"], named: "Agent model picker")
         let agentModelSearch = app.searchFields["Search models…"]
         if !agentModelSearch.exists { app.swipeDown() }
-        tap(agentModelSearch, named: "search for the Haiku Agent model")
-        agentModelSearch.typeText("Haiku 5.5")
+        tap(agentModelSearch, named: "search for the DeepSeek Agent model")
+        agentModelSearch.typeText("DeepSeek V4.1")
         let agentStar = app.buttons["model.picker.star.\(modelId)"]
         if !waitForElementToExist(agentStar, timeout: 5) {
             print("[e2e] Agent model picker accessibility: \(app.debugDescription)")
@@ -116,8 +116,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         tap(app.buttons["session.toolbar.model"], named: "Pi model picker")
         let piModelSearch = app.searchFields["Search models…"]
         if !piModelSearch.exists { app.swipeDown() }
-        tap(piModelSearch, named: "search for the Haiku Pi model")
-        piModelSearch.typeText("Haiku 5.5")
+        tap(piModelSearch, named: "search for the DeepSeek Pi model")
+        piModelSearch.typeText("DeepSeek V4.1")
         let piStar = app.buttons["model.picker.star.\(modelId)"]
         if !waitForElementToExist(piStar, timeout: 5) {
             print("[e2e] Pi model picker accessibility: \(app.debugDescription)")
@@ -428,15 +428,13 @@ final class QuickSessionE2ETests: E2ETestCase {
     }
 
     @MainActor
-    private func assertThinkingMenuRunsFromMaxToOff() {
-        // Haiku 5.5, the E2E model, has no Minimal level.
+    private func assertThinkingMenuRunsFromMaxToLow() {
+        // The E2E model is DeepSeek V4.1 Flash, whose Pi metadata maps only Max,
+        // High, and Low; the picker shows exactly the levels it advertises.
         let expectedOptions = [
             (id: "max", label: "Max"),
-            (id: "xhigh", label: "XHigh"),
             (id: "high", label: "High"),
-            (id: "medium", label: "Medium"),
             (id: "low", label: "Low"),
-            (id: "off", label: "Off"),
         ]
         let options = expectedOptions.map { thinkingOption($0.id) }
         for (option, expected) in zip(options, expectedOptions) {
@@ -450,7 +448,7 @@ final class QuickSessionE2ETests: E2ETestCase {
             XCTAssertLessThan(
                 upper.frame.midY,
                 lower.frame.midY,
-                "Thinking menu must run from Max at the top to Off at the bottom"
+                "Thinking menu must run from Max at the top to Low at the bottom"
             )
         }
     }

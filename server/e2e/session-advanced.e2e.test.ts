@@ -8,7 +8,7 @@
  *   4. Session deletion while the bound session stream is open
  *   5. Follow-up queue execution during an active turn
  *
- * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
+ * Requires: Docker or native server, a Pi OpenCode Go credential for the DeepSeek model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
