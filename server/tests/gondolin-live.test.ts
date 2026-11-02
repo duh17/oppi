@@ -18,10 +18,10 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  isQemuAvailable,
   GondolinManager,
   type VmFactoryOptions,
 } from "../src/gondolin-manager.js";
+import { realVmSkipReason } from "./helpers/real-vm.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import {
   createGondolinBashOps,
@@ -31,16 +31,18 @@ import {
   GUEST_WORKSPACE,
 } from "../src/gondolin-ops.js";
 
-// ─── Skip if QEMU not available ───
+// ─── Skip if this host cannot boot a real VM ───
 
+/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
 let qemuAvailable = false;
 
 beforeAll(async () => {
-  qemuAvailable = await isQemuAvailable();
-  if (!qemuAvailable) {
-    console.log("[gondolin-live] Skipping: QEMU not installed");
+  const reason = await realVmSkipReason();
+  qemuAvailable = reason === undefined;
+  if (reason) {
+    console.log(`[gondolin-live] Skipping: ${reason}`);
   }
-}, 10_000);
+}, 30_000);
 
 describe("Gondolin live VM", { timeout: 120_000 }, () => {
   let hostDir: string;

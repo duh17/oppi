@@ -29,6 +29,7 @@ import { availableMcpBuiltinNames } from "../src/host-mcp-extensions.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
+import { realVmSkipReason } from "./helpers/real-vm.js";
 import { SessionManager as ManagedSessions } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { serverResourceId } from "../src/server-resource-id.js";
@@ -482,7 +483,12 @@ export default function (pi) {
   });
 
   it("runs a picked stdio MCP server inside a real Gondolin VM", { timeout: 150_000 }, async () => {
-    if (!(await GondolinManagerModule.isQemuAvailable())) return; // Like gondolin-live.test.ts: needs QEMU on this host.
+    // Like gondolin-live.test.ts: needs a host that can boot a real VM, and says why when it cannot.
+    const skipReason = await realVmSkipReason();
+    if (skipReason) {
+      console.log(`[host-mcp] Skipping: ${skipReason}`);
+      return;
+    }
     const workspace = {
       id: "workspace-1",
       name: "Sandbox MCP Live",

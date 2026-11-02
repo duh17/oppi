@@ -26,7 +26,7 @@ import {
 } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { isQemuAvailable, GondolinManager } from "../src/gondolin-manager.js";
+import { GondolinManager } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { createGondolinBashOps } from "../src/gondolin-ops.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
@@ -39,15 +39,18 @@ import {
 import { SdkBackend } from "../src/sdk-backend.js";
 import type { Workspace } from "../src/types.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
+import { realVmSkipReason } from "./helpers/real-vm.js";
 
+/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
 let qemuAvailable = false;
 
 beforeAll(async () => {
-  qemuAvailable = await isQemuAvailable();
-  if (!qemuAvailable) {
-    console.log("[attack-surface] Skipping: QEMU not installed");
+  const reason = await realVmSkipReason();
+  qemuAvailable = reason === undefined;
+  if (reason) {
+    console.log(`[attack-surface] Skipping: ${reason}`);
   }
-}, 10_000);
+}, 30_000);
 
 describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   let hostDir: string;

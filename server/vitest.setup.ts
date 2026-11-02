@@ -9,7 +9,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
 
@@ -70,6 +70,19 @@ process.env.PI_CODING_AGENT_DIR = piAgentDir;
 afterAll(() => {
   rmSync(piAgentDir, { recursive: true, force: true });
 });
+
+// Gondolin boots its guest from an image store that the SDK fills by pulling the guest image from
+// GitHub (the builtin image registry, then the release archive). HOME points at a temp dir here,
+// so that store would live in a throwaway cache: every file of every run pulls the image again,
+// and a host without network cannot boot a VM at all. Keep the store on the machine instead — the
+// first run on a host fetches it once, every later run is offline. GONDOLIN_IMAGE_STORE is the
+// SDK's own knob for the store, and `tests/helpers/real-vm.ts` skips a real-VM test that has none.
+const developerHome = process.env.HOME ?? homedir();
+const developerCache =
+  process.platform === "darwin"
+    ? join(developerHome, "Library", "Caches")
+    : (process.env.XDG_CACHE_HOME ?? join(developerHome, ".cache"));
+process.env.GONDOLIN_IMAGE_STORE ??= join(developerCache, "oppi-gondolin", "images");
 
 // Skill discovery (Pi's SDK and Oppi's resource service) reads ~/.agents/skills,
 // ~/.claude/skills and other user-level dirs through os.homedir(), which follows HOME. A skill

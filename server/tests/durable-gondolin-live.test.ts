@@ -5,18 +5,21 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import { createEditTool } from "@earendil-works/pi-durable/tools";
 import { createEnvConformance, createExpectAssertions } from "@earendil-works/pi-durable/testing";
-import { GondolinManager, isQemuAvailable } from "../src/gondolin-manager.js";
+import { GondolinManager } from "../src/gondolin-manager.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { realVmSkipReason } from "./helpers/real-vm.js";
 
 // Match the other live VM suites: absent prerequisites return early, but VM
 // boot and assertion failures after a successful preflight must still fail.
+/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
 let qemuAvailable = false;
 beforeAll(async () => {
-  qemuAvailable = await isQemuAvailable();
-  if (!qemuAvailable) console.log("[durable-security] Skipping: QEMU not installed");
-}, 10_000);
+  const reason = await realVmSkipReason();
+  qemuAvailable = reason === undefined;
+  if (reason) console.log(`[durable-security] Skipping: ${reason}`);
+}, 30_000);
 
 describe("Durable shared guest security", { timeout: 30_000 }, () => {
   const root = "/workspace/durable-security";
