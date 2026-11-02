@@ -1433,6 +1433,35 @@ struct WorkspaceFileEditRecoveryTests {
         ) == nil)
         #expect(try Data(contentsOf: unreadable.store.fileURL(for: unreadable.identity)) == Data([0x01]))
     }
+
+    /// The write in flight answers after the file went missing. The session
+    /// already cancelled that write, so its answer belongs to nothing: the
+    /// queue's token guard drops it. A late `.saved` must not mark the edits
+    /// saved and remove the draft they are kept in, and a late `.notSent` must
+    /// not arm a retry that writes a file the server says is gone.
+    @Test(arguments: [WorkspaceFileWriteOutcome.saved(etag: tag("b")), .notSent])
+    func lateWriteAnswerAfterFileWentMissingChangesNothing(lateAnswer: WorkspaceFileWriteOutcome) async {
+        let harness = Harness()
+        let session = harness.open(retryDelay: .milliseconds(150))
+        harness.type(" gone", into: session)
+        session.flush()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(session.status == .saving)
+
+        session.noteFileMissing()
+        #expect(session.status == .deleted)
+        let keptDraft = harness.store.load(harness.identity)
+        #expect(keptDraft?.bytes == Data("hello gone".utf8), "the edits are kept as a draft")
+
+        harness.scripted.resolveNext(lateAnswer)
+        // Well past the retry delay a late `.notSent` would have waited out.
+        try? await Task.sleep(for: .milliseconds(400))
+
+        #expect(session.status == .deleted, "the late answer is dropped")
+        #expect(harness.store.load(harness.identity) == keptDraft, "the kept draft is untouched")
+        #expect(harness.scripted.writeLog.count == 1, "no retry against a deleted file")
+        #expect(session.hasUnsavedChanges)
+    }
 }
 
 @Suite("Workspace file editor surface")

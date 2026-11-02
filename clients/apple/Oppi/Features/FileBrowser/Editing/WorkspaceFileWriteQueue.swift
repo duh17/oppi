@@ -10,7 +10,7 @@ import Foundation
 /// and can never mark newer edits saved.
 @MainActor
 final class WorkspaceFileWriteQueue {
-    struct Write: Equatable {
+    struct Write {
         let generation: Int
         let bytes: Data
         let origin: WorkspaceFileEditSession.WriteOrigin
@@ -38,10 +38,12 @@ final class WorkspaceFileWriteQueue {
         let write: Write
     }
 
-    /// Delivered on the main actor, current epoch only.
+    /// Delivered on the main actor. A write's answer is dropped unless its token
+    /// matches the write in flight; a retry or verify report is dropped unless
+    /// its epoch is current. `cancelAll()` invalidates both.
     var onEvent: ((Event) -> Void)?
     private(set) var epoch = 0
-    private(set) var queuedSave: QueuedSave?
+    private var queuedSave: QueuedSave?
     private var flight: Flight?
     private var flightTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?

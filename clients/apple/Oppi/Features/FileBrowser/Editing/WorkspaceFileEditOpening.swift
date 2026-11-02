@@ -4,7 +4,7 @@ import Foundation
 /// before anything is written: the buffer, the base its next save is conditioned
 /// on, the status, and what to do with a stored draft. Pure, so both of the
 /// session's inits reduce to applying one of these.
-struct WorkspaceFileEditOpening: Equatable {
+struct WorkspaceFileEditOpening {
     enum DraftAction: Equatable {
         case keep
         /// Disk already holds exactly the draft's bytes: the draft is saved.
