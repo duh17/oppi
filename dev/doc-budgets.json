@@ -6,8 +6,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client.md": {
-      "words": 6170,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 5359 words; headroom max(15%, 100 words)."
+      "words": 6330,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 5497 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
       "words": 980,
@@ -26,12 +26,12 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1210 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/media-files.md": {
-      "words": 790,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 683 words; headroom max(15%, 100 words)."
+      "words": 830,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 716 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server.md": {
-      "words": 1880,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1632 words; headroom max(15%, 100 words)."
+      "words": 1960,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1698 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/blocks-and-boundaries.md": {
       "words": 800,
@@ -74,8 +74,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1951 words; headroom max(15%, 100 words). The generated event tables are not counted."
     },
     "dev/testing/README.md": {
-      "words": 2160,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1877 words; headroom max(15%, 100 words)."
+      "words": 2230,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1933 words; headroom max(15%, 100 words)."
     },
     "dev/testing/apple.md": {
       "words": 2440,
