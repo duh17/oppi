@@ -34,11 +34,11 @@ extension ModalPresentation {
 /// chosen and then commits the icon. A failed save shows its reason at the top
 /// with Retry and keeps the choice.
 ///
-/// The screen is a grid, not a list of rows, so it lays out its own sections
-/// (a list for the chooser and the search field, a grid for the symbols) and
-/// is not on the settings base.
+/// The rows are the kit's list; the symbol grid is a section the page lays out
+/// itself (`layoutSection(for:environment:)`), which is why the page keeps its
+/// own cell registrations.
 @MainActor
-final class IconPickerViewController: UIViewController, UICollectionViewDelegate {
+final class IconPickerViewController: ListScreenController<IconPickerViewController.Section, IconPickerViewController.Item> {
     /// What one picker edits and where its choice goes.
     struct Source {
         let purpose: IconPickerPurpose
@@ -52,8 +52,8 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
         let commit: (IconChoice) async throws -> Void
     }
 
-    private enum Section: Hashable, Sendable { case saveError, custom, symbolSearch, symbols, saving }
-    private enum Item: Hashable, Sendable {
+    enum Section: Hashable, Sendable { case saveError, custom, symbolSearch, symbols, saving }
+    enum Item: Hashable, Sendable {
         case saveError, chooser, validation, search, noResults, symbol(String), saving
     }
 
@@ -61,20 +61,9 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
     private let model: IconPickerModel<IconChoice>
     private var searchText = ""
     private var draftGenmojiImage: UIImage?
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
     private var lastErrorMessage: String?
     private let glyphInput = IconPickerGlyphInput()
 
-    private lazy var collectionView = UICollectionView(
-        frame: .zero,
-        collectionViewLayout: UICollectionViewCompositionalLayout { [weak self] index, environment in
-            self?.layoutSection(at: index, environment: environment) ?? Self.listSection(
-                environment, headers: false, footers: false
-            )
-        }
-    )
     private lazy var cancelItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
@@ -108,17 +97,11 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
                 return "The selected SF Symbol is unavailable on this device."
             }
         )
-        super.init(nibName: nil, bundle: nil)
-        title = source.purpose.title
-        navigationItem.largeTitleDisplayMode = .never
+        super.init(title: source.purpose.title, listIdentifier: "\(source.accessibilityPrefix).list", endsAtKeyboard: true)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
 
     private static func customChoice(_ value: IconChoice) -> IconPickerCustomChoice? {
         switch value {
@@ -132,33 +115,16 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
+        // Dragging the list puts the search field's keyboard away.
         collectionView.keyboardDismissMode = .onDrag
-        collectionView.accessibilityIdentifier = "\(source.accessibilityPrefix).list"
-        // The symbol search field scrolls above the keyboard.
-        SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: true)
         installGlyphInput()
-        installDataSource()
         navigationItem.leftBarButtonItem = cancelItem
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil
-        )
-        setNeedsUpdateProperties()
     }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        // Everything a row shows is read here, so a model change re-runs this pass.
-        _ = (model.draft, model.selectedCustomChoice, model.validationMessage, model.errorMessage, model.isSaving)
-        applySnapshot(themeID: themeID)
-
+        // Everything a row shows is read in `sections()` and `inputs(of:)`, so a
+        // model change re-runs this pass; the bar follows here.
         let isSaving = model.isSaving
         let trailing = isSaving ? savingItem : saveItem
         if navigationItem.rightBarButtonItem !== trailing {
@@ -170,48 +136,42 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
         cancelItem.isEnabled = !isSaving
         collectionView.isUserInteractionEnabled = !isSaving
         isModalInPresentation = isSaving
+        showErrorIfNew()
     }
 
-    // MARK: - Snapshot
+    // MARK: - Rows
 
     private var filteredSymbols: [IconSymbolOption] {
         IconSymbolCatalog.availableOptions(matching: searchText)
     }
 
-    private func applySnapshot(themeID: ThemeID) {
-        guard let dataSource else { return }
+    override func sections() -> [ListSection<Section, Item>] {
         let symbols = filteredSymbols
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        var sections: [ListSection<Section, Item>] = []
         if model.errorMessage != nil {
-            snapshot.appendSections([.saveError])
-            snapshot.appendItems([.saveError], toSection: .saveError)
+            sections.append(ListSection(.saveError, items: [.saveError]))
         }
-        snapshot.appendSections([.custom])
-        snapshot.appendItems(
-            model.validationMessage == nil ? [.chooser] : [.chooser, .validation],
-            toSection: .custom
-        )
-        snapshot.appendSections([.symbolSearch])
-        snapshot.appendItems(symbols.isEmpty ? [.search, .noResults] : [.search], toSection: .symbolSearch)
+        sections.append(ListSection(
+            .custom,
+            footer: "Use the Globe key to switch to the Emoji keyboard if needed.",
+            items: model.validationMessage == nil ? [.chooser] : [.chooser, .validation]
+        ))
+        sections.append(ListSection(
+            .symbolSearch,
+            header: source.purpose.symbolSectionTitle,
+            items: symbols.isEmpty ? [.search, .noResults] : [.search]
+        ))
         if !symbols.isEmpty {
-            snapshot.appendSections([.symbols])
-            snapshot.appendItems(symbols.map { .symbol($0.symbolName) }, toSection: .symbols)
+            sections.append(ListSection(.symbols, items: symbols.map { .symbol($0.symbolName) }))
         }
         if model.isSaving {
-            snapshot.appendSections([.saving])
-            snapshot.appendItems([.saving], toSection: .saving)
+            sections.append(ListSection(.saving, items: [.saving]))
         }
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
-        showErrorIfNew()
+        return sections
     }
 
     /// The values a row is drawn from.
-    private func inputs(of item: Item) -> AnyHashable {
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .saveError: AnyHashable(model.errorMessage)
         case .chooser:
@@ -236,7 +196,7 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
         defer { lastErrorMessage = message }
         guard message != nil, message != lastErrorMessage else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, let indexPath = dataSource?.indexPath(for: .saveError) else { return }
+            guard let self, let indexPath = indexPath(for: .saveError) else { return }
             collectionView.scrollToItem(at: indexPath, at: .top, animated: true)
             if let cell = collectionView.cellForItem(at: indexPath) {
                 UIAccessibility.post(notification: .layoutChanged, argument: cell)
@@ -246,28 +206,35 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
 
     // MARK: - Layout
 
-    private func layoutSection(at index: Int, environment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection? {
-        switch dataSource?.sectionIdentifier(for: index) {
-        case .symbols:
-            return Self.symbolGrid(environment)
-        case .custom:
-            return Self.listSection(environment, headers: false, footers: true)
-        case .symbolSearch:
-            return Self.listSection(environment, headers: true, footers: false)
-        default:
-            return Self.listSection(environment, headers: false, footers: false)
+    /// The symbol grid is the page's own section. The two sections that carry a
+    /// heading or the keyboard hint are the kit's list with that supplementary
+    /// declared here; the rest are the kit's list as it is.
+    override func layoutSection(
+        for section: Section,
+        environment: NSCollectionLayoutEnvironment
+    ) -> NSCollectionLayoutSection? {
+        switch section {
+        case .symbols: Self.symbolGrid(environment)
+        case .custom: Self.listSection(environment, headers: false, footers: true)
+        case .symbolSearch: Self.listSection(environment, headers: true, footers: false)
+        case .saveError, .saving: nil
         }
     }
 
+    /// An inset-grouped section whose own background is clear, so the theme's
+    /// page color shows around the rows: the kit's list section, with the one
+    /// supplementary this page's section declares (the base's `footers:` speaks
+    /// for the whole list, and this list has one footer and one heading).
     private static func listSection(
         _ environment: NSCollectionLayoutEnvironment,
         headers: Bool,
         footers: Bool
     ) -> NSCollectionLayoutSection {
-        NSCollectionLayoutSection.list(
-            using: SettingsListStyle.layoutConfiguration(headers: headers, footers: footers),
-            layoutEnvironment: environment
-        )
+        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        config.backgroundColor = .clear
+        if headers { config.headerMode = .supplementary }
+        if footers { config.footerMode = .supplementary }
+        return NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
     }
 
     /// Symbols fill the row at least 104 pt wide each, 8 pt apart; at accessibility
@@ -356,46 +323,30 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
         }
     }
 
-    private func installDataSource() {
+    /// The page's own cells are registered before the first row is dequeued; the
+    /// kit's theme card (its `cardProvider`) paints the ones that are list cells.
+    override func prepareRegistrations() {
         _ = (saveErrorRow, validationRow, noResultsRow, savingRow, chooserRow, searchRow, symbolCell)
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, _ in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.source.purpose.symbolSectionTitle
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { view, _, _ in
-            var content = UIListContentConfiguration.footer()
-            content.text = "Use the Globe key to switch to the Emoji keyboard if needed."
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(
-            collectionView: collectionView,
-            cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, item in
-                guard let self else { return nil }
-                switch item {
-                case .saveError: return collectionView.dequeueConfiguredReusableCell(using: saveErrorRow, for: indexPath, item: item)
-                case .validation: return collectionView.dequeueConfiguredReusableCell(using: validationRow, for: indexPath, item: item)
-                case .noResults: return collectionView.dequeueConfiguredReusableCell(using: noResultsRow, for: indexPath, item: item)
-                case .saving: return collectionView.dequeueConfiguredReusableCell(using: savingRow, for: indexPath, item: item)
-                case .chooser: return collectionView.dequeueConfiguredReusableCell(using: chooserRow, for: indexPath, item: item)
-                case .search: return collectionView.dequeueConfiguredReusableCell(using: searchRow, for: indexPath, item: item)
-                case .symbol: return collectionView.dequeueConfiguredReusableCell(using: symbolCell, for: indexPath, item: item)
-                }
-            }
-        )
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
     }
 
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool { false }
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .saveError:
+            return collectionView.dequeueConfiguredReusableCell(using: saveErrorRow, for: indexPath, item: item)
+        case .validation:
+            return collectionView.dequeueConfiguredReusableCell(using: validationRow, for: indexPath, item: item)
+        case .noResults:
+            return collectionView.dequeueConfiguredReusableCell(using: noResultsRow, for: indexPath, item: item)
+        case .saving:
+            return collectionView.dequeueConfiguredReusableCell(using: savingRow, for: indexPath, item: item)
+        case .chooser:
+            return collectionView.dequeueConfiguredReusableCell(using: chooserRow, for: indexPath, item: item)
+        case .search:
+            return collectionView.dequeueConfiguredReusableCell(using: searchRow, for: indexPath, item: item)
+        case .symbol:
+            return collectionView.dequeueConfiguredReusableCell(using: symbolCell, for: indexPath, item: item)
+        }
+    }
 
     // MARK: - Choosing
 

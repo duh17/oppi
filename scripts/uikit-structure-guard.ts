@@ -181,14 +181,6 @@ const listPageSubclass = /\bclass\s+\w+\s*:\s*(?:\w+\.)*(?:ListScreenController|
  */
 const settingsThemingExceptions: { file: string; reason: string }[] = [
   {
-    file: "clients/apple/Oppi/Features/Settings/ThemeGalleryViewController.swift",
-    reason: "A grid of theme cards with its own layout, not a list of rows.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Icons/IconPickerViewController.swift",
-    reason: "The icon picker: a list for the chooser and search field above a grid of SF Symbols, laid out by its own compositional layout.",
-  },
-  {
     file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalOverviewViewController.swift",
     reason: "The list of Herdr agents or Rex panes: a picker over a live terminal, or a Rex host's sessions screen; not a settings page.",
   },

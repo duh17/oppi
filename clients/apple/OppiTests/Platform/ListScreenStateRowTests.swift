@@ -117,6 +117,50 @@ struct ListScreenStateRowTests {
         #expect(!row.accessibilityTraits.contains(.button))
     }
 
+    @Test("A section the page lays out itself is its own shape; the kit's list is every other")
+    func pageSectionLayout() async throws {
+        let page = GridPage()
+        let window = try show(page)
+        defer {
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
+
+        // The page's two grid cells, and the kit's one list row.
+        var laidOut: (first: CGRect, second: CGRect, row: CGRect)?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            guard let first = page.indexPath(for: 1).flatMap({ page.collectionView.cellForItem(at: $0) }),
+                  let second = page.indexPath(for: 2).flatMap({ page.collectionView.cellForItem(at: $0) }),
+                  let row = page.indexPath(for: 3).flatMap({ page.collectionView.cellForItem(at: $0) })
+            else { return false }
+            laidOut = (first.frame, second.frame, row.frame)
+            return true
+        }, "the page's grid and the kit's row laid out")
+        let laid = try #require(laidOut)
+        #expect(abs(laid.first.minY - laid.second.minY) < 0.5, "the page's layout put its two cells on one row")
+        #expect(laid.second.minX >= laid.first.maxX - 0.5, "the second cell sits beside the first, not over it")
+        #expect(
+            laid.row.width > laid.first.width * 1.5,
+            "the kit's list row spans the card while the page's grid cell takes half of it"
+        )
+
+        // The page section's heading comes from `ListSection.header`, filled by the
+        // kit's supplementary provider; the kit's own list section shows none.
+        var heading: String??
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            heading = Self.header(in: page.collectionView, at: IndexPath(item: 0, section: 0))
+            return heading.flatMap { $0 } != nil
+        }, "the page's grid section shows its heading")
+        #expect(heading.flatMap { $0 } == "Grid heading")
+        #expect(
+            page.collectionView.indexPathsForVisibleSupplementaryElements(ofKind: UICollectionView.elementKindSectionHeader)
+                .map(\.section) == [0],
+            "the kit's list section shows a header only where the page names one"
+        )
+    }
+
     @Test("A page that names no state section draws no row of the kit's")
     func noStateSection() async throws {
         let page = StateRowPage()
@@ -189,6 +233,15 @@ struct ListScreenStateRowTests {
         if let label = view as? UILabel { found.append(label) }
         for subview in view.subviews { found += labels(in: subview) }
         return found
+    }
+
+    /// A section heading's text, or nil when that section has none on screen.
+    private static func header(in collectionView: UICollectionView, at indexPath: IndexPath) -> String?? {
+        guard let view = collectionView.supplementaryView(
+            forElementKind: UICollectionView.elementKindSectionHeader,
+            at: indexPath
+        ) as? UICollectionViewListCell else { return nil }
+        return (view.contentConfiguration as? UIListContentConfiguration)?.text
     }
 
     private static func button(withIdentifier identifier: String, in view: UIView) -> [UIButton] {
@@ -281,6 +334,52 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
         guard !gates.isEmpty else { return }
         gates.removeFirst().resume()
     }
+}
+
+/// A page whose first section is its own grid and whose second is the kit's
+/// list: the page hook says which is which.
+private final class GridPage: ListScreenController<GridPage.Section, Int> {
+    enum Section: Hashable, Sendable { case grid, rows }
+
+    init() {
+        super.init(title: "Grid", listIdentifier: "test.grid.list")
+    }
+
+    override func sections() -> [ListSection<Section, Int>] {
+        [
+            ListSection(.grid, header: "Grid heading", items: [1, 2]),
+            ListSection(.rows, header: "Rows heading", items: [3]),
+        ]
+    }
+
+    /// Two cells to a row, and a boundary header item of its own.
+    override func layoutSection(
+        for section: Section,
+        environment: NSCollectionLayoutEnvironment
+    ) -> NSCollectionLayoutSection? {
+        guard section == .grid else { return nil }
+        let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(0.5), heightDimension: .absolute(60))
+        let group = NSCollectionLayoutGroup.horizontal(
+            layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(60)),
+            repeatingSubitem: NSCollectionLayoutItem(layoutSize: size),
+            count: 2
+        )
+        let laidOut = NSCollectionLayoutSection(group: group)
+        laidOut.boundarySupplementaryItems = [NSCollectionLayoutBoundarySupplementaryItem(
+            layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(36)),
+            elementKind: UICollectionView.elementKindSectionHeader,
+            alignment: .top
+        )]
+        return laidOut
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Int) {
+        var content = UIListContentConfiguration.cell()
+        content.text = "\(item)"
+        cell.contentConfiguration = content
+    }
+
+    override func inputs(of item: Int) -> AnyHashable { AnyHashable(item) }
 }
 
 /// A request's failure: its reason, which the page's title heads.

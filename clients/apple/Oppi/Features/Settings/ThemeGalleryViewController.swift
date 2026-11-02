@@ -57,77 +57,68 @@ enum ThemeSlot: Hashable, Sendable {
 /// the app re-themes behind the gallery, which stays open to try another.
 ///
 /// Each card is one button (`ThemeCardCell`); its identifier is
-/// `settings.appearance.theme.<theme raw value>`.
+/// `settings.appearance.theme.<theme raw value>`. The kit owns the list, its
+/// pin, and its theme; the page owns the grid each section is laid out as
+/// (`layoutSection(for:environment:)`) and the cards in it.
 @MainActor
-final class ThemeGalleryViewController: UIViewController {
-    private enum Section: Hashable, Sendable { case builtIn, imported }
+final class ThemeGalleryViewController: ListScreenController<ThemeGalleryViewController.Section, ThemeID> {
+    enum Section: Hashable, Sendable { case builtIn, imported }
 
     private let themeStore: ThemeStore
     private let slot: ThemeSlot
-    private var dataSource: UICollectionViewDiffableDataSource<Section, ThemeID>?
-    private var appliedAppThemeID: ThemeID?
-    private var changedCards = ChangedRows<ThemeID>()
-    private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
 
     init(themeStore: ThemeStore, slot: ThemeSlot) {
         self.themeStore = themeStore
         self.slot = slot
-        super.init(nibName: nil, bundle: nil)
-        title = slot.title
-        navigationItem.largeTitleDisplayMode = .never
+        super.init(title: slot.title, listIdentifier: "settings.appearance.gallery")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    // MARK: - Lifecycle
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.accessibilityIdentifier = "settings.appearance.gallery"
+        // A card is a button of its own: choosing a theme is the card's action,
+        // never a selection of the list's.
         collectionView.allowsSelection = false
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
-        setNeedsUpdateProperties()
     }
 
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
+    // MARK: - Rows
 
-    override func updateProperties() {
-        super.updateProperties()
-        let appThemeID = ThemeRuntimeState.currentThemeID()
-        if appliedAppThemeID != appThemeID {
-            appliedAppThemeID = appThemeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: appThemeID)
-        }
-        // Reading the store here re-runs this pass on a choice made anywhere,
-        // including the tap on a card.
-        let chosen = slot.themeID(in: themeStore)
+    override func sections() -> [ListSection<Section, ThemeID>] {
         let themes = slot.pickerThemes
-        let builtIn = themes.filter { !$0.isImported }
         let imported = themes.filter(\.isImported)
-
-        var snapshot = NSDiffableDataSourceSnapshot<Section, ThemeID>()
-        snapshot.appendSections([.builtIn])
-        snapshot.appendItems(builtIn, toSection: .builtIn)
+        var sections: [ListSection<Section, ThemeID>] = [ListSection(
+            .builtIn,
+            header: String(localized: "Built-in"),
+            items: themes.filter { !$0.isImported }
+        )]
         if !imported.isEmpty {
-            snapshot.appendSections([.imported])
-            snapshot.appendItems(imported, toSection: .imported)
+            sections.append(ListSection(.imported, header: String(localized: "Imported"), items: imported))
         }
-        guard let dataSource else { return }
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        // A card is drawn from its own theme's palette, so only whether it is
-        // the chosen one can change what it shows.
-        let changed = changedCards.changed(in: snapshot.itemIdentifiers) { themeID in
-            AnyHashable(themeID == chosen)
+        return sections
+    }
+
+    /// A card is drawn from its own theme's palette, so only whether it is the
+    /// chosen one can change what it shows. Reading the store here is what re-runs
+    /// the page on a choice made anywhere, including the tap on a card.
+    override func inputs(of themeID: ThemeID) -> AnyHashable {
+        AnyHashable(themeID == slot.themeID(in: themeStore))
+    }
+
+    private lazy var card = UICollectionView.CellRegistration<ThemeCardCell, ThemeID> { [weak self] cell, _, themeID in
+        guard let self else { return }
+        cell.configure(themeID: themeID, selected: slot.themeID(in: themeStore) == themeID) { [weak self] in
+            guard let self else { return }
+            slot.choose(themeID, in: themeStore)
+            setNeedsUpdateProperties()
         }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: !shown.isEmpty)
+    }
+
+    override func prepareRegistrations() { _ = card }
+
+    override func dequeue(_ item: ThemeID, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: card, for: indexPath, item: item)
     }
 
     // MARK: - Layout
@@ -135,62 +126,39 @@ final class ThemeGalleryViewController: UIViewController {
     /// One column, or two where the width allows: a card needs about 280pt to
     /// show its chat and swatches without crowding. Text at accessibility sizes
     /// takes the whole row.
-    private func makeLayout() -> UICollectionViewLayout {
-        UICollectionViewCompositionalLayout { _, environment in
-            let spacing: CGFloat = 12
-            let inset: CGFloat = 16
-            let width = environment.container.effectiveContentSize.width - 2 * inset
-            let wide = environment.container.effectiveContentSize.width >= 640
-            let columns = wide && !environment.traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 2 : 1
-            // Each card sizes itself to its content. A row is as tall as its
-            // tallest card; a shorter neighbour (a one-line description beside
-            // a two-line one) keeps its own height.
-            let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(
-                widthDimension: .absolute((width - spacing * CGFloat(columns - 1)) / CGFloat(columns)),
-                heightDimension: .estimated(220)
-            ))
-            let group = NSCollectionLayoutGroup.horizontal(
-                layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(220)),
-                repeatingSubitem: item,
-                count: columns
-            )
-            group.interItemSpacing = .fixed(spacing)
-            let section = NSCollectionLayoutSection(group: group)
-            section.interGroupSpacing = spacing
-            section.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: inset, bottom: 16, trailing: inset)
-            let header = NSCollectionLayoutBoundarySupplementaryItem(
-                layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(36)),
-                elementKind: UICollectionView.elementKindSectionHeader,
-                alignment: .top
-            )
-            section.boundarySupplementaryItems = [header]
-            return section
-        }
-    }
-
-    private func installDataSource() {
-        let card = UICollectionView.CellRegistration<ThemeCardCell, ThemeID> { [weak self] cell, _, themeID in
-            guard let self else { return }
-            cell.configure(themeID: themeID, selected: slot.themeID(in: themeStore) == themeID) { [weak self] in
-                guard let self else { return }
-                slot.choose(themeID, in: themeStore)
-                setNeedsUpdateProperties()
-            }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .imported: content.text = String(localized: "Imported")
-            default: content.text = String(localized: "Built-in")
-            }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, themeID in
-            collectionView.dequeueConfiguredReusableCell(using: card, for: indexPath, item: themeID)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
+    override func layoutSection(
+        for section: Section,
+        environment: NSCollectionLayoutEnvironment
+    ) -> NSCollectionLayoutSection? {
+        let spacing: CGFloat = 12
+        let inset: CGFloat = 16
+        let width = environment.container.effectiveContentSize.width - 2 * inset
+        let wide = environment.container.effectiveContentSize.width >= 640
+        let columns = wide && !environment.traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 2 : 1
+        // Each card sizes itself to its content. A row is as tall as its
+        // tallest card; a shorter neighbour (a one-line description beside
+        // a two-line one) keeps its own height.
+        let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(
+            widthDimension: .absolute((width - spacing * CGFloat(columns - 1)) / CGFloat(columns)),
+            heightDimension: .estimated(220)
+        ))
+        let group = NSCollectionLayoutGroup.horizontal(
+            layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(220)),
+            repeatingSubitem: item,
+            count: columns
+        )
+        group.interItemSpacing = .fixed(spacing)
+        let laidOut = NSCollectionLayoutSection(group: group)
+        laidOut.interGroupSpacing = spacing
+        laidOut.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: inset, bottom: 16, trailing: inset)
+        // The heading is the section's own: the kit fills its text from
+        // `ListSection.header`.
+        laidOut.boundarySupplementaryItems = [NSCollectionLayoutBoundarySupplementaryItem(
+            layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(36)),
+            elementKind: UICollectionView.elementKindSectionHeader,
+            alignment: .top
+        )]
+        return laidOut
     }
 }
 

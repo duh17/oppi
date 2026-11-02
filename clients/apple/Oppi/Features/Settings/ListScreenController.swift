@@ -132,6 +132,9 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 /// - `showsHeader(for:)`: which sections show a header. A page whose sections
 ///   carry headings only on some (a catalog's groups) narrows the `headers:`
 ///   it was built with.
+/// - `layoutSection(for:environment:)`: the layout of the sections the page
+///   draws as something other than a list of rows (a grid); the kit's list
+///   section is the default for every other one.
 /// - `loadPolicy`, `loadSubject()`, `load()` and `subjectDidChange()`: what the
 ///   page loads, when, and what it is for. One task: started on appearance (per
 ///   the policy), on pull to refresh, on a subject change, and on
@@ -179,6 +182,12 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         // One section at a time: the page says which show a header. Everything
         // else is the kit's list, so the theme's `bg` shows behind the cards.
         let layout = UICollectionViewCompositionalLayout { [weak self] index, environment in
+            // A section the page lays out itself (a grid) keeps its own shape; every
+            // other section is the kit's list of rows.
+            if let section = self?.dataSource?.sectionIdentifier(for: index),
+               let pageSection = self?.layoutSection(for: section, environment: environment) {
+                return pageSection
+            }
             var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
             config.backgroundColor = .clear
             let section = self?.dataSource?.sectionIdentifier(for: index)
@@ -297,6 +306,16 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Whether `section` shows its header: the `headers:` the page was built
     /// with, unless the page answers for each.
     func showsHeader(for section: Section) -> Bool { showsHeaders }
+
+    /// The layout of `section`, when the page draws something that is not the
+    /// kit's list of rows: a grid of theme cards, a grid of symbols. nil (the
+    /// default) is the kit's inset-grouped list section. A page that lays a
+    /// section out itself declares that section's boundary header item, and the
+    /// kit fills it from the section's `ListSection.header`.
+    func layoutSection(
+        for section: Section,
+        environment: NSCollectionLayoutEnvironment
+    ) -> NSCollectionLayoutSection? { nil }
 
     // MARK: - Load
 

@@ -859,3 +859,101 @@ private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRo
 
 
 }
+
+// MARK: - Theme gallery
+
+/// The theme gallery is a kit page: the kit owns the list and its theme, and the
+/// page owns the layout of its card sections.
+@Suite("Theme gallery")
+@MainActor
+struct ThemeGalleryTests {
+    @Test("Choosing a card moves the check to it, and the gallery stays open as the app re-themes")
+    func choosingACardKeepsTheGalleryOpen() async throws {
+        let keys = [
+            "\(AppIdentifiers.subsystem).theme.mode",
+            ThemeID.storageKey,
+            "\(AppIdentifiers.subsystem).theme.light.id",
+            "\(AppIdentifiers.subsystem).theme.dark.id",
+        ]
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        let originals = Dictionary(uniqueKeysWithValues: keys.map { ($0, UserDefaults.standard.object(forKey: $0)) })
+        for key in keys { UserDefaults.standard.removeObject(forKey: key) }
+        defer {
+            for key in keys {
+                UserDefaults.standard.removeObject(forKey: key)
+                if let value = originals[key], let value { UserDefaults.standard.set(value, forKey: key) }
+            }
+            ThemeRuntimeState.setThemeID(originalThemeID)
+        }
+
+        // A dark app, so choosing the light theme is a re-theme the gallery lives through.
+        let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .dark })
+        store.manualThemeID = .dark
+        let gallery = ThemeGalleryViewController(themeStore: store, slot: .manual)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 1600)
+        let stack = UINavigationController(rootViewController: gallery)
+        window.rootViewController = stack
+        window.makeKeyAndVisible()
+        defer {
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
+
+        let dark = try await Self.card("settings.appearance.theme.dark", on: gallery)
+        let light = try await Self.card("settings.appearance.theme.light", on: gallery)
+        #expect(dark.accessibilityTraits.contains(.selected), "the chosen theme's card starts checked")
+        #expect(!light.accessibilityTraits.contains(.selected))
+
+        light.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            gallery.updateProperties()
+            gallery.view.layoutIfNeeded()
+            return ThemeRuntimeState.currentThemeID() == .light
+                && Self.button("settings.appearance.theme.light", on: gallery)?.accessibilityTraits.contains(.selected) == true
+        }, "choosing a card re-themes the app and moves the check to it")
+        #expect(Self.button("settings.appearance.theme.dark", on: gallery)?.accessibilityTraits.contains(.selected) == false)
+
+        // The gallery is still the screen in front, and the kit painted it for the new theme.
+        #expect(stack.viewControllers == [gallery], "the gallery stays the stack's only screen")
+        #expect(stack.presentedViewController == nil, "and nothing was presented over it")
+        let list = try #require(Self.collectionView(in: gallery.view))
+        #expect(
+            list.backgroundColor == ThemeID.light.palette.ui.bg,
+            "the kit repainted the list for the new theme"
+        )
+    }
+
+    private static func card(_ identifier: String, on gallery: ThemeGalleryViewController) async throws -> UIButton {
+        var found: UIButton?
+        _ = await waitForMainActorCondition(timeout: .seconds(5)) {
+            gallery.view.layoutIfNeeded()
+            found = button(identifier, on: gallery)
+            return found != nil
+        }
+        return try #require(found, "no card \(identifier)")
+    }
+
+    /// The card's one button, from the rows the list shows now.
+    private static func button(_ identifier: String, on gallery: ThemeGalleryViewController) -> UIButton? {
+        guard let list = collectionView(in: gallery.view) else { return nil }
+        return list.visibleCells.lazy.compactMap { cell in
+            buttons(in: cell).lazy.first { $0.accessibilityIdentifier == identifier }
+        }.first
+    }
+
+    private static func collectionView(in view: UIView) -> UICollectionView? {
+        if let list = view as? UICollectionView { return list }
+        for subview in view.subviews {
+            if let found = collectionView(in: subview) { return found }
+        }
+        return nil
+    }
+
+    private static func buttons(in view: UIView) -> [UIButton] {
+        var found = (view as? UIButton).map { [$0] } ?? []
+        for subview in view.subviews { found += buttons(in: subview) }
+        return found
+    }
+}
