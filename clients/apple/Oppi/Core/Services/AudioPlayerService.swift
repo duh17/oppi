@@ -22,7 +22,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
     nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
 
-    private static weak var activePlaybackOwner: AudioPlayerService?
+    private(set) static weak var activePlaybackOwner: AudioPlayerService?
     // ServerConnection owns each player, but AVAudioSession is process-wide.
     // Weak, identity-scoped claims cover every player (including newly created
     // ones) without retaining departed servers or letting unrelated release
@@ -37,7 +37,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         captureInterruptionOwners = captureInterruptionOwners.filter { $0.value.owner != nil }
         return !captureInterruptionOwners.isEmpty
     }
-    private static var remoteCommandTargetsInstalled = false
     struct SessionContext: Equatable {
         let sessionID: String
         let sessionTitle: String
@@ -102,8 +101,18 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// Known duration for the active item. Nil for live streams.
     private(set) var duration: TimeInterval?
 
-    /// True when the active item is paused rather than stopped.
+    /// True when the active item is paused rather than stopped, whether the
+    /// listener paused it or the system did (a call, Siri, headphones out).
     private(set) var isPaused = false
+
+    /// Set when the system, not the listener, paused the active item. Only an item
+    /// paused for an interruption resumes when that interruption ends.
+    private enum SystemPause: Equatable {
+        /// AVPlayer paused itself; `since` is `ProcessInfo.systemUptime`.
+        case player(since: TimeInterval)
+        case interruption
+    }
+    private var systemPause: SystemPause?
 
     /// Listening speed for file, clip, and media playback. Live PCM streams play at 1×.
     private(set) var playbackRate: Float = AudioPlaybackRate.stored()
@@ -172,6 +181,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var player: AVAudioPlayer?
     private var mediaPlaybackSession: AuthenticatedMediaPlaybackSession?
     private var mediaStatusObservation: NSKeyValueObservation?
+    private var mediaTimeControlObservation: NSKeyValueObservation?
     private var mediaEndObserver: NSObjectProtocol?
     private var sessionContext: SessionContext?
     private var activePlaybackContext: SessionContext?
@@ -382,6 +392,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         currentTime = 0
         duration = nil
         isPaused = false
+        systemPause = nil
         nowPlayingItemTitle = nil
         nowPlayingTimedText = .empty
         isNowPlayingTimedTextLoading = false
@@ -398,6 +409,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     func pause() {
+        systemPause = nil
+        pausePlayback()
+    }
+
+    private func pausePlayback() {
         guard playingItemID != nil, !isPaused else { return }
         player?.pause()
         mediaPlaybackSession?.player.pause()
@@ -416,6 +432,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func resume() {
         guard playingItemID != nil, isPaused else { return }
+        systemPause = nil
         // A paused item does not reclaim playback when dictation releases its
         // session. Category/options survive deactivation, so explicit resume
         // must restore them before either a retained player or PCM graph runs.
@@ -807,6 +824,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         stopProgressUpdates()
         mediaStatusObservation?.invalidate()
         mediaStatusObservation = nil
+        mediaTimeControlObservation?.invalidate()
+        mediaTimeControlObservation = nil
         if let mediaEndObserver {
             NotificationCenter.default.removeObserver(mediaEndObserver)
             self.mediaEndObserver = nil
@@ -939,6 +958,81 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 }
             }
         }
+
+        // AVPlayer pauses itself for calls, Siri, lost headphones and AirPlay
+        // without telling Oppi. Follow its real state so the controls and the
+        // lock screen never claim it is playing.
+        mediaTimeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            Task { @MainActor in
+                guard let self, self.mediaPlaybackSession === playbackSession else { return }
+                self.followMediaTimeControl(of: player)
+            }
+        }
+    }
+
+    /// Reads the player's status now, not the KVO change: a pause or resume made
+    /// since the change was posted has already settled the state.
+    private func followMediaTimeControl(of mediaPlayer: AVPlayer) {
+        // Before the first play (or while a resume seek lands) the player is paused on purpose.
+        guard playingItemID != nil, !mediaStartAwaitingSeek else { return }
+        let status = mediaPlayer.timeControlStatus
+        if status == .paused, !isPaused, !Self.hasPlayedToEnd(mediaPlayer.currentItem) {
+            pausePlayback()
+            if systemPause == nil { systemPause = .player(since: ProcessInfo.processInfo.systemUptime) }
+            return
+        }
+        if status == .playing, isPaused {
+            // Something outside Oppi's controls started the player again.
+            isPaused = false
+            systemPause = nil
+            sleepTimer?.resume(now: Date())
+            startProgressUpdates()
+        }
+        // Buffering stops the lock-screen clock; playing restarts it.
+        updateNowPlayingInfo(
+            durationSeconds: duration ?? lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream
+        )
+    }
+
+    /// The end-of-item observer finishes the item; reaching the end is not a pause.
+    private static func hasPlayedToEnd(_ item: AVPlayerItem?) -> Bool {
+        guard let item, item.duration.isNumeric else { return false }
+        // Slack for a VBR MP3, whose duration through the loader is an estimate.
+        return item.currentTime().seconds >= item.duration.seconds - 0.1
+    }
+
+    func handleInterruption(
+        _ type: AVAudioSession.InterruptionType,
+        options: AVAudioSession.InterruptionOptions
+    ) {
+        switch type {
+        case .began:
+            if playingItemID != nil, !isPaused {
+                pausePlayback()
+                systemPause = .interruption
+            } else if case .player(let since)? = systemPause,
+                      ProcessInfo.processInfo.systemUptime - since < 1 {
+                // AVPlayer paused itself just before this notification arrived. An
+                // older self-pause (a stall, an AirPlay receiver) is not this
+                // interruption's to resume.
+                systemPause = .interruption
+            }
+        case .ended:
+            guard systemPause == .interruption else { return }
+            systemPause = nil
+            if options.contains(.shouldResume) { resume() }
+        @unknown default:
+            break
+        }
+    }
+
+    /// Headphones unplugged, AirPods out, a car disconnected: stop before the
+    /// speaker takes over, and never resume on our own. AVPlayer pauses itself
+    /// here; AVAudioPlayer and the PCM graph would keep playing aloud.
+    func handleOutputRouteLost() {
+        pausePlayback()
+        systemPause = nil
     }
 
     private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String, resumeKey: String?) {
@@ -967,9 +1061,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         audioPlayer.enableRate = true
         audioPlayer.rate = playbackRate
         setPlaybackState(playing: itemID, loading: nil)
-        updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
 
         audioPlayer.play()
+        // After play(): the lock-screen rate reads whether the player really runs.
+        updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
         startProgressUpdates()
     }
 
@@ -1389,6 +1484,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests
     var _isProgressTimerRunningForTesting: Bool { progressTimer != nil }
 
+    // periphery:ignore - the simulator cannot make the system pause AVPlayer;
+    // AudioPlayerSystemPauseTests pauses this real player from outside instead
+    var _mediaPlayerForTesting: AVPlayer? { mediaPlaybackSession?.player }
+
     // periphery:ignore - test seam used by audio completion tests
     func _finishDataPlaybackForTesting() {
         handleDataPlaybackFinished(completed: true)
@@ -1544,6 +1643,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             activeOwner.stop()
         }
         Self.installRemoteCommandTargetsIfNeeded()
+        Self.installAudioSessionObserversIfNeeded()
         Self.activePlaybackOwner = self
     }
 
@@ -1702,7 +1802,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     ) {
         // Live PCM streams always play at normal speed; everything else uses the listening speed.
         let listeningRate: Float = streamID != nil ? 1 : self.playbackRate
-        let playbackRate = overrideRate ?? (isPaused ? 0 : listeningRate)
+        // The lock screen advances its clock from this rate, so it is 0 whenever
+        // audio is not actually advancing (paused by anyone, loading, buffering).
+        let playbackRate = overrideRate ?? (isOutputAdvancing ? listeningRate : 0)
         lastNowPlayingDurationSeconds = durationSeconds
         lastNowPlayingIsLiveStream = isLiveStream
 
@@ -1739,95 +1841,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         MPRemoteCommandCenter.shared().changePlaybackRateCommand.isEnabled = streamID == nil
     }
 
-    private static func setRemoteSeekingEnabled(_ enabled: Bool) {
-        let center = MPRemoteCommandCenter.shared()
-        center.changePlaybackPositionCommand.isEnabled = enabled
-        center.skipForwardCommand.isEnabled = enabled
-        center.skipBackwardCommand.isEnabled = enabled
-    }
-
-    private static func installRemoteCommandTargetsIfNeeded() {
-        guard !remoteCommandTargetsInstalled else { return }
-        remoteCommandTargetsInstalled = true
-
-        let center = MPRemoteCommandCenter.shared()
-        let stopHandler: (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus = { _ in
-            Task { @MainActor in
-                Self.activePlaybackOwner?.stop()
-            }
-            return .success
-        }
-
-        center.playCommand.isEnabled = true
-        center.pauseCommand.isEnabled = true
-        center.stopCommand.isEnabled = true
-        center.togglePlayPauseCommand.isEnabled = true
-        center.skipForwardCommand.isEnabled = false
-        center.skipBackwardCommand.isEnabled = false
-        center.changePlaybackPositionCommand.isEnabled = false
-        center.skipForwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
-        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
-        center.changePlaybackRateCommand.supportedPlaybackRates = AudioPlaybackRate.options.map { NSNumber(value: $0) }
-        center.changePlaybackRateCommand.addTarget { event in
-            guard let event = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
-            let rate = event.playbackRate
-            Task { @MainActor in
-                Self.activePlaybackOwner?.setPlaybackRate(rate)
-            }
-            return .success
-        }
-        center.playCommand.addTarget { _ in
-            Task { @MainActor in
-                Self.activePlaybackOwner?.resume()
-            }
-            return .success
-        }
-        center.pauseCommand.addTarget { _ in
-            Task { @MainActor in
-                Self.activePlaybackOwner?.pause()
-            }
-            return .success
-        }
-        center.stopCommand.addTarget(handler: stopHandler)
-        center.togglePlayPauseCommand.addTarget { _ in
-            Task { @MainActor in
-                guard let owner = Self.activePlaybackOwner else { return }
-                if owner.isPaused {
-                    owner.resume()
-                } else {
-                    owner.pause()
-                }
-            }
-            return .success
-        }
-        center.skipForwardCommand.addTarget { event in
-            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? Self.skipInterval
-            Task { @MainActor in
-                Self.activePlaybackOwner?.skip(by: interval)
-            }
-            return .success
-        }
-        center.skipBackwardCommand.addTarget { event in
-            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? Self.skipInterval
-            Task { @MainActor in
-                Self.activePlaybackOwner?.skip(by: -abs(interval))
-            }
-            return .success
-        }
-        center.changePlaybackPositionCommand.addTarget { event in
-            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
-                return .commandFailed
-            }
-            let position = event.positionTime
-            Task { @MainActor in
-                guard let owner = Self.activePlaybackOwner,
-                      let time = AudioPlaybackSeek.clampedTime(position, duration: owner.duration) else {
-                    return
-                }
-                owner.seek(to: time)
-            }
-            return .success
-        }
+    private var isOutputAdvancing: Bool {
+        guard !isPaused else { return false }
+        if let mediaPlayer = mediaPlaybackSession?.player { return mediaPlayer.timeControlStatus == .playing }
+        if let player { return player.isPlaying }
+        return streamID != nil
     }
 
     private static func streamingPlaybackItemID(for streamID: String) -> String {

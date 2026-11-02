@@ -39,6 +39,7 @@
 		036BF31F1FBD29BCECC9223E /* ProviderAuthFlowAttemptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9D47B9F2F749E3E646743C1 /* ProviderAuthFlowAttemptTests.swift */; };
 		03ABBEAC81245686CF6A0F1A /* StreamingAutoFollowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F63CD7097552FDF80941DF3 /* StreamingAutoFollowTests.swift */; };
 		03BF88991293E990CC033D33 /* CommitGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B690F532703A17742CCCC570 /* CommitGraphView.swift */; };
+		03D35864495C760C8E548366 /* AudioPlayerService+SystemControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C816AC23F26FED06464C9 /* AudioPlayerService+SystemControls.swift */; };
 		03E1204D76C500C84236EBF8 /* MacDictationAudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0E51642EAA86705CA6B0AA /* MacDictationAudioCapture.swift */; };
 		03EAFE1FA63B1CF291D77BC2 /* ReadySessionScrollToBottomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7335136063FDF4FC9DA6A08 /* ReadySessionScrollToBottomTests.swift */; };
 		03EB2327AD2E1DA3F42A238F /* OrbMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79289812FD7C83A5FAF21678 /* OrbMetalView.swift */; };
@@ -1966,6 +1967,7 @@
 		C89651109E13D6FE58806727 /* MermaidGanttParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */; };
 		C8B359703EA276B0037CFCE6 /* OppiNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4AA2EB1A02F7F48FE7EC165A /* OppiNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C8E4998A0077B8A0B6903314 /* WebSocketClientSubscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742844DD73D5A735763825D2 /* WebSocketClientSubscriptionTests.swift */; };
+		C8FB798413C7ED1E03A0FD58 /* AudioPlayerSystemPauseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA93F209CCEDAFA8AD7A10E2 /* AudioPlayerSystemPauseTests.swift */; };
 		C8FE60D5A96E038BE23507E8 /* JSONUnpairedSurrogateRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 408FF5C27B794D214CD842EE /* JSONUnpairedSurrogateRepair.swift */; };
 		C92662C28B6E66F349E4D687 /* ChatFocusOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */; };
 		C98D9AF204E386FD1897C527 /* LiveActivityRelaySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927356DB17E13D25095EF23A /* LiveActivityRelaySync.swift */; };
@@ -3786,6 +3788,7 @@
 		8DA0F12CBDF4BA21DB902B85 /* CommitGraph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitGraph.swift; sourceTree = "<group>"; };
 		8DD7CE28D49A32D14C4791F2 /* ProviderAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAuth.swift; sourceTree = "<group>"; };
 		8DF59844CC02911865351D62 /* DeviceKeyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeyProvider.swift; sourceTree = "<group>"; };
+		8E4C816AC23F26FED06464C9 /* AudioPlayerService+SystemControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudioPlayerService+SystemControls.swift"; sourceTree = "<group>"; };
 		8E5E5F4331EF250AE6F86345 /* KeybindingEventMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingEventMap.swift; sourceTree = "<group>"; };
 		8E653943FFE4A0AB90C752CB /* WorkspaceIconPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIconPicker.swift; sourceTree = "<group>"; };
 		8E9E3106B53C20450F229CB7 /* ProviderColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderColor.swift; sourceTree = "<group>"; };
@@ -4287,6 +4290,7 @@
 		CA29EB015CA1A879D937108C /* VoiceInputRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRoutingTests.swift; sourceTree = "<group>"; };
 		CA33700ABC0A008153E7BF86 /* SessionRowPresentationBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRowPresentationBuilderTests.swift; sourceTree = "<group>"; };
 		CA5F6B94ED781B4360EF75F9 /* WorkspaceFileEditTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditTransport.swift; sourceTree = "<group>"; };
+		CA93F209CCEDAFA8AD7A10E2 /* AudioPlayerSystemPauseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerSystemPauseTests.swift; sourceTree = "<group>"; };
 		CAB8AFCF68D7D58F621769A6 /* ListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListScreen.swift; sourceTree = "<group>"; };
 		CABE31ABCABEE739E8A0F420 /* WorkspaceInstructionsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceInstructionsViewController.swift; sourceTree = "<group>"; };
 		CADAFD996957A295CE65DD51 /* McpServersViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServersViewControllerTests.swift; sourceTree = "<group>"; };
@@ -5399,6 +5403,7 @@
 				E1E08A4A1DD1241FDFCF2BD2 /* AudioPlayerServiceLifecycleTests.swift */,
 				AF6F9DDEE95C822151949FE9 /* AudioPlayerSkipTests.swift */,
 				DF03665268A048733CEF65E5 /* AudioPlayerSpeechTests.swift */,
+				CA93F209CCEDAFA8AD7A10E2 /* AudioPlayerSystemPauseTests.swift */,
 				27806A6C72201BADCF5532F9 /* BottomOverlapScrollGapTests.swift */,
 				CD31CB66E8787D521802C4D4 /* ChatActionHandlerReconnectTests.swift */,
 				D1F54EBF5A2788A7C540F408 /* ChatActionHandlerRecoveryTests.swift */,
@@ -5681,6 +5686,7 @@
 				12ED902524EA11CF9202B517 /* AudioLongformListening.swift */,
 				DBF480164E5D7F4E1E3504A7 /* AudioLyrics.swift */,
 				A3B9106745D6171B057B5DA5 /* AudioPlayerService.swift */,
+				8E4C816AC23F26FED06464C9 /* AudioPlayerService+SystemControls.swift */,
 				A2F279BD3C0388350AEE583E /* BackgroundKeepAlive.swift */,
 				9DFA524D3904C59BF1A061DA /* BiometricService.swift */,
 				8BC9A9B9229497D47A8A4919 /* ClientLogBuffer.swift */,
@@ -9584,6 +9590,7 @@
 				CE5C407EC68FFDEEA2A6AB0E /* AudioPlayerServiceLifecycleTests.swift in Sources */,
 				86A72170AE2F195904B6B01E /* AudioPlayerSkipTests.swift in Sources */,
 				2D26E6FC5091D1565F498E6D /* AudioPlayerSpeechTests.swift in Sources */,
+				C8FB798413C7ED1E03A0FD58 /* AudioPlayerSystemPauseTests.swift in Sources */,
 				879AC952E65E152D44647FEF /* AuthDeviceAPIClientTests.swift in Sources */,
 				F1EDDF6F097B44FDB4E1CBDC /* AuthenticatedMediaLoaderBoundaryTests.swift in Sources */,
 				3A2CC2DC8D07E60CBAD35E82 /* AuthenticatedMediaPlaybackAudioTests.swift in Sources */,
@@ -10267,6 +10274,7 @@
 				BBA9EE0FBB458B502A69CBF9 /* AudioLyricsPlayerPresenter.swift in Sources */,
 				4847DB1AB8CDC47D28D47919 /* AudioLyricsPlayerViewController.swift in Sources */,
 				1E7A7846D2C0F43AE5028BF0 /* AudioPlaybackTransportView.swift in Sources */,
+				03D35864495C760C8E548366 /* AudioPlayerService+SystemControls.swift in Sources */,
 				2EC0AA6A7A7F518C5D96AC59 /* AudioPlayerService.swift in Sources */,
 				5659315065A12A6B16E64361 /* AudioScreenshotPreview.swift in Sources */,
 				1AD276ADFCF2FA6AEB3E3535 /* AudioTranscriptView.swift in Sources */,
