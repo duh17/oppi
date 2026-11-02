@@ -20,12 +20,12 @@ import type {
   TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import type { Schema } from "@earendil-works/pi-schema";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ClassicParams } from "../classic-params.ts";
 import {
   boundaryDelivery,
   consumeSettleSuppression,
@@ -147,10 +147,46 @@ function lookupOppiAutoStop(sessionId: string): Promise<boolean | undefined> {
   });
 }
 
-const ActionSchema = StringEnum(["start", "cancel"] as const, {
-  description:
-    "start runs a command in the background. cancel stops a job. Neither is a status poll.",
-});
+// The JSON Schema pi-schema's builders would make, written out: why is in `classic-params.ts`.
+const BashParams: Schema<{ command: string; timeout?: number }> = {
+  type: "object",
+  properties: {
+    command: { type: "string", description: "Bash command to execute" },
+    timeout: {
+      type: "number",
+      description:
+        "Timeout in seconds. Optional. A timeout of 1 second or less stays in the foreground.",
+    },
+  },
+  required: ["command"],
+};
+
+const BackgroundJobParams: Schema<{
+  action: "start" | "cancel";
+  command?: string;
+  timeout?: number;
+  job_id?: string;
+}> = {
+  type: "object",
+  properties: {
+    action: {
+      enum: ["start", "cancel"],
+      description:
+        "start runs a command in the background. cancel stops a job. Neither is a status poll.",
+    },
+    command: {
+      type: "string",
+      description: "Shell command to run in the background. Required for start.",
+    },
+    timeout: {
+      type: "number",
+      description:
+        "Kill the job after this many seconds. Optional. You are still woken when it ends; this does not make polling useful.",
+    },
+    job_id: { type: "string", description: "Job id returned by start. Required for cancel." },
+  },
+  required: ["action"],
+};
 
 interface ShellSettings {
   shellPath?: string;
@@ -439,15 +475,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI): void {
       "Do not use bash or background_job for commands that read or print secrets. Use secret_run.",
     ],
     executionMode: "parallel",
-    parameters: Type.Object({
-      command: Type.String({ description: "Bash command to execute" }),
-      timeout: Type.Optional(
-        Type.Number({
-          description:
-            "Timeout in seconds. Optional. A timeout of 1 second or less stays in the foreground.",
-        }),
-      ),
-    }),
+    parameters: BashParams as ClassicParams<typeof BashParams>,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       rememberUi(ctx);
       const result = await runBackgroundPolicy({
@@ -482,25 +510,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI): void {
       "Use background_job cancel only to stop a job. Do not call it to check whether a job finished.",
     ],
     executionMode: "parallel",
-    parameters: Type.Object({
-      action: ActionSchema,
-      command: Type.Optional(
-        Type.String({
-          description: "Shell command to run in the background. Required for start.",
-        }),
-      ),
-      timeout: Type.Optional(
-        Type.Number({
-          description:
-            "Kill the job after this many seconds. Optional. You are still woken when it ends; this does not make polling useful.",
-        }),
-      ),
-      job_id: Type.Optional(
-        Type.String({
-          description: "Job id returned by start. Required for cancel.",
-        }),
-      ),
-    }),
+    parameters: BackgroundJobParams as ClassicParams<typeof BackgroundJobParams>,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (signal?.aborted) {
         return {

@@ -12,7 +12,7 @@ import {
   fauxThinking,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
   Harness,
@@ -326,7 +326,7 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
   const tool: ToolRegistration = {
     name: "startup_counter",
     description: "Controlled tool recovery",
-    parameters: Type.Object({}),
+    parameters: obj({}),
     replay: "safe",
     async execute(_args, api, callContext) {
       if (!recovering) {
@@ -790,7 +790,7 @@ describe("server durable managed runtime", () => {
       const probe = defineTool({
         name: "ui_probe",
         description: "Generic UI proof",
-        parameters: Type.Object({}),
+        parameters: obj({}),
         replay: "safe",
         async execute(_args, api, ctx) {
           const response = await requestUI(
@@ -955,7 +955,7 @@ describe("server durable managed runtime", () => {
     const probe = defineTool({
       name: "timeout_probe",
       description: "UI deadline proof",
-      parameters: Type.Object({}),
+      parameters: obj({}),
       replay: "safe",
       async execute(_args, api, ctx) {
         const response = await requestUI(
@@ -4194,7 +4194,7 @@ describe("server durable managed runtime", () => {
     const tool: ToolRegistration = {
       name: "side_effect_counter",
       description: "Deterministic restart probe",
-      parameters: Type.Object({}),
+      parameters: obj({}),
       replay: "safe",
       async execute(_args, api, callContext) {
         if (!recovering) {

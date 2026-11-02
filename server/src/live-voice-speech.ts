@@ -5,8 +5,9 @@ import type {
   ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 
+import type { ClassicParams } from "../plugins/classic-params.js";
 import {
   CALL_STARTED,
   NO_CALL_ATTACHED,
@@ -32,6 +33,8 @@ const CALL_ENDED =
   "The Live Voice call ended. Later messages are typed, not speech transcripts. Nobody is listening: replies are no longer read aloud and the speak tool is gone. Stop writing a spoken opening and resume normal written chat.";
 /** Live Voice status lines on the phone are a glance, not the transcript. */
 const STATUS_MAX_CHARS = 500;
+/** The classic `speak` tool's arguments; open, as TypeBox's objects were. */
+const SpeakParams = obj({ text: str(SPEAK_TEXT) }, { open: true });
 
 export interface RunOutcome {
   /** `blocked` when the run failed or was stopped. */
@@ -301,7 +304,7 @@ export class LiveVoiceSpeech implements LiveVoiceRuntimePort {
       description: SPEAK_DESCRIPTION,
       promptSnippet: "Talk to the user out loud on the attached Live Voice call",
       promptGuidelines: SPEAK_GUIDELINES,
-      parameters: Type.Object({ text: Type.String(SPEAK_TEXT) }),
+      parameters: SpeakParams as ClassicParams<typeof SpeakParams>,
       defaultActive: false,
       executionMode: "sequential",
       execute: async (_toolCallId, params) => {

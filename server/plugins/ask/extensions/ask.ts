@@ -4,8 +4,9 @@ import type {
   ExtensionUIDialogOptions,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import type { Schema } from "@earendil-works/pi-schema";
 
+import type { ClassicParams } from "../../classic-params.js";
 import {
   buildAskToolResult,
   buildFallbackAnswers,
@@ -16,36 +17,47 @@ import {
 } from "./ask-shared.js";
 import { runTerminalAskDialog } from "./ask-terminal.js";
 
-const AskOptionSchema = Type.Object({
-  value: Type.String({ description: "Return value when selected" }),
-  label: Type.String({ description: "Display label" }),
-  description: Type.Optional(Type.String({ description: "Short description below label" })),
-});
-
-const AskQuestionSchema = Type.Object({
-  id: Type.String({ description: "Stable key for the answer map" }),
-  question: Type.String({ description: "Full question text" }),
-  options: Type.Array(AskOptionSchema, {
-    description: "Options for the user to choose from (2-6 recommended)",
-  }),
-  multiSelect: Type.Optional(
-    Type.Boolean({
-      description: "Allow selecting multiple options. Default: false",
-    }),
-  ),
-});
-
-const AskParams = Type.Object({
-  questions: Type.Array(AskQuestionSchema, {
-    minItems: 1,
-    description: "One or more questions to ask. Presented as a horizontal pager on mobile.",
-  }),
-  allowCustom: Type.Optional(
-    Type.Boolean({
+// The JSON Schema pi-schema's builders would make, written out: why is in `classic-params.ts`.
+const AskParams: Schema<{ questions: AskQuestion[]; allowCustom?: boolean }> = {
+  type: "object",
+  properties: {
+    questions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Stable key for the answer map" },
+          question: { type: "string", description: "Full question text" },
+          options: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                value: { type: "string", description: "Return value when selected" },
+                label: { type: "string", description: "Display label" },
+                description: { type: "string", description: "Short description below label" },
+              },
+              required: ["value", "label"],
+            },
+            description: "Options for the user to choose from (2-6 recommended)",
+          },
+          multiSelect: {
+            type: "boolean",
+            description: "Allow selecting multiple options. Default: false",
+          },
+        },
+        required: ["id", "question", "options"],
+      },
+      minItems: 1,
+      description: "One or more questions to ask. Presented as a horizontal pager on mobile.",
+    },
+    allowCustom: {
+      type: "boolean",
       description: "Allow typing a custom answer per question. Default: true",
-    }),
-  ),
-});
+    },
+  },
+  required: ["questions"],
+};
 
 function questionModeLabel(question: AskQuestion, allowCustom: boolean): string {
   const parts = [question.multiSelect ? "multi-select" : "single-select"];
@@ -282,7 +294,7 @@ export function createAskFactory(): ExtensionFactory {
         "Good triggers for ask: file organization choices, naming conventions, test strategy, error handling approach, " +
           "scope of a refactor, which features to include, API design tradeoffs, dependency choices.",
       ],
-      parameters: AskParams,
+      parameters: AskParams as ClassicParams<typeof AskParams>,
       executionMode: "sequential",
 
       async execute(_toolCallId, params, signal, _onUpdate, ctx) {

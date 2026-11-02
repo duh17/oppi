@@ -11,7 +11,7 @@
 
 import { isAbsolute, join, relative, resolve, posix } from "node:path";
 import type { Readable } from "node:stream";
-import { Type } from "typebox";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import type {
   BashOperations,
   ReadOperations,
@@ -21,6 +21,7 @@ import type {
   FindOperations,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { ClassicParams } from "../plugins/classic-params.js";
 
 /**
  * Minimal VM interface consumed by the operations layer.
@@ -515,31 +516,23 @@ export function createGondolinFindOps(
 
 // ─── Grep ───
 
-export const sandboxGrepSchema = Type.Object({
-  pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
-  path: Type.Optional(
-    Type.String({ description: "Directory or file to search (default: current directory)" }),
-  ),
-  glob: Type.Optional(
-    Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" }),
-  ),
-  ignoreCase: Type.Optional(
-    Type.Boolean({ description: "Case-insensitive search (default: false)" }),
-  ),
-  literal: Type.Optional(
-    Type.Boolean({
-      description: "Treat pattern as literal string instead of regex (default: false)",
-    }),
-  ),
-  context: Type.Optional(
-    Type.Number({
-      description: "Number of lines to show before and after each match (default: 0)",
-    }),
-  ),
-  limit: Type.Optional(
-    Type.Number({ description: "Maximum number of matches to return (default: 100)" }),
-  ),
-});
+/** Open, as TypeBox's objects were: classic sandbox sessions offer this tool in place of Pi's `grep`. */
+export const sandboxGrepSchema = obj(
+  {
+    pattern: str({ description: "Search pattern (regex or literal string)" }),
+    path: opt(str({ description: "Directory or file to search (default: current directory)" })),
+    glob: opt(str({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" })),
+    ignoreCase: opt(bool({ description: "Case-insensitive search (default: false)" })),
+    literal: opt(
+      bool({ description: "Treat pattern as literal string instead of regex (default: false)" }),
+    ),
+    context: opt(
+      num({ description: "Number of lines to show before and after each match (default: 0)" }),
+    ),
+    limit: opt(num({ description: "Maximum number of matches to return (default: 100)" })),
+  },
+  { open: true },
+);
 
 function isHostHomeTildePath(input: string): boolean {
   return input === "~" || input.startsWith("~/") || input.startsWith("~\\");
@@ -585,14 +578,14 @@ export function createSandboxGrepToolDefinition(
   vm: GondolinVm,
   localCwd: string,
   guestWorkspace: string = GUEST_WORKSPACE,
-): ToolDefinition<typeof sandboxGrepSchema> {
+): ToolDefinition<ClassicParams<typeof sandboxGrepSchema>> {
   return {
     name: "grep",
     label: "grep",
     description:
       "Search file contents inside the sandbox workspace. Paths outside the workspace mount are rejected. Prefers guest rg when present, otherwise guest grep.",
     promptSnippet: "Search file contents in the sandbox workspace",
-    parameters: sandboxGrepSchema,
+    parameters: sandboxGrepSchema as ClassicParams<typeof sandboxGrepSchema>,
     async execute(_toolCallId, params, signal) {
       const pattern = String(params.pattern ?? "");
       const guestPath = resolveSandboxToolPath(

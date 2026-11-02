@@ -19,8 +19,8 @@
     "package.json"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-schema": "*",
     "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {

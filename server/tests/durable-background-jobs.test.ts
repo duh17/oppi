@@ -10,7 +10,7 @@ import {
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
 import {
   Harness,
   createRegistry,
@@ -826,7 +826,7 @@ describe("native Durable background jobs", () => {
     const probe = defineTool({
       name: "probe",
       description: "Run commands through bash.",
-      parameters: Type.Object({}),
+      parameters: obj({}),
       async execute(_args, api, ctx) {
         nested.push(await api.executeTool("bash", { command: "echo ok" }, ctx));
         nested.push(await api.executeTool("bash", { command: "echo broke; exit 3" }, ctx));

@@ -23,7 +23,8 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-schema": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

@@ -32,9 +32,6 @@ import * as piSchema from "@earendil-works/pi-schema";
 import { createJiti } from "jiti";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
-import * as typebox from "typebox";
-import * as typeboxCompile from "typebox/compile";
-import * as typeboxValue from "typebox/value";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import * as oppiV1 from "./oppi-v1.js";
@@ -667,9 +664,6 @@ const HOST_MODULES: Record<string, unknown> = {
   "@earendil-works/chord/next": chordNext,
   "@earendil-works/pi-ai": piAi,
   "@earendil-works/pi-schema": piSchema,
-  typebox,
-  "typebox/compile": typeboxCompile,
-  "typebox/value": typeboxValue,
 };
 
 /**

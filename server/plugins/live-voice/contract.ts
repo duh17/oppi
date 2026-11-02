@@ -1,7 +1,7 @@
 // The agent-facing `speak` tool and call guidance, shared by the classic inline extension
 // (`server/src/live-voice-speech.ts`) and the durable built-in (`./server.ts`), so both runtimes
-// offer the same words and limits. Each entry builds its own schema from them: TypeBox for
-// classic Pi, pi-schema for durable. Imports nothing from `oppi/v1`, which only the plugin host
+// offer the same words and limits. Each entry builds its own pi-schema schema from them: open for
+// classic Pi, closed for durable. Imports nothing from `oppi/v1`, which only the plugin host
 // resolves. The server decides when a session has the tool (`LiveVoiceSpeech`).
 
 export const SPEAK_TOOL_NAME = "speak";

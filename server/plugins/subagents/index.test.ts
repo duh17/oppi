@@ -4,11 +4,6 @@ import { EventEmitter } from "node:events";
 const calls: string[][] = [];
 const waitChildren: Array<EventEmitter & { stdout: EventEmitter }> = [];
 const getChildren: Array<EventEmitter & { stdout: EventEmitter }> = [];
-const buildType = (): object => ({});
-mock.module("@sinclair/typebox", () => ({
-  Type: { Object: buildType, Optional: buildType, String: buildType, Boolean: buildType },
-}));
-mock.module("@earendil-works/pi-ai", () => ({ StringEnum: buildType }));
 mock.module("node:child_process", () => ({
   spawn: (_command: string, args: string[]) => {
     calls.push(args);

@@ -14,8 +14,8 @@ import type {
   ExtensionContext,
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import type { Schema } from "@earendil-works/pi-schema";
+import type { ClassicParams } from "../classic-params.ts";
 import {
   applyWaitReading,
   isMissingSession,
@@ -186,6 +186,58 @@ function terminalStyle(theme: {
     bold: (text) => theme.bold(text),
   };
 }
+
+const stringArg = (description: string): Schema<string> => ({ type: "string", description });
+const booleanArg = (description: string): Schema<boolean> => ({ type: "boolean", description });
+
+// The JSON Schema pi-schema's builders would make, written out: why is in `classic-params.ts`.
+const SubagentParams: Schema<{
+  action: "launch" | "release";
+  workspace?: string;
+  prompt?: string;
+  name?: string;
+  model?: string;
+  thinking?: string;
+  agent?: string;
+  worktree?: string;
+  tools?: string;
+  exclude_tools?: string;
+  auto_stop?: boolean;
+  allow_nested?: boolean;
+  idempotency_key?: string;
+  supervise?: boolean;
+  session_id?: string;
+}> = {
+  type: "object",
+  properties: {
+    action: {
+      enum: ["launch", "release"],
+      description:
+        "launch creates a child. release stops supervision and does not stop the session.",
+    },
+    workspace: stringArg("Workspace id or unique name. Required for launch."),
+    prompt: stringArg("Child prompt. Required for launch."),
+    name: stringArg("Session name."),
+    model: stringArg(
+      "Exact provider/model id. Required unless agent is a saved agent with its own default model.",
+    ),
+    thinking: stringArg("Thinking level."),
+    agent: stringArg("Saved agent id, or workspace_default."),
+    worktree: stringArg("Worktree id when the work may land."),
+    tools: stringArg("Comma-separated tool allowlist."),
+    exclude_tools: stringArg("Comma-separated tool denylist."),
+    auto_stop: booleanArg(
+      "Stop the child when it settles with nothing pending. Default true; false keeps it loaded until the idle timeout.",
+    ),
+    allow_nested: booleanArg("Let this child spawn sessions. Detached Donkey Master only."),
+    idempotency_key: stringArg("Stable key for one logical launch."),
+    supervise: booleanArg(
+      "Wake this session when the child settles, needs attention, stalls, or the wait fails. Waiting does not send acknowledgment turns. Default true.",
+    ),
+    session_id: stringArg("Child id to release."),
+  },
+  required: ["action"],
+};
 
 export default function subagentsExtension(pi: ExtensionAPI): void {
   let seen: Subagent[] = [];
@@ -607,49 +659,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
       "release stops supervision only. It does not stop the child session.",
     ],
     executionMode: "parallel",
-    parameters: Type.Object({
-      action: StringEnum(["launch", "release"] as const, {
-        description:
-          "launch creates a child. release stops supervision and does not stop the session.",
-      }),
-      workspace: Type.Optional(
-        Type.String({ description: "Workspace id or unique name. Required for launch." }),
-      ),
-      prompt: Type.Optional(Type.String({ description: "Child prompt. Required for launch." })),
-      name: Type.Optional(Type.String({ description: "Session name." })),
-      model: Type.Optional(
-        Type.String({
-          description:
-            "Exact provider/model id. Required unless agent is a saved agent with its own default model.",
-        }),
-      ),
-      thinking: Type.Optional(Type.String({ description: "Thinking level." })),
-      agent: Type.Optional(Type.String({ description: "Saved agent id, or workspace_default." })),
-      worktree: Type.Optional(Type.String({ description: "Worktree id when the work may land." })),
-      tools: Type.Optional(Type.String({ description: "Comma-separated tool allowlist." })),
-      exclude_tools: Type.Optional(Type.String({ description: "Comma-separated tool denylist." })),
-      auto_stop: Type.Optional(
-        Type.Boolean({
-          description:
-            "Stop the child when it settles with nothing pending. Default true; false keeps it loaded until the idle timeout.",
-        }),
-      ),
-      allow_nested: Type.Optional(
-        Type.Boolean({
-          description: "Let this child spawn sessions. Detached Donkey Master only.",
-        }),
-      ),
-      idempotency_key: Type.Optional(
-        Type.String({ description: "Stable key for one logical launch." }),
-      ),
-      supervise: Type.Optional(
-        Type.Boolean({
-          description:
-            "Wake this session when the child settles, needs attention, stalls, or the wait fails. Waiting does not send acknowledgment turns. Default true.",
-        }),
-      ),
-      session_id: Type.Optional(Type.String({ description: "Child id to release." })),
-    }),
+    parameters: SubagentParams as ClassicParams<typeof SubagentParams>,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       rememberUi(ctx);
       if (params.action === "release") {

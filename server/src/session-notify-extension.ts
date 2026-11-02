@@ -1,5 +1,6 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import type { ClassicParams } from "../plugins/classic-params.js";
 import {
   NOTIFY_BODY,
   NOTIFY_DESCRIPTION,
@@ -10,6 +11,8 @@ import {
   type NotifyOutcome,
 } from "../plugins/notify/contract.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+
+const NotifyParams = obj({ title: str(NOTIFY_TITLE), body: str(NOTIFY_BODY) }, { open: true });
 
 /**
  * The agent `notify` tool for a classic session. Registered on each resource load only while
@@ -27,10 +30,7 @@ export function createNotifyExtension(sessionId: string, port: SessionNotifyPort
         description: NOTIFY_DESCRIPTION,
         promptSnippet: "Send the user a push notification when a result is ready to read",
         promptGuidelines: NOTIFY_GUIDELINES,
-        parameters: Type.Object({
-          title: Type.String(NOTIFY_TITLE),
-          body: Type.String(NOTIFY_BODY),
-        }),
+        parameters: NotifyParams as ClassicParams<typeof NotifyParams>,
         async execute(_toolCallId, params) {
           const outcome: NotifyOutcome = await port.notify(sessionId, params);
           return {
