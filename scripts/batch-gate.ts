@@ -13,12 +13,30 @@
 //
 // `bun scripts/batch-gate.ts --supports-profile-scope` prints PROFILE_SCOPE_CAPABILITY and exits 0
 // without running anything: a queue probes it before passing @<profile> selectors, because a gate
-// from before that suffix exists rejects it. An older gate exits 2 on the unknown flag.
+// from before that suffix exists rejects it. An older gate exits 2 on the unknown flag. The same
+// holds for `--supports-pre-push` (PRE_PUSH_CAPABILITY) and `--build-cache` (below).
+//
+// --with-pre-push <push row>: run `.githooks/pre-push origin` (the row on its stdin, as git would
+// give it) alongside the lanes instead of before them, so the UI lanes do not wait minutes for the
+// unit shards and the Mac and Release compiles. The UI lanes start once the hook's Apple build
+// passed, or with the hook when its plan has no Apple lane; every other lane starts after the hook
+// passed. With UI or E2E lanes the hook gets OPPI_PRE_PUSH_UI_LANES=1 and builds the Oppi scheme,
+// which they test and which builds OppiTests too, so sim-pool skips every later build in .build/dd.
+// The first failed hook lane, or a failed hook, stops every running lane at once (SIGTERM to its
+// process group) and starts no other; the hook itself runs to its end, so its log still names
+// every red lane. The hook writes its lane
+// outcomes to OPPI_PRE_PUSH_EVENTS (see lane_event in .githooks/pre-push). Its output is prefixed
+// [pre-push], and the summary leads with its row.
+//
+// `--build-cache` prints, one BUILD_CACHE_LINE each, the ignored paths a reused queue worktree keeps
+// between batches (the DerivedData of the Oppi, Mac, and Release builds, and the prebuilt Vendor
+// frameworks), then one BUILD_CACHE_KEY_LINE naming the pinned Xcode: a queue that sees the key
+// change throws the worktree away instead of building incrementally over another toolchain's state.
 //
 // Exit codes: 0 every lane passed (or no suites were named); 1 a lane failed, or an entry of
 // dev/testing/quarantine.json expired or lacks a field; 2 a bad argument, test selector, or not an
-// Oppi checkout; 143 stopped by SIGTERM/SIGINT; the failing exit code of the server-deps sync, which
-// runs before any lane.
+// Oppi checkout; 3 the pre-push hook failed (--with-pre-push); 143 stopped by SIGTERM/SIGINT; the
+// failing exit code of the server-deps sync, which runs before any lane.
 //
 // The summary prints each lane's wall time against its budget (dev/testing/lane-budgets.json; over
 // budget is a warning), the flakes that a rerun hid at this HEAD (pre-push's unit shards included),
@@ -58,9 +76,11 @@
 // Every lane runs even when an earlier one failed, so one gate reports every red suite.
 // Lane output is prefixed with the lane name; SIGTERM/SIGINT stop every lane's process group.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadQuarantine, runFailures, runTestIds, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
+import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
   headOf, recordRedLane, recordRerun, redLaneLine, xctestRerun, zeroTestLine,
@@ -78,6 +98,8 @@ type Step = {
   command: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
+  /** Written to the step's stdin (closed otherwise). */
+  input?: string;
   requireTests?: boolean;
   selectors?: string[];
   rerun?: "e2e" | "two-server";
@@ -88,6 +110,30 @@ type Lane = { name: string; profile: string | null; steps: Step[] };
 
 /** The line `--supports-profile-scope` prints; the queue matches it exactly (land-queue.ts gateSupportsProfileScope). */
 export const PROFILE_SCOPE_CAPABILITY = "batch-gate: profile-scope";
+/** The line `--supports-pre-push` prints: the gate takes `--with-pre-push <row>` and runs the hook itself. */
+export const PRE_PUSH_CAPABILITY = "batch-gate: runs-pre-push";
+/** `--build-cache` output: one line per kept path, then one key line. */
+export const BUILD_CACHE_LINE = "batch-gate: build-cache";
+export const BUILD_CACHE_KEY_LINE = "batch-gate: build-cache-key";
+/** What a reused queue worktree keeps: everything the Apple builds can build incrementally from. */
+export const BUILD_CACHE_PATHS = [
+  "clients/apple/.build/dd",
+  "clients/apple/.build/pre-push-mac",
+  "clients/apple/.build/pre-push-release",
+  // Installed from a host cache by `cp -R`: new copies would carry new mtimes and re-link the app.
+  // ensure-prebuilt-frameworks.sh replaces them when their BUILD_ID pin changes.
+  "clients/apple/Vendor",
+];
+/** Exit code of a --with-pre-push gate whose hook failed. */
+export const PRE_PUSH_FAILED = 3;
+
+/** The pinned Xcode and its build number: the toolchain that owns the kept DerivedData. */
+export function buildCacheKey(env: NodeJS.ProcessEnv = process.env): string {
+  const developerDir = resolveDeveloperDir(env);
+  const plist = readFileSync(join(developerDir, "..", "version.plist"), "utf8");
+  const value = (key: string) => new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`).exec(plist)?.[1] ?? "?";
+  return `${developerDir} ${value("CFBundleShortVersionString")} (${value("ProductBuildVersion")})`;
+}
 
 const PROFILES = new Set(["iphone", "ipad", "duo"]);
 
@@ -389,7 +435,7 @@ export function unmatchedUnitSelectors(worktree: string, head: string, selectors
  * on the same HEAD. If the target moved since, its merge base is still the batch's base; if anything
  * is unknown, the answer is no and the ios-unit lane runs.
  */
-export function prePushRanUnitShards(worktree: string, target: string | undefined): { ran: boolean; why: string } {
+export function prePushRanUnitShards(worktree: string, target: string | undefined): { ran: boolean; why: string; apple?: "none" | "unit" | "all" } {
   if (!target) return { ran: false, why: "no --target, so the pre-push plan is unknown" };
   const git = (args: string[]) => spawnSync("git", args, { cwd: worktree, encoding: "utf8" });
   const base = git(["merge-base", "HEAD", target]);
@@ -398,7 +444,7 @@ export function prePushRanUnitShards(worktree: string, target: string | undefine
   const diff = git(["diff", "--name-only", "--diff-filter=ACMRD", "-z", sha, "HEAD"]);
   if (diff.status !== 0) return { ran: false, why: `git diff ${sha.slice(0, 9)}..HEAD failed` };
   const plan = planForPaths(diff.stdout.split("\0"));
-  return { ran: plan.apple !== "none", why: `the pre-push plan for ${sha.slice(0, 9)}..HEAD has apple=${plan.apple}` };
+  return { ran: plan.apple !== "none", why: `the pre-push plan for ${sha.slice(0, 9)}..HEAD has apple=${plan.apple}`, apple: plan.apple };
 }
 
 /** Tests a finished sim-pool run executed, from the log its summary artifact names. */
@@ -414,30 +460,36 @@ export function executedTests(output: string): number {
 }
 
 const running = new Set<ChildProcess>();
+/** SIGTERM/SIGINT: everything stops, the hook too. */
 let stopping = false;
+/** The pre-push hook failed (--with-pre-push): the lanes stop, and no step starts. */
+let cancelled = false;
+const halted = () => stopping || cancelled;
 
-function stopAll(signal: NodeJS.Signals): void {
-  stopping = true;
-  for (const child of running) {
-    if (child.pid) {
-      try {
-        process.kill(-child.pid, signal);
-      } catch {
-        // Already gone.
-      }
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      // Already gone.
     }
   }
 }
 
+function stopAll(signal: NodeJS.Signals): void {
+  stopping = true;
+  for (const child of running) signalGroup(child, signal);
+}
+
 type StepRun = { code: number; output: string };
 
-function runStep(name: string, step: Step): Promise<StepRun> {
-  if (stopping) return Promise.resolve({ code: 143, output: "" });
+function runStep(name: string, step: Step, onSpawn?: (child: ChildProcess) => void): Promise<StepRun> {
+  if (halted()) return Promise.resolve({ code: 143, output: "" });
   console.log(`[batch-gate] ${name}: ${step.command} ${step.args.join(" ")}`);
   // Its own process group, so a stop reaches sim-pool, xcodebuild, and vitest workers.
   const child = spawn(step.command, step.args, {
     cwd: step.cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [step.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     // OPPI_SIM_POOL_GATE: a lane that finds every simulator slot busy queues for one (sim-pool's
     // gate wait) instead of failing after a developer run's 60 s: a gate lane has no caller to
     // retry it, and a busy pool is not a test failure. The wait itself is defined in sim-pool-ops.ts.
@@ -445,6 +497,8 @@ function runStep(name: string, step: Step): Promise<StepRun> {
     detached: true,
   });
   running.add(child);
+  onSpawn?.(child);
+  if (step.input !== undefined) child.stdin!.end(step.input);
   let output = "";
   for (const stream of [child.stdout!, child.stderr!]) {
     let pending = "";
@@ -487,7 +541,7 @@ async function runGateStep(lane: Lane, step: Step): Promise<GateStepRun> {
     console.log(`[batch-gate] ${lane.name}: ${line}`);
     output += `${line}\n`;
   };
-  if (stopping) return { code, output, failed: [] };
+  if (halted()) return { code, output, failed: [] };
   // Only a step that is a sim-pool run has its own log; a shard runner names its red tests itself.
   const artifact = step.requireTests ? lastArtifact(run.output) : undefined;
   const log = logOfSummary(artifact);
@@ -531,7 +585,7 @@ async function rerunE2E(lane: Lane, step: Step, first: GateStepRun, log: string,
     for (const id of passedXCTestCases(logOfSummary(lastArtifact(run.output)))) passed.add(id);
     if (code === 0) code = run.code;
   }
-  if (stopping) return { code: 143, output, failed: first.failed };
+  if (halted()) return { code: 143, output, failed: first.failed };
   // A red rerun in which every test passed failed outside them: none of them is cleared.
   const cleared = code === 0 && ids.every((id) => passed.has(id));
   const red = new Set(cleared ? [] : ids.filter((id) => !passed.has(id)));
@@ -558,7 +612,8 @@ function withoutOnlyTesting(args: string[]): string[] {
   return kept;
 }
 
-type LaneResult = { lane: Lane; code: number; seconds: number; failed: string[]; output: string };
+/** `cancelled`: still running when the pre-push hook failed, and stopped for it; its exit says nothing about its tests. */
+type LaneResult = { lane: Lane; code: number; seconds: number; failed: string[]; output: string; cancelled?: boolean };
 
 async function runLane(lane: Lane): Promise<LaneResult> {
   const started = Date.now();
@@ -572,10 +627,100 @@ async function runLane(lane: Lane): Promise<LaneResult> {
     output += run.output;
   }
   for (const step of lane.steps.filter((step) => step.blocking === false)) {
+    if (halted()) break;
     const run = await runStep(lane.name, step);
     console.log(`[batch-gate] ${lane.name}: quarantined (non-blocking): ${run.code === 0 ? "passed" : `failed (exit ${run.code})`} ${(step.selectors ?? []).join(", ")}`);
   }
   return { lane, code, seconds: Math.round((Date.now() - started) / 1000), failed: [...new Set(failed)], output };
+}
+
+/** UI lanes need only the Oppi build, so they may start before the pre-push hook ends. */
+const startsEarly = (lane: Lane) => lane.name.startsWith("ui-");
+
+/** When the early lanes start: once this pre-push lane passed, with the hook (`now`), or after it passed (`end`). */
+type EarlyStart = { after: string } | "now" | "end";
+
+type PrePushRun = { code: number; seconds: number };
+
+/**
+ * Run the pre-push `hook` and the `early` lanes together (see --with-pre-push in the header). Once
+ * the hook passed, `afterPrePush` gives the rest: lanes to run then, and results already decided.
+ * A failed hook lane (an `<lane> failed` line in `eventsPath`) or a failed hook stops every running
+ * lane at once; those come back `cancelled`. The hook always runs to its end.
+ */
+async function gateAlongsidePrePush(input: {
+  hook: Step;
+  eventsPath: string;
+  early: Lane[];
+  earlyStart: EarlyStart;
+  afterPrePush: () => { lanes: Lane[]; results: LaneResult[] };
+}): Promise<{ prePush: PrePushRun; results: LaneResult[] }> {
+  const started = Date.now();
+  const elapsed = () => Math.round((Date.now() - started) / 1000);
+  const active = new Set<string>();
+  const stopped = new Set<string>();
+  const runs: Promise<LaneResult>[] = [];
+  const launch = (lanes: Lane[], why: string) => {
+    if (lanes.length === 0 || halted()) return;
+    console.log(`[batch-gate] ${lanes.map((lane) => lane.name).join(", ")}: starting ${why} (+${elapsed()}s)`);
+    for (const lane of lanes) {
+      active.add(lane.name);
+      runs.push(runLane(lane).then((result) => {
+        active.delete(lane.name);
+        return stopped.has(lane.name) ? { ...result, cancelled: true } : result;
+      }));
+    }
+  };
+  let hookChild: ChildProcess | undefined;
+  const cancel = (why: string) => {
+    if (cancelled) return;
+    cancelled = true;
+    for (const name of active) stopped.add(name);
+    console.log(`[batch-gate] pre-push: ${why} (+${elapsed()}s); ${active.size > 0 ? `stopping ${[...active].join(", ")}` : "no lane was running"}; starting no other lane`);
+    for (const child of running) if (child !== hookChild) signalGroup(child, "SIGTERM");
+  };
+  let earlyStarted = false;
+  const startEarly = (why: string) => {
+    if (earlyStarted) return;
+    earlyStarted = true;
+    launch(input.early, why);
+  };
+  if (input.earlyStart === "now") startEarly("with the pre-push gate");
+  let seen = 0;
+  const readEvents = () => {
+    let text = "";
+    try {
+      text = readFileSync(input.eventsPath, "utf8");
+    } catch {
+      return;
+    }
+    // Only whole lines: the hook may be halfway through appending one.
+    const lines = text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean);
+    for (const line of lines.slice(seen)) {
+      const [lane, outcome] = line.split(" ");
+      if (outcome === "failed") cancel(`its ${lane} lane failed`);
+      else if (typeof input.earlyStart === "object" && lane === input.earlyStart.after) startEarly(`after the pre-push ${lane} lane ${outcome === "cache-hit" ? "hit its cache" : "passed"}`);
+    }
+    seen = lines.length;
+  };
+  const poll = setInterval(readEvents, 250);
+  const hook = await runStep("pre-push", input.hook, (child) => (hookChild = child));
+  clearInterval(poll);
+  readEvents();
+  const prePush = { code: hook.code, seconds: elapsed() };
+  const results: LaneResult[] = [];
+  if (stopping) {
+    // SIGTERM/SIGINT: the caller reports nothing and exits 143.
+  } else if (hook.code !== 0) {
+    cancel(`the hook failed (exit ${hook.code})`);
+  } else if (!cancelled) {
+    startEarly("after the pre-push gate passed");
+    const rest = input.afterPrePush();
+    results.push(...rest.results);
+    launch(rest.lanes, "after the pre-push gate passed");
+  }
+  results.push(...(await Promise.all(runs)));
+  return { prePush, results };
 }
 
 /** A UI lane's budget comes from ui-shards, which measured its tests; other lanes are measured by their wall time. */
@@ -598,10 +743,20 @@ async function main(argv: string[]): Promise<number> {
     console.log(PROFILE_SCOPE_CAPABILITY);
     return 0;
   }
+  if (argv.length === 1 && argv[0] === "--supports-pre-push") {
+    console.log(PRE_PUSH_CAPABILITY);
+    return 0;
+  }
+  if (argv.length === 1 && argv[0] === "--build-cache") {
+    for (const path of BUILD_CACHE_PATHS) console.log(`${BUILD_CACHE_LINE} ${path}`);
+    console.log(`${BUILD_CACHE_KEY_LINE} ${buildCacheKey()}`);
+    return 0;
+  }
   let worktree = process.cwd();
   let target: string | undefined;
   const tests: string[] = [];
   const profiles: string[] = [];
+  let prePushRow: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i + 1];
     switch (argv[i]) {
@@ -609,6 +764,7 @@ async function main(argv: string[]): Promise<number> {
       case "--target": target = value; i += 1; break;
       case "--test": tests.push(value); i += 1; break;
       case "--profile": profiles.push(value); i += 1; break;
+      case "--with-pre-push": prePushRow = value; i += 1; break;
       default:
         console.error(`[batch-gate] unknown argument ${argv[i]}`);
         return 2;
@@ -616,6 +772,10 @@ async function main(argv: string[]): Promise<number> {
   }
   if (!existsSync(join(worktree, "clients", "apple"))) {
     console.error(`[batch-gate] not an Oppi checkout: ${worktree}`);
+    return 2;
+  }
+  if (prePushRow !== undefined && !/^\S+ [0-9a-f]{40} \S+ [0-9a-f]{40}$/.test(prePushRow)) {
+    console.error(`[batch-gate] --with-pre-push needs a push row '<local ref> <sha> <remote ref> <sha>', got '${prePushRow}'`);
     return 2;
   }
   // Queues pass a symlinked temp path (/var/... -> /private/var/...), but the pre-push hook
@@ -644,52 +804,108 @@ async function main(argv: string[]): Promise<number> {
   }
   if (plan.unit.length > 0) console.log(`[batch-gate] ios-unit: ${unitShards.why}`);
   // A dropped ios-unit lane no longer proves that a named selector names a test: the pre-push unit
-  // run's results must show one. Without them, the lane runs after all.
-  const results: LaneResult[] = [];
-  if (unitShards.ran && plan.unit.length > 0) {
+  // run's results must show one. Without them, the lane runs after all. With --with-pre-push that
+  // run is still going, so this waits for the hook to pass.
+  const checkUnitSelectors = (): LaneResult[] => {
+    if (!unitShards.ran || plan.unit.length === 0) return [];
     const check = unmatchedUnitSelectors(worktree, headOf(worktree), plan.unit);
     if ("reason" in check) {
       console.log(`[batch-gate] ios-unit: cannot check the named unit selectors against the pre-push unit run (${check.reason}); running the ios-unit lane`);
       plan = planGate(worktree, tests, profiles, undefined, { unitShardsRan: false, quarantined });
-    } else if (check.unmatched.length > 0) {
+      return [];
+    }
+    if (check.unmatched.length > 0) {
       const line = `${zeroTestLine(check.unmatched, true)}; checked against the tests the pre-push unit shards ran at this HEAD`;
       console.log(`[batch-gate] ios-unit: ${line}`);
-      results.push({ lane: { name: "ios-unit", profile: "iphone", steps: [] }, code: 1, seconds: 0, failed: [], output: `${line}\n` });
-    } else {
-      console.log(`[batch-gate] ios-unit: every named unit selector matched a test the pre-push unit shards ran at this HEAD`);
+      return [{ lane: { name: "ios-unit", profile: "iphone", steps: [] }, code: 1, seconds: 0, failed: [], output: `${line}\n` }];
     }
-  }
-  for (const note of plan.notes) console.log(`[batch-gate] ${note}`);
-  if (plan.lanes.length === 0 && results.length === 0) {
-    console.log("[batch-gate] no lanes to run; the pre-push gate is the whole gate");
-    console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree))}`);
-    return 0;
-  }
+    console.log(`[batch-gate] ios-unit: every named unit selector matched a test the pre-push unit shards ran at this HEAD`);
+    return [];
+  };
+  const results: LaneResult[] = [];
+  let prePush: PrePushRun | undefined;
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => stopAll(signal));
-  if (plan.lanes.length > 0) {
-    // The pre-push gate only syncs server deps for server changes; named lanes may need them.
-    const deps = await runStep("server-deps", { cwd: join(worktree, "server"), command: "node", args: ["scripts/ensure-installed-deps.mjs"] });
-    if (deps.code !== 0) return deps.code;
-    results.push(...await Promise.all(plan.lanes.map(runLane)));
+  // The pre-push gate only syncs server deps for server changes; named lanes may need them. Before
+  // the hook starts, so the two never install into one node_modules at once.
+  const syncDeps = async () => (await runStep("server-deps", { cwd: join(worktree, "server"), command: "node", args: ["scripts/ensure-installed-deps.mjs"] })).code;
+  if (prePushRow === undefined) {
+    results.push(...checkUnitSelectors());
+    for (const note of plan.notes) console.log(`[batch-gate] ${note}`);
+    if (plan.lanes.length === 0 && results.length === 0) {
+      console.log("[batch-gate] no lanes to run; the pre-push gate is the whole gate");
+      console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree))}`);
+      return 0;
+    }
+    if (plan.lanes.length > 0) {
+      const deps = await syncDeps();
+      if (deps !== 0) return deps;
+      results.push(...await Promise.all(plan.lanes.map(runLane)));
+    }
+  } else {
+    if (plan.lanes.length > 0 || plan.unit.length > 0) {
+      const deps = await syncDeps();
+      if (deps !== 0) return deps;
+    }
+    const events = mkdtempSync(join(tmpdir(), "batch-gate-pre-push-"));
+    try {
+      const eventsPath = join(events, "events");
+      const ran = await gateAlongsidePrePush({
+        hook: {
+          cwd: worktree,
+          command: join(worktree, ".githooks", "pre-push"),
+          args: ["origin"],
+          input: `${prePushRow}\n`,
+          // UI and E2E lanes test the Oppi scheme: the hook builds that one (it builds OppiTests too), so
+          // .build/dd holds a single scheme's build and every lane's build after it is a skip.
+          env: { OPPI_PRE_PUSH_EVENTS: eventsPath, ...(plan.lanes.some((lane) => startsEarly(lane) || lane.name === "e2e") ? { OPPI_PRE_PUSH_UI_LANES: "1" } : {}) },
+        },
+        eventsPath,
+        early: plan.lanes.filter(startsEarly),
+        // The UI lanes build the Oppi scheme into the hook's .build/dd: after its Apple build that is a skip.
+        earlyStart: unitShards.apple === undefined ? "end" : unitShards.apple === "none" ? "now" : { after: "apple" },
+        afterPrePush: () => {
+          const decided = checkUnitSelectors();
+          for (const note of plan.notes) console.log(`[batch-gate] ${note}`);
+          return { lanes: plan.lanes.filter((lane) => !startsEarly(lane)), results: decided };
+        },
+      });
+      prePush = ran.prePush;
+      results.push(...ran.results);
+    } finally {
+      rmSync(events, { recursive: true, force: true });
+    }
+    if (prePush.code === 0 && plan.lanes.length === 0 && results.length === 0) {
+      console.log("[batch-gate] no lanes to run; the pre-push gate is the whole gate");
+      console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree))}`);
+      return 0;
+    }
   }
   if (stopping) return 143;
   // The batch's own budget file; one that cannot be read is a warning, never a failure.
   const { budgets, warnings } = loadBudgets(join(worktree, "dev", "testing", "lane-budgets.json"));
   console.log("[batch-gate] summary:");
+  if (prePush) console.log(`[batch-gate] pre-push: ${prePush.code === 0 ? "PASS" : `FAIL (exit ${prePush.code})`} ${prePush.seconds}s`);
   if (plan.notes.some((note) => note.startsWith("ios-unit: not run"))) console.log("[batch-gate] ios-unit: not run (covered by the pre-push unit shards)");
   for (const result of results) {
+    if (result.cancelled) {
+      console.log(`[batch-gate] ${result.lane.name}: CANCELLED ${result.seconds}s; stopped because the pre-push gate failed`);
+      continue;
+    }
     const budget = laneBudget(result, budgets);
     if (budget.warning) warnings.push(budget.warning);
     console.log(`[batch-gate] ${result.lane.name}: ${result.code === 0 ? "PASS" : `FAIL (exit ${result.code})`} ${result.seconds}s; ${budget.line}`);
   }
   for (const warning of warnings) console.log(`[batch-gate] ${warning}`);
   // A red lane hid nothing: its failures are reported. Flakes of the lanes that passed were hidden.
-  const red = new Set(results.filter((result) => result.code !== 0).map((result) => result.lane.name));
-  console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree).filter((row) => !red.has(row.lane)))}`);
-  for (const result of results.filter((result) => result.code !== 0)) {
+  // A cancelled lane is neither: its run was cut short, so it is not a red lane of the ledger.
+  const red = results.filter((result) => result.code !== 0 && !result.cancelled);
+  const redNames = new Set(red.map((result) => result.lane.name));
+  console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree).filter((row) => !redNames.has(row.lane)))}`);
+  for (const result of red) {
     reportRed(worktree, { lane: result.lane.name, profile: result.lane.profile, exit: result.code, seconds: result.seconds, tests: result.failed, output: result.output });
   }
-  return results.every((result) => result.code === 0) ? 0 : 1;
+  if (prePush && prePush.code !== 0) return PRE_PUSH_FAILED;
+  return red.length === 0 ? 0 : 1;
 }
 
 if (import.meta.main) {

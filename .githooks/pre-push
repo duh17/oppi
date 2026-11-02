@@ -82,7 +82,7 @@ run_self_test() {
   # whose last step succeeds must fail the lane, and Mac must not start after it.
   local lane_fixture lane_src lane_status
   lane_fixture="$(mktemp -d -t oppi-pre-push-lane.XXXXXX)"
-  lane_src="$(awk '/^(run_cached|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
+  lane_src="$(awk '/^(lane_event|run_cached|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
   case "$lane_src" in
     *'run_cached() {'*'apple_then_mac() {'*) ;;
     *)
@@ -453,7 +453,7 @@ cache_path() {
   local lane_mode key
   case "$lane" in
     server) lane_mode="$SERVER_MODE" ;;
-    apple|ios-unit) lane_mode="$APPLE_MODE" ;;
+    apple|ios-unit) lane_mode="$APPLE_MODE $(apple_scheme)" ;;
     # These compile under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
     ios-release) lane_mode="$APPLE_MODE $(pinned_xcode_version)" ;;
     mac) lane_mode="$MAC_CHANGED $(pinned_xcode_version)" ;;
@@ -461,6 +461,15 @@ cache_path() {
   esac
   key="$(printf '%s\n' "$GATE_VERSION" "$HEAD_SHA" "$RANGE_KEY_INPUT" "$PUSH_PATHS_KEY" "$lane" "$lane_mode" "$TOOLCHAIN_KEY" | shasum -a 256 | cut -d' ' -f1)"
   echo "$CACHE_DIR/${lane}-${key}.pass"
+}
+
+# One line per lane outcome (`<lane> passed|failed|cache-hit`) appended to $OPPI_PRE_PUSH_EVENTS
+# when it is set. scripts/batch-gate.ts --with-pre-push runs this hook alongside its own lanes and
+# reads the file: `apple` passing starts its UI lanes, and any failure stops them at once.
+lane_event() {
+  if [[ -n "${OPPI_PRE_PUSH_EVENTS:-}" ]]; then
+    printf '%s %s\n' "$1" "$2" >> "$OPPI_PRE_PUSH_EVENTS"
+  fi
 }
 
 run_cached() {
@@ -471,10 +480,11 @@ run_cached() {
   # permanently changing the caller's option state.
   local caller_errexit=0
   [[ $- == *e* ]] && caller_errexit=1
-  ensure_lane_clean "$lane" || return $?
+  ensure_lane_clean "$lane" || { status=$?; lane_event "$lane" failed; return "$status"; }
   marker="$(cache_path "$lane")"
   if [[ -f "$marker" ]]; then
     echo "[$lane] cache hit"
+    lane_event "$lane" cache-hit
     return 0
   fi
   echo "[$lane] starting"
@@ -496,11 +506,12 @@ run_cached() {
   else
     set +e
   fi
-  [[ "$status" -eq 0 ]] || return "$status"
-  ensure_lane_clean "$lane" || return $?
+  [[ "$status" -eq 0 ]] || { lane_event "$lane" failed; return "$status"; }
+  ensure_lane_clean "$lane" || { status=$?; lane_event "$lane" failed; return "$status"; }
   : > "$marker.tmp.$$"
   mv "$marker.tmp.$$" "$marker"
   echo "[$lane] passed"
+  lane_event "$lane" passed
 }
 
 run_harness_gate() {
@@ -583,19 +594,27 @@ run_apple_gate() {
   # The edit-entry scan reads app sources the build phase's stamp does not watch, so a change
   # to the guard or to one reader's bar would otherwise pass unpushed. About 0.1 s.
   (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/document-edit-guard.ts) || return $?
-  local scheme="OppiUnitTests"
-  if [[ "$APPLE_MODE" == "all" ]]; then
-    scheme="Oppi"
-  fi
   # sim-pool builds without a simulator slot and takes a machine-wide heavy.sh xcode-build
   # slot around the build itself.
   (cd "$REPO_ROOT/clients/apple" && "$SIM_POOL" run -- \
-    xcodebuild -project Oppi.xcodeproj -scheme "$scheme" build-for-testing)
+    xcodebuild -project Oppi.xcodeproj -scheme "$(apple_scheme)" build-for-testing)
 }
 
-# Every OppiUnitTests test, in OPPI_UNIT_SHARDS (3) pool slots from one build (~2 min).
+# The scheme the Apple lane builds: Oppi (every test target) when UI or E2E code changed, or when
+# the batch gate that runs this hook (batch-gate.ts --with-pre-push) has UI or E2E lanes that will
+# test this build (OPPI_PRE_PUSH_UI_LANES=1); else OppiUnitTests. Both build OppiTests, and the unit
+# shards run from this same build.
+apple_scheme() {
+  if [[ "$APPLE_MODE" == "all" || "${OPPI_PRE_PUSH_UI_LANES:-0}" == "1" ]]; then echo Oppi; else echo OppiUnitTests; fi
+}
+
+# Every OppiTests test, in OPPI_UNIT_SHARDS (3) pool slots (~3.5 min). The shards build the scheme
+# the Apple lane just built, so sim-pool skips the build ("nothing changed") and the shards need no
+# xcode-build slot: they never wait behind the Mac and Release compiles. A build of the other
+# scheme would also rewrite .build/dd's products and make every later Oppi build (the batch UI
+# and E2E lanes) re-link.
 run_ios_unit_gate() {
-  (cd "$REPO_ROOT/clients/apple" && bun scripts/unit-shards.ts)
+  (cd "$REPO_ROOT/clients/apple" && bun scripts/unit-shards.ts --scheme "$(apple_scheme)")
 }
 
 # Xcode named in clients/apple/scripts/xcode-toolchain.txt (an explicit DEVELOPER_DIR wins), the one
@@ -679,7 +698,7 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
 fi
 
 # After the iOS build, the Mac compile (~50 s), the Release device-SDK compile, and the sharded iOS
-# unit tests (~2 min) run together, overlapping the server lane. A failed iOS build skips all three.
+# unit tests (~3.5 min) run together, overlapping the server lane. A failed iOS build skips all three.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
 # shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
 # ends this function with that status before the other lanes start. Those lanes run in the
@@ -690,10 +709,8 @@ fi
 apple_then_mac() {
   run_cached apple run_apple_gate
   local mac_pid="" unit_pid release_pid unit_status=0 release_status=0 mac_status=0
-  # Unit tests start first: their build takes an xcode-build slot (2 machine-wide), and the Mac
-  # and Release compiles can hold both for minutes. Starting first does not guarantee the slot (the
-  # lanes only race for it, and Mac or Release can still win), so the shards can be delayed behind
-  # one of them, never deadlocked: each compile releases its slot when it ends.
+  # The Apple build above already built the unit products (run_ios_unit_gate), so the shards need
+  # no xcode-build slot and start at once, beside the Mac and Release compiles that take the slots.
   run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"

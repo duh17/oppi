@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
 // Run the whole OppiUnitTests suite as N parallel shards from one build.
 //
-//   bun clients/apple/scripts/unit-shards.ts [--shards N] [--strict]
+//   bun clients/apple/scripts/unit-shards.ts [--shards N] [--strict] [--scheme OppiUnitTests|Oppi]
 //   bun clients/apple/scripts/unit-shards.ts --record <sim-pool log of a full run>
 //
-// 1. Build once without a simulator slot (`sim-pool.sh run -- ... build-for-testing`).
+// 1. Build once without a simulator slot (`sim-pool.sh run -- ... build-for-testing`). --scheme
+//    (default OppiUnitTests) names the scheme to build: both build OppiTests with the same settings,
+//    and the shards select only OppiTests. The pre-push gate passes the scheme its Apple lane just
+//    built, so sim-pool skips this build and takes no xcode-build slot.
 // 2. sim-pool clones the products (OPPI_SIM_POOL_PRODUCTS_DIR) under the build's checkout
 //    lock, so a rebuild cannot change them.
 // 3. Split the top-level test types of OppiTests into N shards by recorded suite seconds
@@ -26,7 +29,8 @@ import { fileURLToPath } from "node:url";
 import { budgetVerdict, headOf, hiddenFlakesLine, loadBudgets, recordRedLane, recordRerun, redLaneLine, zeroTestLine } from "../../../scripts/gate-report";
 import { findXctestrun, runDirectory } from "./sim-pool-build";
 
-const SCHEME = "OppiUnitTests";
+/** Schemes whose build-for-testing builds OppiTests (project.yml). */
+const SCHEMES = new Set(["OppiUnitTests", "Oppi"]);
 const BUNDLE = "OppiTests";
 const TEST_SECONDS = 0.05;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -336,6 +340,9 @@ async function main(argv: string[]): Promise<number> {
   const shardsArg = argv.indexOf("--shards");
   const shards = Number(shardsArg >= 0 ? argv[shardsArg + 1] : process.env.OPPI_UNIT_SHARDS ?? "3");
   if (!Number.isInteger(shards) || shards < 1) throw new Error(`invalid shard count ${shards}`);
+  const schemeArg = argv.indexOf("--scheme");
+  const scheme = schemeArg >= 0 ? argv[schemeArg + 1] : "OppiUnitTests";
+  if (!SCHEMES.has(scheme)) throw new Error(`--scheme must be one of ${[...SCHEMES].join(", ")}, got ${scheme}`);
   const started = Date.now();
   const wall = () => Math.round((Date.now() - started) / 1000);
   /** A red run of a land-queue batch goes to the red-lane ledger with a cause guessed from `output`. */
@@ -357,7 +364,7 @@ async function main(argv: string[]): Promise<number> {
   const runDir = runDirectory(join(appleDir, ".build"), `shards-${stamp}`);
   // sim-pool clones the products into runDir under the same checkout lock as the build, so
   // another run in this checkout cannot swap them in between.
-  const build = spawnSync(join(scriptDir, "sim-pool.sh"), ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", SCHEME, "build-for-testing"], {
+  const build = spawnSync(join(scriptDir, "sim-pool.sh"), ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", scheme, "build-for-testing"], {
     cwd: appleDir,
     stdio: "inherit",
     env: { ...process.env, OPPI_SIM_POOL_PRODUCTS_DIR: runDir },
@@ -368,7 +375,7 @@ async function main(argv: string[]): Promise<number> {
     red([], line);
     return build.status || 1;
   }
-  const xctestrun = findXctestrun(join(runDir, "Build", "Products"), SCHEME);
+  const xctestrun = findXctestrun(join(runDir, "Build", "Products"), scheme);
 
   const weights: Record<string, number> = existsSync(weightsPath) ? JSON.parse(readFileSync(weightsPath, "utf8")) : {};
   const parts = partition(loadTypes(), weights, shards);

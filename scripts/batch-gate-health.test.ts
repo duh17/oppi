@@ -298,6 +298,109 @@ describe("batch gate: quarantine", () => {
   });
 });
 
+describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => {
+  /**
+   * An app change whose gate names a UI and an E2E suite. The stand-in hook reads its push row, says
+   * `apple passed` after 0.5 s (leaving an `apple-passed` marker), then after 1 s more either says
+   * `ios-unit failed` and exits 1 two seconds later, or exits 0. The stand-in ui-shards records
+   * whether the Apple build had passed when it started, then works for `uiSeconds` unless stopped.
+   */
+  function overlapCheckout(options: { hookFails: boolean; uiSeconds: number }) {
+    const fx = fakeCheckout();
+    const state = join(fx.checkout, "..", "state");
+    const apple = join(fx.checkout, "clients", "apple");
+    mkdirSync(join(apple, "OppiUITests"), { recursive: true });
+    writeFileSync(join(apple, "OppiUITests", "ChatRoutesUITests.swift"), "final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n");
+    writeFileSync(join(apple, "scripts", "ui-shards.ts"), `import { existsSync, writeFileSync } from "node:fs";
+const profile = process.argv[process.argv.indexOf("--profile") + 1];
+writeFileSync("${state}/ui-" + profile + ".start", existsSync("${state}/apple-passed") ? "after-apple" : "before-apple");
+process.on("SIGTERM", () => { writeFileSync("${state}/ui-" + profile + ".terminated", ""); process.exit(143); });
+await Bun.sleep(${options.uiSeconds * 1000});
+writeFileSync("${state}/ui-" + profile + ".done", "");
+`);
+    mkdirSync(join(fx.checkout, ".githooks"));
+    writeFileSync(join(fx.checkout, ".githooks", "pre-push"), `#!/bin/bash
+set -euo pipefail
+cat > "${state}/hook.stdin"
+echo "[apple] starting"
+sleep 0.5
+touch "${state}/apple-passed"
+echo "apple passed" >> "$OPPI_PRE_PUSH_EVENTS"
+sleep 1
+${options.hookFails ? `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[ios-unit] FAILED" >&2\nsleep 2\nexit 1` : `touch "${state}/hook-done"\nexit 0`}
+`);
+    chmodSync(join(fx.checkout, ".githooks", "pre-push"), 0o755);
+    fx.git("checkout", "-q", "-b", "feature");
+    mkdirSync(join(apple, "Oppi"), { recursive: true });
+    writeFileSync(join(apple, "Oppi", "A.swift"), "let a = 1\n");
+    fx.git("add", ".");
+    fx.git("commit", "-q", "-m", "app change");
+    const head = Bun.spawnSync(["git", "-C", fx.checkout, "rev-parse", "HEAD"]).stdout.toString().trim();
+    const base = Bun.spawnSync(["git", "-C", fx.checkout, "rev-parse", "main"]).stdout.toString().trim();
+    const row = `refs/heads/land-queue/b-test-1 ${head} refs/heads/main ${base}`;
+    const gate = () => {
+      const started = Date.now();
+      const result = fx.run(["--target", "main", "--with-pre-push", row, "--test", "OppiUITests/ChatRoutesUITests", "--test", "OppiE2ETests/ChatE2ETests/testSend"]);
+      return { ...result, seconds: (Date.now() - started) / 1000 };
+    };
+    const has = (name: string) => existsSync(join(state, name));
+    const read = (name: string) => readFileSync(join(state, name), "utf8");
+    return { ...fx, row, gate, has, read };
+  }
+
+  test("a red pre-push lane stops the UI lanes it started early, starts no other lane, and fails the gate", () => {
+    const fx = overlapCheckout({ hookFails: true, uiSeconds: 60 });
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(3);
+    // The UI lane waited for the hook's Apple build, then was stopped at the failed lane, not after its 60 s.
+    expect(fx.read("ui-iphone.start")).toBe("after-apple");
+    expect(fx.has("ui-iphone.terminated")).toBe(true);
+    expect(fx.has("ui-iphone.done")).toBe(false);
+    expect(result.seconds).toBeLessThan(20);
+    expect(result.out).toContain("[batch-gate] pre-push: its ios-unit lane failed");
+    // The hook ran to its end with git's push row, its output prefixed.
+    expect(fx.read("hook.stdin")).toBe(`${fx.row}\n`);
+    expect(result.out).toContain("[pre-push] [apple] starting");
+    expect(result.out).toContain("[pre-push] [ios-unit] FAILED");
+    // The E2E lane waits for a green hook, so it never ran.
+    expect(fx.calls("e2e")).toEqual([]);
+    expect(result.out).toMatch(/\[batch-gate\] pre-push: FAIL \(exit 1\) [0-9]+s/);
+    expect(result.out).toMatch(/\[batch-gate\] ui-iphone: CANCELLED [0-9]+s; stopped because the pre-push gate failed/);
+    // A lane cut short is not a red lane of its own.
+    expect(fx.ledger("land-queue/red-lanes.jsonl")).toEqual([]);
+  });
+
+  test("a green pre-push lets the early UI lanes finish and then runs the rest; the summary leads with the hook", () => {
+    const fx = overlapCheckout({ hookFails: false, uiSeconds: 0.2 });
+    fx.script("e2e", [{ log: e2eLog({ testSend: "passed" }) }]);
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(0);
+    expect(fx.read("ui-iphone.start")).toBe("after-apple");
+    expect(fx.has("ui-iphone.done")).toBe(true);
+    expect(fx.calls("e2e")).toEqual(["--native --only-testing OppiE2ETests/ChatE2ETests/testSend"]);
+    const order = ["ui-iphone: starting after the pre-push apple lane passed", "e2e: starting after the pre-push gate passed", "[batch-gate] summary:", "[batch-gate] pre-push: PASS", "[batch-gate] ui-iphone: PASS", "[batch-gate] e2e: PASS"];
+    const positions = order.map((text) => result.out.indexOf(text));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  test("--supports-pre-push and --build-cache answer without a checkout", () => {
+    const probe = (flag: string) => Bun.spawnSync(["bun", gate, flag], { cwd: tmpdir(), stdout: "pipe" });
+    const pre = probe("--supports-pre-push");
+    expect(pre.exitCode).toBe(0);
+    expect(pre.stdout.toString().trim()).toBe("batch-gate: runs-pre-push");
+    const cache = probe("--build-cache");
+    expect(cache.exitCode).toBe(0);
+    const lines = cache.stdout.toString().trim().split("\n");
+    expect(lines.filter((line) => line.startsWith("batch-gate: build-cache "))).toContain("batch-gate: build-cache clients/apple/.build/dd");
+    expect(lines.filter((line) => line.startsWith("batch-gate: build-cache-key "))).toHaveLength(1);
+  });
+});
+
 describe("batch gate: budgets and hidden flakes", () => {
   test("a lane budget file that cannot be read is a warning in the summary; the lane still passes", () => {
     const fx = fakeCheckout();
