@@ -192,9 +192,7 @@ final class FullScreenImageViewController: UIViewController {
 
         if let savedFeedbackLabel {
             savedFeedbackLabel.textColor = palette.ui.fg
-            savedFeedbackLabel.backgroundColor = UIColor(
-                ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
-            )
+            savedFeedbackLabel.backgroundColor = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
             savedFeedbackLabel.layer.borderColor = palette.ui.comment
                 .withAlphaComponent(0.25).cgColor
         }
@@ -284,9 +282,7 @@ final class FullScreenImageViewController: UIViewController {
         label.adjustsFontForContentSizeCategory = true
         label.textColor = palette.ui.fg
         label.textAlignment = .center
-        label.backgroundColor = UIColor(
-            ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
-        )
+        label.backgroundColor = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         label.layer.cornerRadius = 8
         label.layer.borderWidth = 1
         label.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor

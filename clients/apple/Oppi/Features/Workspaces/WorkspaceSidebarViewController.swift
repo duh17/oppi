@@ -433,7 +433,7 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     private func configureUtility(_ cell: SidebarListCell, row: UtilityRow, palette: ThemePalette) {
         let item = row.item
-        let tint = UIColor(row.isSelected ? palette.blue : palette.fg)
+        let tint = row.isSelected ? palette.blue : palette.fg
         var content = UIListContentConfiguration.cell()
         content.image = UIImage(systemName: item.systemImage)
         content.imageProperties.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .title3)

@@ -954,7 +954,7 @@ private struct UIHangHarnessContent: View {
             )
             .accessibilityIdentifier("harness.timeline")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.themeBg)
+            .background(Color(uiColor: .themeBg))
 
             TextField("Harness input", text: $inputText)
                 .textFieldStyle(.roundedBorder)
@@ -974,7 +974,7 @@ private struct UIHangHarnessContent: View {
             .frame(height: 16)
         }
         .padding()
-        .background(Color.themeBg.ignoresSafeArea())
+        .background(Color(uiColor: .themeBg).ignoresSafeArea())
         .toolbarVisibility(.hidden, for: .navigationBar)
         .environment(harnessNavigation)
         .onAppear {
@@ -2220,14 +2220,13 @@ private struct UIHangHarnessTimeline: UIViewRepresentable {
 // above: the chat shows the same view in the extension strip's drawer.
 private struct UIHangHarnessMessageQueue: UIViewRepresentable {
     let configuration: MessageQueueSurfaceConfiguration
-    @Environment(\.themeID) private var themeID
 
     func makeUIView(context: Context) -> MessageQueueView {
         MessageQueueView(presentation: .standalone)
     }
 
     func updateUIView(_ view: MessageQueueView, context: Context) {
-        view.apply(configuration, themeID: themeID)
+        view.apply(configuration, themeID: ThemeRuntimeState.currentThemeID())
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MessageQueueView, context: Context) -> CGSize? {

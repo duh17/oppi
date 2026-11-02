@@ -50,8 +50,8 @@ final class FloatingProgressPanel: UIView {
 
     func apply(_ palette: ThemePalette) {
         let surface = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
-        backgroundColor = UIColor(surface.fill)
-        layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
+        backgroundColor = surface.fill
+        layer.borderColor = surface.stroke?.cgColor
         layer.borderWidth = surface.stroke == nil ? 0 : borderWidth ?? surface.strokeLineWidth
         spinner.color = palette.ui.cyan
         label.textColor = palette.ui.fg

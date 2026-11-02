@@ -300,8 +300,8 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let palette = theme.palette
         card.backgroundColor = palette.ui.bgDark
         card.layer.borderColor = palette.ui.mdCodeBlockBorder.cgColor
-        accent.backgroundColor = UIColor(plan.failed ? palette.red : palette.blue)
-        rail.backgroundColor = UIColor((plan.failed ? palette.red : palette.comment).opacity(0.3))
+        accent.backgroundColor = plan.failed ? palette.red : palette.blue
+        rail.backgroundColor = (plan.failed ? palette.ui.red : palette.ui.comment).withAlphaComponent(0.3)
         let kind = plan.inputIsCode ? "Code cell" : "Tool call"
         accessibilityLabel = plan.running ? "\(kind), running" : (plan.failed ? "\(kind), failed" : kind)
         card.isHidden = plan.sources.isEmpty && plan.metadata.isEmpty

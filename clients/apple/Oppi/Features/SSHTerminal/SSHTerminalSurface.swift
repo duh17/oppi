@@ -499,8 +499,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         appliedTheme = themeID
         appliedColors = colors
         let theme = themeID.appTheme
-        foreground = colors?.foreground.map(UIColor.init) ?? UIColor(theme.text.primary)
-        let background = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
+        foreground = colors?.foreground.map(UIColor.init) ?? theme.text.primary
+        let background = colors?.background.map(UIColor.init) ?? theme.bg.primary
         cursorColor = colors?.cursor.map(UIColor.init)
         selectionOverlay.fill = colors?.selectionBackground.map(UIColor.init)
         backgroundColor = background

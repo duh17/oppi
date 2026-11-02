@@ -151,25 +151,6 @@ struct ThemeStoreTests {
         }
     }
 
-    @Test func swiftUIThemeShapeStylesResolveFromTheirEnvironment() {
-        let originalThemeID = ThemeRuntimeState.currentThemeID()
-        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
-        ThemeRuntimeState.setThemeID(.dark)
-
-        var lightEnvironment = EnvironmentValues()
-        lightEnvironment.theme = .light
-        var oledEnvironment = EnvironmentValues()
-        oledEnvironment.theme = .oled
-
-        let foreground = ThemeShapeStyle(role: .foreground)
-        let background = ThemeShapeStyle(role: .background)
-
-        #expect(UIColor(foreground.color(in: lightEnvironment)) == UIColor(ThemePalettes.light.fg))
-        #expect(UIColor(foreground.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.fg))
-        #expect(UIColor(background.color(in: lightEnvironment)) == UIColor(ThemePalettes.light.bg))
-        #expect(UIColor(background.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.bg))
-    }
-
     private static func makeLightTheme(name: String) -> RemoteTheme {
         RemoteTheme(
             name: name,

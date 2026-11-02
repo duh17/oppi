@@ -228,10 +228,10 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
         var configuration = doneButton.configuration ?? .borderedProminent()
         configuration.cornerStyle = .capsule
         configuration.baseBackgroundColor = colors.blue
-        configuration.baseForegroundColor = UIColor(ThemeColorContrast.contrastingForeground(
+        configuration.baseForegroundColor = ThemeColorContrast.contrastingForeground(
             on: palette.blue,
             candidates: [palette.fg, palette.bg]
-        ))
+        )
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20)
         configuration.attributedTitle = AttributedString(
             String(localized: "Done"),

@@ -114,7 +114,7 @@ struct BashToolRowViewTests {
         )
         // Error mode sets a non-default (red-tinted) background on outputContainer.
         let bg = view.outputContainer.backgroundColor
-        #expect(bg != UIColor(Color.themeBgDark))
+        #expect(bg != UIColor.themeBgDark)
     }
 
     @Test("non-error output uses normal dark background")
@@ -130,7 +130,7 @@ struct BashToolRowViewTests {
         _ = view.apply(
             input: input, outputColor: .white, wasOutputVisible: false
         )
-        #expect(view.outputContainer.backgroundColor == UIColor(Color.themeBgDark))
+        #expect(view.outputContainer.backgroundColor == UIColor.themeBgDark)
     }
 
     @Test("applyTheme refreshes persistent UIKit surfaces")
@@ -145,8 +145,8 @@ struct BashToolRowViewTests {
         let lightCommand = try #require(view.commandContainer.backgroundColor)
         let lightOutput = try #require(view.outputContainer.backgroundColor)
 
-        #expect(lightCommand == UIColor(ThemePalettes.light.bgHighlight))
-        #expect(lightOutput == UIColor(ThemePalettes.light.bgDark))
+        #expect(lightCommand == ThemePalettes.light.bgHighlight)
+        #expect(lightOutput == ThemePalettes.light.bgDark)
         #expect(lightCommand != darkCommand)
         #expect(lightOutput != darkOutput)
     }

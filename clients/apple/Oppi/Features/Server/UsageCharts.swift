@@ -24,11 +24,11 @@ struct UsageChartColors: Equatable {
     let themeKey: String
 
     init(palette: ThemePalette, themeKey: String) {
-        primary = palette.fg
-        secondary = palette.fgDim
-        tertiary = palette.comment
-        washEmpty = palette.comment.opacity(0.08)
-        washTooltip = palette.comment.opacity(0.1)
+        primary = Color(uiColor: palette.fg)
+        secondary = Color(uiColor: palette.fgDim)
+        tertiary = Color(uiColor: palette.comment)
+        washEmpty = Color(uiColor: palette.comment.multiplyingAlpha(0.08))
+        washTooltip = Color(uiColor: palette.comment.multiplyingAlpha(0.1))
         self.themeKey = themeKey
     }
 }

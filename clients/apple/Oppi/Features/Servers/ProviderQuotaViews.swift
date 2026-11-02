@@ -172,7 +172,7 @@ final class ProviderQuotaWindowView: UIView {
         case "on_pace":
             return palette.ui.blue
         case "conserve":
-            return UIColor(byRemaining == .red ? palette.red : palette.orange)
+            return byRemaining == .red ? palette.red : palette.orange
         default:
             switch byRemaining {
             case .green: return palette.ui.green
@@ -351,7 +351,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
         nameLabel.text = provider.name
         nameLabel.textColor = palette.ui.fg
         statusLabel.text = Self.statusText(provider)
-        statusLabel.textColor = UIColor(provider.authenticated ? palette.green : palette.comment)
+        statusLabel.textColor = provider.authenticated ? palette.green : palette.comment
         applyAction(configuration.action, palette: palette, providerId: provider.id, name: provider.name)
         applyQuota(configuration.quota, provider: provider, palette: palette, now: configuration.now)
     }

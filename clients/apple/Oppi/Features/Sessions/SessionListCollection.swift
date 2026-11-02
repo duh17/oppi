@@ -999,7 +999,7 @@ enum SessionListBarItems {
         // The rail draws the app tint; a disabled item dims itself.
         item.tintColor = railTitle != nil
             ? railTint(palette)
-            : UIColor(isEnabled ? palette.fg : palette.fgDim)
+            : isEnabled ? palette.fg : palette.fgDim
         item.accessibilityLabel = accessibilityLabel
         item.accessibilityIdentifier = "workspace.files.open"
         return railTitle == nil ? item : railItem(item, priority: .keep)
@@ -1301,13 +1301,13 @@ final class ServerSwitcherPillButton: UIButton {
 }
 
 extension ServerBadgeConnectionState {
-    /// `tintColor` in UIKit.
+    /// The state's color, from the screen's palette.
     func uiColor(_ colors: ComposerThemeColors) -> UIColor {
-        switch tintColor.role {
+        switch tintRole {
         case .green: colors.green
         case .blue: colors.blue
         case .orange: colors.orange
-        default: colors.red
+        case .red: colors.red
         }
     }
 }

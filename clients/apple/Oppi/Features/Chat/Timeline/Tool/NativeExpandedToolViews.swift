@@ -186,7 +186,7 @@ final class NativeExpandedReadMediaView: UIView {
         if !displayText.isEmpty {
             let textLabel = UILabel()
             textLabel.font = AppFont.monoMedium
-            textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
+            textLabel.textColor = isError ? palette.red : palette.fg
             textLabel.numberOfLines = 0
             textLabel.text = String(displayText.prefix(3_000))
             contentStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
@@ -772,7 +772,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
                     self.fetchTask = nil
                     self.lastError = error.localizedDescription
                     self.subtitleLabel.text = error.localizedDescription
-                    self.subtitleLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().red)
+                    self.subtitleLabel.textColor = ThemeRuntimeState.currentPalette().red
                     self.recordSourceError(error)
                     self.updateButton(palette: ThemeRuntimeState.currentPalette(), isLoading: false)
                 }

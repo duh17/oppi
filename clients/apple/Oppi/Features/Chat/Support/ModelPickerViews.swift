@@ -88,11 +88,11 @@ final class ModelPickerCell: UICollectionViewListCell {
     ) {
         nameLabel.text = model.name
         nameLabel.font = SessionOutlineStyle.font(.subheadline, bold: isCurrent)
-        nameLabel.textColor = UIColor(isCurrent ? palette.blue : palette.fg)
+        nameLabel.textColor = isCurrent ? palette.blue : palette.fg
         currentBadge.isHidden = !isCurrent
         currentBadge.font = .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .medium)
         currentBadge.textColor = palette.ui.blue
-        currentBadge.backgroundColor = UIColor(palette.blue.opacity(0.14))
+        currentBadge.backgroundColor = palette.ui.blue.withAlphaComponent(0.14)
         idLabel.text = id
         idLabel.font = SessionOutlineStyle.font(.caption1, monospaced: true)
         idLabel.textColor = palette.ui.comment
@@ -109,7 +109,7 @@ final class ModelPickerCell: UICollectionViewListCell {
         checkmark.tintColor = palette.ui.blue
 
         var background = UIBackgroundConfiguration.listCell()
-        background.backgroundColor = isCurrent ? UIColor(palette.blue.opacity(0.12)) : palette.ui.bg
+        background.backgroundColor = isCurrent ? palette.ui.blue.withAlphaComponent(0.12) : palette.ui.bg
         backgroundConfiguration = background
 
         row.onActivate = onSelect
@@ -130,7 +130,7 @@ final class ModelPickerCell: UICollectionViewListCell {
                 withConfiguration: UIImage.SymbolConfiguration(textStyle: .body, scale: .default)
                     .applying(UIImage.SymbolConfiguration(weight: .semibold))
             )
-            config.baseForegroundColor = UIColor(star.isDefault ? palette.orange : palette.comment)
+            config.baseForegroundColor = star.isDefault ? palette.orange : palette.comment
             starButton.configuration = config
             starButton.isEnabled = star.isEnabled
             self.onStar = onStar

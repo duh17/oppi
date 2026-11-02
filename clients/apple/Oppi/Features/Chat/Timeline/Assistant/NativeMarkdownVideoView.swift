@@ -199,14 +199,14 @@ final class NativeMarkdownVideoView: UIView {
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
         layer.cornerRadius = 8
         clipsToBounds = true
         accessibilityIdentifier = "markdown-video"
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        statusLabel.textColor = ThemeRuntimeState.currentPalette().comment
         statusLabel.textAlignment = .center
         statusLabel.numberOfLines = 3
 
@@ -271,7 +271,7 @@ final class NativeMarkdownVideoView: UIView {
 
     /// Pre-tap state: placeholder background (or still frame) plus the play control.
     private func showPlayPrompt(embed: MarkdownVideoEmbed) {
-        backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
         statusLabel.isHidden = true
         openButton.isHidden = true
         stillImageView.isHidden = stillImageView.image == nil
@@ -288,7 +288,7 @@ final class NativeMarkdownVideoView: UIView {
         removePlayer()
         playButton.isHidden = true
         stillImageView.isHidden = true
-        backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
         statusLabel.text = "\(title)\n\(detail)"
         statusLabel.isHidden = false
         openButton.isHidden = !actionable
@@ -487,7 +487,7 @@ final class NativeMarkdownVideoView: UIView {
         if failed != lastAppliedFailed || playerChanged {
             lastAppliedFailed = failed
             lastAppliedPlayer = playbackModel.player
-            backgroundColor = failed ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight) : .clear
+            backgroundColor = failed ? ThemeRuntimeState.currentPalette().bgHighlight : .clear
             playerController.view.isHidden = failed
             stillImageView.isHidden = failed || stillImageView.image == nil
             statusLabel.isHidden = !failed

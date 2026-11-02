@@ -663,7 +663,7 @@ final class WorkspaceContextBarView: UIView {
         selectDivider.backgroundColor = .separator
         selectLabel.text = isSelecting ? String(localized: "Cancel") : String(localized: "Select")
         selectLabel.font = font(.caption2, .caption1, .semibold)
-        selectLabel.textColor = UIColor(isSelecting ? palette.orange : palette.purple)
+        selectLabel.textColor = isSelecting ? palette.orange : palette.purple
         selectButton.accessibilityLabel = selectLabel.text
     }
 
@@ -1107,7 +1107,7 @@ final class WorkspaceContextBarView: UIView {
         for row in fileRows {
             let selected = selectedPaths.contains(row.path)
             row.mark?.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
-            row.mark?.tintColor = UIColor(selected ? palette.purple : palette.comment)
+            row.mark?.tintColor = selected ? palette.purple : palette.comment
             row.view.accessibilityTraits = selected ? [.button, .selected] : .button
         }
     }
@@ -1265,7 +1265,7 @@ final class WorkspaceContextBarView: UIView {
         let countLabel = Self.label(
             "\(count) file\(count == 1 ? "" : "s")",
             font: font(.caption2, .caption1, mono: true),
-            color: UIColor(count == 0 ? palette.comment : palette.fg)
+            color: count == 0 ? palette.comment : palette.fg
         )
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -1370,8 +1370,8 @@ final class WorkspaceContextBarView: UIView {
         let content = Self.row(items, spacing: 6, insets: NSDirectionalEdgeInsets(top: 6, leading: 9, bottom: 6, trailing: 9))
         let button = PlainRowButton(wrapping: content, action: action)
         let surface = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette)
-        button.backgroundColor = UIColor(surface.fill)
-        button.layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
+        button.backgroundColor = surface.fill
+        button.layer.borderColor = surface.stroke?.cgColor
         button.layer.borderWidth = surface.stroke == nil ? 0 : surface.strokeLineWidth
         button.isCapsule = true
         return button

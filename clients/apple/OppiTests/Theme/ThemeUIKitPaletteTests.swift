@@ -30,11 +30,11 @@ struct ThemeUIKitPaletteTests {
     @Test func aThemeThatIsNotTheCurrentOneKeepsItsOwnColors() {
         let light = ThemePalettes.light
         let dark = ThemePalettes.dark
-        #expect(light.ui.bg == UIColor(light.bg))
+        #expect(light.ui.bg == light.bg)
         #expect(light.ui.bg != dark.ui.bg)
-        #expect(light.ui.mdLink == UIColor(light.mdLink))
+        #expect(light.ui.mdLink == light.mdLink)
         // Reading the palette again, after another one was read, keeps its colors.
-        #expect(light.ui.bg == UIColor(light.bg))
+        #expect(light.ui.bg == light.bg)
     }
 
     @Test func tokensFollowAThemeChange() {
@@ -58,6 +58,6 @@ struct ThemeUIKitPaletteTests {
         // cannot answer with the seed's colors.
         let resolved = ThemeContrast.resolve(isDark: true, seed: ThemePalettes.dark)
         #expect(resolved.palette.ui !== ThemePalettes.dark.ui)
-        #expect(resolved.palette.ui.bg == UIColor(resolved.palette.bg))
+        #expect(resolved.palette.ui.bg == resolved.palette.bg)
     }
 }

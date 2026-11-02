@@ -92,7 +92,7 @@ struct SyntaxHighlightOwnershipTests {
         let displayed = try #require(codeAttributedText(in: view))
         #expect(displayed.string.contains("let value"))
         #expect(
-            foregroundColor(of: "let", in: displayed) != UIColor(ThemePalettes.light.syntaxKeyword)
+            foregroundColor(of: "let", in: displayed) != ThemePalettes.light.syntaxKeyword
         )
     }
 
@@ -128,7 +128,7 @@ struct SyntaxHighlightOwnershipTests {
         let attributed = try #require(codeAttributedText(in: codeView))
         #expect(uniqueForegroundColorCount(attributed) >= 2)
         #expect(
-            foregroundColor(of: "let", in: attributed) == UIColor(ThemePalettes.dark.syntaxKeyword)
+            foregroundColor(of: "let", in: attributed) == ThemePalettes.dark.syntaxKeyword
         )
     }
 
@@ -164,14 +164,14 @@ struct SyntaxHighlightOwnershipTests {
         try await waitUntil(timeout: .seconds(2)) {
             codeText(in: codeView).contains("betaUnique")
                 && foregroundColor(of: "let", in: codeAttributedText(in: codeView) ?? NSAttributedString())
-                    == UIColor(ThemePalettes.light.syntaxKeyword)
+                    == ThemePalettes.light.syntaxKeyword
         }
 
         let attributed = try #require(codeAttributedText(in: codeView))
         #expect(attributed.string.contains("betaUnique"))
         #expect(!attributed.string.contains("alphaUnique"))
         #expect(uniqueForegroundColorCount(attributed) >= 2)
-        #expect(foregroundColor(of: "let", in: attributed) == UIColor(ThemePalettes.light.syntaxKeyword))
+        #expect(foregroundColor(of: "let", in: attributed) == ThemePalettes.light.syntaxKeyword)
     }
 
     @Test func unchangedMarkdownReconfigureDoesNotRedoHighlightWork() async throws {
@@ -259,11 +259,11 @@ struct SyntaxHighlightOwnershipTests {
         #expect(uniqueForegroundColorCount(attributed) >= 2)
         #expect(
             foregroundColor(of: "function", in: attributed)
-                == UIColor(ThemePalettes.dark.syntaxKeyword)
+                == ThemePalettes.dark.syntaxKeyword
                 || foregroundColor(of: "export", in: attributed)
-                    == UIColor(ThemePalettes.dark.syntaxKeyword)
+                    == ThemePalettes.dark.syntaxKeyword
                 || foregroundColor(of: "type", in: attributed)
-                    == UIColor(ThemePalettes.dark.syntaxKeyword)
+                    == ThemePalettes.dark.syntaxKeyword
         )
     }
 
@@ -354,8 +354,8 @@ struct SyntaxHighlighterSourcePreservationTests {
 
         ThemeRuntimeState.setThemeID(.light)
         let result = SyntaxHighlighter.highlight("let value = 1", language: .swift, themeID: .dark)
-        #expect(foregroundColor(of: "let", in: result) == UIColor(ThemePalettes.dark.syntaxKeyword))
-        #expect(foregroundColor(of: "let", in: result) != UIColor(ThemePalettes.light.syntaxKeyword))
+        #expect(foregroundColor(of: "let", in: result) == ThemePalettes.dark.syntaxKeyword)
+        #expect(foregroundColor(of: "let", in: result) != ThemePalettes.light.syntaxKeyword)
     }
 
     @Test func remainderBeyondMaxLinesUsesNeutralBaseColor() {
@@ -373,8 +373,8 @@ struct SyntaxHighlighterSourcePreservationTests {
             at: tailLocation,
             effectiveRange: nil
         ) as? UIColor
-        #expect(tailColor == UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable))
-        #expect(tailColor != UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxKeyword))
+        #expect(tailColor == ThemeRuntimeState.currentThemeID().palette.syntaxVariable)
+        #expect(tailColor != ThemeRuntimeState.currentThemeID().palette.syntaxKeyword)
     }
 
     @Test func shareHighlightedCodeUsesDeclaredExportFont() {

@@ -102,17 +102,17 @@ enum DiffAttributedStringBuilder {
 
             let addedAccent = palette.ui.diffAdded
             let removedAccent = palette.ui.diffRemoved
-            let contextDim = UIColor(palette.comment.opacity(0.4))
-            let lineNumColor = UIColor(palette.comment.opacity(0.5))
+            let contextDim = palette.ui.comment.withAlphaComponent(0.4)
+            let lineNumColor = palette.ui.comment.withAlphaComponent(0.5)
             let fgColor = palette.ui.fg
             let fgDimColor = palette.ui.fgDim
             let headerColor = palette.ui.purple
             let gapSummaryColor = palette.ui.fgDim
 
-            let lineAddedBg = UIColor(palette.toolDiffAdded.opacity(0.12))
-            let lineRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.10))
-            let wordAddedBg = UIColor(palette.toolDiffAdded.opacity(0.35))
-            let wordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.35))
+            let lineAddedBg = palette.ui.diffAdded.withAlphaComponent(0.12)
+            let lineRemovedBg = palette.ui.diffRemoved.withAlphaComponent(0.10)
+            let wordAddedBg = palette.ui.diffAdded.withAlphaComponent(0.35)
+            let wordRemovedBg = palette.ui.diffRemoved.withAlphaComponent(0.35)
 
             // Painter-backed readers draw the text-extent tint themselves (cheap
             // line-fragment rects instead of TextKit's per-run attribute rects),
@@ -120,8 +120,8 @@ enum DiffAttributedStringBuilder {
             // background now lands on top of the text tint instead of replacing
             // it, so its alpha is reduced to give the same pixel:
             // 1 - (1 - text)(1 - word') = 0.35. Same hue, so this is exact.
-            let paintedWordAddedBg = UIColor(palette.toolDiffAdded.opacity(1 - (1 - 0.35) / (1 - 0.12)))
-            let paintedWordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(1 - (1 - 0.35) / (1 - 0.10)))
+            let paintedWordAddedBg = palette.ui.diffAdded.withAlphaComponent(1 - (1 - 0.35) / (1 - 0.12))
+            let paintedWordRemovedBg = palette.ui.diffRemoved.withAlphaComponent(1 - (1 - 0.35) / (1 - 0.10))
 
             func rows(
                 addedBackground: UIColor?,
@@ -184,8 +184,8 @@ enum DiffAttributedStringBuilder {
                 painterColors: PainterColors(
                     addedText: lineAddedBg,
                     removedText: lineRemovedBg,
-                    addedRow: UIColor(palette.toolDiffAdded.opacity(0.10)),
-                    removedRow: UIColor(palette.toolDiffRemoved.opacity(0.08)),
+                    addedRow: palette.ui.diffAdded.withAlphaComponent(0.10),
+                    removedRow: palette.ui.diffRemoved.withAlphaComponent(0.08),
                     header: palette.ui.bgHighlight,
                     addedBar: addedAccent,
                     removedBar: removedAccent

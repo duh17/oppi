@@ -87,7 +87,7 @@ struct MermaidThemeContractTests {
                 theme: palette.renderTheme,
                 displayMode: .document
             )
-            let surface = UIColor(palette.bgHighlight).cgColor
+            let surface = palette.bgHighlight.cgColor
 
             for kind in NativeDiagramKind.allCases {
                 let source = try #require(Self.fixtures[kind])
@@ -118,7 +118,7 @@ struct MermaidThemeContractTests {
                 theme: palette.renderTheme,
                 displayMode: .document
             )
-            let surface = UIColor(palette.bgHighlight).cgColor
+            let surface = palette.bgHighlight.cgColor
 
             for kind in NativeDiagramKind.allCases {
                 let source = try #require(Self.fixtures[kind])

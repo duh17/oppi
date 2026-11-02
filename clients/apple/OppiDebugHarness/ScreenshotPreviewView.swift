@@ -229,13 +229,19 @@ private enum SettingsPageThemes {
 /// Duo's vertical rail, follows it there. A harness's window keeps the system
 /// appearance, which drew a light rail beside a dark chat, so this host
 /// asks for the theme's color scheme the same way.
+/// The preview's SwiftUI color scheme for a theme: the theme model is
+/// UIKit-side, so a preview maps it where SwiftUI wants one.
+private func previewColorScheme(_ scheme: ThemeColorScheme) -> ColorScheme {
+    scheme == .light ? .light : .dark
+}
+
 struct RouterPreviewNavigation<Content: View>: View {
     @ViewBuilder let content: () -> Content
     @Environment(\.appRootEnvironment) private var root
 
     var body: some View {
         RouterPreviewNavigationHost(content: content)
-            .preferredColorScheme(root?.themeStore.preferredColorScheme)
+            .preferredColorScheme(root?.themeStore.preferredColorScheme.map(previewColorScheme))
     }
 }
 
@@ -249,7 +255,7 @@ struct RouterPreviewControllerNavigation: View {
 
     var body: some View {
         RouterPreviewControllerNavigationHost(id: id, screen: screen)
-            .preferredColorScheme(root?.themeStore.preferredColorScheme)
+            .preferredColorScheme(root?.themeStore.preferredColorScheme.map(previewColorScheme))
     }
 }
 

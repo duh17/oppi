@@ -838,7 +838,7 @@ final class NativeTableBlockView: UIView {
         /// equal; a dynamic color would compare by provider identity.
         init(palette: ThemePalette, traits: UITraitCollection) {
             colors = [palette.bgHighlight, palette.fg, palette.cyan, palette.blue, palette.comment]
-                .map { UIColor($0).resolvedColor(with: traits) }
+                .map { $0.resolvedColor(with: traits) }
             fonts = [AppFont.monoMediumBold, AppFont.monoMedium]
         }
     }
@@ -2039,7 +2039,7 @@ private final class CopiedPillView: UIView {
 
         // Transient pill over code content with no blur behind it, so it
         // takes the near-opaque card role.
-        backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill)
+        backgroundColor = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         layer.cornerRadius = 16
         isUserInteractionEnabled = false
 

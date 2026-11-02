@@ -1903,7 +1903,7 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
             loadingIndicator.stopAnimating()
         }
         view.backgroundColor = player == nil
-            ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+            ? ThemeRuntimeState.currentPalette().bgHighlight
             : .clear
 #if DEBUG
         AuthenticatedMediaE2EPlaybackProbe.install(on: playerController, model: model)
@@ -1911,7 +1911,7 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
     }
 
     private func setupFailureViews() {
-        let comment = UIColor(ThemeRuntimeState.currentPalette().comment)
+        let comment = ThemeRuntimeState.currentPalette().comment
         failureStack.axis = .vertical
         failureStack.alignment = .center
         failureStack.spacing = 6

@@ -13,7 +13,7 @@ struct ToolTimelineRowStatusAppearance {
                 symbolName: "play.circle.fill",
                 statusColor: palette.ui.blue,
                 borderBackgroundColor: palette.ui.toolPendingBg,
-                borderColor: UIColor(palette.blue.opacity(0.25)).cgColor
+                borderColor: palette.ui.blue.withAlphaComponent(0.25).cgColor
             )
         }
 
@@ -21,8 +21,8 @@ struct ToolTimelineRowStatusAppearance {
             return .init(
                 symbolName: "exclamationmark.circle.fill",
                 statusColor: palette.ui.orange,
-                borderBackgroundColor: UIColor(palette.orange.opacity(0.08)),
-                borderColor: UIColor(palette.orange.opacity(0.25)).cgColor
+                borderBackgroundColor: palette.ui.orange.withAlphaComponent(0.08),
+                borderColor: palette.ui.orange.withAlphaComponent(0.25).cgColor
             )
         }
 
@@ -31,7 +31,7 @@ struct ToolTimelineRowStatusAppearance {
                 symbolName: "xmark.circle.fill",
                 statusColor: palette.ui.red,
                 borderBackgroundColor: palette.ui.toolErrorBg,
-                borderColor: UIColor(palette.red.opacity(0.25)).cgColor
+                borderColor: palette.ui.red.withAlphaComponent(0.25).cgColor
             )
         }
 
@@ -39,7 +39,7 @@ struct ToolTimelineRowStatusAppearance {
             symbolName: "checkmark.circle.fill",
             statusColor: palette.ui.green,
             borderBackgroundColor: palette.ui.toolSuccessBg,
-            borderColor: UIColor(palette.comment.opacity(0.2)).cgColor
+            borderColor: palette.ui.comment.withAlphaComponent(0.2).cgColor
         )
     }
 }

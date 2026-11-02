@@ -108,7 +108,7 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
         compactionBadge.isHidden = !entry.isCompaction
         compactionBadge.font = SessionOutlineStyle.font(.caption2, bold: true)
         compactionBadge.textColor = palette.ui.orange
-        compactionBadge.backgroundColor = UIColor(palette.orange.opacity(0.18))
+        compactionBadge.backgroundColor = palette.ui.orange.withAlphaComponent(0.18)
 
         let stats = entry.diffStats
         addedLabel.isHidden = (stats?.added ?? 0) <= 0
@@ -192,7 +192,7 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
         switch entry.kind {
         case .user: return palette.ui.blue
         case .assistant, .thinking: return palette.ui.purple
-        case .tool: return UIColor(entry.isError ? palette.red : palette.cyan)
+        case .tool: return entry.isError ? palette.red : palette.cyan
         case .system: return palette.ui.comment
         case .compaction: return palette.ui.orange
         case .custom: return palette.ui.blue
@@ -295,7 +295,7 @@ final class SessionOutlineTreeCell: UICollectionViewListCell {
     ) {
         let node = state.displayNode.node
         connector.displayNode = state.displayNode
-        connector.lineColor = UIColor(palette.comment.opacity(0.38))
+        connector.lineColor = palette.ui.comment.withAlphaComponent(0.38)
 
         toggleButton.isHidden = !state.isCollapsible
         toggleButton.isEnabled = !state.isDisabled
@@ -499,10 +499,10 @@ final class SessionOutlineFilterBar: UIView {
     func update(selected: Int, isLoading: Bool, count: Int, palette: ThemePalette) {
         for (index, chip) in chips.enumerated() {
             let isSelected = index == selected
-            chip.configuration?.background.backgroundColor = UIColor(isSelected ? palette.blue : palette.bgHighlight)
-            chip.configuration?.baseForegroundColor = UIColor(
-                isSelected ? ThemeColorContrast.foreground(for: palette.blue) : palette.fgDim
-            )
+            chip.configuration?.background.backgroundColor = isSelected ? palette.blue : palette.bgHighlight
+            chip.configuration?.baseForegroundColor = isSelected
+                ? ThemeColorContrast.foreground(for: palette.blue)
+                : palette.fgDim
             chip.accessibilityTraits = isSelected ? [.button, .selected] : .button
         }
         if isLoading {
@@ -560,7 +560,7 @@ final class SessionOutlineBannerView: UIView {
         label.text = message
         label.textColor = palette.ui.fg
         icon.tintColor = palette.ui.orange
-        card.backgroundColor = UIColor(palette.orange.opacity(0.12))
-        card.layer.borderColor = UIColor(palette.orange.opacity(0.35)).cgColor
+        card.backgroundColor = palette.ui.orange.withAlphaComponent(0.12)
+        card.layer.borderColor = palette.ui.orange.withAlphaComponent(0.35).cgColor
     }
 }

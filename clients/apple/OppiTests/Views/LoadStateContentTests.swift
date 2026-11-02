@@ -65,7 +65,7 @@ private final class StateScreen: UIViewController {
         body.configuration = UIContentUnavailableConfiguration.loadState(
             state,
             palette: palette,
-            background: UIColor(palette.bg)
+            background: palette.bg
         )
     }
 }

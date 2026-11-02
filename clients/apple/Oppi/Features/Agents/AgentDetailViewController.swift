@@ -404,7 +404,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                     text,
                     systemImage: systemImage,
                     style: warning ? .caption1 : .subheadline,
-                    color: UIColor(warning ? palette.orange : palette.fg)
+                    color: warning ? palette.orange : palette.fg
                 )
             }
         case .schedule:

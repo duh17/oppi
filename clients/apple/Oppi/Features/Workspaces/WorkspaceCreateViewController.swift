@@ -497,7 +497,7 @@ final class WorkspaceCreateViewController: ListScreenController<
         case .submit:
             content.textProperties.alignment = .center
             enabled = model.canCreate
-            content.textProperties.color = UIColor(enabled ? palette.blue : palette.comment)
+            content.textProperties.color = enabled ? palette.blue : palette.comment
             if model.isCreating {
                 content.text = "Creating…"
                 let spinner = UIActivityIndicatorView(style: .medium)

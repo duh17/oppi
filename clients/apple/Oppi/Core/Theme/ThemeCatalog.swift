@@ -1,16 +1,19 @@
+import CoreGraphics
 import Foundation
-import SwiftUI
 import os
 #if canImport(UIKit)
 import UIKit
-#elseif canImport(AppKit)
-import AppKit
 #endif
 
 /// Color palette for the entire app — 51 tokens (49 required, 2 optional on import).
 ///
-/// 13 base colors (used by `Color.theme*` static accessors) plus 38 semantic
-/// tokens for UI surfaces, syntax highlighting, markdown, diffs, and thinking.
+/// 13 base colors (used by `UIColor.theme*` static accessors and, on the Mac,
+/// `Color.theme*`) plus 38 semantic tokens for UI surfaces, syntax highlighting,
+/// markdown, diffs, and thinking.
+///
+/// A token's type is the platform's own color (`ThemeColor`: `UIColor` on iOS,
+/// `Color` on the Mac), so nothing here imports SwiftUI. UIKit call sites read
+/// the palette's cached UIKit face, `palette.ui` (`ThemeUIKitPalette`).
 ///
 /// A palette does not change after it is built: `ThemeContrast` reads a seed and
 /// builds the adjusted palette.
@@ -22,74 +25,74 @@ struct ThemePalette: Sendable, ProviderIconTintPalette {
     #endif
 
     // ── Base (13) ──
-    let bg: Color
-    let bgDark: Color
-    let bgHighlight: Color
-    let fg: Color
-    let fgDim: Color
-    let comment: Color
-    let blue: Color
-    let cyan: Color
-    let green: Color
-    let orange: Color
-    let purple: Color
-    let red: Color
-    let yellow: Color
+    let bg: ThemeColor
+    let bgDark: ThemeColor
+    let bgHighlight: ThemeColor
+    let fg: ThemeColor
+    let fgDim: ThemeColor
+    let comment: ThemeColor
+    let blue: ThemeColor
+    let cyan: ThemeColor
+    let green: ThemeColor
+    let orange: ThemeColor
+    let purple: ThemeColor
+    let red: ThemeColor
+    let yellow: ThemeColor
 
     // ── Thinking text (1) ──
-    let thinkingText: Color
+    let thinkingText: ThemeColor
 
     // ── User / assistant message (4) ──
-    let userMessageBg: Color
-    let userMessageText: Color
-    /// Assistant row fill. Built-ins use `Color.clear` (no wash).
-    let assistantMessageBg: Color
+    let userMessageBg: ThemeColor
+    let userMessageText: ThemeColor
+    /// Assistant row fill. Built-ins use a clear color (no wash).
+    let assistantMessageBg: ThemeColor
     /// Optional leading strip on the user card. Built-ins use `nil` (no
     /// strip); a custom theme opts in with `userMessageAccent`.
-    let userMessageAccent: Color?
+    let userMessageAccent: ThemeColor?
 
     // ── Tool state (5) ──
-    let toolPendingBg: Color
-    let toolSuccessBg: Color
-    let toolErrorBg: Color
-    let toolTitle: Color
-    let toolOutput: Color
+    let toolPendingBg: ThemeColor
+    let toolSuccessBg: ThemeColor
+    let toolErrorBg: ThemeColor
+    let toolTitle: ThemeColor
+    let toolOutput: ThemeColor
 
     // ── Markdown (10) ──
-    let mdHeading: Color
-    let mdLink: Color
-    let mdLinkUrl: Color
-    let mdCode: Color
-    let mdCodeBlock: Color
-    let mdCodeBlockBorder: Color
-    let mdQuote: Color
-    let mdQuoteBorder: Color
-    let mdHr: Color
-    let mdListBullet: Color
+    let mdHeading: ThemeColor
+    let mdLink: ThemeColor
+    let mdLinkUrl: ThemeColor
+    let mdCode: ThemeColor
+    let mdCodeBlock: ThemeColor
+    let mdCodeBlockBorder: ThemeColor
+    let mdQuote: ThemeColor
+    let mdQuoteBorder: ThemeColor
+    let mdHr: ThemeColor
+    let mdListBullet: ThemeColor
 
     // ── Diffs (3) ──
-    let toolDiffAdded: Color
-    let toolDiffRemoved: Color
-    let toolDiffContext: Color
+    let toolDiffAdded: ThemeColor
+    let toolDiffRemoved: ThemeColor
+    let toolDiffContext: ThemeColor
 
     // ── Syntax (9) ──
-    let syntaxComment: Color
-    let syntaxKeyword: Color
-    let syntaxFunction: Color
-    let syntaxVariable: Color
-    let syntaxString: Color
-    let syntaxNumber: Color
-    let syntaxType: Color
-    let syntaxOperator: Color
-    let syntaxPunctuation: Color
+    let syntaxComment: ThemeColor
+    let syntaxKeyword: ThemeColor
+    let syntaxFunction: ThemeColor
+    let syntaxVariable: ThemeColor
+    let syntaxString: ThemeColor
+    let syntaxNumber: ThemeColor
+    let syntaxType: ThemeColor
+    let syntaxOperator: ThemeColor
+    let syntaxPunctuation: ThemeColor
 
     // ── Thinking levels (6) ──
-    let thinkingOff: Color
-    let thinkingMinimal: Color
-    let thinkingLow: Color
-    let thinkingMedium: Color
-    let thinkingHigh: Color
-    let thinkingXhigh: Color
+    let thinkingOff: ThemeColor
+    let thinkingMinimal: ThemeColor
+    let thinkingLow: ThemeColor
+    let thinkingMedium: ThemeColor
+    let thinkingHigh: ThemeColor
+    let thinkingXhigh: ThemeColor
 }
 
 // MARK: - Theme IDs
@@ -108,7 +111,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     ///
     /// Pass `.light` or `.dark` to keep day and night lists from mixing.
     /// Pass `nil` for the manual picker, which can choose any theme.
-    static func pickerThemes(matching scheme: ColorScheme?) -> [Self] {
+    static func pickerThemes(matching scheme: ThemeColorScheme?) -> [Self] {
         let builtinMatches = builtins.filter { scheme == nil || $0.preferredColorScheme == scheme }
         let customMatches = CustomThemeStore.names().compactMap { name -> Self? in
             let themeID = Self.custom(name)
@@ -119,12 +122,12 @@ enum ThemeID: Hashable, Codable, Sendable {
     }
 
     /// Default built-in for a system appearance slot.
-    static func defaultTheme(for scheme: ColorScheme) -> Self {
+    static func defaultTheme(for scheme: ThemeColorScheme) -> Self {
         scheme == .light ? .light : .dark
     }
 
     /// Keep a persisted Light/Dark preset on the matching side of the picker.
-    func matching(scheme: ColorScheme) -> Self {
+    func matching(scheme: ThemeColorScheme) -> Self {
         preferredColorScheme == scheme ? self : Self.defaultTheme(for: scheme)
     }
 
@@ -202,7 +205,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         }
     }
 
-    var preferredColorScheme: ColorScheme {
+    var preferredColorScheme: ThemeColorScheme {
         switch self {
         case .dark, .oled, .night:
             return .dark
@@ -252,12 +255,12 @@ enum ThemeID: Hashable, Codable, Sendable {
 /// and derives the chat surfaces (assistant card, user bubbles) from them.
 // swiftlint:disable function_body_length
 enum ThemePalettes {
-    // Helper to build Color from hex literal
-    private static func c(_ hex: UInt32) -> Color {
-        Color(
-            red: Double((hex >> 16) & 0xFF) / 255.0,
-            green: Double((hex >> 8) & 0xFF) / 255.0,
-            blue: Double(hex & 0xFF) / 255.0
+    // Helper to build a token from a hex literal
+    private static func c(_ hex: UInt32) -> ThemeColor {
+        ThemeColor.themeSRGB(
+            Double((hex >> 16) & 0xFF) / 255.0,
+            Double((hex >> 8) & 0xFF) / 255.0,
+            Double(hex & 0xFF) / 255.0
         )
     }
 
@@ -287,9 +290,9 @@ enum ThemePalettes {
         assistantMessageBg: .clear,
         userMessageAccent: nil,
         // Tool state
-        toolPendingBg: c(0x7AA2F7).opacity(0.13),
-        toolSuccessBg: c(0x8FBE78).opacity(0.10),
-        toolErrorBg: c(0xE07A8C).opacity(0.10),
+        toolPendingBg: c(0x7AA2F7).multiplyingAlpha(0.13),
+        toolSuccessBg: c(0x8FBE78).multiplyingAlpha(0.10),
+        toolErrorBg: c(0xE07A8C).multiplyingAlpha(0.10),
         toolTitle: c(0xC8D1EB),
         toolOutput: c(0xA2ACC9),
         // Markdown
@@ -353,9 +356,9 @@ enum ThemePalettes {
         assistantMessageBg: .clear,
         userMessageAccent: nil,
         // Tool state
-        toolPendingBg: c(0x7A9DD5).opacity(0.12),
-        toolSuccessBg: c(0x85BF8A).opacity(0.08),
-        toolErrorBg: c(0xD87888).opacity(0.08),
+        toolPendingBg: c(0x7A9DD5).multiplyingAlpha(0.12),
+        toolSuccessBg: c(0x85BF8A).multiplyingAlpha(0.08),
+        toolErrorBg: c(0xD87888).multiplyingAlpha(0.08),
         toolTitle: c(0xC5CEEA),
         toolOutput: c(0xA5AEC8),
         // Markdown
@@ -422,9 +425,9 @@ enum ThemePalettes {
         assistantMessageBg: .clear,
         userMessageAccent: nil,
         // Tool state
-        toolPendingBg: c(0xC49468).opacity(0.10),
-        toolSuccessBg: c(0x7C9C6E).opacity(0.08),
-        toolErrorBg: c(0xB86C6E).opacity(0.08),
+        toolPendingBg: c(0xC49468).multiplyingAlpha(0.10),
+        toolSuccessBg: c(0x7C9C6E).multiplyingAlpha(0.08),
+        toolErrorBg: c(0xB86C6E).multiplyingAlpha(0.08),
         toolTitle: c(0xC8BFB0),
         toolOutput: c(0x9C9488),
         // Markdown
@@ -537,14 +540,13 @@ enum ThemePalettes {
 // MARK: - UIKit Palette
 
 #if canImport(UIKit)
-/// A `ThemePalette` as UIKit colors, for view controllers.
+/// A `ThemePalette`'s UIKit face, for view controllers.
 ///
-/// Every palette token, so a UIKit call site reads `palette.ui.fg` instead of
-/// bridging `UIColor(Color)`; the UIKit structure guard fails a new bridge.
-/// Palette colors are static sRGB values, so the conversions cannot go stale
-/// against a trait collection, and a palette's colors never change after it is
-/// built (its tokens are `let`), so the colors built for one palette cannot go
-/// stale either.
+/// The palette's own tokens are `ThemeColor` (`UIColor` on iOS), so this adds
+/// what a UIKit call site needs beyond them: the derived translucent tokens
+/// (`scrim`, `onBlue`, the surface roles) and one cached object per palette.
+/// UIKit code reads `palette.ui.fg` (the cached object the views paint with)
+/// rather than rebuilding a wash at the call site.
 ///
 /// A class, so handing it to a call site is one retain: it holds a `UIColor` per
 /// token, and `palette.ui` is on cell configure and draw paths.
@@ -619,93 +621,89 @@ final class ThemeUIKitPalette: Sendable {
 
     private let surfaces: [ThemeSurfaceRole: ThemeUIKitSurface]
 
-    /// Converts the palette. Reads nothing but `palette`: `palette.ui` may build
-    /// this inside `ThemeUIKitPalette.init`'s caller, which can be under the
-    /// theme state's lock, so it must not read `ThemeRuntimeState` back
-    /// (`bee815ece`).
+    /// Reads nothing but `palette`: `palette.ui` may build this inside
+    /// `ThemeUIKitPalette.init`'s caller, which can be under the theme state's
+    /// lock, so it must not read `ThemeRuntimeState` back (`bee815ece`).
     init(palette: ThemePalette) {
-        bg = UIColor(palette.bg)
-        bgDark = UIColor(palette.bgDark)
-        bgHighlight = UIColor(palette.bgHighlight)
+        bg = palette.bg
+        bgDark = palette.bgDark
+        bgHighlight = palette.bgHighlight
 
-        fg = UIColor(palette.fg)
-        fgDim = UIColor(palette.fgDim)
-        comment = UIColor(palette.comment)
+        fg = palette.fg
+        fgDim = palette.fgDim
+        comment = palette.comment
 
-        blue = UIColor(palette.blue)
-        cyan = UIColor(palette.cyan)
-        green = UIColor(palette.green)
-        orange = UIColor(palette.orange)
-        purple = UIColor(palette.purple)
-        red = UIColor(palette.red)
-        yellow = UIColor(palette.yellow)
+        blue = palette.blue
+        cyan = palette.cyan
+        green = palette.green
+        orange = palette.orange
+        purple = palette.purple
+        red = palette.red
+        yellow = palette.yellow
 
-        thinkingText = UIColor(palette.thinkingText)
+        thinkingText = palette.thinkingText
 
-        userMessageBg = UIColor(palette.userMessageBg)
-        userMessageText = UIColor(palette.userMessageText)
-        assistantMessageBg = UIColor(palette.assistantMessageBg)
-        userMessageAccent = palette.userMessageAccent.map { UIColor($0) }
+        userMessageBg = palette.userMessageBg
+        userMessageText = palette.userMessageText
+        assistantMessageBg = palette.assistantMessageBg
+        userMessageAccent = palette.userMessageAccent
 
-        toolPendingBg = UIColor(palette.toolPendingBg)
-        toolSuccessBg = UIColor(palette.toolSuccessBg)
-        toolErrorBg = UIColor(palette.toolErrorBg)
-        toolTitle = UIColor(palette.toolTitle)
-        toolOutput = UIColor(palette.toolOutput)
+        toolPendingBg = palette.toolPendingBg
+        toolSuccessBg = palette.toolSuccessBg
+        toolErrorBg = palette.toolErrorBg
+        toolTitle = palette.toolTitle
+        toolOutput = palette.toolOutput
 
-        mdHeading = UIColor(palette.mdHeading)
-        mdLink = UIColor(palette.mdLink)
-        mdLinkUrl = UIColor(palette.mdLinkUrl)
-        mdCode = UIColor(palette.mdCode)
-        mdCodeBlock = UIColor(palette.mdCodeBlock)
-        mdCodeBlockBorder = UIColor(palette.mdCodeBlockBorder)
-        mdQuote = UIColor(palette.mdQuote)
-        mdQuoteBorder = UIColor(palette.mdQuoteBorder)
-        mdHr = UIColor(palette.mdHr)
-        mdListBullet = UIColor(palette.mdListBullet)
+        mdHeading = palette.mdHeading
+        mdLink = palette.mdLink
+        mdLinkUrl = palette.mdLinkUrl
+        mdCode = palette.mdCode
+        mdCodeBlock = palette.mdCodeBlock
+        mdCodeBlockBorder = palette.mdCodeBlockBorder
+        mdQuote = palette.mdQuote
+        mdQuoteBorder = palette.mdQuoteBorder
+        mdHr = palette.mdHr
+        mdListBullet = palette.mdListBullet
 
-        diffAdded = UIColor(palette.toolDiffAdded)
-        diffRemoved = UIColor(palette.toolDiffRemoved)
-        diffContext = UIColor(palette.toolDiffContext)
+        diffAdded = palette.toolDiffAdded
+        diffRemoved = palette.toolDiffRemoved
+        diffContext = palette.toolDiffContext
 
-        syntaxComment = UIColor(palette.syntaxComment)
-        syntaxKeyword = UIColor(palette.syntaxKeyword)
-        syntaxFunction = UIColor(palette.syntaxFunction)
-        syntaxVariable = UIColor(palette.syntaxVariable)
-        syntaxString = UIColor(palette.syntaxString)
-        syntaxNumber = UIColor(palette.syntaxNumber)
-        syntaxType = UIColor(palette.syntaxType)
-        syntaxOperator = UIColor(palette.syntaxOperator)
-        syntaxPunctuation = UIColor(palette.syntaxPunctuation)
+        syntaxComment = palette.syntaxComment
+        syntaxKeyword = palette.syntaxKeyword
+        syntaxFunction = palette.syntaxFunction
+        syntaxVariable = palette.syntaxVariable
+        syntaxString = palette.syntaxString
+        syntaxNumber = palette.syntaxNumber
+        syntaxType = palette.syntaxType
+        syntaxOperator = palette.syntaxOperator
+        syntaxPunctuation = palette.syntaxPunctuation
 
-        thinkingOff = UIColor(palette.thinkingOff)
-        thinkingMinimal = UIColor(palette.thinkingMinimal)
-        thinkingLow = UIColor(palette.thinkingLow)
-        thinkingMedium = UIColor(palette.thinkingMedium)
-        thinkingHigh = UIColor(palette.thinkingHigh)
-        thinkingXhigh = UIColor(palette.thinkingXhigh)
+        thinkingOff = palette.thinkingOff
+        thinkingMinimal = palette.thinkingMinimal
+        thinkingLow = palette.thinkingLow
+        thinkingMedium = palette.thinkingMedium
+        thinkingHigh = palette.thinkingHigh
+        thinkingXhigh = palette.thinkingXhigh
 
-        scrim = UIColor(palette.bgDark.opacity(0.82))
-        dimScrim = UIColor(palette.bg.opacity(0.5))
-        recessedInset = UIColor(palette.bg.opacity(0.30))
-        // Not `ThemeColorContrast.foreground(for:)`: its candidates are
-        // `Color.themeFg`/`.themeBg`, which read the runtime palette, and this
-        // init runs inside that palette's one-time initialization.
-        onBlue = UIColor(ThemeColorContrast.contrastingForeground(
+        scrim = palette.bgDark.multiplyingAlpha(0.82)
+        dimScrim = palette.bg.multiplyingAlpha(0.5)
+        recessedInset = palette.bg.multiplyingAlpha(0.30)
+        // Not `ThemeColorContrast.foreground(for:)`: its candidates are the
+        // runtime palette's `fg`/`bg`, and this init runs inside that palette's
+        // one-time initialization.
+        onBlue = ThemeColorContrast.contrastingForeground(
             on: palette.blue,
             candidates: [palette.fg, palette.bg]
-        ))
-        onGreen = UIColor(ThemeColorContrast.contrastingForeground(
+        )
+        onGreen = ThemeColorContrast.contrastingForeground(
             on: palette.green,
             candidates: [palette.fg, palette.bg]
-        ))
+        )
 
         surfaces = ThemeSurfaceRole.allCases.reduce(into: [:]) { surfaces, role in
             let style = ThemeSurfaceStyle.resolve(role, palette: palette)
-            surfaces[role] = ThemeUIKitSurface(
-                fill: UIColor(style.fill),
-                stroke: style.stroke.map { UIColor($0) }
-            )
+            surfaces[role] = ThemeUIKitSurface(fill: style.fill, stroke: style.stroke)
         }
     }
 
@@ -846,13 +844,7 @@ extension ThemePalette {
         )
     }
 
-    private static func platformCGColor(_ color: Color) -> CGColor {
-        #if canImport(UIKit)
-        UIColor(color).cgColor
-        #elseif canImport(AppKit)
-        NSColor(color).usingColorSpace(.sRGB)?.cgColor ?? CGColor(gray: 0.5, alpha: 1)
-        #else
-        CGColor(gray: 0.5, alpha: 1)
-        #endif
+    private static func platformCGColor(_ color: ThemeColor) -> CGColor {
+        color.themeCGColor
     }
 }

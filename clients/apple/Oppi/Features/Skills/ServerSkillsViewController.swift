@@ -342,7 +342,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         let isIssue = skill.state == .error || skill.state == .unknown
         // The symbol takes the size of the secondary text it leads.
         let secondaryFont = UIListContentConfiguration.subtitleCell().secondaryTextProperties.font
-        let stateColor = UIColor(isIssue ? palette.orange : palette.comment)
+        let stateColor = isIssue ? palette.orange : palette.comment
         let symbol = isIssue ? "exclamationmark.triangle.fill" : (skill.state == .enabled ? "checkmark.circle" : "minus.circle")
         if let image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: secondaryFont))?
             .withTintColor(stateColor, renderingMode: .alwaysOriginal) {

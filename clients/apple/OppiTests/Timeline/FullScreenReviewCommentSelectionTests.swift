@@ -884,7 +884,7 @@ struct FullScreenReviewCommentSelectionTests {
             at: keywordRange.location,
             effectiveRange: nil
         ) as? UIColor
-        #expect(keywordColor == UIColor(ThemeID.dark.palette.syntaxKeyword))
+        #expect(keywordColor == ThemeID.dark.palette.syntaxKeyword)
 
         let collectionView = try #require(timelineAllScrollViews(in: body).compactMap {
             $0 as? UICollectionView
@@ -913,7 +913,7 @@ struct FullScreenReviewCommentSelectionTests {
             at: tailKeywordRange.location,
             effectiveRange: nil
         ) as? UIColor
-        #expect(tailKeywordColor == UIColor(ThemeID.dark.palette.syntaxKeyword))
+        #expect(tailKeywordColor == ThemeID.dark.palette.syntaxKeyword)
         let tailLineRange = tailText.range(of: "row4730")
         #expect(tailTextView.reviewCommentSourceLineRange(for: tailLineRange) == 4_730...4_730)
         let tailDiagnostics = body.performanceDiagnosticsForTesting()
@@ -1125,7 +1125,7 @@ struct FullScreenReviewCommentSelectionTests {
             headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
         )
 
-        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+        #expect(headingColor == ThemeID.oled.palette.mdHeading)
     }
 
     @Test func fullScreenMarkdownUsesOwnerThemeWhenRuntimeThemeIsStale() throws {
@@ -1152,7 +1152,7 @@ struct FullScreenReviewCommentSelectionTests {
             headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
         )
 
-        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+        #expect(headingColor == ThemeID.oled.palette.mdHeading)
     }
 
     @Test func fullScreenMarkdownRetainsOwnerThemeAppliedBeforeViewLoad() throws {
@@ -1179,7 +1179,7 @@ struct FullScreenReviewCommentSelectionTests {
             headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
         )
 
-        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+        #expect(headingColor == ThemeID.oled.palette.mdHeading)
     }
 
     @Test func markdownBodyKeepsAdjacentHeadingAndParagraphInSingleSelectionSurface() throws {

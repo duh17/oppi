@@ -115,10 +115,13 @@ struct ElevatedSurfaceOpacityTests {
 
     @MainActor
     @Test func contrastingForegroundPicksPaperBackgroundOnBlackSendDisc() throws {
-        let fill = try rgb(of: Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255))
-        let ink = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255)
-        let paper = Color(red: 251 / 255, green: 250 / 255, blue: 247 / 255)
-        let chosen = ThemeColorContrast.contrastingForeground(on: Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255), candidates: [ink, paper])
+        let fill = try rgb(of: ThemeColor.themeSRGB(31 / 255, 31 / 255, 31 / 255))
+        let ink = ThemeColor.themeSRGB(17 / 255, 17 / 255, 17 / 255)
+        let paper = ThemeColor.themeSRGB(251 / 255, 250 / 255, 247 / 255)
+        let chosen = ThemeColorContrast.contrastingForeground(
+            on: ThemeColor.themeSRGB(31 / 255, 31 / 255, 31 / 255),
+            candidates: [ink, paper]
+        )
         let chosenRGB = try rgb(of: chosen)
         let paperRGB = try rgb(of: paper)
         #expect(abs(chosenRGB.red - paperRGB.red) < 0.02)
@@ -176,21 +179,22 @@ struct ElevatedSurfaceOpacityTests {
     }
 
     @MainActor
-    private func rgb(of color: Color) throws -> RGB {
+    private func rgb(of color: ThemeColor) throws -> RGB {
         let components = try rgba(of: color)
         return RGB(red: components.red, green: components.green, blue: components.blue)
     }
 
     @MainActor
-    private func rgba(of color: Color) throws -> RGBA {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+    private func rgba(of color: ThemeColor) throws -> RGBA {
+        guard let components = color.themeRGBComponents() else {
             throw ElevatedSurfaceTestError.unresolvedColor
         }
-        return RGBA(red: red, green: green, blue: blue, alpha: alpha)
+        return RGBA(
+            red: CGFloat(components.red),
+            green: CGFloat(components.green),
+            blue: CGFloat(components.blue),
+            alpha: CGFloat(components.alpha)
+        )
     }
 
     private func composite(_ foreground: RGB, over background: RGB, opacity: Double) -> RGB {

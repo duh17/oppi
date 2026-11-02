@@ -226,8 +226,8 @@ private final class DelimitedTableCell: UICollectionViewCell {
     func apply(text: String, isHeader: Bool, palette: ThemePalette, font: UIFont) {
         label.text = text
         label.font = font
-        label.textColor = UIColor(isHeader ? palette.fg : palette.fgDim)
-        contentView.backgroundColor = UIColor(isHeader ? palette.bgHighlight : palette.bgDark)
+        label.textColor = isHeader ? palette.fg : palette.fgDim
+        contentView.backgroundColor = isHeader ? palette.bgHighlight : palette.bgDark
         divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
     }
 }

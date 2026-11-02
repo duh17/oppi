@@ -21,9 +21,9 @@ extension ComposerThemeColors {
             purple: palette.ui.purple,
             red: palette.ui.red,
             yellow: palette.ui.yellow,
-            scrim: UIColor(palette.bgDark.opacity(0.82)),
-            elevatedStroke: UIColor(elevated.stroke ?? palette.fg.opacity(0.12)),
-            floatingFill: UIColor(floating.fill)
+            scrim: palette.ui.bgDark.withAlphaComponent(0.82),
+            elevatedStroke: elevated.stroke ?? palette.ui.fg.withAlphaComponent(0.12),
+            floatingFill: floating.fill
         )
     }
 }

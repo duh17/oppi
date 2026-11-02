@@ -335,8 +335,8 @@ struct AskCardTests {
                     ? (attributed.string as NSString).range(of: prefix) : nil)
                 return attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
             }
-            #expect(try color(ofLineStarting: "- old") == UIColor(palette.toolDiffRemoved), "compact=\(compact)")
-            #expect(try color(ofLineStarting: "+ new") == UIColor(palette.toolDiffAdded), "compact=\(compact)")
+            #expect(try color(ofLineStarting: "- old") == palette.toolDiffRemoved, "compact=\(compact)")
+            #expect(try color(ofLineStarting: "+ new") == palette.toolDiffAdded, "compact=\(compact)")
             let header = Self.views(in: view, identifierPrefix: "markdown.codeBlock.language").first
             let headerHidden = header.map { label in
                 sequence(first: label, next: { $0.superview }).contains { $0.isHidden }

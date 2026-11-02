@@ -116,7 +116,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
         expandButton.contentVerticalAlignment = .center
         expandButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         expandButton.setContentHuggingPriority(.required, for: .horizontal)
-        expandButton.tintColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        expandButton.tintColor = ThemeRuntimeState.currentPalette().comment
         expandButton.accessibilityIdentifier = "compaction.expand-toggle"
         expandButton.addTarget(self, action: #selector(handleExpandButtonTap), for: .touchUpInside)
 

@@ -170,9 +170,7 @@ final class FeatureEducationTipBannerView: UIView {
 
         // The banner fill sits on a UIVisualEffectView blur, satisfying the
         // floating-control role's blur pairing.
-        blurView.contentView.backgroundColor = UIColor(
-            ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
-        )
+        blurView.contentView.backgroundColor = ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
         layer.borderColor = palette.ui.comment.withAlphaComponent(0.22).cgColor
         titleLabel.textColor = palette.ui.fg
         messageLabel.textColor = palette.ui.fgDim

@@ -1042,7 +1042,7 @@ struct SSHTerminalTests {
 
         bar.micColors = nil
         bar.apply()
-        #expect(components(try disc()) == components(UIColor(ThemeRuntimeState.currentPalette().bgHighlight)), "everywhere else it keeps the app theme's")
+        #expect(components(try disc()) == components(ThemeRuntimeState.currentPalette().bgHighlight), "everywhere else it keeps the app theme's")
     }
 
     @Test func terminalDictationFailureRestoresThePrefixAndShowsTheRetryBanner() async throws {

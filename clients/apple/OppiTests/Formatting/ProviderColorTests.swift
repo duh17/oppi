@@ -62,8 +62,8 @@ struct ProviderColorTests {
         expectColor("custom/provider", equals: palette.purple)
     }
 
-    private func expectColor(_ model: String?, equals expected: Color) {
+    private func expectColor(_ model: String?, equals expected: ThemeColor) {
         let resolved = ProviderColor.color(for: model, palette: palette)
-        #expect(resolved == UIColor(expected))
+        #expect(resolved == expected)
     }
 }

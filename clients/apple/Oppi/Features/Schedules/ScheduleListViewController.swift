@@ -296,7 +296,7 @@ enum ScheduleCardView {
             let pill = ControlStatusPill()
             pill.apply(
                 text: schedule.status.rawValue.capitalized,
-                tone: UIColor(schedule.status == .paused ? palette.orange : palette.comment),
+                tone: schedule.status == .paused ? palette.orange : palette.comment,
                 emphasis: .tinted,
                 palette: palette
             )

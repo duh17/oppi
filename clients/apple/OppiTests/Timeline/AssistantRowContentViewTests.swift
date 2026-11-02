@@ -335,7 +335,7 @@ struct AssistantTimelineRowContentViewTests {
             at: codeRange.location,
             effectiveRange: nil
         ) as? UIColor
-        #expect(assistantRowColor(lightBackground, approximatelyEquals: UIColor(ThemePalettes.light.bgHighlight)))
+        #expect(assistantRowColor(lightBackground, approximatelyEquals: ThemePalettes.light.bgHighlight))
 
         let reconfigureCountBeforeThemeChange = controller.debugReconfiguredItemIDs.count
         ThemeRuntimeState.setThemeID(.dark)
@@ -361,8 +361,8 @@ struct AssistantTimelineRowContentViewTests {
             at: updatedCodeRange.location,
             effectiveRange: nil
         ) as? UIColor
-        #expect(assistantRowColor(darkBackground, approximatelyEquals: UIColor(ThemePalettes.dark.bgHighlight)))
-        #expect(assistantRowColor(darkBackground, approximatelyEquals: UIColor(ThemePalettes.light.bgHighlight)) == false)
+        #expect(assistantRowColor(darkBackground, approximatelyEquals: ThemePalettes.dark.bgHighlight))
+        #expect(assistantRowColor(darkBackground, approximatelyEquals: ThemePalettes.light.bgHighlight) == false)
     }
 
     @MainActor

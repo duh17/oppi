@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
  * Theme surface guardrails for the themed iOS app target (clients/apple/Oppi
  * and its Debug-only clients/apple/OppiDebugHarness).
  *
- * The Oppi iOS app resolves all UI colors through the runtime theme
- * (Color.theme* accessors and ThemeSurfaceStyle roles). This guard fails when
- * app code bypasses that system:
+ * The Oppi iOS app resolves all UI colors through the runtime theme: a token is
+ * a `UIColor` (`UIColor.theme*` accessors, `palette.ui.*`, and `ThemeSurfaceStyle`
+ * roles). This guard fails when app code bypasses that system:
  *
  *  1. System materials in .background()/.presentationBackground() — system
  *     materials ignore the active theme palette.
@@ -21,9 +21,9 @@ import { fileURLToPath } from "node:url";
  *     or add a semantic accessor in Color+Theme.swift.
  *  5. Fixed black/white SwiftUI backgrounds and UIKit theme-background alpha
  *     re-derivations — common escape hatches that fail under light themes.
- *  6. Theme shorthand backed by static Color, or explicit snapshot colors in
- *     foregroundStyle — SwiftUI styles must resolve from the environment so
- *     persistent views repaint.
+ *  6. Snapshot `Color.theme*` styling in SwiftUI. Those accessors, and the
+ *     `.theme*` `ShapeStyle` that resolves them, ship in `OppiMac` only, so on
+ *     iOS these checks are inert; the Mac's SwiftUI face is out of scope here.
  *
  * Preview/screenshot harnesses are allowlisted: they intentionally freeze
  * styling for marketing shots and stress fixtures.

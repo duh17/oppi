@@ -587,7 +587,7 @@ struct AppSettingsView: View {
     private func themePicker(
         _ title: String,
         selection: Binding<ThemeID>,
-        matching scheme: ColorScheme?
+        matching scheme: ThemeColorScheme?
     ) -> some View {
         let themes = ThemeID.pickerThemes(matching: scheme)
         let builtins = themes.filter { !$0.isImported }

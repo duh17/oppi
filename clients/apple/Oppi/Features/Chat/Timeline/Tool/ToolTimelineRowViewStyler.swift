@@ -132,9 +132,7 @@ enum ToolTimelineRowViewStyler {
         )
         let palette = ThemeRuntimeState.currentPalette()
         previewLabel.textColor = palette.ui.toolOutput
-        expandedContainer.backgroundColor = UIColor(
-            ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
-        )
+        expandedContainer.backgroundColor = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
     }
 
     static func styleExpanded(

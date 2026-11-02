@@ -31,7 +31,7 @@ final class MicButtonChromeView: UIControl {
     private var liveSpectrum: (@MainActor () -> VoiceSpectrumFrame)?
     nonisolated(unsafe) private var liveLink: CADisplayLink?
     private var languageLabel: String?
-    private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
+    private var accentColor = ThemeRuntimeState.currentPalette().blue
     /// The disc's colors; nil is the app theme's palette. Takes effect on the next `apply`.
     var colors: ComposerThemeColors?
     private var engineBadge: MicEngineBadge = .onDevice

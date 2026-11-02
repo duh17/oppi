@@ -363,7 +363,7 @@ extension ChatViewController: ChatComposerSource {
             modelTitle: session?.model.map(shortModelName) ?? "Model",
             modelProvider: session?.model.flatMap(providerFromModel),
             thinkingLevel: chatState.thinkingLevel,
-            thinkingTint: UIColor(theme.thinking.color(for: chatState.thinkingLevel)),
+            thinkingTint: theme.thinking.color(for: chatState.thinkingLevel),
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: session?.model,
                 in: chatState.cachedModels
@@ -457,7 +457,7 @@ extension ChatViewController: ChatComposerSource {
             ),
             isSubmitInFlight: composerIsSending,
             colors: colors,
-            thinkingTint: UIColor(theme.thinking.color(for: chatState.thinkingLevel))
+            thinkingTint: theme.thinking.color(for: chatState.thinkingLevel)
         )
     }
 }

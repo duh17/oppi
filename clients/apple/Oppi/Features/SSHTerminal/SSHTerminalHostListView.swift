@@ -938,7 +938,7 @@ final class SSHTerminalHostListViewController:
             content.imageProperties.tintColor = palette.ui.comment
             content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou) : "Rex"
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.secondaryTextProperties.color = UIColor(needsYou > 0 ? palette.orange : palette.comment)
+            content.secondaryTextProperties.color = needsYou > 0 ? palette.orange : palette.comment
             cell.accessibilityIdentifier = "\(prefix).header"
             cell.accessibilityTraits = .header
             // The heading is the host in Rex mode (no host row is listed), so its
@@ -1011,9 +1011,9 @@ final class SSHTerminalHostListViewController:
             ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
         case .newSession(let busy):
             content.text = busy ? "Working\u{2026}" : "New Session"
-            content.textProperties.color = UIColor(busy ? palette.comment : palette.blue)
+            content.textProperties.color = busy ? palette.comment : palette.blue
             content.image = UIImage(systemName: "plus")
-            content.imageProperties.tintColor = UIColor(busy ? palette.comment : palette.blue)
+            content.imageProperties.tintColor = busy ? palette.comment : palette.blue
             cell.accessories = []
             cell.indentationLevel = 0
             cell.configureAction(

@@ -662,7 +662,7 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             .environment(\.theme, themeID.appTheme)
             .environment(\.themeID, themeID)
             .tint(.themeBlue)
-            .preferredColorScheme(themeID.preferredColorScheme)
+            .preferredColorScheme(themeID.preferredColorScheme.colorScheme)
 
         return try captureHostedView(
             root,
@@ -728,7 +728,7 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         .environment(\.theme, themeID.appTheme)
         .environment(\.themeID, themeID)
         .tint(.themeBlue)
-        .preferredColorScheme(themeID.preferredColorScheme)
+        .preferredColorScheme(themeID.preferredColorScheme.colorScheme)
 
         return try captureHostedView(
             root,

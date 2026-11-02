@@ -437,6 +437,10 @@ extension View {
     /// the finger" — while the whole set passed. Nothing in the harness reads a
     /// store from the environment, so the cause is not a missing read; it is a
     /// SwiftUI layout or settle difference we have not isolated.
+    ///
+    /// `\.theme` and `\.themeID` no longer exist on iOS (the theme files are
+    /// UIKit-side and those keys ship in `OppiMac`), so the harness's SwiftUI
+    /// roots read colors as `Color(uiColor: .themeX)` and pass a `ThemeID` down.
     func harnessEnvironment(_ root: AppRootEnvironment) -> some View {
         self
             .environment(root.coordinator)
@@ -454,15 +458,13 @@ extension View {
             .environment(root.coordinator.serverStore)
             .environment(root.themeStore)
             .environment(root.quickCommentTemplateStore)
-            .environment(\.theme, root.themeStore.appTheme)
-            .environment(\.themeID, root.themeStore.activeThemeID)
             .environment(\.scenePhase, ScenePhase(AppScenePhase.shared.phase))
             .environment(\.appRootEnvironment, root)
             .environment(\.openURL, OpenURLAction { url in
                 root.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
                 return .handled
             })
-            .tint(.themeBlue)
+            .tint(Color(uiColor: .themeBlue))
     }
 }
 

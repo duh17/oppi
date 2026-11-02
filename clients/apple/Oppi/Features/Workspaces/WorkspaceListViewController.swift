@@ -195,7 +195,7 @@ final class WorkspaceListViewController: ListScreenController<
             completion(self?.confirmDelete(workspace) ?? false)
         }
         delete.image = UIImage(systemName: "trash")
-        delete.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().red)
+        delete.backgroundColor = ThemeRuntimeState.currentPalette().red
         let configuration = UISwipeActionsConfiguration(actions: [delete])
         // A delete asks first, so a long swipe must not run it.
         configuration.performsFirstActionWithFullSwipe = false

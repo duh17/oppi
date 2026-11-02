@@ -64,15 +64,25 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         }
     }
 
-    /// The state's color; `uiColor(_:)` (SessionListCollection) maps its role to UIKit.
-    var tintColor: ThemeShapeStyle {
+    /// The palette slot the state paints with; `uiColor(_:)` (SessionListCollection)
+    /// resolves it against the screen's palette. A slot, not a shape style: the
+    /// SwiftUI face (`ThemeShapeStyle`) ships in `OppiMac`.
+    var tintRole: ServerBadgeTintRole {
         switch self {
-        case .connected: return .themeGreen
-        case .connecting: return .themeBlue
-        case .recovering: return .themeOrange
-        case .disconnected, .syncFailed: return .themeRed
+        case .connected: return .green
+        case .connecting: return .blue
+        case .recovering: return .orange
+        case .disconnected, .syncFailed: return .red
         }
     }
+}
+
+/// The accent slots a connection badge can paint with.
+enum ServerBadgeTintRole {
+    case green
+    case blue
+    case orange
+    case red
 }
 
 enum FocusedSessionStreamRecoveryPresentation {

@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -45,7 +44,7 @@ final class ThemeStore {
     private static let lightThemeKey = "\(AppIdentifiers.subsystem).theme.light.id"
     private static let darkThemeKey = "\(AppIdentifiers.subsystem).theme.dark.id"
 
-    @ObservationIgnored private let systemColorSchemeProvider: (ColorScheme) -> ColorScheme
+    @ObservationIgnored private let systemColorSchemeProvider: (ThemeColorScheme) -> ThemeColorScheme
 
     var mode: ThemeMode {
         didSet {
@@ -95,7 +94,7 @@ final class ThemeStore {
         }
     }
 
-    private var systemColorScheme: ColorScheme {
+    private var systemColorScheme: ThemeColorScheme {
         didSet {
             guard systemColorScheme != oldValue else { return }
             applyResolvedTheme()
@@ -117,13 +116,13 @@ final class ThemeStore {
         activeThemeID.appTheme
     }
 
-    var preferredColorScheme: ColorScheme? {
+    var preferredColorScheme: ThemeColorScheme? {
         mode == .system ? nil : activeThemeID.preferredColorScheme
     }
 
     init(
-        initialSystemColorScheme: ColorScheme? = nil,
-        systemColorSchemeProvider: ((ColorScheme) -> ColorScheme)? = nil
+        initialSystemColorScheme: ThemeColorScheme? = nil,
+        systemColorSchemeProvider: ((ThemeColorScheme) -> ThemeColorScheme)? = nil
     ) {
         let systemColorSchemeProvider = systemColorSchemeProvider ?? { fallback in
             Self.currentSystemColorScheme(fallback: fallback)
@@ -163,7 +162,7 @@ final class ThemeStore {
         ThemeRuntimeState.setThemeID(activeThemeID)
     }
 
-    func updateSystemColorScheme(_ colorScheme: ColorScheme) {
+    func updateSystemColorScheme(_ colorScheme: ThemeColorScheme) {
         systemColorScheme = colorScheme
     }
 
@@ -182,7 +181,7 @@ final class ThemeStore {
 
     /// Load a Light/Dark preset, keep it on the matching side of the picker,
     /// and rewrite a stored mismatch so the next launch does not re-clamp.
-    private static func persistedTheme(key: String, fallback: ThemeID, scheme: ColorScheme) -> ThemeID {
+    private static func persistedTheme(key: String, fallback: ThemeID, scheme: ThemeColorScheme) -> ThemeID {
         let stored = UserDefaults.standard.string(forKey: key)
         let raw = stored.map(ThemeID.init(rawValue:)) ?? fallback
         let matched = raw.matching(scheme: scheme)
@@ -192,7 +191,7 @@ final class ThemeStore {
         return matched
     }
 
-    private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
+    private static func currentSystemColorScheme(fallback: ThemeColorScheme = .dark) -> ThemeColorScheme {
         #if canImport(UIKit)
         // Deliberately the display's system appearance, not a window's: this runs from
         // app launch before any view or window exists, and Light/Dark is a device

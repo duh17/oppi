@@ -520,7 +520,7 @@ final class ChatStoppedFooterView: UIView {
         costLabel.isHidden = (session?.cost ?? 0) <= 0
 
         let isResuming = chat.actionHandler.isResuming
-        let onGreen = UIColor(ThemeColorContrast.foreground(for: palette.green))
+        let onGreen = ThemeColorContrast.foreground(for: palette.green)
         var configuration = UIButton.Configuration.filled()
         configuration.baseBackgroundColor = palette.ui.green
         configuration.baseForegroundColor = onGreen

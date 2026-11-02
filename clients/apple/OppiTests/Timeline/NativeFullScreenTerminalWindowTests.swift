@@ -48,7 +48,7 @@ struct NativeFullScreenTerminalWindowTests {
         let view = try #require(Self.visibleTextViews(in: collection).first { $0.textStorage.string.contains("still green after cursor rewrite") })
         let range = (view.textStorage.string as NSString).range(of: "still green")
         #expect(view.textStorage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
-            == UIColor(ThemeID.dark.palette.green))
+            == ThemeID.dark.palette.green)
         #expect(body.virtualizationDiagnosticsForTesting()?.cachedChunkCount ?? 100 <= 14)
     }
 

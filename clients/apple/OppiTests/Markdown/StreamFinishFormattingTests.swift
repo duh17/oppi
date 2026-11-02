@@ -41,7 +41,7 @@ struct StreamFinishFormattingTests {
         let color = ns.attribute(.foregroundColor, at: codeRange.location, effectiveRange: nil) as? UIColor
         #expect(color != nil, "Inline code should have UIColor")
 
-        let baseFG = UIColor(darkPalette.fg)
+        let baseFG = darkPalette.fg
         if let color {
             var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
             var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
@@ -71,7 +71,7 @@ struct StreamFinishFormattingTests {
             Issue.record("No attributed text after finish"); return
         }
 
-        let baseFG = UIColor(darkPalette.fg)
+        let baseFG = darkPalette.fg
         let codeRange = (attrText.string as NSString).range(of: "foo()")
         guard codeRange.location != NSNotFound else {
             Issue.record("foo() not found"); return

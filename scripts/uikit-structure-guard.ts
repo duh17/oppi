@@ -20,22 +20,14 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - `import SwiftUI` is an allow-list (`swiftUIImporters` below), and it counts
  *    `import Charts`, `import TipKit` and `import struct SwiftUI.X` too, because
  *    both frameworks re-export SwiftUI. The iOS app target is UIKit everywhere
- *    except the two framework leaves, the theme and colour files that carry the
- *    palette's SwiftUI tokens, one TipKit file, the `Shared/` files the target
- *    compiles, and the debug harness's previews. Any other file fails, and a new
- *    entry needs Chen's approval. `@_exported import` of any of them fails even
- *    in an allow-listed file.
+ *    except the two framework leaves, the chart and colour values that sit next
+ *    to a SwiftUI-only framework, one TipKit file, the `Shared/` files the
+ *    target compiles, and the debug harness's previews. The theme itself is
+ *    UIKit-side on iOS (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face
+ *    of the same tokens ships in `OppiMac/Theme/`), so no theme file imports
+ *    SwiftUI. Any other file fails, and a new entry needs Chen's approval.
+ *    `@_exported import` of any of them fails even in an allow-listed file.
  *
- *  - A `UIColor(<palette>.` bridge is a ratchet of the same kind: a UIKit
- *    call site converts the palette's SwiftUI `Color` again instead of reading
- *    the colour the palette already has for UIKit (`palette.ui.fg`). A new
- *    translucent colour is `palette.ui.x.withAlphaComponent(a)`; `Color.opacity`
- *    multiplies into a token's own alpha, which an imported theme may set. The
- *    baseline keeps the older `UIColor(palette.x.opacity(a))` chains and
- *    `Core/Theme/ThemeCatalog.swift`, where `ThemeUIKitPalette.init` is the one
- *    place that converts palette colors for UIKit. The guard reads the argument
- *    by name, so a bridge through a variable that is not called a palette is not
- *    seen.
  *  - A hand-built `UICollectionLayoutListConfiguration(appearance: .insetGrouped)`
  *    is a ratchet of the same kind: a settings list that lays itself out carries
  *    its own copy of what `ListScreenController` (the settings kit's base) does.
@@ -246,32 +238,9 @@ const swiftUIImporters: { file: string; reason: string }[] = [
     file: "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift",
     reason: "RealityKit's RealityView is SwiftUI-only: the USDZ canvas and the one UIHostingController that hosts it.",
   },
-  // The palette carries SwiftUI `Color`/`Font` tokens; the UIKit view of it is
-  // `ThemeUIKitPalette`, so these are the one place a Color crosses to UIKit.
-  {
-    file: "clients/apple/Oppi/Core/Theme/AppTheme.swift",
-    reason: "The `\\.theme` environment value and the SwiftUI `Color` tokens the palette carries.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Theme/ThemeStore.swift",
-    reason: "The store publishes `appTheme`, `Color` tokens, and a preferred color scheme.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Theme/RemoteTheme.swift",
-    reason: "An imported theme's JSON decodes into SwiftUI `Color` tokens.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift",
-    reason: "`ThemeUIKitPalette` and the built-in palettes' SwiftUI `Color` tokens.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Theme/ThemeContrast.swift",
-    reason: "Contrast resolution works on the palette's SwiftUI `Color` tokens.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Extensions/Color+Theme.swift",
-    reason: "`Color.theme…` helpers over the palette.",
-  },
+  // The theme is UIKit-side on iOS: a token is `ThemeColor` (`UIColor`), and the
+  // Mac's SwiftUI face of the same tokens ships in `OppiMac/Theme/`. No theme
+  // file imports SwiftUI, so none is named here.
   // TipKit: the framework re-exports SwiftUI (`Text` and `Image` inside a tip),
   // so the tips' definitions and their display live in this one file.
   {
@@ -281,11 +250,7 @@ const swiftUIImporters: { file: string; reason: string }[] = [
   // Shared/ files the iOS target compiles.
   {
     file: "clients/apple/Shared/Theme/ModelColorHelpers.swift",
-    reason: "`import Charts`: the shared `StatsDailyChart` (whose tooltip draws `ProviderGlyph`), the model colors, and the stats aggregation the Usage charts draw from.",
-  },
-  {
-    file: "clients/apple/Shared/Renderers/Orbs/OrbMetalView.swift",
-    reason: "The thinking orb renderer: its SwiftUI `OrbView` wrapper is `#if os(macOS)` (the Mac's chat chrome); iOS draws the same `OrbMetalView` in UIKit.",
+    reason: "`import Charts`: the shared `StatsDailyChart` (whose tooltip draws `ProviderGlyph`), the model colors, and the contrast rules the chart labels use.",
   },
   {
     file: "clients/apple/Shared/Activity/LiveActivityPresentation.swift",
@@ -327,6 +292,10 @@ const sharedMacOnlySwiftUI: { file: string; reason: string }[] = [
   {
     file: "clients/apple/Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift",
     reason: "The Mac's orb acknowledgments page; iOS has none. Excluded from the Oppi target.",
+  },
+  {
+    file: "clients/apple/Shared/Renderers/Orbs/OrbView.swift",
+    reason: "The Mac's SwiftUI wrapper around `OrbMetalView`; iOS draws the same view in UIKit. Excluded from the Oppi target.",
   },
 ];
 const swiftUIExemptFiles = [...swiftUIImporterFiles, ...sharedMacOnlySwiftUI.map((entry) => entry.file)];
@@ -376,15 +345,6 @@ const constructs: Construct[] = [
     pattern:
       /^[ \t]*(?:@[A-Za-z_]\w*(?:\([^)]*\))?[ \t]+)*@_exported[ \t]+(?:(?:public|internal|package|fileprivate|private)[ \t]+)?import[ \t]+(?:(?:struct|enum|class|protocol|typealias|var|let|func)[ \t]+)?(?:SwiftUI|Charts|TipKit)\b/gm,
     disallowed: true,
-  },
-  // A UIKit call site that bridges the palette instead of reading its colors: see
-  // "Client boundary rules current code" in the guide.
-  {
-    name: "UIColor(<palette>.",
-    pattern: /\bUIColor\s*\(\s*[A-Za-z_.?]*[pP]alette\s*\./g,
-    disallowed: false,
-    // The one place the conversions belong: `ThemeUIKitPalette.init`.
-    exemptFiles: ["clients/apple/Oppi/Core/Theme/ThemeCatalog.swift"],
   },
   // Alerts outside the shared presenters: see "Alerts" in the guide.
   {
@@ -629,7 +589,7 @@ harnesses included. Present and push through the router (Router.present,
 Router.push, and a RouterModalPresenter slot; previews that are their own window
 root host through PreviewHost.screenStack). SwiftUI survives only in the files
 \`swiftUIImporters\` names: the two framework leaves (Swift Charts, RealityKit),
-the theme and colour files, the TipKit file, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
+the chart and colour values, the TipKit file, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
 debug harness's previews. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
@@ -639,15 +599,6 @@ approval and an entry in \`swiftUIImporters\`, with a reason. \`bun
 scripts/uikit-structure-guard.ts --update\` lowers the other ratchets after a
 migration. After a rename or move, --update is fine when the
 baseline diff only moves entries.
-
-A UIColor(<palette>.) bridge at a UIKit call site builds the palette's colour
-from its SwiftUI Color again, which the palette's UIKit view avoids: read
-palette.ui.fg (or any other token, see ThemeUIKitPalette) instead of
-UIColor(palette.fg); a new translucent color is
-palette.ui.x.withAlphaComponent(a), not UIColor(palette.x.opacity(a)) (that
-multiplies into the token's own alpha, which an imported theme may set). The
-count only goes down; --update lowers the baseline behind it. ThemeCatalog.swift
-is exempt because ThemeUIKitPalette.init is where the UIKit colors come from.
 
 Settings lists subclass ListScreenController, which pins the list, paints it in
 the theme, and lays out its rows. A hand-built

@@ -257,7 +257,7 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         self.onToggle = onToggle
         self.onShowDetail = onShowDetail
         nameLabel.text = skill.name
-        nameLabel.textColor = UIColor(isEnabled ? palette.fg : palette.comment)
+        nameLabel.textColor = isEnabled ? palette.fg : palette.comment
         descriptionLabel.text = skill.description
         descriptionLabel.textColor = palette.ui.comment
         if isPending { spinner.startAnimating() } else { spinner.stopAnimating() }

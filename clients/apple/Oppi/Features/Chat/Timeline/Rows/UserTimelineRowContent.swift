@@ -582,7 +582,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
     /// User text sits on the user fill; an agent message has no fill, so it uses body text.
     private func bodyTextColor(_ palette: ThemePalette) -> UIColor {
-        UIColor(currentConfiguration.agentMessage == nil ? palette.userMessageText : palette.fg)
+        currentConfiguration.agentMessage == nil ? palette.userMessageText : palette.fg
     }
 
     /// The agent message card's header, its folded preview, and the fold state.
@@ -1432,7 +1432,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         container.layer.borderWidth = 1
         container.layer.borderColor = borderColor
         container.clipsToBounds = true
-        container.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        container.backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
         container.isAccessibilityElement = true
         container.accessibilityIdentifier = accessibilityIdentifier
         container.accessibilityLabel = accessibilityLabel
@@ -1440,7 +1440,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             // Image aspect inside the fixed 80 pt slot: width 80, height 80/ratio (clamped).
             let placeholder = UIView()
             placeholder.translatesAutoresizingMaskIntoConstraints = false
-            placeholder.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bg)
+            placeholder.backgroundColor = ThemeRuntimeState.currentPalette().bg
                 .withAlphaComponent(0.35)
             placeholder.layer.cornerRadius = Self.thumbnailCornerRadius
             placeholder.isUserInteractionEnabled = false
@@ -1590,7 +1590,7 @@ private final class UserTimelineImageThumbnailView: UIView {
             label.text = String(localized: "Image preview unavailable")
             label.font = .preferredFont(forTextStyle: .caption2)
             label.adjustsFontForContentSizeCategory = true
-            label.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+            label.textColor = ThemeRuntimeState.currentPalette().comment
             label.textAlignment = .center
             label.numberOfLines = 3
             let icon = UIImageView(image: UIImage(systemName: "photo.badge.exclamationmark"))

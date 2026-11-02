@@ -98,10 +98,10 @@ struct SessionTimelinePreview: View {
         .overlay(alignment: .bottomLeading) {
             Text("Last tree navigate: \(lastTreeNavigationCapture)")
                 .font(.caption2.monospaced())
-                .foregroundStyle(.themeComment)
+                .foregroundStyle(Color(uiColor: .themeComment))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.themeBgDark.opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color(uiColor: .themeBgDark).opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .padding(10)
                 .accessibilityIdentifier("session-timeline.last-navigation")
         }

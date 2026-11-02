@@ -1,9 +1,11 @@
-import SwiftUI
+import Foundation
 
 /// Centralized theme definition for the entire app.
 ///
 /// Organizes all visual tokens — colors, code metrics, diff styling —
-/// into a single `Sendable` value type. Injected via `@Environment(\.theme)`.
+/// into a single `Sendable` value type. Tokens are `ThemeColor` (UIKit colors
+/// on iOS, SwiftUI `Color` on the Mac), so this file imports no SwiftUI; the
+/// Mac's `\.theme` environment lives in `OppiMac/Theme/Theme+SwiftUI.swift`.
 struct AppTheme: Sendable {
     let bg: BgColors
     let text: TextColors
@@ -18,78 +20,78 @@ struct AppTheme: Sendable {
 
     struct BgColors: Sendable {
         /// Primary background (main surfaces).
-        let primary: Color
+        let primary: ThemeColor
         /// Darkest background (code blocks, inset areas).
-        let secondary: Color
+        let secondary: ThemeColor
         /// Elevated/highlighted background (headers, selections).
-        let highlight: Color
+        let highlight: ThemeColor
     }
 
     struct TextColors: Sendable {
         /// Primary text.
-        let primary: Color
+        let primary: ThemeColor
         /// Secondary/dimmed text.
-        let secondary: Color
+        let secondary: ThemeColor
         /// Tertiary/muted text (comments, timestamps, placeholders).
-        let tertiary: Color
+        let tertiary: ThemeColor
         /// Thinking block text.
-        let thinking: Color
+        let thinking: ThemeColor
     }
 
     struct AccentColors: Sendable {
         /// Primary accent (pi's `accent` token).
-        let primary: Color
-        let blue: Color
-        let cyan: Color
-        let green: Color
-        let orange: Color
-        let purple: Color
-        let red: Color
-        let yellow: Color
+        let primary: ThemeColor
+        let blue: ThemeColor
+        let cyan: ThemeColor
+        let green: ThemeColor
+        let orange: ThemeColor
+        let purple: ThemeColor
+        let red: ThemeColor
+        let yellow: ThemeColor
     }
 
     struct DiffColors: Sendable {
         /// Background for added lines.
-        let addedBg: Color
+        let addedBg: ThemeColor
         /// Background for removed lines.
-        let removedBg: Color
+        let removedBg: ThemeColor
         /// Left accent bar and prefix for added lines.
-        let addedAccent: Color
+        let addedAccent: ThemeColor
         /// Left accent bar and prefix for removed lines.
-        let removedAccent: Color
+        let removedAccent: ThemeColor
         /// Context line text color.
-        let contextFg: Color
+        let contextFg: ThemeColor
         /// Hunk header color (@@ ... @@).
-        let hunkFg: Color
+        let hunkFg: ThemeColor
     }
 
     struct SyntaxColors: Sendable {
-        let keyword: Color
-        let string: Color
-        let comment: Color
-        let number: Color
-        let type: Color
-        let function: Color
-        let variable: Color
-        let `operator`: Color
-        let punctuation: Color
-        let plain: Color
+        let keyword: ThemeColor
+        let string: ThemeColor
+        let comment: ThemeColor
+        let number: ThemeColor
+        let type: ThemeColor
+        let function: ThemeColor
+        let variable: ThemeColor
+        let `operator`: ThemeColor
+        let punctuation: ThemeColor
+        let plain: ThemeColor
         // iOS-specific extras (no pi TUI equivalent)
-        let decorator: Color
-        let preprocessor: Color
-        let jsonKey: Color
-        let jsonDim: Color
+        let decorator: ThemeColor
+        let preprocessor: ThemeColor
+        let jsonKey: ThemeColor
+        let jsonDim: ThemeColor
     }
 
     struct ThinkingColors: Sendable {
-        let off: Color
-        let minimal: Color
-        let low: Color
-        let medium: Color
-        let high: Color
-        let xhigh: Color
+        let off: ThemeColor
+        let minimal: ThemeColor
+        let low: ThemeColor
+        let medium: ThemeColor
+        let high: ThemeColor
+        let xhigh: ThemeColor
 
-        func color(for level: ThinkingLevel) -> Color {
+        func color(for level: ThinkingLevel) -> ThemeColor {
             switch level {
             case .off: return off
             case .minimal: return minimal
@@ -103,16 +105,16 @@ struct AppTheme: Sendable {
     }
 
     struct MarkdownColors: Sendable {
-        let heading: Color
-        let link: Color
-        let linkUrl: Color
-        let code: Color
-        let codeBlock: Color
-        let codeBlockBorder: Color
-        let quote: Color
-        let quoteBorder: Color
-        let hr: Color
-        let listBullet: Color
+        let heading: ThemeColor
+        let link: ThemeColor
+        let linkUrl: ThemeColor
+        let code: ThemeColor
+        let codeBlock: ThemeColor
+        let codeBlockBorder: ThemeColor
+        let quote: ThemeColor
+        let quoteBorder: ThemeColor
+        let hr: ThemeColor
+        let listBullet: ThemeColor
     }
 
     struct CodeMetrics: Sendable {
@@ -129,11 +131,11 @@ extension AppTheme {
     /// (distinct from `toolDiffAdded`/`toolDiffRemoved` which are the accent/text colors).
     static func from(
         palette p: ThemePalette,
-        diffAddedBg: Color? = nil,
-        diffRemovedBg: Color? = nil
+        diffAddedBg: ThemeColor? = nil,
+        diffRemovedBg: ThemeColor? = nil
     ) -> AppTheme {
-        let resolvedAddedBg = diffAddedBg ?? p.toolDiffAdded.opacity(0.15)
-        let resolvedRemovedBg = diffRemovedBg ?? p.toolDiffRemoved.opacity(0.15)
+        let resolvedAddedBg = diffAddedBg ?? p.toolDiffAdded.multiplyingAlpha(0.15)
+        let resolvedRemovedBg = diffRemovedBg ?? p.toolDiffRemoved.multiplyingAlpha(0.15)
         return AppTheme(
             bg: BgColors(
                 primary: p.bg,
@@ -212,40 +214,40 @@ extension AppTheme {
 
 extension AppTheme {
     // Helper for hex color literals
-    private static func c(_ hex: UInt32) -> Color {
-        Color(
-            red: Double((hex >> 16) & 0xFF) / 255.0,
-            green: Double((hex >> 8) & 0xFF) / 255.0,
-            blue: Double(hex & 0xFF) / 255.0
+    private static func c(_ hex: UInt32) -> ThemeColor {
+        ThemeColor.themeSRGB(
+            Double((hex >> 16) & 0xFF) / 255.0,
+            Double((hex >> 8) & 0xFF) / 255.0,
+            Double(hex & 0xFF) / 255.0
         )
     }
 
     /// Dark — deep ink surfaces with soft editor-style contrast.
     static let dark = AppTheme.from(
         palette: ThemePalettes.dark,
-        diffAddedBg: c(0x73B07C).opacity(0.10),
-        diffRemovedBg: c(0xCC7488).opacity(0.08)
+        diffAddedBg: c(0x73B07C).multiplyingAlpha(0.10),
+        diffRemovedBg: c(0xCC7488).multiplyingAlpha(0.08)
     )
 
     /// OLED — true black variant of Dark with brighter secondary text.
     static let oled = AppTheme.from(
         palette: ThemePalettes.oled,
-        diffAddedBg: c(0x6FAF78).opacity(0.10),
-        diffRemovedBg: c(0xCC7388).opacity(0.08)
+        diffAddedBg: c(0x6FAF78).multiplyingAlpha(0.10),
+        diffRemovedBg: c(0xCC7388).multiplyingAlpha(0.08)
     )
 
     /// Light — Latte-inspired surfaces with softened accent contrast.
     static let light = AppTheme.from(
         palette: ThemePalettes.light,
-        diffAddedBg: c(0x2A9D8F).opacity(0.10),
-        diffRemovedBg: c(0xC0505A).opacity(0.08)
+        diffAddedBg: c(0x2A9D8F).multiplyingAlpha(0.10),
+        diffRemovedBg: c(0xC0505A).multiplyingAlpha(0.08)
     )
 
     /// Night — warm dark-room reading mode with minimal eye strain.
     static let night = AppTheme.from(
         palette: ThemePalettes.night,
-        diffAddedBg: c(0x6A9060).opacity(0.10),
-        diffRemovedBg: c(0xA85858).opacity(0.08)
+        diffAddedBg: c(0x6A9060).multiplyingAlpha(0.10),
+        diffRemovedBg: c(0xA85858).multiplyingAlpha(0.08)
     )
 
 }
@@ -268,31 +270,5 @@ extension ThemeID {
             }
             return .dark
         }
-    }
-}
-
-// MARK: - Environment
-
-private struct ThemeKey: EnvironmentKey {
-    static var defaultValue: AppTheme {
-        ThemeRuntimeState.currentThemeID().appTheme
-    }
-}
-
-private struct ThemeIDKey: EnvironmentKey {
-    static var defaultValue: ThemeID {
-        ThemeRuntimeState.currentThemeID()
-    }
-}
-
-extension EnvironmentValues {
-    var theme: AppTheme {
-        get { self[ThemeKey.self] }
-        set { self[ThemeKey.self] = newValue }
-    }
-
-    var themeID: ThemeID {
-        get { self[ThemeIDKey.self] }
-        set { self[ThemeIDKey.self] = newValue }
     }
 }

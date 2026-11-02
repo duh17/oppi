@@ -315,7 +315,7 @@ struct DiffGutterAttributeTests {
         let addedColor = result.attribute(.foregroundColor, at: addedRange.location, effectiveRange: nil) as? UIColor
         let removedColor = result.attribute(.foregroundColor, at: removedRange.location, effectiveRange: nil) as? UIColor
 
-        #expect(addedColor == UIColor(Color.themeDiffAdded))
-        #expect(removedColor == UIColor(Color.themeDiffRemoved))
+        #expect(addedColor == UIColor.themeDiffAdded)
+        #expect(removedColor == UIColor.themeDiffRemoved)
     }
 }

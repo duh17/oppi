@@ -261,12 +261,12 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(json, language: .json)
 
         #expect(result.string == json)
-        #expect(foregroundColor(of: #""key""#, in: result) == UIColor(Color.themeSyntaxType))
-        #expect(foregroundColor(of: #""value""#, in: result) == UIColor(Color.themeSyntaxString))
-        #expect(foregroundColor(of: "-42.5e+1", in: result) == UIColor(Color.themeSyntaxNumber))
-        #expect(foregroundColor(of: "true", in: result) == UIColor(Color.themeSyntaxKeyword))
-        #expect(foregroundColor(of: "null", in: result) == UIColor(Color.themeSyntaxComment))
-        #expect(foregroundColor(of: ":", in: result) == UIColor(Color.themeSyntaxPunctuation))
+        #expect(foregroundColor(of: #""key""#, in: result) == UIColor.themeSyntaxType)
+        #expect(foregroundColor(of: #""value""#, in: result) == UIColor.themeSyntaxString)
+        #expect(foregroundColor(of: "-42.5e+1", in: result) == UIColor.themeSyntaxNumber)
+        #expect(foregroundColor(of: "true", in: result) == UIColor.themeSyntaxKeyword)
+        #expect(foregroundColor(of: "null", in: result) == UIColor.themeSyntaxComment)
+        #expect(foregroundColor(of: ":", in: result) == UIColor.themeSyntaxPunctuation)
     }
 
     @Test func jsonHighlightColorsWhitespaceAsPunctuation() {
@@ -281,7 +281,7 @@ struct SyntaxHighlighterTests {
         }
 
         let color = result.attribute(.foregroundColor, at: whitespaceRange.location, effectiveRange: nil) as? UIColor
-        #expect(color == UIColor(Color.themeSyntaxPunctuation))
+        #expect(color == UIColor.themeSyntaxPunctuation)
     }
 
     @Test func shellBlockHighlightingOnMainThreadUsesHeuristicScanner() {
@@ -289,9 +289,9 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(command, language: .shell)
 
         #expect(result.string == command)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor.themeSyntaxFunction)
         // Tree-sitter: flags starting with '-' are @constant (number color)
-        #expect(foregroundColor(of: "-scheme", in: result) == UIColor(Color.themeSyntaxNumber))
+        #expect(foregroundColor(of: "-scheme", in: result) == UIColor.themeSyntaxNumber)
     }
 
     @Test func shellHighlightingUsesShellHeuristics() {
@@ -299,12 +299,12 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(line, language: .shell)
 
         #expect(result.string == line)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor.themeSyntaxFunction)
         // Tree-sitter: file descriptor '2' is a number, '>' is an operator.
         // The old scanner treated '2>&1' as a single operator token.
-        #expect(foregroundColor(of: "2", at: 37, in: result) == UIColor(Color.themeSyntaxNumber))
-        #expect(foregroundColor(of: "grep", in: result) == UIColor(Color.themeSyntaxFunction))
-        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == UIColor(Color.themeSyntaxString))
+        #expect(foregroundColor(of: "2", at: 37, in: result) == UIColor.themeSyntaxNumber)
+        #expect(foregroundColor(of: "grep", in: result) == UIColor.themeSyntaxFunction)
+        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == UIColor.themeSyntaxString)
     }
 
     @Test func shellCommentDetectionRespectsTokenBoundaries() {
@@ -312,7 +312,7 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(line, language: .shell)
 
         #expect(result.string == line)
-        #expect(foregroundColor(of: "# trailing comment", in: result) == UIColor(Color.themeSyntaxComment))
+        #expect(foregroundColor(of: "# trailing comment", in: result) == UIColor.themeSyntaxComment)
     }
 
     @Test func shellAssignmentsKeepCommandPosition() {
@@ -321,10 +321,10 @@ struct SyntaxHighlighterTests {
 
         #expect(result.string == line)
         // Tree-sitter: variable_name 'FOO' is type, '=' and 'bar' are separate.
-        #expect(foregroundColor(of: "FOO", in: result) == UIColor(Color.themeSyntaxType))
-        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "FOO", in: result) == UIColor.themeSyntaxType)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor.themeSyntaxFunction)
         // Tree-sitter: '$' is operator, 'SCHEME' is type (variable_name).
-        #expect(foregroundColor(of: "SCHEME", in: result) == UIColor(Color.themeSyntaxType))
+        #expect(foregroundColor(of: "SCHEME", in: result) == UIColor.themeSyntaxType)
     }
 
     @Test func shellHighlightingBridgesToUIKitForegroundColors() {
@@ -343,9 +343,9 @@ struct SyntaxHighlighterTests {
         let commandColor = result.attribute(.foregroundColor, at: commandRange.location, effectiveRange: nil) as? UIColor
         let optionColor = result.attribute(.foregroundColor, at: optionRange.location, effectiveRange: nil) as? UIColor
 
-        #expect(commandColor == UIColor(Color.themeSyntaxFunction))
+        #expect(commandColor == UIColor.themeSyntaxFunction)
         // Tree-sitter: flags starting with '-' are @constant (number color)
-        #expect(optionColor == UIColor(Color.themeSyntaxNumber))
+        #expect(optionColor == UIColor.themeSyntaxNumber)
     }
 
     @Test func cachedTokenColorsUpdateWhenThemeChanges() {
@@ -361,8 +361,8 @@ struct SyntaxHighlighterTests {
         let lightResult = SyntaxHighlighter.highlight(code, language: .swift)
         let lightKeywordColor = foregroundColor(of: "let", in: lightResult)
 
-        #expect(darkKeywordColor == UIColor(ThemePalettes.dark.syntaxKeyword))
-        #expect(lightKeywordColor == UIColor(ThemePalettes.light.syntaxKeyword))
+        #expect(darkKeywordColor == ThemePalettes.dark.syntaxKeyword)
+        #expect(lightKeywordColor == ThemePalettes.light.syntaxKeyword)
         #expect(darkKeywordColor != lightKeywordColor)
     }
 
@@ -430,7 +430,7 @@ struct SyntaxHighlighterTokenBudgetTests {
         let tailColor = try #require(
             attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
         )
-        let plain = UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable)
+        let plain = ThemeRuntimeState.currentThemeID().palette.syntaxVariable
         #expect(tailColor == plain)
         #expect(tailColor != SyntaxHighlighter.color(for: .keyword))
     }
@@ -458,7 +458,7 @@ struct SyntaxHighlighterTokenBudgetTests {
         let tailColor = try #require(
             attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
         )
-        #expect(tailColor == UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable))
+        #expect(tailColor == ThemeRuntimeState.currentThemeID().palette.syntaxVariable)
     }
 
     @Test func treeSitterShellPreservesSourceBeyondMaxLines() throws {
@@ -472,7 +472,7 @@ struct SyntaxHighlighterTokenBudgetTests {
         let tailColor = try #require(
             attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
         )
-        #expect(tailColor == UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable))
+        #expect(tailColor == ThemeRuntimeState.currentThemeID().palette.syntaxVariable)
         #expect(tailColor != SyntaxHighlighter.color(for: .function))
     }
 

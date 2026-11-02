@@ -101,8 +101,8 @@ struct ANSIParserTests {
         let freshColor = result.attribute(.foregroundColor, at: freshRange.location, effectiveRange: nil) as? UIColor
         let plainColor = result.attribute(.foregroundColor, at: plainRange.location, effectiveRange: nil) as? UIColor
 
-        #expect(freshColor == UIColor(Color.themeGreen))
-        #expect(plainColor == UIColor(Color.themeFg))
+        #expect(freshColor == UIColor.themeGreen)
+        #expect(plainColor == UIColor.themeFg)
     }
 
     @Test("attributedString ANSI color cache updates when theme changes")
@@ -119,8 +119,8 @@ struct ANSIParserTests {
         let lightResult = ANSIParser.attributedString(from: input)
         let lightColor = lightResult.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
 
-        #expect(darkColor == UIColor(ThemePalettes.dark.green))
-        #expect(lightColor == UIColor(ThemePalettes.light.green))
+        #expect(darkColor == ThemePalettes.dark.green)
+        #expect(lightColor == ThemePalettes.light.green)
         #expect(darkColor != lightColor)
     }
 
@@ -170,7 +170,7 @@ struct ANSIParserTests {
 
         let attributed = ANSIParser.attributedString(from: input)
         let dimColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
-        #expect(dimColor == UIColor(Color.themeFgDim))
+        #expect(dimColor == UIColor.themeFgDim)
     }
 
     @Test("handles consecutive codes without text between")
@@ -488,7 +488,7 @@ struct ANSIParserTests {
 
         let second = rendered[1]
         let color = second.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
-        #expect(color == UIColor(Color.themeGreen))
+        #expect(color == UIColor.themeGreen)
         let font = second.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
         #expect(font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
 
@@ -523,7 +523,7 @@ struct ANSIParserTests {
                 line += ANSIParser.strip(chunk.rawText).filter { $0 == "\n" }.count
                 let rendered = ANSIParser.attributedString(from: chunk.leadingSGR + chunk.rawText)
                 if rendered.length > 0 {
-                    #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == UIColor(Color.themeGreen))
+                    #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == UIColor.themeGreen)
                 }
             }
             let boundary = index.chunks[0].displayedUTF16Range.upperBound
@@ -545,7 +545,7 @@ struct ANSIParserTests {
         let rendered = ANSIParser.attributedString(from: suffixStart.leadingSGR + suffixStart.rawText)
         #expect(rendered.length > 0)
         let color = rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
-        #expect(color == UIColor(Color.themeGreen))
+        #expect(color == UIColor.themeGreen)
         let full = ANSIParser.TerminalChunkIndex.build(from: prefix + suffix, maxLines: 8, maxBytes: 80)
         #expect(combined.chunks.map { ANSIParser.strip($0.rawText) }.joined()
             == full.chunks.map { ANSIParser.strip($0.rawText) }.joined())

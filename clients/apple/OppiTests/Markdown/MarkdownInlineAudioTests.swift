@@ -677,12 +677,12 @@ struct MarkdownInlineAudioTests {
             $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.expand"
         })
 
-        #expect(inlineAudioColor(play.tintColor, approximatelyEquals: UIColor(palette.fg)))
-        #expect(inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.fg)))
-        #expect(inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.comment)))
-        #expect(!inlineAudioColor(play.tintColor, approximatelyEquals: UIColor(palette.purple)))
-        #expect(!inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.purple)))
-        #expect(!inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.purple)))
+        #expect(inlineAudioColor(play.tintColor, approximatelyEquals: palette.fg))
+        #expect(inlineAudioColor(expand.tintColor, approximatelyEquals: palette.fg))
+        #expect(inlineAudioColor(time.textColor, approximatelyEquals: palette.comment))
+        #expect(!inlineAudioColor(play.tintColor, approximatelyEquals: palette.purple))
+        #expect(!inlineAudioColor(expand.tintColor, approximatelyEquals: palette.purple))
+        #expect(!inlineAudioColor(time.textColor, approximatelyEquals: palette.purple))
     }
 
     @MainActor

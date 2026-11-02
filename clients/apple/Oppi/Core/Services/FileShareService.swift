@@ -1328,7 +1328,7 @@ enum FileShareService {
 
     /// Current theme's background color for image/PDF export.
     private static var currentBackgroundColor: UIColor {
-        UIColor(ThemeRuntimeState.currentPalette().bgDark)
+        ThemeRuntimeState.currentPalette().bgDark
     }
 
     private static func placeholderImage() -> UIImage {

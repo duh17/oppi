@@ -31,8 +31,8 @@ enum SyntaxHighlighter {
     // MARK: - Pre-computed Token Attributes
 
     /// Resolved UIColor attribute dictionaries for each token type.
-    /// Created once per top-level highlight call to avoid repeated
-    /// `UIColor(Color)` conversions per token.
+    /// Created once per top-level highlight call to avoid rebuilding an
+    /// attribute dictionary per token.
     private struct TokenAttrs {
         let comment: [NSAttributedString.Key: Any]
         let keyword: [NSAttributedString.Key: Any]
@@ -44,7 +44,7 @@ enum SyntaxHighlighter {
         let function: [NSAttributedString.Key: Any]
         let `operator`: [NSAttributedString.Key: Any]
 
-        // Cache: UIColor(Color) is expensive (~10μs each × 9 = ~90μs per call).
+        // Cache: the dictionary build is the expensive part of a highlight call.
         // Key by theme because tool render caches may ask for a fresh render after
         // `ThemeRuntimeState` changes without restarting the process.
         private final class CacheBox: @unchecked Sendable {

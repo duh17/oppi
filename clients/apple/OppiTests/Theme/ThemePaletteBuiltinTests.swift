@@ -133,7 +133,7 @@ struct ThemePaletteBuiltinTests {
     @Test func increasedContrastUserBorderVersusBackgroundMeetsNonText() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
-            let border = Color(TimelineSpeakerChrome.increasedContrastBorder(from: palette))
+            let border = TimelineSpeakerChrome.increasedContrastBorder(from: palette)
             let ratio = wcagContrast(border, palette.bg)
             #expect(
                 ratio + 1e-6 >= 3.0,
@@ -160,7 +160,7 @@ struct ThemePaletteBuiltinTests {
     @Test func builtInChatSurfacesMeetAutoContrastLevels() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
-            let card = Color(ChatTimelineChromeStyle.conversation.assistantFill(from: palette, themeID: themeID))
+            let card = ChatTimelineChromeStyle.conversation.assistantFill(from: palette, themeID: themeID)
             let checks: [(String, CGFloat, Double)] = [
                 ("assistant text on card", wcagContrast(palette.fg, card), ThemeContrast.Level.text),
                 ("card vs bg", wcagContrast(card, palette.bg), ThemeContrast.Level.cardLift),
@@ -182,7 +182,7 @@ struct ThemePaletteBuiltinTests {
                 Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
                 continue
             }
-            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            let ratio = wcagContrast(palette.userMessageText, fill)
             #expect(
                 ratio + 1e-6 >= 4.5,
                 "\(themeID.rawValue) IC user text on fill \(ratio)"
@@ -208,7 +208,7 @@ struct ThemePaletteBuiltinTests {
                 Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
                 continue
             }
-            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            let ratio = wcagContrast(palette.userMessageText, fill)
             #expect(
                 ratio + 1e-6 >= 3.0,
                 "\(themeID.rawValue) IC glyph on fill \(ratio)"
@@ -234,7 +234,7 @@ struct ThemePaletteBuiltinTests {
                 Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
                 continue
             }
-            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            let ratio = wcagContrast(palette.userMessageText, fill)
             #expect(
                 ratio + 1e-6 >= 4.5,
                 "\(themeID.rawValue) IC caption on fill \(ratio)"
@@ -245,9 +245,9 @@ struct ThemePaletteBuiltinTests {
     @Test func builtInUserCardPillGlyphsAndTextMeetContrastOnBothFills() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
-            var fills: [(name: String, fill: Color)] = [("default", palette.userMessageBg)]
+            var fills: [(name: String, fill: ThemeColor)] = [("default", palette.userMessageBg)]
             if let icFill = TimelineSpeakerChrome.increasedContrastFill(for: themeID) {
-                fills.append(("IC", Color(icFill)))
+                fills.append(("IC", icFill))
             } else {
                 Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
             }
@@ -269,34 +269,21 @@ struct ThemePaletteBuiltinTests {
     }
 }
 
-private func opaqueFill(_ color: Color) -> Color? {
-    TimelineSpeakerChrome.resolvedAlpha(of: UIColor(color)) < 0.02 ? nil : color
+private func opaqueFill(_ color: ThemeColor) -> ThemeColor? {
+    TimelineSpeakerChrome.resolvedAlpha(of: color) < 0.02 ? nil : color
 }
 
-private func wcagContrast(_ foreground: Color, _ background: Color) -> CGFloat {
-    wcagContrast(UIColor(foreground), UIColor(background))
-}
-
-private func wcagContrast(_ foreground: UIColor, _ background: Color) -> CGFloat {
-    wcagContrast(foreground, UIColor(background))
-}
-
-private func wcagContrast(_ foreground: UIColor, _ background: UIColor) -> CGFloat {
+private func wcagContrast(_ foreground: ThemeColor, _ background: ThemeColor) -> CGFloat {
     let a = relativeLuminance(foreground)
     let b = relativeLuminance(background)
     return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 }
 
-private func relativeLuminance(_ color: Color) -> CGFloat {
-    relativeLuminance(UIColor(color))
-}
-
-private func relativeLuminance(_ color: UIColor) -> CGFloat {
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    color.getRed(&red, green: &green, blue: &blue, alpha: nil)
-    return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
+private func relativeLuminance(_ color: ThemeColor) -> CGFloat {
+    guard let components = color.themeRGBComponents() else { return 0 }
+    return 0.2126 * linearize(CGFloat(components.red))
+        + 0.7152 * linearize(CGFloat(components.green))
+        + 0.0722 * linearize(CGFloat(components.blue))
 }
 
 private func linearize(_ channel: CGFloat) -> CGFloat {

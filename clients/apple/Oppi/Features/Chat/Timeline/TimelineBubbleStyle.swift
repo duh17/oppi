@@ -131,7 +131,7 @@ enum ChatTimelineChromeStyle: Equatable {
             // (`ThemeContrast`). A `bgHighlight` card read as a second user
             // bubble in Light and hid inline code and table headers.
             let card = themeID.chatSurfaces?.assistantCard ?? palette.bgHighlight
-            return UIColor(card)
+            return card
         }
     }
 
@@ -294,7 +294,7 @@ enum TimelineSpeakerChrome {
 
     /// Nil unless the theme opts in; built-ins draw no strip.
     static func userAccent(from palette: ThemePalette) -> UIColor? {
-        palette.userMessageAccent.map { UIColor($0) }
+        palette.userMessageAccent
     }
 
     /// Increase Contrast outlines the user card in the theme's accent, or in
@@ -312,7 +312,7 @@ enum TimelineSpeakerChrome {
     /// `ThemeContrast`. Built-ins only; custom themes keep their
     /// `userMessageBg` and gain the border.
     static func increasedContrastFill(for themeID: ThemeID) -> UIColor? {
-        themeID.chatSurfaces.map { UIColor($0.strongUserBubble) }
+        themeID.chatSurfaces.map { $0.strongUserBubble }
     }
 
     static func resolvedAlpha(

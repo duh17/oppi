@@ -143,7 +143,7 @@ final class NativeMarkdownUSDZView: UIView {
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
         layer.cornerRadius = 8
         clipsToBounds = true
         accessibilityIdentifier = "markdown-usdz"
@@ -162,7 +162,7 @@ final class NativeMarkdownUSDZView: UIView {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.font = UIFont.preferredFont(forTextStyle: .caption1)
-        statusLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        statusLabel.textColor = ThemeRuntimeState.currentPalette().comment
         statusLabel.textAlignment = .center
         statusLabel.numberOfLines = 3
 

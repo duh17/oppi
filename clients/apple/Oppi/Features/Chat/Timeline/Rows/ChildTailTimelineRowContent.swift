@@ -126,7 +126,7 @@ final class ChildTailLinesView: UIStackView {
             label.alpha = 1
             label.text = line.text
             label.font = Self.font(line.kind)
-            label.textColor = UIColor(line.kind == .text || line.kind == .tool ? palette.fgDim : palette.comment)
+            label.textColor = line.kind == .text || line.kind == .tool ? palette.fgDim : palette.comment
         }
     }
 

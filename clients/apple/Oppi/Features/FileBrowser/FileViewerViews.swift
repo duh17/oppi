@@ -59,7 +59,7 @@ final class FileMotionDebugMarker: UILabel {
         super.init(frame: .zero)
         text = path
         textAlignment = .center
-        textColor = UIColor(ThemeColorContrast.foreground(for: ThemeRuntimeState.currentThemeID().palette.blue))
+        textColor = ThemeColorContrast.foreground(for: ThemeRuntimeState.currentThemeID().palette.blue)
         let size = UIFont.preferredFont(forTextStyle: .title2).pointSize
         font = .monospacedSystemFont(ofSize: size, weight: .bold)
         backgroundColor = if path.contains("alpha") {

@@ -189,7 +189,7 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
                 self?.submit()
             }
             cell.contentConfiguration = Self.actionContent(
-                "Submit Callback", color: UIColor(enabled ? palette.blue : palette.comment)
+                "Submit Callback", color: enabled ? palette.blue : palette.comment
             )
         case .flowError:
             notice(cell, attempt.flow.error, style: .body, color: palette.ui.red)
@@ -214,7 +214,7 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
                     Task { await owner.cancel() }
                 }
                 cell.contentConfiguration = Self.actionContent(
-                    "Cancel Sign-In", color: UIColor(cancelling ? palette.comment : palette.red)
+                    "Cancel Sign-In", color: cancelling ? palette.comment : palette.red
                 )
             }
         }

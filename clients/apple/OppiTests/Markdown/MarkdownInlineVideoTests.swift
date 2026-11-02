@@ -1984,8 +1984,8 @@ struct MarkdownInlineVideoTests {
     func quoteChromeKeepsDistinctMarkerAndTextColors() throws {
         let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let palette = ThemeID.dark.palette
-        let border = UIColor(palette.mdQuoteBorder)
-        let quoteColor = UIColor(palette.mdQuote)
+        let border = palette.mdQuoteBorder
+        let quoteColor = palette.mdQuote
         #expect(!colorsMatch(border, quoteColor))
 
         let mixed = build("> Watch this ![[movie.mp4]] clip", baseURL: baseURL)

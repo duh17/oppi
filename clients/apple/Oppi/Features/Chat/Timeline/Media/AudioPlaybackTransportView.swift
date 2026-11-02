@@ -25,7 +25,6 @@ struct AudioPlayerChromeStyle {
         yellow = palette.ui.yellow
         orange = palette.ui.orange
         speakerAccents = [palette.orange, palette.blue, palette.green, palette.purple, palette.red, palette.cyan, palette.yellow]
-            .map { UIColor($0) }
     }
 
     static func symbol(_ name: String, pointSize: CGFloat, weight: UIImage.SymbolWeight = .semibold) -> UIImage? {

@@ -131,8 +131,8 @@ struct CodeTests {
         // Gutter characters (line number + separator) must keep their assigned
         // colors (lineNumberColor / separatorColor) — no syntax color override.
         let gutterRanges = findGutterRanges(in: result)
-        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
-        let separatorColor = UIColor(Color.themeComment.opacity(0.35))
+        let lineNumberColor = UIColor.themeComment.withAlphaComponent(0.55)
+        let separatorColor = UIColor.themeComment.withAlphaComponent(0.35)
 
         for gutter in gutterRanges {
             // Check line number portion
@@ -160,7 +160,7 @@ struct CodeTests {
         )
 
         let gutterRanges = findGutterRanges(in: result)
-        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
+        let lineNumberColor = UIColor.themeComment.withAlphaComponent(0.55)
 
         // Line 2's gutter must not be colored by a cross-line $() token
         if let line2 = gutterRanges.first(where: { $0.lineNumber == 2 }) {
@@ -253,8 +253,8 @@ private struct GutterInfo {
 }
 
 private func assertGuttersHaveNoSyntaxColor(in attributed: NSAttributedString, syntaxColor: UIColor) {
-    let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
-    let separatorColor = UIColor(Color.themeComment.opacity(0.35))
+    let lineNumberColor = UIColor.themeComment.withAlphaComponent(0.55)
+    let separatorColor = UIColor.themeComment.withAlphaComponent(0.35)
     for gutter in findGutterRanges(in: attributed) {
         let numColor = attributed.attribute(.foregroundColor, at: gutter.lineNumStart, effectiveRange: nil) as? UIColor
         let sepColor = attributed.attribute(.foregroundColor, at: gutter.sepStart, effectiveRange: nil) as? UIColor

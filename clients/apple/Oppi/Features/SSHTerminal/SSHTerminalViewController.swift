@@ -765,7 +765,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// screen, its bars and its pills read as one surface with the grid.
     private func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
         let theme = themeID.appTheme
-        view.backgroundColor = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
+        view.backgroundColor = colors?.background.map(UIColor.init) ?? theme.bg.primary
         let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
         overrideUserInterfaceStyle = dark ? .dark : .light
         let style: UIStatusBarStyle = dark ? .lightContent : .darkContent

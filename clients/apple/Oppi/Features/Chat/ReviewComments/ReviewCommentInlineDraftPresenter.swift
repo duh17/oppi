@@ -536,7 +536,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         inputTextView.applyStyledText(
             currentText,
             font: inputTextView.font ?? UIFont.preferredFont(forTextStyle: .body),
-            baseColor: UIColor(ThemeRuntimeState.currentPalette().fg),
+            baseColor: ThemeRuntimeState.currentPalette().fg,
             volatileSuffixLength: ComposerShared.volatileSuffixLength(
                 manager: router.voiceInputManager,
                 owner: .reviewCommentInline
@@ -977,7 +977,7 @@ private final class ReviewCommentInlineInputTextView: PastableUITextView {
     private func setupPlaceholder() {
         placeholderLabel.font = UIFont.preferredFont(forTextStyle: .body)
         placeholderLabel.adjustsFontForContentSizeCategory = true
-        placeholderLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        placeholderLabel.textColor = ThemeRuntimeState.currentPalette().comment
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.isUserInteractionEnabled = false
         addSubview(placeholderLabel)

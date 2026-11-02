@@ -120,8 +120,8 @@ struct AppThemeFactoryTests {
         let palette = ThemePalettes.dark
         let theme = AppTheme.from(
             palette: palette,
-            diffAddedBg: .green.opacity(0.2),
-            diffRemovedBg: .red.opacity(0.2)
+            diffAddedBg: palette.green.multiplyingAlpha(0.2),
+            diffRemovedBg: palette.red.multiplyingAlpha(0.2)
         )
         // The factory should accept explicit diff backgrounds without crashing.
         _ = theme.diff.addedBg

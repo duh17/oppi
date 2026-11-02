@@ -330,23 +330,23 @@ private struct ANSIThemeColors {
         self.fg = fg
         self.comment = comment
 
-        self.bgBlack = UIColor(palette.fgDim.opacity(0.35))
-        self.bgRed = UIColor(palette.red.opacity(0.55))
-        self.bgGreen = UIColor(palette.green.opacity(0.45))
-        self.bgYellow = UIColor(palette.yellow.opacity(0.45))
-        self.bgBlue = UIColor(palette.blue.opacity(0.45))
-        self.bgPurple = UIColor(palette.purple.opacity(0.45))
-        self.bgCyan = UIColor(palette.cyan.opacity(0.40))
-        self.bgWhite = UIColor(palette.fg.opacity(0.20))
+        self.bgBlack = palette.ui.fgDim.withAlphaComponent(0.35)
+        self.bgRed = palette.ui.red.withAlphaComponent(0.55)
+        self.bgGreen = palette.ui.green.withAlphaComponent(0.45)
+        self.bgYellow = palette.ui.yellow.withAlphaComponent(0.45)
+        self.bgBlue = palette.ui.blue.withAlphaComponent(0.45)
+        self.bgPurple = palette.ui.purple.withAlphaComponent(0.45)
+        self.bgCyan = palette.ui.cyan.withAlphaComponent(0.40)
+        self.bgWhite = palette.ui.fg.withAlphaComponent(0.20)
 
-        self.bgBrightBlack = UIColor(palette.comment.opacity(0.30))
-        self.bgBrightRed = UIColor(palette.red.opacity(0.65))
-        self.bgBrightGreen = UIColor(palette.green.opacity(0.55))
-        self.bgBrightYellow = UIColor(palette.yellow.opacity(0.55))
-        self.bgBrightBlue = UIColor(palette.blue.opacity(0.55))
-        self.bgBrightPurple = UIColor(palette.purple.opacity(0.55))
-        self.bgBrightCyan = UIColor(palette.cyan.opacity(0.50))
-        self.bgBrightWhite = UIColor(palette.fg.opacity(0.30))
+        self.bgBrightBlack = palette.ui.comment.withAlphaComponent(0.30)
+        self.bgBrightRed = palette.ui.red.withAlphaComponent(0.65)
+        self.bgBrightGreen = palette.ui.green.withAlphaComponent(0.55)
+        self.bgBrightYellow = palette.ui.yellow.withAlphaComponent(0.55)
+        self.bgBrightBlue = palette.ui.blue.withAlphaComponent(0.55)
+        self.bgBrightPurple = palette.ui.purple.withAlphaComponent(0.55)
+        self.bgBrightCyan = palette.ui.cyan.withAlphaComponent(0.50)
+        self.bgBrightWhite = palette.ui.fg.withAlphaComponent(0.30)
 
         var colors = Array(repeating: fg, count: 256)
         colors[0] = fgDim
@@ -383,7 +383,7 @@ private struct ANSIThemeColors {
     }
 }
 
-/// Created once per active theme, avoids repeated `UIColor(Color.themeX)` bridge calls.
+/// Created once per active theme, avoids repeated palette conversions per token.
 private enum ANSIColorCache {
     private final class CacheBox: @unchecked Sendable {
         private let lock = NSLock()

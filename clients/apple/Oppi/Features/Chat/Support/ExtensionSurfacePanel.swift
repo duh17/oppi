@@ -58,8 +58,8 @@ final class ElevatedSurfaceView: UIView {
     /// `active` strokes the shape at 45% over the hairline (an expanded pill).
     func apply(palette: ThemePalette, active: UIColor? = nil) {
         let style = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
-        glass.contentView.backgroundColor = UIColor(style.fill)
-        glass.layer.borderColor = style.stroke.map { UIColor($0).cgColor }
+        glass.contentView.backgroundColor = style.fill
+        glass.layer.borderColor = style.stroke?.cgColor
         glass.layer.borderWidth = style.strokeLineWidth
         activeStroke.strokeColor = active?.withAlphaComponent(0.45).cgColor
         activeStroke.isHidden = active == nil
@@ -457,7 +457,7 @@ private enum ExtensionSurfaceStripTone {
     case neutral, accent, running, queued, success, warning, danger
 
     func color(_ palette: ThemePalette) -> UIColor {
-        let color = switch self {
+        switch self {
         case .neutral: palette.comment
         case .accent: palette.cyan
         case .running: palette.blue
@@ -466,7 +466,6 @@ private enum ExtensionSurfaceStripTone {
         case .warning: palette.orange
         case .danger: palette.red
         }
-        return UIColor(color)
     }
 }
 

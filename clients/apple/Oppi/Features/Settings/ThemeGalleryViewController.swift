@@ -292,7 +292,7 @@ final class ThemeCardCell: UICollectionViewCell {
         codeBlock.borderColor = palette.ui.mdCodeBlockBorder
         codeBlock.label.attributedText = Self.codeLine(palette: palette, font: codeBlock.label.font)
         swatches.configure(
-            colors: [palette.blue, palette.cyan, palette.green, palette.orange, palette.purple, palette.red, palette.yellow].map { UIColor($0) },
+            colors: [palette.blue, palette.cyan, palette.green, palette.orange, palette.purple, palette.red, palette.yellow],
             outline: palette.ui.fg.withAlphaComponent(0.2)
         )
 

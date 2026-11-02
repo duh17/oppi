@@ -649,12 +649,12 @@ struct ServerMessageTests {
         #expect(link[.link] as? URL == url)
         #expect((link[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
         #expect(link[.underlineStyle] as? Int == NSUnderlineStyle.single.rawValue)
-        #expect(link[.foregroundColor] as? UIColor == UIColor(palette.red))
+        #expect(link[.foregroundColor] as? UIColor == palette.red)
 
         let code = attributed.attributes(at: ("Open child" as NSString).length, effectiveRange: nil)
         #expect(code[.link] == nil)
         #expect(code[.strikethroughStyle] as? Int == NSUnderlineStyle.single.rawValue)
-        #expect(code[.foregroundColor] as? UIColor == UIColor(palette.yellow))
+        #expect(code[.foregroundColor] as? UIColor == palette.yellow)
         #expect((code[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) == true)
     }
 

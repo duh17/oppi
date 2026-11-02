@@ -67,7 +67,7 @@ struct ImagePreviewSecurityTests {
         #expect(doneButton.accessibilityLabel == "Done")
         #expect(doneButton.accessibilityIdentifier == "fullscreen-image-data.dismiss")
         #expect(doneButton.image != nil)
-        #expect(Self.color(doneButton.tintColor, approximatelyEquals: UIColor(palette.cyan)))
+        #expect(Self.color(doneButton.tintColor, approximatelyEquals: palette.cyan))
         #expect(navigation.navigationBar.standardAppearance.backgroundColor == nil)
     }
 

@@ -371,7 +371,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                 Task { await owner.cancel() }
             }
             cell.contentConfiguration = Self.actionContent(
-                "Cancel Sign-In", color: UIColor(cancelling ? palette.comment : palette.red)
+                "Cancel Sign-In", color: cancelling ? palette.comment : palette.red
             )
         case .signInError:
             ListScreen.staticRow(cell)

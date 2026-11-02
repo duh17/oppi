@@ -562,7 +562,7 @@ struct MicButtonOrbLayoutTests {
             #expect(orb?.isHidden == false)
             #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.42, bands: SIMD8(0.8, 0, 0.3, 0, 0.4, 0, 0, 0)))
             let palette = ThemeRuntimeState.currentPalette()
-            #expect(orb?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) })
+            #expect(orb?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange])
 
             chrome.apply(
                 isRecording: true,
@@ -746,7 +746,7 @@ struct WorkingIndicatorMetalSizeTests {
         #expect(metal?.bounds.size == CGSize(width: 20, height: 20))
         #expect(metal?.isHidden == false)
         let palette = ThemeRuntimeState.currentPalette()
-        #expect(metal?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) })
+        #expect(metal?.accentUIColors == [palette.blue, palette.cyan, palette.purple, palette.orange])
     }
 
     @Test func extensionHiddenIndicatorHidesTheMetalOrb() {

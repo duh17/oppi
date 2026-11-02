@@ -295,7 +295,7 @@ private extension View {
             .background {
                 MacThemeColorSchemeSyncView(themeStore: themeStore)
             }
-            .preferredColorScheme(themeStore.preferredColorScheme)
+            .preferredColorScheme(themeStore.preferredColorScheme.map(\.colorScheme))
     }
 }
 
@@ -315,7 +315,7 @@ private struct MacThemeColorSchemeSyncView: View {
 
     private func syncIfSystemMode() {
         guard themeStore.mode == .system else { return }
-        themeStore.updateSystemColorScheme(colorScheme)
+        themeStore.updateSystemColorScheme(ThemeColorScheme(colorScheme))
     }
 }
 

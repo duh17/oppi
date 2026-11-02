@@ -135,7 +135,7 @@ private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
         guard !name.isEmpty else { return nil }
         let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
         guard let symbol = UIImage(systemName: name, withConfiguration: config) else { return nil }
-        let tinted = symbol.withTintColor(UIColor(ThemeRuntimeState.currentPalette().comment), renderingMode: .alwaysOriginal)
+        let tinted = symbol.withTintColor(ThemeRuntimeState.currentPalette().comment, renderingMode: .alwaysOriginal)
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = false
         return UIGraphicsImageRenderer(size: tinted.size, format: format).image { _ in
@@ -611,7 +611,7 @@ final class WorkspaceFileEditStatusView: UIView {
         switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
         case .progress:
             canvas.isHidden = true
-            spinner.color = UIColor(ThemeRuntimeState.currentPalette().comment)
+            spinner.color = ThemeRuntimeState.currentPalette().comment
             spinner.startAnimating()
         case .symbol(let name):
             spinner.stopAnimating()

@@ -71,7 +71,7 @@ final class GuidedControlComposerController: UIViewController {
     }
 
     var thinkingTint: UIColor {
-        UIColor(root.themeStore.appTheme.thinking.color(for: model.thinkingLevel))
+        root.themeStore.appTheme.thinking.color(for: model.thinkingLevel)
     }
 
     var stacksActionControls: Bool {

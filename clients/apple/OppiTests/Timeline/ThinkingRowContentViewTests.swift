@@ -350,8 +350,8 @@ struct ThinkingRowContentViewTests {
         view.configuration = configuration
         let lightColor = try #require(foregroundColor(in: label))
 
-        #expect(darkColor == UIColor(ThemePalettes.dark.fg).withAlphaComponent(0.94))
-        #expect(lightColor == UIColor(ThemePalettes.light.fg).withAlphaComponent(0.94))
+        #expect(darkColor == ThemePalettes.dark.fg.withAlphaComponent(0.94))
+        #expect(lightColor == ThemePalettes.light.fg.withAlphaComponent(0.94))
         #expect(darkColor != lightColor)
     }
 

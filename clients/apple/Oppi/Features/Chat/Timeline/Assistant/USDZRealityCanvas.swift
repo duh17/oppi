@@ -26,7 +26,7 @@ struct USDZRealityCanvas: View {
             pose.apply(to: content.entities.first?.findEntity(named: Self.gimbalName))
         } placeholder: {
             ProgressView()
-                .tint(.themeBlue)
+                .tint(Color(uiColor: .themeBlue))
         }
         .realityViewCameraControls(.none)
         .realityViewLayoutBehavior(.centered)

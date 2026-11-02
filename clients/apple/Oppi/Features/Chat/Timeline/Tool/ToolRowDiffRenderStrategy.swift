@@ -45,7 +45,7 @@ struct ToolRowDiffRenderStrategy {
                 }.joined(separator: "\n")
                 expandedLabel.attributedText = nil
                 expandedLabel.text = plainDiff
-                expandedLabel.textColor = UIColor(.themeFg)
+                expandedLabel.textColor = UIColor.themeFg
                 expandedLabel.font = AppFont.monoMedium
                 renderedText = plainDiff
             } else if let cached = ToolRowRenderCache.get(signature: signature) {
@@ -62,7 +62,7 @@ struct ToolRowDiffRenderStrategy {
                         string: "No textual changes",
                         attributes: [
                             .font: AppFont.monoMedium,
-                            .foregroundColor: UIColor(.themeComment),
+                            .foregroundColor: UIColor.themeComment,
                         ]
                     )
                 } else {

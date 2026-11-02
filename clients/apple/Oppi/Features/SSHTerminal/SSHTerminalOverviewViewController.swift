@@ -122,7 +122,7 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
             content.textProperties.color = palette.ui.fg
             content.textProperties.font = .preferredFont(forTextStyle: .headline)
             content.secondaryText = note
-            content.secondaryTextProperties.color = UIColor(failed ? palette.red : palette.comment)
+            content.secondaryTextProperties.color = failed ? palette.red : palette.comment
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
             cell.accessibilityIdentifier = "\(prefix).header"
             cell.accessibilityTraits = .header

@@ -15,11 +15,11 @@ struct TerminalMirrorIndicatorPresentation: Equatable {
 
         if session.mirror?.status == "connected" {
             accessibilityLabel = "pi-tui live"
-            color = UIColor(ThemeRuntimeState.currentPalette().green)
+            color = ThemeRuntimeState.currentPalette().green
             isAnimated = true
         } else {
             accessibilityLabel = "pi-tui offline"
-            color = UIColor(ThemeRuntimeState.currentPalette().comment)
+            color = ThemeRuntimeState.currentPalette().comment
             isAnimated = false
         }
     }

@@ -63,7 +63,7 @@ struct RemoteThemeTests {
         #expect(theme.colors.assistantMessageBg == nil)
         #expect(theme.colors.userMessageAccent == nil)
         let palette = try #require(theme.toPalette())
-        let resolved = UIColor(palette.assistantMessageBg).resolvedColor(
+        let resolved = palette.assistantMessageBg.resolvedColor(
             with: UITraitCollection(userInterfaceStyle: .dark)
         )
         var assistantAlpha: CGFloat = 1
@@ -162,10 +162,10 @@ struct RemoteThemeTests {
 
     // MARK: - Helpers
 
-    private func remoteThemeColor(_ lhs: Color, approximatelyEquals rhs: Color, tolerance: CGFloat = 0.02) -> Bool {
+    private func remoteThemeColor(_ lhs: ThemeColor, approximatelyEquals rhs: Color, tolerance: CGFloat = 0.02) -> Bool {
         var lR: CGFloat = 0, lG: CGFloat = 0, lB: CGFloat = 0, lA: CGFloat = 0
         var rR: CGFloat = 0, rG: CGFloat = 0, rB: CGFloat = 0, rA: CGFloat = 0
-        UIColor(lhs).getRed(&lR, green: &lG, blue: &lB, alpha: &lA)
+        lhs.getRed(&lR, green: &lG, blue: &lB, alpha: &lA)
         UIColor(rhs).getRed(&rR, green: &rG, blue: &rB, alpha: &rA)
         return abs(lR - rR) <= tolerance
             && abs(lG - rG) <= tolerance

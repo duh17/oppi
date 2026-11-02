@@ -156,14 +156,18 @@ struct SettingsKitTests {
     @Test("The card is whichever of the system card and bgHighlight reads better against bg")
     func cardColorFollowsTheThemeWithEnoughContrast() {
         let system = UIColor.secondarySystemGroupedBackground
-        func color(_ hex: Int) -> Color {
-            Color(UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1))
+        func color(_ hex: Int) -> ThemeColor {
+            ThemeColor.themeSRGB(
+                Double((hex >> 16) & 0xFF) / 255,
+                Double((hex >> 8) & 0xFF) / 255,
+                Double(hex & 0xFF) / 255
+            )
         }
 
         // A built-in dark theme: its highlight reads better than the system card.
         let dark = ThemeID.dark.palette
         let darkStyle = SettingsStyle(palette: dark, isDark: true)
-        #expect(darkStyle.card == UIColor(dark.bgHighlight))
+        #expect(darkStyle.card == dark.bgHighlight)
         // Every built-in dark theme's card reads against its page.
         for id in [ThemeID.dark, .oled, .night] {
             let style = SettingsStyle(palette: id.palette, isDark: true)
@@ -174,7 +178,7 @@ struct SettingsKitTests {
             let isDark = id != .light
             let palette = id.palette
             let style = SettingsStyle(palette: palette, isDark: isDark)
-            let other = style.card == system ? UIColor(palette.bgHighlight) : system
+            let other = style.card == system ? palette.bgHighlight : system
             let chosen = SettingsStyle.contrast(style.card, style.page, isDark: isDark)
             let passedOver = SettingsStyle.contrast(other, style.page, isDark: isDark)
             if isDark {
@@ -190,7 +194,7 @@ struct SettingsKitTests {
         // A dark bg near #1C1C1E is the system card's own color: any highlight that
         // differs more wins, and one that does not leaves the system card.
         let nearSystem = palette(dark, bg: color(0x1C1C1E), bgHighlight: color(0x2C2C30))
-        #expect(SettingsStyle(palette: nearSystem, isDark: true).card == UIColor(nearSystem.bgHighlight))
+        #expect(SettingsStyle(palette: nearSystem, isDark: true).card == nearSystem.bgHighlight)
         let systemCardBg = palette(dark, bg: color(0x1C1C1E), bgHighlight: color(0x1C1C1E))
         #expect(SettingsStyle(palette: systemCardBg, isDark: true).card == system)
 
@@ -199,7 +203,7 @@ struct SettingsKitTests {
 
         // ...and takes bgHighlight when bg is white itself and the highlight reads better.
         let white = palette(ThemeID.light.palette, bg: color(0xFFFFFF), bgHighlight: color(0xE8E8EC))
-        #expect(SettingsStyle(palette: white, isDark: false).card == UIColor(white.bgHighlight))
+        #expect(SettingsStyle(palette: white, isDark: false).card == white.bgHighlight)
     }
 
     @Test("A section's state row is the list's LoadState, with its identifier and its Retry")
@@ -427,7 +431,7 @@ struct SettingsKitTests {
     /// A palette like `base` with a different page and highlight: checking the
     /// card's fallback needs colours no built-in theme has, and a palette's
     /// colours are `let`.
-    private func palette(_ base: ThemePalette, bg: Color, bgHighlight: Color) -> ThemePalette {
+    private func palette(_ base: ThemePalette, bg: ThemeColor, bgHighlight: ThemeColor) -> ThemePalette {
         ThemePalette(
             bg: bg,
             bgDark: base.bgDark,

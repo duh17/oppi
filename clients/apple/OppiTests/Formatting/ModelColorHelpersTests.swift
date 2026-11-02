@@ -140,8 +140,8 @@ struct ModelColorHelpersTests {
 
     @Test func providerIconTintMeetsContrastFloorOnThemeSurfaces() {
         let palette = ThemePalettes.dark
-        let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
-        let preferred = [palette.green, palette.blue, palette.orange, palette.red, palette.purple]
+        let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight].map(swiftUIColor)
+        let preferred = [palette.green, palette.blue, palette.orange, palette.red, palette.purple].map(swiftUIColor)
 
         for color in preferred {
             let tinted = providerIconTint(color, palette: palette)
@@ -149,6 +149,11 @@ struct ModelColorHelpersTests {
             #expect(ratio != nil)
             #expect((ratio ?? 0) >= 3.0)
         }
+    }
+
+    /// A theme token as the SwiftUI color `providerIconTint` works in.
+    private func swiftUIColor(_ token: ThemeColor) -> Color {
+        Color(uiColor: token)
     }
 
     private struct RasterAlpha {

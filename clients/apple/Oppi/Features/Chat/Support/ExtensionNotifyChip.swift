@@ -42,12 +42,11 @@ enum ExtensionNotifyChip {
     }
 
     fileprivate static func tint(for notifyType: String?, palette: ThemePalette) -> UIColor {
-        let color = switch notifyType {
+        switch notifyType {
         case "error": palette.red
         case "warning": palette.orange
         default: palette.cyan
         }
-        return UIColor(color)
     }
 }
 

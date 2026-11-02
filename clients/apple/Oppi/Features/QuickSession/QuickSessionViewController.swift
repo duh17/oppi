@@ -187,7 +187,7 @@ final class QuickSessionViewController: UIViewController {
     }
 
     var thinkingTint: UIColor {
-        UIColor(root.themeStore.appTheme.thinking.color(for: model.effectiveThinkingLevel))
+        root.themeStore.appTheme.thinking.color(for: model.effectiveThinkingLevel)
     }
 
     var stacksActionControls: Bool {

@@ -12,14 +12,14 @@ struct SessionStatusKindStyleTests {
         let theme = ThemeID.dark.appTheme
         func color(_ kind: SessionStatusKind) -> UIColor { kind.tint(theme) }
 
-        #expect(color(.working) == UIColor(theme.accent.blue))
+        #expect(color(.working) == theme.accent.blue)
         for blocked in [SessionStatusKind.needsApproval, .question, .signIn] {
-            #expect(color(blocked) == UIColor(theme.accent.orange))
+            #expect(color(blocked) == theme.accent.orange)
         }
-        #expect(color(.done) == UIColor(theme.accent.green))
-        #expect(color(.error) == UIColor(theme.accent.red))
-        #expect(color(.idle) == UIColor(theme.text.secondary))
-        #expect(color(.stopped) == UIColor(theme.text.tertiary))
+        #expect(color(.done) == theme.accent.green)
+        #expect(color(.error) == theme.accent.red)
+        #expect(color(.idle) == theme.text.secondary)
+        #expect(color(.stopped) == theme.text.tertiary)
         #expect(color(.idle) != color(.done))
     }
 

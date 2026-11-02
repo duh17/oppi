@@ -60,7 +60,7 @@ final class WorkingSpinnerUIView: UIView {
         braille.tintUIColor = tint
         life.tintUIColor = tint
         orb.tintUIColor = tint
-        orb.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
+        orb.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange]
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         palette.ui.bg.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         orb.isDarkBackground = OrbTint.isDarkBackground(red: red, green: green, blue: blue)

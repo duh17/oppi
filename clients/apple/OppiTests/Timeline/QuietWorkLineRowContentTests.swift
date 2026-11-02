@@ -144,8 +144,8 @@ struct QuietWorkLineRowContentTests {
         }
         #expect(attributed.string.contains(added))
         #expect(attributed.string.contains(removed))
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().green)))
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().red)))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().green))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().red))
     }
 
     @Test func liveEditStatsStayGreenAndRedAfterReapply() throws {
@@ -179,8 +179,8 @@ struct QuietWorkLineRowContentTests {
         view.configuration = configuration
         let lightForeground = try #require(label.textColor)
 
-        #expect(color(darkForeground, approximatelyEquals: UIColor(ThemePalettes.dark.fgDim)))
-        #expect(color(lightForeground, approximatelyEquals: UIColor(ThemePalettes.light.fgDim)))
+        #expect(color(darkForeground, approximatelyEquals: ThemePalettes.dark.fgDim))
+        #expect(color(lightForeground, approximatelyEquals: ThemePalettes.light.fgDim))
         #expect(color(darkForeground, approximatelyEquals: lightForeground) == false)
     }
 
@@ -204,12 +204,12 @@ struct QuietWorkLineRowContentTests {
         let lightIcon = try #require(firstAttachment(in: lightSummary))
 
         #expect(darkIcon !== lightIcon)
-        #expect(color(attributedColor(in: darkSummary, for: "4"), approximatelyEquals: UIColor(ThemePalettes.dark.fgDim)))
-        #expect(color(attributedColor(in: lightSummary, for: "4"), approximatelyEquals: UIColor(ThemePalettes.light.fgDim)))
-        #expect(color(attributedColor(in: darkSummary, for: "+12"), approximatelyEquals: UIColor(ThemePalettes.dark.green)))
-        #expect(color(attributedColor(in: lightSummary, for: "+12"), approximatelyEquals: UIColor(ThemePalettes.light.green)))
-        #expect(color(attributedColor(in: darkSummary, for: "−3"), approximatelyEquals: UIColor(ThemePalettes.dark.red)))
-        #expect(color(attributedColor(in: lightSummary, for: "−3"), approximatelyEquals: UIColor(ThemePalettes.light.red)))
+        #expect(color(attributedColor(in: darkSummary, for: "4"), approximatelyEquals: ThemePalettes.dark.fgDim))
+        #expect(color(attributedColor(in: lightSummary, for: "4"), approximatelyEquals: ThemePalettes.light.fgDim))
+        #expect(color(attributedColor(in: darkSummary, for: "+12"), approximatelyEquals: ThemePalettes.dark.green))
+        #expect(color(attributedColor(in: lightSummary, for: "+12"), approximatelyEquals: ThemePalettes.light.green))
+        #expect(color(attributedColor(in: darkSummary, for: "−3"), approximatelyEquals: ThemePalettes.dark.red))
+        #expect(color(attributedColor(in: lightSummary, for: "−3"), approximatelyEquals: ThemePalettes.light.red))
     }
 
     @Test func iconEditStatsUseSeparatePositiveAndNegativeColors() throws {
@@ -229,8 +229,8 @@ struct QuietWorkLineRowContentTests {
 
         #expect(attributed.string.contains("+12"))
         #expect(attributed.string.contains("−3"))
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().green)))
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().red)))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().green))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().red))
     }
 
     @Test func wordsEditStatsUseSeparatePositiveAndNegativeColors() throws {
@@ -254,8 +254,8 @@ struct QuietWorkLineRowContentTests {
         }
 
         #expect(attributed.string == "read 4 files  edit +48 −20")
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().green)))
-        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().red)))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().green))
+        #expect(colors.contains(ThemeRuntimeState.currentPalette().red))
     }
 
     @Test func settingsPreviewUsesAgreedSampleCounts() {
@@ -431,7 +431,7 @@ struct QuietWorkLineRowContentTests {
         view.layoutIfNeeded()
 
         let chip = try #require(chipView(in: view))
-        let userFill = UIColor(ThemeRuntimeState.currentPalette().userMessageBg)
+        let userFill = ThemeRuntimeState.currentPalette().userMessageBg
         var alpha: CGFloat = 1
         var red: CGFloat = 0
         var green: CGFloat = 0

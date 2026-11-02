@@ -122,9 +122,7 @@ enum FullScreenFloatingControlChrome {
         config.cornerStyle = .capsule
         // Fill comes from the shared surface resolver so the floating-control
         // opacity is chosen in exactly one place (ThemeSurfaceStyle.resolve).
-        config.background.backgroundColor = UIColor(
-            ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
-        )
+        config.background.backgroundColor = ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
         config.baseForegroundColor = palette.ui.fg
     }
 

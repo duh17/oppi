@@ -316,7 +316,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         let palette = palette
         view.backgroundColor = palette.ui.bg
         for divider in dividers {
-            divider.backgroundColor = UIColor(palette.comment.opacity(0.3))
+            divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.3)
         }
         updateTimelineChrome()
         updateTreeChrome()
@@ -840,7 +840,7 @@ final class TreeSummaryInstructionsViewController: UIViewController, UITextViewD
         captionLabel.textColor = palette.ui.comment
         textView.textColor = palette.ui.fg
         textView.backgroundColor = palette.ui.bgDark
-        textView.layer.borderColor = UIColor(palette.comment.opacity(0.18)).cgColor
+        textView.layer.borderColor = palette.ui.comment.withAlphaComponent(0.18).cgColor
     }
 
     func textViewDidChange(_ textView: UITextView) {

@@ -221,8 +221,8 @@ struct ToolRowCodeRenderStrategyTests {
         )
 
         #expect(dark.output.renderSignature != light.output.renderSignature)
-        #expect(darkColor == UIColor(ThemePalettes.dark.fg))
-        #expect(light.label.textColor == UIColor(ThemePalettes.light.fg))
+        #expect(darkColor == ThemePalettes.dark.fg)
+        #expect(light.label.textColor == ThemePalettes.light.fg)
     }
 
     private func render(

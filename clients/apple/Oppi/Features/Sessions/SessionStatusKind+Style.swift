@@ -6,12 +6,12 @@ import UIKit
 extension SessionStatusKind {
     func tint(_ theme: AppTheme) -> UIColor {
         switch self {
-        case .working: UIColor(theme.accent.blue)
-        case .needsApproval, .question, .signIn: UIColor(theme.accent.orange)
-        case .error: UIColor(theme.accent.red)
-        case .done: UIColor(theme.accent.green)
-        case .idle: UIColor(theme.text.secondary)
-        case .stopped: UIColor(theme.text.tertiary)
+        case .working: theme.accent.blue
+        case .needsApproval, .question, .signIn: theme.accent.orange
+        case .error: theme.accent.red
+        case .done: theme.accent.green
+        case .idle: theme.text.secondary
+        case .stopped: theme.text.tertiary
         }
     }
 

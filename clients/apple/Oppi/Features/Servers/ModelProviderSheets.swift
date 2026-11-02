@@ -235,13 +235,13 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
                 guard let attempt = self?.attempt else { return }
                 Task { await attempt.submitPromptResponse(id) }
             }
-            cell.contentConfiguration = Self.actionContent(label, color: UIColor(isBusy ? palette.comment : palette.blue))
+            cell.contentConfiguration = Self.actionContent(label, color: isBusy ? palette.comment : palette.blue)
         case .submit:
             let enabled = canSubmit
             ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.submit", label: "Submit", enabled: enabled) { [weak self] in
                 self?.submit()
             }
-            cell.contentConfiguration = Self.actionContent("Submit", color: UIColor(enabled ? palette.blue : palette.comment))
+            cell.contentConfiguration = Self.actionContent("Submit", color: enabled ? palette.blue : palette.comment)
         case .progress:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -283,7 +283,7 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
                 ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.cancel", label: title, enabled: !cancelling) { [weak self] in
                     self?.onCancel()
                 }
-                cell.contentConfiguration = Self.actionContent(title, color: UIColor(cancelling ? palette.comment : palette.red))
+                cell.contentConfiguration = Self.actionContent(title, color: cancelling ? palette.comment : palette.red)
                 if cancelling {
                     let spinner = UIActivityIndicatorView(style: .medium)
                     spinner.startAnimating()

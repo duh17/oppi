@@ -114,7 +114,7 @@ struct UserTimelineRowContentTests {
         let doneButton = try #require(viewController.navigationItem.leftBarButtonItem)
         #expect(doneButton.accessibilityLabel == "Done")
         #expect(doneButton.accessibilityIdentifier == "fullscreen-image.dismiss")
-        #expect(color(doneButton.tintColor, approximatelyEquals: UIColor(palette.cyan)))
+        #expect(color(doneButton.tintColor, approximatelyEquals: palette.cyan))
 
         // Nav bar has no custom appearance — iOS 26 Liquid Glass handles chrome
         let navAppearance = navigation.navigationBar.standardAppearance
@@ -146,7 +146,7 @@ struct UserTimelineRowContentTests {
         NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
 
         #expect(navigation.overrideUserInterfaceStyle == .light)
-        #expect(color(navigation.view.backgroundColor, approximatelyEquals: UIColor(ThemePalettes.light.bgDark)))
+        #expect(color(navigation.view.backgroundColor, approximatelyEquals: ThemePalettes.light.bgDark))
     }
 
     @MainActor
@@ -902,7 +902,7 @@ struct UserTimelineRowContentTests {
         let store = ThemeStore(initialSystemColorScheme: .dark)
         store.mode = .system
         store.updateSystemColorScheme(.dark)
-        let darkColor = UIColor(store.activeThemeID.palette.bgDark)
+        let darkColor = store.activeThemeID.palette.bgDark
 
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         defer {
@@ -911,7 +911,7 @@ struct UserTimelineRowContentTests {
         }
 
         store.updateSystemColorScheme(.light)
-        let lightColor = UIColor(store.activeThemeID.palette.bgDark)
+        let lightColor = store.activeThemeID.palette.bgDark
         #expect(!color(darkColor, approximatelyEquals: lightColor, tolerance: 0.08))
 
         store.updateSystemColorScheme(.dark)
@@ -999,9 +999,9 @@ struct UserTimelineRowContentTests {
                 )
             )
         )
-        #expect(color(textView.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+        #expect(color(textView.textColor, approximatelyEquals: palette.userMessageText))
         let chevron = try #require(userMessageIconLabel(in: view))
-        #expect(color(chevron.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+        #expect(color(chevron.textColor, approximatelyEquals: palette.userMessageText))
     }
 
     @MainActor
@@ -1146,7 +1146,7 @@ struct UserTimelineRowContentTests {
         let border = try #require(bubble.layer.borderColor)
         #expect(color(
             UIColor(cgColor: border),
-            approximatelyEquals: UIColor(ThemePalettes.dark.userMessageText)
+            approximatelyEquals: ThemePalettes.dark.userMessageText
         ))
     }
 
@@ -1170,7 +1170,7 @@ struct UserTimelineRowContentTests {
         let caption = try #require(userMessageYouCaption(in: view))
         #expect(caption.isHidden == false)
         #expect(caption.text == "You")
-        #expect(color(caption.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+        #expect(color(caption.textColor, approximatelyEquals: palette.userMessageText))
     }
 
     @MainActor
@@ -1257,9 +1257,9 @@ struct UserTimelineRowContentTests {
             let icon = try #require(allSubviews(ofType: UIImageView.self, in: pill).first)
             #expect(color(prefix.textColor, approximatelyEquals: expected))
             #expect(color(icon.tintColor, approximatelyEquals: expected))
-            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.cyan)))
-            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.purple)))
-            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.orange)))
+            #expect(!color(prefix.textColor, approximatelyEquals: palette.cyan))
+            #expect(!color(prefix.textColor, approximatelyEquals: palette.purple))
+            #expect(!color(prefix.textColor, approximatelyEquals: palette.orange))
             let backgroundAlpha = pill.backgroundColor?.cgColor.alpha ?? 0
             #expect(backgroundAlpha < 0.02)
         }

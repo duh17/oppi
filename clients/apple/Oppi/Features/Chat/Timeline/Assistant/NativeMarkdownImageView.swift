@@ -156,7 +156,7 @@ final class NativeMarkdownImageView: UIView {
         translatesAutoresizingMaskIntoConstraints = false
         layer.cornerRadius = 8
         clipsToBounds = true
-        backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        backgroundColor = ThemeRuntimeState.currentPalette().bgHighlight
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true

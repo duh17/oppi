@@ -207,7 +207,7 @@ final class MessageQueueView: UIView {
             body.addArrangedSubview(attachmentStrip(chips))
         }
         let well = UIView()
-        well.backgroundColor = UIColor(palette.bg.opacity(0.30))
+        well.backgroundColor = palette.ui.bg.withAlphaComponent(0.30)
         well.layer.cornerRadius = 10
         if let onOpenMessage, !item.message.isEmpty {
             well.addGestureRecognizer(DoubleTapRecognizer { onOpenMessage(item) })
@@ -291,7 +291,7 @@ final class MessageQueueView: UIView {
            let decoded = UIImage(data: data) {
             tile.image = decoded
         } else {
-            tile.backgroundColor = UIColor(palette.bg.opacity(0.30))
+            tile.backgroundColor = palette.ui.bg.withAlphaComponent(0.30)
             tile.contentMode = .center
             tile.image = UIImage.scaledSymbol("photo", style: .caption1, weight: .semibold, color: palette.ui.comment)
         }

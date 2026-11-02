@@ -86,7 +86,6 @@ enum CommitGraphView {
 
     fileprivate static func laneColors(_ palette: ThemePalette) -> [UIColor] {
         [palette.purple, palette.cyan, palette.green, palette.orange, palette.blue, palette.yellow, palette.red]
-            .map { UIColor($0) }
     }
 
     // MARK: Chips
@@ -254,7 +253,7 @@ enum CommitGraphView {
             sha.textColor = palette.ui.comment
             message.text = row.commit.message
             message.font = style.message
-            message.textColor = UIColor(row.commit.isHead ? palette.fg : palette.fgDim)
+            message.textColor = row.commit.isHead ? palette.fg : palette.fgDim
             chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: style.chevron)
             chevron.tintColor = palette.ui.comment.withAlphaComponent(0.5)
 

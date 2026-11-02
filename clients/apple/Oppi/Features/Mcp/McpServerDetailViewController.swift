@@ -360,18 +360,18 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
             ListScreen.buttonRow(cell, identifier: "mcp.login", label: title, enabled: enabled) { [weak self] in
                 self?.startLogin()
             }
-            cell.contentConfiguration = Self.rowText(title, color: UIColor(enabled ? palette.blue : palette.comment))
+            cell.contentConfiguration = Self.rowText(title, color: enabled ? palette.blue : palette.comment)
         case .signOut:
             let enabled = !(locked || needsRememberedTrust)
             ListScreen.buttonRow(cell, identifier: "mcp.logout", label: "Sign Out", enabled: enabled) { [weak self] in
                 self?.confirmLogout()
             }
-            cell.contentConfiguration = Self.rowText("Sign Out", color: UIColor(enabled ? palette.red : palette.comment))
+            cell.contentConfiguration = Self.rowText("Sign Out", color: enabled ? palette.red : palette.comment)
         case .remove:
             ListScreen.buttonRow(cell, identifier: "mcp.remove", label: "Remove Server", enabled: !locked) { [weak self] in
                 self?.confirmRemove()
             }
-            cell.contentConfiguration = Self.rowText("Remove Server", color: UIColor(locked ? palette.comment : palette.red))
+            cell.contentConfiguration = Self.rowText("Remove Server", color: locked ? palette.comment : palette.red)
         default:
             break
         }

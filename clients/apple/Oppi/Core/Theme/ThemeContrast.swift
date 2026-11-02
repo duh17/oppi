@@ -1,17 +1,11 @@
 import Foundation
-import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
 /// Chat surfaces solved for a built-in theme (`ThemeID.chatSurfaces`).
 struct ThemeChatSurfaces: Sendable {
     /// Conversation-layout assistant card.
-    let assistantCard: Color
+    let assistantCard: ThemeColor
     /// User bubble when Increase Contrast is on.
-    let strongUserBubble: Color
+    let strongUserBubble: ThemeColor
 }
 
 /// Auto contrast for the built-in themes, after Pi's system theme (Earendil,
@@ -193,11 +187,11 @@ enum ThemeContrast {
     /// Text rule: a seed that already passes keeps its exact value; otherwise
     /// only its lightness moves, as little as the rule needs.
     private static func adjust(
-        _ color: Color,
+        _ color: ThemeColor,
         on surfaces: [SRGB],
         level: Double,
         toward direction: Direction
-    ) -> Color {
+    ) -> ThemeColor {
         let seed = SRGB(color)
         guard !seed.passes(on: surfaces, level: level) else { return color }
         return search(seed, from: seed.oklch.l, on: surfaces, level: level, toward: direction).color
@@ -250,16 +244,12 @@ private struct SRGB {
         self.alpha = alpha
     }
 
-    init(_ color: Color) {
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, opacity: CGFloat = 1
-        #if canImport(UIKit)
-        UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &opacity)
-        #elseif canImport(AppKit)
-        if let srgb = NSColor(color).usingColorSpace(.sRGB) {
-            srgb.getRed(&red, green: &green, blue: &blue, alpha: &opacity)
+    init(_ color: ThemeColor) {
+        guard let components = color.themeRGBComponents() else {
+            self.init(r: 0, g: 0, b: 0, alpha: 1)
+            return
         }
-        #endif
-        self.init(r: Double(red), g: Double(green), b: Double(blue), alpha: Double(opacity))
+        self.init(r: components.red, g: components.green, b: components.blue, alpha: components.alpha)
     }
 
     /// Closest in-gamut color at this OKLCH lightness and hue; chroma shrinks
@@ -284,7 +274,7 @@ private struct SRGB {
         self.init(r: Self.encode(rgb.0), g: Self.encode(rgb.1), b: Self.encode(rgb.2))
     }
 
-    var color: Color { Color(.sRGB, red: r, green: g, blue: b, opacity: alpha) }
+    var color: ThemeColor { ThemeColor.themeSRGB(r, g, b, alpha: alpha) }
 
     func composited(over base: SRGB) -> SRGB {
         SRGB(

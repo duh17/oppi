@@ -8,30 +8,30 @@ struct RenderThemeMappingTests {
         let palette = ThemePalettes.light
         let renderTheme = palette.renderTheme
 
-        assertEqual(renderTheme.foreground, UIColor(palette.fg))
-        assertEqual(renderTheme.foregroundDim, UIColor(palette.fgDim))
-        assertEqual(renderTheme.background, UIColor(palette.bg))
-        assertEqual(renderTheme.backgroundDark, UIColor(palette.bgDark))
-        assertEqual(renderTheme.comment, UIColor(palette.comment))
+        assertEqual(renderTheme.foreground, palette.fg)
+        assertEqual(renderTheme.foregroundDim, palette.fgDim)
+        assertEqual(renderTheme.background, palette.bg)
+        assertEqual(renderTheme.backgroundDark, palette.bgDark)
+        assertEqual(renderTheme.comment, palette.comment)
     }
 
     @Test func paletteRenderThemeMapsSyntaxAndAccentTokens() {
         let palette = ThemePalettes.light
         let renderTheme = palette.renderTheme
 
-        assertEqual(renderTheme.keyword, UIColor(palette.syntaxKeyword))
-        assertEqual(renderTheme.string, UIColor(palette.syntaxString))
-        assertEqual(renderTheme.number, UIColor(palette.syntaxNumber))
-        assertEqual(renderTheme.function, UIColor(palette.syntaxFunction))
-        assertEqual(renderTheme.type, UIColor(palette.syntaxType))
-        assertEqual(renderTheme.link, UIColor(palette.mdLink))
-        assertEqual(renderTheme.heading, UIColor(palette.mdHeading))
-        assertEqual(renderTheme.accentBlue, UIColor(palette.blue))
-        assertEqual(renderTheme.accentGreen, UIColor(palette.green))
-        assertEqual(renderTheme.accentOrange, UIColor(palette.orange))
-        assertEqual(renderTheme.accentPurple, UIColor(palette.purple))
-        assertEqual(renderTheme.accentRed, UIColor(palette.red))
-        assertEqual(renderTheme.accentYellow, UIColor(palette.yellow))
+        assertEqual(renderTheme.keyword, palette.syntaxKeyword)
+        assertEqual(renderTheme.string, palette.syntaxString)
+        assertEqual(renderTheme.number, palette.syntaxNumber)
+        assertEqual(renderTheme.function, palette.syntaxFunction)
+        assertEqual(renderTheme.type, palette.syntaxType)
+        assertEqual(renderTheme.link, palette.mdLink)
+        assertEqual(renderTheme.heading, palette.mdHeading)
+        assertEqual(renderTheme.accentBlue, palette.blue)
+        assertEqual(renderTheme.accentGreen, palette.green)
+        assertEqual(renderTheme.accentOrange, palette.orange)
+        assertEqual(renderTheme.accentPurple, palette.purple)
+        assertEqual(renderTheme.accentRed, palette.red)
+        assertEqual(renderTheme.accentYellow, palette.yellow)
     }
 
     @Test func currentRenderThemeTracksRuntimeTheme() {
@@ -39,12 +39,12 @@ struct RenderThemeMappingTests {
         defer { ThemeRuntimeState.setThemeID(original) }
 
         ThemeRuntimeState.setThemeID(.light)
-        assertEqual(ThemeRuntimeState.currentRenderTheme().foreground, UIColor(ThemePalettes.light.fg))
-        assertEqual(ThemeRuntimeState.currentRenderTheme().accentRed, UIColor(ThemePalettes.light.red))
+        assertEqual(ThemeRuntimeState.currentRenderTheme().foreground, ThemePalettes.light.fg)
+        assertEqual(ThemeRuntimeState.currentRenderTheme().accentRed, ThemePalettes.light.red)
 
         ThemeRuntimeState.setThemeID(.night)
-        assertEqual(ThemeRuntimeState.currentRenderTheme().foreground, UIColor(ThemePalettes.night.fg))
-        assertEqual(ThemeRuntimeState.currentRenderTheme().accentBlue, UIColor(ThemePalettes.night.blue))
+        assertEqual(ThemeRuntimeState.currentRenderTheme().foreground, ThemePalettes.night.fg)
+        assertEqual(ThemeRuntimeState.currentRenderTheme().accentBlue, ThemePalettes.night.blue)
     }
 
     private func assertEqual(_ lhs: CGColor, _ rhs: UIColor) {

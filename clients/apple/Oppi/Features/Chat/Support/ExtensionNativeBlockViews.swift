@@ -567,7 +567,7 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
             case .header(let title, let isActive):
                 text.append(NSAttributedString(string: "●  ", attributes: [
                     .font: UIFont.systemFont(ofSize: 8, weight: .bold),
-                    .foregroundColor: UIColor(isActive ? palette.green : palette.comment),
+                    .foregroundColor: isActive ? palette.green : palette.comment,
                     .baselineOffset: 1,
                 ]))
                 text.append(NSAttributedString(string: title, attributes: [
