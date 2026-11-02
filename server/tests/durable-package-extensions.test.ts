@@ -696,6 +696,20 @@ describe("plugins from Pi packages", () => {
         message: 'Tool "read" is built into Oppi',
       }),
     ]);
+
+    // The linked package keeps its own classic row, which says durable sessions use the built-in;
+    // the built-in has its own row.
+    const asks = (await f.rows()).filter((row) => row.name === "ask");
+    expect(asks).toHaveLength(2);
+    const classic = asks.find((row) => row.kinds.includes("pi-extension"))!;
+    expect(classic.plugin).toBeUndefined();
+    expect(classic.warnings).toEqual([
+      "\"ask\" is built into Oppi: durable sessions use Oppi's built-in plugin, not this package's",
+    ]);
+    expect(asks.find((row) => row !== classic)).toMatchObject({
+      kinds: ["plugin"],
+      source: "built-in",
+    });
   });
 });
 
@@ -719,9 +733,10 @@ describe("plugins on the extension list", () => {
 
     // A plugin-only row is still reachable by ID without the flag.
     const durableOnly = rowNamed(all, "durable-only");
-    expect(
-      await f.route("GET", `/server/resources/extensions/${durableOnly.id}`),
-    ).toMatchObject({ status: 200, body: { summary: { name: "durable-only" } } });
+    expect(await f.route("GET", `/server/resources/extensions/${durableOnly.id}`)).toMatchObject({
+      status: 200,
+      body: { summary: { name: "durable-only" } },
+    });
     expect(await f.route("GET", "/server/resources/extensions?plugins=false")).toMatchObject({
       status: 400,
     });
@@ -738,7 +753,7 @@ describe("plugins on the extension list", () => {
       '    name: "durable_only_tool",',
       '    description: "A tool.",',
       "    parameters: obj({}),",
-      '    async execute() { return { output: [] }; },',
+      "    async execute() { return { output: [] }; },",
       "  })],",
       "  hooks: [",
       "    hook(GenerationTask, { async beforeRequest() {} }),",

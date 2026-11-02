@@ -31,7 +31,7 @@ import {
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
 import { packageHasPlugin } from "./plugin-discovery.js";
-import type { PluginListing } from "./plugin-host.js";
+import type { PluginCatalog, PluginListing } from "./plugin-host.js";
 import {
   PiGlobalConfigError,
   readPiDefaultTools,
@@ -137,7 +137,7 @@ export interface ServerPluginSummary {
 
 /** The plugin host's side of the extension list (`SessionManager`). */
 export interface ServerPluginCatalog {
-  listPlugins(): Promise<readonly PluginListing[]>;
+  listPlugins(): Promise<PluginCatalog>;
   /** Turn the installed extension `name` on or off for workspace sessions. */
   setPluginEnabled(name: string, enabled: boolean): void;
 }
@@ -190,6 +190,8 @@ interface PluginRows {
   own: Map<string, PluginListing>;
   /** Why the plugins could not be listed (the durable runtime did not open). */
   failure?: string;
+  /** Classic IDs whose package was skipped as a built-in, with the skipped issue. */
+  linkedBuiltIns: ReadonlyMap<string, string>;
 }
 
 interface ExtensionCatalog {
@@ -463,7 +465,8 @@ export class ServerResourceService {
         `${plugin.name} is required by the server and cannot be disabled`,
       );
     this.plugins.setPluginEnabled(plugin.extension, enabled);
-    const current = (await this.plugins.listPlugins()).find((p) => p.name === plugin.name);
+    const { plugins } = await this.plugins.listPlugins();
+    const current = plugins.find((p) => p.name === plugin.name);
     if (!current) throw new ServerResourceNotFoundError("extension");
     return pluginRow(id, current, this.agentDir);
   }
@@ -485,19 +488,20 @@ export class ServerResourceService {
    * has no plugin yet, else a row of its own, identified by its facet (or folder).
    */
   private async pluginRows(context: ResolutionContext): Promise<PluginRows> {
-    const rows: PluginRows = { attached: new Map(), own: new Map() };
+    const rows: PluginRows = { attached: new Map(), own: new Map(), linkedBuiltIns: new Map() };
     if (!this.plugins) return rows;
     // The plugins load with the durable runtime; when it cannot open, the classic list stands.
-    let plugins: readonly PluginListing[];
+    let catalog: PluginCatalog;
     try {
-      plugins = await this.plugins.listPlugins();
+      catalog = await this.plugins.listPlugins();
     } catch (error: unknown) {
       return { ...rows, failure: messageFrom(error) };
     }
+    rows.linkedBuiltIns = catalog.linkedBuiltIns;
     const classicIds = new Set(
       context.extensions.map((resource) => resourceId("extension", canonicalPath(resource.path))),
     );
-    for (const plugin of plugins) {
+    for (const plugin of catalog.plugins) {
       const id = plugin.extensionIds.find(
         (candidate) => classicIds.has(candidate) && !rows.attached.has(candidate),
       );
@@ -1104,8 +1108,14 @@ function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {
 function withPlugin(summary: ServerExtensionSummary, rows: PluginRows): ServerExtensionSummary {
   const plugin = rows.attached.get(summary.id);
   if (!plugin) {
-    if (rows.failure === undefined || !summary.kinds.includes("plugin")) return summary;
-    const warning = `Plugins could not be loaded: ${rows.failure}`;
+    const skipped = rows.linkedBuiltIns.get(summary.id);
+    const warning =
+      skipped !== undefined
+        ? `${skipped}: durable sessions use Oppi's built-in plugin, not this package's`
+        : rows.failure !== undefined && summary.kinds.includes("plugin")
+          ? `Plugins could not be loaded: ${rows.failure}`
+          : undefined;
+    if (warning === undefined) return summary;
     return { ...summary, warnings: boundedWarnings([warning, ...summary.warnings]) };
   }
   const loadError = plugin.loadError === undefined ? undefined : boundMessage(plugin.loadError);

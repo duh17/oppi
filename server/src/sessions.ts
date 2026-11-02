@@ -86,7 +86,7 @@ type ActiveSession = SessionStartActiveSession;
 // ─── Session Manager ───
 
 import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
-import type { PluginListing } from "./plugin-host.js";
+import type { PluginCatalog } from "./plugin-host.js";
 import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
@@ -662,7 +662,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /** Every plugin, installed or failed, as the extension list shows it (`listPlugins`). */
-  async listPlugins(): Promise<PluginListing[]> {
+  async listPlugins(): Promise<PluginCatalog> {
     const harness = await this.durableHarness;
     await harness.ensureShared();
     return harness.listPlugins();

@@ -53,8 +53,8 @@ import type { PluginRuntime } from "./oppi-v1.js";
 import {
   PluginHost,
   type LoadedPlugin,
+  type PluginCatalog,
   type PluginIssue,
-  type PluginListing,
 } from "./plugin-host.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
@@ -1638,12 +1638,16 @@ export class DurableHarness {
   /**
    * Every plugin: the installed ones in install order (built-ins first), each with why its last
    * load failed if it did, then those that failed and have no code installed. Oppi Control's built-in
-   * is selected only by Control sessions and is left out unless its reload failed.
+   * is selected only by Control sessions and is left out unless its reload failed. With them, the
+   * classic extensions whose package was skipped as one of the built-ins.
    */
-  listPlugins(): PluginListing[] {
-    return (this.pluginHost?.listings((name) => this.isExtensionEnabled(name)) ?? []).filter(
-      (plugin) => plugin.extension !== CONTROL_EXTENSION || plugin.loadError !== undefined,
-    );
+  listPlugins(): PluginCatalog {
+    return {
+      plugins: (this.pluginHost?.listings((name) => this.isExtensionEnabled(name)) ?? []).filter(
+        (plugin) => plugin.extension !== CONTROL_EXTENSION || plugin.loadError !== undefined,
+      ),
+      linkedBuiltIns: this.pluginHost?.classic.linkedBuiltIns ?? new Map(),
+    };
   }
 
   /**

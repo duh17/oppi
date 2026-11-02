@@ -197,6 +197,15 @@ export interface ClassicPluginIndex {
   readonly bundled: ReadonlySet<string>;
   /** A readable name per ID. */
   readonly names: ReadonlyMap<string, string>;
+  /** Each `bundled` ID's skipped issue: why its package's plugin is not loaded. */
+  readonly linkedBuiltIns: ReadonlyMap<string, string>;
+}
+
+/** The extension list's view of the plugins (`DurableHarness.listPlugins`). */
+export interface PluginCatalog {
+  readonly plugins: readonly PluginListing[];
+  /** Classic extension IDs of owner packages skipped as built-ins, with the skipped issue. */
+  readonly linkedBuiltIns: ReadonlyMap<string, string>;
 }
 
 /** The core facet's plugin name; a plugin of this name is refused. */
@@ -217,7 +226,11 @@ export class PluginHost {
   private failed: PluginFailure[] = [];
   /** What the core facet's `compose` orders by: the plugin set Chord is committing or holds. */
   private composition: Composition = { order: new Map(), builtIns: new Set() };
-  private classicIndex: ClassicPluginIndex = { bundled: new Set(), names: new Map() };
+  private classicIndex: ClassicPluginIndex = {
+    bundled: new Set(),
+    names: new Map(),
+    linkedBuiltIns: new Map(),
+  };
   private sync: Promise<unknown> = Promise.resolve();
   private reader?: RegistryReader;
   /** The host's own extensions outside plugins: per-session MCP. */
@@ -401,7 +414,7 @@ export class PluginHost {
     try {
       const found = await discoverOwnerPlugins(this.options.agentDir);
       errors.push(...found.problems.map(issueOf));
-      const bundled = new Set<string>();
+      const linkedBuiltIns = new Map<string, string>();
       owners = [];
       for (const plugin of found.plugins) {
         if (plugin.name === CORE_PLUGIN) {
@@ -411,15 +424,20 @@ export class PluginHost {
             message: `"${CORE_PLUGIN}" is reserved`,
           });
         } else if (builtInNames.has(plugin.name)) {
-          skipped.push({
+          const issue = {
             path: plugin.dir,
             plugin: plugin.name,
             message: `"${plugin.name}" is built into Oppi`,
-          });
-          for (const id of plugin.extensionIds) bundled.add(id);
+          };
+          skipped.push(issue);
+          for (const id of plugin.extensionIds) linkedBuiltIns.set(id, issue.message);
         } else owners.push(plugin);
       }
-      this.classicIndex = { bundled, names: found.names };
+      this.classicIndex = {
+        bundled: new Set(linkedBuiltIns.keys()),
+        names: found.names,
+        linkedBuiltIns,
+      };
     } catch (error) {
       errors.push({
         path: this.options.agentDir,
