@@ -3285,7 +3285,21 @@ struct SSHTerminalTests {
             channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
             "the remote terminal is the grid above the bar"
         )
-        let settledResizes = resizes.sizes.count
+        // The bar coalesces resizes for 80 ms and the fixture delivers each one on its own
+        // task, so a count read straight after a layout wait can miss a resize still owed:
+        // the settled count is the one that stops changing, not the next reading.
+        func settledResizeCount() async -> Int {
+            var last = resizes.sizes.count
+            for _ in 0..<12 {
+                try? await Task.sleep(for: .milliseconds(120))
+                nav.view.layoutIfNeeded()
+                let count = resizes.sizes.count
+                if count == last { return count }
+                last = count
+            }
+            return last
+        }
+        let settledResizes = await settledResizeCount()
         #expect(settledResizes > 0, "the first layout sized the remote terminal")
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
             nav.view.layoutIfNeeded()
