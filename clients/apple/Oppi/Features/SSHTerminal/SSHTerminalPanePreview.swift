@@ -57,12 +57,23 @@ final class SSHTerminalPanePreview: UIView {
         needsFullPaint = true
     }
 
-    /// No incoming side any more: the next swipe starts from nothing, and the
-    /// renderer it built goes (4 MiB of atlas, 20 MiB once a pane drew an
-    /// emoji) rather than waiting for the next drag.
+    /// No incoming side any more. The renderer stays, with the glyphs its atlas
+    /// already holds, so the next swipe's first frame does not build one:
+    /// `releaseRenderer` lets it go when the screen is not in view. One that drew
+    /// images goes now: its texture cache holds up to 171 MB
+    /// (`SSHTerminalKittyTextureCache.limitBytes`), and a text-only frame never
+    /// clears it, so no image texture outlives the swipe that drew it.
     func detach() {
         block = nil
         channel = nil
+        if (renderer?.cachedImageCount ?? 0) > 0 { renderer = nil }
+        needsFullPaint = true
+    }
+
+    /// The screen left the view, went to the background, or memory is short:
+    /// the renderer goes (4 MiB of text atlas once it has drawn, 16 MiB more
+    /// once a pane drew a colour glyph), and the next swipe builds another.
+    func releaseRenderer() {
         renderer = nil
         needsFullPaint = true
     }
@@ -144,7 +155,8 @@ final class SSHTerminalPanePreview: UIView {
     }
 
     private func rendererIfReady(scale: CGFloat) -> SSHTerminalMetalRenderer? {
-        if let renderer { return renderer }
+        // Kept across swipes, so a display that changed scale meanwhile builds anew.
+        if let renderer, renderer.scale == max(scale, 1) { return renderer }
         guard let pipeline = SSHTerminalMetalPipeline.peek() else {
             SSHTerminalMetalPipeline.prewarm()
             return nil
@@ -160,7 +172,13 @@ final class SSHTerminalPanePreview: UIView {
     /// Posted on the main thread after `AppFont` rebuilds.
     func fontPreferencesChanged() {
         metrics = SSHTerminalCellMetrics.codeFont()
-        renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))
+        // A font change resets the atlas, so a renderer kept with no drag in
+        // progress has nothing left to keep: the next swipe builds one.
+        if block == nil {
+            renderer = nil
+        } else {
+            renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))
+        }
         needsFullPaint = true
     }
 }

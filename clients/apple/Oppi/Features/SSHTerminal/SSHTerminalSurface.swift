@@ -338,8 +338,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         stopDisplayLink()
         if window == nil {
             keyRepeater.stop()
+            // The page is not in view: the swipe renderer kept between drags goes.
+            panePreview.releaseRenderer()
             NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
             NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+            NotificationCenter.default.removeObserver(self, name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+            NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
             return
         }
         setNeedsLayout()
@@ -352,6 +356,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         center.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(sceneBecameActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(sceneResignedActive), name: UIApplication.willResignActiveNotification, object: nil)
+        center.removeObserver(self, name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        center.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
+        center.addObserver(self, selector: #selector(releaseSwipeRenderer), name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        center.addObserver(self, selector: #selector(releaseSwipeRenderer), name: UIApplication.didEnterBackgroundNotification, object: nil)
+    }
+
+    /// Memory is short or the app went to the background: the swipe's renderer goes.
+    @objc private func releaseSwipeRenderer() {
+        panePreview.releaseRenderer()
     }
 
     @objc private func sceneBecameActive() {
@@ -1316,8 +1329,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         requestDisplayLink()
     }
 
-    /// The swipe is over: the incoming side is neither needed nor drawn, and the
-    /// renderer it built goes with it.
+    /// The swipe is over: the incoming side is not drawn. Its renderer stays for the next swipe.
     func dropIncomingPane() {
         panePreview.detach()
     }
