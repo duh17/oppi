@@ -164,10 +164,13 @@ final class SettingsSweepPreviewController: PreviewRootController {
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
 
-        // A LAN host, not a tailnet name: activating a tailnet server would start the
-        // in-app Tailscale node and wait for its proxy.
+        // A reserved `.invalid` host (RFC 6761) that never resolves. Pages on the
+        // installed connection still run real setup (`apiClientReady`); against a
+        // reachable host, e.g. this Mac's own `oppi serve` at mac-studio.local, the
+        // refused pairing fails closed and drops the fixture client. A tailnet name
+        // would start the in-app Tailscale node and wait for its proxy.
         let credentials = ServerCredentials(
-            host: "mac-studio.local",
+            host: "settings-sweep.invalid",
             port: 7749,
             token: "sk_preview",
             name: "mac-studio",
@@ -184,7 +187,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SettingsSweepFixtureURLProtocol.self]
         let client = APIClient(
-            baseURL: URL(string: "https://mac-studio.local:7749") ?? URL(fileURLWithPath: "/"),
+            baseURL: URL(string: "https://settings-sweep.invalid:7749") ?? URL(fileURLWithPath: "/"),
             token: "sk_preview",
             configuration: configuration
         )
