@@ -28,9 +28,16 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
     var detailDescription: String { description ?? "" }
     var detailLoadError: String? { loadError }
     var detailState: AnyHashable { AnyHashable(state) }
-    var isServerDefaultOn: Bool { state == .on }
-    /// A built-in the server needs stays on: its plugin says it is required.
-    var canToggleServerDefault: Bool { state != .error && state != .unknown && plugin?.required != true }
+    /// A plugin whose reload failed but kept its previous code is on while that code runs: its
+    /// row says `error`, its plugin `enabled`. A row being switched off shows off.
+    var isServerDefaultOn: Bool { state == .on || (state == .error && isKeptRunning) }
+    /// A kept plugin can still be turned off. A built-in the server needs stays on: its plugin
+    /// says it is required.
+    var canToggleServerDefault: Bool {
+        (state == .on || state == .off || isKeptRunning) && plugin?.required != true
+    }
+
+    private var isKeptRunning: Bool { plugin?.kept == true && plugin?.enabled == true }
 }
 
 /// A detail response carries its own newer copy of the catalog's row.

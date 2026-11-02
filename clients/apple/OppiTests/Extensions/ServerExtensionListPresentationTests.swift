@@ -77,6 +77,31 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation(extensions: [required], query: "required").visibleExtensions.map(\.id) == ["control"])
     }
 
+    @Test func aKeptPluginsSwitchStaysOnAndCanBeTurnedOffUnlessRequired() {
+        func kept(required: Bool, state: ServerExtensionState = .error) -> ServerExtensionSummary {
+            extensionRow(
+                id: "both", name: "both", kind: .directory, state: state, loadError: "ParseError",
+                kinds: [.plugin, .piExtension], source: .owner,
+                plugin: plugin(required: required, loadError: "ParseError", kept: true)
+            )
+        }
+        // Its reload failed, but its plugin is on and its previous code runs.
+        #expect(kept(required: false).isServerDefaultOn)
+        #expect(kept(required: false).canToggleServerDefault)
+        #expect(kept(required: true).isServerDefaultOn)
+        #expect(!kept(required: true).canToggleServerDefault)
+        // Switching it off shows off while the save runs.
+        #expect(!kept(required: false, state: .off).isServerDefaultOn)
+
+        // A plugin that never loaded has nothing running and nothing to switch.
+        let neverLoaded = extensionRow(
+            id: "broken", name: "broken", kind: .directory, state: .error, loadError: "ParseError",
+            kinds: [.plugin], source: .owner, plugin: plugin(loadError: "ParseError")
+        )
+        #expect(!neverLoaded.isServerDefaultOn)
+        #expect(!neverLoaded.canToggleServerDefault)
+    }
+
     @Test func aPluginsDetailListsWhatItContributesWithHooksByTask() {
         let sections = ServerExtensionListPresentation.pluginSections(for: ServerPluginSummary(
             extensionName: "webtools", required: false, enabled: true,
@@ -390,7 +415,8 @@ struct ServerExtensionListPresentationTests {
 
     private func plugin(required: Bool = false, loadError: String? = nil, kept: Bool = false) -> ServerPluginSummary {
         ServerPluginSummary(
-            extensionName: loadError == nil || kept ? "plugin" : nil, required: required, enabled: loadError == nil,
+            extensionName: loadError == nil || kept ? "plugin" : nil, required: required,
+            enabled: loadError == nil || kept,
             runtimes: ["host"], tools: [], hooks: [], sections: [], wraps: [], tasks: [],
             loadError: loadError, kept: kept
         )
