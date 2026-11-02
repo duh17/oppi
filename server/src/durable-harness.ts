@@ -530,8 +530,8 @@ export class SessionHost {
    * The tasks behind `hasPendingWake`: conversation `id`'s live reporters and its background
    * jobs not yet delivered. Each one ends; tickers (pills, working words) are not among them.
    * A parent's reporter waits on these of its child to report the child's later answers.
-   * A blocked task (parked by the crash-loop guard, or with no definition to run it) does not
-   * end by itself, so it is not among them either: it would hold the idle timeout forever.
+   * A blocked task (no registered definition can run it) does not end by itself, so it is not
+   * among them either: it would hold the idle timeout forever.
    */
   async pendingWakers(id: ConversationId): Promise<TaskId[]> {
     if (!this.opening || this.closed || this.closing) return [];
@@ -1035,7 +1035,7 @@ export class SessionHost {
   private async recover(
     error: unknown,
   ): Promise<{ kind: "recovered" } | { kind: "stopped" } | { kind: "abandoned"; error: unknown }> {
-    log.error("durable_store.session_failed", {
+    log.error("durable_store.storage_failed", {
       storeId: this.storeId,
       error: safeErrorMessage(error),
     });
