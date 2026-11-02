@@ -45,73 +45,82 @@ enum ContextBarScoping {
         fileScope == .session && fileScopes(sessionId: sessionId, worktreeId: worktreeId).contains(.session)
     }
 
-    /// The Git status narrowed to the session's touched files: `changedFiles`
-    /// (the server's full list, or `changeStats.changedFiles`, which is
-    /// capped) and `stats.filesChanged`, the session's own count. The panel
-    /// and the bar button both read it, so they count alike. Nil when the
-    /// session touched nothing.
-    static func sessionScope(
-        gitStatus: GitStatus?,
-        changedFiles: [String]?,
-        stats: SessionChangeStats? = nil
-    ) -> SessionScopedGitStatus? {
-        guard let gitStatus, let changedFiles, !changedFiles.isEmpty else { return nil }
-        return SessionScopedGitStatus.filter(
-            gitStatus: gitStatus,
-            sessionChangedFiles: changedFiles,
-            reportedTouchedCount: stats?.filesChanged ?? 0
-        )
+    /// What the Git button and the Git panel show for one scope: the rows and
+    /// the counts. `displayedChanges` is their one owner, so they count alike.
+    struct DisplayedChanges {
+        /// The scope lists the session's touched files, not the Git status.
+        let filtersToSession: Bool
+        /// The Git status narrowed to the session's touched files, while the
+        /// scope filters and the session touched something.
+        let sessionScope: SessionScopedGitStatus?
+        /// Changes, not touches: the touched files Git reports in This
+        /// session, else Git's own count.
+        let fileCount: Int
+        let addedLines: Int
+        let removedLines: Int
+        private let gitStatus: GitStatus?
+
+        fileprivate init(
+            filtersToSession: Bool,
+            sessionScope: SessionScopedGitStatus?,
+            gitStatus: GitStatus?
+        ) {
+            self.filtersToSession = filtersToSession
+            self.sessionScope = sessionScope
+            self.gitStatus = gitStatus
+            if filtersToSession {
+                fileCount = sessionScope?.sessionFileCount ?? 0
+                addedLines = sessionScope?.sessionAddedLines ?? 0
+                removedLines = sessionScope?.sessionRemovedLines ?? 0
+            } else {
+                fileCount = gitStatus?.uncommittedCount ?? 0
+                addedLines = gitStatus?.addedLines ?? 0
+                removedLines = gitStatus?.removedLines ?? 0
+            }
+        }
+
+        /// This session's header total: every touched file, Git's or not.
+        var touchedCount: Int { sessionScope?.touchedCount ?? 0 }
+
+        /// The rows: in This session every touched file, Git's first;
+        /// otherwise Git's changes.
+        var files: [GitPanelFile] {
+            if filtersToSession { return sessionScope?.touchedFiles ?? [] }
+            return (gitStatus?.files ?? []).map(GitPanelFile.init)
+        }
     }
 
-    /// This session counts the files it touched, as its list shows them.
-    static func sessionScope(gitStatus: GitStatus?, stats: SessionChangeStats?) -> SessionScopedGitStatus? {
-        sessionScope(gitStatus: gitStatus, changedFiles: stats?.changedFiles, stats: stats)
-    }
-
-    static func displayFileCount(
+    /// The changes `fileScope` lists, with their counts. `touchedPaths` is
+    /// the session's touched list as its host resolved it
+    /// (`SessionTouchedList.paths`: the server's full list, or the capped
+    /// `changeStats.changedFiles`); `reportedTouchedCount` is
+    /// `changeStats.filesChanged`, the session's own count when that list is
+    /// capped. The Git button passes the scope the panel opens on; the panel
+    /// passes the one it shows.
+    static func displayedChanges(
         gitStatus: GitStatus?,
-        filtersToSession: Bool,
-        sessionScope: SessionScopedGitStatus?
-    ) -> Int {
-        // Changes, not touches: the touched files Git reports. The touched
-        // total is This session's header alone.
-        if filtersToSession { return sessionScope?.sessionFileCount ?? 0 }
-        return gitStatus?.uncommittedCount ?? 0
-    }
-
-    static func displayAddedLines(
-        gitStatus: GitStatus?,
-        filtersToSession: Bool,
-        sessionScope: SessionScopedGitStatus?
-    ) -> Int {
-        if filtersToSession { return sessionScope?.sessionAddedLines ?? 0 }
-        return gitStatus?.addedLines ?? 0
-    }
-
-    static func displayRemovedLines(
-        gitStatus: GitStatus?,
-        filtersToSession: Bool,
-        sessionScope: SessionScopedGitStatus?
-    ) -> Int {
-        if filtersToSession { return sessionScope?.sessionRemovedLines ?? 0 }
-        return gitStatus?.removedLines ?? 0
+        sessionId: String?,
+        worktreeId: String?,
+        fileScope: FileScope,
+        touchedPaths: [String]?,
+        reportedTouchedCount: Int
+    ) -> DisplayedChanges {
+        let filters = filtersToSession(sessionId: sessionId, worktreeId: worktreeId, fileScope: fileScope)
+        var scope: SessionScopedGitStatus?
+        if filters, let gitStatus, let touchedPaths, !touchedPaths.isEmpty {
+            scope = SessionScopedGitStatus.filter(
+                gitStatus: gitStatus,
+                sessionChangedFiles: touchedPaths,
+                reportedTouchedCount: reportedTouchedCount
+            )
+        }
+        return DisplayedChanges(filtersToSession: filters, sessionScope: scope, gitStatus: gitStatus)
     }
 
     /// The paths Select may pick, in list order: Git's files only. Quick
     /// actions send them to the server, which refuses one Git does not report.
     static func selectablePaths(_ files: [GitPanelFile]) -> [String] {
         files.filter(\.isSelectable).map(\.path)
-    }
-
-    /// The rows: in This session every touched file, Git's first; otherwise
-    /// Git's changes.
-    static func displayFiles(
-        gitStatus: GitStatus?,
-        filtersToSession: Bool,
-        sessionScope: SessionScopedGitStatus?
-    ) -> [GitPanelFile] {
-        if filtersToSession { return sessionScope?.touchedFiles ?? [] }
-        return (gitStatus?.files ?? []).map(GitPanelFile.init)
     }
 }
 
@@ -186,8 +195,11 @@ final class WorkspaceContextBarView: UIView {
         var serverId: String?
         /// The session's touched list as its host resolved it
         /// (`SessionTouchedList.paths`): the one the host's Git button counts
-        /// too. Nil reads the session's `changeStats.changedFiles`.
+        /// too.
         var sessionTouchedFiles: [String]?
+        /// The session's own touched count (`changeStats.filesChanged`),
+        /// which a capped touched list falls short of.
+        var sessionFilesChanged = 0
     }
 
     /// What stays fixed for the bar's life.
@@ -304,8 +316,10 @@ final class WorkspaceContextBarView: UIView {
 
     // Derived on each render.
     private var displayFiles: [GitPanelFile] = []
-    private var sessionScope: SessionScopedGitStatus?
-    private var filtersToSession = false
+    private var changes = ContextBarScoping.displayedChanges(
+        gitStatus: nil, sessionId: nil, worktreeId: nil, fileScope: .all, touchedPaths: nil, reportedTouchedCount: 0
+    )
+    private var filtersToSession: Bool { changes.filtersToSession }
 
     // Views.
     /// The summary row over the table, then the selection bar. Hidden while
@@ -554,27 +568,15 @@ final class WorkspaceContextBarView: UIView {
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
 
-        filtersToSession = ContextBarScoping.filtersToSession(
+        changes = ContextBarScoping.displayedChanges(
+            gitStatus: context.gitStatus,
             sessionId: context.sessionId,
             worktreeId: context.worktreeId,
-            fileScope: fileScope
+            fileScope: fileScope,
+            touchedPaths: context.sessionTouchedFiles,
+            reportedTouchedCount: context.sessionFilesChanged
         )
-        if filtersToSession, let sessionId = context.sessionId {
-            let session = connection.sessionStore.sessions.first { $0.id == sessionId }
-            // The host's touched list, the one its Git button counts too.
-            sessionScope = ContextBarScoping.sessionScope(
-                gitStatus: context.gitStatus,
-                changedFiles: context.sessionTouchedFiles ?? session?.changeStats?.changedFiles,
-                stats: session?.changeStats
-            )
-        } else {
-            sessionScope = nil
-        }
-        displayFiles = ContextBarScoping.displayFiles(
-            gitStatus: context.gitStatus,
-            filtersToSession: filtersToSession,
-            sessionScope: sessionScope
-        )
+        displayFiles = changes.files
         // A clean repository still shows its branch and commits.
         let showsContent = context.gitStatus?.isGitRepo == true
         contentStack.isHidden = !showsContent
@@ -597,17 +599,9 @@ final class WorkspaceContextBarView: UIView {
 
     private func renderSummaryRow(palette: ThemePalette) {
         let gitStatus = context.gitStatus
-        let fileCount = ContextBarScoping.displayFileCount(
-            gitStatus: gitStatus,
-            filtersToSession: filtersToSession,
-            sessionScope: sessionScope
-        )
-        let added = ContextBarScoping.displayAddedLines(
-            gitStatus: gitStatus, filtersToSession: filtersToSession, sessionScope: sessionScope
-        )
-        let removed = ContextBarScoping.displayRemovedLines(
-            gitStatus: gitStatus, filtersToSession: filtersToSession, sessionScope: sessionScope
-        )
+        let fileCount = changes.fileCount
+        let added = changes.addedLines
+        let removed = changes.removedLines
 
         let cyan = palette.ui.cyan
         branchGroup.isHidden = gitStatus?.branch == nil
@@ -619,7 +613,7 @@ final class WorkspaceContextBarView: UIView {
 
         if filtersToSession {
             // The list's own count: every touched file, then the ones Git has.
-            let touched = sessionScope?.touchedCount ?? 0
+            let touched = changes.touchedCount
             changedLabel.isHidden = touched <= 0
             changedLabel.text = String(localized: "\(SessionFormatting.compactCount(touched)) touched · \(SessionFormatting.compactCount(fileCount)) with changes")
         } else {

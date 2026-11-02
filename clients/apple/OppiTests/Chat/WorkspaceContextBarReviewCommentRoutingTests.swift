@@ -64,6 +64,29 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
                 "The open review should retain its original navigation files")
     }
 
+    /// The bar no longer reads the session store: a session's touched list and
+    /// count reach it through its context, and each change redraws the header.
+    @Test func thisSessionHeaderFollowsTheContextsTouchedListAndCount() throws {
+        let fixture = ContextBarFixture(context: .init(
+            gitStatus: makeReviewGitStatus(),
+            workspaceId: "w1",
+            sessionId: "s1",
+            sessionTouchedFiles: ["/repo/src/App.swift"],
+            sessionFilesChanged: 1
+        ))
+        defer { fixture.tearDown() }
+        #expect(fixture.label(containing: "touched")?.text == "1 touched · 1 with changes")
+
+        // A capped list: the session reports more files than the list names.
+        fixture.bar.context.sessionFilesChanged = 4
+        fixture.bar.updatePropertiesIfNeeded()
+        #expect(fixture.label(containing: "touched")?.text == "4 touched · 1 with changes")
+
+        fixture.bar.context.sessionTouchedFiles = ["/repo/src/App.swift", "/repo/README.md"]
+        fixture.bar.updatePropertiesIfNeeded()
+        #expect(fixture.label(containing: "touched")?.text == "4 touched · 2 with changes")
+    }
+
     @Test func parentScopeKeepsInlineComposerVoiceInputForFileDetail() async throws {
         let voiceInputManager = VoiceInputManager()
         let parentScope = ReviewCommentSelectionScope.activeSession(ReviewCommentSelectionRouter(
@@ -97,11 +120,11 @@ private struct ContextBarFixture {
     let bar: WorkspaceContextBarView
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
 
-    init() {
+    init(context: WorkspaceContextBarView.Context = .init(gitStatus: makeReviewGitStatus(), workspaceId: "w1")) {
         let connection = ServerConnection()
         connection.sessionStore.switchServer(to: "srv1")
         bar = WorkspaceContextBarView(
-            context: .init(gitStatus: makeReviewGitStatus(), workspaceId: "w1"),
+            context: context,
             options: .init(),
             connection: connection,
             apiClient: nil,
@@ -133,6 +156,12 @@ private struct ContextBarFixture {
         timelineAllViews(in: bar)
             .compactMap { $0 as? UIButton }
             .first { $0.accessibilityLabel?.contains(text) == true }
+    }
+
+    func label(containing text: String) -> UILabel? {
+        timelineAllViews(in: bar)
+            .compactMap { $0 as? UILabel }
+            .first { $0.text?.contains(text) == true }
     }
 
     func tearDown() {

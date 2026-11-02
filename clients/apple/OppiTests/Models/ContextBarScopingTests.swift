@@ -33,26 +33,22 @@ struct ContextBarScopingTests {
         let gitStatus = makeDirtyGitStatus(totalFiles: 3, files: allFiles, addedLines: 6, removedLines: 3)
         // The session's edit and write calls touched only a.swift; a script
         // it ran changed the rest. All of it is the session's worktree.
-        let sessionTouched = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["a.swift"])
+        let touched = ["a.swift"]
 
         #expect(ContextBarScoping.fileScopes(sessionId: "session-1", worktreeId: "wt-feature") == [.worktree, .session])
         let opening = ContextBarScoping.defaultFileScope(sessionId: "session-1", worktreeId: "wt-feature")
         #expect(opening == .worktree)
-        let wide = ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: "wt-feature", fileScope: opening)
-        #expect(!wide)
-        #expect(ContextBarScoping.displayFiles(
-            gitStatus: gitStatus, filtersToSession: wide, sessionScope: sessionTouched
-        ).map(\.path) == ["a.swift", "b.swift", "c.swift"])
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: wide, sessionScope: sessionTouched) == 3)
-        #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: wide, sessionScope: sessionTouched) == 6)
+        let wide = changes(gitStatus, worktreeId: "wt-feature", scope: opening, touched: touched)
+        #expect(!wide.filtersToSession)
+        #expect(wide.files.map(\.path) == ["a.swift", "b.swift", "c.swift"])
+        #expect(wide.fileCount == 3)
+        #expect(wide.addedLines == 6)
 
-        let narrow = ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: "wt-feature", fileScope: .session)
-        #expect(narrow)
-        #expect(ContextBarScoping.displayFiles(
-            gitStatus: gitStatus, filtersToSession: narrow, sessionScope: sessionTouched
-        ).map(\.path) == ["a.swift"])
+        let narrow = changes(gitStatus, worktreeId: "wt-feature", scope: .session, touched: touched)
+        #expect(narrow.filtersToSession)
+        #expect(narrow.files.map(\.path) == ["a.swift"])
         // All changes is the main checkout's widening; a worktree has none.
-        #expect(!ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: "wt-feature", fileScope: .all))
+        #expect(!changes(gitStatus, worktreeId: "wt-feature", scope: .all, touched: touched).filtersToSession)
     }
 
     @Test func mainCheckoutSessionDefaultsToItsOwnFiles() {
@@ -62,23 +58,18 @@ struct ContextBarScopingTests {
             makeFile("c.swift", added: 3, removed: 2),
         ]
         let gitStatus = makeDirtyGitStatus(totalFiles: 20, files: allFiles, addedLines: 200, removedLines: 80)
-        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["a.swift", "b.swift"])
 
         // No worktree and the main worktree's id are both the main checkout.
         for worktreeId in [nil, WorkspaceWorktree.mainId] {
             #expect(ContextBarScoping.fileScopes(sessionId: "session-1", worktreeId: worktreeId) == [.session, .all])
             let opening = ContextBarScoping.defaultFileScope(sessionId: "session-1", worktreeId: worktreeId)
             #expect(opening == .session)
-            let filters = ContextBarScoping.filtersToSession(
-                sessionId: "session-1", worktreeId: worktreeId, fileScope: opening
-            )
-            #expect(filters)
-            #expect(ContextBarScoping.displayFiles(
-                gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope
-            ).map(\.path) == ["a.swift", "b.swift"])
-            #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 2)
-            #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 15)
-            #expect(ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 4)
+            let shown = changes(gitStatus, worktreeId: worktreeId, scope: opening, touched: ["a.swift", "b.swift"])
+            #expect(shown.filtersToSession)
+            #expect(shown.files.map(\.path) == ["a.swift", "b.swift"])
+            #expect(shown.fileCount == 2)
+            #expect(shown.addedLines == 15)
+            #expect(shown.removedLines == 4)
         }
     }
 
@@ -88,15 +79,12 @@ struct ContextBarScopingTests {
             makeFile("b.swift", added: 2, removed: 1),
         ]
         let gitStatus = makeDirtyGitStatus(totalFiles: 2, files: allFiles, addedLines: 3, removedLines: 1)
-        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["a.swift"])
-        let filters = ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: nil, fileScope: .all)
+        let shown = changes(gitStatus, scope: .all, touched: ["a.swift"])
 
-        #expect(!filters)
-        #expect(ContextBarScoping.displayFiles(
-            gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope
-        ).map(\.path) == ["a.swift", "b.swift"])
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 2)
-        #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 3)
+        #expect(!shown.filtersToSession)
+        #expect(shown.files.map(\.path) == ["a.swift", "b.swift"])
+        #expect(shown.fileCount == 2)
+        #expect(shown.addedLines == 3)
     }
 
     /// A file the session wrote that Git no longer reports (committed, or
@@ -107,27 +95,26 @@ struct ContextBarScopingTests {
             totalFiles: 2,
             files: [makeFile("src/a.swift", added: 4, removed: 1), makeFile("src/b.swift", added: 2, removed: 0)]
         )
-        let scope = ContextBarScoping.sessionScope(
-            gitStatus: gitStatus,
-            changedFiles: ["/tmp/plan.md", "/repo/src/b.swift", "src/committed.swift", "/tmp/plan.md"]
+        let shown = changes(
+            gitStatus,
+            touched: ["/tmp/plan.md", "/repo/src/b.swift", "src/committed.swift", "/tmp/plan.md"]
         )
-        let files = ContextBarScoping.displayFiles(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope)
+        let files = shown.files
 
         #expect(files.map(\.path) == ["src/b.swift", "/tmp/plan.md", "src/committed.swift"])
         #expect(files.map { $0.gitFile != nil } == [true, false, false])
         // The bar counts changes (the one Git reports); the header's touched
         // total counts the whole list.
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope) == 1)
-        #expect(scope?.touchedCount == 3)
-        #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope) == 2)
+        #expect(shown.fileCount == 1)
+        #expect(shown.touchedCount == 3)
+        #expect(shown.addedLines == 2)
     }
 
     /// Select picks only Git's files: a quick action sends the paths to the
     /// server, which refuses one Git does not report.
     @Test func selectOffersOnlyFilesGitReports() {
         let gitStatus = makeDirtyGitStatus(totalFiles: 2, files: [makeFile("src/a.swift", added: 1, removed: 0)])
-        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["/tmp/plan.md", "src/a.swift"])
-        let files = ContextBarScoping.displayFiles(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope)
+        let files = changes(gitStatus, touched: ["/tmp/plan.md", "src/a.swift"]).files
 
         #expect(files.map(\.path) == ["src/a.swift", "/tmp/plan.md"])
         #expect(ContextBarScoping.selectablePaths(files) == ["src/a.swift"])
@@ -137,21 +124,17 @@ struct ContextBarScopingTests {
     /// header reads the same before and after the full list arrives.
     @Test func aCappedTouchedListCountsTheSessionsOwnTotal() {
         let gitStatus = makeDirtyGitStatus(totalFiles: 1, files: [makeFile("a.swift", added: 1, removed: 0)])
-        let stats = SessionChangeStats(
-            mutatingToolCalls: 9,
-            filesChanged: 5,
-            changedFiles: ["a.swift", "b.swift"],
-            changedFilesOverflow: 3
+        // The capped list the session reports (`changeStats.changedFiles`),
+        // then the full list once the host has loaded it.
+        let capped = changes(gitStatus, touched: ["a.swift", "b.swift"], reported: 5)
+        let full = changes(
+            gitStatus,
+            touched: ["a.swift", "b.swift", "c.swift", "d.swift", "e.swift"],
+            reported: 5
         )
-        let capped = ContextBarScoping.sessionScope(gitStatus: gitStatus, stats: stats)
-        let full = ContextBarScoping.sessionScope(
-            gitStatus: gitStatus,
-            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift", "e.swift"],
-            stats: stats
-        )
-        #expect(capped?.touchedCount == 5)
-        #expect(full?.touchedCount == 5)
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: true, sessionScope: full) == 1)
+        #expect(capped.touchedCount == 5)
+        #expect(full.touchedCount == 5)
+        #expect(full.fileCount == 1)
     }
 
     /// The Git button and the panel read one list: the loaded full list only
@@ -179,35 +162,36 @@ struct ContextBarScopingTests {
             addedLines: 150,
             removedLines: 75
         )
-        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: [])
-        let filters = ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: nil, fileScope: .session)
+        let shown = changes(gitStatus, touched: [])
 
-        #expect(scope == nil)
-        #expect(ContextBarScoping.displayFiles(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope).isEmpty)
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 0)
-        #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 0)
-        #expect(ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 0)
+        #expect(shown.sessionScope == nil)
+        #expect(shown.files.isEmpty)
+        #expect(shown.fileCount == 0)
+        #expect(shown.addedLines == 0)
+        #expect(shown.removedLines == 0)
     }
 
+    /// The session's tool calls name absolute paths; Git's are repo-relative.
     @Test func sessionScopeMatchesTheSessionsAbsolutePathsToGitPaths() {
         let gitStatus = makeDirtyGitStatus(
             totalFiles: 2,
             files: [makeFile("src/a.swift", added: 4, removed: 1), makeFile("src/b.swift", added: 2, removed: 0)]
         )
-        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["/repo/src/a.swift"])
+        let scope = changes(gitStatus, touched: ["/repo/src/a.swift"]).sessionScope
         #expect(scope?.touchedFiles.map(\.path) == ["src/a.swift"])
         #expect(scope?.touchedFiles.first?.gitFile != nil)
-        #expect(ContextBarScoping.sessionScope(gitStatus: nil, changedFiles: ["/repo/src/a.swift"]) == nil)
-        #expect(ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: nil) == nil)
+        #expect(changes(nil, touched: ["/repo/src/a.swift"]).sessionScope == nil)
+        #expect(changes(gitStatus, touched: nil).sessionScope == nil)
     }
 
     // MARK: - Workspace totals
 
     @Test func workspaceViewShowsTotalUncommittedCountAndLines() {
         let gitStatus = makeDirtyGitStatus(totalFiles: 12, addedLines: 100, removedLines: 50)
-        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: false, sessionScope: nil) == 12)
-        #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: false, sessionScope: nil) == 100)
-        #expect(ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, filtersToSession: false, sessionScope: nil) == 50)
+        let shown = changes(gitStatus, sessionId: nil, scope: .all, touched: nil)
+        #expect(shown.fileCount == 12)
+        #expect(shown.addedLines == 100)
+        #expect(shown.removedLines == 50)
     }
 
     // MARK: - Quick action routing
@@ -240,6 +224,26 @@ struct ContextBarScopingTests {
     }
 
     // MARK: - Helpers
+
+    /// The real entry the Git button and the panel share. Defaults: a main
+    /// checkout session on This session.
+    private func changes(
+        _ gitStatus: GitStatus?,
+        sessionId: String? = "session-1",
+        worktreeId: String? = nil,
+        scope: ContextBarScoping.FileScope = .session,
+        touched: [String]?,
+        reported: Int = 0
+    ) -> ContextBarScoping.DisplayedChanges {
+        ContextBarScoping.displayedChanges(
+            gitStatus: gitStatus,
+            sessionId: sessionId,
+            worktreeId: worktreeId,
+            fileScope: scope,
+            touchedPaths: touched,
+            reportedTouchedCount: reported
+        )
+    }
 
     private func makeFile(_ path: String, added: Int, removed: Int) -> GitFileStatus {
         GitFileStatus(status: " M", path: path, addedLines: added, removedLines: removed)

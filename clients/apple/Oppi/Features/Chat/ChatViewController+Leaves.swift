@@ -74,7 +74,8 @@ extension ChatViewController {
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
             serverId: serverIdHint ?? connection.currentServerId,
-            sessionTouchedFiles: sessionTouchedPaths
+            sessionTouchedFiles: sessionTouchedPaths,
+            sessionFilesChanged: session?.changeStats?.filesChanged ?? 0
         )
     }
 
@@ -191,20 +192,15 @@ extension ChatViewController {
     private var gitGlance: (status: GitStatus, changedFiles: Int, added: Int, removed: Int)? {
         guard let gitStatus = loadedGitStatus, gitStatus.isGitRepo else { return nil }
         let session = session
-        let filters = ContextBarScoping.filtersToSession(
+        let changes = ContextBarScoping.displayedChanges(
+            gitStatus: gitStatus,
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
-            fileScope: ContextBarScoping.defaultFileScope(sessionId: sessionId, worktreeId: session?.worktreeId)
+            fileScope: ContextBarScoping.defaultFileScope(sessionId: sessionId, worktreeId: session?.worktreeId),
+            touchedPaths: sessionTouchedPaths,
+            reportedTouchedCount: session?.changeStats?.filesChanged ?? 0
         )
-        let scope = filters
-            ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: sessionTouchedPaths, stats: session?.changeStats)
-            : nil
-        return (
-            gitStatus,
-            ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope),
-            ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope),
-            ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope)
-        )
+        return (gitStatus, changes.fileCount, changes.addedLines, changes.removedLines)
     }
 
     /// The Files panel (UIKit), as a sheet or in the trailing column. It
