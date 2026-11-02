@@ -88,7 +88,7 @@ run_self_test() {
   # whose last step succeeds must fail the lane, and Mac must not start after it.
   local lane_fixture lane_src lane_status
   lane_fixture="$(mktemp -d -t oppi-pre-push-lane.XXXXXX)"
-  lane_src="$(awk '/^(lane_event|run_cached|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
+  lane_src="$(awk '/^(lane_event|run_cached|with_apple_slot|wait_for_apple_slot|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
   case "$lane_src" in
     *'run_cached() {'*'apple_then_mac() {'*) ;;
     *)
@@ -232,15 +232,17 @@ HOOK_SHAPE
     exit 1
   }
   rm -f "$lane_fixture"/*
-  # The Release compile starts with the iOS build, not after it.
+  # The Release compile starts while the iOS build runs, once that build holds its slot.
+  mkdir -p "$lane_fixture/heavy"
   set +e
   (
     set -euo pipefail
+    export OPPI_HEAVY_DIR="$lane_fixture/heavy"
     eval "$lane_src"
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
     MAC_CHANGED=0
-    run_apple_gate() { sleep 1; [[ -e "$lane_fixture/release-started" ]]; }
+    run_apple_gate() { with_apple_slot bash -c 'sleep 1; [[ -e "$0/release-started" ]]' "$lane_fixture"; }
     run_ios_unit_gate() { true; }
     run_ios_release_gate() { touch "$lane_fixture/release-started"; }
     apple_then_mac & wait "$!"
@@ -251,7 +253,37 @@ HOOK_SHAPE
     echo "pre-push self-test: the Release compile must start while the iOS build runs" >&2
     exit 1
   }
-  rm -f "$lane_fixture"/*
+  rm -rf "${lane_fixture:?}"/*
+  # With one of the two xcode-build slots busy elsewhere, the iOS build takes the free one first and
+  # the early Release compile waits for it, though the Release lane starts first and the build
+  # spends 0.5 s on its guards before asking (scripts/heavy.sh has no queue).
+  mkdir -p "$lane_fixture/heavy"
+  /usr/bin/lockf -k "$lane_fixture/heavy/xcode-build.0" \
+    /bin/bash -c 'while [[ ! -e "$0" ]]; do sleep 0.1; done' "$lane_fixture/free-slot" &
+  local slot_holder="$!"
+  while /usr/bin/lockf -s -t 0 "$lane_fixture/heavy/xcode-build.0" true; do sleep 0.05; done
+  set +e
+  (
+    set -euo pipefail
+    export OPPI_HEAVY_DIR="$lane_fixture/heavy" OPPI_HEAVY_POLL=1
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=0
+    run_apple_gate() { sleep 0.5; with_apple_slot bash -c 'echo apple >> "$0/trace"; sleep 1' "$lane_fixture"; }
+    run_ios_unit_gate() { true; }
+    run_ios_release_gate() { "$HEAVY" xcode-build -- bash -c 'echo release >> "$0/trace"' "$lane_fixture"; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  : > "$lane_fixture/free-slot"
+  wait "$slot_holder" || true
+  [[ "$lane_status" -eq 0 && "$(tr '\n' ' ' < "$lane_fixture/trace")" == "apple release " ]] || {
+    echo "pre-push self-test: with one xcode-build slot busy, the iOS build must take the free slot before the early Release compile" >&2
+    exit 1
+  }
+  rm -rf "${lane_fixture:?}"/*
   # A red iOS build still waits for the early Release compile, starts neither Mac nor the unit
   # tests, and fails with its own status even when Release fails too.
   set +e
@@ -646,10 +678,23 @@ run_apple_gate() {
   # The edit-entry scan reads app sources the build phase's stamp does not watch, so a change
   # to the guard or to one reader's bar would otherwise pass unpushed. About 0.1 s.
   (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/document-edit-guard.ts) || return $?
-  # sim-pool builds without a simulator slot and takes a machine-wide heavy.sh xcode-build
-  # slot around the build itself.
-  (cd "$REPO_ROOT/clients/apple" && "$SIM_POOL" run -- \
+  # sim-pool builds without a simulator slot. The lane takes the machine-wide xcode-build slot for
+  # it (with_apple_slot), so sim-pool, seeing OPPI_HEAVY_HELD, takes no second one.
+  (cd "$REPO_ROOT/clients/apple" && with_apple_slot "$SIM_POOL" run -- \
     xcodebuild -project Oppi.xcodeproj -scheme "$(apple_scheme)" build-for-testing)
+}
+
+# Run "$@" in a heavy.sh xcode-build slot, first marking $APPLE_SLOT_SIGNAL/held: the early Release
+# compile (apple_then_mac) asks for a slot only once the iOS Debug build holds one, so on a busy
+# machine Release never takes the last free slot from the build every other lane waits for.
+with_apple_slot() {
+  "$HEAVY" xcode-build -- bash -c ': > "$0/held"; exec "$@"' "${APPLE_SLOT_SIGNAL:?}" "$@"
+}
+
+# Until the iOS Debug build holds its xcode-build slot, or its lane ended without one (a guard
+# failed, a cache hit). Never the other way round, so the two cannot wait on each other.
+wait_for_apple_slot() {
+  while [[ ! -e "${APPLE_SLOT_SIGNAL:?}/held" && ! -e "$APPLE_SLOT_SIGNAL/done" ]]; do sleep 0.2; done
 }
 
 # The scheme the Apple lane builds: Oppi (every test target) when UI or E2E code changed, or when
@@ -753,7 +798,8 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
 fi
 
 # The Release device-SDK compile (whole-module, ~5 min, the gate's longest compile) needs only the
-# sources, so it starts with the iOS Debug build. After that build, the Mac compile (~50 s) and the
+# sources, so it starts during the iOS Debug build, as soon as that build holds its xcode-build
+# slot (the Debug build gates every other lane, so it gets the first claim). After that build, the Mac compile (~50 s) and the
 # sharded iOS unit tests (~3.5 min) join it, overlapping the server lane. A failed iOS build skips
 # Mac and the unit tests, and the lane still waits for the Release compile and ends with the iOS
 # build's status.
@@ -766,15 +812,24 @@ fi
 # frame is gone, so a `local` PID is already unbound under set -u.
 apple_then_mac() {
   local mac_pid="" unit_pid release_pid apple_status=0 unit_status=0 release_status=0 mac_status=0
-  run_cached ios-release run_ios_release_gate & release_pid="$!"
+  local APPLE_SLOT_SIGNAL
+  APPLE_SLOT_SIGNAL="$(mktemp -d -t oppi-pre-push-apple-slot.XXXXXX)"
+  export APPLE_SLOT_SIGNAL
+  # The Debug build gets the first claim on an xcode-build slot (with_apple_slot).
+  (
+    wait_for_apple_slot
+    run_cached ios-release run_ios_release_gate
+  ) & release_pid="$!"
   set +e
   (
     set -euo pipefail
     run_cached apple run_apple_gate
   )
   apple_status=$?
+  : > "$APPLE_SLOT_SIGNAL/done"
   if [[ "$apple_status" -ne 0 ]]; then
     wait "$release_pid"
+    rm -rf "$APPLE_SLOT_SIGNAL"
     set -e
     return "$apple_status"
   fi
@@ -794,6 +849,7 @@ apple_then_mac() {
     wait "$mac_pid"
     mac_status=$?
   fi
+  rm -rf "$APPLE_SLOT_SIGNAL"
   set -e
   # Every lane has ended. The first failure in this order is the lane's status; the
   # others report themselves in their logs.
