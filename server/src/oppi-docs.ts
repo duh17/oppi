@@ -13,16 +13,18 @@ const OPPI_DOCS_HINT_PREFIX =
 const OLD_OPPI_DOCS_HINT_PREFIX = "Oppi documentation for mobile-compatible Pi extensions:";
 
 export const MOBILE_OUTPUT_GUIDE = [
-  "You are running in Oppi.",
+  "You are running in Oppi: your Markdown renders in a native iPhone/iPad app.",
   "",
-  "Oppi rendering capabilities:",
-  "- Wiki links open real workspace or owner-host files: [[path/to/file.ext|Label]], [[path/to/file.ext#L12-L18|Label]], [[/abs/path|Label]], [[~/path|Label]]. Recognized documents and media (images, audio, video, PDF, USDZ, HTML, Org, LaTeX, Mermaid, Graphviz, GeoJSON, TopoJSON) open in viewers.",
-  "- Session links open a session: [Label](oppi://session/<session-id>) or oppi://session/<session-id>.",
-  "- Images and SVG appear inline with ![Description](path/to/image.svg) or ![[path/to/image.svg]]. Existing Oppi-backed videos play inline with ![[path/to/video.mp4]] or ![Video](path/to/video.mp4); [[path/to/video.mp4]] stays a file link. Existing Oppi-backed audio plays inline with ![[path/to/clip.m4a]] or ![Clip](path/to/clip.m4a); [[path/to/clip.m4a]] stays a file link. Existing Oppi-backed USDZ scenes orbit inline with ![[path/to/scene.usdz]] or ![Scene](path/to/scene.usdz); [[path/to/scene.usdz]] stays a file link. Remote URLs, HTML <video>, HTML <audio>, and attachment IDs are not embeds.",
-  "- Fenced mermaid blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.",
-  "- Fenced geojson and topojson blocks render as an interactive map with a JSON source toggle.",
-  "- LaTeX renders inline, display, and fenced latex blocks.",
-  "- File targets must be real relative, absolute, or ~ paths. Relative targets resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd; link files outside it, including other repos, with ~/ or absolute paths. Do not cite secrets, credentials, private runtime state, or dump credential files. Sandbox sessions should keep using sandbox-visible paths.",
+  "- Link files the user may want to open, such as files you created, changed, or cite: [[path|label]] or [[path#L12-L18|label]]. Backticked paths, `file.ts:12`, and [[file#Heading]] stay plain text. Extensionless wiki targets gain .md, so link those with [label](path).",
+  "- Embed images, audio, video, or USDZ you made or found: ![[path]] or ![alt](path). [[path]] only links. Only local files embed; remote https images load on tap.",
+  "- Relative paths resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd. Use ~/ or absolute paths for other files on this machine, including other repos; in a sandbox, use sandbox-visible paths. Link only files that exist.",
+  "- Session link: [label](oppi://session/<full-session-id>).",
+  "- ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.",
+  "- ```geojson or ```topojson renders an interactive map.",
+  "- Inline and display math render. Use aligned, cases, or matrices; align, \\color, \\textcolor, and \\dfrac show as source.",
+  "- No footnotes, callouts, or raw HTML; they show as text.",
+  "- Linked CSV, HTML, Org, .mmd, GeoJSON, and PDF files open in rendered viewers.",
+  "- Never link, embed, or quote secrets, credentials, or private runtime state.",
 ].join("\n");
 
 export function buildMobileOutputGuide(): string {

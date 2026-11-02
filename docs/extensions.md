@@ -40,7 +40,7 @@ No other session gets the Oppi tools. Pi Control sessions created before this ch
 
 ## Mobile Output Guide
 
-**Server Settings → Mobile Output Guide** tells agents which links and rich content Oppi renders: wiki links to workspace and owner-host files, inline images, audio, video and USDZ, Mermaid diagrams, maps, LaTeX, session links, and document viewers. See [Document viewers](document-viewers.md) and [Attachment rendering](attachment-rendering.md).
+**Server Settings → Mobile Output Guide** (off by default) tells agents when to link and embed files and which Markdown Oppi renders: wiki links to workspace and host files, inline images, audio, video and USDZ, session links, Mermaid diagrams, maps, supported math, linked files that open in rendered viewers, and the forms that stay plain text. Its full text is in [Document viewers](document-viewers.md#agent-instructions); embeds are in [Attachment rendering](attachment-rendering.md).
 
 - It applies to new and reloaded managed host and sandbox sessions on either engine, and to classic Pi Control sessions. It does not prescribe response style, fabricate paths, or expose secrets, and Oppi sends no viewport dimensions.
 - It is an append, so a global `SYSTEM.md` replacement does not suppress it. Saved Agent and workspace instructions keep their precedence.

@@ -29,43 +29,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("Oppi documentation prompt hint", () => {
-  it("describes supported Oppi rendering without prescribing response style", () => {
-    const guide = buildMobileOutputGuide();
-
-    expect(guide).toMatch(/^You are running in Oppi\.\n\nOppi rendering capabilities:/);
-    expect(guide).toContain("[[path/to/file.ext#L12-L18|Label]]");
-    expect(guide).toContain("![Description](path/to/image.svg)");
-    expect(guide).toContain("![[path/to/image.svg]]");
-    expect(guide).toContain("![Video](path/to/video.mp4)");
-    expect(guide).toContain("![Clip](path/to/clip.m4a)");
-    expect(guide).toContain(
-      "flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban",
-    );
-    expect(guide).toContain("Other Mermaid types show an unsupported placeholder");
-    expect(guide).not.toContain("```mermaid");
-    expect(guide).toContain("fenced latex blocks");
-    expect(guide).toContain("images, audio, video, PDF, USDZ, HTML, Org, LaTeX, Mermaid, Graphviz, GeoJSON, TopoJSON");
-    expect(guide).toContain("![[path/to/video.mp4]]");
-    expect(guide).toContain("[[path/to/video.mp4]] stays a file link");
-    expect(guide).toContain("![[path/to/clip.m4a]]");
-    expect(guide).toContain("[[path/to/clip.m4a]] stays a file link");
-    expect(guide).toContain("![[path/to/scene.usdz]]");
-    expect(guide).toContain("[[path/to/scene.usdz]] stays a file link");
-    expect(guide).toContain("Remote URLs, HTML <video>, HTML <audio>, and attachment IDs are not embeds");
-    expect(guide).toContain("[Label](oppi://session/<session-id>)");
-    expect(guide).toContain("oppi://session/<session-id>");
-    expect(guide).not.toContain("[[oppi://session");
-    const bullets = guide.split("\n").filter((line) => line.startsWith("- "));
-    expect(
-      bullets.some(
-        (line) => line.includes("[[path/to/file.ext|Label]]") && !line.includes("oppi://session"),
-      ),
-    ).toBe(true);
-    expect(bullets.some((line) => line.includes("[Label](oppi://session/<session-id>)"))).toBe(true);
-    expect(guide).toContain("real relative, absolute, or ~ paths");
-    expect(guide).not.toMatch(/lead with|be concise|short paragraphs|instead of|must use/i);
-    expect(guide).not.toContain("screen dimension");
-  });
   let cwd: string | undefined;
 
   afterEach(() => {

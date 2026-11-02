@@ -2,7 +2,7 @@
 
 Oppi opens text and document output in native full-screen viewers on iPhone and iPad, for reading, reviewing, copying, sharing, and selecting. Viewers do not change the file, tool output, session transcript, or agent context.
 
-Covered here: markdown, code, source text, diffs, terminal output, HTML, and rendered formats (Org, LaTeX, Mermaid, Graphviz, GeoJSON, TopoJSON). Images, audio, video, and PDFs use their own controls; inline embeds are in [Attachment rendering](attachment-rendering.md).
+Covered here: markdown, code, source text, diffs, terminal output, HTML, rendered formats (Org, LaTeX math, Mermaid, GeoJSON, TopoJSON), and Graphviz, which opens as highlighted source. Images, audio, video, and PDFs use their own controls; inline embeds are in [Attachment rendering](attachment-rendering.md).
 
 ## File links in agent output
 
@@ -49,18 +49,22 @@ Reading a file is an owner action: pairing and authentication are the gate, not 
 
 ### Agent instructions
 
-Copy this into an `AGENTS.md` or system prompt so an agent links and embeds files in forms Oppi renders:
+When it is on, the Mobile Output Guide ([Oppi extension behavior](extensions.md#mobile-output-guide)) sends this text to managed sessions. For other agents, copy it into an `AGENTS.md` or system prompt:
 
-````markdown
-- When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Relative links resolve from the session's workspace checkout root, not the shell's cwd; link files in other repos with `~/` or absolute paths. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
-- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)` or `![[path/to/image.png]]`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]` or `![Video](path/to/video.mp4)`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]` or `![Clip](path/to/clip.m4a)`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player. When a real Oppi-backed USDZ scene should orbit inline, use `![[path/to/scene.usdz]]` or `![Scene](path/to/scene.usdz)`; keep `[[path/to/scene.usdz]]` as a file link that opens the document viewer.
-- Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.
-- Fenced `geojson` and `topojson` blocks render as an interactive map with a JSON source toggle.
-- LaTeX renders inline, display, and fenced `latex` blocks.
-- Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.
+````text
+You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
+
+- Link files the user may want to open, such as files you created, changed, or cite: [[path|label]] or [[path#L12-L18|label]]. Backticked paths, `file.ts:12`, and [[file#Heading]] stay plain text. Extensionless wiki targets gain .md, so link those with [label](path).
+- Embed images, audio, video, or USDZ you made or found: ![[path]] or ![alt](path). [[path]] only links. Only local files embed; remote https images load on tap.
+- Relative paths resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd. Use ~/ or absolute paths for other files on this machine, including other repos; in a sandbox, use sandbox-visible paths. Link only files that exist.
+- Session link: [label](oppi://session/<full-session-id>).
+- ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.
+- ```geojson or ```topojson renders an interactive map.
+- Inline and display math render. Use aligned, cases, or matrices; align, \color, \textcolor, and \dfrac show as source.
+- No footnotes, callouts, or raw HTML; they show as text.
+- Linked CSV, HTML, Org, .mmd, GeoJSON, and PDF files open in rendered viewers.
+- Never link, embed, or quote secrets, credentials, or private runtime state.
 ````
-
-The Mobile Output Guide ([Oppi extension behavior](extensions.md#mobile-output-guide)) gives agents the same capability list automatically.
 
 ## Viewing Options
 
