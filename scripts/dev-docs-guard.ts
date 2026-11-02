@@ -4,12 +4,14 @@
  * owners, boundaries, invariants, entry points, and for testing docs commands and gotchas;
  * never feature behaviour, flows, or slice narratives. Two mechanical limits hold the line:
  *
- *  - a word budget per doc, in `dev/doc-budgets.json` (set at the doc's rewritten size plus about
- *    15%; every `dev/**` Markdown file needs an entry, and an entry needs its file). A generated
- *    region (`<!-- name:begin … -->` to `<!-- name:end -->`, such as telemetry.md's event tables)
- *    does not count: it grows with its source, not with prose;
+ *  - a word budget per doc, in `dev/doc-budgets.json`: `{ words, reason }` per doc, the reason saying
+ *    why the budget is what it is. Every `dev/**` Markdown file needs an entry, an entry needs its
+ *    file, and its reason is required;
  *  - a maximum paragraph length (`maxParagraphChars`), measured per paragraph and per list item.
  *    Tables and fenced code are not paragraphs.
+ *
+ * A generated region (`<!-- name:begin … -->` to `<!-- name:end -->`, such as telemetry.md's event
+ * tables) is skipped by both: it grows with its source, not with prose.
  *
  *   bun scripts/dev-docs-guard.ts            check every dev/ doc
  *
@@ -19,16 +21,20 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type Budgets = { reason: string; maxParagraphChars: number; words: Record<string, number> };
+type Budgets = { maxParagraphChars: number; docs: Record<string, { words: number; reason: string }> };
 export type LongParagraph = { line: number; chars: number };
 
 const budgetsPath = "dev/doc-budgets.json";
 const standard = "dev/README.md, section \"What belongs in dev/\"";
 
+/** `text` with each generated region blanked to empty lines, so line numbers still match. */
+function withoutGenerated(text: string): string {
+  return text.replace(/<!-- ([\w-]+):begin\b[^>]*-->[\s\S]*?<!-- \1:end -->/g, (region) => region.replace(/[^\n]/g, ""));
+}
+
 /** Whitespace-separated words, as `wc -w` counts them, outside generated regions. */
 export function countWords(text: string): number {
-  const prose = text.replace(/<!-- ([\w-]+):begin\b[^>]*-->[\s\S]*?<!-- \1:end -->/g, "");
-  return prose.split(/\s+/).filter(Boolean).length;
+  return withoutGenerated(text).split(/\s+/).filter(Boolean).length;
 }
 
 /** Paragraphs and list items longer than `max` characters, with the line each starts on. */
@@ -42,7 +48,7 @@ export function longParagraphs(text: string, max: number): LongParagraph[] {
     if (chars > max) hits.push({ line: start, chars });
     parts = [];
   };
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+  for (const [index, raw] of withoutGenerated(text).split(/\r?\n/).entries()) {
     const line = raw.trim();
     const fenceMark = /^(```|~~~)/.exec(line)?.[1];
     if (fence) {
@@ -85,18 +91,21 @@ export function checkDocs(root: string): string[] {
   const docs = markdownFiles(join(root, "dev")).map((path) => relative(root, path)).sort();
   for (const doc of docs) {
     const text = readFileSync(join(root, doc), "utf8");
-    const budget = budgets.words[doc];
+    const entry = budgets.docs[doc];
     const words = countWords(text);
-    if (budget === undefined) {
-      failures.push(`${doc}: no budget in ${budgetsPath} (${words} words). Add one at its size plus about 15%, with the reason.`);
-    } else if (words > budget) {
-      failures.push(`${doc}: ${words} words, budget ${budget}. Move behaviour, flows, and history into code comments and tests (${standard}), or raise the budget in ${budgetsPath} with a reason.`);
+    if (entry === undefined) {
+      failures.push(`${doc}: no budget in ${budgetsPath} (${words} words). Add { words, reason } at its size plus max(15%, 100 words).`);
+    } else {
+      if (!entry.reason?.trim()) failures.push(`${budgetsPath}: the budget for ${doc} has no reason. Say why it is ${entry.words} words.`);
+      if (words > entry.words) {
+        failures.push(`${doc}: ${words} words, budget ${entry.words}. Move behaviour, flows, and history into code comments and tests (${standard}), or raise the budget in ${budgetsPath} and update its reason.`);
+      }
     }
     for (const hit of longParagraphs(text, budgets.maxParagraphChars)) {
       failures.push(`${doc}:${hit.line}: paragraph of ${hit.chars} characters, limit ${budgets.maxParagraphChars}. Split it into rules of a sentence or two each (${standard}).`);
     }
   }
-  for (const doc of Object.keys(budgets.words).sort()) {
+  for (const doc of Object.keys(budgets.docs).sort()) {
     if (!docs.includes(doc)) failures.push(`${budgetsPath}: budget for ${doc}, which does not exist. Remove the entry.`);
   }
   return failures;

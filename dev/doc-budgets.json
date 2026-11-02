@@ -1,29 +1,97 @@
 {
-  "reason": "Doc diet, 2026-11-02 (approved by Chen): dev/ had grown into per-slice changelogs (88,771 words). Each budget is the doc's rewritten size plus about 15%, counted outside generated regions. A doc that outgrows it is drifting back into feature behaviour, flows, or history: move those into code comments at the owner and into tests (dev/README.md, \"What belongs in dev/\"). Raise a budget only for real new rules, and say why in the commit.",
   "maxParagraphChars": 1200,
-  "words": {
-    "dev/README.md": 320,
-    "dev/architecture-client.md": 6140,
-    "dev/architecture-client/blocks.md": 980,
-    "dev/architecture-client/change-map.md": 370,
-    "dev/architecture-client/code-map.md": 390,
-    "dev/architecture-client/flows.md": 1400,
-    "dev/architecture-client/media-files.md": 790,
-    "dev/architecture-server.md": 1870,
-    "dev/architecture-server/blocks-and-boundaries.md": 800,
-    "dev/architecture-server/code-map.md": 450,
-    "dev/architecture-server/durable-conversation-stream.md": 1380,
-    "dev/architecture-server/durable-extension-ui.md": 1200,
-    "dev/architecture-server/read-models.md": 630,
-    "dev/architecture-server/runtime.md": 3220,
-    "dev/architecture-server/tool-inspection.md": 460,
-    "dev/architecture.md": 1030,
-    "dev/networking.md": 1400,
-    "dev/telemetry.md": 2240,
-    "dev/testing/README.md": 1930,
-    "dev/testing/apple.md": 2440,
-    "dev/testing/ios-accessibility-testability.md": 880,
-    "dev/testing/mac.md": 220,
-    "dev/testing/qa-verification.md": 460
+  "docs": {
+    "dev/README.md": {
+      "words": 400,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client.md": {
+      "words": 6170,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 5359 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client/blocks.md": {
+      "words": 980,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 847 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client/change-map.md": {
+      "words": 420,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 320 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client/code-map.md": {
+      "words": 440,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 334 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client/flows.md": {
+      "words": 1400,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1210 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-client/media-files.md": {
+      "words": 790,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 683 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server.md": {
+      "words": 1880,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1632 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/blocks-and-boundaries.md": {
+      "words": 800,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 693 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/code-map.md": {
+      "words": 490,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 386 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/durable-conversation-stream.md": {
+      "words": 1380,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1194 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/durable-extension-ui.md": {
+      "words": 1200,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1037 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/read-models.md": {
+      "words": 650,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 546 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/runtime.md": {
+      "words": 3260,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 2827 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/tool-inspection.md": {
+      "words": 500,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 393 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture.md": {
+      "words": 1030,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 891 words; headroom max(15%, 100 words)."
+    },
+    "dev/networking.md": {
+      "words": 1400,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1211 words; headroom max(15%, 100 words)."
+    },
+    "dev/telemetry.md": {
+      "words": 2250,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1951 words; headroom max(15%, 100 words). The generated event tables are not counted."
+    },
+    "dev/testing/README.md": {
+      "words": 2160,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1877 words; headroom max(15%, 100 words)."
+    },
+    "dev/testing/apple.md": {
+      "words": 2440,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 2117 words; headroom max(15%, 100 words)."
+    },
+    "dev/testing/ios-accessibility-testability.md": {
+      "words": 880,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 765 words; headroom max(15%, 100 words)."
+    },
+    "dev/testing/mac.md": {
+      "words": 290,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 190 words; headroom max(15%, 100 words)."
+    },
+    "dev/testing/qa-verification.md": {
+      "words": 500,
+      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 397 words; headroom max(15%, 100 words)."
+    }
   }
 }
