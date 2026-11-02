@@ -14,7 +14,6 @@ import {
   type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
 
-import { isManagedExtensionName } from "../extensions/built-ins.js";
 import { PiSettingsOperationError } from "./settings/pi-resource-errors.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
@@ -387,7 +386,7 @@ function toHostExtensionInfo(
     }
   }
 
-  if (!isValidExtensionName(name) || isManagedExtensionName(name)) {
+  if (!isValidExtensionName(name)) {
     return null;
   }
 
