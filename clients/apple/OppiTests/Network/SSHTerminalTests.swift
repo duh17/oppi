@@ -3700,6 +3700,55 @@ struct SSHTerminalTests {
         #expect(textView.isFirstResponder, "with the keyboard the user brought back")
     }
 
+    /// The chat bar's key strip is wired once, when the screen builds it; the
+    /// property passes and the hide and reshow of the bar that follow must leave
+    /// it sending to the live channel and asking for the raw keyboard.
+    @Test func theChatBarKeyStripKeepsSendingAfterPropertyPassesAndAReshow() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try mounted.tapChatBar()
+        try await settle(mounted)
+        let grid = try #require(mounted.controller.gridView)
+
+        func escape() throws -> UIButton {
+            try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.composer.escape" } as? UIButton)
+        }
+        func leftArrow() throws -> SSHTerminalArrowButton {
+            try #require(mounted.find {
+                ($0 as? SSHTerminalArrowButton)?.configuration?.title == "\u{2190}"
+            } as? SSHTerminalArrowButton)
+        }
+        try escape().sendActions(for: .touchUpInside)
+        #expect(await bytes.next() == Data("\u{1b}".utf8), "a named key sends its strokes")
+        #expect(try leftArrow().accessibilityActivate())
+        #expect(await bytes.next() == Data("\u{1b}[D".utf8), "an arrow sends through the channel")
+
+        // A pass that re-applies the chat bar's chrome leaves the keys wired.
+        mounted.controller.setNeedsUpdateProperties()
+        try await settle(mounted)
+        try escape().sendActions(for: .touchUpInside)
+        #expect(await bytes.next() == Data("\u{1b}".utf8), "the keys still send after a property pass")
+
+        let rawKeyboard = try #require(mounted.find {
+            $0.accessibilityIdentifier == "sshTerminal.composer.rawKeyboard"
+        } as? UIButton)
+        rawKeyboard.sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "the raw-keyboard key asks for the grid's keyboard")
+
+        try mounted.tapChatBar()
+        try await settle(mounted)
+        try escape().sendActions(for: .touchUpInside)
+        #expect(await bytes.next() == Data("\u{1b}".utf8), "the reshown chat bar's keys still send")
+    }
+
     /// A coding agent's report picks the key strip's program, never the input:
     /// the chat bar shows only after Chat Bar, and then outlives report changes.
     @Test func anAgentReportDoesNotShowTheChatBarButTheChatBarActionDoes() async throws {

@@ -1571,11 +1571,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             connected: channel.connected
         )
         let colors = ComposerThemeColors(palette: themeID.palette, terminal: lastTerminalColors)
-        composerKeyStrip?.handlers.sendStrokes = { [weak self] strokes in self?.channel.keys(strokes) }
-        composerKeyStrip?.handlers.sendKey = { [weak self] key in _ = self?.channel.key(key) }
-        composerKeyStrip?.handlers.sendArrow = { [weak self] key in self?.channel.key(key) ?? false }
-        composerKeyStrip?.handlers.showRawKeyboard = { [weak self] in self?.showTerminalKeyboard() }
-        composerKeyStrip?.handlers.fillPassword = { [weak self] in self?.fillPassword() }
         composerKeyStrip?.apply(
             profile: keymap.profile,
             userFile: keymap.userFile,
