@@ -38,14 +38,8 @@ import { DurableLiveVoice } from "../plugins/live-voice/server.js";
  * ls, find, grep, nor codemode is offered. Note the reattached sessions: their `{ add }` edit
  * applies to the Harness default selection.
  */
-/** The `project-context` sections: Oppi's prompt appends, then AGENTS files and Skills. */
-const PROMPT_SECTIONS = [
-  "oppi_docs",
-  "mobile_output_guide",
-  "oppi_cli",
-  "project_context",
-  "skills",
-];
+/** The `project-context` sections: Oppi's appends, then AGENTS files and Skills. */
+const PROMPT_SECTIONS = ["oppi_append", "project_context", "skills"];
 
 const PINNED = {
   host: {
@@ -787,8 +781,8 @@ describe("notify and speak arguments", () => {
   });
 });
 
-// Oppi's appends to a durable session's prompt, as `buildSdkAppendSystemPrompt` gates them for a
-// classic one, read from what the model is actually sent.
+// Oppi's appends to a durable session's prompt, from the owner a classic session also uses
+// (`oppiAppendSystemPrompt`), read from what the model is actually sent.
 describe("durable prompt appends", () => {
   const WORKSPACE_PROMPT = "WORKSPACE_PROMPT_MARKER";
   const GUIDE = buildMobileOutputGuide();
@@ -828,8 +822,8 @@ describe("durable prompt appends", () => {
     return created;
   }
 
-  it("renders the docs hint, guide, and CLI hint before the workspace prompt on the host; a sandbox gets only the guide", async () => {
-    expect(DOCS).toContain("Oppi documentation");
+  it("renders the docs hint, CLI hint, workspace prompt, then the guide on the host; a sandbox gets no hints", async () => {
+    expect(DOCS).toEqual(expect.any(String));
     const { prompts, steps } = capturing(2);
     const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
     vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
@@ -843,17 +837,70 @@ describe("durable prompt appends", () => {
     }
     const [hostPrompt, sandboxPrompt] = prompts as [string, string];
 
-    const order = [DOCS, GUIDE, OPPI_CLI_SYSTEM_PROMPT_HINT, WORKSPACE_PROMPT].map((text) =>
+    const order = [DOCS, OPPI_CLI_SYSTEM_PROMPT_HINT, WORKSPACE_PROMPT, GUIDE].map((text) =>
       hostPrompt.indexOf(text),
     );
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
 
     // A sandbox prompt never names host paths: no docs hint, no host `oppi` CLI.
-    expect(sandboxPrompt).toContain(GUIDE);
-    expect(sandboxPrompt).toContain(WORKSPACE_PROMPT);
-    expect(sandboxPrompt).not.toContain("Oppi documentation");
+    expect(sandboxPrompt.indexOf(WORKSPACE_PROMPT)).toBeGreaterThanOrEqual(0);
+    expect(sandboxPrompt.indexOf(GUIDE)).toBeGreaterThan(sandboxPrompt.indexOf(WORKSPACE_PROMPT));
+    expect(sandboxPrompt).not.toContain(DOCS);
     expect(sandboxPrompt).not.toContain(OPPI_CLI_SYSTEM_PROMPT_HINT);
+  });
+
+  it("keeps the docs and CLI hints and the workspace prompt but drops the guide under a saved Agent's replacement prompt", async () => {
+    const { prompts, steps } = capturing(1);
+    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    setGuide(f, true);
+    const agent = f.storage.getAgentDefinitionStore().createAgent({
+      name: "Replacer",
+      instructions: { mode: "replace", text: "REPLACEMENT_MARKER" },
+    });
+    const created = workspaceSession(f, "host", {
+      status: "launching",
+      requestedAt: 1,
+      agentId: agent.id,
+      agentVersion: 1,
+    } as Session["launch"]);
+    created.workspace.systemPrompt = WORKSPACE_PROMPT;
+    f.storage.updateWorkspace(created.workspace.id, { systemPrompt: WORKSPACE_PROMPT });
+    await f.manager.startSession(created.session.id, created.workspace);
+    await turn(f, created.session.id);
+    await f.manager.stopSession(created.session.id);
+
+    const order = [DOCS, OPPI_CLI_SYSTEM_PROMPT_HINT, WORKSPACE_PROMPT].map((text) =>
+      prompts[0]!.indexOf(text),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(prompts[0]).not.toContain(GUIDE);
+    // The prompt still ends with the Agent's own instructions: its text and the working directory.
+    const tail = prompts[0]!.slice(prompts[0]!.indexOf("REPLACEMENT_MARKER"));
+    expect(tail).toMatch(/^REPLACEMENT_MARKER\n\nWorking directory: [^\n]+\n<\/instructions>$/);
+  });
+
+  it("renders the workspace prompt once for a conversation whose instructions still carry it", async () => {
+    const { prompts, steps } = capturing(1);
+    const f = await fixture(steps);
+    const { session, workspace } = withWorkspacePrompt(f, "host");
+    await f.manager.startSession(session.id, workspace);
+    // As a conversation created before the workspace prompt moved out of its instructions.
+    const harness: Harness = (await f.opening.mock.results.at(-1)!.value).harness;
+    const id = f.storage.getSession(session.id)!.serverDurable!.conversationId as ConversationId;
+    const conversation = (await harness.conversation(id, context))!;
+    await conversation.commit(async (tx) => {
+      const agent = await tx.doc(AgentDoc, id);
+      agent.instructions = `${agent.instructions}\n\n${WORKSPACE_PROMPT}`;
+    }, context);
+    await f.manager.stopSession(session.id);
+
+    await f.manager.startSession(session.id, workspace);
+    await turn(f, session.id);
+    await f.manager.stopSession(session.id);
+
+    expect(prompts[0]!.split(WORKSPACE_PROMPT)).toHaveLength(2);
   });
 
   it("leaves out the docs and CLI hints while oppiDocsPrompt and oppiCliPrompt are off, and the guide while its setting is off", async () => {
@@ -868,7 +915,7 @@ describe("durable prompt appends", () => {
     await f.manager.stopSession(session.id);
 
     expect(prompts[0]).toContain(WORKSPACE_PROMPT);
-    expect(prompts[0]).not.toContain("Oppi documentation");
+    expect(prompts[0]).not.toContain(DOCS);
     expect(prompts[0]).not.toContain(OPPI_CLI_SYSTEM_PROMPT_HINT);
     expect(prompts[0]).not.toContain(GUIDE);
   });

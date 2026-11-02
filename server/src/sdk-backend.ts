@@ -99,10 +99,9 @@ import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
-import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildControlSystemPrompt, CONTROL_SESSION_TOOLS } from "./control-prompt.js";
 import { isDeclaredControlSession } from "./control-session.js";
-import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
+import { oppiAppendSystemPrompt } from "./oppi-docs.js";
 import type { GondolinManager } from "./gondolin-manager.js";
 import {
   readVmTextFileWithin,
@@ -705,48 +704,6 @@ Guidelines:
 - Show sandbox file paths clearly when working with files.`;
 }
 
-export function isOppiDocsPromptEnabled(
-  config: Pick<ServerConfig, "oppiDocsPrompt"> | undefined,
-): boolean {
-  return config?.oppiDocsPrompt?.enabled !== false;
-}
-
-export function isOppiCliPromptEnabled(
-  config: Pick<ServerConfig, "oppiCliPrompt"> | undefined,
-): boolean {
-  return config?.oppiCliPrompt?.enabled === true;
-}
-
-function buildSdkAppendSystemPrompt(
-  workspace: Workspace | undefined,
-  options: {
-    includeOppiDocsHint: boolean;
-    includeOppiCliHint: boolean;
-    includeMobileOutputGuide: boolean;
-  },
-): string[] | undefined {
-  const prompts: string[] = [];
-
-  // Host-backed sessions can read the packaged docs path directly. Sandbox sessions
-  // use a custom prompt that intentionally avoids exposing host/server paths.
-  const oppiDocsHint = options.includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined;
-  if (oppiDocsHint) {
-    prompts.push(oppiDocsHint);
-  }
-  if (options.includeMobileOutputGuide) {
-    prompts.push(buildMobileOutputGuide());
-  }
-  if (options.includeOppiCliHint) {
-    prompts.push(OPPI_CLI_SYSTEM_PROMPT_HINT);
-  }
-
-  if (workspace?.systemPrompt) {
-    prompts.push(workspace.systemPrompt);
-  }
-
-  return prompts.length > 0 ? prompts : undefined;
-}
-
 function normalizeAgentContextFiles(
   agentDefinition: AgentDefinition | undefined,
   sandboxGuestCwd?: string,
@@ -1324,46 +1281,35 @@ export class SdkBackend implements AgentBackend {
       // append list through a callback so the guide follows the frozen live
       // server setting on every reload, rather than the snapshot that
       // happened to exist when this loader was constructed.
-      const staticAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
-        includeOppiDocsHint:
-          !controlMetadata &&
-          !sandboxMode &&
-          managedSession &&
-          isOppiDocsPromptEnabled(config.serverConfig),
-        includeOppiCliHint:
-          !controlMetadata &&
-          !sandboxMode &&
-          managedSession &&
-          isOppiCliPromptEnabled(config.serverConfig),
-        includeMobileOutputGuide: false,
-      });
+      const replace = agentDefinition?.instructions?.mode === "replace";
       const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
-        // The control prompt already names the docs and the `oppi` CLI. Ignore Pi's
-        // discovered APPEND_SYSTEM.md; keep only the live Mobile Output Guide setting.
-        if (controlMetadata) {
-          return managedSession && mobileOutputGuideSettingsHolder.snapshot.enabled
-            ? [buildMobileOutputGuide()]
-            : [];
-        }
-
-        // A saved-Agent replacement remains authoritative over this optional
-        // capability guide. Preserve the append resources Pi/Oppi already
-        // supplied before this feature, but never add the guide after replace.
-        if (agentDefinition?.instructions?.mode === "replace") {
-          return staticAppendSystemPrompt ? [...staticAppendSystemPrompt] : [...base];
-        }
-
-        // Preserve Pi's discovered APPEND_SYSTEM.md, then add Oppi-owned
-        // append capabilities. A global SYSTEM.md replacement remains the base
-        // system prompt and does not suppress these append-only additions.
-        const prompts = [...base, ...(staticAppendSystemPrompt ?? [])];
-        if (managedSession && mobileOutputGuideSettingsHolder.snapshot.enabled) {
-          prompts.push(buildMobileOutputGuide());
-        }
-        if (agentDefinition?.instructions?.mode === "append") {
-          prompts.push(agentDefinition.instructions.text);
-        }
-        return prompts;
+        const oppi = oppiAppendSystemPrompt({
+          target: !managedSession
+            ? "terminal"
+            : controlMetadata
+              ? "control"
+              : sandboxMode
+                ? "sandbox"
+                : "host",
+          serverConfig: config.serverConfig,
+          workspacePrompt: workspace?.systemPrompt,
+          mobileOutputGuide: mobileOutputGuideSettingsHolder.snapshot.enabled,
+          replace,
+        });
+        // The control prompt is the whole setup: ignore Pi's discovered APPEND_SYSTEM.md.
+        if (controlMetadata) return oppi;
+        // A saved-Agent replacement remains authoritative: Oppi's appends, when there are
+        // any, stand in for Pi's discovered APPEND_SYSTEM.md.
+        if (replace) return oppi.length > 0 ? oppi : [...base];
+        // Preserve Pi's discovered APPEND_SYSTEM.md, then add Oppi's appends. A global
+        // SYSTEM.md replacement remains the base system prompt and does not suppress them.
+        return [
+          ...base,
+          ...oppi,
+          ...(agentDefinition?.instructions?.mode === "append"
+            ? [agentDefinition.instructions.text]
+            : []),
+        ];
       };
       const normalizedSelectedAgentSkillPaths = normalizeSelectedAgentSkillPaths(
         selectedAgentSkillPaths,

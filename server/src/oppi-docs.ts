@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
+import type { ServerConfig } from "./types.js";
 
 const REQUIRED_OPPI_DOCS = [
   "extensions.md",
@@ -67,6 +69,44 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
     `- Attachment rendering: ${join(docsPath, "attachment-rendering.md")}`,
     "- When working on Oppi topics, read the relevant docs completely and follow .md cross-references before implementing.",
   ].join("\n");
+}
+
+/**
+ * Oppi's appends to a session's system prompt, in the one order both engines send them: the docs
+ * hint, the `oppi` CLI hint, the workspace prompt, then the Mobile Output Guide. Classic sessions
+ * append them through Pi's resource loader; durable sessions render them as one `project-context`
+ * section, ahead of their instructions.
+ *
+ * - The docs and CLI hints reach host sessions only: a sandbox prompt never names host paths, and
+ *   an Oppi Control prompt already names both. `oppiDocsPrompt` is on unless turned off;
+ *   `oppiCliPrompt` is opt-in.
+ * - Oppi Control sessions have no workspace prompt.
+ * - The guide follows its setting in every managed session, Oppi Control included, but never
+ *   after a saved Agent's replacement prompt. A terminal-owned session gets only the workspace
+ *   prompt.
+ */
+export function oppiAppendSystemPrompt(options: {
+  target: "host" | "sandbox" | "control" | "terminal";
+  serverConfig: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt"> | undefined;
+  workspacePrompt: string | undefined;
+  /** The Mobile Output Guide setting. */
+  mobileOutputGuide: boolean;
+  /** A saved Agent's instructions replace the system prompt. */
+  replace: boolean;
+}): string[] {
+  const { target, serverConfig, workspacePrompt } = options;
+  const prompts: string[] = [];
+  const docs =
+    target === "host" && serverConfig?.oppiDocsPrompt?.enabled !== false
+      ? buildOppiSystemPromptAppend()
+      : undefined;
+  if (docs) prompts.push(docs);
+  if (target === "host" && serverConfig?.oppiCliPrompt?.enabled === true)
+    prompts.push(OPPI_CLI_SYSTEM_PROMPT_HINT);
+  if (workspacePrompt && target !== "control") prompts.push(workspacePrompt);
+  if (options.mobileOutputGuide && target !== "terminal" && !options.replace)
+    prompts.push(buildMobileOutputGuide());
+  return prompts;
 }
 
 export function appendOppiSystemPromptHint(prompt: string): string {

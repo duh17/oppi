@@ -1,23 +1,29 @@
 import { defineDoc } from "@earendil-works/pi-durable";
 
 /**
- * The rendered prompt sections of a conversation: Oppi's appends to the system prompt, then
- * `project_context` and `skills`. The server writes it when a session attaches or reloads; the
- * plugin reads it. Shared by both, so it imports nothing from `oppi/v1`, which only the plugin
- * host resolves.
+ * The `project-context` sections, in prompt order: each section's key, the `ProjectContextDoc`
+ * field holding its body (unset omits the section), and whether it renders tagged.
+ *
+ * - `oppi_append`: Oppi's appends to the system prompt, in the order `oppiAppendSystemPrompt`
+ *   gives them (the docs hint, the `oppi` CLI hint, the workspace prompt, the Mobile Output
+ *   Guide), untagged as a classic session appends them.
+ * - `project_context`: the AGENTS files.
+ * - `skills`: the model-visible Skills.
  */
-export const ProjectContextDoc = defineDoc<{
-  /** Where Oppi's docs are; unset for a sandbox, Oppi Control, or `oppiDocsPrompt` off. */
-  oppiDocs?: string;
-  /** The Mobile Output Guide; unset while its setting is off. */
-  mobileOutputGuide?: string;
-  /** The `oppi` CLI hint; unset unless `oppiCliPrompt` is on (never a sandbox or Oppi Control). */
-  oppiCli?: string;
-  /** Body of the `project_context` section; unset without context files. */
-  projectContext?: string;
-  /** Body of the `skills` section; unset without model-visible Skills. */
-  skills?: string;
-}>({
+export const PROJECT_CONTEXT_SECTIONS = [
+  { key: "oppi_append", field: "oppiAppend", tag: false },
+  { key: "project_context", field: "projectContext", tag: true },
+  { key: "skills", field: "skills", tag: true },
+] as const;
+
+export type ProjectContextField = (typeof PROJECT_CONTEXT_SECTIONS)[number]["field"];
+
+/**
+ * The rendered `project-context` sections of a conversation. The server writes it when a session
+ * attaches or reloads; the plugin reads it. Shared by both, so it imports nothing from `oppi/v1`,
+ * which only the plugin host resolves.
+ */
+export const ProjectContextDoc = defineDoc<Partial<Record<ProjectContextField, string>>>({
   kind: "oppi.project-context",
   version: 1,
   scope: "conversation",

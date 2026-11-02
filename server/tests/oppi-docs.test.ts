@@ -105,7 +105,7 @@ describe("Oppi documentation prompt hint", () => {
     }
   });
 
-  it("adds the docs hint before workspace prompt text in host sessions", async () => {
+  it("orders the docs hint, CLI hint, workspace prompt, then the guide in host sessions", async () => {
     cwd = mkdtempSync(join(tmpdir(), "oppi-docs-prompt-"));
     mkdirSync(cwd, { recursive: true });
     writeFileSync(join(cwd, "README.md"), "# Workspace\n");
@@ -119,6 +119,8 @@ describe("Oppi documentation prompt hint", () => {
         hostMount: cwd,
         systemPrompt: "Workspace-specific note.",
       } as Workspace,
+      serverConfig: { oppiCliPrompt: { enabled: true } },
+      getMobileOutputGuideSettings: () => ({ enabled: true, revision: 1 }),
       onEvent: () => {},
       onEnd: () => {},
     });
@@ -129,12 +131,12 @@ describe("Oppi documentation prompt hint", () => {
           runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
         }
       ).runtime.services.resourceLoader;
-      const appendPrompts = resourceLoader.getAppendSystemPrompt();
-
-      expect(appendPrompts[0]).toContain(
-        "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
-      );
-      expect(appendPrompts[1]).toBe("Workspace-specific note.");
+      expect(resourceLoader.getAppendSystemPrompt()).toEqual([
+        buildOppiSystemPromptAppend(),
+        OPPI_CLI_SYSTEM_PROMPT_HINT,
+        "Workspace-specific note.",
+        buildMobileOutputGuide(),
+      ]);
     } finally {
       await backend.dispose();
     }

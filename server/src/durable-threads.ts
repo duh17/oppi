@@ -272,14 +272,7 @@ export class DurableThreads {
             },
           }
         : {}),
-      ...(saved
-        ? {
-            instructions: {
-              cwd: agent.cwd ?? "",
-              ...(workspace.systemPrompt ? { workspacePrompt: workspace.systemPrompt } : {}),
-            },
-          }
-        : {}),
+      ...(saved ? { instructions: { cwd: agent.cwd ?? "" } } : {}),
     });
     const icon = saved?.definition.icon;
     return {

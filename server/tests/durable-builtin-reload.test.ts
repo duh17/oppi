@@ -19,7 +19,7 @@ describe("built-in plugins", () => {
     // A copy of Oppi's built-in plugins, so one can change under the runtime.
     const bundled = join(dir, "bundled");
     cpSync(BUILT_IN_PLUGINS_DIR, bundled, { recursive: true, dereference: true });
-    const entry = join(bundled, "project-context", "server.ts");
+    const entry = join(bundled, "notify", "server.ts");
     const original = readFileSync(entry, "utf8");
 
     const runtime = new DurableHarness(join(dir, "data"), bundled);
@@ -48,7 +48,7 @@ describe("built-in plugins", () => {
     const reloaded = await runtime.reloadExtensions();
     expect(reloaded.errors).toEqual([]);
     expect(reloaded.loaded).toContainEqual(
-      expect.objectContaining({ name: "oppi-project-context", builtIn: true }),
+      expect.objectContaining({ name: "oppi-notify", builtIn: true }),
     );
     // Replaced under its name: the next resolution uses the new code, in the same place.
     expect(await sections()).toContain("reload_probe");
@@ -57,10 +57,10 @@ describe("built-in plugins", () => {
     writeFileSync(entry, "export default {\n");
     const broken = await runtime.reloadExtensions();
     expect(broken.errors).toEqual([
-      expect.objectContaining({ plugin: "oppi-project-context", entry: realpathSync(entry) }),
+      expect.objectContaining({ plugin: "oppi-notify", entry: realpathSync(entry) }),
     ]);
     expect(broken.kept).toEqual([
-      expect.objectContaining({ name: "oppi-project-context", builtIn: true }),
+      expect.objectContaining({ name: "oppi-notify", builtIn: true }),
     ]);
     expect(await sections()).toContain("reload_probe");
     expect(installed()).toEqual(order);

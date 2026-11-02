@@ -74,10 +74,11 @@ import {
   type MobileOutputGuideSettingsSnapshot,
 } from "./mobile-output-guide-settings.js";
 import {
-  promptAppends,
+  dropInstructionsWorkspacePrompt,
   syncProjectContext,
   type PresentedResources,
 } from "./durable-prompt-sections.js";
+import { oppiAppendSystemPrompt } from "./oppi-docs.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import {
   SessionRuntimeTransaction,
@@ -343,18 +344,21 @@ export class DurableBackend implements AgentBackend {
     const sandboxEnv = sandbox
       ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
       : undefined;
-    // An Oppi Control session presents no AGENTS files, no Skills, global or project, and no
-    // appends: its `oppi-control` section is its whole setup, as with `/reload`. The appends
-    // read the settings each time, so an attach or `/reload` applies a change from the next
-    // request, as an SDK session's runtime rebuild does.
+    // An Oppi Control session presents no AGENTS files and no Skills, global or project, as
+    // with `/reload`. Oppi's appends read the settings and the workspace prompt each time, so an
+    // attach or `/reload` applies a change from the next request, as an SDK session's runtime
+    // rebuild does.
     const loadResources = async (): Promise<PresentedResources> => {
-      if (control) return { contextFiles: [], skills: [], appends: {} };
-      const appends = promptAppends({
-        sandbox,
-        replace: launched?.doc?.projectContext === false,
+      const appends = oppiAppendSystemPrompt({
+        target: control ? "control" : sandbox ? "sandbox" : "host",
         serverConfig: options.serverConfig,
-        guide: options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
+        workspacePrompt: workspace?.systemPrompt,
+        mobileOutputGuide: (
+          options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS
+        ).enabled,
+        replace: launched?.doc?.projectContext === false,
       });
+      if (control) return { contextFiles: [], skills: [], appends };
       const files = await loadDurableProjectResources({
         hostCwd,
         agentDir,
@@ -443,7 +447,6 @@ export class DurableBackend implements AgentBackend {
     const spawn = !session.launch?.parentSessionId || grant;
     const agentId = session.launch?.agentId;
     const definition = options.agentDefinition;
-    const workspacePrompt = options.workspace?.systemPrompt;
     const created = resolveDurableAgent({
       ...(agentId && definition
         ? { saved: { id: agentId, version: session.launch?.agentVersion ?? 0, definition } }
@@ -462,7 +465,7 @@ export class DurableBackend implements AgentBackend {
       grant,
       notify: host.runtime.notifyExtension,
       notifies: host.runtime.offersNotify(session.id),
-      instructions: { cwd: target.cwd, ...(workspacePrompt ? { workspacePrompt } : {}) },
+      instructions: { cwd: target.cwd },
     });
     return { doc: created.doc, spawn, created };
   }
@@ -523,6 +526,7 @@ export class DurableBackend implements AgentBackend {
           "A bound server durable session cannot switch execution runtime or sandbox workspace",
         );
       conversation = existing;
+      await dropInstructionsWorkspacePrompt(existing, workspace?.systemPrompt);
       // The Session this conversation belongs to, for hooks and tasks of durable extensions. A
       // conversation bound before the document existed gets it here.
       if (

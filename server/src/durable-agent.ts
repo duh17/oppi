@@ -83,20 +83,20 @@ export interface SavedAgent {
 const DURABLE_DEFAULT_INSTRUCTIONS =
   "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.";
 
-/** The `instructions` of a durable session: Oppi's default or the Agent's replacement, then cwd and appends. */
+/**
+ * The `instructions` of a durable session: Oppi's default or the Agent's replacement, then cwd and
+ * the Agent's append. The workspace prompt is one of Oppi's appends, rendered by the
+ * `project-context` plugin's `oppi_append` section from the current workspace.
+ */
 function durableInstructions(options: {
   cwd: string;
-  workspacePrompt?: string;
   instructions?: AgentDefinition["instructions"];
 }): string {
-  const { cwd, workspacePrompt, instructions } = options;
-  const append = [workspacePrompt, instructions?.mode === "append" ? instructions.text : undefined]
-    .filter(Boolean)
-    .join("\n\n");
+  const { cwd, instructions } = options;
   return [
     instructions?.mode === "replace" ? instructions.text : DURABLE_DEFAULT_INSTRUCTIONS,
     `Working directory: ${cwd}`,
-    append,
+    instructions?.mode === "append" ? instructions.text : undefined,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -331,7 +331,7 @@ interface DurableAgentInput {
   notifies: boolean;
   grant: boolean;
   /** Where the instructions come from; unset keeps the base agent's (a child without an Agent). */
-  instructions?: { cwd: string; workspacePrompt?: string };
+  instructions?: { cwd: string };
 }
 
 /**
