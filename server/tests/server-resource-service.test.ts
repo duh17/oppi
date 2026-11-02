@@ -469,6 +469,48 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(off).toMatchObject({ state: "off", kinds: ["plugin", "pi-extension"] });
   });
 
+  it("lists classic rows when the plugins cannot be listed, and says so on rows with a plugin", async () => {
+    const fixture = makeFixture();
+    for (const name of ["classic-only", "with-plugin"]) {
+      const dir = join(fixture.agentDir, "extensions", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "index.ts"), "export default function () {}\n");
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ name, pi: { extensions: ["./index.ts"] } }),
+      );
+      if (name === "with-plugin") writeFileSync(join(dir, "server.ts"), "export default {};\n");
+    }
+    // The durable runtime did not open: a required built-in failed.
+    const service = new ServerResourceService({
+      dataDir: fixture.dataDir,
+      agentDir: fixture.agentDir,
+      plugins: {
+        listPlugins: async () => {
+          throw new Error("Oppi's built-in plugins failed to load: ask (server.ts): boom");
+        },
+        setPluginEnabled: () => undefined,
+      },
+    });
+
+    const listed = (await service.listExtensions({ plugins: true })).extensions;
+    expect(listed.map((row) => row.name)).toEqual(["classic-only", "with-plugin"]);
+    const withPlugin = listed.find((row) => row.name === "with-plugin")!;
+    expect(withPlugin).toMatchObject({ state: "on", kinds: ["plugin", "pi-extension"] });
+    expect(withPlugin.warnings).toEqual([
+      expect.stringContaining("Plugins could not be loaded: Oppi's built-in plugins failed"),
+    ]);
+    expect(listed.find((row) => row.name === "classic-only")!.warnings).toEqual([]);
+    // Detail and a toggle work the same way.
+    expect((await service.getExtensionDetail(withPlugin.id)).summary.warnings).toEqual(
+      withPlugin.warnings,
+    );
+    expect(await service.setExtensionEnabled(withPlugin.id, false)).toMatchObject({
+      state: "off",
+      warnings: withPlugin.warnings,
+    });
+  });
+
   it("reads skill detail through a symlinked user skill directory", async () => {
     const fixture = makeFixture();
     const externalSkills = join(fixture.root, "external-skills");

@@ -188,6 +188,8 @@ interface PluginRows {
   attached: Map<string, PluginListing>;
   /** By the plugin's own row ID. */
   own: Map<string, PluginListing>;
+  /** Why the plugins could not be listed (the durable runtime did not open). */
+  failure?: string;
 }
 
 interface ExtensionCatalog {
@@ -266,7 +268,7 @@ export class ServerResourceService {
     const { entries, optionalTools } = await this.buildExtensionCatalog(context);
     const plugins = await this.pluginRows(context);
     const rows = [
-      ...entries.map((entry) => withPlugin(entry.summary, plugins.attached.get(entry.summary.id))),
+      ...entries.map((entry) => withPlugin(entry.summary, plugins)),
       ...(withPluginRows
         ? [...plugins.own].map(([id, plugin]) => pluginRow(id, plugin, this.agentDir))
         : []),
@@ -355,7 +357,7 @@ export class ServerResourceService {
       (candidate) => candidate.summary.id === id,
     );
     if (!entry) throw new ServerResourceNotFoundError("extension");
-    const summary = copyExtensionSummary(withPlugin(entry.summary, plugins.attached.get(id)));
+    const summary = copyExtensionSummary(withPlugin(entry.summary, plugins));
     return {
       summary,
       contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
@@ -442,8 +444,7 @@ export class ServerResourceService {
       const authoritative = await this.buildExtensionCatalog(latest);
       const current = authoritative.entries.find((entry) => entry.summary.id === id);
       if (!current) throw new ServerResourceNotFoundError("extension");
-      const attached = (await this.pluginRows(latest)).attached.get(id);
-      return copyExtensionSummary(withPlugin(current.summary, attached));
+      return copyExtensionSummary(withPlugin(current.summary, await this.pluginRows(latest)));
     });
   }
 
@@ -486,10 +487,17 @@ export class ServerResourceService {
   private async pluginRows(context: ResolutionContext): Promise<PluginRows> {
     const rows: PluginRows = { attached: new Map(), own: new Map() };
     if (!this.plugins) return rows;
+    // The plugins load with the durable runtime; when it cannot open, the classic list stands.
+    let plugins: readonly PluginListing[];
+    try {
+      plugins = await this.plugins.listPlugins();
+    } catch (error: unknown) {
+      return { ...rows, failure: messageFrom(error) };
+    }
     const classicIds = new Set(
       context.extensions.map((resource) => resourceId("extension", canonicalPath(resource.path))),
     );
-    for (const plugin of await this.plugins.listPlugins()) {
+    for (const plugin of plugins) {
       const id = plugin.extensionIds.find(
         (candidate) => classicIds.has(candidate) && !rows.attached.has(candidate),
       );
@@ -1090,13 +1098,16 @@ function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {
 
 /**
  * Classic row `summary` with its package's plugin: both kinds, and the plugin's load error
- * (the classic one first, when both failed).
+ * (the classic one first, when both failed). When the plugins could not be listed, a row whose
+ * package holds a plugin says why instead.
  */
-function withPlugin(
-  summary: ServerExtensionSummary,
-  plugin: PluginListing | undefined,
-): ServerExtensionSummary {
-  if (!plugin) return summary;
+function withPlugin(summary: ServerExtensionSummary, rows: PluginRows): ServerExtensionSummary {
+  const plugin = rows.attached.get(summary.id);
+  if (!plugin) {
+    if (rows.failure === undefined || !summary.kinds.includes("plugin")) return summary;
+    const warning = `Plugins could not be loaded: ${rows.failure}`;
+    return { ...summary, warnings: boundedWarnings([warning, ...summary.warnings]) };
+  }
   const loadError = plugin.loadError === undefined ? undefined : boundMessage(plugin.loadError);
   return {
     ...summary,
