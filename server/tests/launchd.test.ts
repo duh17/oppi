@@ -1457,9 +1457,9 @@ describe("launchctl error classification", () => {
 
   it("does not treat bootstrap 125 as already-loaded when uid or path contains 37", () => {
     process.getuid = () => 537;
-    mockHomedir.mockReturnValue("/Users/chen37");
+    mockHomedir.mockReturnValue("/Users/alex37");
     setupValidInstall();
-    const plist = "/Users/chen37/Library/LaunchAgents/dev.chaosdonkey.oppi.plist";
+    const plist = "/Users/alex37/Library/LaunchAgents/dev.chaosdonkey.oppi.plist";
     mockExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("bootstrap")) {
         throw execError(
@@ -1483,7 +1483,7 @@ describe("launchctl error classification", () => {
 
   it("still kickstarts on bootstrap 37 when uid or path contains 37", () => {
     process.getuid = () => 537;
-    mockHomedir.mockReturnValue("/Users/chen37");
+    mockHomedir.mockReturnValue("/Users/alex37");
     setupValidInstall();
     mockExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("bootstrap")) {

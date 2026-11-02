@@ -31,14 +31,14 @@ describe("authenticated dictation dictionary HTTP boundary", () => {
       return { status: res.statusCode, json: JSON.parse(res.body) as Record<string, unknown> };
     }
     expect(
-      (await call("POST", "/dictation/dictionary/global", { phrase: "Duh Ifone" })).json,
-    ).toMatchObject({ phrases: ["Duh Ifone"], revision: 1, added: 1, skipped: [] });
+      (await call("POST", "/dictation/dictionary/global", { phrase: "Alex Ifone" })).json,
+    ).toMatchObject({ phrases: ["Alex Ifone"], revision: 1, added: 1, skipped: [] });
     expect(
       (await call("POST", "/dictation/dictionary/workspaces/w1", { phrase: "Yuwp" })).status,
     ).toBe(200);
     expect((await call("GET", "/dictation/dictionary/workspaces/w2")).json.phrases).toEqual([]);
     expect((await call("GET", "/dictation/dictionary/global")).json).toMatchObject({
-      phrases: ["Duh Ifone"],
+      phrases: ["Alex Ifone"],
       provider: "xai",
     });
     expect(
@@ -50,7 +50,7 @@ describe("authenticated dictation dictionary HTTP boundary", () => {
     ).toBe(409);
     expect((await call("DELETE", "/dictation/dictionary/workspaces/w1", {})).status).toBe(200);
     expect((await call("GET", "/dictation/dictionary/workspaces/w1")).json.phrases).toEqual([]);
-    expect((await call("GET", "/dictation/dictionary/global")).json.phrases).toEqual(["Duh Ifone"]);
+    expect((await call("GET", "/dictation/dictionary/global")).json.phrases).toEqual(["Alex Ifone"]);
   });
 
   it("accepts a 100-phrase POST and reports partial overflow without losing saved entries", async () => {

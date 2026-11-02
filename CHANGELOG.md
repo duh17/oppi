@@ -180,7 +180,7 @@ Target: iOS `1.1.2` Build `56`, `oppi-server@0.53.0`, and `oppi-mirror@0.53.0` (
 - **Client:** Several audio cards in one message no longer collapse onto each other.
 - **Client:** Choosing an Ask option and sliding your finger off the row no longer sends it, and the expanded Ask follows a theme change.
 - **Client:** Blank thinking blocks, such as the ones some local models emit before each tool call, no longer leave empty rows in the chat.
-- **Client:** File links in chat no longer draw a broken underline under names with `_`, such as `Da_Chen_Resume.pdf`. Web and session links keep their underline.
+- **Client:** File links in chat no longer draw a broken underline under names with `_`, such as `Alex_Doe_Resume.pdf`. Web and session links keep their underline.
 - **Server:** A retried prompt or steer with an attachment is no longer rejected as a conflict after its turn has landed.
 - **Client:** SSH Terminal: holding Delete on the on-screen keyboard repeats while typing in the terminal. A dictated phrase with a newline asks first, like a multi-line paste.
 - **Client:** SSH Terminal switches the keyboard to secure entry at `Password:`, `sudo`, passphrase, and PIN prompts and shows **Secure Input** on the keyboard bar, so third-party keyboards, dictation, and keyboard learning no longer see the password. While the chat bar holds the input, typing moves to the terminal for the prompt and back afterwards, so a password never lands in a draft.

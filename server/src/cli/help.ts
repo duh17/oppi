@@ -199,7 +199,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--host must not conflict with publicUrl.",
     ],
     examples: [
-      { command: 'oppi pair "Chen"' },
+      { command: 'oppi pair "Alex"' },
       { command: "oppi pair --host mac-studio.local" },
       { command: "oppi pair --json" },
       { command: 'oppi pair "App Review" --ttl 14d --json' },
@@ -568,8 +568,8 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [
-      { command: "oppi dictionary add --phrase 'Duh Ifone'" },
-      { command: "printf 'Yuwp\\nDuh Ifone\\n' | oppi dictionary add --phrases @-" },
+      { command: "oppi dictionary add --phrase 'Alex Ifone'" },
+      { command: "printf 'Yuwp\\nAlex Ifone\\n' | oppi dictionary add --phrases @-" },
       { command: "oppi dictionary list --workspace <id> --json" },
       { command: "oppi dictionary forget --workspace <id>" },
     ],

@@ -4859,7 +4859,7 @@ describe("server durable managed runtime", () => {
   });
 
   describe("with experimental.serverDurable turned off after sessions were bound", () => {
-    // Chen flips the flag off to go back to classic sessions; the durable rows
+    // The owner flips the flag off to go back to classic sessions; the durable rows
     // already bound to a conversation must keep their history and resume.
     async function boundThenFlagOff() {
       const f = await fixture([

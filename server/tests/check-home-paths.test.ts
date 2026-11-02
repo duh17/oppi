@@ -13,16 +13,16 @@ const repoRoot = resolve(__dirname, "../..");
 
 describe("findHomePathViolations", () => {
   it("flags a real home directory with its line number", () => {
-    const content = ['const dataDir = "/Users/chenda/.config/oppi";', "const ok = true;"].join(
+    const content = ['const dataDir = "/Users/jordan/.config/oppi";', "const ok = true;"].join(
       "\n",
     );
     expect(findHomePathViolations("server/src/config.ts", content)).toEqual([
-      { file: "server/src/config.ts", line: 1, text: "/Users/chenda" },
+      { file: "server/src/config.ts", line: 1, text: "/Users/jordan" },
     ]);
   });
 
   it("flags a bare home path and an embedded one on every line", () => {
-    const content = ['"exact": "/Users/chenda"', "'-d', '/Users/duh/.pi'"].join("\n");
+    const content = ['"exact": "/Users/jordan"', "'-d', '/Users/sam/.pi'"].join("\n");
     expect(findHomePathViolations("server/src/config.ts", content).map((v) => v.line)).toEqual([
       1, 2,
     ]);

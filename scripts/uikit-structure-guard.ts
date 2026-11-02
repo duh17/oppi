@@ -28,7 +28,7 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face of the same
  *    tokens ships in `OppiMac/Theme/`), so no theme file imports SwiftUI, model
  *    colors included: `modelColor` and `providerIconTint` return `ThemeColor`.
- *    Any other file fails, and a new entry needs Chen's approval.
+ *    Any other file fails, and a new entry needs the owner's approval.
  *    `@_exported import` of any of them fails even in an allow-listed file.
  *
  *  - A hand-built `UICollectionLayoutListConfiguration(appearance: .insetGrouped)`
@@ -229,7 +229,7 @@ const navigationBarOwners = [
  * same dependency, so all three count as importing SwiftUI: the iOS app is UIKit
  * everywhere except the surfaces Apple requires in SwiftUI, and the files here
  * say which one and why. Every other file fails the guard, and a new entry needs
- * Chen's approval.
+ * the owner's approval.
  */
 const swiftUIImporters: { file: string; reason: string }[] = [
   // The two framework leaves: SwiftUI only because the framework is.
@@ -569,7 +569,7 @@ ${sharedImporterCount} \`Shared/\` files the app target compiles (the
 \`ModelColorHelpers\` chart and \`LiveActivityPresentation\`). See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
-UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in
+UIHostingController< (a subclass or stored type) have no baseline: an exception needs the owner's approval and a commented entry in
 the guard's allowed list. A new \`import SwiftUI\` fails too: the file needs
 approval and an entry in \`swiftUIImporters\`, with a reason. \`bun
 scripts/uikit-structure-guard.ts --update\` lowers the other ratchets after a

@@ -2,7 +2,7 @@
 
 // Home path guard: tracked source and configuration must not record an absolute
 // home directory (`/Users/<name>`). The 2026-10 macOS home rename
-// (chenda -> duh on both Macs) stranded every live file that had kept the old
+// (an account short-name change on both Macs) stranded every live file that had kept the old
 // home: container snapshots would not boot, Oppi sessions would not resume,
 // LaunchAgents ran scripts that exported the vanished HOME. None of it failed
 // where the path was written, so nothing caught it until runtime.
@@ -25,8 +25,8 @@ export type HomePathViolation = {
 /**
  * Home names that never belong to a real account on these machines. They are
  * placeholders in comments, samples, and preview fixtures. Add a name only when
- * it is unmistakably fictional; `duh`, `chenda`, and any other real account
- * must fail so the stale path is rewritten, not allowlisted.
+ * it is unmistakably fictional; any real account name must fail so the stale
+ * path is rewritten, not allowlisted.
  */
 export const NEUTRAL_HOME_NAMES: ReadonlySet<string> = new Set([
   "alice",

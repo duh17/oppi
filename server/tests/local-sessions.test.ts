@@ -90,27 +90,27 @@ function makeSessionJsonl(opts: {
 
 describe("validateCwdAlignment", () => {
   it("allows exact CWD match", () => {
-    expect(validateCwdAlignment("/Users/chen/workspace/oppi", "/Users/chen/workspace/oppi")).toBe(
+    expect(validateCwdAlignment("/Users/alex/workspace/oppi", "/Users/alex/workspace/oppi")).toBe(
       true,
     );
   });
 
   it("allows subdirectory of hostMount", () => {
     expect(
-      validateCwdAlignment("/Users/chen/workspace/oppi/server", "/Users/chen/workspace/oppi"),
+      validateCwdAlignment("/Users/alex/workspace/oppi/server", "/Users/alex/workspace/oppi"),
     ).toBe(true);
   });
 
   it("rejects different directory", () => {
-    expect(validateCwdAlignment("/Users/chen/workspace/other", "/Users/chen/workspace/oppi")).toBe(
+    expect(validateCwdAlignment("/Users/alex/workspace/other", "/Users/alex/workspace/oppi")).toBe(
       false,
     );
   });
 
   it("rejects partial path prefix that is not a parent", () => {
-    // /Users/chen/workspace/oppi-fork is NOT under /Users/chen/workspace/oppi
+    // /Users/alex/workspace/oppi-fork is NOT under /Users/alex/workspace/oppi
     expect(
-      validateCwdAlignment("/Users/chen/workspace/oppi-fork", "/Users/chen/workspace/oppi"),
+      validateCwdAlignment("/Users/alex/workspace/oppi-fork", "/Users/alex/workspace/oppi"),
     ).toBe(false);
   });
 
@@ -122,7 +122,7 @@ describe("validateCwdAlignment", () => {
 
 describe("isControlSessionLocalArtifact", () => {
   it("matches the real data-dir control cwd tree", () => {
-    const dataDir = "/Users/chen/.config/oppi";
+    const dataDir = "/Users/alex/.config/oppi";
     expect(isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir })).toBe(
       true,
     );
@@ -130,10 +130,10 @@ describe("isControlSessionLocalArtifact", () => {
   });
 
   it("does not treat ordinary workspace cwds as control artifacts", () => {
-    expect(isControlSessionLocalArtifact("/Users/chen/workspace/oppi")).toBe(false);
+    expect(isControlSessionLocalArtifact("/Users/alex/workspace/oppi")).toBe(false);
     expect(
-      isControlSessionLocalArtifact("/Users/chen/workspace/oppi/server", {
-        dataDir: "/Users/chen/.config/oppi",
+      isControlSessionLocalArtifact("/Users/alex/workspace/oppi/server", {
+        dataDir: "/Users/alex/.config/oppi",
       }),
     ).toBe(false);
   });

@@ -95,9 +95,9 @@ describe("oppi dictionary CLI", () => {
         res.end(
           JSON.stringify({
             revision: 1,
-            phrases: ["Yuwp", "Duh Ifone"],
+            phrases: ["Yuwp", "Alex Ifone"],
             added: 1,
-            skipped: [{ phrase: "Duh Ifone", reason: "duplicate" }],
+            skipped: [{ phrase: "Alex Ifone", reason: "duplicate" }],
           }),
         );
       });
@@ -106,8 +106,8 @@ describe("oppi dictionary CLI", () => {
       await listenOnLocalApiFixture(server, dir);
       const jsonFile = join(dir, "json.txt");
       const linesFile = join(dir, "lines.txt");
-      writeFileSync(jsonFile, '["Yuwp","Duh Ifone"]');
-      writeFileSync(linesFile, "Yuwp\nDuh Ifone\n");
+      writeFileSync(jsonFile, '["Yuwp","Alex Ifone"]');
+      writeFileSync(linesFile, "Yuwp\nAlex Ifone\n");
       const fileResult = await runCli(["dictionary", "add", "--file", jsonFile], {
         dataDir: dir,
         captureHuman: true,
@@ -116,7 +116,7 @@ describe("oppi dictionary CLI", () => {
       expect(fileResult.ok).toBe(true);
       expect(fileResult.json).toMatchObject({
         ok: true,
-        data: { added: 1, skipped: [{ phrase: "Duh Ifone", reason: "duplicate" }] },
+        data: { added: 1, skipped: [{ phrase: "Alex Ifone", reason: "duplicate" }] },
       });
       expect(fileResult.humanOutput).toContain("1 added, 1 skipped");
       const linesResult = await runCli(["dictionary", "add", "--file", linesFile], {
@@ -134,11 +134,11 @@ describe("oppi dictionary CLI", () => {
       let stderr = "";
       child.stdout.setEncoding("utf8").on("data", (text: string) => (stdout += text));
       child.stderr.setEncoding("utf8").on("data", (text: string) => (stderr += text));
-      child.stdin.end("Yuwp\nDuh Ifone\n");
+      child.stdin.end("Yuwp\nAlex Ifone\n");
       const exit = await new Promise<number | null>((resolve) => child.on("close", resolve));
       expect({ exit, stderr }).toEqual({ exit: 0, stderr: "" });
       expect(JSON.parse(stdout)).toMatchObject({ ok: true, data: { added: 1 } });
-      expect(seen).toEqual(Array.from({ length: 3 }, () => ({ phrases: ["Yuwp", "Duh Ifone"] })));
+      expect(seen).toEqual(Array.from({ length: 3 }, () => ({ phrases: ["Yuwp", "Alex Ifone"] })));
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       rmSync(dir, { recursive: true, force: true });

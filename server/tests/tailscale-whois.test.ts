@@ -23,8 +23,8 @@ const humanWhois = `{
   },
   "UserProfile": {
     "ID": 123,
-    "LoginName": "chen@example.com",
-    "DisplayName": "Chen"
+    "LoginName": "alex@example.com",
+    "DisplayName": "Alex"
   },
   "CapMap": {}
 }`;
@@ -52,12 +52,12 @@ const taggedWhois = `{
 
 describe("tailscale whois proof helpers", () => {
   it("reads LoginName from UserProfile, not User", () => {
-    expect(parseWhoisIdentity(humanWhois)).toEqual({ ok: true, login: "chen@example.com", stableNodeId: "nPhone1CNTRL" });
-    expect(parseWhoisLogin(humanWhois)).toBe("chen@example.com");
-    expect(parseWhoisIdentity(`{"User":{"ID":1,"LoginName":"chen@example.com","DisplayName":"Chen"}}`)).toEqual(
+    expect(parseWhoisIdentity(humanWhois)).toEqual({ ok: true, login: "alex@example.com", stableNodeId: "nPhone1CNTRL" });
+    expect(parseWhoisLogin(humanWhois)).toBe("alex@example.com");
+    expect(parseWhoisIdentity(`{"User":{"ID":1,"LoginName":"alex@example.com","DisplayName":"Alex"}}`)).toEqual(
       { ok: false, reason: "invalid" },
     );
-    expect(parseWhoisLogin(`{"User":{"ID":1,"LoginName":"chen@example.com"}}`)).toBeNull();
+    expect(parseWhoisLogin(`{"User":{"ID":1,"LoginName":"alex@example.com"}}`)).toBeNull();
     expect(parseWhoisLogin(`{"Node":{"Name":"phone"}}`)).toBeNull();
     expect(parseWhoisLogin("not-json")).toBeNull();
   });
@@ -81,10 +81,10 @@ describe("tailscale whois proof helpers", () => {
         "UserID": 123,
         "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"]
       },
-      "User": {"123": {"ID": 123, "LoginName": "chen@example.com"}}
+      "User": {"123": {"ID": 123, "LoginName": "alex@example.com"}}
     }`);
     expect(self).toEqual({
-      login: "chen@example.com",
+      login: "alex@example.com",
       dnsName: "mac-studio.tail1234.ts.net",
       tailscaleIPv4: "100.101.102.103",
       stableNodeId: "nSelf1CNTRL",
@@ -115,8 +115,8 @@ describe("tailscale whois proof helpers", () => {
   });
 
   it("compares Tailscale logins case-insensitively", () => {
-    expect(loginsMatch("Chen@example.com", "chen@example.com")).toBe(true);
-    expect(loginsMatch("chen@example.com", "other@example.com")).toBe(false);
+    expect(loginsMatch("Alex@example.com", "alex@example.com")).toBe(true);
+    expect(loginsMatch("alex@example.com", "other@example.com")).toBe(false);
   });
 
   it("advertises MagicDNS only in tailscale TLS mode", () => {

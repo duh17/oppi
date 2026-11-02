@@ -33,7 +33,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 4. **Reuse the [shared building blocks](#shared-uikit-building-blocks)** before writing one.
 5. **A list cell that changes its own layout re-measures:** session lists set `selfSizingInvalidation = .enabledIncludingConstraints` and a rearranging row invalidates its intrinsic size, or lines overlap.
 6. **SwiftUI only where Apple requires it:** widgets, control widgets, Live Activities (`OppiControlWidget`, `OppiActivityExtension`), App Intents UI.
-7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason** ([the SwiftUI allow-list](#the-swiftui-allow-list)); `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too, and a new entry needs Chen's approval.
+7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason** ([the SwiftUI allow-list](#the-swiftui-allow-list)); `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too, and a new entry needs the owner's approval.
 8. **Observe notifications with a block on the main queue:** a `@MainActor` type uses `addObserver(forName:object:queue: .main)`, keeps the token, and removes it in `isolated deinit` or when it leaves; selector observers trap when the poster is off the main thread (`bd3b2b5d4`, `415f62e75`).
 
 ### Shared UIKit building blocks
@@ -87,7 +87,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Structure guard
 
-`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs Chen's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
+`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs the owner's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
 
 **Mac (`clients/apple/OppiMac`):** new views are AppKit; existing SwiftUI stays until a separate decision.
 

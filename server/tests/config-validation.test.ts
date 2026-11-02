@@ -261,7 +261,7 @@ describe("Storage config validation", () => {
     const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const token = storage.issuePairingToken(90_000, {
       method: "tailscale",
-      source: "chen@example.com",
+      source: "alex@example.com",
     });
     storage.enrollViaPairing(token, { publicKey: publicKey.export({ format: "jwk" }) });
     const next = storage.issuePairingToken(600_000);
@@ -269,7 +269,7 @@ describe("Storage config validation", () => {
     const reopened = new Storage(dir);
     expect(reopened.listDevices()[0]?.pairing).toEqual({
       method: "tailscale",
-      source: "chen@example.com",
+      source: "alex@example.com",
     });
     expect(reopened.getConfig().pairingToken).toBe(next);
     expect(reopened.getConfig().pairingTokenOrigin).toEqual({ method: "invite", ttlMs: 600_000 });

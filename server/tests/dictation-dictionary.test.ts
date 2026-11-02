@@ -8,17 +8,17 @@ describe("dictation dictionary persistence", () => {
   it("isolates workspace ids, preserves ordered global entries, and keeps deletion across reload", () => {
     const dir = makeTempDir("oppi-dictionary-");
     const store = new DictationDictionaryStore(dir);
-    store.add(null, "Duh Ifone");
+    store.add(null, "Alex Ifone");
     store.add("ws-a", "Yuwp");
     store.add("ws-b", "kypu");
-    expect(store.get(null).phrases).toEqual(["Duh Ifone"]);
+    expect(store.get(null).phrases).toEqual(["Alex Ifone"]);
     expect(store.get("ws-a").phrases).toEqual(["Yuwp"]);
     expect(store.get("ws-b").phrases).toEqual(["kypu"]);
     store.remove("ws-a", "Yuwp");
     expect(new DictationDictionaryStore(dir).get("ws-a").phrases).toEqual([]);
     expect(new DictationDictionaryStore(dir).get("ws-b").phrases).toEqual(["kypu"]);
     store.forget("ws-b");
-    expect(store.get(null).phrases).toEqual(["Duh Ifone"]);
+    expect(store.get(null).phrases).toEqual(["Alex Ifone"]);
     expect(store.get("ws-b").phrases).toEqual([]);
   });
 

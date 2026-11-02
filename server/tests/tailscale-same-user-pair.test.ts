@@ -35,7 +35,7 @@ fi
 if [ "$1" = "status" ]; then
   dns="\${OPPI_TEST_SELF_DNS:-mac.tail1234.ts.net}"
   ip="\${OPPI_TEST_SELF_IP:-100.101.102.1}"
-  login="\${OPPI_TEST_SELF_LOGIN:-chen@example.com}"
+  login="\${OPPI_TEST_SELF_LOGIN:-alex@example.com}"
   stable_id="\${OPPI_TEST_SELF_STABLE_ID:-nSelf1CNTRL}"
   if [ "\${OPPI_TEST_SELF_TAGGED:-}" = "1" ]; then
     printf '{"Self":{"DNSName":"%s.","UserID":1,"Tags":["tag:server"],"TailscaleIPs":["%s"]},"User":{"1":{"ID":1,"LoginName":"tagged-devices","DisplayName":"tagged-devices"}}}\\n' "$dns" "$ip"
@@ -66,7 +66,7 @@ if [ "$1" = "whois" ]; then
   ip=""
   for arg in "$@"; do ip="$arg"; done
   self_ip="\${OPPI_TEST_SELF_IP:-100.101.102.1}"
-  self_login="\${OPPI_TEST_SELF_LOGIN:-chen@example.com}"
+  self_login="\${OPPI_TEST_SELF_LOGIN:-alex@example.com}"
   peer_login="\${OPPI_TEST_PEER_LOGIN:-$self_login}"
   login="$peer_login"
   if [ "$ip" = "$self_ip" ]; then
@@ -81,7 +81,7 @@ if [ "$1" = "whois" ]; then
     exit 0
   fi
   stable_id="\${OPPI_TEST_PEER_STABLE_ID:-nPeer1CNTRL}"
-  printf '{"Node":{"ID":2,"StableID":"%s","Name":"iphone.tail1234.ts.net.","User":1,"Addresses":["%s/32"],"Hostinfo":{"OS":"iOS","Hostname":"iPhone"}},"UserProfile":{"ID":1,"LoginName":"%s","DisplayName":"Chen"},"CapMap":{}}\\n' "$stable_id" "$ip" "$login"
+  printf '{"Node":{"ID":2,"StableID":"%s","Name":"iphone.tail1234.ts.net.","User":1,"Addresses":["%s/32"],"Hostinfo":{"OS":"iOS","Hostname":"iPhone"}},"UserProfile":{"ID":1,"LoginName":"%s","DisplayName":"Alex"},"CapMap":{}}\\n' "$stable_id" "$ip" "$login"
   exit 0
 fi
 exit 1
@@ -250,7 +250,7 @@ describe("POST /pair/tailscale", () => {
         expect(storage.getConfig().pairingTokenOrigin).toEqual({
           method: "tailscale",
           ttlMs: 90_000,
-          source: "chen@example.com",
+          source: "alex@example.com",
         });
         expect(certLogContents(certLog)).toBe(certBefore);
       });

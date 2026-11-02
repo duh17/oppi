@@ -102,7 +102,7 @@ export interface VoiceCallMediaAttachInput {
  * This fixed pause is what a Yuwp from before semantic_vad uses instead, and how long an open
  * turn may go without audio before the client cuts it. As a fixed pause, every pause this
  * long splits the caller's speech into separate turns, mid-sentence or not, so it trades reply
- * latency against cutting people off. Measured on 8 recordings of Chen's speech with
+ * latency against cutting people off. Measured on 8 recordings of one speaker with
  * mid-sentence pauses (real yuwp-asr, real time): 1200 ms gave 24 turns, 1500 ms gave 23, and
  * 2000 ms gave 18, so 2000 ms leaves the fewest sentences split and each reply starts about
  * 0.5 s later than at 1500 ms. Pauses longer than this still split ("what does the" /

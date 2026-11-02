@@ -148,7 +148,7 @@ addValid("device-enrolled", {
   event: "device_enrolled",
   deviceId: "dev_vector",
   title: "New Device Paired",
-  body: "iPad paired (tailscale, chen@example.com).",
+  body: "iPad paired (tailscale, alex@example.com).",
 });
 
 const invalid: Array<{ name: string; envelope: string; reason: string }> = [];

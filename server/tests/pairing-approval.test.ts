@@ -185,7 +185,7 @@ describe("pairing approval policy", () => {
   it("enrolls the first device from a Tailscale invite without approval", async () => {
     const pairingToken = storage.issuePairingToken(90_000, {
       method: "tailscale",
-      source: "chen@example.com",
+      source: "alex@example.com",
     });
     const paired = await call("POST", "/pair", {
       body: { pairingToken, devicePublicKey: makeDeviceKey().publicKey, deviceName: "iPad" },
@@ -193,7 +193,7 @@ describe("pairing approval policy", () => {
     expect(paired.status).toBe(200);
     expect(storage.listDevices()[0]?.pairing).toEqual({
       method: "tailscale",
-      source: "chen@example.com",
+      source: "alex@example.com",
     });
   });
 
@@ -227,7 +227,7 @@ describe("pairing approval policy", () => {
     enrollExisting();
     const pairingToken = storage.issuePairingToken(90_000, {
       method: "tailscale",
-      source: "chen@example.com",
+      source: "alex@example.com",
     });
     const pending = await call("POST", "/pair", {
       body: { pairingToken, devicePublicKey: makeDeviceKey().publicKey, deviceName: "Mac" },
@@ -237,7 +237,7 @@ describe("pairing approval policy", () => {
     expect(listed.body.approvals).toEqual([
       expect.objectContaining({
         method: "tailscale",
-        source: "chen@example.com",
+        source: "alex@example.com",
         deviceName: "Mac",
       }),
     ]);
@@ -675,12 +675,12 @@ describe("custom approver", () => {
       authModule: await loadModule(
         `export function approvePairing(req) {
            return req.credential === "letmein" && req.method === "custom" && req.keyThumbprint
-             ? { allow: true, source: "sso:chen" } : { allow: false, reason: "bad credential" };
+             ? { allow: true, source: "sso:alex" } : { allow: false, reason: "bad credential" };
          }`,
       ),
     });
     expect((await pairCustom("letmein")).status).toBe(200);
-    expect(storage.listDevices()[0]?.pairing).toEqual({ method: "custom", source: "sso:chen" });
+    expect(storage.listDevices()[0]?.pairing).toEqual({ method: "custom", source: "sso:alex" });
 
     expect(await pairCustom("wrong")).toEqual({ status: 403, body: { error: "bad credential" } });
   });
