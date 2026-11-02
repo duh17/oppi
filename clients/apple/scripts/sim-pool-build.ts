@@ -11,8 +11,8 @@
 // Locks, outermost first, all flock(2) held by this process so a crash frees them:
 //   1. `.build/dd.lock`: exclusive while building (and cloning), shared while a
 //      caller's own `test-without-building` reads `.build/dd` directly.
-//   2. a machine-wide `xcode-build` slot from scripts/heavy.sh (same slot files,
-//      same counting semaphore), only around the xcodebuild build itself.
+//   2. a machine-wide `xcode-build` slot from scripts/heavy.sh (same slot files, same gate
+//      markers), only around the xcodebuild build itself.
 //   3. the simulator slot, taken after 1 and 2 are released.
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -478,12 +478,45 @@ const HEAVY_CLASSES = {
   "sim-first-boot": { knob: "OPPI_HEAVY_SIM_FIRST_BOOT", slots: 1 },
 } as const;
 
+/** Where a waiting gate job (LAND_QUEUE_BATCH) leaves `<class>.<pid>` markers, next to the slot files. */
+function gateWaitingDirectory(dir: string): string {
+  return join(dir, "gate-waiting");
+}
+
+/**
+ * True while a gate job waits for `heavyClass`, as heavy.sh's `gate_waiting` reads it: a marker
+ * whose pid is gone is a killed waiter, not a hold, and is removed so the directory cannot grow.
+ */
+function gateWaiting(dir: string, heavyClass: keyof typeof HEAVY_CLASSES): boolean {
+  const gateDir = gateWaitingDirectory(dir);
+  let names: string[];
+  try {
+    names = readdirSync(gateDir);
+  } catch {
+    return false;
+  }
+  let waiting = false;
+  for (const name of names) {
+    if (!name.startsWith(`${heavyClass}.`)) continue;
+    const pid = Number(name.slice(heavyClass.length + 1));
+    if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) {
+      waiting = true;
+      continue;
+    }
+    rmSync(join(gateDir, name), { force: true });
+  }
+  return waiting;
+}
+
 /**
  * Take one of scripts/heavy.sh's machine-wide slots of `heavyClass` (same slot files and env knobs),
  * or nothing when an ancestor already holds that class (OPPI_HEAVY_HELD). The child environment must
  * carry `heldEnv` so a nested heavy.sh does not wait on us. Resolves undefined when canceled or when
  * the caller is gone. `deadlineMs` bounds the wait (checked after each full round of busy slots, so
  * 0 means try once); it throws when the wait outlasts it. Without it the wait is unbounded.
+ *
+ * Priority is heavy.sh's: a job with LAND_QUEUE_BATCH set (the land gate's lanes) gets the next free
+ * slot of the class, so while one waits this non-gate caller writes no slot and waits behind it.
  */
 export async function acquireHeavySlot(
   heavyClass: keyof typeof HEAVY_CLASSES,
@@ -507,36 +540,61 @@ export async function acquireHeavySlot(
   mkdirSync(dir, { recursive: true });
   const pollMs = Math.max(100, Number(env.OPPI_HEAVY_POLL ?? "5") * 1000);
   const started = Date.now();
+  // One marker per waiting gate job, cleared as soon as it holds a slot (a crash leaves it to the
+  // pid check above). Two concurrent waits in this process for one class share a marker.
+  const isGate = Boolean(env.LAND_QUEUE_BATCH);
+  const gateDir = gateWaitingDirectory(dir);
+  const gateMarker = join(gateDir, `${heavyClass}.${process.pid}`);
+  const clearGateMarker = () => {
+    if (isGate) rmSync(gateMarker, { force: true });
+  };
   let announced = false;
   while (true) {
-    for (let slot = 0; slot < slots; slot += 1) {
-      const path = join(dir, `${heavyClass}.${slot}`);
-      const fd = openSync(path, "a");
-      if (flockFd(fd, LOCK_EX | LOCK_NB) === 0) {
-        let isHeld = true;
-        const lock: HeldLock = {
-          path,
-          release: () => {
-            if (!isHeld) return;
-            isHeld = false;
-            flockFd(fd, LOCK_UN);
-            closeSync(fd);
-          },
-        };
-        return { lock, heldEnv, waitedSeconds: Math.round((Date.now() - started) / 1000) };
-      }
-      closeSync(fd);
+    if (isGate) {
+      // Announce before looking for a slot, and again each round while the wait lasts.
+      mkdirSync(gateDir, { recursive: true });
+      writeFileSync(gateMarker, `${process.pid}\n`);
     }
-    if (session.canceled) return undefined;
+    // A gate job takes no notice of markers: gate jobs keep racing each other as before.
+    const deferred = !isGate && gateWaiting(dir, heavyClass);
+    if (!deferred) {
+      for (let slot = 0; slot < slots; slot += 1) {
+        const path = join(dir, `${heavyClass}.${slot}`);
+        const fd = openSync(path, "a");
+        if (flockFd(fd, LOCK_EX | LOCK_NB) === 0) {
+          let isHeld = true;
+          const lock: HeldLock = {
+            path,
+            release: () => {
+              if (!isHeld) return;
+              isHeld = false;
+              flockFd(fd, LOCK_UN);
+              closeSync(fd);
+            },
+          };
+          clearGateMarker();
+          return { lock, heldEnv, waitedSeconds: Math.round((Date.now() - started) / 1000) };
+        }
+        closeSync(fd);
+      }
+    }
+    if (session.canceled) {
+      clearGateMarker();
+      return undefined;
+    }
     if (deadlineMs !== undefined && Date.now() - started >= deadlineMs) {
+      clearGateMarker();
       throw new Error(`timed out after ${Math.round((Date.now() - started) / 1000)}s waiting for a machine-wide ${heavyClass} slot (${dir})`);
     }
     if (!announced) {
       announced = true;
-      log(`[sim-pool] all ${slots} machine-wide ${heavyClass} slots busy (${dir}); waiting`);
+      log(deferred
+        ? `[sim-pool] a land-gate job is waiting for a machine-wide ${heavyClass} slot; waiting behind it`
+        : `[sim-pool] all ${slots} machine-wide ${heavyClass} slots busy (${dir}); waiting`);
     }
     // Like heavy.sh: a waiter whose caller is gone (a killed pre-push hook) does not build later.
     if (callerGone(env)) {
+      clearGateMarker();
       log(`[sim-pool] caller is gone; not starting the queued ${heavyClass} job`);
       return undefined;
     }

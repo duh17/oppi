@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Subprocess } from "bun";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +28,11 @@ afterEach(async () => {
 function env(extra: Record<string, string> = {}): Record<string, string> {
   const base: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("OPPI_HEAVY")) base[key] = value;
+    // Gate-ness is per test: a gate job sets LAND_QUEUE_BATCH itself (through `extra`), so the batch
+    // id that the land gate exports while running these tests must not turn a "non-gate newcomer"
+    // into a gate job that ignores the waiting gate's marker.
+    if (value === undefined || key.startsWith("OPPI_HEAVY") || key === "LAND_QUEUE_BATCH") continue;
+    base[key] = value;
   }
   return { ...base, OPPI_HEAVY_DIR: join(dir, "slots"), OPPI_HEAVY_POLL: "0.05", ...extra };
 }
@@ -51,6 +55,17 @@ async function waitFor(condition: () => boolean, what: string): Promise<void> {
 function holder(name: string, cls = "xcode-build", extra: Record<string, string> = {}) {
   const script = 'echo started > "$0.started"; while [ ! -e "$1" ]; do sleep 0.02; done';
   return run([cls, "--", "bash", "-c", script, join(dir, name), join(dir, "release")], extra);
+}
+
+// The same holder, released on its own `<name>-release` file, so two slots can free one at a time.
+function ownHolder(name: string) {
+  const script = 'echo started > "$0.started"; while [ ! -e "$1" ]; do sleep 0.02; done';
+  return run(["xcode-build", "--", "bash", "-c", script, join(dir, name), join(dir, `${name}-release`)]);
+}
+
+// Where heavy.sh leaves a gate job's waiting marker: the class and the waiting job's pid.
+function gateMarker(pid: number, cls = "xcode-build"): string {
+  return join(dir, "slots", "gate-waiting", `${cls}.${pid}`);
 }
 
 describe.skipIf(!hasLockf)("heavy.sh", () => {
@@ -145,6 +160,62 @@ describe.skipIf(!hasLockf)("heavy.sh", () => {
     expect(await run(["ui-suite", "--", "true"]).exited).toBe(0);
     writeFileSync(join(dir, "release"), "");
     expect(await a.exited).toBe(0);
+  });
+
+  test("a gate job waiting for a class gets the next free slot ahead of a non-gate newcomer", async () => {
+    const a = ownHolder("a");
+    const b = ownHolder("b");
+    await waitFor(() => existsSync(join(dir, "a.started")) && existsSync(join(dir, "b.started")), "two holders");
+
+    // The land gate (LAND_QUEUE_BATCH, exported by the pre-push hook and batch-gate.ts) queues with a
+    // 0.5 s poll, so without priority the newcomer's 0.05 s polls take any slot that frees.
+    const gate = run(
+      ["xcode-build", "--", "bash", "-c", 'echo ran > "$0"; while [ ! -e "$1" ]; do sleep 0.02; done', join(dir, "gate.started"), join(dir, "gate-release")],
+      { LAND_QUEUE_BATCH: "b-test-1", OPPI_HEAVY_POLL: "0.5" },
+    );
+    await waitFor(() => existsSync(gateMarker(gate.pid)), "the gate's waiting marker");
+
+    const newcomer = run(["xcode-build", "--", "bash", "-c", `echo ran > "${join(dir, "newcomer")}"`]);
+    // The gate waits for one of the two busy slots; the newcomer waits behind the gate.
+    await Bun.sleep(300);
+    expect(newcomer.exitCode).toBeNull();
+    expect(existsSync(join(dir, "newcomer"))).toBe(false);
+
+    writeFileSync(join(dir, "a-release"), "");
+    await waitFor(() => existsSync(join(dir, "gate.started")), "the gate to take the freed slot");
+    expect(existsSync(join(dir, "newcomer"))).toBe(false);
+
+    writeFileSync(join(dir, "b-release"), "");
+    await waitFor(() => existsSync(join(dir, "newcomer")), "the newcomer to run once no gate is waiting");
+    expect(await newcomer.exited).toBe(0);
+    expect(await a.exited).toBe(0);
+    expect(await b.exited).toBe(0);
+    writeFileSync(join(dir, "gate-release"), "");
+    expect(await gate.exited).toBe(0);
+  }, 20_000);
+
+  test("a stale gate marker from a dead waiter blocks nobody and is cleaned up", async () => {
+    // A killed waiter leaves its marker behind; a dead pid is not a hold, and the next job clears it.
+    const dead = Bun.spawn(["true"]);
+    await dead.exited;
+    mkdirSync(join(dir, "slots", "gate-waiting"), { recursive: true });
+    const marker = gateMarker(dead.pid);
+    writeFileSync(marker, `${dead.pid}\n`);
+
+    const job = run(["xcode-build", "--", "bash", "-c", `echo ran > "${join(dir, "ran")}"`]);
+    expect(await job.exited).toBe(0);
+    expect(existsSync(join(dir, "ran"))).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("gate jobs do not defer to a gate marker, so they keep racing each other", async () => {
+    const other = Bun.spawn(["sleep", "600"]);
+    parents.push(other);
+    mkdirSync(join(dir, "slots", "gate-waiting"), { recursive: true });
+    writeFileSync(gateMarker(other.pid), `${other.pid}\n`);
+
+    expect(await run(["xcode-build", "--", "true"], { LAND_QUEUE_BATCH: "b-test-1" }).exited).toBe(0);
+    expect(existsSync(gateMarker(other.pid))).toBe(true);
   });
 
   test("nested use of a held class runs directly instead of deadlocking", async () => {

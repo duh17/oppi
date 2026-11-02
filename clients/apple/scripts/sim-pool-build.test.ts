@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  acquireHeavySlot,
   buildIsCurrent,
   buildKey,
   completionArgvForXctestrun,
@@ -325,5 +326,91 @@ describe("sharedCacheArguments", () => {
   test("a build opted out of the cache gets no arguments", () => {
     const { appleDir, env, derived } = fixture();
     expect(sharedCacheArguments({ ...env, OPPI_SIM_POOL_COMPILATION_CACHE: "0" }, appleDir, derived)).toEqual([]);
+  });
+});
+
+describe("acquireHeavySlot gate priority", () => {
+  const dirs: string[] = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Same slot files and markers heavy.sh uses, in a temp dir: no OPPI_HEAVY_* or gate env leaks in.
+  function fixture(extra: Record<string, string> = {}) {
+    const root = mkdtempSync(join(tmpdir(), "heavy-gate-"));
+    dirs.push(root);
+    const dir = join(root, "heavy");
+    const env: NodeJS.ProcessEnv = { ...process.env, OPPI_HEAVY_DIR: dir, OPPI_HEAVY_POLL: "0.1" };
+    for (const name of ["OPPI_HEAVY_HELD", "OPPI_HEAVY_PARENT_PID", "LAND_QUEUE_BATCH", "OPPI_HEAVY_XCODE_BUILD", "OPPI_HEAVY_SIM_FIRST_BOOT"]) {
+      delete env[name];
+    }
+    const gateDir = join(dir, "gate-waiting");
+    const marker = (pid: number) => join(gateDir, `sim-first-boot.${pid}`);
+    return { dir, gateDir, marker, env: { ...env, ...extra } as NodeJS.ProcessEnv };
+  }
+
+  const session = { canceled: false, waitWhileIdle: async () => {} };
+
+  test("a non-gate caller waits behind a gate job's marker even with a free slot", async () => {
+    const { gateDir, marker, env } = fixture();
+    mkdirSync(gateDir, { recursive: true });
+    writeFileSync(marker(process.pid), `${process.pid}\n`);
+    let message = "";
+    await expect(
+      acquireHeavySlot("sim-first-boot", env, session, (line) => { message = line; }, 400),
+    ).rejects.toThrow("timed out");
+    expect(message).toContain("a land-gate job is waiting for a machine-wide sim-first-boot slot");
+    expect(existsSync(join(env.OPPI_HEAVY_DIR!, "sim-first-boot.0"))).toBe(false);
+  });
+
+  test("a stale marker from a dead gate job blocks nobody and is removed", async () => {
+    const { gateDir, env } = fixture();
+    mkdirSync(gateDir, { recursive: true });
+    const dead = spawnSync("true").pid!;
+    const stale = join(gateDir, `sim-first-boot.${dead}`);
+    writeFileSync(stale, `${dead}\n`);
+    const held = await acquireHeavySlot("sim-first-boot", env, session, () => {}, 2000);
+    expect(held?.lock).toBeDefined();
+    expect(existsSync(stale)).toBe(false);
+    held!.lock!.release();
+  });
+
+  test("a gate job ignores markers, keeps racing gate jobs, and clears its own", async () => {
+    const { gateDir, marker, env } = fixture({ LAND_QUEUE_BATCH: "b-test-1" });
+    mkdirSync(gateDir, { recursive: true });
+    const other = Bun.spawn(["sleep", "30"]);
+    writeFileSync(marker(other.pid), `${other.pid}\n`);
+    try {
+      // Another gate job waits, and a free slot is still ours: gate jobs keep today's behaviour.
+      const held = await acquireHeavySlot("sim-first-boot", env, session, () => {}, 0);
+      expect(held?.lock).toBeDefined();
+      expect(existsSync(marker(other.pid))).toBe(true);
+      expect(existsSync(marker(process.pid))).toBe(false);
+      held!.lock!.release();
+    } finally {
+      other.kill();
+    }
+  });
+
+  test("a waiting gate job announces itself and clears the marker when it gets the slot", async () => {
+    const { gateDir, marker, env } = fixture();
+    const holder = await acquireHeavySlot("sim-first-boot", env, session, () => {});
+    const gateEnv = { ...env, LAND_QUEUE_BATCH: "b-test-1" };
+    let announcedMidWait = false;
+    const watching = {
+      canceled: false,
+      waitWhileIdle: async () => {
+        announcedMidWait ||= existsSync(marker(process.pid));
+      },
+    };
+    await expect(acquireHeavySlot("sim-first-boot", gateEnv, watching, () => {}, 400)).rejects.toThrow("timed out");
+    // The marker was there for whoever looked while the gate waited; a timed-out gate leaves none.
+    expect(announcedMidWait).toBe(true);
+    expect(existsSync(gateDir)).toBe(true);
+    holder!.lock!.release();
+    const gate = await acquireHeavySlot("sim-first-boot", gateEnv, session, () => {}, 2000);
+    expect(gate?.lock).toBeDefined();
+    expect(existsSync(marker(process.pid))).toBe(false);
+    gate!.lock!.release();
   });
 });
