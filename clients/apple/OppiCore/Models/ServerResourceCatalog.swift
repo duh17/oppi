@@ -267,6 +267,27 @@ struct ServerPluginSummary: Codable, Sendable, Equatable {
     }
 }
 
+extension ServerPluginSummary {
+    /// Lenient: a field a later server leaves out decodes as empty or false instead of failing the
+    /// whole extension list.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            extensionName: try container.decodeIfPresent(String.self, forKey: .extensionName),
+            required: try container.decodeIfPresent(Bool.self, forKey: .required) ?? false,
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            runtimes: try container.decodeIfPresent([String].self, forKey: .runtimes) ?? [],
+            tools: try container.decodeIfPresent([String].self, forKey: .tools) ?? [],
+            hooks: try container.decodeIfPresent([ServerPluginHook].self, forKey: .hooks) ?? [],
+            sections: try container.decodeIfPresent([String].self, forKey: .sections) ?? [],
+            wraps: try container.decodeIfPresent([ServerPluginWrap].self, forKey: .wraps) ?? [],
+            tasks: try container.decodeIfPresent([String].self, forKey: .tasks) ?? [],
+            loadError: try container.decodeIfPresent(String.self, forKey: .loadError),
+            kept: try container.decodeIfPresent(Bool.self, forKey: .kept) ?? false
+        )
+    }
+}
+
 /// A plugin's hook handlers on one task.
 struct ServerPluginHook: Codable, Sendable, Equatable {
     let task: String

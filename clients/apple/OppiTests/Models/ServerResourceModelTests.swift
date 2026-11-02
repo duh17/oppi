@@ -228,6 +228,43 @@ struct ServerResourceModelTests {
         #expect(future.plugin?.wraps == [ServerPluginWrap()])
     }
 
+    @Test func pluginFieldsALaterServerLeavesOutDecodeAsEmpty() throws {
+        let catalog = try JSONDecoder().decode(ServerExtensionCatalog.self, from: Data("""
+        {
+          "extensions": [
+            {
+              "id": "extension_sparse",
+              "name": "sparse",
+              "kind": "directory",
+              "provenance": { "kind": "piAgent", "label": "~/.pi/agent/plugins" },
+              "state": "on",
+              "warnings": [],
+              "isRemovable": false,
+              "kinds": ["plugin"],
+              "source": "owner",
+              "plugin": { "extension": "sparse", "tools": ["sparse_tool"] }
+            }
+          ],
+          "builtInTools": []
+        }
+        """.utf8))
+
+        let plugin = try #require(catalog.extensions.first?.plugin)
+        #expect(plugin == ServerPluginSummary(
+            extensionName: "sparse",
+            required: false,
+            enabled: false,
+            runtimes: [],
+            tools: ["sparse_tool"],
+            hooks: [],
+            sections: [],
+            wraps: [],
+            tasks: [],
+            loadError: nil,
+            kept: false
+        ))
+    }
+
     @Test func decodesAPluginReloadReport() throws {
         let report = try JSONDecoder().decode(ServerPluginReloadReport.self, from: Data("""
         {
