@@ -5,6 +5,11 @@ import XCTest
 ///
 /// Fixture source: `web_fetch` of Node.js fs documentation that produced a
 /// 7s+ client hang and multi-GB memory warning on device.
+///
+/// `web_fetch` is a generic tool call, so it expands as a notebook cell whose
+/// printed Markdown stays plain output, and a double-tap opens the notebook
+/// reader (`NotebookCellPlan`). The Markdown viewport and Markdown reader
+/// belong to file reads, not to this row.
 @MainActor
 final class LargeMarkdownToolRowE2ETests: E2ETestCase {
     func testLargeWebFetchMarkdownExpansionDoesNotHang() throws {
@@ -51,11 +56,18 @@ final class LargeMarkdownToolRowE2ETests: E2ETestCase {
         let expandMs = Date().timeIntervalSince(started) * 1_000
         try saveLabScreenshot(name: "large-markdown-web-fetch-expanded-e2e")
 
+        let inlineOutput = toolRow.descendants(matching: .any)["tool.notebook.output"].firstMatch
+        XCTAssertTrue(inlineOutput.waitForExistence(timeout: 5), "Expanded web_fetch row did not show its notebook output")
+
         let fullScreenStarted = Date()
-        openExpandedContentFullScreen(toolRow, toolId: toolId)
-        let fullScreenMarkdownBody = app.collectionViews["full-screen.markdown.body"].firstMatch
-        XCTAssertTrue(fullScreenMarkdownBody.waitForExistence(timeout: 15), "Large markdown full-screen reader did not open")
+        inlineOutput.doubleTap()
+        let fullScreenReader = app.scrollViews["fullscreen-notebook.scroll"].firstMatch
+        XCTAssertTrue(fullScreenReader.waitForExistence(timeout: 15), "Large web_fetch full-screen reader did not open")
         let fullScreenMs = Date().timeIntervalSince(fullScreenStarted) * 1_000
+        XCTAssertTrue(
+            fullScreenReader.textViews["tool.notebook.output"].firstMatch.waitForExistence(timeout: 5),
+            "Full-screen reader opened without the fetched document"
+        )
         try saveLabScreenshot(name: "large-markdown-web-fetch-full-screen-e2e")
         try writeReproMetrics(
             expandMs: expandMs,
@@ -116,16 +128,6 @@ final class LargeMarkdownToolRowE2ETests: E2ETestCase {
     private func tapToolRowChrome(_ row: XCUIElement) {
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Tool row did not exist before tap")
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.16)).tap()
-    }
-
-    private func openExpandedContentFullScreen(_ row: XCUIElement, toolId: String) {
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "Tool row did not exist before full-screen activation")
-        let viewport = app.collectionViews["chat.timeline.row.\(toolId).markdownViewport"].firstMatch
-        if viewport.waitForExistence(timeout: 3) {
-            viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.45)).doubleTap()
-            return
-        }
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.34)).doubleTap()
     }
 
     private func stableFrame(of element: XCUIElement) -> CGRect {
