@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -9,7 +10,13 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
-import { DurableHarness, durableStoreDir, durableStoreSqlitePath } from "../src/durable-harness.js";
+import {
+  DurableHarness,
+  durableSessionsRoot,
+  durableStoreDir,
+  durableStoreLockPath,
+  durableStoreSqlitePath,
+} from "../src/durable-harness.js";
 import { DurableInputCards } from "../extensions/durable/durable-ui.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SANDBOX_RESOURCE_MAX_BYTES } from "../src/gondolin-ops.js";
@@ -260,7 +267,7 @@ describe("durable SessionHost stores", () => {
     await f.manager.stopSession(session.id);
     await until(() => runtime.host(session.id) === undefined, "idle store close");
     // A stale lock directory nothing refreshes, holding a stray file: rmdir fails.
-    const lockPath = `${durableStoreDir(f.dir, session.id)}.lock`;
+    const lockPath = durableStoreLockPath(f.dir, session.id);
     mkdirSync(lockPath);
     writeFileSync(join(lockPath, "session.sqlite"), "");
     const past = new Date(Date.now() - 60_000);
@@ -272,7 +279,7 @@ describe("durable SessionHost stores", () => {
       (error: unknown) => error as Error & { code?: string },
     );
     expect(refused?.message).toContain("ENOTEMPTY");
-    expect(refused?.message).toContain(realpathSync(lockPath));
+    expect(refused?.message).toContain(lockPath);
     expect(refused?.message).not.toMatch(/already open/);
     expect(refused?.code).toBe("durable_store_lock_failed");
   });
@@ -311,12 +318,34 @@ describe("durable SessionHost stores", () => {
     const host = runtime.host(lost.id)!;
     // A stray file in the lock directory changes its mtime under the holder: the lock is
     // compromised at its next refresh.
-    writeFileSync(join(`${durableStoreDir(f.dir, lost.id)}.lock`, "session.sqlite"), "");
+    writeFileSync(join(durableStoreLockPath(f.dir, lost.id), "session.sqlite"), "");
     await until(() => !f.manager.isActive(lost.id), "the lost-lock session to end");
     await expect(host.use(async () => undefined)).rejects.toThrow(/lost its lock/);
     await expect(runtime.openHost(lost.id)).rejects.toThrow(/lost its lock/);
     expect(f.manager.isActive(kept.id)).toBe(true);
     await expect(runtime.host(kept.id)!.use(async () => "served")).resolves.toBe("served");
+  });
+
+  it("keeps its lock when a reader opens session.sqlite in the newest store directory", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Newest store");
+    await f.manager.startSession(session.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    // Let a lock refresh run: a held lock's mtime is then the newest under the sessions root.
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    // A shell reader picks "the latest store" as `ls -td sessions/*/ | head -1` and opens its
+    // session.sqlite; sqlite3 creates the file when it is missing.
+    const root = durableSessionsRoot(f.dir);
+    const newest = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, entry.name))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0]!;
+    new DatabaseSync(join(newest, "session.sqlite")).close();
+    // The next refresh would see a changed lock mtime and seal the store.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(f.manager.isActive(session.id)).toBe(true);
+    await expect(runtime.host(session.id)!.use(async () => "served")).resolves.toBe("served");
   });
 
   it("re-attaches a transcript socket whose room failed, on one subscription", async () => {

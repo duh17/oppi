@@ -32,14 +32,7 @@ import {
   type CodemodeNamespace,
 } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -125,6 +118,13 @@ const CODEMODE_SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 const MAX_CODEMODE_SCRIPTS = 8;
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
+/**
+ * The store's proper-lockfile directory, inside the store directory. As a `<storeId>.lock`
+ * sibling it was the newest entry under the sessions root (each refresh touches its mtime), so
+ * a reader that opened `session.sqlite` in "the latest store" created that file inside the live
+ * lock: the next refresh saw a changed mtime and the store lost its lock.
+ */
+const LOCK_DIR = ".lock";
 
 /** The store and conversation each execution env the server made runs; one env, one conversation. */
 const conversationsByEnv = new WeakMap<
@@ -149,6 +149,10 @@ export function durableStoreDir(dataDir: string, storeId: string): string {
 
 export function durableStoreSqlitePath(dataDir: string, storeId: string): string {
   return join(durableStoreDir(dataDir, storeId), STORAGE_FILE);
+}
+
+export function durableStoreLockPath(dataDir: string, storeId: string): string {
+  return join(durableStoreDir(dataDir, storeId), LOCK_DIR);
 }
 
 export function assertDurableStoreId(storeId: string): void {
@@ -817,8 +821,10 @@ export class SessionHost {
       // (a refresh stat in flight when the release removes the directory reports ENOENT).
       const token = {};
       this.lockToken = token;
+      const lockPath = join(this.directory, LOCK_DIR);
       try {
         this.releaseLock = await properLockfile.lock(this.directory, {
+          lockfilePath: lockPath,
           realpath: true,
           stale: 2_000,
           update: 1_000,
@@ -834,12 +840,6 @@ export class SessionHost {
             new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
             { code: "durable_store_locked" },
           );
-        let lockPath = `${this.directory}.lock`;
-        try {
-          lockPath = `${realpathSync(this.directory)}.lock`;
-        } catch {
-          // Name the unresolved path; the lock error is the one to report.
-        }
         throw Object.assign(
           new Error(
             `Durable store ${this.storeId} could not take its lock ${lockPath}: ${safeErrorMessage(error)}`,
@@ -945,7 +945,7 @@ export class SessionHost {
     // The lock is no longer ours to release: it may be another holder's now.
     this.releaseLock = undefined;
     const failure = new Error(
-      `Durable store ${this.storeId} lost its lock (${safeErrorMessage(cause)}). Another process may hold it, or its lock directory ${this.directory}.lock may need cleaning before a server restart can reopen it`,
+      `Durable store ${this.storeId} lost its lock (${safeErrorMessage(cause)}). Another process may hold it, or its lock directory ${join(this.directory, LOCK_DIR)} may need cleaning before a server restart can reopen it`,
       { cause },
     );
     this.runtime.loseLock(this.storeId, failure);

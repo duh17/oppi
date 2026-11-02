@@ -8,6 +8,8 @@ export const properLockfile = createRequire(
   lock: (
     file: string,
     options?: {
+      /** The lock directory; defaults to `<file>.lock`. */
+      lockfilePath?: string;
       realpath?: boolean;
       stale?: number;
       update?: number;

@@ -179,7 +179,7 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
   /**
    * The attachment records the session's manifest holds, read at the store's own path.
    * The data directory must not be walked recursively: beside `session-attachments` the durable
-   * store creates and removes its directory lock (`durable/sessions/<storeId>.lock`) whenever a
+   * store creates and removes its directory lock (`durable/sessions/<storeId>/.lock`) whenever a
    * request opens the store or the idle close releases it, and `readdirSync(…, { recursive: true })`
    * throws ENOENT when that directory goes away between listing it and opening it.
    *

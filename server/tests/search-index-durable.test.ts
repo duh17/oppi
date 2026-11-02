@@ -204,6 +204,29 @@ describe("SearchIndex durable sessions", () => {
     expect(result.cancelled).toBe(false);
   });
 
+  it("indexes the other durable sessions when one session's store cannot open", async () => {
+    const f = await durableFixture();
+    await f.turn("gharial prompt", "saola reply");
+    const broken = makeSession(f.id, {
+      id: "broken",
+      serverDurable: { storeId: "locked", conversationId: f.id },
+    });
+    const good = makeSession(f.id, { id: "good" });
+    const sessions = new Map([broken, good].map((session) => [session.id, session]));
+    const lockError = new Error("Durable store locked could not take its lock: ENOTEMPTY");
+    const index = openIndex((id) => sessions.get(id), {
+      readTipEntryId: (id) =>
+        id === broken.id ? Promise.reject(lockError) : f.source.readTipEntryId(id),
+      readTranscript: (id) =>
+        id === broken.id ? Promise.reject(lockError) : f.source.readTranscript(id),
+    });
+
+    const result = await index.startBackgroundSync([broken, good]);
+
+    expect(result).toMatchObject({ cancelled: false, sessionsChecked: 2, added: 1 });
+    expect(index.search("saola").map((hit) => hit.sessionId)).toEqual([good.id]);
+  });
+
   it("does not index ephemeral durable sessions", async () => {
     const f = await durableFixture();
     await f.turn("incognito secret", "hidden reply");
