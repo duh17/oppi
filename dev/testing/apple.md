@@ -124,7 +124,7 @@ clients/apple/scripts/e2e.sh --group regression   # also media, screenshot; all,
 
 ## Debug harnesses
 
-Harnesses, `--screenshot-preview` screens, and fixtures live in `clients/apple/OppiDebugHarness/` and compile only in Debug: Release sets `EXCLUDED_SOURCE_FILE_NAMES` to `$(SRCROOT)/OppiDebugHarness/*` and `*/*`, and Xcode's `*` does not match `/`, so files stay at most one folder deep (`ios-debug-harness-depth`), each still wrapped in `#if DEBUG`. The app's one hook is `OppiApp.makeRootViewController()` → `DebugHarnessLaunch.rootViewController(root:)`. It is the same target (tests launch the Debug app with arguments; harnesses use internal types). Route a new harness in `DebugHarnessLaunch` or `ScreenshotPreviewView`; fixture seams that set private state stay in the type's file under `#if DEBUG`.
+Harnesses, `--screenshot-preview` screens, and fixtures live in `clients/apple/OppiDebugHarness/` and compile only in Debug: Release sets `EXCLUDED_SOURCE_FILE_NAMES` to `$(SRCROOT)/OppiDebugHarness/*` and `*/*`, and Xcode's `*` does not match `/`, so files stay at most one folder deep (`ios-debug-harness-depth`), each still wrapped in `#if DEBUG`. The app's one hook is `OppiApp.makeRootViewController()` → `DebugHarnessLaunch.rootViewController(root:)`. It is the same target (tests launch the Debug app with arguments; harnesses use internal types). Route a new harness or preview in `DebugHarnessLaunch` (UIKit controllers; `PreviewRootController` for a preview that is its own window root); fixture seams that set private state stay in the type's file under `#if DEBUG`.
 
 ## Screenshot previews
 

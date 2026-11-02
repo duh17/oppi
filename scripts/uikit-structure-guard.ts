@@ -15,14 +15,14 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    or type are disallowed in every file, debug previews and harnesses
  *    included: SwiftUI never owns structure. The only exceptions are the
  *    commented entries in `allowed` below, which are the two framework leaves
- *    that have to be SwiftUI (Swift Charts, RealityKit) and the debug harness's
- *    own hosting. Nothing else in the app hosts SwiftUI.
+ *    that have to be SwiftUI (Swift Charts, RealityKit). Nothing else in the
+ *    app hosts SwiftUI.
  *  - `import SwiftUI` is an allow-list (`swiftUIImporters` below), and it counts
  *    `import Charts`, `import TipKit` and `import struct SwiftUI.X` too, because
  *    both frameworks re-export SwiftUI. The iOS app target is UIKit everywhere
  *    except the two framework leaves, the chart and colour values that sit next
- *    to a SwiftUI-only framework, one TipKit file, the `Shared/` files the
- *    target compiles, and the debug harness's previews. The theme itself is
+ *    to a SwiftUI-only framework, one TipKit file, and the `Shared/` files the
+ *    target compiles; the debug harness is UIKit too. The theme itself is
  *    UIKit-side on iOS (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face
  *    of the same tokens ships in `OppiMac/Theme/`), so no theme file imports
  *    SwiftUI. Any other file fails, and a new entry needs Chen's approval.
@@ -256,29 +256,6 @@ const swiftUIImporters: { file: string; reason: string }[] = [
     file: "clients/apple/Shared/Activity/LiveActivityPresentation.swift",
     reason: "The Live Activity surface (Apple requires it in SwiftUI); shared with the widget extension.",
   },
-  // The debug harness: previews that are still SwiftUI views, captured by
-  // scripts/screenshot-*.sh and launched by UI tests. It compiles into the app
-  // target in Debug only.
-  {
-    file: "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift",
-    reason: "The harness hosts its own SwiftUI roots; it is the only hosting seam left in the target.",
-  },
-  {
-    file: "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift",
-    reason: "The still-SwiftUI screenshot previews, their config, and the router preview host.",
-  },
-  {
-    file: "clients/apple/OppiDebugHarness/UIHangHarnessView.swift",
-    reason: "The UI-hang harness is a SwiftUI view around the UIKit timeline.",
-  },
-  {
-    file: "clients/apple/OppiDebugHarness/ChatRoutesHarness.swift",
-    reason: "The chat-routes harness is a SwiftUI fixture screen.",
-  },
-  {
-    file: "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift",
-    reason: "The session-timeline capture is a SwiftUI fixture screen.",
-  },
 ];
 const swiftUIImporterFiles = swiftUIImporters.map((entry) => entry.file);
 
@@ -479,12 +456,6 @@ const allowed: { file: string; construct: string; count: number; reason: string 
     count: 1,
     reason: "USDZRealityCanvasHost is the RealityKit canvas's own UIKit host; RealityView cannot be UIKit.",
   },
-  {
-    file: "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift",
-    construct: "UIHostingController<",
-    count: 1,
-    reason: "HarnessSwiftUIHost is how a debug harness's SwiftUI root becomes a controller; every app screen is UIKit.",
-  },
 ];
 
 function walkSwiftFiles(root: string): string[] {
@@ -589,8 +560,7 @@ harnesses included. Present and push through the router (Router.present,
 Router.push, and a RouterModalPresenter slot; previews that are their own window
 root host through PreviewHost.screenStack). SwiftUI survives only in the files
 \`swiftUIImporters\` names: the two framework leaves (Swift Charts, RealityKit),
-the chart and colour values, the TipKit file, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
-debug harness's previews. See ${guide}.
+the chart and colour values, the TipKit file, and ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
 UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in

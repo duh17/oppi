@@ -71,13 +71,12 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Remaining SwiftUI
 
-- `clients/apple/OppiDebugHarness` (Debug-only) is the one SwiftUI host besides the leaves (`HarnessSwiftUIHost`, `harnessEnvironment(_:)`). Keep `harnessEnvironment` whole: trimming it broke `UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership`.
 - Framework leaves: Usage charts (`UsageCharts.swift`) and the USDZ canvas (`USDZRealityCanvas`) take values only and read no `@Environment` or app service; `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app.
 - `Shared/Theme/ModelColorHelpers.swift` (the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use), `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels; no SwiftUI and no Charts), and the Mac-only `ThinkingOrbAcknowledgmentsView.swift` and `Shared/Renderers/Orbs/OrbView.swift` (the orb's SwiftUI wrapper; excluded from `Oppi` in `project.yml`; the guard's `sharedMacOnlySwiftUI` names them and the two lists move together). `OrbMetalView.swift` is a UIKit/AppKit view on both platforms.
 
 ### App services
 
-`OppiApp` publishes services as one `AppRootEnvironment` window trait (`window.traitOverrides.appRootEnvironment`, found with `AppRootEnvironment.near(_:)`); a controller embedding one server's page sets the trait on itself. The app has no SwiftUI environment value for it (the harness declares its own); never hand-write an environment list around a leaf: pass values. The App Lock cover (`AppLockCoverViewController`) paints before the root exists, so it reads only `ThemeRuntimeState` and `AppLockService`.
+`OppiApp` publishes services as one `AppRootEnvironment` window trait (`window.traitOverrides.appRootEnvironment`, found with `AppRootEnvironment.near(_:)`); a controller embedding one server's page sets the trait on itself. The app has no SwiftUI environment value for it; never hand-write an environment list around a leaf: pass values. The App Lock cover (`AppLockCoverViewController`) paints before the root exists, so it reads only `ThemeRuntimeState` and `AppLockService`.
 
 ### Presentation gotchas
 
@@ -88,7 +87,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Structure guard
 
-`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts and `HarnessSwiftUIHost`); another exception needs Chen's approval. The other ratchets (palette bridges, settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a migration commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
+`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs Chen's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (palette bridges, settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a migration commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
 
 **Mac (`clients/apple/OppiMac`):** new views are AppKit; existing SwiftUI stays until a separate decision.
 
