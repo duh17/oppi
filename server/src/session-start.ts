@@ -239,6 +239,8 @@ export class SessionStartCoordinator {
       onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
       hasUI: () => this.deps.hasUI?.(key) ?? false,
       metrics: this.deps.metrics,
+      serverConfig: this.deps.config,
+      getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
     });
   }
 

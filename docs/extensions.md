@@ -42,7 +42,7 @@ No other session gets the Oppi tools. Pi Control sessions created before this ch
 
 **Server Settings → Mobile Output Guide** tells agents which links and rich content Oppi renders: wiki links to workspace and owner-host files, inline images, audio, video and USDZ, Mermaid diagrams, maps, LaTeX, session links, and document viewers. See [Document viewers](document-viewers.md) and [Attachment rendering](attachment-rendering.md).
 
-- It applies to new and reloaded managed host, sandbox, and classic Pi Control sessions. It does not prescribe response style, fabricate paths, or expose secrets, and Oppi sends no viewport dimensions.
+- It applies to new and reloaded managed host and sandbox sessions on either engine, and to classic Pi Control sessions. It does not prescribe response style, fabricate paths, or expose secrets, and Oppi sends no viewport dimensions.
 - It is an append, so a global `SYSTEM.md` replacement does not suppress it. Saved Agent and workspace instructions keep their precedence.
 - It does not change standalone Pi or terminal-owned Mirror sessions. A stopped Mirror session reads the current guide only if you promote it to Oppi-managed.
 

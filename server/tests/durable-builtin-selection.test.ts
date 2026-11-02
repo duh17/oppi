@@ -18,7 +18,10 @@ import { LiveVoiceSpeech, type RunOutcome } from "../src/live-voice-speech.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { ServerMessage, Session } from "../src/types.js";
+import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
+import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "../src/oppi-docs.js";
+import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../src/oppi-cli-prompt.js";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 import { DurableNotify } from "../plugins/notify/server.js";
@@ -35,6 +38,15 @@ import { DurableLiveVoice } from "../plugins/live-voice/server.js";
  * ls, find, grep, nor codemode is offered. Note the reattached sessions: their `{ add }` edit
  * applies to the Harness default selection.
  */
+/** The `project-context` sections: Oppi's prompt appends, then AGENTS files and Skills. */
+const PROMPT_SECTIONS = [
+  "oppi_docs",
+  "mobile_output_guide",
+  "oppi_cli",
+  "project_context",
+  "skills",
+];
+
 const PINNED = {
   host: {
     created: {
@@ -74,8 +86,7 @@ const PINNED = {
       sections: [
         "ask-guidelines",
         "background-jobs",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "sessions",
         "instructions",
@@ -121,8 +132,7 @@ const PINNED = {
         "ask-guidelines",
         "background-jobs",
         "sessions",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "instructions",
       ],
@@ -166,8 +176,7 @@ const PINNED = {
       sections: [
         "ask-guidelines",
         "background-jobs",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "sessions",
         "instructions",
@@ -213,8 +222,7 @@ const PINNED = {
         "ask-guidelines",
         "background-jobs",
         "sessions",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "instructions",
       ],
@@ -255,8 +263,7 @@ const PINNED = {
       sections: [
         "ask-guidelines",
         "background-jobs",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "instructions",
       ],
@@ -297,8 +304,7 @@ const PINNED = {
       sections: [
         "ask-guidelines",
         "background-jobs",
-        "project_context",
-        "skills",
+        ...PROMPT_SECTIONS,
         "codemode",
         "instructions",
       ],
@@ -378,7 +384,11 @@ afterEach(async () => {
 });
 
 /** `defaultTools` is the Pi Tools setting; Pi's default when unset. */
-async function fixture(responses: FauxResponseStep[] = [], defaultTools?: string[]) {
+async function fixture(
+  responses: FauxResponseStep[] = [],
+  defaultTools?: string[],
+  config?: Partial<ServerConfig>,
+) {
   const dir = makeTempDir("oppi-durable-selection-");
   // No user packages: only Oppi's own extensions.
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
@@ -405,7 +415,7 @@ async function fixture(responses: FauxResponseStep[] = [], defaultTools?: string
   );
   const opening = vi.spyOn(SessionHost.prototype, "open");
   const storage = new Storage(dir);
-  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true }, ...config }));
   const manager = new SessionManager(storage);
   managers.push(manager);
   await manager.resumeDurableSessions();
@@ -774,5 +784,113 @@ describe("notify and speak arguments", () => {
     expect(() => toolArguments(speak, { text: "Checking.", voice: "calm" })).toThrow(
       "voice: unknown field",
     );
+  });
+});
+
+// Oppi's appends to a durable session's prompt, as `buildSdkAppendSystemPrompt` gates them for a
+// classic one, read from what the model is actually sent.
+describe("durable prompt appends", () => {
+  const WORKSPACE_PROMPT = "WORKSPACE_PROMPT_MARKER";
+  const GUIDE = buildMobileOutputGuide();
+  const DOCS = buildOppiSystemPromptAppend()!;
+
+  /** Faux steps that record each request's rendered system prompt. */
+  function capturing(count: number) {
+    const prompts: string[] = [];
+    const steps: FauxResponseStep[] = Array.from({ length: count }, () => (request) => {
+      prompts.push(getCurrentSystemPrompt(request.messages));
+      return fauxAssistantMessage("ok");
+    });
+    return { prompts, steps };
+  }
+
+  async function turn(f: Fixture, sessionId: string) {
+    const ended = new Promise<void>((resolve) => {
+      const unsubscribe = f.manager.subscribe(sessionId, (message: ServerMessage) => {
+        if (message.type !== "agent_end") return;
+        unsubscribe();
+        resolve();
+      });
+    });
+    await f.manager.sendPrompt(sessionId, "hello");
+    await ended;
+  }
+
+  function setGuide(f: Fixture, enabled: boolean) {
+    const current = f.storage.getMobileOutputGuideSettings();
+    expect(f.storage.replaceMobileOutputGuideSettings(current.revision, { enabled }).ok).toBe(true);
+  }
+
+  function withWorkspacePrompt(f: Fixture, runtime: "host" | "sandbox") {
+    const created = workspaceSession(f, runtime);
+    created.workspace.systemPrompt = WORKSPACE_PROMPT;
+    f.storage.updateWorkspace(created.workspace.id, { systemPrompt: WORKSPACE_PROMPT });
+    return created;
+  }
+
+  it("renders the docs hint, guide, and CLI hint before the workspace prompt on the host; a sandbox gets only the guide", async () => {
+    expect(DOCS).toContain("Oppi documentation");
+    const { prompts, steps } = capturing(2);
+    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    setGuide(f, true);
+    const host = withWorkspacePrompt(f, "host");
+    const sandbox = withWorkspacePrompt(f, "sandbox");
+    for (const { session, workspace } of [host, sandbox]) {
+      await f.manager.startSession(session.id, workspace);
+      await turn(f, session.id);
+      await f.manager.stopSession(session.id);
+    }
+    const [hostPrompt, sandboxPrompt] = prompts as [string, string];
+
+    const order = [DOCS, GUIDE, OPPI_CLI_SYSTEM_PROMPT_HINT, WORKSPACE_PROMPT].map((text) =>
+      hostPrompt.indexOf(text),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+
+    // A sandbox prompt never names host paths: no docs hint, no host `oppi` CLI.
+    expect(sandboxPrompt).toContain(GUIDE);
+    expect(sandboxPrompt).toContain(WORKSPACE_PROMPT);
+    expect(sandboxPrompt).not.toContain("Oppi documentation");
+    expect(sandboxPrompt).not.toContain(OPPI_CLI_SYSTEM_PROMPT_HINT);
+  });
+
+  it("leaves out the docs and CLI hints while oppiDocsPrompt and oppiCliPrompt are off, and the guide while its setting is off", async () => {
+    const { prompts, steps } = capturing(1);
+    const f = await fixture(steps, undefined, {
+      oppiDocsPrompt: { enabled: false },
+      oppiCliPrompt: { enabled: false },
+    });
+    const { session, workspace } = withWorkspacePrompt(f, "host");
+    await f.manager.startSession(session.id, workspace);
+    await turn(f, session.id);
+    await f.manager.stopSession(session.id);
+
+    expect(prompts[0]).toContain(WORKSPACE_PROMPT);
+    expect(prompts[0]).not.toContain("Oppi documentation");
+    expect(prompts[0]).not.toContain(OPPI_CLI_SYSTEM_PROMPT_HINT);
+    expect(prompts[0]).not.toContain(GUIDE);
+  });
+
+  it("gives a bound conversation a Mobile Output Guide change on its next turn after it attaches again or reloads", async () => {
+    const { prompts, steps } = capturing(3);
+    const f = await fixture(steps);
+    const { session, workspace } = withWorkspacePrompt(f, "host");
+    await f.manager.startSession(session.id, workspace);
+    await turn(f, session.id);
+
+    // As a classic session: the setting applies when the runtime is built again.
+    setGuide(f, true);
+    await f.manager.stopSession(session.id);
+    await f.manager.startSession(session.id, workspace);
+    await turn(f, session.id);
+
+    setGuide(f, false);
+    await f.manager.runCommand(session.id, { type: "reload" });
+    await turn(f, session.id);
+    await f.manager.stopSession(session.id);
+
+    expect(prompts.map((prompt) => prompt.includes(GUIDE))).toEqual([false, true, false]);
   });
 });

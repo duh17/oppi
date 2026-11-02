@@ -2,6 +2,6 @@
   "name": "oppi-project-context",
   "version": "0.0.0",
   "private": true,
-  "description": "Oppi built-in: the project_context and skills prompt sections of durable sessions.",
+  "description": "Oppi built-in: Oppi's prompt appends and the project_context and skills prompt sections of durable sessions.",
   "type": "module"
 }

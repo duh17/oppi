@@ -69,13 +69,22 @@ import {
   toCommandLocation,
   type QueuedModelTurnBatch,
 } from "./sdk-backend.js";
+import {
+  DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
+  type MobileOutputGuideSettingsSnapshot,
+} from "./mobile-output-guide-settings.js";
+import {
+  promptAppends,
+  syncProjectContext,
+  type PresentedResources,
+} from "./durable-prompt-sections.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import type { MessageQueueState, Session, Workspace } from "./types.js";
+import type { MessageQueueState, ServerConfig, Session, Workspace } from "./types.js";
 import {
   DURABLE_QUEUE_REQUEST_ID_PREFIX,
   DURABLE_RESERVED_REQUEST_ID_PREFIXES,
@@ -102,13 +111,7 @@ import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
-import {
-  expandSkillCommand,
-  loadDurableProjectResources,
-  renderProjectContext,
-  renderSkills,
-  type DurableProjectResources,
-} from "./durable-project-resources.js";
+import { expandSkillCommand, loadDurableProjectResources } from "./durable-project-resources.js";
 import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -140,6 +143,10 @@ interface DurableBackendOptions {
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   metrics?: ServerTelemetry;
   hasUI?: () => boolean;
+  /** Server settings that gate Oppi's prompt appends, as for SDK sessions. */
+  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
+  /** Read on every attach and `/reload`, as an SDK session reads it per runtime rebuild. */
+  getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
 }
 
 /**
@@ -256,27 +263,6 @@ function asErrorText(message: unknown): string | undefined {
     : undefined;
 }
 
-/** Store the rendered sections; a changed section reaches the model on its next request. */
-async function syncProjectContext(
-  conversation: Conversation,
-  resources: DurableProjectResources,
-): Promise<void> {
-  const tools = (await conversation.agent(BACKGROUND_CONTEXT)).tools.map((tool) => tool.name);
-  const next = {
-    projectContext: renderProjectContext(resources.contextFiles),
-    skills: renderSkills(resources.skills, tools),
-  };
-  await conversation.commit(async (tx) => {
-    const doc = await tx.doc(ProjectContextDoc, conversation.id);
-    for (const key of ["projectContext", "skills"] as const) {
-      const value = next[key];
-      if (doc[key] === value) continue;
-      if (value === undefined) delete doc[key];
-      else doc[key] = value;
-    }
-  }, BACKGROUND_CONTEXT);
-}
-
 /**
  * The classic-event facade of a conversation for the session socket: classic events, lifecycle
  * permits, Skill expansion, and the queue version over the host's `AgentController` and `Models`,
@@ -316,8 +302,8 @@ export class DurableBackend implements AgentBackend {
     private readonly events: DurableClassicEvents,
     private readonly onEvent: (event: SessionBackendEvent) => void,
     private readonly mcp: DurableMcp | undefined,
-    private resources: DurableProjectResources,
-    private readonly loadResources: () => Promise<DurableProjectResources>,
+    private resources: PresentedResources,
+    private readonly loadResources: () => Promise<PresentedResources>,
     private readonly dataDir: string,
     /** Reads a presented Skill file: the VM for a sandbox, the host otherwise. */
     private readonly readSkillFile: (path: string) => Promise<string>,
@@ -357,19 +343,28 @@ export class DurableBackend implements AgentBackend {
     const sandboxEnv = sandbox
       ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
       : undefined;
-    // An Oppi Control session presents no AGENTS files and no Skills, global or project: its
-    // `oppi-control` section is its whole setup, as with `/reload`.
-    const loadResources = (): Promise<DurableProjectResources> =>
-      control
-        ? Promise.resolve({ contextFiles: [], skills: [] })
-        : loadDurableProjectResources({
-            hostCwd,
-            agentDir,
-            ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
-            projectTrusted,
-            ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
-            projectContext: launched?.doc?.projectContext !== false,
-          });
+    // An Oppi Control session presents no AGENTS files, no Skills, global or project, and no
+    // appends: its `oppi-control` section is its whole setup, as with `/reload`. The appends
+    // read the settings each time, so an attach or `/reload` applies a change from the next
+    // request, as an SDK session's runtime rebuild does.
+    const loadResources = async (): Promise<PresentedResources> => {
+      if (control) return { contextFiles: [], skills: [], appends: {} };
+      const appends = promptAppends({
+        sandbox,
+        replace: launched?.doc?.projectContext === false,
+        serverConfig: options.serverConfig,
+        guide: options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
+      });
+      const files = await loadDurableProjectResources({
+        hostCwd,
+        agentDir,
+        ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
+        projectTrusted,
+        ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
+        projectContext: launched?.doc?.projectContext !== false,
+      });
+      return { ...files, appends };
+    };
     const resources = await loadResources();
     // An Oppi Control session selects an exact extension list; it gets no MCP tools, and an
     // exact Extension selection without `builtin:mcp` gets none either.
@@ -481,8 +476,8 @@ export class DurableBackend implements AgentBackend {
       piTools: ReadonlySet<string>;
       launched: LaunchedAs | undefined;
       sandboxEnv: GondolinExecutionEnv | undefined;
-      resources: DurableProjectResources;
-      loadResources: () => Promise<DurableProjectResources>;
+      resources: PresentedResources;
+      loadResources: () => Promise<PresentedResources>;
     },
   ): Promise<DurableBackend> {
     const { harness, models, session, host } = options;
