@@ -121,6 +121,7 @@ final class SessionThreadListUITests: XCTestCase, PreviewUITestCase {
         fold.tap()
         XCTAssertTrue(waitForValue(fold, "Collapsed"))
         XCTAssertTrue(stopped.waitUntilGone(timeout: 5), "Closing the fold hides the stopped members")
+        hold()
         XCTAssertTrue(working.exists, "Closing the fold keeps the live members")
     }
 

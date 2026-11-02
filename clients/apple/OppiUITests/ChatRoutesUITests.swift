@@ -140,7 +140,8 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
         app.buttons["chat.toolbar.more"].tap()
         let customize = app.buttons["Customize Top Bar…"]
-        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu stays")
+        hold()
+        XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu stays")
         XCTAssertFalse(
             app.buttons["chat.toolbar.menu.files"].exists,
             "Nothing is hidden, so the … menu holds only Customize Top Bar…"
@@ -241,8 +242,9 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         search.tap()
         search.typeText("ROUTES_FILL_2")
         // Each outline row is one button whose label is its summary.
+        hold()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ROUTES_FILL_2")).firstMatch
-            .waitForExistence(timeout: 5), "Search must keep the matching entry")
+            .waitUntilExists(timeout: 5), "Search must keep the matching entry")
         attachScreenshot("outline-search")
         assertRunning()
 
@@ -265,7 +267,8 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             XCTAssertTrue(outline.waitUntilGone(timeout: 5), "Swipe-down must close the outline sheet")
             outlineButton.tap()
             XCTAssertTrue(outline.waitUntilExists(timeout: 5), "The binding cleared on swipe-down, so the button reopens it")
-            app.buttons["chat.outline.close"].tap()
+            // A sheet's bar button can show as two elements while it presents (`dev/testing/apple.md`, Gotchas).
+            app.buttons.matching(identifier: "chat.outline.close").firstMatch.tap()
             XCTAssertTrue(outline.waitUntilGone(timeout: 5))
         }
         assertRunning()
@@ -375,6 +378,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("files-panel-search-everywhere")
         scopes.buttons["Sources"].tap()
         XCTAssertTrue(rootHit.waitUntilGone(timeout: 5), "This folder must drop Route.md, which is outside Sources/")
+        hold()
         XCTAssertTrue(folderHit.exists, "This folder must keep Sources/RouteView.swift")
         attachScreenshot("files-panel-search-this-folder")
         scopes.buttons["Everywhere"].tap()
@@ -545,6 +549,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open above the composer")
         dragToBottom(models)
         XCTAssertTrue(models.waitUntilGone(timeout: 5))
+        hold()
         XCTAssertTrue(editor.exists, "Closing the picker must keep the composer")
 
         app.buttons["expanded.composer.cancel"].tap()
@@ -860,6 +865,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("git-panel-session-copy")
         sessionCopyBack.tap()
         XCTAssertTrue(sessionCopyBack.waitUntilGone(timeout: 5), "Back must close the session's copy")
+        hold()
         XCTAssertTrue(panel.exists, "Closing the session's copy must leave the Git panel open")
         // The summary counts what the list shows.
         XCTAssertTrue(
@@ -905,6 +911,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(review.waitUntilExists(timeout: 5))
         dragToBottom(review)
         XCTAssertTrue(review.waitUntilGone(timeout: 5), "Swipe-down must close the file review")
+        hold()
         XCTAssertTrue(panel.exists, "Closing the review must leave the Git panel open")
         assertRunning()
 
@@ -951,6 +958,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             NSPredicate(format: "label == %@ AND value == %@", "Rename session", "Routes")
         ).firstMatch
         XCTAssertTrue(originalTitle.waitUntilExists(timeout: 5), "Back must return to the chat the panel was opened from")
+        hold()
         XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
         assertRunning()
     }
@@ -1084,6 +1092,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             dragToBottom(diff)
             XCTAssertTrue(diff.waitUntilGone(timeout: 5), "Swipe-down must close the diff sheet")
         }
+        hold()
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")
         assertRunning()
     }

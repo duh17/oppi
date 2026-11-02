@@ -36,7 +36,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
 
         dragToBottom(dialog)
-        XCTAssertTrue(dialog.waitForExistence(timeout: 2), "Swipe-down must not dismiss an unanswered dialog")
+        hold()
+        XCTAssertTrue(dialog.waitUntilExists(timeout: 2), "Swipe-down must not dismiss an unanswered dialog")
 
         app.buttons["extension.dialog.cancel"].tap()
         XCTAssertTrue(dialog.waitUntilGone(timeout: 5), "Cancel must close the dialog")
@@ -153,12 +154,14 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         search.tap()
         search.typeText("steady")
         let star = app.buttons["model.picker.star.fixture/fixture-steady"]
-        XCTAssertTrue(star.waitForExistence(timeout: 5), "The search must keep the matching model")
+        hold()
+        XCTAssertTrue(star.waitUntilExists(timeout: 5), "The search must keep the matching model")
         star.tap()
         XCTAssertTrue(alert.waitUntilExists(timeout: 5), "The failed save must show its alert over the active search")
         attachScreenshot("model-picker-default-failure-alert")
         alert.buttons["OK"].tap()
         XCTAssertTrue(alert.waitUntilGone(timeout: 5), "OK must dismiss the alert")
+        hold()
         XCTAssertTrue(app.navigationBars["Models"].exists, "The picker stays open after a failed save")
         assertRunning()
     }
@@ -243,7 +246,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
             app.navigationBars["Create Workspace"].waitUntilGone(timeout: 5),
             "Cancel must close the guided composer"
         )
-        XCTAssertTrue(app.buttons["workspace.create.manual"].waitForExistence(timeout: 5), "The create form must stay open")
+        hold()
+        XCTAssertTrue(app.buttons["workspace.create.manual"].waitUntilExists(timeout: 5), "The create form must stay open")
         assertRunning()
     }
 
@@ -309,11 +313,13 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()
         XCTAssertTrue(waitFor(paneValue(switcher) == "tail -f server.log, 2 of 3"), "A swipe left must show the next pane")
-        XCTAssertTrue(cells[1].waitForNonExistence(timeout: 5), "The minimap is not left on screen after the switch settles")
+        hold()
+        XCTAssertTrue(cells[1].waitUntilGone(timeout: 5), "The minimap is not left on screen after the switch settles")
         attachScreenshot("rex-panes-second")
         grid.swipeRight()
         XCTAssertTrue(waitFor(paneValue(switcher) == "\u{03C0} - oppi, 1 of 3"), "A swipe right must show the previous pane")
-        XCTAssertTrue(cells[0].waitForNonExistence(timeout: 5), "The minimap is not left on screen after the swipe back")
+        hold()
+        XCTAssertTrue(cells[0].waitUntilGone(timeout: 5), "The minimap is not left on screen after the swipe back")
 
         // Touch and hold shows the quick menu of the panes in strip order, and shows the one chosen
         // (a tap opens the Rex panel instead).
@@ -324,7 +330,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("rex-panes-menu")
         third.tap()
         XCTAssertTrue(waitFor(paneValue(switcher) == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
-        XCTAssertTrue(cells[2].waitForNonExistence(timeout: 5), "The minimap is not left on screen after a menu choice")
+        hold()
+        XCTAssertTrue(cells[2].waitUntilGone(timeout: 5), "The minimap is not left on screen after a menu choice")
 
         // Customize Bar opened from this Rex pane lists the switcher but neither
         // Herdr nor Rex Sessions: a terminal in Rex offers only Rex, and its one
@@ -406,6 +413,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("terminal-tab-rex-close-confirm")
         confirm.buttons["Cancel"].tap()
         XCTAssertTrue(confirm.waitUntilGone(timeout: 5))
+        hold()
         XCTAssertTrue(dotfiles.exists, "Cancel must leave the session")
 
         // Rename: the name goes to Rex and the row follows its event.

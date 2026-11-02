@@ -22,7 +22,8 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         waitForDelayPending()
 
         let ignore = inCardIgnore
-        XCTAssertTrue(ignore.waitForExistence(timeout: 2), "In-card Ignore → should stay available after a selection")
+        hold()
+        XCTAssertTrue(ignore.waitUntilExists(timeout: 2), "In-card Ignore → should stay available after a selection")
         ignore.tap()
 
         XCTAssertTrue(questionTwo.waitUntilExists(timeout: 2), "In-card Ignore should move to question two immediately")
@@ -43,7 +44,8 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(currentDot.waitUntilExists(timeout: 2), "Current page dot Question 1 of 3 should be tappable")
         currentDot.tap()
 
-        XCTAssertTrue(questionOne.waitForExistence(timeout: 2), "Tapping the current page dot should keep question one")
+        hold()
+        XCTAssertTrue(questionOne.waitUntilExists(timeout: 2), "Tapping the current page dot should keep question one")
         releaseDelay()
         XCTAssertFalse(
             questionTwo.waitForExistence(timeout: 1),
@@ -90,7 +92,8 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
             app.staticTexts["Ignored all"].waitUntilExists(timeout: 2),
             "Composer X should ignore the whole request"
         )
-        XCTAssertTrue(questionOne.waitForExistence(timeout: 2), "Composer X must not wait for store removal")
+        hold()
+        XCTAssertTrue(questionOne.waitUntilExists(timeout: 2), "Composer X must not wait for store removal")
         XCTAssertFalse(composerIgnore.isEnabled, "Duplicate composer Ignore should be disabled while submit is in flight")
         saveScreenshot(name: "ask-intent-composer-x")
     }

@@ -61,8 +61,9 @@ final class ModelProvidersUITests: XCTestCase, PreviewUITestCase {
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitUntilExists(timeout: 5), "The key sheet has no Cancel")
         cancel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Cancel must close the key sheet")
-        XCTAssertTrue(app.staticTexts["Connected"].waitForExistence(timeout: 5), "The list must still be there")
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Cancel must close the key sheet")
+        hold()
+        XCTAssertTrue(app.staticTexts["Connected"].waitUntilExists(timeout: 5), "The list must still be there")
         assertRunning()
     }
 }

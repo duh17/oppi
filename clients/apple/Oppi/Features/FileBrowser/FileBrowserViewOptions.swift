@@ -130,10 +130,22 @@ final class FileBrowserViewOptionsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        options = defaults.data(forKey: Self.key)
+        options = Self.load(from: defaults)
+    }
+
+    private static func load(from defaults: UserDefaults) -> FileBrowserViewOptions {
+        defaults.data(forKey: key)
             .flatMap { try? JSONDecoder().decode(FileBrowserViewOptions.self, from: $0) }
             ?? FileBrowserViewOptions()
     }
+
+#if DEBUG
+    /// Reads the options from defaults again (`HarnessLaunchReset`): the
+    /// in-process reset clears defaults, and this copy was read from them once.
+    func resetForTesting() {
+        options = Self.load(from: defaults)
+    }
+#endif
 
     /// The chat Files panel's per-session Changed / All tab, gone with the
     /// Changed tab. Launch removes what an older build stored there.

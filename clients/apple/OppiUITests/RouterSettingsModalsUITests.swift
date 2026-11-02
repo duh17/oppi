@@ -517,8 +517,22 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertStartsCleanThenLeavesStateBehind()
     }
 
+    /// How many of the pair have run in this test process.
+    private static var cleanStartRuns = 0
+
     private func assertStartsCleanThenLeavesStateBehind() {
         launch(page: "mcp")
+        defer { Self.cleanStartRuns += 1 }
+        // The second of the pair must start from a reset of the first one's
+        // process, or its clean start proves nothing. A fresh launch here means
+        // reuse ended: the kill switch is off, or a test in between failed.
+        if Self.cleanStartRuns > 0, ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch) {
+            let marker = app.descendants(matching: .any)[ReusedHarnessLaunch.markerID]
+            XCTAssertGreaterThan(
+                Int(marker.value as? String ?? "") ?? 0, 0,
+                "The second of the pair must reuse the first one's launch"
+            )
+        }
         let add = app.buttons["mcp.add"]
         XCTAssertTrue(waitFor(add.exists && add.isEnabled, timeout: 10), "MCP list did not load")
         let sheet = app.navigationBars["Add MCP Server"]
@@ -600,7 +614,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"slow\""), timeout: 10), "The add did not start: \(lastWrite)")
 
         dragToBottom(sheet)
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        hold()
         XCTAssertTrue(sheet.exists, "Swipe-down must not close the sheet while it saves")
         XCTAssertTrue(sheet.waitUntilGone(timeout: 20), "The finished add must close the sheet")
         assertRunning()
@@ -625,7 +639,8 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
         app.buttons["BackButton"].firstMatch.tap()
         let resume = app.buttons["mcp.auth.continue"]
-        XCTAssertTrue(resume.waitForExistence(timeout: 5), "The list must keep the live sign-in")
+        hold()
+        XCTAssertTrue(resume.waitUntilExists(timeout: 5), "The list must keep the live sign-in")
         XCTAssertFalse(signIn.exists, "Going back must not present sign-in again")
         resume.tap()
         XCTAssertTrue(signIn.waitUntilExists(timeout: 5), "Continue Sign-In did not open from the list")

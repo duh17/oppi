@@ -67,6 +67,7 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
         let warning = app.descendants(matching: .any)["extensions.cachedWarning"]
         XCTAssertTrue(warning.waitUntilExists(timeout: 10), "A failed sync over a cached catalog warns")
         XCTAssertTrue(warning.label.contains("Showing cached settings for mac-studio"))
+        hold()
         XCTAssertTrue(app.buttons["extensions.row.workflow"].exists, "The cached rows stay")
         attachScreenshot("extensions-cached-offline")
     }

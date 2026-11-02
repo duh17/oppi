@@ -141,10 +141,9 @@ extension PreviewUITestCase where Self: XCTestCase {
 /// waits hold at their first check. These read `exists` once and fall back to
 /// XCTest's wait, with the same timeout, only when it does not hold yet.
 ///
-/// Not for a claim that something stays after an action that could remove it ("a
-/// swipe must not dismiss the dialog"): read at once, it can pass before the
-/// dismissal starts. Such a claim keeps XCTest's wait, or a wait that holds for a
-/// set time.
+/// Not for a claim that something stays, or happens once, after an action that
+/// could still change it ("a swipe must not dismiss the dialog", "onDismiss runs
+/// once"): read at once, it can pass before the change starts. `hold(for:)` first.
 extension XCUIElement {
     /// `waitForExistence(timeout:)`, answered at once when the element already exists.
     func waitUntilExists(timeout: TimeInterval) -> Bool {
@@ -154,6 +153,18 @@ extension XCUIElement {
     /// `waitForNonExistence(timeout:)`, answered at once when the element is already gone.
     func waitUntilGone(timeout: TimeInterval) -> Bool {
         !exists || waitForNonExistence(timeout: timeout)
+    }
+}
+
+extension XCTestCase {
+    /// Lets `seconds` pass with the run loop running, before a claim that
+    /// something stays, or happened only once, after an action that could still
+    /// change it: a delayed second dismissal, a late callback, a row that moves
+    /// after its first layout. The claim then reads what is on screen after that
+    /// time, not the instant its own wait returned. One second is the margin these
+    /// claims had while XCTest's waits made their first check a second late.
+    func hold(for seconds: TimeInterval = 1) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }
 

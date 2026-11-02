@@ -41,6 +41,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
         idea.tap()
         XCTAssertTrue(idea.waitUntilGone(timeout: 5), "Picking an icon must close the popover")
+        hold()
         XCTAssertTrue(editor.exists, "Closing the popover must keep the editor sheet")
 
         cancelButton.tap()
@@ -83,7 +84,9 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         app.buttons["agent.nativeEdit.save"].tap()
         XCTAssertTrue(editAgent.waitUntilGone(timeout: 5), "Save must close the full-screen modal")
-        XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "agent tools=inherit")
+        let lastSave = app.staticTexts["routerRoutes.lastSave"]
+        XCTAssertTrue(waitFor(lastSave.label == "agent tools=inherit"), "The save must reach the stub server: \(lastSave.label)")
+        hold()
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
     }
@@ -114,6 +117,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(editAgent.waitUntilGone(timeout: 5), "Cancel must close the full-screen modal")
         let dismissed = app.staticTexts["routerRoutes.dismissedModals"]
         XCTAssertTrue(dismissed.waitUntilExists(timeout: 5))
+        hold()
         XCTAssertEqual(dismissed.label, "Dismissed 1", "onDismiss must run once after finish()")
         XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "none")
         assertRunning()
@@ -135,12 +139,14 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         search.tap()
         search.typeText("Tokyo")
         let tokyo = app.buttons["Asia/Tokyo"]
-        XCTAssertTrue(tokyo.waitForExistence(timeout: 5), "Search must keep the matching zone")
+        hold()
+        XCTAssertTrue(tokyo.waitUntilExists(timeout: 5), "Search must keep the matching zone")
         XCTAssertFalse(app.buttons["America/Los Angeles"].exists, "Search must filter other zones")
         attachScreenshot("search-sheet-filtered")
 
         tokyo.tap()
         XCTAssertTrue(timeZone.waitUntilGone(timeout: 5), "Choosing a zone must close the sheet")
+        hold()
         XCTAssertTrue(editSchedule.exists, "Closing the sheet must keep Edit Schedule")
         let row = app.buttons["schedule.nativeEdit.timeZone"]
         XCTAssertTrue(text(of: row).contains("Asia/Tokyo"), "The chosen zone must reach the screen: \(text(of: row))")
@@ -148,7 +154,9 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         app.buttons["schedule.nativeEdit.save"].tap()
         XCTAssertTrue(editSchedule.waitUntilGone(timeout: 5), "Save must close Edit Schedule")
-        XCTAssertEqual(app.staticTexts["routerRoutes.lastSave"].label, "schedule timeZone=Asia/Tokyo")
+        let lastSave = app.staticTexts["routerRoutes.lastSave"]
+        XCTAssertTrue(waitFor(lastSave.label == "schedule timeZone=Asia/Tokyo"), "The save must reach the stub server: \(lastSave.label)")
+        hold()
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
     }
@@ -183,6 +191,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         cancelButton.tap()
         XCTAssertTrue(editSchedule.waitUntilGone(timeout: 5), "Cancel must close Edit Schedule")
+        hold()
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()
     }
@@ -483,8 +492,9 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
         let splitToggle = app.buttons["workspace.split.sidebarToggle"]
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(splitToggle.waitForNonExistence(timeout: 10), "Portrait must leave the split view")
-        XCTAssertTrue(chatBack.waitForExistence(timeout: 5), "The chat must stay open in the stack")
+        XCTAssertTrue(splitToggle.waitUntilGone(timeout: 10), "Portrait must leave the split view")
+        hold()
+        XCTAssertTrue(chatBack.waitUntilExists(timeout: 5), "The chat must stay open in the stack")
         attachScreenshot("shell-ipad-portrait-chat")
         assertRunning()
         chatBack.tap()
@@ -492,8 +502,9 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(app.buttons["BackButton"].exists, "The workspace must sit above All Sessions")
 
         XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(splitToggle.waitForExistence(timeout: 10), "Landscape must split again")
-        XCTAssertTrue(session.waitForExistence(timeout: 5), "The split detail must keep the workspace")
+        XCTAssertTrue(splitToggle.waitUntilExists(timeout: 10), "Landscape must split again")
+        hold()
+        XCTAssertTrue(session.waitUntilExists(timeout: 5), "The split detail must keep the workspace")
         attachScreenshot("shell-ipad-landscape-workspace")
         assertRunning()
     }

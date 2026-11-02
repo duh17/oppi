@@ -262,6 +262,22 @@ class UIHarnessTestCase: XCTestCase {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
+    /// `element`'s top edge, relative to `container`'s when given, once it has
+    /// stopped moving: two reads 0.2 s apart within half a point, or the last read
+    /// at `timeout`.
+    func settledMinY(of element: XCUIElement, in container: XCUIElement? = nil, timeout: TimeInterval = 3) -> CGFloat {
+        func read() -> CGFloat { element.frame.minY - (container?.frame.minY ?? 0) }
+        var last = read()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let next = read()
+            if abs(next - last) < 0.5 { return next }
+            last = next
+        }
+        return last
+    }
+
     func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
 

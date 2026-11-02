@@ -66,6 +66,12 @@ enum ReusedHarnessLaunch {
         freshProcess: Bool = false,
         launch: () -> Void
     ) -> XCUIApplication {
+        // The run's kill switch holds for every caller, including a class that
+        // calls this directly instead of checking its own opt-in first.
+        guard isEnabled(optedIn: true) else {
+            launch()
+            return application
+        }
         installObserver()
         application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
         application.launchEnvironment[OppiTestLaunch.reuseScreenFileKey] = screenFile.path

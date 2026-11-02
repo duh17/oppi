@@ -286,8 +286,10 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
         XCTAssertTrue(row.waitUntilExists(timeout: 3), "Visible row identity disappeared after stream pulse")
         XCTAssertTrue(glyph.waitUntilExists(timeout: 3), "Visible glyph disappeared after stream pulse")
-        let rowYAfter = row.frame.minY
-        let glyphYAfter = glyph.frame.minY
+        // A yank can animate in after the pulse lands: read where they come to rest.
+        hold()
+        let rowYAfter = settledMinY(of: row)
+        let glyphYAfter = settledMinY(of: glyph)
         XCTAssertLessThanOrEqual(
             abs(rowYAfter - rowYBefore),
             2,
@@ -430,6 +432,12 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let thumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
         XCTAssertTrue(row.waitUntilExists(timeout: 5), "Visual image row did not become visible")
         XCTAssertTrue(thumbnail.waitUntilExists(timeout: 5), "Visual image thumbnail did not become visible")
+        // The image control scrolls the timeline to its row, and where the gesture
+        // below leaves the thumbnail depends on when it starts. These holds keep the
+        // timing this test had while each wait made its first check a second late;
+        // with less time the thumbnail can end off screen, and the tap then scrolls
+        // the viewport it measures.
+        hold(for: 2)
 
         // Match the reported reading gesture: move away, reverse direction,
         // then stop detached with the same stable row still visible.
@@ -447,7 +455,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertTrue(thumbnail.waitUntilExists(timeout: 3))
         // Measured inside the timeline: the router shows its navigation bar again
         // when the reader pops, which moves the harness chrome but not the viewport.
-        let rowYBefore = row.frame.minY - timeline.frame.minY
+        // The drags can still be decelerating: read where the row comes to rest.
+        hold(for: 2)
+        let rowYBefore = settledMinY(of: row, in: timeline)
 
         // A user photo opens the pushed chat reader; Back must land on the same viewport.
         thumbnail.tap()
@@ -457,7 +467,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertTrue(waitForElementToDisappear(readerBack, timeout: 5), "Image reader did not close")
         XCTAssertTrue(row.waitUntilExists(timeout: 5), "Stable image row disappeared after preview")
 
-        let rowYAfter = row.frame.minY - timeline.frame.minY
+        // A restore can land after the pop animation: read where the row comes to rest.
+        hold()
+        let rowYAfter = settledMinY(of: row, in: timeline)
         XCTAssertLessThanOrEqual(
             abs(rowYAfter - rowYBefore),
             2,

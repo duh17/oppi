@@ -402,6 +402,7 @@ final class HarnessLaunchReset {
         NativeMarkdownImageView.resetCachesForTesting()
         FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
         InlineVideoStillFrameStore.shared.removeAll()
+        FileBrowserViewOptionsStore.shared.resetForTesting()
     }
 }
 
