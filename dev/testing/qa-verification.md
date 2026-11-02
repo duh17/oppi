@@ -1,6 +1,6 @@
 # Deterministic QA core
 
-Part of [Testing Guide](README.md); same standard. Strict iOS UI verification with source-bound receipts: one CLI, one XCTest executor, one paired success, one steering-item removal. It makes no Jev, speed, or terminal-mirror claim.
+Part of [Testing Guide](README.md). Strict iOS UI verification with source-bound receipts; it makes no Jev, speed, or terminal-mirror claim.
 
 ## Owner
 
@@ -14,7 +14,7 @@ Part of [Testing Guide](README.md); same standard. Strict iOS UI verification wi
 | `queue-remove-steering` | paired E2E | A seeded steering item is removed via `chat.messageQueue.remove.<itemId>`: its control is gone and one correlated `get_queue` `command_result` shows it absent with the queue version advanced |
 | negatives | hang harness | Ambiguous or missing target, missing scope, absent postcondition, unconfirmed dispatch, unrelated wait, evidence failure never false-pass |
 
-- The queue oracle is the UI plus the correlated `command_result` with strict row fields (nothing defaulted); refresh is not the oracle. A visible version-mismatch banner is an honest product FAIL. The busy-turn seed can race the live model: a bounded fixture caveat, never a reason to weaken the oracle or mock the queue.
+- The queue oracle is the UI plus the correlated `command_result` with strict row fields (nothing defaulted), never a refresh. A visible version-mismatch banner is an honest product FAIL. The busy-turn seed can race the live model: a fixture caveat, never a reason to weaken the oracle or mock the queue.
 - Admission requires step records in catalog order, explicit skip/cancel counts, the matching test-bundle identity, and the owned sim-pool summary. Missing, foreign, stale, malformed, skipped, cancelled, zero-step, duplicate, or incomplete receipts cannot pass.
 - A generic wait (`waitExists`, `waitHittable`, `waitGone`) never confirms a dispatch; confirmation is the mutation's declared postcondition. Typing fails closed without keyboard focus.
 

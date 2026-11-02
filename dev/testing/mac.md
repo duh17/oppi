@@ -1,6 +1,6 @@
 # Testing Guide: Mac
 
-Part of [Testing Guide](README.md); same standard. Use only when the work names Mac (`OppiMac` / `OppiMacTests`).
+Part of [Testing Guide](README.md). Use only when the work names Mac (`OppiMac` / `OppiMacTests`).
 
 - Never use `sim-pool.sh` for Mac. Reuse `.build/mac-tests` for tests and `.build/mac-debug` for the debug app; never a new `mac-*` or `derived-data-*` path per experiment. Unsigned Debug builds set `CODE_SIGNING_ALLOWED=NO`.
 - Architecture: `cd server && bun scripts/check-architecture-boundaries.ts --scope mac` (`--scope all` includes it; the Mac pre-push lane runs it before `build-for-testing`).

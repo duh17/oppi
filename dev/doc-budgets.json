@@ -70,24 +70,24 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1951 words; headroom max(15%, 100 words). The generated event tables are not counted."
     },
     "dev/testing/README.md": {
-      "words": 2230,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1933 words; headroom max(15%, 100 words)."
+      "words": 2120,
+      "reason": "Testing entry point: command picker, policy as code, pre-push lanes, heavy-job slots, batch gate selectors and exit codes, gate-report lines, UI/E2E launch state and launch-reuse rules, server test rules. 1841 words; headroom max(15%, 100 words)."
     },
     "dev/testing/apple.md": {
-      "words": 2440,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 2117 words; headroom max(15%, 100 words)."
+      "words": 2370,
+      "reason": "Apple test commands and gotchas (including UI-test waits and hold()): prebuilt frameworks, privacy manifests, simulator profiles and claims, unit and UI shards, Swift Testing filters, sim-pool behaviour, coverage, E2E, debug harnesses, screenshot previews. 2055 words; headroom max(15%, 100 words)."
     },
     "dev/testing/ios-accessibility-testability.md": {
-      "words": 880,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 765 words; headroom max(15%, 100 words)."
+      "words": 820,
+      "reason": "Accessibility contract for agent-facing controls: timeline headers, identifier naming and its guard, Live Voice ids, semantic journey proof. 712 words; headroom max(15%, 100 words)."
     },
     "dev/testing/mac.md": {
       "words": 290,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 190 words; headroom max(15%, 100 words)."
+      "reason": "Mac build and test commands, derived-data paths, and what the visual gates prove. 188 words; headroom max(15%, 100 words)."
     },
     "dev/testing/qa-verification.md": {
-      "words": 500,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 397 words; headroom max(15%, 100 words)."
+      "words": 490,
+      "reason": "QA verification owner, journeys and their oracles, commands, and what the driver refuses. 381 words; headroom max(15%, 100 words)."
     }
   }
 }
