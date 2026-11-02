@@ -912,88 +912,11 @@ final class ConnectionCoordinator {
               let server = serverStore.server(for: serverId) else {
             return nil
         }
-
-        let normalizedServerId = normalizeFingerprint(server.id)
-        guard !normalizedServerId.isEmpty else { return nil }
-
-        let credentials = server.credentials
-        let normalizedPinnedTLS = normalizeOptionalFingerprint(credentials.normalizedTLSCertFingerprint)
-        let pool = candidates ?? lanDiscovery.endpoints
-
-        let rankedCandidates = pool
-            .filter { endpoint in
-                let prefix = normalizeFingerprint(endpoint.serverFingerprintPrefix)
-                return !prefix.isEmpty && normalizedServerId.hasPrefix(prefix)
-            }
-            .sorted { lhs, rhs in
-                let lhsServerSpecificity = normalizeFingerprint(lhs.serverFingerprintPrefix).count
-                let rhsServerSpecificity = normalizeFingerprint(rhs.serverFingerprintPrefix).count
-                if lhsServerSpecificity != rhsServerSpecificity {
-                    return lhsServerSpecificity > rhsServerSpecificity
-                }
-
-                let lhsTLSSpecificity = tlsPrefixSpecificityScore(
-                    endpointTLSPrefix: lhs.tlsCertFingerprintPrefix,
-                    normalizedPinnedTLS: normalizedPinnedTLS
-                )
-                let rhsTLSSpecificity = tlsPrefixSpecificityScore(
-                    endpointTLSPrefix: rhs.tlsCertFingerprintPrefix,
-                    normalizedPinnedTLS: normalizedPinnedTLS
-                )
-                if lhsTLSSpecificity != rhsTLSSpecificity {
-                    return lhsTLSSpecificity > rhsTLSSpecificity
-                }
-
-                if lhs.host != rhs.host {
-                    return lhs.host < rhs.host
-                }
-                return lhs.port < rhs.port
-            }
-
-        for candidate in rankedCandidates {
-            guard let selection = LANEndpointSelection.select(
-                credentials: credentials,
-                discoveredEndpoint: candidate
-            ) else {
-                continue
-            }
-
-            if selection.transportPath == .lan {
-                return candidate
-            }
-        }
-
-        return nil
-    }
-
-    private func tlsPrefixSpecificityScore(
-        endpointTLSPrefix: String?,
-        normalizedPinnedTLS: String?
-    ) -> Int {
-        guard let normalizedPrefix = normalizeOptionalFingerprint(endpointTLSPrefix) else {
-            return 0
-        }
-
-        guard let normalizedPinnedTLS else {
-            return -1
-        }
-
-        return normalizedPinnedTLS.hasPrefix(normalizedPrefix) ? normalizedPrefix.count : -1
-    }
-
-    private func normalizeOptionalFingerprint(_ value: String?) -> String? {
-        guard let value else { return nil }
-
-        let normalized = normalizeFingerprint(value)
-        return normalized.isEmpty ? nil : normalized
-    }
-
-    private func normalizeFingerprint(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("sha256:") {
-            return String(trimmed.dropFirst("sha256:".count))
-        }
-        return trimmed
+        return LANEndpointSelection.bestEndpoint(
+            serverId: server.id,
+            credentials: server.credentials,
+            among: candidates ?? lanDiscovery.endpoints
+        )
     }
 
     #if DEBUG

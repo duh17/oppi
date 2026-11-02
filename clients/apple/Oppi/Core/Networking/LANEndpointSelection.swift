@@ -150,6 +150,75 @@ enum LANEndpointSelection {
         return normalizedPaired.hasPrefix(normalizedPrefix)
     }
 
+    /// The discovered endpoint that best matches a paired server, among those
+    /// `select` would route over LAN: the most specific server-fingerprint
+    /// prefix first, then the most specific TLS prefix the paired pin agrees
+    /// with (a prefix the pin rules out, or any prefix without a pin, ranks
+    /// last), then host and port.
+    static func bestEndpoint(
+        serverId: String,
+        credentials: ServerCredentials,
+        among pool: [LANDiscoveredEndpoint]
+    ) -> LANDiscoveredEndpoint? {
+        guard let normalizedServerId = rankingFingerprint(serverId) else { return nil }
+        let normalizedPinnedTLS = rankingFingerprint(credentials.normalizedTLSCertFingerprint)
+
+        let rankedCandidates = pool
+            .filter { endpoint in
+                guard let prefix = rankingFingerprint(endpoint.serverFingerprintPrefix) else { return false }
+                return normalizedServerId.hasPrefix(prefix)
+            }
+            .sorted { lhs, rhs in
+                let lhsServerSpecificity = rankingFingerprint(lhs.serverFingerprintPrefix)?.count ?? 0
+                let rhsServerSpecificity = rankingFingerprint(rhs.serverFingerprintPrefix)?.count ?? 0
+                if lhsServerSpecificity != rhsServerSpecificity {
+                    return lhsServerSpecificity > rhsServerSpecificity
+                }
+
+                let lhsTLSSpecificity = tlsPrefixSpecificityScore(
+                    endpointTLSPrefix: lhs.tlsCertFingerprintPrefix,
+                    normalizedPinnedTLS: normalizedPinnedTLS
+                )
+                let rhsTLSSpecificity = tlsPrefixSpecificityScore(
+                    endpointTLSPrefix: rhs.tlsCertFingerprintPrefix,
+                    normalizedPinnedTLS: normalizedPinnedTLS
+                )
+                if lhsTLSSpecificity != rhsTLSSpecificity {
+                    return lhsTLSSpecificity > rhsTLSSpecificity
+                }
+
+                if lhs.host != rhs.host {
+                    return lhs.host < rhs.host
+                }
+                return lhs.port < rhs.port
+            }
+
+        return rankedCandidates.first { candidate in
+            select(credentials: credentials, discoveredEndpoint: candidate)?.transportPath == .lan
+        }
+    }
+
+    private static func tlsPrefixSpecificityScore(
+        endpointTLSPrefix: String?,
+        normalizedPinnedTLS: String?
+    ) -> Int {
+        guard let normalizedPrefix = rankingFingerprint(endpointTLSPrefix) else {
+            return 0
+        }
+
+        guard let normalizedPinnedTLS else {
+            return -1
+        }
+
+        return normalizedPinnedTLS.hasPrefix(normalizedPrefix) ? normalizedPrefix.count : -1
+    }
+
+    /// `normalizeFingerprint`, with a bare `sha256:` treated as no fingerprint.
+    private static func rankingFingerprint(_ value: String?) -> String? {
+        guard let normalized = normalizeFingerprint(value), !normalized.isEmpty else { return nil }
+        return normalized
+    }
+
     private static func normalizeFingerprint(_ value: String?) -> String? {
         guard let value else { return nil }
 
