@@ -40,9 +40,7 @@ final class ServerConnection {
     /// `GET /server/info` version from the last successful bootstrap or capability refresh.
     private(set) var connectedServerVersion: String?
     /// Pending pairing approvals for this server (`GET /auth/pairing-approvals` + app events).
-    var pendingPairingApprovals: [PendingPairingApproval] = []
-    var pairingApprovalsMutationGeneration: UInt64 = 0
-    var pairingApprovalsRefreshSequence: UInt64 = 0
+    let pairingApprovals = PairingApprovalList()
     /// `serverMetrics.enabled` from `GET /server/metrics/settings`, read once per
     /// connection and updated by the toggle. Nil until known: the host pill hides
     /// Server Metrics for nil and false alike. Filled by `ConnectionCoordinator`.

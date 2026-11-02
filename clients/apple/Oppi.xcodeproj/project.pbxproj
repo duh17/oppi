@@ -639,6 +639,7 @@
 		41DDD7385EFEE2D9BDFEE607 /* MathCoreGraphicsRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7B4CAE2A5865A269549911F /* MathCoreGraphicsRenderer.swift */; };
 		42366F76054EC58F1C1E06E4 /* OppiLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA83524385AB9BA7D8A7D0A5 /* OppiLiveActivity.swift */; };
 		423A9FB295E685345AF3FCDE /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
+		4242852C18B363AC9B757CDD /* PairingApprovalList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED87BF5B72C9862C6403E27 /* PairingApprovalList.swift */; };
 		425082935735C3C328A1A30F /* FloatingProgressPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD132131766760180A3BDB72 /* FloatingProgressPanel.swift */; };
 		426B1F008EA658EB429A961A /* SSHTerminalColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A110C2A7D77CB81399E935 /* SSHTerminalColors.swift */; };
 		428E6AAD4DE6959B90635F17 /* OrgAttributedStringRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E669818A177E15546B537121 /* OrgAttributedStringRenderer.swift */; };
@@ -3759,6 +3760,7 @@
 		8E9E3106B53C20450F229CB7 /* ProviderColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderColor.swift; sourceTree = "<group>"; };
 		8EA495A039FCFC65EB77A0B0 /* ChildTailTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChildTailTimelineRowContent.swift; sourceTree = "<group>"; };
 		8ED25B9D846471DDD5A97738 /* MermaidMindmapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidMindmapTests.swift; sourceTree = "<group>"; };
+		8ED87BF5B72C9862C6403E27 /* PairingApprovalList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingApprovalList.swift; sourceTree = "<group>"; };
 		8F17D16398175ED9E8F8B705 /* MacWorkspaceClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceClient.swift; sourceTree = "<group>"; };
 		8F3FB54AC86026E666A6F09D /* SettingsScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScope.swift; sourceTree = "<group>"; };
 		8F5959377C5BC880803CD86D /* GuidedControlSessionLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedControlSessionLaunch.swift; sourceTree = "<group>"; };
@@ -6351,6 +6353,7 @@
 				B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */,
 				798A4FA283A530A34D954D31 /* MessageSender.swift */,
 				8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */,
+				8ED87BF5B72C9862C6403E27 /* PairingApprovalList.swift */,
 				CE5460DA8E5696A189E4A488 /* RexDirectStore.swift */,
 				A86DA7C2BCB9EFEF702C2CE4 /* ServerConnection.swift */,
 				DE0698969FEFDBEE2E8A488D /* ServerConnection+AppEvents.swift */,
@@ -10617,6 +10620,7 @@
 				9A22D32C7059FD99994052CF /* PairedServer.swift in Sources */,
 				70F55877EEB613BEE524DECB /* PairedServerKeychain.swift in Sources */,
 				160473910083A84E91185548 /* PairingApprovalController.swift in Sources */,
+				4242852C18B363AC9B757CDD /* PairingApprovalList.swift in Sources */,
 				7EDB493D3448D0CFD92FD9DD /* PairingApprovalViewController.swift in Sources */,
 				0E37C02303339709D6418EC9 /* PairingApprovalWaitingView.swift in Sources */,
 				55A2B884E1915CCA5566515C /* PairingDeviceName.swift in Sources */,

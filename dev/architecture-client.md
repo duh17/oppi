@@ -14,6 +14,10 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 | [Renderer change map](architecture-client/change-map.md) | Adding a document renderer; cleanup targets |
 | [Where to look in code](architecture-client/code-map.md) | File pointers by area |
 
+`ServerConnection` is the facade and cross-store workflow owner; each state machine inside it has its own owner:
+
+- `PairingApprovalList` holds one server's pending pairing approvals and fences stale list reads; `PairingApprovalController` presents them across connections.
+
 ## UIKit and SwiftUI ownership
 
 UIKit owns every iOS view and all app structure (decided 2026-10-15). `scripts/uikit-structure-guard.ts` holds the ratchet (see [Structure guard](#structure-guard)).

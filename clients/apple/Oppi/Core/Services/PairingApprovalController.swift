@@ -64,7 +64,7 @@ final class PairingApprovalController {
 
     private func observePendingIds(of coordinator: ConnectionCoordinator) {
         withObservationTracking {
-            for connection in coordinator.connections.values { _ = connection.pendingPairingApprovals.map(\.id) }
+            for connection in coordinator.connections.values { _ = connection.pairingApprovals.pending.map(\.id) }
         } onChange: { [weak self, weak coordinator] in
             Task { @MainActor in
                 guard let self, let coordinator, self.syncedCoordinator === coordinator else { return }
@@ -81,7 +81,7 @@ final class PairingApprovalController {
             let serverName = coordinator.serverStore.server(for: serverId)?.name
                 ?? connection.credentials?.name
                 ?? "Server"
-            for approval in connection.pendingPairingApprovals where approval.expiresAt > nowMs {
+            for approval in connection.pairingApprovals.pending where approval.expiresAt > nowMs {
                 pending.append((serverId, serverName, approval))
             }
         }
@@ -319,11 +319,11 @@ final class PairingApprovalController {
                     continue
                 }
                 denyInFlight.remove(key)
-                coordinator?.connection(for: key.serverId)?.removePendingPairingApproval(id: key.approvalId)
+                coordinator?.connection(for: key.serverId)?.pairingApprovals.remove(id: key.approvalId)
             } catch {
                 denyInFlight.remove(key)
                 if Self.denyIsSettled(error) {
-                    coordinator?.connection(for: key.serverId)?.removePendingPairingApproval(id: key.approvalId)
+                    coordinator?.connection(for: key.serverId)?.pairingApprovals.remove(id: key.approvalId)
                     continue
                 }
                 pairingDenyLogger.error(

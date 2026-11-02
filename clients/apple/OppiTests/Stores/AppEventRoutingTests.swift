@@ -261,11 +261,11 @@ struct AppEventRoutingTests {
             keyThumbprint: "thumb"
         )
         connection.handleAppEvent(.pairingApprovalRequested(emittedAt: 1, approval: approval))
-        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+        #expect(connection.pairingApprovals.pending.map(\.id) == ["pa_1"])
         connection.handleAppEvent(
             .pairingApprovalSettled(emittedAt: 2, approvalId: "pa_1", outcome: .approved)
         )
-        #expect(connection.pendingPairingApprovals.isEmpty)
+        #expect(connection.pairingApprovals.pending.isEmpty)
     }
 
     @Test func stalePairingApprovalListDoesNotOverwriteLaterAppEvents() async {
@@ -299,10 +299,10 @@ struct AppEventRoutingTests {
             await Task.yield()
         }
         connection.handleAppEvent(.pairingApprovalRequested(emittedAt: 1, approval: approval))
-        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+        #expect(connection.pairingApprovals.pending.map(\.id) == ["pa_1"])
         gate.open()
         await refresh.value
-        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+        #expect(connection.pairingApprovals.pending.map(\.id) == ["pa_1"])
     }
 
     @Test func olderOverlappingPairingApprovalRefreshDoesNotReplaceNewer() async {
@@ -348,10 +348,10 @@ struct AppEventRoutingTests {
         }
         newerGate.open()
         await newerRefresh.value
-        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_2"])
+        #expect(connection.pairingApprovals.pending.map(\.id) == ["pa_2"])
         olderGate.open()
         await olderRefresh.value
-        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_2"])
+        #expect(connection.pairingApprovals.pending.map(\.id) == ["pa_2"])
     }
 }
 

@@ -247,7 +247,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
         case "pairing-approval":
-            connection.pendingPairingApprovals = [Self.pendingApproval]
+            connection.pairingApprovals.upsert(Self.pendingApproval)
         default:
             break
         }
