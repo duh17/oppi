@@ -16,6 +16,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { DurableSqlExplorer, parseSqliteJson } from "../extensions/durable/sql-explorer/durable.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
@@ -650,5 +651,35 @@ describe("parseSqliteJson", () => {
       expect(parsed.ok, sample).toBe(false);
       if (!parsed.ok) expect(parsed.error).not.toBe("Run one statement per query.");
     }
+  });
+});
+
+// Argument shapes models sent these tools in recorded durable sessions.
+describe("SQLite explorer arguments", () => {
+  it("take the recorded shapes and reject a field the tool does not have", () => {
+    const schema = toolNamed(DurableSqlExplorer.tools, "sqlite_schema");
+    const query = toolNamed(DurableSqlExplorer.tools, "sqlite_query");
+    expect(toolArguments(schema, { path: "/tmp/session.sqlite" })).toEqual({
+      path: "/tmp/session.sqlite",
+    });
+    for (const args of [
+      { path: "/tmp/session.sqlite", sql: "SELECT name, type FROM sqlite_master" },
+      {
+        path: "/tmp/state.db",
+        sql: "SELECT status, COUNT(*) AS sessions FROM sessions GROUP BY status",
+        chart: { kind: "bar", title: "Sessions by status" },
+      },
+    ])
+      expect(toolArguments(query, args)).toEqual(args);
+    expect(() =>
+      toolArguments(query, { path: "/tmp/state.db", sql: "SELECT 1", limit: 10 }),
+    ).toThrow("limit: unknown field");
+    expect(() =>
+      toolArguments(query, {
+        path: "/tmp/state.db",
+        sql: "SELECT 1",
+        chart: { kind: "bar", x: "status" },
+      }),
+    ).toThrow("chart.x: unknown field");
   });
 });

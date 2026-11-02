@@ -34,6 +34,7 @@ import { controlSection, createDurableControl } from "../extensions/durable/cont
 import type { DurableControlHost } from "../src/durable-extension-api.js";
 import { DurableUI, type UIRequest } from "../extensions/durable/durable-ui.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
 const harnesses: Harness[] = [];
 const servers: HttpServer[] = [];
@@ -1649,5 +1650,24 @@ describe("control script crash safety", () => {
     // The list and the first archive were not run again.
     expect(f.run).toHaveBeenCalledTimes(5);
     expect(f.seen.filter((request) => request.method === "DELETE")).toHaveLength(3);
+  });
+});
+
+// Argument shapes models sent the control tools in recorded durable sessions.
+describe("oppi.control tool arguments", () => {
+  const tools = createDurableControl(() => undefined).tools;
+
+  it("take the recorded shapes and reject a field the tool does not have", () => {
+    for (const [name, args] of [
+      ["oppi", { argv: ["session", "list", "--since", "1d"] }],
+      ["agents_get", { id: "P_PetUX2" }],
+      ["workspaces_get", { id: "MGXU8ses" }],
+      ["sessions_response", { id: "b92e4ca0-8d8d-4e23-a69f-463c82382613" }],
+      ["sessions_wait", { ids: ["d5bf1ba6-45ff-46b2-bec6-9525b375c8aa"], timeout: "5m" }],
+    ] as const)
+      expect(toolArguments(toolNamed(tools, name), args)).toEqual(args);
+    expect(() =>
+      toolArguments(toolNamed(tools, "sessions_send"), { id: "s1", text: "hi", followUp: true }),
+    ).toThrow("followUp: unknown field");
   });
 });

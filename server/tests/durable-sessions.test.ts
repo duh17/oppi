@@ -70,6 +70,7 @@ import {
   makeUnconfiguredVoiceBackendHealth,
 } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
 const managers: SessionManager[] = [];
 const gates: Array<() => void> = [];
@@ -3723,5 +3724,66 @@ describe("subagent stop replay", () => {
     // The rerun reports the stop without aborting the child's newer work.
     expect(await stop()).toMatchObject({ details: { name: "Worker", sessionId: "child" } });
     expect(aborts).toBe(1);
+  });
+});
+
+// Argument shapes models sent subagent in recorded durable sessions.
+describe("subagent arguments", () => {
+  const subagent = toolNamed(createDurableSessions(() => undefined).tools, "subagent");
+
+  it("takes every recorded action and spawn option, and rejects a field the tool does not have", () => {
+    for (const args of [
+      { action: "list" },
+      { action: "stop", name: "worker" },
+      { action: "wait", names: ["review", "worker"] },
+      { action: "send", name: "review", message: "Re-review please." },
+      { action: "send", name: "worker", message: "Note on your baseline.", followUp: true },
+      { action: "spawn", name: "pill-review", task: "Review the change." },
+      {
+        action: "spawn",
+        name: "review",
+        task: "Review commit 50706be54.",
+        model: "anthropic/claude-opus-5-5",
+        thinking: "high",
+        readOnly: true,
+        wait: true,
+      },
+      {
+        action: "spawn",
+        name: "worker",
+        task: "Implement slice 1.",
+        agent: "Worker",
+        worktree: "new",
+        tools: ["read", "bash", "edit", "write"],
+        excludeTools: ["subagent"],
+      },
+      { action: "spawn", name: "reviewer", task: "Review.", worktree: "wt_night-experience-2" },
+      { action: "spawn", name: "ios", task: "Build.", worktree: { branch: "subagent/ios" } },
+      {
+        action: "spawn",
+        name: "ios",
+        task: "Build.",
+        worktree: { branch: "subagent/ios", base: "subagent/core" },
+      },
+      {
+        action: "spawn",
+        name: "triage",
+        task: "Triage tonight's run.",
+        agent: "Night Shift Triage",
+        allowNestedDelegation: true,
+      },
+    ])
+      expect(toolArguments(subagent, args)).toEqual(args);
+    expect(() =>
+      toolArguments(subagent, { action: "spawn", name: "w", task: "t", timeout: 600 }),
+    ).toThrow("timeout: unknown field");
+    expect(() =>
+      toolArguments(subagent, {
+        action: "spawn",
+        name: "w",
+        task: "t",
+        worktree: { branch: "b", path: "/tmp/b" },
+      }),
+    ).toThrow("worktree.path: unknown field");
   });
 });

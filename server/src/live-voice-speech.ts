@@ -5,6 +5,7 @@ import type {
   ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 import {
   CALL_STARTED,
@@ -12,8 +13,8 @@ import {
   SAID_ALOUD,
   SPEAK_DESCRIPTION,
   SPEAK_GUIDELINES,
+  SPEAK_TEXT,
   SPEAK_TOOL_NAME,
-  SpeakParams,
 } from "../extensions/durable/live-voice/contract.js";
 import type { VoiceCallController, VoiceDelegation } from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
@@ -300,7 +301,7 @@ export class LiveVoiceSpeech implements LiveVoiceRuntimePort {
       description: SPEAK_DESCRIPTION,
       promptSnippet: "Talk to the user out loud on the attached Live Voice call",
       promptGuidelines: SPEAK_GUIDELINES,
-      parameters: SpeakParams,
+      parameters: Type.Object({ text: Type.String(SPEAK_TEXT) }),
       defaultActive: false,
       executionMode: "sequential",
       execute: async (_toolCallId, params) => {

@@ -345,7 +345,7 @@ The entry's default export is a plain pi-durable extension, or an array of them:
 
 ```ts
 // ~/.pi/agent/extensions/release-notes/durable.ts
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 
 export default defineExtension({
@@ -354,7 +354,7 @@ export default defineExtension({
     defineTool({
       name: "release_notes",
       description: "Read the latest release notes.",
-      parameters: Type.Object({}),
+      parameters: obj({}),
       replay: "safe", // a read; rerun after a crash
       async execute(_args, api, context) {
         const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
@@ -368,7 +368,8 @@ export default defineExtension({
 An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that only needs the Oppi Session id of its own conversation (for a link, say) reads `(await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId`, with `DurableSessionDoc` from `oppi/durable`. One that also reads or sets the Session's name calls `await oppiHost().sessionName(api, context)` for its `sessionId`, `get()` and `set(name)`, as `auto-name` does from a generation hook. It names the Session of the conversation `api` is for and takes no Session id, so an extension cannot name another Session by mistake; extension code is trusted like the rest of the server process, and the host cannot tell a hand-built `api` from pi-durable's.
 
 - **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
-- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
+- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `@earendil-works/pi-schema`, `typebox`, and `oppi/durable` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
+- **Tool schemas:** build them with pi-schema's builders (`obj`, `str`, `opt`, ...). An `obj()` rejects arguments it does not declare, and the model sees which field was unknown; pass `{ open: true }` to accept others.
 - **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. Oppi Control sessions select none. A name, tool name, or task name another extension already uses is refused, as are an extension with two tools or two sections of one name and a section key pi-durable does not accept. A package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
 - **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load or install is reported in the server log and the reload output; the others load, and no user package can keep the durable runtime from opening.
 - **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports, Oppi's bundled ones included. An installed extension is replaced in place: a running tool call finishes on its old code, and the next call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).

@@ -1,9 +1,11 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
+  NOTIFY_BODY,
   NOTIFY_DESCRIPTION,
   NOTIFY_GUIDELINES,
+  NOTIFY_TITLE,
   NOTIFY_TOOL_NAME,
-  NotifyParams,
   notifyOutcomeText,
   type NotifyOutcome,
 } from "../extensions/durable/notify/contract.js";
@@ -25,7 +27,10 @@ export function createNotifyExtension(sessionId: string, port: SessionNotifyPort
         description: NOTIFY_DESCRIPTION,
         promptSnippet: "Send the user a push notification when a result is ready to read",
         promptGuidelines: NOTIFY_GUIDELINES,
-        parameters: NotifyParams,
+        parameters: Type.Object({
+          title: Type.String(NOTIFY_TITLE),
+          body: Type.String(NOTIFY_BODY),
+        }),
         async execute(_toolCallId, params) {
           const outcome: NotifyOutcome = await port.notify(sessionId, params);
           return {

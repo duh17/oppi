@@ -1,8 +1,7 @@
-import { Type, type Static } from "typebox";
-
 // The agent-facing `notify` tool, shared by the classic inline extension (`server/src/
 // session-notify-extension.ts`) and the durable built-in (`./durable.ts`), so both runtimes offer
-// the same words and limits. Imports nothing from `oppi/durable`, which only the extension loader
+// the same words and limits. Each entry builds its own schema from them: TypeBox for classic Pi,
+// pi-schema for durable. Imports nothing from `oppi/durable`, which only the extension loader
 // resolves. The server decides who is offered the tool and what a call sends
 // (`SessionPushNotifier`).
 
@@ -35,20 +34,22 @@ export const NOTIFY_GUIDELINES = [
   "Do not call notify before ask; ask already alerts the user.",
 ];
 
-export const NotifyParams = Type.Object({
-  title: Type.String({
-    minLength: 1,
-    maxLength: NOTIFY_TITLE_MAX,
-    description: "The outcome in a few words; the notification's headline",
-  }),
-  body: Type.String({
-    minLength: 1,
-    maxLength: NOTIFY_BODY_MAX,
-    description: "One or two sentences: what to read and where",
-  }),
-});
+/** The `title` and `body` arguments, as each entry's schema declares them. */
+export const NOTIFY_TITLE = {
+  minLength: 1,
+  maxLength: NOTIFY_TITLE_MAX,
+  description: "The outcome in a few words; the notification's headline",
+};
+export const NOTIFY_BODY = {
+  minLength: 1,
+  maxLength: NOTIFY_BODY_MAX,
+  description: "One or two sentences: what to read and where",
+};
 
-export type NotifyInput = Static<typeof NotifyParams>;
+export interface NotifyInput {
+  title: string;
+  body: string;
+}
 
 /** What a `notify` call did; also the tool result's details. */
 export type NotifyOutcome =

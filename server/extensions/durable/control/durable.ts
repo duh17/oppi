@@ -1,5 +1,16 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
-import type { TSchema } from "typebox";
+import {
+  arr,
+  bool,
+  nullable,
+  num,
+  obj,
+  opt,
+  str,
+  unknown,
+  type Properties,
+  type Schema,
+} from "@earendil-works/pi-schema";
 import {
   defineDoc,
   defineExtension,
@@ -26,30 +37,20 @@ import { cardOf, type WriteCard } from "./card.js";
 // mirror server types (`AgentDefinition` in agent-launch-service.ts, `AgentSchedule` in
 // agent-schedules.ts, the `oppi session|workspace ...` JSON data) and the CLI's own flags, and are
 // kept small on purpose: they are sent with every request and shown in the `codemode` section.
+// Arguments are closed objects: a field a tool does not have is an error the model sees. Answers
+// are open (`answer`): the CLI's records carry more fields than a tool promises.
 // ---------------------------------------------------------------------------------------------
 
-type Schema = { [key: string]: unknown };
-const str: Schema = { type: "string" };
-const num: Schema = { type: "number" };
-const bool: Schema = { type: "boolean" };
-const any: Schema = {};
-const list = (items: Schema): Schema => ({ type: "array", items });
-const obj = (properties: { [key: string]: Schema }, required: string[] = []): Schema => ({
-  type: "object",
-  properties,
-  ...(required.length > 0 ? { required } : {}),
-});
-const noArgs: Schema = { type: "object", properties: {}, additionalProperties: false };
-const nullable = (schema: Schema): Schema => ({ anyOf: [schema, { type: "null" }] });
+const answer = <P extends Properties>(properties: P): Schema => obj(properties, { open: true });
+const any = unknown();
+const noArgs = obj({});
 
-const agent = obj({ id: str, version: num }, ["id", "version"]);
+const agent = answer({ id: str(), version: num() });
 
-/** First-class `oppi agent create|update` flags (kebab-case there); JSON is for bulk edits via oppi(). */
-const agentFields = { name: str, instructions: str, model: str };
-const scheduleRow = obj({ id: str, status: str }, ["id", "status"]);
+const scheduleRow = answer({ id: str(), status: str() });
 
-const id = { id: str };
-const idOnly = obj(id, ["id"]);
+const id = { id: str() };
+const idOnly = obj(id);
 
 interface Entry {
   /** The tool name. */
@@ -81,10 +82,12 @@ const TABLE: readonly Entry[] = [
     description:
       "Run any oppi CLI command, for example argv ['session','list','--since','1d']. Returns the JSON envelope. Writes ask the owner.",
     cmd: [],
-    input: obj({ argv: list(str) }, ["argv"]),
-    output: obj({ ok: bool, data: any, error: obj({ message: str, code: str }, ["message"]) }, [
-      "ok",
-    ]),
+    input: obj({ argv: arr(str()) }),
+    output: answer({
+      ok: bool(),
+      data: opt(any),
+      error: opt(answer({ message: str(), code: opt(str()) })),
+    }),
     write: true,
     envelope: true,
   },
@@ -93,7 +96,7 @@ const TABLE: readonly Entry[] = [
     description: "List saved Agents.",
     cmd: ["agent", "list"],
     input: noArgs,
-    output: obj({ agents: list(obj({ id: str, name: str }, ["id", "name"])) }, ["agents"]),
+    output: answer({ agents: arr(answer({ id: str(), name: str() })) }),
   },
   {
     name: "agents_get",
@@ -108,7 +111,8 @@ const TABLE: readonly Entry[] = [
     name: "agents_create",
     description: "Create a saved Agent.",
     cmd: ["agent", "create"],
-    input: obj(agentFields, ["name"]),
+    // First-class `oppi agent create|update` flags (kebab-case there); JSON is for bulk edits via oppi().
+    input: obj({ name: str(), instructions: opt(str()), model: opt(str()) }),
     output: agent,
     write: true,
     pick: "agent",
@@ -117,7 +121,12 @@ const TABLE: readonly Entry[] = [
     name: "agents_update",
     description: "Update a saved Agent. Pass expectedVersion.",
     cmd: ["agent", "update"],
-    input: obj({ ...id, expectedVersion: num, instructions: str, model: str }, ["id"]),
+    input: obj({
+      ...id,
+      expectedVersion: opt(num()),
+      instructions: opt(str()),
+      model: opt(str()),
+    }),
     positional: ["id"],
     output: agent,
     write: true,
@@ -137,7 +146,7 @@ const TABLE: readonly Entry[] = [
     description: "List schedules.",
     cmd: ["schedule", "list"],
     input: noArgs,
-    output: obj({ schedules: list(scheduleRow) }, ["schedules"]),
+    output: answer({ schedules: arr(scheduleRow) }),
   },
   {
     name: "schedules_get",
@@ -152,19 +161,16 @@ const TABLE: readonly Entry[] = [
     name: "schedules_create",
     description: "Create a schedule: one of at, every, or cron.",
     cmd: ["schedule", "create"],
-    input: obj(
-      {
-        name: str,
-        prompt: str,
-        workspace: str,
-        agent: str,
-        at: str,
-        every: str,
-        cron: str,
-        tz: str,
-      },
-      ["name", "prompt"],
-    ),
+    input: obj({
+      name: str(),
+      prompt: str(),
+      workspace: opt(str()),
+      agent: opt(str()),
+      at: opt(str()),
+      every: opt(str()),
+      cron: opt(str()),
+      tz: opt(str()),
+    }),
     output: scheduleRow,
     write: true,
     pick: "schedule",
@@ -173,7 +179,7 @@ const TABLE: readonly Entry[] = [
     name: "schedules_update",
     description: "Patch a schedule's definition.",
     cmd: ["schedule", "update"],
-    input: obj({ ...id, patch: any }, ["id", "patch"]),
+    input: obj({ ...id, patch: any }),
     positional: ["id"],
     flagOf: { patch: "definition-json" },
     output: any,
@@ -185,7 +191,7 @@ const TABLE: readonly Entry[] = [
     cmd: ["schedule", "run"],
     input: idOnly,
     positional: ["id"],
-    output: obj({ id: str, sessionId: str }, ["id"]),
+    output: answer({ id: str(), sessionId: opt(str()) }),
     write: true,
     pick: "run",
   },
@@ -193,8 +199,8 @@ const TABLE: readonly Entry[] = [
     name: "sessions_create",
     description: "Start a session in a workspace with a prompt.",
     cmd: ["session", "create"],
-    input: obj({ workspace: str, prompt: str }, ["workspace", "prompt"]),
-    output: obj({ session_id: str }, ["session_id"]),
+    input: obj({ workspace: str(), prompt: str() }),
+    output: answer({ session_id: str() }),
     // The owner's session, not crew: it keeps the idle timeout like one started in the app,
     // although the control session is its caller and so its parent.
     fixed: ["--no-auto-stop"],
@@ -204,7 +210,7 @@ const TABLE: readonly Entry[] = [
     name: "sessions_send",
     description: "Send a message to a session.",
     cmd: ["session", "send"],
-    input: obj({ ...id, text: str }, ["id", "text"]),
+    input: obj({ ...id, text: str() }),
     positional: ["id"],
     output: any,
     write: true,
@@ -213,17 +219,14 @@ const TABLE: readonly Entry[] = [
     name: "sessions_wait",
     description: "Wait until sessions are idle; never poll. Check timed_out.",
     cmd: ["session", "wait"],
-    input: obj({ ids: list(str), timeout: str, all: bool }, ["ids"]),
+    input: obj({ ids: arr(str()), timeout: opt(str()), all: opt(bool()) }),
     positional: ["ids"],
-    output: obj(
-      {
-        timed_out: bool,
-        sessions: list(
-          obj({ session_id: str, status: nullable(str), reason: str }, ["session_id"]),
-        ),
-      },
-      ["timed_out", "sessions"],
-    ),
+    output: answer({
+      timed_out: bool(),
+      sessions: arr(
+        answer({ session_id: str(), status: opt(nullable(str())), reason: opt(str()) }),
+      ),
+    }),
     // One shape for every case: the CLI answers one id with that session's object, and many
     // ids, `all`, or a timeout with a `sessions` list; a status can be unknown (null).
     shape: (data) => {
@@ -248,14 +251,14 @@ const TABLE: readonly Entry[] = [
     input: idOnly,
     positional: ["id"],
     fixed: ["--view", "response", "--turns", "last"],
-    output: obj({ text: str }, ["text"]),
+    output: answer({ text: str() }),
   },
   {
     name: "workspaces_list",
     description: "List workspaces.",
     cmd: ["workspace", "list"],
     input: noArgs,
-    output: obj({ workspaces: list(obj({ id: str, name: str }, ["id"])) }, ["workspaces"]),
+    output: answer({ workspaces: arr(answer({ id: str(), name: opt(str()) })) }),
   },
   {
     name: "workspaces_get",
@@ -516,9 +519,8 @@ function controlTool(
   return defineTool({
     name: entry.name,
     description: entry.description,
-    // JSON Schema; pi-durable validates arguments and structured output with TypeBox, which accepts it.
-    parameters: entry.input as unknown as TSchema,
-    structuredOutputSchema: entry.output as unknown as TSchema,
+    parameters: entry.input,
+    structuredOutputSchema: entry.output,
     replay: "safe",
     async execute(args, api, context) {
       const bound = host(api.env);

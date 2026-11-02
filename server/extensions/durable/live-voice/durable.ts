@@ -1,4 +1,5 @@
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+import { obj, str } from "@earendil-works/pi-schema";
 import { oppiHost } from "oppi/durable";
 import {
   CALL_STARTED,
@@ -7,14 +8,14 @@ import {
   SAID_ALOUD,
   SPEAK_DESCRIPTION,
   SPEAK_GUIDELINES,
+  SPEAK_TEXT,
   SPEAK_TOOL_NAME,
-  SpeakParams,
 } from "./contract.js";
 
 const speak = defineTool({
   name: SPEAK_TOOL_NAME,
   description: SPEAK_DESCRIPTION,
-  parameters: SpeakParams,
+  parameters: obj({ text: str(SPEAK_TEXT) }),
   executionMode: "sequential",
   // Default `unsafe`: words a crash interrupted are not said again.
   async execute(args, api) {

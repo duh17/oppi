@@ -20,6 +20,9 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage, Session } from "../src/types.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
+import DurableNotify from "../extensions/durable/notify/durable.js";
+import DurableLiveVoice from "../extensions/durable/live-voice/durable.js";
 
 // What each kind of durable session selects, pinned by name: the built-in extensions, the tools
 // offered, and the prompt sections, in order, when the conversation is created and after it
@@ -753,5 +756,23 @@ describe("durable built-in selection", () => {
     speech.setCallAttached(session.id, false);
     await vi.waitFor(async () => expect(voiced(await selection(f, session.id))).toBe(false));
     await f.manager.stopSession(session.id);
+  });
+});
+
+// Argument shapes models sent these tools in recorded durable sessions.
+describe("notify and speak arguments", () => {
+  it("take the recorded shapes and reject a field the tool does not have", () => {
+    const notify = toolNamed(DurableNotify.tools, "notify");
+    const call = { title: "Oppi installed", body: "Release build is on your phone." };
+    expect(toolArguments(notify, call)).toEqual(call);
+    expect(() => toolArguments(notify, { ...call, urgent: true })).toThrow("urgent: unknown field");
+
+    const speak = toolNamed(DurableLiveVoice.tools, "speak");
+    expect(toolArguments(speak, { text: "Checking the logs." })).toEqual({
+      text: "Checking the logs.",
+    });
+    expect(() => toolArguments(speak, { text: "Checking.", voice: "calm" })).toThrow(
+      "voice: unknown field",
+    );
   });
 });

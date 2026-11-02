@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { arr, bool, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineDoc,
   defineExtension,
@@ -25,30 +25,35 @@ const ask = defineTool({
     "Call ONCE per turn — bundle all questions into a single call. " +
     "The user can select multiple options, type a custom answer, or ignore any question. " +
     "Prefer asking over guessing when intent is ambiguous.",
-  parameters: Type.Object({
-    questions: Type.Array(
-      Type.Object({
-        id: Type.String({ description: "Stable key for the answer map" }),
-        question: Type.String({ description: "Full question text" }),
-        options: Type.Array(
-          Type.Object({
-            value: Type.String({ description: "Return value when selected" }),
-            label: Type.String({ description: "Display label" }),
-            description: Type.Optional(
-              Type.String({ description: "Short description below label" }),
-            ),
-          }),
-        ),
-        multiSelect: Type.Optional(
-          Type.Boolean({
-            description: "Allow selecting multiple options. Default: false",
-          }),
-        ),
-      }),
+  parameters: obj({
+    questions: arr(
+      obj(
+        {
+          id: str({ description: "Stable key for the answer map" }),
+          question: str({ description: "Full question text" }),
+          options: arr(
+            obj({
+              value: str({ description: "Return value when selected" }),
+              label: str({ description: "Display label" }),
+              description: opt(
+                str({ description: "Short description below label" }),
+              ),
+            }),
+          ),
+          multiSelect: opt(
+            bool({
+              description: "Allow selecting multiple options. Default: false",
+            }),
+          ),
+        },
+        // Open: models sometimes put the call's `allowCustom` on a question, and such a call
+        // must still reach the user.
+        { open: true },
+      ),
       { minItems: 1 },
     ),
-    allowCustom: Type.Optional(
-      Type.Boolean({
+    allowCustom: opt(
+      bool({
         description: "Allow typing a custom answer per question. Default: true",
       }),
     ),

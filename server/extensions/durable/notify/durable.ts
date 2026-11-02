@@ -1,10 +1,12 @@
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+import { obj, str } from "@earendil-works/pi-schema";
 import { oppiHost } from "oppi/durable";
 import {
+  NOTIFY_BODY,
   NOTIFY_DESCRIPTION,
   NOTIFY_GUIDELINES,
+  NOTIFY_TITLE,
   NOTIFY_TOOL_NAME,
-  NotifyParams,
   notifyOutcomeText,
   type NotifyOutcome,
 } from "./contract.js";
@@ -12,7 +14,7 @@ import {
 const notify = defineTool({
   name: NOTIFY_TOOL_NAME,
   description: NOTIFY_DESCRIPTION,
-  parameters: NotifyParams,
+  parameters: obj({ title: str(NOTIFY_TITLE), body: str(NOTIFY_BODY) }),
   // Default `unsafe`: a call a crash interrupted is not sent again.
   async execute(args, api) {
     const send = oppiHost().notify(api.env);

@@ -9,7 +9,6 @@ import type {
   Tx,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { TSchema } from "typebox";
 import type { Job } from "../extensions/durable/background-jobs/contract.js";
 import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
@@ -18,8 +17,9 @@ import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/co
  * `oppi/durable`: the host API a durable extension imports for what only Oppi provides. The
  * extension itself is plain pi-durable (`export default defineExtension(...)`), and its package
  * declares the entry in `package.json` `oppi.durable`. The loader aliases this module, and
- * pi-durable, chord, pi-ai, and typebox, to the server's own copies, as upstream's plugin loader
- * resolved its plugin API.
+ * pi-durable, chord, pi-ai, and pi-schema, to the server's own copies, as upstream's plugin
+ * loader resolved its plugin API. Tool schemas use pi-schema's builders; this API offers no
+ * TypeBox.
  *
  * Every package entry gets its own evaluation of this module (the loader keeps no module cache,
  * so a reload re-reads everything), so nothing here may keep state: documents are matched by
@@ -369,7 +369,8 @@ export interface DurableControlHost {
  */
 export interface OppiFileTool {
   readonly description: string;
-  readonly parameters: TSchema;
+  /** JSON Schema of the tool's arguments: Pi's, for its own file tools. */
+  readonly parameters: object;
   execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult>;
 }
 

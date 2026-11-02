@@ -290,7 +290,8 @@ describe("server durable MCP (host)", () => {
           ],
           { stopReason: "toolUse" },
         ),
-        fauxAssistantMessage([fauxToolCall("tool_search", { query: "echo text back" })], {
+        // A recorded tool_search shape: the query and a limit.
+        fauxAssistantMessage([fauxToolCall("tool_search", { query: "echo text back", limit: 3 })], {
           stopReason: "toolUse",
         }),
         fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "found" })], {

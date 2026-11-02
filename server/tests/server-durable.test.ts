@@ -86,6 +86,7 @@ import type { TracePageResult } from "../src/trace-paging.js";
 import type { TraceOutlineResult } from "../src/trace-outline.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
@@ -4949,5 +4950,54 @@ describe("server durable managed runtime", () => {
       // The stub backend cannot run the real stop flow during teardown.
       (f.manager as unknown as { active: Map<string, unknown> }).active.clear();
     });
+  });
+});
+
+// Argument shapes models sent ask in recorded durable sessions.
+describe("ask arguments", () => {
+  const ask = toolNamed(DurableAsk.tools, "ask");
+  const option = { value: "repo", label: "Fix it in the repo", description: "Recommended" };
+
+  it("takes the recorded shapes, including a question that carries its own allowCustom", () => {
+    for (const args of [
+      { questions: [{ id: "auth", question: "Which account?", options: [option] }] },
+      {
+        questions: [
+          {
+            id: "extras",
+            question: "Which extras?",
+            multiSelect: true,
+            options: [option, { value: "docs", label: "Docs" }],
+          },
+        ],
+        allowCustom: false,
+      },
+      {
+        questions: [
+          {
+            allowCustom: true,
+            id: "spawner",
+            question: "How?",
+            multiSelect: false,
+            options: [option],
+          },
+        ],
+      },
+    ])
+      expect(toolArguments(ask, args)).toEqual(args);
+  });
+
+  it("rejects a field ask does not have outside a question", () => {
+    expect(() =>
+      toolArguments(ask, {
+        questions: [{ id: "q", question: "Q?", options: [option] }],
+        title: "T",
+      }),
+    ).toThrow("title: unknown field");
+    expect(() =>
+      toolArguments(ask, {
+        questions: [{ id: "q", question: "Q?", options: [{ ...option, recommended: true }] }],
+      }),
+    ).toThrow("questions.0.options.0.recommended: unknown field");
   });
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Type } from "typebox";
+import { arr, bool, lit, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { withCancel } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -762,43 +762,26 @@ export function createDurableSessions(
       "answers. Neither waits for a child's own background jobs that still run once it is " +
       "idle: its answer then ends with a note naming them. stop (name) aborts its current " +
       "work; it stays usable. list shows every child.",
-    parameters: Type.Object({
-      action: Type.Union([
-        Type.Literal("spawn"),
-        Type.Literal("send"),
-        Type.Literal("wait"),
-        Type.Literal("stop"),
-        Type.Literal("list"),
-      ]),
-      name: Type.Optional(Type.String({ description: "The child, for spawn, send, and stop." })),
-      names: Type.Optional(Type.Array(Type.String(), { description: "The children to wait for." })),
-      task: Type.Optional(Type.String({ description: "spawn: what the child should do." })),
-      message: Type.Optional(Type.String({ description: "send: the message." })),
-      followUp: Type.Optional(
-        Type.Boolean({ description: "send: queue after the child's current answer." }),
+    parameters: obj({
+      action: oneOf(["spawn", "send", "wait", "stop", "list"]),
+      name: opt(str({ description: "The child, for spawn, send, and stop." })),
+      names: opt(arr(str(), { description: "The children to wait for." })),
+      task: opt(str({ description: "spawn: what the child should do." })),
+      message: opt(str({ description: "send: the message." })),
+      followUp: opt(bool({ description: "send: queue after the child's current answer." })),
+      agent: opt(str({ description: "spawn: a saved Agent, by name or id." })),
+      model: opt(str({ description: "spawn: provider/model; default: the Agent's or yours." })),
+      thinking: opt(str({ description: "spawn: thinking level; default: the Agent's or yours." })),
+      wait: opt(bool({ description: "spawn: wait for the child's answer and return it." })),
+      allowNestedDelegation: opt(
+        bool({ description: "spawn: let the child spawn children of its own." }),
       ),
-      agent: Type.Optional(Type.String({ description: "spawn: a saved Agent, by name or id." })),
-      model: Type.Optional(
-        Type.String({ description: "spawn: provider/model; default: the Agent's or yours." }),
-      ),
-      thinking: Type.Optional(
-        Type.String({ description: "spawn: thinking level; default: the Agent's or yours." }),
-      ),
-      wait: Type.Optional(
-        Type.Boolean({ description: "spawn: wait for the child's answer and return it." }),
-      ),
-      allowNestedDelegation: Type.Optional(
-        Type.Boolean({ description: "spawn: let the child spawn children of its own." }),
-      ),
-      worktree: Type.Optional(
-        Type.Union(
+      worktree: opt(
+        union(
           [
-            Type.Literal("new"),
-            Type.String({ description: "An existing worktree id (wt_…), to adopt it." }),
-            Type.Object({
-              branch: Type.String(),
-              base: Type.Optional(Type.String()),
-            }),
+            lit("new"),
+            str({ description: "An existing worktree id (wt_…), to adopt it." }),
+            obj({ branch: str(), base: opt(str()) }),
           ],
           {
             description:
@@ -809,16 +792,12 @@ export function createDurableSessions(
           },
         ),
       ),
-      tools: Type.Optional(
-        Type.Array(Type.String(), {
-          description: "spawn: only these tools; a child never gains one you lack.",
-        }),
+      tools: opt(
+        arr(str(), { description: "spawn: only these tools; a child never gains one you lack." }),
       ),
-      excludeTools: Type.Optional(
-        Type.Array(Type.String(), { description: "spawn: never these tools." }),
-      ),
-      readOnly: Type.Optional(
-        Type.Boolean({
+      excludeTools: opt(arr(str(), { description: "spawn: never these tools." })),
+      readOnly: opt(
+        bool({
           description:
             "spawn: read and bash only, and the task says so. bash is not a sandbox: it can " +
             "still write.",

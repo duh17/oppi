@@ -37,6 +37,7 @@ import { readDurableInputCardOutput } from "../src/durable-input-cards.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
@@ -995,5 +996,36 @@ describe("native Durable background jobs", () => {
       finish.resolve();
     }
     expect(JSON.stringify(await delivery(harness, root))).toContain("guest-result");
+  });
+});
+
+// Argument shapes models sent these tools in recorded durable sessions.
+describe("background job tool arguments", () => {
+  const backgroundJob = toolNamed(DurableBackgroundJobs.tools, "background_job");
+  const bash = toolNamed(DurableBackgroundJobs.tools, "bash");
+
+  it("takes background_job's start and cancel calls, and coerces a timeout sent as text", () => {
+    for (const args of [
+      { action: "start", command: "npm test", timeout: 900 },
+      { action: "start", command: "npm test" },
+      { action: "cancel", job_id: "bash-87" },
+    ])
+      expect(toolArguments(backgroundJob, args)).toEqual(args);
+    expect(
+      toolArguments(backgroundJob, { action: "start", command: "./scrape.sh", timeout: "600" }),
+    ).toEqual({ action: "start", command: "./scrape.sh", timeout: 600 });
+    expect(() =>
+      toolArguments(backgroundJob, { action: "start", command: "npm test", detach: true }),
+    ).toThrow("detach: unknown field");
+  });
+
+  it("runs bash calls that carry another harness's background flag instead of rejecting them", () => {
+    for (const args of [
+      { command: "ls" },
+      { command: "sleep 20", timeout: 15 },
+      { command: "npx vitest run > /tmp/t.log 2>&1", run_in_background: "true" },
+      { command: "xcodebuild test", background: "true" },
+    ])
+      expect(toolArguments(bash, args)).toEqual(args);
   });
 });

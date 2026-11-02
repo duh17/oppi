@@ -30,7 +30,7 @@ import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { McpExposure, McpServerEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   AgentDoc,
   section,
@@ -126,7 +126,7 @@ function durableTool(definition: ToolDefinition, exposure: McpExposure): ToolReg
   return {
     name: definition.name,
     description: definition.description,
-    // MCP input schemas are JSON Schema; pi-durable validates them with TypeBox, which accepts it.
+    // MCP input schemas are JSON Schema; pi-durable validates them with pi-schema, through pi-ai.
     parameters: definition.parameters,
     replay: replayOf(definition),
     ...(exposure === "direct" ? {} : { deferred: true }),
@@ -207,10 +207,10 @@ function liveServersSection(live: LiveCell): ReturnType<typeof section> {
 }
 
 function liveToolSearch(live: LiveCell, internals: PiMcpInternals): ToolRegistration {
-  const parameters = Type.Object({
-    query: Type.String({ description: "Search query for deferred tools." }),
-    limit: Type.Optional(
-      Type.Number({
+  const parameters = obj({
+    query: str({ description: "Search query for deferred tools." }),
+    limit: opt(
+      num({
         description: `Maximum number of tools to return. Defaults to ${internals.DEFAULT_TOOL_SEARCH_LIMIT}.`,
       }),
     ),

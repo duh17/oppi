@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
   defineExtension,
   defineTool,
@@ -715,8 +715,8 @@ const sqliteSchema = defineTool({
   description:
     "Inspect a SQLite database schema (tables, views, indexes, and their SQL). Read-only. " +
     "Updates the Data widget with a table of the schema.",
-  parameters: Type.Object({
-    path: Type.String({ description: "Path to the SQLite database file." }),
+  parameters: obj({
+    path: str({ description: "Path to the SQLite database file." }),
   }),
   replay: "safe",
   execute: (args, api, context) => executeQuery({ path: args.path, sql: SCHEMA_SQL }, api, context),
@@ -727,13 +727,13 @@ const sqliteQuery = defineTool({
   description:
     "Run a read-only SQL query against a SQLite file. Updates the Data widget with a native " +
     "table and, when chart.kind is set, a bar, line, or pie chart of numeric columns.",
-  parameters: Type.Object({
-    path: Type.String({ description: "Path to the SQLite database file." }),
-    sql: Type.String({ description: "Read-only SQL. Writes, ATTACH, and shell commands fail." }),
-    chart: Type.Optional(
-      Type.Object({
-        kind: Type.Union([Type.Literal("bar"), Type.Literal("line"), Type.Literal("pie")]),
-        title: Type.Optional(Type.String()),
+  parameters: obj({
+    path: str({ description: "Path to the SQLite database file." }),
+    sql: str({ description: "Read-only SQL. Writes, ATTACH, and shell commands fail." }),
+    chart: opt(
+      obj({
+        kind: oneOf(["bar", "line", "pie"]),
+        title: opt(str()),
       }),
     ),
   }),

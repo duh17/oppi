@@ -1,8 +1,7 @@
-import { Type } from "typebox";
-
 // The agent-facing `speak` tool and call guidance, shared by the classic inline extension
 // (`server/src/live-voice-speech.ts`) and the durable built-in (`./durable.ts`), so both runtimes
-// offer the same words and limits. Imports nothing from `oppi/durable`, which only the extension
+// offer the same words and limits. Each entry builds its own schema from them: TypeBox for
+// classic Pi, pi-schema for durable. Imports nothing from `oppi/durable`, which only the extension
 // loader resolves. The server decides when a session has the tool (`LiveVoiceSpeech`).
 
 export const SPEAK_TOOL_NAME = "speak";
@@ -30,6 +29,5 @@ export const SPEAK_GUIDELINES = [
 export const NO_CALL_ATTACHED = "No Live Voice call is attached; answer in text.";
 export const SAID_ALOUD = "Said aloud.";
 
-export const SpeakParams = Type.Object({
-  text: Type.String({ minLength: 1, maxLength: SPEAK_MAX_CHARS }),
-});
+/** The `text` argument, as each entry's schema declares it. */
+export const SPEAK_TEXT = { minLength: 1, maxLength: SPEAK_MAX_CHARS };

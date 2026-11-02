@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Type } from "typebox";
+import { bool, lit, num, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import type { Context } from "@earendil-works/chord";
 import {
@@ -553,18 +553,12 @@ const backgroundJob = defineTool({
   description:
     "Start or cancel a background shell job. start returns immediately; cancel stops a job, not a status check. Output arrives as a follow-up at a safe boundary. " +
     POLL_RULE,
-  parameters: Type.Object({
-    action: Type.Union([Type.Literal("start"), Type.Literal("cancel")]),
-    command: Type.Optional(
-      Type.String({ description: "Shell command. Required for start." }),
-    ),
-    timeout: Type.Optional(
-      Type.Number({ description: "Kill the job after this many seconds." }),
-    ),
-    job_id: Type.Optional(
-      Type.String({
-        description: "Job id returned by start. Required for cancel.",
-      }),
+  parameters: obj({
+    action: oneOf(["start", "cancel"]),
+    command: opt(str({ description: "Shell command. Required for start." })),
+    timeout: opt(num({ description: "Kill the job after this many seconds." })),
+    job_id: opt(
+      str({ description: "Job id returned by start. Required for cancel." }),
     ),
   }),
   replay: "safe",
@@ -605,18 +599,16 @@ const backgroundJob = defineTool({
  * command matches pi-durable's own `bash`, so scripts check `exitCode`; a command that moved to
  * the background gives its job instead, whose result arrives later as a follow-up.
  */
-const bashStructuredOutput = Type.Union([
-  Type.Object({
-    output: Type.String({
+const bashStructuredOutput = union([
+  obj({
+    output: str({
       description:
         "Combined stdout and stderr, at most the last 64000 characters",
     }),
-    truncated: Type.Boolean({
-      description: "Whether earlier output was dropped",
-    }),
-    exitCode: Type.Number(),
+    truncated: bool({ description: "Whether earlier output was dropped" }),
+    exitCode: num(),
   }),
-  Type.Object({ jobId: Type.String(), backgrounded: Type.Literal(true) }),
+  obj({ jobId: str(), backgrounded: lit(true) }),
 ]);
 function backgrounded(job: Job): ToolExecutionResult {
   return {
@@ -627,15 +619,20 @@ function backgrounded(job: Job): ToolExecutionResult {
 const bash = defineTool({
   name: "bash",
   description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ${POLL_RULE}`,
-  parameters: Type.Object({
-    command: Type.String({ description: "Bash command to execute" }),
-    timeout: Type.Optional(
-      Type.Number({
-        description:
-          "Timeout in seconds. A timeout of 1 second or less stays in the foreground.",
-      }),
-    ),
-  }),
+  parameters: obj(
+    {
+      command: str({ description: "Bash command to execute" }),
+      timeout: opt(
+        num({
+          description:
+            "Timeout in seconds. A timeout of 1 second or less stays in the foreground.",
+        }),
+      ),
+    },
+    // Open: models carry other harnesses' flags (`run_in_background`, `background`) into
+    // bash calls, and such a call still runs, under this tool's own backgrounding rules.
+    { open: true },
+  ),
   structuredOutputSchema: bashStructuredOutput,
   replay: "safe",
   executionMode: "parallel",
