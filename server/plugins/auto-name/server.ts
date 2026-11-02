@@ -6,7 +6,12 @@ import { autoName, userText } from "./core.js";
 // starts the title without awaiting it (the request must not wait for a title), and names the
 // Oppi Session through the host once it is ready.
 
-/** Conversations this process already tried; a recovered request reruns its hook. */
+/**
+ * Sessions this module already tried; a recovered request reruns its hook. A plugin reload starts
+ * an empty set, which is safe: the hook asks only on a conversation's first request, skips a
+ * Session that has a name, and `autoName` checks the name again before it sets one, so a reload
+ * during a title in flight costs at most one more small-model request, never a second rename.
+ */
 const tried = new Set<string>();
 let warned = false;
 

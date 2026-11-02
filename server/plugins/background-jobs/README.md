@@ -22,7 +22,7 @@ Then ask for a command that should keep running, or call the `background_job` to
 
 ## Server-Durable implementation
 
-`durable.ts` uses conversation-owned background tasks and the reporter pattern
+`server.ts`, the plugin for durable sessions, uses conversation-owned background tasks and the reporter pattern
 from pi-durable's `test/examples/23-subagent-background.ts`. A stable request ID
 makes follow-up admission replay-safe; the Harness handles the queue. Stop drops
 reports already queued, rather than retrying them. A job finishing later can

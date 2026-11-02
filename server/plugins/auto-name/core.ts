@@ -1,4 +1,4 @@
-// What the classic (`index.ts`) and durable (`durable.ts`) entries share: the title contract (model
+// What the classic (`index.ts`) and durable (`server.ts`) entries share: the title contract (model
 // instructions, first-message prompt, normalization), the config file, and the model choice. Only
 // type imports from Pi, so both engines load it, and a package outside the server loads it too.
 

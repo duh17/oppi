@@ -383,6 +383,13 @@ const ScriptApproval = defineDoc<{ all: boolean }>({
  * Cards of one script, or of one conversation's direct calls, are asked one at a time, so a
  * "Apply All" answer covers the writes waiting behind it. Process memory: a restart re-asks in
  * whatever order the calls resume.
+ *
+ * A plugin reload evaluates this module again and starts an empty map, while calls already
+ * running keep the old one. That is safe: each answer is kept with its own card
+ * (`oppi-confirm:<task>:<slot>`, through `requestUI`) and "Apply All" with its script
+ * (`ScriptApproval`), never here, so no write goes out unanswered or is asked twice. A script
+ * whose writes span a reload can show its next card beside the open one, and an "Apply All" on
+ * the first does not close that second card; the owner answers it too.
  */
 const asking = new Map<string, Promise<unknown>>();
 

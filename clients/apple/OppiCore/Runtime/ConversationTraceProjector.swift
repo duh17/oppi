@@ -97,7 +97,7 @@ enum ConversationTraceProjector {
 
     // MARK: - Entry kinds
 
-    /// `agentMessageText` in `server/extensions/durable/sessions/agent-message.ts`: the text after
+    /// `agentMessageText` in `server/plugins/subagents/agent-message.ts`: the text after
     /// the model-only header (`offset` in UTF-16 units), or the whole text when that is empty.
     private static func agentMessageText(_ text: String, offset: Int?) -> String {
         let units = text.utf16

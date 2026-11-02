@@ -15,7 +15,7 @@ export function isLive(task: { state: { status: string } } | undefined): boolean
 
 /**
  * Conversation `id`'s own subagent reporters that have not ended, as a commit reads them: those
- * that wake it, not a parent's reporters for it (`liveReporters` in `durable.ts`).
+ * that wake it, not a parent's reporters for it (`liveReporters` in `server.ts`).
  */
 export async function wakingReporters(
   tx: Tx,
