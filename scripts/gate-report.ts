@@ -185,21 +185,31 @@ export function failedTestsInOutput(output: string): string[] {
 
 export type Cause = "selector" | "compile" | "test-failure" | "infra" | "quarantine" | "unknown";
 
-/** First match wins: a selector or compile problem means the tests themselves never ran. */
-const CAUSE_SIGNALS: [Cause, RegExp][] = [
+/** First match wins: the tests themselves never ran, so nothing else in the output explains the lane. */
+const NO_TESTS_RAN: [Cause, RegExp][] = [
   ["selector", /no test matches the selector|unknown --test|unknown profile|declares no (?:type|test)|ambiguous --test|No test files? found/],
-  ["compile", /\.swift:[0-9]+:[0-9]+: error:|Compiler\/linker errors|\*\* (?:TEST )?BUILD FAILED \*\*|error TS[0-9]+:|\] build failed \(exit/],
   ["quarantine", /quarantine (?:expired|entry)/],
+];
+
+/** First match wins, once a named failing test has been ruled out: the tests ran and this is why. */
+const CAUSE_SIGNALS: [Cause, RegExp][] = [
+  ["compile", /\.swift:[0-9]+:[0-9]+: error:|Compiler\/linker errors|\*\* (?:TEST )?BUILD FAILED \*\*|error TS[0-9]+:|\] build failed \(exit/],
   ["infra", /busy or quarantined|slots? \(slots [^)]*\) busy|hang detected|stalled before opening|INFRASTRUCTURE|[Uu]nable to boot|failed to boot|could not start|Test runner never began|Lost connection to the test|EADDRINUSE|server (?:failed|did not start)|no tests ran/],
   ["test-failure", /^Test Case '.+' failed|^✘ Test |^ FAIL |test failures in|Issue recorded/m],
 ];
 
-/** A guess at why a lane failed, from its output: the cause class and the line that suggested it. */
+/**
+ * A guess at why a lane failed, from its output: the cause class and the line that suggested it.
+ *
+ * A lane that names failing tests ran them, so its FAIL lines outrank compile and infrastructure
+ * lines its own output can carry: a test fixture logged `server_update.install_failed` with an
+ * `error TS2322` string while the build was fine, and an infrastructure line can come from a shard
+ * a rerun cleared. Only a selector or quarantine line, which says the tests never ran at all, still
+ * wins over a named test.
+ */
 export function guessCause(output: string, failedTests: string[]): { cause: Cause; evidence: string | null } {
   const lines = output.replace(ANSI, "").split("\n");
-  for (const [cause, signal] of CAUSE_SIGNALS) {
-    // A named failing test outranks infrastructure noise (a retried hang, one busy shard).
-    if (cause === "infra" && failedTests.length > 0) return { cause: "test-failure", evidence: failedTests[0] };
+  for (const [cause, signal] of failedTests.length > 0 ? NO_TESTS_RAN : [...NO_TESTS_RAN, ...CAUSE_SIGNALS]) {
     const line = lines.find((text) => signal.test(text));
     if (line !== undefined) return { cause, evidence: line.trim().slice(0, 240) };
   }

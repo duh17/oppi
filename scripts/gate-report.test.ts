@@ -104,6 +104,21 @@ describe("red lanes", () => {
     expect(guessCause("error: all 6 simulator slots (slots 0-5) are busy or quarantined (waited 60s)", []).evidence).toContain("busy or quarantined");
   });
 
+  test("a named failing test outranks a compile line a passing test's own log carried", () => {
+    // A server lane whose test fixture logs `server_update.install_failed` with an `error TS2322`
+    // string: the build was fine, and the FAIL line names the test that actually failed.
+    const output = [
+      '·····{"ts":"2026-11-02T11:41:54.530Z","level":"warn","event":"server_update.install_failed","component":"server_update","version":"0.0.1","error":"src/server.ts(1,7): error TS2322: Type \'string\' is not assignable to type \'number\'."}',
+      " FAIL  tests/durable-sessions.test.ts > durable-native threads > gives concurrent spawns of one name distinct worktrees",
+    ].join("\n");
+    expect(guessCause(output, failedTestsInOutput(output))).toEqual({
+      cause: "test-failure",
+      evidence: "server/tests/durable-sessions.test.ts > durable-native threads > gives concurrent spawns of one name distinct worktrees",
+    });
+    // A real compile failure, with no failing test named, is still the compile lane's answer.
+    expect(guessCause("error TS2322: Type 'string' is not assignable to type 'number'.", []).cause).toBe("compile");
+  });
+
   test("failing tests come from the runners' FAILED lines and Vitest, not from XCTest lines a rerun may have cleared", () => {
     const output = [
       "Test Case '-[OppiUITests.A testFlaky]' failed (3.0 seconds).",
