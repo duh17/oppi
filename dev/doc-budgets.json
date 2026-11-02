@@ -58,12 +58,12 @@
       "reason": "Server tool inspection: registry ownership, producer facts, full-output and snapshot lifetime, outline budgets. 378 words; headroom max(15%, 100 words)."
     },
     "dev/architecture.md": {
-      "words": 1030,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 891 words; headroom max(15%, 100 words)."
+      "words": 860,
+      "reason": "Cross-system map: runtime topology, ownership and projection, transport map, and the invariants that span server and clients. 743 words; headroom max(15%, 100 words)."
     },
     "dev/networking.md": {
-      "words": 1400,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1211 words; headroom max(15%, 100 words)."
+      "words": 1330,
+      "reason": "Transport owners and trust boundaries: credentials and pairing, iOS route selection and LAN policy, reverse-proxy trust, embedded Tailscale, machine setup over SSH. 1150 words; headroom max(15%, 100 words)."
     },
     "dev/telemetry.md": {
       "words": 2000,

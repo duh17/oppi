@@ -1,14 +1,10 @@
 # Oppi architecture
 
-> **What belongs here:** the cross-system map: owners, boundaries, invariants that span server and clients, and where to read next. Feature behaviour and history belong in code comments and tests. Standard and budgets: [`dev/README.md`](README.md#what-belongs-in-dev).
-
-Oppi pairs Apple clients with an Oppi server to view, prompt, and steer Pi sessions. The server embeds the Pi SDK for managed sessions, mirrors terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. The local CLI uses HTTP over an owner-only Unix socket; Apple clients use authenticated HTTPS/WSS, including over Tailscale.
-
-Details: [Server architecture](architecture-server.md), [Client architecture](architecture-client.md), [Networking](networking.md).
+Oppi pairs Apple clients with an Oppi server to view, prompt, and steer Pi sessions. Details: [Server architecture](architecture-server.md), [Client architecture](architecture-client.md), [Networking](networking.md).
 
 ## Runtime topology
 
-The server is the authority for sessions, workspace access, runtime configuration, saved Agents and schedules, and the mobile session projection; the app is a remote control and renderer. Execution belongs to the server's Pi SDK runtime or to a terminal Pi TUI connected through the mirror bridge.
+The server is the authority for sessions, workspace access, runtime configuration, saved Agents and schedules, and the mobile session projection; the app is a remote control and renderer. Execution belongs to the server's Pi SDK runtime or to a terminal Pi TUI connected through the mirror bridge (the Oppi Mirror extension).
 
 ```mermaid
 graph TD
@@ -26,8 +22,6 @@ graph TD
   Mirror --> Projection
   Projection --> Storage[SQLite session store]
 ```
-
-Both Apple clients share protocol DTOs, `ChatSessionManager`, and reducers in `OppiCore`. iOS adapts over paired HTTPS/WSS and paints with UIKit; Mac adapts over the owner Unix socket, paints with AppKit/SwiftUI, and attaches to, waits for, or spawns the local runtime.
 
 ## Runtime ownership and projection
 
@@ -58,10 +52,7 @@ Prompt to pixel: `ClientMessage` → `ws-message-handler.ts` → `SessionRuntime
 - The Workspaces root is a server-scoped active-session inbox. The hot recent list is time-bounded; older history is in archive buckets. Session-list endpoints return summaries, not full `Session` payloads.
 - Hot workspace endpoints never reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite read models. Imported sessions stay resumable without mutating their JSONL.
 - Mirror sessions are terminal-owned: the server never auto-starts an SDK runtime for a `runtime == "pi-tui"` session.
-- Hot timeline traffic stays separate from cold projections. Files, attachments, and media stay on authenticated HTTP with byte ranges. Quick actions, review comments, Agents, and schedules stay on HTTP; only the created or focused session uses the session stream.
+- Hot timeline traffic stays separate from cold projections: everything the transport map puts on HTTP stays there, and only the created or focused session uses the session stream.
 - Scheduled runs use the managed-session launch path, not a separate adapter.
-- The client applies shared store updates exactly once per inbound live event. Reducers, coalescers, and focused-session policy stay UI-framework-free in `OppiCore`. A still-stopped session stays history-only: opening its focused stream can resume server-owned execution.
-
-## Protocol boundary
-
-The server source of truth is `server/src/types/protocol.ts` (re-exported by `server/src/types.ts`); Apple mirrors live in `clients/apple/OppiCore/Models/`. Change server types, Apple models, and protocol tests together: a mismatched pair fails at the transport boundary. Checklist: [Server architecture](architecture-server.md#protocol-boundary).
+- The client applies shared store updates exactly once per inbound live event. A still-stopped session stays history-only: opening its focused stream can resume server-owned execution.
+- Server protocol types (`server/src/types/protocol.ts`) and their Apple mirrors (`OppiCore/Models/`) change together with their tests: a mismatched pair fails at the transport boundary ([checklist](architecture-server.md#protocol-boundary)).
