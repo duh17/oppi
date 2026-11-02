@@ -390,7 +390,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         cell.contentConfiguration = content
         cell.isAccessibilityElement = true
         cell.accessibilityLabel = [line.text, line.detail].compactMap { $0 }.joined(separator: ", ")
-        cell.accessibilityIdentifier = "extensions.reload.\(id)"
+        cell.accessibilityIdentifier = "extensions.reload.\(line.accessibilityKey)"
     }
 
     private lazy var extensionRow = UICollectionView.CellRegistration<ServerExtensionRowCell, Item> { [weak self] cell, _, item in

@@ -222,6 +222,10 @@ struct ServerExtensionsViewControllerTests {
             return screen.sections().first { $0.id == .reload }?.items.contains(.reloadLine("kept.broken")) == true
         }, "the report lists the plugin whose previous code still runs")
         #expect(answers.reloads == 1)
+        // A report row's identifier keys on the file that failed, never on its message.
+        let errorIds = screen.collectionView.visibleCells.compactMap(\.accessibilityIdentifier)
+            .filter { $0.hasPrefix("extensions.reload.error.") }
+        #expect(errorIds == ["extensions.reload.error./plugins/broken/server.ts"])
         // The reload changed the server's plugins: the list asks again and drops the stale note.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()

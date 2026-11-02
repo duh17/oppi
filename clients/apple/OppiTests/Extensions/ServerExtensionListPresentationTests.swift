@@ -102,6 +102,18 @@ struct ServerExtensionListPresentationTests {
         #expect(!neverLoaded.canToggleServerDefault)
     }
 
+    @Test func aReloadErrorNamesItsFileOnce() {
+        let entry = "/plugins/broken/server.ts"
+        let lines = ServerPluginReloadPresentation.lines(for: .finished(ServerPluginReloadReport(
+            loaded: [], kept: [], removed: [], skipped: [],
+            errors: [
+                .init(entry: entry, message: "ParseError: Unexpected token \(entry):2:0", plugin: "broken"),
+                .init(entry: "/plugins/thief/server.ts", message: "Task \"x\" is taken", plugin: "thief"),
+            ]
+        )))
+        #expect(lines.map(\.detail) == [nil, "/plugins/thief/server.ts"])
+    }
+
     @Test func aPluginsDetailListsWhatItContributesWithHooksByTask() {
         let sections = ServerExtensionListPresentation.pluginSections(for: ServerPluginSummary(
             extensionName: "webtools", required: false, enabled: true,

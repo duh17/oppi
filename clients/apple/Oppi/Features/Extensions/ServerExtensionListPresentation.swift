@@ -238,10 +238,21 @@ enum ServerExtensionCatalogPresentationState: Equatable, Sendable {
 struct ServerPluginReloadLine: Sendable, Hashable {
     /// Unique within one report: its kind and the plugin, name, or entry it is about.
     let id: String
+    /// Its row's identifier key: its kind and the plugin, name, or entry, never display text.
+    let accessibilityKey: String
     let text: String
     let detail: String?
     let symbol: String
     let isIssue: Bool
+
+    init(id: String, accessibilityKey: String? = nil, text: String, detail: String?, symbol: String, isIssue: Bool) {
+        self.id = id
+        self.accessibilityKey = accessibilityKey ?? id
+        self.text = text
+        self.detail = detail
+        self.symbol = symbol
+        self.isIssue = isIssue
+    }
 }
 
 /// What the last plugin reload did, as the Extensions page lists it: what loaded, what kept its
@@ -256,6 +267,11 @@ enum ServerPluginReloadPresentation {
         case .finished(let report):
             return lines(for: report)
         }
+    }
+
+    /// The issue's file under its message, unless the message already names it.
+    private static func fileDetail(_ issue: ServerPluginReloadReport.Issue) -> String? {
+        issue.message.contains(issue.entry) ? nil : issue.entry
     }
 
     private static func lines(for report: ServerPluginReloadReport) -> [ServerPluginReloadLine] {
@@ -284,10 +300,10 @@ enum ServerPluginReloadPresentation {
             lines.append(.init(id: "removed.\(name)", text: String(localized: "Removed \(name)"), detail: nil, symbol: "minus.circle", isIssue: false))
         }
         for issue in report.errors {
-            lines.append(.init(id: "error.\(issue.entry).\(issue.message)", text: issue.message, detail: issue.entry, symbol: "xmark.octagon", isIssue: true))
+            lines.append(.init(id: "error.\(issue.entry).\(issue.message)", accessibilityKey: "error.\(issue.entry)", text: issue.message, detail: fileDetail(issue), symbol: "xmark.octagon", isIssue: true))
         }
         for issue in report.skipped {
-            lines.append(.init(id: "skipped.\(issue.entry).\(issue.message)", text: issue.message, detail: issue.entry, symbol: "arrow.uturn.right", isIssue: false))
+            lines.append(.init(id: "skipped.\(issue.entry).\(issue.message)", accessibilityKey: "skipped.\(issue.entry)", text: issue.message, detail: fileDetail(issue), symbol: "arrow.uturn.right", isIssue: false))
         }
         if lines.isEmpty {
             lines.append(.init(id: "none", text: String(localized: "No plugins found."), detail: nil, symbol: "puzzlepiece.extension", isIssue: false))
