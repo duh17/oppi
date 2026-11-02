@@ -31,7 +31,6 @@ import {
 import { RESULT_GUIDANCE } from "./delivery.js";
 import { DurableJobs, type Job, type Status } from "./contract.js";
 
-
 type Output = { output: string; truncated: boolean };
 /**
  * Finished output, held from completion until delivery. Task-scoped to the
@@ -135,12 +134,17 @@ async function waitForJob(
         if (timer) clearTimeout(timer);
         context.abortSignal?.removeEventListener("abort", abort);
       };
-      const take = (value: typeof watch.value, expired = false): void => {
+      const take = (
+        value: typeof watch.value | null,
+        expired = false,
+      ): void => {
         const job = value?.jobs.find((item) => item.id === jobId);
         if (!job) reject(new Error(`No background job ${jobId}.`));
         else if (expired || predicate(job)) resolve(job);
       };
-      watch.start(async (value) => take(value));
+      watch.start(async (call) => {
+        if (call.kind === "value") take(call.retired ? null : call.value);
+      });
       context.abortSignal?.addEventListener("abort", abort, { once: true });
       take(watch.value);
       if (deadline !== undefined)
@@ -275,9 +279,16 @@ const JobRunner = defineTask<
             )
               cancel.abort();
           };
-          watch?.start(async (value) => changed(value));
-          live?.start(async (value) => {
-            if (value?.run === undefined) await checkStop();
+          watch?.start(async (call) => {
+            if (call.kind === "value")
+              changed(call.retired ? null : call.value);
+          });
+          live?.start(async (call) => {
+            if (
+              call.kind === "value" &&
+              (call.retired || call.value.run === undefined)
+            )
+              await checkStop();
           });
           changed(watch?.value ?? null);
           if (live?.value?.run === undefined) await checkStop();
@@ -351,8 +362,12 @@ const JobRunner = defineTask<
           if (current.decision === "waiting") current.decision = "foreground";
         }, context);
       };
-      live?.start(async (value) => {
-        if (value?.run === undefined) await retireStoppedForeground();
+      live?.start(async (call) => {
+        if (
+          call.kind === "value" &&
+          (call.retired || call.value.run === undefined)
+        )
+          await retireStoppedForeground();
       });
       let job: Job;
       try {

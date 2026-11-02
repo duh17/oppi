@@ -631,8 +631,9 @@ describe("native Durable background jobs", () => {
     await busy.promise;
     const queued = deferred<SubmissionId>();
     const inbox = (await f.harness.watchDoc(InboxDoc, f.root.id, context))!;
-    inbox.start(async (value) => {
-      const item = value?.items.find(
+    inbox.start(async (call) => {
+      if (call.kind !== "value") return;
+      const item = call.value.items.find(
         (item) => item.mode !== "write" && JSON.stringify(item.content).includes("FINAL-OUTPUT"),
       );
       if (item) queued.resolve(item.id);

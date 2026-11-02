@@ -20,7 +20,7 @@ import {
   type ShellExecResult,
   type TextLineReader,
   type TextLine,
-  type WatchChange,
+  type FileChange,
   type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import {
@@ -479,7 +479,7 @@ export class GondolinExecutionEnv implements ExecutionEnv {
   /** The guest VM offers no change notification; callers get a typed refusal, not silence. */
   async watch(
     _targets: readonly WatchTarget[],
-    _onChange: (change: WatchChange) => void,
+    _onChange: (change: FileChange) => void,
     _context: Context,
   ): Promise<Result<FileWatcher, FileError>> {
     return err(new FileError("not_supported", "VM filesystem cannot watch for changes"));

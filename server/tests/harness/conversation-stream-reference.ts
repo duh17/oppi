@@ -55,7 +55,7 @@ export interface ConversationReference {
 
 /**
  * What a replica must converge to, read from the Harness without a stream room: the
- * conversation view's active entries with the presentation trace history gives them, and
+ * conversation's active entries with the presentation trace history gives them, and
  * the committed client documents, through the client projection, wire-roundtripped like a
  * frame.
  */
@@ -66,9 +66,7 @@ export async function conversationReference(
 ): Promise<ConversationReference> {
   const conversation = await harness.conversation(conversationId, context);
   if (!conversation) throw new Error(`Durable conversation ${conversationId} is missing`);
-  const state = await conversation.viewState(context);
-  const view = state.value;
-  state.dispose();
+  const view = await conversation.context(context);
   const calls = new Map<string, { name: string; args: unknown }>();
   for (const entry of view.entries)
     for (const message of entry.model ?? [])

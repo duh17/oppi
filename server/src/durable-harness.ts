@@ -1,5 +1,4 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
   ModelRegistry,
   ModelRuntime,
@@ -387,6 +386,8 @@ export class SessionHost {
   private closed = false;
   private harnessStorage?: Storage;
   private resumeHeld: boolean;
+  /** Waiters for the scheduling gate to open (`whenResumed`). */
+  private readonly resumeWaiters: Array<() => void> = [];
   private readonly pausedAborts = new Set<Promise<void>>();
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
   private readonly mcps = new Map<string, DurableMcp>();
@@ -394,7 +395,8 @@ export class SessionHost {
   /** The current lock acquisition; a compromise report for any other one is stale. */
   private lockToken?: object;
   private readonly holds: string[] = [];
-  private taskGraph?: AttachedReplicatedState<TaskGraph>;
+  /** The task graph as last observed. */
+  private taskGraph?: TaskGraph;
   private stopTaskGraph?: () => void;
   private closing?: Promise<void>;
   private idleCloseTimer: ReturnType<typeof setImmediate> | undefined;
@@ -569,6 +571,16 @@ export class SessionHost {
     while (this.pausedAborts.size) await Promise.all([...this.pausedAborts]);
     this.resumeHeld = false;
     await this.resume();
+    for (const resumed of this.resumeWaiters.splice(0)) resumed();
+  }
+
+  /**
+   * Resolves once startup opened the scheduling gate, at once when it is open. Work that asks
+   * for progress (a submission) waits for it: it would otherwise resume the Harness early.
+   */
+  whenResumed(): Promise<void> {
+    if (!this.resumeHeld) return Promise.resolve();
+    return new Promise((resolve) => this.resumeWaiters.push(resolve));
   }
 
   /** Storage `open()` retained. Absent until the Harness storage exists. */
@@ -732,13 +744,13 @@ export class SessionHost {
   }
 
   get isIdle(): boolean {
-    return this.holds.length === 0 && Object.keys(this.taskGraph?.value?.tasks ?? {}).length === 0;
+    return this.holds.length === 0 && Object.keys(this.taskGraph?.tasks ?? {}).length === 0;
   }
 
   /** Why this host stays open. Empty when it can idle-close. */
   get holdReasons(): string[] {
     const reasons = [...this.holds];
-    const tasks = this.taskGraph?.value?.tasks ?? {};
+    const tasks = this.taskGraph?.tasks ?? {};
     const live = Object.keys(tasks).length;
     if (live > 0) {
       const kinds = Object.values(tasks).map(
@@ -847,14 +859,15 @@ export class SessionHost {
           registry: shared.registry,
           settings: shared.settings,
           // Without a handler pi-durable drops every failure that does not fail the calling
-          // operation: a throwing hook, extension, or commit listener, a faulted or parked task,
-          // a task kept on an old definition. The storage error that fails the Harness is
-          // reported here too (`session_failed`), then `recover` handles it.
-          onReport: (error, info) => {
+          // operation: a throwing hook, extension, or commit observer, a faulted or interrupted
+          // task, a task kept on an old definition. The storage error that fails the Harness is
+          // reported here too (`storage_failed`), then `recover` handles it.
+          onReport: (report) => {
+            const { error } = report;
             const cause = error instanceof Error ? error.cause : undefined;
             log.warn("durable_store.report", {
               storeId: this.storeId,
-              ...reportFields(info),
+              ...reportFields(report),
               error: safeErrorMessage(error),
               ...(cause === undefined ? {} : { cause: safeErrorMessage(cause) }),
             });
@@ -961,15 +974,23 @@ export class SessionHost {
 
   private async watchTaskGraph(harness: Harness): Promise<void> {
     this.stopTaskGraph?.();
-    const graph = await harness.taskGraph(BACKGROUND_CONTEXT);
-    this.taskGraph = graph;
-    const unsubscribe = graph.subscribe(() => {
-      this.maybeClose();
-    });
-    this.stopTaskGraph = () => {
-      unsubscribe();
-      graph.dispose();
-    };
+    // An observer only records: `maybeClose` defers its close past this call.
+    let advanced = false;
+    const observation = await harness.observeTaskGraph(
+      {
+        advance: (call) => {
+          if (call.kind !== "value") return;
+          advanced = true;
+          this.taskGraph = call.value;
+          this.maybeClose();
+        },
+        end: () => {},
+      },
+      BACKGROUND_CONTEXT,
+    );
+    // A change can arrive before the attachment resolves; its value is the newer one.
+    if (!advanced) this.taskGraph = observation.value;
+    this.stopTaskGraph = () => observation.detach();
   }
 
   /**
@@ -984,7 +1005,7 @@ export class SessionHost {
       if (this.services?.harness === harness) this.failingHarness = harness;
     });
     void harness.closed.then(async (end) => {
-      if (end.reason !== "failed") return;
+      if (end.kind !== "failed") return;
       // A Harness a recovery attempt opened and then dropped is that recovery's business.
       while (this.recovering) await this.recovering;
       if (this.services?.harness !== harness) return;
@@ -1323,18 +1344,18 @@ export class SessionHost {
     const { harness } = await this.opening;
     if (this.runtime.shuttingDown || this.closed || this.closing) return;
     const keep = new Set<number>();
-    for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
+    for (const node of Object.values(this.taskGraph?.tasks ?? {})) {
       if (node.conversations.length > 0) keep.add(node.id);
     }
     const conversationIds = new Set(
-      Object.values(this.taskGraph?.value?.tasks ?? {}).map((node) => node.conversationId),
+      Object.values(this.taskGraph?.tasks ?? {}).map((node) => node.conversationId),
     );
     for (const conversationId of conversationIds) {
       if (this.closed || this.closing) return;
       const jobs = await harness.snapshot(DurableJobs, conversationId, BACKGROUND_CONTEXT);
       for (const job of jobs?.jobs ?? []) if (!job.delivered) keep.add(job.taskId);
     }
-    for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
+    for (const node of Object.values(this.taskGraph?.tasks ?? {})) {
       if (this.closed || this.closing) return;
       if (!node.background || keep.has(node.id)) continue;
       await harness.abortTask(node.id, BACKGROUND_CONTEXT);
@@ -2158,7 +2179,8 @@ function installPackages(
  * callback, and the typed reason.
  */
 function reportFields(info: ReportInfo): Record<string, string | number> {
-  const fields: Record<string, string | number> = { type: info.type };
+  // `type`, as pi-durable's own `pi.durable.report` telemetry names it.
+  const fields: Record<string, string | number> = { type: info.kind };
   if ("task" in info && info.task !== undefined) {
     fields.taskId = info.task.id;
     fields.taskKind = info.task.kind;
@@ -2184,10 +2206,11 @@ function harnessSettings(
     get extensions() {
       return extensions();
     },
-    // pi-durable 1.4.0 parks a task cut off by 5 crashes in a row without committing a new
-    // state. Oppi's long in-process waits commit nothing while they wait (a reporter delivering
-    // to a child, a follower, an ask card), so a parked reporter would lose its child's answer
-    // and a parked ask would leave its session busy until Stop. Never park, as 1.3.0 did.
+    // pi-durable ends a task cut off by 5 crashes in a row without committing a new state: a
+    // tool call gets an error result, an extension task faults. Oppi's long in-process waits
+    // commit nothing while they wait (a reporter delivering to a child, a follower, an ask
+    // card), so a reporter would lose its child's answer and an ask would fail its call after
+    // five restarts of an ordinary wait. Never end them, as 1.3.0 never parked them.
     restartLimit: Number.POSITIVE_INFINITY,
     get stream() {
       const provider = settings.getProviderRetrySettings();

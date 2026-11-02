@@ -16,6 +16,8 @@ import {
   createRegistry,
   defineExtension,
   defineTask,
+  type CommitObserver,
+  type CommitPublication,
   type Conversation,
   type EntryId,
   type Extension,
@@ -781,9 +783,23 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const f = await fixture([fauxAssistantMessage("ack")]);
     const id = f.conversation.id;
     let lost = 0;
+    // The room's commit observer, so a test can hand it a publication pi-durable would refuse
+    // to adopt itself.
+    let publish!: (publication: CommitPublication) => void;
+    const harness = new Proxy(f.harness, {
+      get(target, key) {
+        if (key === "observeCommits")
+          return (observer: CommitObserver) => {
+            publish = (publication) => observer.advance(publication, context);
+            return target.observeCommits(observer);
+          };
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
     const client = new Client();
     client.subscription = await attachConversationStream({
-      harness: f.harness,
+      harness,
       conversationId: id,
       renderers: new MobileRendererRegistry(),
       send: (frame) => {
@@ -798,10 +814,17 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const before = client.frames.length;
 
     // A published entry whose `model` is not a list: the room cannot apply it, so its
-    // state no longer matches the store.
-    await f.conversation.commit(async (tx) => {
-      await tx.appendEntry(id, { kind: "oppi.notice", model: "malformed" as never });
-    }, context);
+    // state no longer matches the store. (pi-durable now refuses such an entry itself, so it
+    // reaches the room only as a publication.)
+    publish({
+      seq: 0,
+      changes: [
+        {
+          type: "entry",
+          value: { id: 1_000_000, conversationId: id, kind: "oppi.notice", model: "malformed" },
+        },
+      ],
+    } as unknown as CommitPublication);
     await settle();
 
     // The room ended and told its owner, instead of staying open with stale state.

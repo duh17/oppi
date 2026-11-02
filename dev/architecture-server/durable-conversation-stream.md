@@ -60,6 +60,7 @@ Documents travel as Chord ops (`@earendil-works/chord/delta`) from `diffRevision
 `durable-conversation-stream.ts` keeps one `ConversationRoom` per attached conversation, reached through `SessionHost.transcript(...)` (holds the store open) and `SessionHost.olderEntries(...)` (reads storage, no room).
 
 - The room subscribes to commits before loading, then replays commits that landed during the load (idempotent). Each commit updates the room synchronously, and each socket flushes at most every 100 ms, so one `update` is a whole number of commits: a new assistant entry and the cleared `pi.live.generation` always share a frame.
+- `pi.live` comes from a synchronous view observer (`observeConversation`), never from publications: pi-durable defers streamed text and tool output and publishes them only once stored, up to a second later. The observer advances inside a commit's adoption and the commit observer a microtask later, both before the flush timer.
 - A head entry (reset or compaction) makes the next flush a `snapshot`.
 - **Resume:** `attach { afterEntryId }` at or after the head answers an `update` with restated presentation, the later entries, and every document whole; any other cursor gets a `snapshot`. Entries come from the room's active set, so the gap never expires.
 

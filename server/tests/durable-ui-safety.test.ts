@@ -215,7 +215,7 @@ describe("durable working words commit interleavings", () => {
         await fn({ doc: async () => ui });
         frames.push(ui.notifications["working:message"]?.message);
         if (frames.length === 1) {
-          if (edge === "idle") await notify({});
+          if (edge === "idle") await notify({ kind: "value", value: {}, ops: [], retired: false });
           else controller.abort(reason);
         } else controller.abort(reason);
       },

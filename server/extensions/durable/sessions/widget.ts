@@ -385,7 +385,9 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
               entry.wakers = new Set();
             }
             entry.carried = undefined;
-            live.start(async (value) => {
+            live.start(async (call) => {
+              if (call.kind !== "value") return;
+              const value = call.retired ? null : call.value;
               const busy = value?.run !== undefined;
               const activity = currentActivity(value);
               if (busy === entry.busy) {
@@ -412,8 +414,9 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
           if (ui) {
             entry.ui = ui;
             entry.asking = asking(ui.value);
-            ui.start(async (value) => {
-              const next = asking(value);
+            ui.start(async (call) => {
+              if (call.kind !== "value") return;
+              const next = asking(call.retired ? null : call.value);
               // Before its first run, any change (the run's working message) means look for
               // `pi.live` again.
               if (next === entry.asking && entry.live) return;

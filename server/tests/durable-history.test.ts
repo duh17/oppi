@@ -11,6 +11,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
@@ -145,7 +146,8 @@ async function history(options: {
   await append([assistant("retry", options.stopped ? "aborted" : "stop")], taskId);
   // Seed immutable crash/recovery records through the real storage boundary;
   // no scheduler or simulated page/trace implementation is involved.
-  await storage.commit(
+  await commitWrites(
+    storage,
     [
       { type: "conversation", value: { id } },
       {

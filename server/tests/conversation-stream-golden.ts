@@ -11,7 +11,12 @@ import {
   fauxThinking,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { Harness, createRegistry, type Conversation } from "@earendil-works/pi-durable";
+import {
+  Harness,
+  createRegistry,
+  type Conversation,
+  type SubmissionDraft,
+} from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -116,7 +121,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
         },
       });
     const settle = () => wait(300);
-    const turn = async (content: Parameters<Conversation["submit"]>[0]) => {
+    const turn = async (content: SubmissionDraft) => {
       const submission = await conversation.submit(content, context);
       await submission.wait(context);
       await conversation.waitForIdle(context);

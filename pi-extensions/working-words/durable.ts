@@ -249,8 +249,9 @@ const Words = defineTask<null, { phase: "watch" }, null>({
       const invocationEnds = Date.now() + INVOCATION_MS;
       let view = deriveView(live.value);
       let wake: (() => void) | undefined;
-      live.start(async (value) => {
-        const next = deriveView(value);
+      live.start(async (call) => {
+        if (call.kind !== "value") return;
+        const next = deriveView(call.retired ? null : call.value);
         if (next.run !== view.run || next.activity !== view.activity) {
           view = next;
           wake?.();

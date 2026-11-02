@@ -10,8 +10,8 @@
  * The view watch is the one ordered source for entries and `pi.live`, so an entry and the
  * live state its commit cleared always arrive together; it sees deferred progress commits at
  * once, before pi-durable stores them. Commit publications add only what no view holds: task
- * faults and nested call results. Submission records (which input was placed, which failed)
- * are read when an input leaves `pi.inbox` or a run ends.
+ * faults and nested call results. Why a run gave no answer is `pi.live.runFailure`; which
+ * queued input was placed is read from its submission record when it leaves `pi.inbox`.
  */
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -21,6 +21,7 @@ import {
   CompactionEntry,
   NestedCallDoc,
   UserEntry,
+  type CommitObservation,
   type CommitPublication,
   type CompactionResult,
   type Conversation,
@@ -35,7 +36,7 @@ import {
   type LiveState,
   type NestedToolExecutionResult,
   type NestedToolSlot,
-  type SubmissionId,
+  type RunFailure,
   type SubmissionRecord,
   type TaskId,
   type ToolSlot,
@@ -44,11 +45,11 @@ import {
   AGENT_MESSAGE_ENTRY_KIND,
   agentMessageOrigin,
 } from "../extensions/durable/sessions/agent-message.js";
+import { continuesAfter } from "./durable-failure-cards.js";
 import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 
-type UnansweredInput = Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>;
 type PlacedInput = Extract<SubmissionRecord, { type: "input"; status: "placed" | "done" }>;
 type Slot = ToolSlot | NestedToolSlot;
 
@@ -63,21 +64,19 @@ export type ClassicFrame = {
   appended: EntryRecord[];
   /** Queued inputs this value placed. */
   placed: PlacedInput[];
-  /** Inputs this value settled without an answer: an ended run's, or a queued one's. */
-  unanswered: UnansweredInput[];
+  /** Why the run this value ended gave no answer (`pi.live.runFailure`). */
+  runFailure?: RunFailure;
   inboxChanged: boolean;
   runStarted: boolean;
   runEnded: boolean;
   /**
-   * A run that failed (`model_error`, `no_model`) with inputs queued behind it: its
-   * `agent_settled` is held until they start (`settle`).
+   * A run Oppi continues (`continuesAfter`): one a host stop cut off (`interrupted`), or one
+   * that failed (`model_error`, `no_model`) with inputs queued behind it. Its `agent_settled`
+   * is held until the continue starts a run (`settle` when none does).
    */
-  continuation?: SubmissionId;
+  continuation?: RunFailure;
   taskFailures: DurableTaskFailure[];
 };
-
-/** The unanswered reasons of a failed run: pi-durable keeps the inputs queued behind it. */
-const FAILED_RUN_REASONS: ReadonlySet<string> = new Set(["model_error", "no_model"]);
 
 const NESTED_CALL_KIND = NestedCallDoc.definition.kind;
 
@@ -100,7 +99,6 @@ function emptyFrame(): ClassicFrame {
     events: [],
     appended: [],
     placed: [],
-    unanswered: [],
     inboxChanged: false,
     runStarted: false,
     runEnded: false,
@@ -255,7 +253,7 @@ export class DurableClassicEvents {
   private readonly nestedResults = new Map<TaskId, NestedToolExecutionResult>();
   private settleHeld = false;
   private chain: Promise<void> = Promise.resolve();
-  private unsubscribe?: () => void;
+  private commits?: CommitObservation;
   private stopped = false;
 
   private constructor(
@@ -317,10 +315,10 @@ export class DurableClassicEvents {
     }
     for (const status of live.compactions ?? []) {
       this.compacting.set(status.taskId, {
-        reason: status.reason,
+        reason: status.trigger,
         tokensBefore: this.estimate(this.current.entries),
       });
-      events.push(pi({ type: "compaction_start", reason: status.reason }));
+      events.push(pi({ type: "compaction_start", reason: status.trigger }));
     }
     return events;
   }
@@ -330,16 +328,20 @@ export class DurableClassicEvents {
    * time. A listener that throws ends the watch, as the event stream did.
    */
   start(listener: (frame: ClassicFrame) => Promise<void>): void {
-    this.unsubscribe = this.harness.subscribeCommits((publication) =>
-      this.publish(publication, listener),
-    );
-    this.watch.start((value) => this.enqueue(async () => listener(await this.frame(value))));
+    this.commits = this.harness.observeCommits({
+      advance: (publication) => this.publish(publication, listener),
+      end: () => {},
+    });
+    this.watch.start(async (call) => {
+      if (call.kind === "value")
+        await this.enqueue(async () => listener(await this.frame(call.value)));
+    });
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+    this.commits?.detach();
+    this.commits = undefined;
     await this.watch.stop();
     await this.chain;
   }
@@ -364,7 +366,11 @@ export class DurableClassicEvents {
   ): void {
     const failures: DurableTaskFailure[] = [];
     for (const change of publication.changes) {
-      if (change.type === "document" && change.record.kind === NESTED_CALL_KIND && change.value) {
+      if (
+        change.type === "document" &&
+        change.kind === "change" &&
+        change.record.kind === NESTED_CALL_KIND
+      ) {
         const state = change.value as { taskId?: TaskId; result?: NestedToolExecutionResult };
         if (state.taskId !== undefined && state.result !== undefined)
           this.nestedResults.set(state.taskId, state.result);
@@ -409,7 +415,7 @@ export class DurableClassicEvents {
     );
     for (const status of startedCompactions)
       this.compacting.set(status.taskId, {
-        reason: status.reason,
+        reason: status.trigger,
         tokensBefore: this.estimate(next.entries),
       });
     const hidden = new Set<number>();
@@ -422,7 +428,7 @@ export class DurableClassicEvents {
         // Overflow compaction is admitted in the same commit as the failed response it retries.
         (message?.role === "assistant" &&
           message.stopReason === "error" &&
-          startedCompactions.some((status) => status.reason === "overflow"))
+          startedCompactions.some((status) => status.trigger === "overflow"))
       )
         hidden.add(entry.id);
     }
@@ -434,9 +440,8 @@ export class DurableClassicEvents {
     const runStarted = now.run !== undefined && runChanged;
     frame.runEnded = runEnded;
     frame.runStarted = runStarted;
-    const settled = await this.settledInputs(prev, next, ended?.inputs ?? []);
-    frame.placed = settled.placed;
-    frame.unanswered = settled.unanswered;
+    frame.placed = await this.placedInputs(prev, next);
+    if (ended) frame.runFailure = await this.failureOf(ended, now, runStarted);
 
     // Progress: tool starts, the streamed answer, tool updates, retry backoff.
     const before = slotsOf(was);
@@ -555,20 +560,19 @@ export class DurableClassicEvents {
       this.shown = undefined;
       this.toolArgs.clear();
       this.nestedResults.clear();
-      // Classic settles once no run follows: hold it when the next run starts here, or when a
-      // failed run left inputs queued, which `DurableAgentController.continueAfterFailedRun`
-      // starts once its failure card is written.
-      const failed = frame.unanswered.find(
-        (input) => FAILED_RUN_REASONS.has(input.reason) && ended.inputs.includes(input.id),
-      );
+      // Classic settles once no run follows: hold it when the next run starts here, when a
+      // failed run left inputs queued, which a continue submission starts once its failure card
+      // is written, or when a host stop cut the run off (`interrupted`), which a continue picks up
+      // where it was, as 1.4.0's resend did (`DurableAgentController.continueAfterFailedRun`).
+      const failure = frame.runFailure;
       if (runStarted) this.settleHeld = false;
-      else if (failed && inboxOf(next).some((item) => item.mode !== "write")) {
+      else if (failure && continuesAfter(failure, inboxOf(next))) {
         this.settleHeld = true;
-        frame.continuation = failed.id;
+        frame.continuation = failure;
       } else out.push(pi({ type: "agent_settled" }));
     }
     for (const status of startedCompactions)
-      out.push(pi({ type: "compaction_start", reason: status.reason }));
+      out.push(pi({ type: "compaction_start", reason: status.trigger }));
     if (runStarted) {
       this.settleHeld = false;
       out.push(pi({ type: "agent_start" }));
@@ -706,28 +710,47 @@ export class DurableClassicEvents {
   }
 
   /**
-   * Inputs that left `pi.inbox` or ended with the run, read from their records: placed ones
-   * start a queue item, unanswered ones fail.
+   * Inputs that left `pi.inbox` placed, read from their records, so each starts its queue item.
+   * An input that left it unanswered was withdrawn or aborted: a quiet end.
    */
-  private async settledInputs(
+  private async placedInputs(
     prev: ConversationView,
     next: ConversationView,
-    runInputs: readonly SubmissionId[],
-  ): Promise<{ placed: PlacedInput[]; unanswered: UnansweredInput[] }> {
+  ): Promise<PlacedInput[]> {
     const queued = new Set(inboxOf(next).map((item) => item.id));
-    const left = inboxOf(prev)
-      .filter((item) => item.mode !== "write" && !queued.has(item.id))
-      .map((item) => item.id);
     const placed: PlacedInput[] = [];
-    const unanswered: UnansweredInput[] = [];
-    for (const id of new Set([...left, ...runInputs])) {
-      const record = await (await this.harness.submission(id, context))?.status(context);
-      if (record?.type !== "input") continue;
-      if (record.status === "unanswered") unanswered.push(record);
-      else if (left.includes(id) && (record.status === "placed" || record.status === "done"))
+    for (const item of inboxOf(prev)) {
+      if (item.mode === "write" || queued.has(item.id)) continue;
+      const record = await (await this.harness.submission(item.id, context))?.status(context);
+      if (record?.type === "input" && (record.status === "placed" || record.status === "done"))
         placed.push(record);
     }
-    return { placed, unanswered };
+    return placed;
+  }
+
+  /**
+   * Why `ended` gave no answer: `pi.live.runFailure`. The next run's start removes it, so when
+   * one starts within this value, its inputs' records say instead.
+   */
+  private async failureOf(
+    ended: NonNullable<LiveState["run"]>,
+    now: LiveState,
+    runStarted: boolean,
+  ): Promise<RunFailure | undefined> {
+    const failure = now.runFailure;
+    if (failure && failure.inputs[0] === ended.inputs[0]) return failure;
+    if (!runStarted) return undefined;
+    for (const id of ended.inputs) {
+      const record = await (await this.harness.submission(id, context))?.status(context);
+      if (record?.type === "input" && record.status === "unanswered")
+        return {
+          taskId: ended.taskId,
+          inputs: [...ended.inputs],
+          reason: record.reason as RunFailure["reason"],
+          ...(typeof record.detail === "string" ? { detail: record.detail } : {}),
+        };
+    }
+    return undefined;
   }
 
   /**

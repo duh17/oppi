@@ -2,13 +2,15 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import {
   defineDoc,
+  LiveDoc,
   type Conversation,
   type ConversationId,
   type Cursor,
   type EntryRecord,
+  type Harness,
+  type InboxState,
+  type RunFailure,
   type Storage,
-  type SubmissionId,
-  type SubmissionRecord,
   type TaskId,
   type TaskRecord,
   type Tx,
@@ -34,21 +36,38 @@ export const FailureCardsDoc = defineDoc<{ taskId: number; open: number[] }>({
   checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
-/** Queue withdrawal and an explicit Stop settle `aborted`. `withdrawn` is reserved for the same quiet end. */
-const QUIET_UNANSWERED_REASONS = new Set(["aborted", "withdrawn"]);
+/**
+ * Run ends that are no failure: an explicit Stop, a continue that found nothing to answer, and
+ * a host stop mid-request, which Oppi continues (`continuesAfter`). Withdrawn queued inputs
+ * settle without a run, so they never reach `runFailure`.
+ */
+const QUIET_RUN_FAILURES: ReadonlySet<RunFailure["reason"]> = new Set([
+  "aborted",
+  "nothing_to_answer",
+  "interrupted",
+]);
+
+/** The unanswered reasons of a failed run: pi-durable keeps the inputs queued behind it. */
+const FAILED_RUN_REASONS: ReadonlySet<RunFailure["reason"]> = new Set(["model_error", "no_model"]);
+
+/**
+ * Whether Oppi continues after `failure`: a run a host stop cut off with no retry left
+ * (`interrupted`) always, a failed one when inputs wait queued behind it.
+ */
+export function continuesAfter(failure: RunFailure, inbox: InboxState["items"]): boolean {
+  if (failure.reason === "interrupted") return true;
+  return FAILED_RUN_REASONS.has(failure.reason) && inbox.some((item) => item.mode !== "write");
+}
 
 const PAGE = 100;
 
-function failureInputRequestId(id: SubmissionId): string {
-  return `${DURABLE_FAILURE_REQUEST_ID_PREFIX}input:${id}`;
+/** One card per failed run, keyed by the task that ended it, so a retry writes nothing. */
+function failureRunRequestId(id: TaskId): string {
+  return `${DURABLE_FAILURE_REQUEST_ID_PREFIX}run:${id}`;
 }
 
 function failureTaskRequestId(id: TaskId): string {
   return `${DURABLE_FAILURE_REQUEST_ID_PREFIX}task:${id}`;
-}
-
-function isRecordedInputFailure(reason: string): boolean {
-  return !QUIET_UNANSWERED_REASONS.has(reason);
 }
 
 /**
@@ -83,19 +102,12 @@ function assistantText(entry: EntryRecord): string {
     .join("\n");
 }
 
-function failureBody(reason: string, detail: JsonValue | undefined): string {
-  return typeof detail === "string" && detail.trim() ? detail : reason;
-}
-
 type FailureCard = { title: string; body: string; status?: string; at: number };
 
-/** What the input's failure card says; undefined for a quiet end (Stop, withdrawal). */
-export function inputFailureText(
-  settled: Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>,
-): string | undefined {
-  return isRecordedInputFailure(settled.reason)
-    ? failureBody(settled.reason, settled.detail)
-    : undefined;
+/** What a failed run's card says; undefined for a quiet end (Stop, nothing to answer). */
+export function runFailureText(failure: RunFailure): string | undefined {
+  if (QUIET_RUN_FAILURES.has(failure.reason)) return undefined;
+  return failure.detail?.trim() ? failure.detail : failure.reason;
 }
 
 async function appendFailureCard(
@@ -140,14 +152,11 @@ async function writeFailureCard(
  * a prompt sent in the same turn has to land behind this commit, not ahead of it.
  * The request-id check and the visible-text check both run inside the commit.
  */
-export function recordInputFailure(
-  conversation: Conversation,
-  settled: Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>,
-): Promise<void> {
-  if (!isRecordedInputFailure(settled.reason)) return Promise.resolve();
-  const body = failureBody(settled.reason, settled.detail);
-  const requestId = failureInputRequestId(settled.id);
-  const card = { title: "Run failed", body, status: settled.reason, at: Date.now() };
+export function recordRunFailure(conversation: Conversation, failure: RunFailure): Promise<void> {
+  const body = runFailureText(failure);
+  if (body === undefined) return Promise.resolve();
+  const requestId = failureRunRequestId(failure.taskId);
+  const card = { title: "Run failed", body, status: failure.reason, at: Date.now() };
   return conversation.commit(async (tx) => {
     if (await assistantFailureAlreadyVisible(tx, conversation.id, body)) return;
     await writeFailureCard(tx, conversation.id, requestId, card);
@@ -155,7 +164,7 @@ export function recordInputFailure(
 }
 
 /**
- * Generation faults settle the run's inputs, which get the input card. Compaction
+ * A generation fault ends its run, which gets the run's card (`faulted`). Compaction
  * failures already project as compaction_end. Other faulted or orphaned tasks do not.
  */
 export function recordTaskFailure(
@@ -227,48 +236,19 @@ async function readWatermark(
   return parseWatermark(stored.value);
 }
 
-async function unansweredInputs(
-  storage: Storage,
-  conversationId: ConversationId,
-): Promise<Array<Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>>> {
-  const inputs: Array<Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>> = [];
-  let cursor: Cursor | undefined;
-  do {
-    const page = await storage.scanSubmissions(
-      { conversationId, status: "unanswered" },
-      PAGE,
-      cursor,
-      context,
-    );
-    for (const record of page.items) {
-      if (record.type === "input" && record.status === "unanswered") inputs.push(record);
-    }
-    cursor = page.next;
-  } while (cursor !== undefined);
-  return inputs;
-}
-
 /**
- * A crash between settlement and the card write leaves the failure only in the
- * submission or task record. Attach fills those cards through the Harness storage.
- * A failed scan fails the attach. The request id makes a retry of a card that
- * already landed a no-op.
+ * A crash between a run's end and its card write leaves the failure only in
+ * `pi.live.runFailure`, until the next run starts; a faulted task leaves it only in the task
+ * record, which the `oppi.failure-cards` watermark scans. Attach fills both. A failed scan
+ * fails the attach. The request id makes a retry of a card that already landed a no-op.
  */
 export async function reconcileFailureCards(
+  harness: Harness,
   conversation: Conversation,
   storage: Storage,
 ): Promise<void> {
-  const inputs = await unansweredInputs(storage, conversation.id);
-  for (const input of inputs) {
-    if (!isRecordedInputFailure(input.reason)) continue;
-    const existing = await storage.submissionByRequest(
-      conversation.id,
-      failureInputRequestId(input.id),
-      context,
-    );
-    if (existing) continue;
-    await recordInputFailure(conversation, input);
-  }
+  const failure = (await harness.snapshot(LiveDoc, conversation.id, context))?.runFailure;
+  if (failure) await recordRunFailure(conversation, failure);
   await reconcileTaskCards(conversation, storage);
 }
 

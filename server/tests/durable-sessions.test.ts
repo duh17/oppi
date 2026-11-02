@@ -1025,27 +1025,39 @@ describe("durable-native threads", () => {
     const widgetWrites: number[] = [];
     let liveChanges = 0;
     let lastWidget: string | undefined;
-    const unsubscribe = harness.subscribeCommits((publication) => {
-      for (const change of publication.changes) {
-        if (change.type !== "document" || change.record.key !== undefined) continue;
-        if (
-          change.conversationId === childConversation &&
-          change.record.kind === LiveDoc.definition.kind
-        )
-          liveChanges += 1;
-        if (
-          change.conversationId !== parentConversation ||
-          change.record.kind !== DurableUI.definition.kind
-        )
-          continue;
-        const widget = JSON.stringify(
-          (change.value as { notifications?: Record<string, unknown> } | undefined)
-            ?.notifications?.["widget:subagents"],
-        );
-        if (widget !== lastWidget) widgetWrites.push(Date.now());
-        lastWidget = widget;
-      }
+    // Streamed progress is a deferred commit, stored (and published) later: count it as
+    // memory adopts it.
+    const live = await harness.observeDoc(
+      LiveDoc,
+      childConversation,
+      { advance: () => (liveChanges += 1), end: () => {} },
+      context,
+    );
+    const commits = harness.observeCommits({
+      advance: (publication) => {
+        for (const change of publication.changes) {
+          if (change.type !== "document" || change.record.key !== undefined) continue;
+          if (
+            change.conversationId !== parentConversation ||
+            change.record.kind !== DurableUI.definition.kind
+          )
+            continue;
+          const widget = JSON.stringify(
+            (change.kind === "change"
+              ? (change.value as { notifications?: Record<string, unknown> })
+              : undefined
+            )?.notifications?.["widget:subagents"],
+          );
+          if (widget !== lastWidget) widgetWrites.push(Date.now());
+          lastWidget = widget;
+        }
+      },
+      end: () => {},
     });
+    const unsubscribe = (): void => {
+      live?.detach();
+      commits.detach();
+    };
     writeFileSync(gatePath, "");
     // A write takes the partial as it is, so the line can be cut mid-word ("progress li").
     const lines = answer.split("\n");

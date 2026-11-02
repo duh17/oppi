@@ -257,7 +257,9 @@ export async function requestUI(
       };
       signal?.addEventListener("abort", abort, { once: true });
       removeAbortListener = () => signal?.removeEventListener("abort", abort);
-      watch.start(async (ui) => take(ui));
+      watch.start(async (call) => {
+        if (call.kind === "value") take(call.retired ? null : call.value);
+      });
       take(watch.value);
       if (signal?.aborted) abort();
     });

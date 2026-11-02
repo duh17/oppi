@@ -34,8 +34,9 @@ export class DurableUIProjection {
   }
   start(): void {
     this.apply(this.watch.value);
-    this.watch.start(async (value) => {
-      if (!this.stopped) this.apply(value);
+    // A retired document reads as gone, as its last frame (`null`) did before pi-durable 1.5.0.
+    this.watch.start(async (call) => {
+      if (call.kind === "value" && !this.stopped) this.apply(call.retired ? null : call.value);
     });
   }
   private apply(value: UIState | null): void {

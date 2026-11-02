@@ -11,6 +11,7 @@ import {
   type EntryRecord,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type { Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { readDurableSearchTranscript, readDurableTipEntryId } from "../src/durable-history.js";
@@ -69,7 +70,7 @@ async function durableFixture() {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-search-"));
   const storage = await openNodeSqliteStorage(join(dir, "history.sqlite"));
   const id = await storage.mintId<ConversationId>();
-  await storage.commit([{ type: "conversation", value: { id } }], context);
+  await commitWrites(storage, [{ type: "conversation", value: { id } }], context);
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -95,7 +96,8 @@ async function durableFixture() {
         model: [model],
       });
     }
-    await storage.commit(
+    await commitWrites(
+      storage,
       entries.map((value) => ({ type: "entry" as const, value })),
       context,
     );

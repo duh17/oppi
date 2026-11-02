@@ -200,8 +200,10 @@ async function resumeOne(
     return { outcome: "failed", reason: safeErrorMessage(error) };
   }
 
-  // Durable continues the original submission; an extra continuation prompt
-  // would manufacture a second user turn after a crash.
+  // Durable continues the original submission: pi-durable retries a request a crash cut
+  // off, and a run it ended `interrupted` (no retry left) the attached backend continues
+  // (`continueAfterFailedRun`). An extra continuation prompt would manufacture a second
+  // user turn after a crash.
   if (
     session.serverDurable?.conversationId !== undefined ||
     !(entry.wasBusy || deps.reportsLostWork(session.id)) ||

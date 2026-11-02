@@ -28,6 +28,7 @@ import {
   defineExtension,
   defineTask,
   type ConversationId,
+  type ConversationRetryPolicy,
   type ConversationView,
   type LiveState,
   type EntryId,
@@ -50,7 +51,7 @@ import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
   FailureCardsDoc,
-  recordInputFailure,
+  recordRunFailure,
 } from "../src/durable-failure-cards.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { readDurableTrace } from "../src/durable-history.js";
@@ -185,6 +186,7 @@ async function openHarness(
   dir: string,
   models: ModelRuntime,
   tool?: ToolRegistration,
+  retry?: Partial<ConversationRetryPolicy>,
 ): Promise<Harness> {
   const registry = createRegistry();
   registry.install(CodingTools);
@@ -199,7 +201,7 @@ async function openHarness(
       models,
       registry,
       env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? dir }),
-      settings: { compaction: { enabled: false } },
+      settings: { compaction: { enabled: false }, ...(retry ? { retry } : {}) },
     },
     context,
   );
@@ -1155,12 +1157,12 @@ describe("server durable managed runtime", () => {
         const next = this.storage;
         const nextCommit = next.commit.bind(next);
         let once = true;
-        next.commit = async (writes, ctx) => {
+        next.commit = async (...args) => {
           if (once) {
             once = false;
             throw new Error("second disk I/O error");
           }
-          return nextCommit(writes, ctx);
+          return nextCommit(...args);
         };
       }
       return opened;
@@ -1206,9 +1208,9 @@ describe("server durable managed runtime", () => {
     const storage = host.storage;
     const commit = storage.commit.bind(storage);
     let failures = 0;
-    storage.commit = async (writes, ctx) => {
+    storage.commit = async (...args) => {
       if (failures++ === 0) throw new Error("disk I/O error");
-      return commit(writes, ctx);
+      return commit(...args);
     };
     const recovered = observed.next(
       (message) => message.type === "notice" && message.message.includes("recovered"),
@@ -1327,10 +1329,12 @@ describe("server durable managed runtime", () => {
     const settled = await failed.wait(context);
     expect(settled).toMatchObject({ type: "input", status: "unanswered", reason: "model_error" });
     await conversation.waitForIdle(context);
+    const failure = (await harness.snapshot(LiveDoc, conversation.id, context))?.runFailure;
+    expect(failure).toMatchObject({ reason: "model_error", inputs: [settled.id] });
 
     // No await between these two: the card commit must already be on the session
     // line before the prompt's admission can queue.
-    const card = recordInputFailure(conversation, settled);
+    const card = recordRunFailure(conversation, failure!);
     const next = conversation.submit(
       { type: "input", content: "next question", requestId: "next-question" },
       context,
@@ -1339,15 +1343,15 @@ describe("server durable managed runtime", () => {
     await next;
 
     const entries = (await conversation.entries({}, 20, undefined, context)).items;
-    const failure = entries.find((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND);
+    const row = entries.find((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND);
     const user = entries.find(
       (entry) =>
         entry.model?.[0]?.role === "user" &&
         JSON.stringify(entry.model[0].content).includes("next question"),
     );
-    expect(failure?.id).toBeDefined();
+    expect(row?.id).toBeDefined();
     expect(user?.id).toBeDefined();
-    expect(failure!.id).toBeLessThan(user!.id);
+    expect(row!.id).toBeLessThan(user!.id);
   });
 
   it("reconciles a crash-before-card failure through the retained harness storage", async () => {
@@ -1361,14 +1365,8 @@ describe("server durable managed runtime", () => {
     const host = await durable.openHost(f.session.id, { cwd: f.dir });
     const { harness } = await host.open();
     const storage = host.storage;
-    const submissionScans: unknown[] = [];
     const taskScans: Array<{ query: unknown; cursor: unknown }> = [];
-    const scanSubmissions = storage.scanSubmissions.bind(storage);
     const scanTasks = storage.scanTasks.bind(storage);
-    storage.scanSubmissions = (async (query, limit, cursor, callContext) => {
-      submissionScans.push(query);
-      return scanSubmissions(query, limit, cursor, callContext);
-    }) as typeof storage.scanSubmissions;
     storage.scanTasks = (async (query, limit, cursor, callContext) => {
       taskScans.push({ query, cursor });
       return scanTasks(query, limit, cursor, callContext);
@@ -1403,10 +1401,6 @@ describe("server durable managed runtime", () => {
     const isCard = (event: TraceEvent) =>
       event.presentation?.accent === "error" &&
       event.presentation.body?.includes(errorText) === true;
-    expect(submissionScans).toContainEqual({
-      conversationId: conversation.id,
-      status: "unanswered",
-    });
     const reconcileScans = () =>
       taskScans.filter(
         (scan) =>
@@ -1655,8 +1649,8 @@ describe("server durable managed runtime", () => {
     );
     const raw = await conversation.watch(context);
     const values: ConversationView[] = [];
-    raw.start(async (value) => {
-      values.push(value);
+    raw.start(async (call) => {
+      if (call.kind === "value") values.push(call.value);
     });
     const compactEnd = observed.next((message) => message.type === "compaction_end");
     const id = await conversation.compact(undefined, context);
@@ -3777,6 +3771,7 @@ describe("server durable managed runtime", () => {
       (await tx.doc(LiveDoc, conversation.id)).run = {
         taskId: 999 as never,
         inputs: [998 as never],
+        turns: 0,
       };
     }, context);
     const attachment: ChatAttachmentRef = {
@@ -3831,8 +3826,12 @@ describe("server durable managed runtime", () => {
     const started = new Promise<void>((resolve) => {
       partial = resolve;
     });
-    events.start(async (value) => {
-      if ((value.docs["pi.live"] as LiveState | undefined)?.generation?.message) partial();
+    events.start(async (call) => {
+      if (
+        call.kind === "value" &&
+        (call.value.docs["pi.live"] as LiveState | undefined)?.generation?.message
+      )
+        partial();
     });
     await first.prompt("Continue exactly this original turn", { clientTurnId: "restart-turn" });
     await expect(
@@ -3879,6 +3878,72 @@ describe("server durable managed runtime", () => {
     expect(f.faux.state.callCount).toBe(2);
     await resumed.dispose();
   }, 15_000);
+
+  // pi-durable charges a request a crash cut off as a failed attempt instead of resending it.
+  // With a retry left the backoff resends it; with none the run ends `interrupted`, and the
+  // backend continues it, so the turn still gets its answer and no failure card.
+  it.each([
+    ["retries", { enabled: true, baseDelayMs: 1 }],
+    ["continues once no retry is left", { enabled: false }],
+  ] as const)(
+    "answers a turn a crash cut off mid-answer: %s",
+    async (_label, retry) => {
+      const f = await fixture(
+        [fauxAssistantMessage("A long answer the host dies in the middle of. ".repeat(20))],
+        { slow: true },
+      );
+      const harness = await openHarness(f.dir, f.models);
+      const first = await backend(harness, f.models, f.session, f.dir);
+      const id = f.session.serverDurable!.conversationId! as ConversationId;
+      const conversation = (await harness.conversation(id, context))!;
+      await first.prompt("Answer this once", { clientTurnId: "crash-turn" });
+      // Wait until the stored task has its request in flight, then take the store's files as
+      // a dead process leaves them: no close, which would resend instead.
+      await vi.waitFor(
+        async () => {
+          const live = await harness.snapshot(LiveDoc, conversation.id, context);
+          const task = live?.run && (await harness.getTask(live.run.taskId, context));
+          expect((task?.state as { checkpoint?: { phase?: string } })?.checkpoint?.phase).toBe(
+            "request",
+          );
+          expect(live?.generation?.message).toBeDefined();
+        },
+        { timeout: 5_000 },
+      );
+      const crashed = makeTempDir("oppi-server-durable-crash-");
+      for (const suffix of ["", "-wal", "-shm"])
+        if (existsSync(join(f.dir, `restart.sqlite${suffix}`)))
+          writeFileSync(
+            join(crashed, `restart.sqlite${suffix}`),
+            readFileSync(join(f.dir, `restart.sqlite${suffix}`)),
+          );
+      await first.dispose();
+      f.faux.setResponses([fauxAssistantMessage("ANSWERED_AFTER_CRASH")]);
+      const reopened = await openHarness(crashed, f.models, undefined, retry);
+      const resumed = await backend(reopened, f.models, f.session, crashed);
+      const rebound = (await reopened.conversation(id, context))!;
+      await vi.waitFor(
+        async () => {
+          const messages = await resumed.messages();
+          expect(
+            messages.filter(
+              (message) =>
+                message.role === "assistant" &&
+                JSON.stringify(message.content).includes("ANSWERED_AFTER_CRASH"),
+            ),
+          ).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      await rebound.waitForIdle(context);
+      const messages = await resumed.messages();
+      expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+      const entries = (await rebound.entries({}, 50, undefined, context)).items;
+      expect(entries.some((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND)).toBe(false);
+      await resumed.dispose();
+    },
+    20_000,
+  );
 
   it("marks two crashed stopped conversations while paused before the third runs its tool", async () => {
     const f = await fixture([]);

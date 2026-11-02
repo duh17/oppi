@@ -22,10 +22,14 @@
  */
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { diffRevisions } from "@earendil-works/chord/delta";
+import type { WatchCall } from "@earendil-works/chord";
 import {
   InboxDoc,
+  LiveDoc,
   type CommitPublication,
   type ConversationId,
+  type ConversationView,
+  type Observation,
   type EntryId,
   type EntryRecord,
   type Harness,
@@ -66,6 +70,7 @@ export const CONVERSATION_FRAME_INTERVAL_MS = 100;
 const CLIENT_DOC_KINDS = new Set(CONVERSATION_CLIENT_DOCS.map((spec) => spec.kind));
 const INPUT_CARDS_KIND = DurableInputCards.definition.kind;
 const INBOX_KIND = InboxDoc.definition.kind;
+const LIVE_KIND = LiveDoc.definition.kind;
 
 /** `older` pages: visible entries per request by default, and at most. */
 export const CONVERSATION_OLDER_LIMIT = 100;
@@ -136,6 +141,16 @@ class ConversationRoom implements DocPresenter {
   private passChain: Promise<void> = Promise.resolve();
   /** Publications that arrive while the room loads; replayed over the loaded state. */
   private pending: CommitPublication[] | undefined = [];
+  /**
+   * `pi.live` as memory holds it. Streamed text and tool output are deferred commits that
+   * pi-durable stores (and publishes) up to a second later, so the room takes this document
+   * from a view observer, which sees each one as memory adopts it, and ignores its
+   * publications. The observer advances inside the commit's adoption and the commit observer
+   * a microtask later, so an entry and the `pi.live` change of its commit share a frame.
+   */
+  private live: JsonObject | undefined;
+  private liveSeen = false;
+  private readonly liveObservation: Promise<Observation<ConversationView>>;
   private readonly detach: Array<() => void> = [];
   /**
    * Settles when the room has loaded. Rejects when the load fails or the room closed
@@ -152,8 +167,26 @@ class ConversationRoom implements DocPresenter {
     private readonly images?: UserImageStoreScope,
   ) {
     // Subscribe before reading so no commit falls between the read and the listener.
-    this.detach.push(harness.subscribeCommits((publication) => this.publish(publication)));
+    const commits = harness.observeCommits({
+      advance: (publication) => this.publish(publication),
+      end: () => {},
+    });
+    this.detach.push(() => commits.detach());
     this.detach.push(harness.subscribeClose(() => this.close()));
+    // The smallest window: the room reads only the view's documents.
+    this.liveObservation = harness.observeConversation(
+      conversationId,
+      { advance: (call) => this.observeLive(call), end: () => {} },
+      context,
+      { min: 1 },
+    );
+    this.liveObservation.then(
+      (observation) => {
+        if (this.closed) observation.detach();
+        else this.detach.push(() => observation.detach());
+      },
+      () => {},
+    );
     this.ready = this.load().then(
       () => {
         if (this.closed)
@@ -169,7 +202,9 @@ class ConversationRoom implements DocPresenter {
   private async load(): Promise<void> {
     const conversation = await this.harness.conversation(this.conversationId, context);
     if (!conversation) throw new Error(`Durable conversation ${this.conversationId} is missing`);
-    // The active transcript, not the conversation view: the view's entries may be a window.
+    const observation = await this.liveObservation;
+    if (!this.liveSeen) this.live = observation.value.docs[LIVE_KIND];
+    // The active transcript, not the conversation view: the view's entries are a window.
     const active = await conversation.context(context);
     // Installed whole, not through `addEntry`: the context lists the head marker first, then
     // the entries it keeps, whose ids are below the marker's and which `addEntry` drops.
@@ -177,9 +212,11 @@ class ConversationRoom implements DocPresenter {
     if (active.head) this.head = active.head.id;
     for (const entry of this.entries) this.index(entry);
     for (const spec of CONVERSATION_CLIENT_DOCS) {
+      if (spec.kind === LIVE_KIND) continue;
       const value = await this.harness.snapshot(spec.doc, this.conversationId, context);
       if (value) this.setDoc(spec.kind, value);
     }
+    this.applyLive();
     let first: number | undefined;
     for (const entry of this.entries) first = Math.min(first ?? entry.id, entry.id);
     if (first !== undefined && first > 1) {
@@ -313,7 +350,24 @@ class ConversationRoom implements DocPresenter {
     this.revisions.set(id, this.revision);
   }
 
-  /** Commit listener: synchronous, never throws, never calls Session APIs. */
+  /** View observer: synchronous, never throws, never calls Session APIs. */
+  private observeLive(call: WatchCall<ConversationView>): void {
+    if (this.closed || call.kind !== "value") return;
+    this.liveSeen = true;
+    const live = call.value.docs[LIVE_KIND];
+    if (live === this.live) return;
+    this.live = live;
+    if (this.pending) return;
+    this.applyLive();
+    for (const subscriber of this.subscribers) subscriber.notify();
+  }
+
+  private applyLive(): void {
+    if (this.live) this.setDoc(LIVE_KIND, this.live);
+    else this.dropDoc(LIVE_KIND);
+  }
+
+  /** Commit observer: synchronous, never throws, never calls Session APIs. */
   private publish(publication: CommitPublication): void {
     if (this.closed) return;
     if (this.pending) {
@@ -366,14 +420,11 @@ class ConversationRoom implements DocPresenter {
         cardsChanged = true;
         continue;
       }
-      if (!CLIENT_DOC_KINDS.has(change.record.kind)) continue;
+      // `pi.live` comes from the view observer; a publication of it can be a second old.
+      if (!CLIENT_DOC_KINDS.has(change.record.kind) || change.record.kind === LIVE_KIND) continue;
       if (change.record.kind === INBOX_KIND) inboxChanged = true;
-      if (change.value) this.setDoc(change.record.kind, change.value);
-      else {
-        this.committed.delete(change.record.kind);
-        this.projected.delete(change.record.kind);
-        this.dirty.delete(change.record.kind);
-      }
+      if (change.kind === "change") this.setDoc(change.record.kind, change.value);
+      else this.dropDoc(change.record.kind);
       changed = true;
     }
     entries.sort((left, right) => left.id - right.id);
@@ -391,6 +442,12 @@ class ConversationRoom implements DocPresenter {
   private setDoc(kind: string, value: JsonObject): void {
     this.committed.set(kind, value);
     this.dirty.add(kind);
+  }
+
+  private dropDoc(kind: string): void {
+    this.committed.delete(kind);
+    this.projected.delete(kind);
+    this.dirty.delete(kind);
   }
 
   private addEntry(entry: EntryRecord): boolean {

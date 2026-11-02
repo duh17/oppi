@@ -82,9 +82,9 @@ import {
 } from "./durable-request-ids.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
-  inputFailureText,
   reconcileFailureCards,
-  recordInputFailure,
+  recordRunFailure,
+  runFailureText,
   recordTaskFailure,
 } from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
@@ -794,16 +794,17 @@ export class DurableBackend implements AgentBackend {
             queueVersion: this.inboxVersion(),
           });
       }
-      // Inputs from any source (a background job's follow-up, a reporter) get their card
-      // here; the request id makes the controller's own write for its prompts a no-op.
-      // The live error is the card's text, written or not, once per run.
-      for (const record of frame.unanswered) {
-        this.showRunError(inputFailureText(record));
+      // A run that ended without an answer gets its card here, whoever submitted its inputs (a
+      // background job's follow-up, a reporter); the request id makes the controller's own write
+      // for its prompts a no-op. The live error is the card's text, written or not, once per run.
+      const failure = frame.runFailure;
+      if (failure) {
+        this.showRunError(runFailureText(failure));
         try {
-          await recordInputFailure(this.conversation, record);
+          await recordRunFailure(this.conversation, failure);
         } catch (error) {
-          log.warn("durable_failure.input_card_failed", {
-            submissionId: record.id,
+          log.warn("durable_failure.run_card_failed", {
+            taskId: failure.taskId,
             error: safeErrorMessage(error),
           });
         }
@@ -835,7 +836,7 @@ export class DurableBackend implements AgentBackend {
           next = await (await this.controller()).continueAfterFailedRun(failed);
         } catch (error) {
           log.warn("durable_failure.continue_failed", {
-            submissionId: failed,
+            taskId: failed.taskId,
             error: safeErrorMessage(error),
           });
         }
@@ -850,7 +851,24 @@ export class DurableBackend implements AgentBackend {
     // card write is filled here; a card that already landed is a no-op.
     // A failed scan fails the attach. Swallowing it would leave the miss hidden.
     if (this.disposed) return;
-    await reconcileFailureCards(this.conversation, this.host.storage);
+    await reconcileFailureCards(this.harness, this.conversation, this.host.storage);
+    // A host stop cut the run off mid-request with no retry left before this attachment saw
+    // it end: continue it, as a run this attachment sees end does, once startup opens
+    // scheduling. A continue the frame listener already sent shares its request id.
+    const live = this.live;
+    const failure = live.runFailure;
+    if (live.run === undefined && failure?.reason === "interrupted")
+      void this.host.whenResumed().then(async () => {
+        if (this.disposed) return;
+        try {
+          await (await this.controller()).continueAfterFailedRun(failure);
+        } catch (error) {
+          log.warn("durable_failure.continue_failed", {
+            taskId: failure.taskId,
+            error: safeErrorMessage(error),
+          });
+        }
+      });
   }
 
   /**

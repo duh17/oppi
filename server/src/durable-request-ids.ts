@@ -1,8 +1,8 @@
 /** Native reporters and Oppi admissions own these namespaces, never client turn IDs. */
 export const DURABLE_QUEUE_REQUEST_ID_PREFIX = "oppi-queue:";
-/** Display-only failure cards. One id per input or task, so a retry writes nothing. */
+/** Display-only failure cards. One id per failed run or task, so a retry writes nothing. */
 export const DURABLE_FAILURE_REQUEST_ID_PREFIX = "oppi-failure:";
-/** The write that starts the inputs queued behind a failed run, one per failed input. */
+/** The continue that starts the inputs queued behind a failed run, one per failed run. */
 export const DURABLE_CONTINUE_REQUEST_ID_PREFIX = "oppi-continue:";
 export const DURABLE_RESERVED_REQUEST_ID_PREFIXES = [
   "background-job:",
