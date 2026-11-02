@@ -66,8 +66,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1211 words; headroom max(15%, 100 words)."
     },
     "dev/telemetry.md": {
-      "words": 2250,
-      "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 1951 words; headroom max(15%, 100 words). The generated event tables are not counted."
+      "words": 2000,
+      "reason": "Telemetry review commands, privacy model, upload channels and retention, resource sampling, catalog invariants (naming, units, tag vocabulary, wire format, Apple recording), reading rules, hang correlation, build identity, importer, and the add-an-event steps. 1738 words; headroom max(15%, 100 words). The generated event tables are not counted."
     },
     "dev/testing/README.md": {
       "words": 2120,

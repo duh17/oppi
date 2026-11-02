@@ -1,8 +1,6 @@
 # Telemetry and diagnostics
 
-> **What belongs here:** telemetry owners, privacy gates, storage, the catalog's invariants, and review commands. Event semantics live in the catalog (`server/src/telemetry/catalog.ts`); the event tables below are generated from it. Standard and budgets: [`dev/README.md`](README.md#what-belongs-in-dev).
-
-Oppi records diagnostics to answer one question: does the app feel fast, reliable, and safe while someone supervises a Pi session? Every event (name, fields and units, tags, emit policy, storage, group, SLO) is declared once in the catalog. Out of scope: Pi's own install telemetry, provider billing, and raw session content.
+Diagnostics answer one question: does the app feel fast, reliable, and safe while someone supervises a Pi session? Every event (name, fields and units, tags, emit policy, storage, group, SLO) is declared once in the catalog (`server/src/telemetry/catalog.ts`); the event tables below are generated from it. Out of scope: Pi's own install telemetry, provider billing, and raw session content.
 
 ## Review commands
 
@@ -18,7 +16,7 @@ npm run telemetry:review:gate                 # release gate
 npm run telemetry:grafana:up                  # http://localhost:13001, admin/admin
 ```
 
-Dashboards: Release Preflight (experience), Server Health (resources and server ops), Model Routing (provider/model/runtime workload). Runbook: `server/README.md`.
+Dashboards: Release Preflight, Server Health, Model Routing. Runbook: `server/README.md`.
 
 ## Privacy model
 
@@ -39,39 +37,39 @@ Dashboards: Release Preflight (experience), Server Health (resources and server 
 
 - All three uploads carry one `client` envelope (`kind: "ios" | "mac"`, versions, `gitCommit`, `deviceModel`, ids); an upload without a valid `client.kind` is 400. MetricKit and client-log files keep their pre-envelope stored shape.
 - Daily files are named by the server's UTC write date; readers filter by each record's `ts`.
-- Retention: MetricKit 14 days (`OPPI_METRICKIT_RETENTION_DAYS`), app events and client logs 14 (`OPPI_CHAT_METRICS_RETENTION_DAYS`), server events 30 (`OPPI_SERVER_METRICS_RETENTION_DAYS`). Daily caps: `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES`, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES`. The server cap excludes `server.resources`, so ops events cannot starve the Server Metrics page and samples cannot use up the ops budget.
+- Retention: MetricKit and app events/client logs 14 days, server events 30 (`OPPI_METRICKIT_RETENTION_DAYS`, `OPPI_CHAT_METRICS_RETENTION_DAYS`, `OPPI_SERVER_METRICS_RETENTION_DAYS`). Daily caps: `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES`, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES`; the server cap excludes `server.resources`, so ops events and samples cannot starve each other.
 - Pre-catalog files (`chat-metrics-*`, `server-ops-metrics-*`, `server-metrics-*`) are neither written nor read; retention prunes them.
 
 ## Server resource sampling
 
-- `ServerResourceSampler` runs only while `serverMetrics.enabled` is true (default false): off means no timer, histogram, host reads, or samples, so Server Health's resource panels and the `server.resources.event_loop_max_ms` gate input stay empty. The switch is latched at startup; `PUT /server/metrics/settings` toggles it live, `oppi config set` needs a restart.
-- Each sample is one `server.resources` event written at once. `host-resource-probe.ts` adds host or container readings: a Linux process is a container when `/.dockerenv`, `/run/.containerenv`, `$container`, or `$KUBERNETES_SERVICE_HOST` exists, and then reads its cgroup like `docker stats`. A container whose cgroup cannot be read omits CPU and memory rather than reporting the machine; any failed read is omitted, never estimated. Process `cpu_total_pct` is a share of one core and can exceed 100.
-- `GET /server/metrics?range=1h|24h|7d|30d` buckets the `server.resources` events from the daily files (`server-metrics-history.ts`); there are no derived files, and the response keeps its pre-catalog shape.
+- `ServerResourceSampler` runs only while `serverMetrics.enabled` is true (default false): off means no timer, host reads, or samples, so Server Health's resource panels and the `server.resources.event_loop_max_ms` gate input stay empty. The switch is latched at startup; `PUT /server/metrics/settings` toggles it live, `oppi config set` needs a restart.
+- Each sample is one `server.resources` event. `host-resource-probe.ts` adds host or container readings (a container reads its cgroup like `docker stats`); a failed read is omitted, never estimated, and an unreadable container cgroup never reports the machine instead. Process `cpu_total_pct` is a share of one core and can exceed 100.
+- `GET /server/metrics?range=1h|24h|7d|30d` buckets `server.resources` events from the daily files (`server-metrics-history.ts`); there are no derived files, and the response keeps its pre-catalog shape.
 
 ## Telemetry catalog
 
-`server/src/telemetry/catalog.ts` is pure data and types; everything else derives from it or is checked against it:
+The catalog is pure data and types; everything else derives from it or is checked against it:
 
 - `POST /telemetry/events` (`routes/telemetry.ts`, `telemetry/validate.ts`) validates name, origin, fields and units, tags, and emit policy, dropping failures with counts by reason.
-- `ServerTelemetry.record(name, fields, tags, ids?)` takes catalog types, so an unknown event, field, tag, or value does not compile; the collector (`telemetry/server-telemetry.ts`) folds `storage.aggregate` events per 60 s window.
+- `ServerTelemetry.record(name, fields, tags, ids?)` takes catalog types, so an unknown event, field, tag, or value does not compile; the collector folds `storage.aggregate` events per 60 s window.
 - `server/scripts/generate-telemetry-catalog.ts` writes `clients/apple/Oppi/Core/Telemetry/TelemetryCatalog.generated.swift`; never edit it by hand.
-- `server/scripts/check-telemetry.ts` (in `npm run check`) enforces the invariants below, fails on stale generated Swift or stale tables on this page, and checks dashboards, alert rules, importer, and review script against the catalog.
+- `server/scripts/check-telemetry.ts` (in `npm run check`) enforces the invariants below, fails on stale generated Swift or tables, and checks dashboards, alert rules, importer, and review script against the catalog.
 
 ### Naming and units
 
-- Event names are `<origin>.<snake_case>` (`app.*`, `server.*`). One logical event is one record: values measured together are fields of one event.
+- Event names are `<origin>.<snake_case>` (`app.*`, `server.*`); values measured together are fields of one event.
 - Units: `ms`, `count`, `bytes`, `mb`, `pct` (0–100), `ratio` (0–1), `usd_micros`, `bool`; field names end with the unit suffix (`count` and `bool` have none). An absent optional field is never written as 0.
 - Numbers and ids are never tags.
-- `emit` rules drop out-of-range events; the generated Swift applies them before building anything, and ingest applies them again. `slo` sets a TM99 threshold on one field (optionally `where` tags match); rendering SLOs use the 120 Hz budget (8.3 ms).
+- `emit` rules drop out-of-range events, in the generated Swift before building anything and again at ingest. `slo` sets a TM99 threshold on one field (optionally where tags match); rendering SLOs use the 120 Hz budget (8.3 ms).
 - Removed events are deleted from the catalog, not retired.
 
 ### Tag vocabulary
 
 Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narrowable per event), `bucket` (shared size classes), or `name` (bounded identifier, 1–128 of `A-Za-z0-9._/:@-`, else `unknown`).
 
-- `name` values shaped like a location are stored as `unknown`, by rules that are data in the catalog (`NAME_LOCATION_RULES`), so the server (`looksLikeLocation`) and Swift (`TelemetryName`) apply the same ones; `protocol/telemetry-name-tags.json` is the shared accept/reject list. This is defence in depth: a bare hostname or relative path looks like any identifier, so **every source of a `name` tag must be bounded** (a constant, an enum-like value, or a value chosen from a closed set). Never feed one a configured endpoint, URL, or path; the streaming STT provider reports the constant `streaming`, never its endpoint.
-- Shared meanings: `status` is the mechanical outcome (`ok`, `error`, `cancelled`, `timeout`); `result` an event-specific outcome; `reason` why it happened; `error_kind` the one coarse error vocabulary (never a type name, text, or code); `phase` the step; `stream` the server WebSocket stream; `transport` `paired`/`lan`/`unix`/`local`; `provider`/`model`/`thinking`/`runtime` the session's configured route.
-- Keys that once carried two meanings were split and `check-telemetry.ts` refuses the old ones (WebSocket `path` → `stream`, device `stream` → `stream_state`, `source` → `trigger`/`playback_source`/`load_source`/`origin_surface`, `outcome`/`success` → `status`, and the rest listed in `check-telemetry.ts`). The raw server `host` is never a tag.
+- `name` values shaped like a location are stored as `unknown` by catalog rules (`NAME_LOCATION_RULES`) that the server (`looksLikeLocation`) and Swift (`TelemetryName`) share, with `protocol/telemetry-name-tags.json` as the accept/reject list. That is only defence in depth (a bare hostname or relative path looks like any identifier), so **every source of a `name` tag must be bounded**: a constant or a value from a closed set, never a configured endpoint, URL, or path.
+- Shared meanings: `status` the mechanical outcome (`ok`, `error`, `cancelled`, `timeout`); `result` an event-specific outcome; `reason` why; `error_kind` the one coarse error vocabulary (never a type name, text, or code); `phase` the step; `stream` the server WebSocket stream; `transport` `paired`/`lan`/`unix`/`local`; `provider`/`model`/`thinking`/`runtime` the session's configured route.
+- `check-telemetry.ts` refuses retired two-meaning keys (`RETIRED_TAG_KEYS`, each naming its replacement). The raw server `host` is never a tag.
 
 ### Wire format and storage
 
@@ -81,9 +79,9 @@ Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narr
 
 ### Apple client recording
 
-- One path: `Telemetry.record(<generated struct>, sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). It applies `emit` rules first (the catalog is the only place a threshold lives), drops non-finite fields (one NaN fails JSON encoding for the whole batch), and hands off to `TelemetryEventUploader` (1000 buffered, batches of 50). A 2xx never requeues; dropped events are logged and never resent. The server logs `telemetry_events.dropped` once per reason and build.
+- One path: `Telemetry.record(<generated struct>, sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). It applies `emit` rules first (the catalog is the only place a threshold lives), drops non-finite fields (one NaN fails JSON encoding for the whole batch), and hands off to `TelemetryEventUploader`. A 2xx never requeues; dropped events are logged and never resent (the server logs `telemetry_events.dropped` once per reason and build).
 - `TelemetryContext` is the one provider of ambient `screen`, `stream_state`, `agents`, `voice`; unknown is `unknown`, never absent.
-- `TelemetryErrorKind.classify` is the one mapping from errors to `error_kind`. `OppiCore` names its vocabularies with enums whose raw values are catalog values, and a test fails on any case without a catalog counterpart.
+- `TelemetryErrorKind.classify` is the one mapping from errors to `error_kind`. `OppiCore` vocabularies are enums whose raw values are catalog values; a test fails on any case without a catalog counterpart.
 - Numbers belong in events, not log lines.
 
 ### Event reference
@@ -260,26 +258,25 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 
 ## Reading events
 
-- Catalog `group` places each event in a review group. Front-page events answer a user-visible question with a unit, owner, bounded tags, and a threshold or trend; drill-down events explain them and never define product health by themselves.
-- `server.turn.duration_ms` is workload, not latency: a long turn is a problem only alongside missing progress, high TTFT, stuck tools, errors, blocked asks, or disconnected clients. Turn and tool events carry a required `runtime` tag (`oppi`, `durable`, `pi-tui`) and the configured route. `server.tool_call` pairs calls by `toolCallId`. A `status=ok` tool call means no mechanical error, not a correct task. Neither ever carries tool arguments, output, or paths.
-- `storage.aggregate` events (`server.turn_usage`, `server.ws_message_sent`, `server.ws_message_received`, `server.broadcast_fanout`) store one row per flush window: `SUM` a `sum` field, `MAX` a `max` field, and never count rows as events. `server.http_request` omits fast successful routine routes (`http-request-metrics.ts`), so its count is not request volume. Filter optional fields `IS NOT NULL` before averaging.
+- Front-page events (catalog `group`) answer a user-visible question with a unit, owner, bounded tags, and a threshold or trend; drill-down events explain them and never define product health alone.
+- `server.turn.duration_ms` is workload, not latency: a long turn matters only alongside missing progress, high TTFT, stuck tools, errors, blocked asks, or disconnected clients. Turn and tool events carry a required `runtime` tag and the configured route; `server.tool_call` pairs calls by `toolCallId`, and `status=ok` means no mechanical error, not a correct task. Neither carries tool arguments, output, or paths.
+- `storage.aggregate` events store one row per flush window: `SUM` a `sum` field, `MAX` a `max` field, never count rows as events. `server.http_request` omits fast successful routine routes, so its count is not request volume. Filter optional fields `IS NOT NULL` before averaging.
 - Release gates: `app.workspace_load` TM99 1000 ms, `app.session_switch` TM99 600 ms, and `server.resources.event_loop_max_ms` TM99 100 ms (`event_loop_p99_ms` is a trend, not a second gate).
 
 ## Lifecycle and hang correlation
 
-- The client persists a bounded diagnostic context (ids, coarse screen, scene phase, last lifecycle step, stream state, large-payload counts), never content, URLs, or paths. On the first write in a new process it rotates the saved context into a previous-process slot, and MetricKit serialization uses that slot, because MetricKit delivers crash and hang diagnostics after the process ended.
-- A release-build watchdog probes the main thread once per second while active (700 ms threshold) and for ten seconds after backgrounding. Background steps, watchdog events, and MetricKit notices force the client-log queue to flush in order.
-- `Navigation` breadcrumbs (`Presentation changed`, `Route changed`, `Quick Session presented`, `Chat appeared`/`Chat disappeared`, `Link opened`) flush so a crash shortly after still has the route; they carry no prompt, file contents, or paths.
+- The client persists a bounded diagnostic context (ids, coarse screen, scene phase, last lifecycle step, stream state, large-payload counts), never content, URLs, or paths. The first write in a new process rotates it into a previous-process slot, which MetricKit serialization uses, because MetricKit delivers crash and hang diagnostics after the process ended.
+- A release-build watchdog probes the main thread once per second while active (700 ms threshold) and for ten seconds after backgrounding. Background steps, watchdog events, MetricKit notices, and `Navigation` breadcrumbs flush the client-log queue in order, so a crash shortly after still has the route; breadcrumbs carry no prompt, file contents, or paths.
 
 ## Build identity
 
-`clients/apple/scripts/stamp-git-commit.sh` (from `project.yml`) stamps `OPPIGitCommit` through a prefix header that Info.plist preprocessing expands, because `ProcessInfoPlistFile` overwrites post-build plist edits. The value is a 12-character SHA, plus `-dirty`. The script fails the build when git cannot read the checkout and never stamps a placeholder; on Xcode Cloud it marks the checkout safe rather than skip. Every Oppi compile lane runs in a git checkout. The server stores `client.gitCommit` only when it is a short SHA (optionally `-dirty`), so a bad stamp cannot store a path.
+`clients/apple/scripts/stamp-git-commit.sh` stamps `OPPIGitCommit` (12-character SHA, plus `-dirty`) through a prefix header that Info.plist preprocessing expands, because `ProcessInfoPlistFile` overwrites post-build plist edits. It fails the build when git cannot read the checkout and never stamps a placeholder (on Xcode Cloud it marks the checkout safe), so every compile lane runs in a git checkout. The server stores `client.gitCommit` only when it is a short SHA (optionally `-dirty`), so a bad stamp cannot store a path.
 
 ## Local dashboards and importer
 
-- `server/scripts/manual/telemetry-import-sqlite.mjs` (parser version 7) imports `app-events-*` and `server-events-*` into one `events` table (`ts_ms`, `origin`, `name`, ids, client columns, `fields_json`, `tags_json`; indexed on `(name, ts_ms)`) plus `metrickit_payloads`. Non-v2 lines and pre-catalog files are skipped; legacy tables stay unused, so dashboard history starts at the catalog cutover. A parser version change reimports files.
+- `server/scripts/manual/telemetry-import-sqlite.mjs` imports `app-events-*` and `server-events-*` into one `events` table plus `metrickit_payloads`; non-v2 lines and pre-catalog files are skipped, so dashboard history starts at the catalog cutover. Bumping its parser version reimports files.
 - Grafana opens the SQLite volume read-write so WAL-mode reads can create shared-memory sidecars.
-- Dashboards and alert rules (`server/docker/grafana/provisioning/alerting/alert-rules.yml`) may use only catalog events, fields, tags, and tag values, and every query must run against the importer schema (`npm run check`). `npm run telemetry:grafana:check` runs every panel against a live Grafana.
+- Dashboards and alert rules (`server/docker/grafana/provisioning/alerting/alert-rules.yml`) may use only catalog events, fields, tags, and tag values, and every query must run against the importer schema (`npm run check`); `npm run telemetry:grafana:check` runs every panel against a live Grafana.
 
 ## Adding or changing an event
 
