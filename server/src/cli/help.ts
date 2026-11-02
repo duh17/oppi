@@ -1,6 +1,11 @@
 import * as c from "../ansi.js";
 import { isHelpFlag } from "./args.js";
-import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
+import {
+  captureHumanCliOutput,
+  setCapturedCliExitCode,
+  writeHumanLine,
+  writeJsonEnvelope,
+} from "./output.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 
 export type CliHelpPath = readonly string[];
@@ -11,7 +16,10 @@ type HelpItem = {
 };
 
 type HelpFlag = {
+  /** The canonical long flag, `--name`. */
   name: string;
+  /** Other spellings the command accepts for this flag: long aliases and parser shorts. */
+  aliases?: string[];
   value?: string;
   summary: string;
   required?: boolean;
@@ -94,12 +102,13 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
+      { name: "devices", summary: "list paired devices or revoke one" },
       { name: "update", summary: "check or update the npm-installed server and CLI" },
       { name: "version", summary: "print the installed package version" },
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
-      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, models, workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
+      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, models, workspace, worktree, session, Agent, schedule, devices, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -276,6 +285,33 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi token rotate",
     notes: ["Existing clients must be re-paired with 'oppi pair' after rotation."],
     examples: [{ command: "oppi token rotate" }],
+  },
+  {
+    path: ["devices"],
+    title: "Devices",
+    summary: "List the devices paired with this server, or revoke one.",
+    usage: "oppi devices <subcommand>",
+    subcommands: [
+      { name: "list", summary: "list paired devices with state and last use (default)" },
+      { name: "revoke <id>", summary: "revoke one device and invalidate its access tokens" },
+    ],
+    notes: ["Devices commands need local owner credentials and a running server."],
+    examples: [{ command: "oppi devices list" }, { command: "oppi devices revoke <id>" }],
+  },
+  {
+    path: ["devices", "list"],
+    title: "List devices",
+    summary: "List paired devices with their id, name, state, and last use.",
+    usage: "oppi devices list",
+    examples: [{ command: "oppi devices list" }],
+  },
+  {
+    path: ["devices", "revoke"],
+    title: "Revoke device",
+    summary: "Revoke one paired device; its access tokens are invalidated immediately.",
+    usage: "oppi devices revoke <id>",
+    arguments: [{ name: "<id>", summary: "device id from 'oppi devices list'" }],
+    examples: [{ command: "oppi devices revoke <id>" }],
   },
   {
     path: ["config"],
@@ -502,15 +538,17 @@ const HELP_TOPICS: HelpTopic[] = [
       "oppi dictionary list|add|remove|forget [--workspace ID] [--phrase TEXT | --phrases @- | --file PATH] [--json]",
     flags: [
       {
-        name: "--workspace ID",
+        name: "--workspace",
+        value: "<id>",
         summary: "stable workspace id for This Workspace; omit for All Workspaces",
       },
-      { name: "--phrase TEXT", summary: "literal phrase for one-shot add or remove" },
+      { name: "--phrase", value: "<text>", summary: "literal phrase for one-shot add or remove" },
       {
-        name: "--phrases @-",
+        name: "--phrases",
+        value: "@-",
         summary: "add JSON array of strings or newline-separated phrases from stdin",
       },
-      { name: "--file PATH", summary: "add phrases from a file in either format" },
+      { name: "--file", value: "<path>", summary: "add phrases from a file in either format" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [
@@ -1071,9 +1109,12 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["schedule", "runs"],
     title: "Schedule run history",
     summary: "Show run history for a schedule.",
-    usage: "oppi schedule runs <id> [--json]",
+    usage: "oppi schedule runs <id> [--limit <count>] [--json]",
     arguments: [{ name: "<id>", summary: "schedule id" }],
-    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    flags: [
+      { name: "--limit", value: "<count>", summary: "maximum runs to return" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
     examples: [{ command: "oppi schedule runs sch_123" }],
   },
   {
@@ -1157,12 +1198,13 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session", "list"],
     title: "List sessions",
     summary:
-      "List app-style session rows, optionally filtered by workspace, worktree, status, or limit.",
+      "List app-style session rows, optionally filtered by workspace, worktree, Agent, status, or limit.",
     usage:
-      "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--since <time>] [--until <time>] [--json]",
+      "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--agent <agent>] [--since <time>] [--until <time>] [--json]",
     flags: [
       { name: "--workspace", value: "<workspace>", summary: "workspace id or unique name" },
       { name: "--worktree", value: "<worktree>", summary: "worktree id" },
+      { name: "--agent", value: "<agent>", summary: "filter by saved Agent id" },
       {
         name: "--status",
         value: "<status>",
@@ -1256,6 +1298,7 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [
       {
         name: "--for",
+        aliases: ["--until"],
         value: "<condition>",
         summary: "idle, attention, or either (default either)",
       },
@@ -1269,7 +1312,8 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "max wait such as 900, 30s, or 4m; bare numbers are seconds (default 4m)",
       },
       {
-        name: "--poll, --interval",
+        name: "--poll",
+        aliases: ["--interval"],
         value: "<duration>",
         summary: "how often to check session state; default 2s from turn TTFT p50/2",
       },
@@ -1400,6 +1444,7 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [
       {
         name: "--turns",
+        aliases: ["--turn"],
         value: "<spec>",
         summary: "all, last, one turn, a range, or comma-separated turns",
       },
@@ -1585,7 +1630,8 @@ const HELP_TOPICS: HelpTopic[] = [
       "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
     flags: [
       {
-        name: "--name, -n",
+        name: "--name",
+        aliases: ["-n"],
         value: "<name>",
         summary: "Agent display name; overrides definition.name",
       },
@@ -1647,21 +1693,25 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: `writes sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
       },
       {
-        name: "--tools, -t",
+        name: "--tools",
+        aliases: ["-t"],
         value: "<csv>",
         summary: "writes sessionDefaults.tools; overlays definition JSON",
       },
       {
-        name: "--exclude-tools, -xt",
+        name: "--exclude-tools",
+        aliases: ["-xt"],
         value: "<csv>",
         summary: "writes sessionDefaults.excludeTools; overlays definition JSON",
       },
       {
-        name: "--no-tools, -nt",
+        name: "--no-tools",
+        aliases: ["-nt"],
         summary: "writes sessionDefaults.noTools=all",
       },
       {
-        name: "--no-builtin-tools, -nbt",
+        name: "--no-builtin-tools",
+        aliases: ["-nbt"],
         summary: "writes sessionDefaults.noTools=builtin",
       },
       {
@@ -1708,7 +1758,8 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
-        name: "--name, -n",
+        name: "--name",
+        aliases: ["-n"],
         value: "<name>",
         summary: "overlays definition.name",
       },
@@ -1797,21 +1848,25 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: `overlays sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
       },
       {
-        name: "--tools, -t",
+        name: "--tools",
+        aliases: ["-t"],
         value: "<csv>",
         summary: "overlays sessionDefaults.tools",
       },
       {
-        name: "--exclude-tools, -xt",
+        name: "--exclude-tools",
+        aliases: ["-xt"],
         value: "<csv>",
         summary: "overlays sessionDefaults.excludeTools",
       },
       {
-        name: "--no-tools, -nt",
+        name: "--no-tools",
+        aliases: ["-nt"],
         summary: "overlays sessionDefaults.noTools=all",
       },
       {
-        name: "--no-builtin-tools, -nbt",
+        name: "--no-builtin-tools",
+        aliases: ["-nbt"],
         summary: "overlays sessionDefaults.noTools=builtin",
       },
       {
@@ -1876,7 +1931,7 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "first prompt sent to the session",
         required: true,
       },
-      { name: "--name, -n", value: "<text>", summary: "session name" },
+      { name: "--name", aliases: ["-n"], value: "<text>", summary: "session name" },
       {
         name: "--model",
         value: "<model[:thinking]>",
@@ -1889,21 +1944,25 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: `thinking level override: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
       },
       {
-        name: "--tools, -t",
+        name: "--tools",
+        aliases: ["-t"],
         value: "<csv>",
         summary: "comma-separated tool allowlist",
       },
       {
-        name: "--exclude-tools, -xt",
+        name: "--exclude-tools",
+        aliases: ["-xt"],
         value: "<csv>",
         summary: "comma-separated tool denylist",
       },
       {
-        name: "--no-tools, -nt",
+        name: "--no-tools",
+        aliases: ["-nt"],
         summary: "disable all tools",
       },
       {
-        name: "--no-builtin-tools, -nbt",
+        name: "--no-builtin-tools",
+        aliases: ["-nbt"],
         summary: "disable built-in tools",
       },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
@@ -2160,8 +2219,7 @@ export function helpPathFor(command: string, positional: readonly string[]): str
     }
   }
 
-  if (path[0] === "workspace" && path[1] === "remove") path[1] = "delete";
-  if (path[0] === "session" && path[1] === "start") path[1] = "create";
+  if (path[0] && path[1]) path[1] = canonicalSubcommand(path[0], path[1]);
 
   // Ignore trailing positionals once help has been requested, but keep the longest
   // known topic so `noun verb ignored help` cannot fall into a mutating handler.
@@ -2171,6 +2229,99 @@ export function helpPathFor(command: string, positional: readonly string[]): str
   const resolved = resolveHelpTopic(path);
   if (resolved && (path.length >= 2 || !rootTopic?.subcommands?.length)) return path;
   return originalPath;
+}
+
+/** Verb spellings a noun accepts for another verb's topic. */
+const SUBCOMMAND_ALIASES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  session: { start: "create" },
+  workspace: { remove: "delete" },
+};
+
+/** The verb a noun runs when none is given: `oppi session` lists sessions. */
+const DEFAULT_SUBCOMMANDS: Readonly<Record<string, string>> = {
+  agent: "list",
+  config: "show",
+  devices: "list",
+  schedule: "list",
+  server: "status",
+  session: "list",
+  wait: "session",
+  workspace: "list",
+  worktree: "list",
+};
+
+/** Flags every command accepts besides its topic's own. Help flags never reach dispatch. */
+const GLOBAL_FLAGS: readonly string[] = ["json", "help"];
+
+function canonicalSubcommand(noun: string, subcommand: string): string {
+  return SUBCOMMAND_ALIASES[noun]?.[subcommand] ?? subcommand;
+}
+
+/**
+ * The topic whose flags an invocation may use: the verb's topic, else the noun's (a noun
+ * without verb topics, or a verb the command will reject as unknown).
+ */
+function invocationTopic(command: string, positional: readonly string[]): HelpTopic | undefined {
+  const noun = command === "--version" || command === "-v" ? "version" : command;
+  const nounTopic = resolveHelpTopic([noun]);
+  if (!nounTopic) return undefined;
+  const verb = positional[0] ?? DEFAULT_SUBCOMMANDS[noun];
+  if (verb === undefined) return nounTopic;
+  return resolveHelpTopic([noun, canonicalSubcommand(noun, verb)]) ?? nounTopic;
+}
+
+/**
+ * The help topics are the flag allow-list of every command: a flag its topic does not declare
+ * (by name or alias) is refused before dispatch, so a guessed flag fails instead of doing nothing.
+ */
+export function unsupportedFlagsMessage(
+  command: string,
+  positional: readonly string[],
+  flags: Readonly<Record<string, string>>,
+): string | undefined {
+  const topic = invocationTopic(command, positional);
+  if (!topic) return undefined;
+  const declared = topic.flags ?? [];
+  const accepted = new Set(GLOBAL_FLAGS);
+  for (const flag of declared) {
+    for (const spelling of [flag.name, ...(flag.aliases ?? [])]) {
+      // Shorts (`-n`) reach the flags map under their long name.
+      if (spelling.startsWith("--")) accepted.add(spelling.slice(2));
+    }
+  }
+  const unsupported = Object.keys(flags)
+    .filter((flag) => !accepted.has(flag))
+    .sort();
+  if (unsupported.length === 0) return undefined;
+
+  const label = topic.path.join(" ");
+  const names = declared.map((flag) => flag.name);
+  if (!names.includes("--json")) names.push("--json");
+  // The parser does not split `--flag=value`; name the spelling it does read.
+  const equalsForm = unsupported.find((flag) => accepted.has(flag.split("=")[0] ?? ""));
+  const equalsHint = equalsForm
+    ? ` Use --${equalsForm.split("=")[0]} <value>; the equals form is not supported.`
+    : "";
+  return `Unsupported flag for '${label}': --${unsupported.join(", --")}. Accepted flags: ${names.join(", ")}.${equalsHint} Run 'oppi ${label} --help'.`;
+}
+
+/** Reports an unsupported flag as the command's failure; true when the command must not run. */
+export function rejectUnsupportedFlags(
+  command: string,
+  positional: readonly string[],
+  flags: Readonly<Record<string, string>>,
+): boolean {
+  const message = unsupportedFlagsMessage(command, positional, flags);
+  if (message === undefined) return false;
+  const line = c.red(`  Error: ${message}`);
+  if (flags.json === "true") {
+    writeJsonEnvelope({ ok: false, error: { message } });
+    captureHumanCliOutput(() => writeHumanLine(line));
+  } else {
+    writeHumanLine(line);
+  }
+  setCapturedCliExitCode(1);
+  return true;
 }
 
 export function writeCliHelpOutput(topic: HelpTopic, jsonOutput: boolean): void {
@@ -2242,7 +2393,10 @@ function appendFlags(lines: string[], flags: HelpFlag[] | undefined): void {
   if (!flags || flags.length === 0) return;
   lines.push(`  ${c.bold("Flags:")}`);
   lines.push("");
-  const labels = flags.map((flag) => `${flag.name}${flag.value ? ` ${flag.value}` : ""}`);
+  const labels = flags.map(
+    (flag) =>
+      `${[flag.name, ...(flag.aliases ?? [])].join(", ")}${flag.value ? ` ${flag.value}` : ""}`,
+  );
   const width = Math.max(...labels.map((label) => label.length));
   flags.forEach((flag, index) => {
     const label = labels[index] ?? flag.name;

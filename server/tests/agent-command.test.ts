@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cmdAgent } from "../src/cli/commands/agent.js";
-import { parseCliArgs } from "../src/cli/args.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
 import { resolveHelpTopic, renderHelpTopic } from "../src/cli/help.js";
 import { captureCliOutput } from "../src/cli/output.js";
+import { runCli } from "../src/cli/runner.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/local-api-client.js")>();
@@ -143,26 +143,23 @@ describe("agent command", () => {
   );
 
   it("rejects the parser's --expected-version=3 key instead of omitting CAS", async () => {
-    const parsed = parseCliArgs([
-      "agent",
-      "update",
-      "agent-1",
-      "--definition-json",
-      JSON.stringify({ description: "Updated" }),
-      "--expected-version=3",
-      "--json",
-    ]);
-    expect(parsed.flags["expected-version=3"]).toBe("true");
-
-    const captured = await captureCliOutput(() =>
-      cmdAgent(storage, parsed.positional[0], parsed.positional.slice(1), parsed.flags),
+    const result = await runCli(
+      [
+        "agent",
+        "update",
+        "agent-1",
+        "--definition-json",
+        JSON.stringify({ description: "Updated" }),
+        "--expected-version=3",
+        "--json",
+      ],
+      { captureHuman: true },
     );
 
-    expect(captured.exitCode).toBe(1);
-    expect(JSON.parse(captured.stdout)).toMatchObject({
-      ok: false,
-      error: { message: "Use --expected-version <version>; equals form is not supported" },
-    });
+    expect(result.exitCode).toBe(1);
+    expect(result.error?.message).toContain(
+      "Use --expected-version <value>; the equals form is not supported.",
+    );
     expect(request).not.toHaveBeenCalled();
   });
 

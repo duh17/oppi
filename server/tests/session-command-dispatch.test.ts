@@ -350,12 +350,6 @@ describe("session command dispatch and output boundaries", () => {
       message: "--workspace and --all cannot be used together",
     },
     {
-      action: "inspect",
-      positional: ["s"],
-      flags: { limit: "2", json: "true" },
-      message: "Unsupported flag for 'session inspect': --limit",
-    },
-    {
       action: "wait",
       positional: ["s"],
       flags: { poll: "2s", interval: "2s", json: "true" },

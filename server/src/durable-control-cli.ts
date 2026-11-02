@@ -31,7 +31,7 @@ import { getOppiDocsPath } from "./oppi-docs.js";
  *   from inside a turn
  * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
  * - `--idempotency-key=…`, `--request-id=…`, `--turn-id=…`: the CLI does not split on `=`, so that
- *   form is an unknown flag it ignores (`session` commands refuse it). The host cannot tell it from
+ *   form is an unknown flag, which the runner refuses. The host cannot tell it from
  *   a script's own replay key without guessing where the verb is, so it is refused outright; the
  *   space-separated form is the one the host replaces with its own key.
  * (`version` never reaches `runCli`: the CLI entry point handles it, so a script gets the runner's

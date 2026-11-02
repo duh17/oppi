@@ -13,7 +13,13 @@ import { createAbortError, throwIfAborted } from "./local-api-client.js";
 import { cmdWorkspace } from "./commands/workspace.js";
 import { cmdWorktree } from "./commands/worktree.js";
 import { createCliConfigStorage, createCliConnectionConfig } from "./connection-config.js";
-import { helpPathFor, isNestedHelpRequest, resolveHelpTopic, writeCliHelpOutput } from "./help.js";
+import {
+  helpPathFor,
+  isNestedHelpRequest,
+  rejectUnsupportedFlags,
+  resolveHelpTopic,
+  writeCliHelpOutput,
+} from "./help.js";
 import { cmdModels } from "./commands/models.js";
 import { cmdQuota } from "./quota.js";
 import {
@@ -119,6 +125,7 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
     writeCliHelpOutput(topic, flags.json === "true");
     return;
   }
+  if (rejectUnsupportedFlags(command, positional, flags)) return;
 
   const dataDir = options.dataDir ?? process.env.OPPI_DATA_DIR ?? undefined;
   const connection = createCliConnectionConfig(dataDir);

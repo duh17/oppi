@@ -378,8 +378,6 @@ describe("oppi pair", () => {
         ["--ttl", "soon"],
         ["--ttl", "99999999999999999999d"],
         ["--ttl"],
-        // parseCliArgs does not split `=`; this must not fall back to a 90s invite.
-        ["--ttl=14d"],
       ];
       for (const extra of rejectedArgs) {
         const rejected = run(["pair", "--host", "127.0.0.1", "--json", ...extra], env);
@@ -388,6 +386,12 @@ describe("oppi pair", () => {
         // A typo must not silently replace the invite already handed out.
         expect(readPairing().pairingToken, extra.join(" ")).toBe(outstanding);
       }
+      // parseCliArgs does not split `=`; this must not fall back to a 90s invite.
+      const equalsForm = run(["pair", "--host", "127.0.0.1", "--json", "--ttl=14d"], env);
+      expect(equalsForm.exitCode).toBe(1);
+      expect(JSON.parse(equalsForm.stdout)).toMatchObject({ ok: false });
+      expect(readPairing().pairingToken).toBe(outstanding);
+
       const rangeError = run(["pair", "--host", "127.0.0.1", "--json", "--ttl", "500ms"], env);
       expect(rangeError.stderr).toContain("1s to 30d");
       expect(rangeError.stderr).not.toContain("500ms, 15s");

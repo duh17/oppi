@@ -92,7 +92,6 @@ export async function cmdSession(
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
-    assertSessionFlags(mode, flags);
     const rawTargets = sessionTargetsForMode(mode, positional);
     // Exact self-target stays local so managed callers fail before any HTTP call.
     assertNotSelfTargetingSession(rawTargets, callerSessionId);
@@ -661,45 +660,7 @@ export function resolvePromptInput(value: string | undefined, flag: "--prompt" |
   return text;
 }
 
-const SESSION_FLAGS: Record<string, readonly string[]> = {
-  list: ["agent", "json", "limit", "since", "status", "until", "workspace", "worktree"],
-  get: ["json"],
-  create: [
-    "agent",
-    "allow-nested-delegation",
-    "auto-stop",
-    "engine",
-    "exclude-tools",
-    "idempotency-key",
-    "json",
-    "model",
-    "name",
-    "no-auto-stop",
-    "no-builtin-tools",
-    "no-tools",
-    "prompt",
-    "thinking",
-    "tools",
-    "workspace",
-    "worktree",
-  ],
-  send: ["follow-up", "json", "steer", "text", "turn-id"],
-  abort: ["json"],
-  wait: ["all", "for", "interval", "json", "poll", "program-status", "summary-every", "timeout"],
-  read: ["json", "tail"],
-  events: ["json", "since"],
-  trace: ["include", "json"],
-  search: ["all", "json", "limit", "query", "since", "until", "workspace"],
-  inspect: ["json", "turns", "view"],
-  stop: ["json"],
-  delete: ["json"],
-  resume: ["json"],
-  fork: ["entry", "json", "name"],
-  "tool-output": ["json"],
-  "trace-page": ["around-entry", "cursor", "json", "preview-bytes", "target-events"],
-  "trace-outline": ["json"],
-};
-
+/** The help topics declare these aliases; the runner has already refused undeclared flags. */
 function normalizeSessionFlagAliases(
   mode: string,
   flags: Record<string, string>,
@@ -725,16 +686,6 @@ function normalizeSessionFlagAliases(
     delete normalized[alias];
   }
   return normalized;
-}
-
-function assertSessionFlags(mode: string, flags: Record<string, string>): void {
-  const allowed = SESSION_FLAGS[mode];
-  if (!allowed) return;
-  const allowedSet = new Set(allowed);
-  const unsupported = Object.keys(flags).filter((flag) => !allowedSet.has(flag));
-  if (unsupported.length > 0) {
-    throw new Error(`Unsupported flag for 'session ${mode}': --${unsupported.sort().join(", --")}`);
-  }
 }
 
 function sessionTargetsForMode(mode: string, positional: string[]): string[] {

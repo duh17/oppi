@@ -8,6 +8,7 @@ import { parseCliArgs } from "../src/cli/args.js";
 import { cmdAgent } from "../src/cli/commands/agent.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
 import { captureCliOutput } from "../src/cli/output.js";
+import { runCli } from "../src/cli/runner.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/local-api-client.js")>();
@@ -201,13 +202,13 @@ describe("agent create/update editor-flag parity", () => {
   });
 
   it("rejects --clear-* flags on create", async () => {
-    const captured = await runAgent("create", [], {
-      name: "Reviewer",
-      "clear-description": "true",
-    });
-    expect(captured.exitCode).toBe(1);
-    expect(JSON.parse(captured.stdout).error.message).toMatch(
-      /--clear-description is only valid on agent update/,
+    const result = await runCli(
+      ["agent", "create", "--name", "Reviewer", "--clear-description", "--json"],
+      { captureHuman: true },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.error?.message).toMatch(
+      /^Unsupported flag for 'agent create': --clear-description\./,
     );
     expect(request).not.toHaveBeenCalled();
   });

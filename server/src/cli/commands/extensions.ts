@@ -31,11 +31,6 @@ export async function cmdExtensions(
   const json = flags.json === "true";
   const { call, output } = createLocalApiCommandContext(connection, json, signal);
   try {
-    const unsupported = Object.keys(flags).filter((flag) => flag !== "json");
-    if (unsupported.length > 0)
-      throw new Error(
-        `Unsupported flag for 'extensions ${action ?? ""}': --${unsupported.sort().join(", --")}`,
-      );
     if (action === "list" && positional.length === 0) {
       const { extensions } = await call<{ extensions: DurableExtensionListing[] }>(
         "/durable/extensions",

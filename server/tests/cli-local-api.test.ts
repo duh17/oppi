@@ -1296,16 +1296,6 @@ describe("oppi local API commands", () => {
       ).toEqual({ action: { model: null } });
 
       for (const args of [
-        [
-          "workspace",
-          "create",
-          "--name",
-          "Rejected",
-          "--default-model",
-          "openai/gpt-5.4",
-          "--json",
-        ],
-        ["workspace", "update", "ws-1", "--default-model", "openai/gpt-5.4", "--json"],
         ["workspace", "create", "--definition", removedWorkspaceDefaultCreatePath, "--json"],
         [
           "workspace",
@@ -1323,7 +1313,7 @@ describe("oppi local API commands", () => {
           ok: false,
           error: {
             message:
-              "Workspace default models are no longer supported; remove --default-model/defaultModel and configure Pi's defaultProvider and defaultModel in ~/.pi/agent/settings.json.",
+              "Workspace default models are no longer supported; remove defaultModel and configure Pi's defaultProvider and defaultModel in ~/.pi/agent/settings.json.",
           },
         });
         expect(requests, args.join(" ")).toHaveLength(before);

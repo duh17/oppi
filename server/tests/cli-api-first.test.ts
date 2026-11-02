@@ -848,7 +848,10 @@ describe("CLI app-state API boundary", () => {
         expect(code).toBe(1);
         expect(JSON.parse(stdout)).toEqual({
           ok: false,
-          error: { message: "Unsupported flag for 'session inspect': --limit" },
+          error: {
+            message:
+              "Unsupported flag for 'session inspect': --limit. Accepted flags: --turns, --view, --json. Run 'oppi session inspect --help'.",
+          },
         });
         expect(requests).toEqual([]);
       },

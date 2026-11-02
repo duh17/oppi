@@ -100,7 +100,6 @@ export async function cmdAgent(
           await resolveModelFlagForCli(storage, flags.model),
         ),
         flags,
-        { update: false },
       );
       if (!definition.name) throw new Error("--name or definition.name is required");
       const result = await call<Record<string, unknown>>("/agents", {
@@ -138,7 +137,6 @@ export async function cmdAgent(
           await resolveModelFlagForCli(storage, flags.model),
         ),
         flags,
-        { update: true },
       );
       if (Object.keys(definition).length === 0) {
         throw new Error("definition update must not be empty");
@@ -208,9 +206,6 @@ type AgentErrorDetails = {
 };
 
 function parseExpectedAgentVersionFlag(flags: Record<string, string>): number | undefined {
-  if (Object.keys(flags).some((key) => key.startsWith("expected-version="))) {
-    throw new Error("Use --expected-version <version>; equals form is not supported");
-  }
   const value = flags["expected-version"];
   if (value === undefined) return undefined;
   if (!/^[1-9]\d*$/.test(value)) {
@@ -245,16 +240,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-const AGENT_CLEAR_FLAGS = [
-  "clear-description",
-  "clear-icon",
-  "clear-instructions",
-  "clear-skills",
-  "clear-extensions",
-  "clear-allowed-workspaces",
-  "clear-required-runtime",
-] as const;
-
 const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
   { values: ["description"], clear: "clear-description" },
   { values: ["icon"], clear: "clear-icon" },
@@ -272,18 +257,11 @@ function hasFlag(flags: Record<string, string>, name: string): boolean {
   return Object.hasOwn(flags, name);
 }
 
+/** Create's help topic does not declare the `--clear-*` flags, so only update sees them. */
 function applyAgentFieldFlags(
   definition: Record<string, unknown>,
   flags: Record<string, string>,
-  options: { update: boolean },
 ): Record<string, unknown> {
-  if (!options.update) {
-    for (const name of AGENT_CLEAR_FLAGS) {
-      if (hasFlag(flags, name)) {
-        throw new Error(`--${name} is only valid on agent update`);
-      }
-    }
-  }
   for (const twin of AGENT_VALUE_CLEAR_TWINS) {
     const present = twin.values.filter((name) => hasFlag(flags, name));
     if (present.length > 0 && hasFlag(flags, twin.clear)) {

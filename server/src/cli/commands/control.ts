@@ -15,11 +15,6 @@ export interface ControlCliCallerContext {
   signal?: AbortSignal;
 }
 
-const CONTROL_FLAGS: Record<string, readonly string[]> = {
-  open: ["json", "model", "thinking"],
-  send: ["json", "model", "thinking"],
-};
-
 type ControlConversationResponse = { session: Session };
 
 /** `oppi control open|send`: the data directory's one durable control conversation. */
@@ -34,14 +29,7 @@ export async function cmdControl(
   const { call, output } = createLocalApiCommandContext(storage, jsonOutput, callerContext.signal);
 
   try {
-    const allowed = action ? CONTROL_FLAGS[action] : undefined;
-    if (!action || !allowed) throw new Error("Usage: oppi control open|send");
-    const unsupported = Object.keys(flags).filter((flag) => !allowed.includes(flag));
-    if (unsupported.length > 0) {
-      throw new Error(
-        `Unsupported flag for 'control ${action}': --${unsupported.sort().join(", --")}`,
-      );
-    }
+    if (action !== "open" && action !== "send") throw new Error("Usage: oppi control open|send");
 
     // Validate and read the text first: a bad `send` must not create the conversation.
     const text =

@@ -69,6 +69,7 @@ import {
 import {
   helpPathFor,
   isNestedHelpRequest,
+  rejectUnsupportedFlags,
   resolveHelpTopic,
   writeCliHelpOutput,
 } from "./cli/help.js";
@@ -938,7 +939,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   const { homedir } = await import("node:os");
   const dataDir = flags["data-dir"] || join(homedir(), ".config", "oppi");
   const alreadyExists = existsSync(join(dataDir, "config.json"));
-  const nonInteractive = flags.yes === "true" || flags.y === "true" || !process.stdin.isTTY;
+  const nonInteractive = flags.yes === "true" || !process.stdin.isTTY;
 
   if (alreadyExists && flags.force !== "true") {
     console.log(c.yellow(`  Config already exists at ${dataDir}/config.json`));
@@ -1355,6 +1356,21 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
 
 // ─── Main ───
 
+const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
+  "status",
+  "quota",
+  "models",
+  "agent",
+  "dictionary",
+  "workspace",
+  "worktree",
+  "session",
+  "control",
+  "extensions",
+  "schedule",
+  "wait",
+]);
+
 export async function runCliMain(args: readonly string[] = process.argv.slice(2)): Promise<void> {
   const invocationArgs = [...args];
   const { command, flags, positional } = parseCliArgs(invocationArgs);
@@ -1363,6 +1379,12 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     cmdHelp(helpPathFor(command, positional), flags.json === "true");
     return;
   }
+  // `runCli` checks the flags of the commands it runs; it also runs in-process for Oppi Control.
+  if (RUNNER_COMMANDS.has(command)) {
+    await runCli(invocationArgs);
+    return;
+  }
+  if (rejectUnsupportedFlags(command, positional, flags)) return;
 
   // These commands run before Storage to avoid creating default config prematurely
   if (command === "init") {
@@ -1403,13 +1425,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       break;
 
     case "pair": {
-      // parseCliArgs does not split `--flag=value`; without this the typo
-      // would silently issue a default 90s invite and replace the outstanding one.
-      const ttlEquals = Object.keys(flags).find((key) => key.startsWith("ttl="));
-      if (ttlEquals) {
-        process.stderr.write("Error: use --ttl <duration> (a space, not =)\n");
-        process.exit(1);
-      }
       await cmdPair(
         createCliConfigStorage(dataDir),
         positional[0],
@@ -1419,21 +1434,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       );
       break;
     }
-
-    case "status":
-    case "quota":
-    case "models":
-    case "agent":
-    case "dictionary":
-    case "workspace":
-    case "worktree":
-    case "session":
-    case "control":
-    case "extensions":
-    case "schedule":
-    case "wait":
-      await runCli(invocationArgs);
-      break;
 
     case "doctor":
       await cmdDoctor(connection);
