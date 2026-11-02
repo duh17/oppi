@@ -4,11 +4,13 @@
  */
 import { describe, expect, it } from "vitest";
 import { createServer as createHttpServer } from "node:http";
-import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
-import { fakeTailscaleEnv } from "./harness/cli-process.js";
+import { CLI, fakeTailscaleEnv } from "./harness/cli-process.js";
 import {
+  cliProcessEnv,
   dataDir,
   hasOpenSSL,
   logSkip,
@@ -235,6 +237,28 @@ describe("oppi status", () => {
 });
 
 // ── Init ──
+
+describe("oppi serve", () => {
+  it.each([[["--data-dir"]], [["--data-dir", "--host", "127.0.0.1"]]])(
+    "refuses %j without a path instead of serving from ./true",
+    (dataDirArgs) => {
+      const cwd = makeTempDir("oppi-cli-serve-cwd-");
+      try {
+        const result = spawnSync("node", [CLI, "serve", ...dataDirArgs], {
+          cwd,
+          encoding: "utf-8",
+          env: cliProcessEnv(),
+          timeout: 15_000,
+        });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain("--data-dir needs a path");
+        expect(existsSync(join(cwd, "true"))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe("oppi init", () => {
   it("re-init releases the relay permissions of the push registrations it drops", async () => {

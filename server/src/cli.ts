@@ -83,7 +83,7 @@ import {
 } from "./server-update.js";
 import type { ServerRestartMode } from "./types/server-update.js";
 import { parseDurationMs } from "./cli/commands/wait.js";
-import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
+import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "./cli/output.js";
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
@@ -1355,6 +1355,21 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
 
 // ─── Main ───
 
+/**
+ * `--data-dir` with no value parses as "true" (`--data-dir --host x` too), which serve, init,
+ * and server install would take as the relative path ./true and set up fresh credentials in.
+ */
+function rejectValuelessDataDir(command: string, flags: Record<string, string>): boolean {
+  const value = flags["data-dir"];
+  if (value === undefined || (value !== "true" && value.trim() !== "")) return false;
+  writeHumanLine(c.red("  Error: --data-dir needs a path, like --data-dir ~/.config/oppi"));
+  // Under `server`, only install declares --data-dir; the allow-list refused the others.
+  const path = command === "server" ? "server install" : command;
+  writeHumanLine(c.dim(`  Run 'oppi ${path} --help' for usage.`));
+  setCapturedCliExitCode(1);
+  return true;
+}
+
 export async function runCliMain(args: readonly string[] = process.argv.slice(2)): Promise<void> {
   const invocationArgs = [...args];
   const parsed = parseCliArgs(invocationArgs);
@@ -1370,6 +1385,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     return;
   }
   if (rejectUnsupportedFlags(parsed)) return;
+  if (rejectValuelessDataDir(command, flags)) return;
 
   // These commands run before Storage to avoid creating default config prematurely
   if (command === "init") {
