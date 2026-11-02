@@ -312,13 +312,15 @@ export function createServerResourceRoutes(
     }
   }
 
+  /** `?plugins=true` adds the rows that are only a plugin; clients that predate plugins omit it. */
   async function listExtensions(url: URL, res: ServerResponse): Promise<void> {
-    if (!hasNoQuery(url)) {
-      error(res, helpers, "This server-global route does not accept query parameters");
+    const plugins = hasExactQuery(url, "plugins");
+    if (!hasNoQuery(url) && plugins !== "true") {
+      error(res, helpers, "This server-global route accepts only plugins=true");
       return;
     }
     try {
-      helpers.json(res, await ctx.serverResources.listExtensions());
+      helpers.json(res, await ctx.serverResources.listExtensions({ plugins: plugins === "true" }));
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Extension", "catalog", cause);
     }

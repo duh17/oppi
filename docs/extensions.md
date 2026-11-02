@@ -57,7 +57,7 @@ The server's **Skills** and **Extensions** destinations show and change Pi's use
 
 The catalog has no working directory. It lists Pi-native user candidates from `~/.pi/agent`, `~/.agents/skills`, configured user settings, and configured packages, and it never installs packages. Provenance and enabled state come from Pi. Resource IDs are opaque and path-derived, so a moved resource can get a new ID. Disabled extensions stay visible but are not executed, so a disabled row shows no load error or contributed tools; enabled ones can show Pi loader diagnostics and contributed tools or commands.
 
-The Extensions list also shows the server's [plugins](#plugins), Oppi's built-ins included. A Pi package with a plugin is one row under its classic extension's ID; a plugin without a classic extension has a row of its own. A plugin's row names its tools, hooks, prompt sections, wraps, and tasks, whether it is required, and why it failed to load; when a reload failed and its previous code still runs, the row says so.
+The server's extension list (`oppi extensions list`) also has its [plugins](#plugins), Oppi's built-ins included. A Pi package with a plugin is one row under its classic extension's ID; a plugin without a classic extension has a row of its own, listed only for clients that ask for plugin rows, so an Agent's extension picker never offers one. A plugin's row names its tools, hooks, prompt sections, wraps, and tasks, whether it is required, and why it failed to load; when a reload failed and its previous code still runs, the row says so.
 
 The workspace **Extensions** picker starts from the extensions Pi resolves for the session's folder, also scans global and project `.pi/extensions` so newly copied files appear, and names them as follows:
 

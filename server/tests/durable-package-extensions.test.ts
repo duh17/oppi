@@ -194,13 +194,8 @@ async function fixture(responses: FauxResponseStep[]) {
     const res = makeResponse();
     const req = makeRequest(body);
     if (body !== undefined) req.headers = { "content-type": "application/json" };
-    const handled = await routes({
-      method,
-      path,
-      url: new URL(`http://localhost${path}`),
-      req,
-      res,
-    });
+    const url = new URL(`http://localhost${path}`);
+    const handled = await routes({ method, path: url.pathname, url, req, res });
     expect(handled).toBe(true);
     return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
   };
@@ -213,8 +208,15 @@ async function fixture(responses: FauxResponseStep[]) {
     route,
     harness: async (): Promise<Harness> => (await opening.mock.results.at(-1)!.value).harness,
     /** The server's extension list, as the Extensions page and `oppi extensions list` read it. */
-    async rows(): Promise<ServerExtensionSummary[]> {
-      const listed = await route("GET", "/server/resources/extensions");
+    /**
+     * The server's extension list with plugin-only rows (`?plugins=true`), as the Extensions page
+     * and `oppi extensions list` read it; without them, as a shipped Agent picker reads it.
+     */
+    async rows({ plugins = true } = {}): Promise<ServerExtensionSummary[]> {
+      const listed = await route(
+        "GET",
+        `/server/resources/extensions${plugins ? "?plugins=true" : ""}`,
+      );
       expect(listed.status).toBe(200);
       return listed.body.extensions as ServerExtensionSummary[];
     },
@@ -698,6 +700,33 @@ describe("plugins from Pi packages", () => {
 });
 
 describe("plugins on the extension list", () => {
+  it("lists plugin-only rows only for a client that asks for them", async () => {
+    writePlugin("durable-only");
+    writePackage("both");
+    const f = await fixture(callsTool("unused"));
+    const pluginOnly = (rows: ServerExtensionSummary[]) =>
+      rows.filter((row) => row.kinds.length === 1 && row.kinds[0] === "plugin").map((r) => r.name);
+
+    // A shipped Agent picker sends no query: it gets the classic rows, a Pi package with a plugin
+    // included, and no row it could not select.
+    const classic = await f.rows({ plugins: false });
+    expect(pluginOnly(classic)).toEqual([]);
+    expect(rowNamed(classic, "both").kinds).toEqual(["plugin", "pi-extension"]);
+
+    const all = await f.rows();
+    expect(pluginOnly(all)).toEqual(expect.arrayContaining(["durable-only", "oppi-working-words"]));
+    expect(rowNamed(all, "both").id).toBe(rowNamed(classic, "both").id);
+
+    // A plugin-only row is still reachable by ID without the flag.
+    const durableOnly = rowNamed(all, "durable-only");
+    expect(
+      await f.route("GET", `/server/resources/extensions/${durableOnly.id}`),
+    ).toMatchObject({ status: 200, body: { summary: { name: "durable-only" } } });
+    expect(await f.route("GET", "/server/resources/extensions?plugins=false")).toMatchObject({
+      status: 400,
+    });
+  });
+
   it("lists each plugin once with its kinds, source, and what its extension contributes", async () => {
     writePlugin("durable-only", [
       'import { obj } from "oppi/v1/schema";',

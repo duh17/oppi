@@ -251,7 +251,12 @@ export class ServerResourceService {
     return { skills: entries.map((entry) => copySkillSummary(entry.summary)) };
   }
 
-  async listExtensions(): Promise<{
+  /**
+   * The extension list. A row that is only a plugin is listed only with `plugins`: a client that
+   * predates plugins (an Agent picker) would offer it for an Agent's classic selection, which
+   * cannot select it. Detail and enable by ID reach it either way.
+   */
+  async listExtensions({ plugins: withPluginRows = false } = {}): Promise<{
     extensions: ServerExtensionSummary[];
     builtInTools: ServerToolSummary[];
     optionalTools: ServerToolSummary[];
@@ -261,7 +266,9 @@ export class ServerResourceService {
     const plugins = await this.pluginRows(context);
     const rows = [
       ...entries.map((entry) => withPlugin(entry.summary, plugins.attached.get(entry.summary.id))),
-      ...[...plugins.own].map(([id, plugin]) => pluginRow(id, plugin, this.agentDir)),
+      ...(withPluginRows
+        ? [...plugins.own].map(([id, plugin]) => pluginRow(id, plugin, this.agentDir))
+        : []),
     ].sort(compareSummaries);
     return {
       extensions: rows.map(copyExtensionSummary),

@@ -13,6 +13,8 @@ import {
 import { apiStatus } from "../resources.js";
 
 const EXTENSIONS = "/server/resources/extensions";
+/** The list with the rows that are only a plugin. */
+const ALL_EXTENSIONS = `${EXTENSIONS}?plugins=true`;
 
 function listingLine(extension: ServerExtensionSummary): string {
   const state =
@@ -60,7 +62,7 @@ export async function cmdExtensions(
   const { call, output } = createLocalApiCommandContext(connection, json, signal);
   try {
     if (action === "list" && positional.length === 0) {
-      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(EXTENSIONS);
+      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(ALL_EXTENSIONS);
       output({ extensions }, () => {
         for (const extension of extensions) writeHumanLine(listingLine(extension));
       });
@@ -68,7 +70,7 @@ export async function cmdExtensions(
     }
     const [key] = positional;
     if ((action === "enable" || action === "disable") && key && positional.length === 1) {
-      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(EXTENSIONS);
+      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(ALL_EXTENSIONS);
       const { id } = rowFor(extensions, key);
       const extension = await call<ServerExtensionSummary>(
         `${EXTENSIONS}/${encodeURIComponent(id)}/enabled`,
