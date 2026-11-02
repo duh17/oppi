@@ -5,8 +5,7 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Every `SCREENSHOT_SCREEN` a UI or E2E test launches must resolve to a case of
- * a `switch ScreenshotPreviewConfig.screen` (`ScreenshotPreviewView`'s, or one
- * `DebugHarnessLaunch` routes before it) or a screen that file compares it to.
+ * `DebugHarnessLaunch`'s `switch ScreenshotPreviewConfig.screen`.
  * A deleted or renamed preview otherwise fails only when
  * that test runs on a simulator: the app shows "Unknown screen" and the test
  * times out. Plain source scan, no simulator.
@@ -16,7 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const apple = join(repoRoot, "clients/apple");
-const previewSwitch = join(apple, "OppiDebugHarness/ScreenshotPreviewView.swift");
 const harnessLaunch = join(apple, "OppiDebugHarness/DebugHarnessLaunch.swift");
 const testRoots = ["OppiUITests", "OppiE2ETests"].map((dir) => join(apple, dir));
 
@@ -44,17 +42,12 @@ function switchScreens(file: string): Set<string> {
   return screens;
 }
 
-/** Every screen a launch path resolves to: both switches, and the `==` routes. */
+/** Every screen the launch switch serves. */
 function previewScreens(): Set<string> {
-  const screens = switchScreens(previewSwitch);
+  const screens = switchScreens(harnessLaunch);
   if (screens.size === 0) {
-    console.error(`Screenshot screen guard: no screen switch found in ${relative(repoRoot, previewSwitch)}.`);
+    console.error(`Screenshot screen guard: no screen switch found in ${relative(repoRoot, harnessLaunch)}.`);
     process.exit(1);
-  }
-  // DebugHarnessLaunch picks its UIKit screens before ScreenshotPreviewView.
-  for (const name of switchScreens(harnessLaunch)) screens.add(name);
-  for (const match of readFileSync(harnessLaunch, "utf8").matchAll(/ScreenshotPreviewConfig\.screen == "([^"]+)"/g)) {
-    screens.add(match[1]);
   }
   return screens;
 }
@@ -99,5 +92,5 @@ console.log("Screenshot screen guard: FAIL — tests launch screens no preview c
 for (const { screen, file } of missing) console.log(`- ${file}: SCREENSHOT_SCREEN=${screen}`);
 console.log(`
 A test that launches an unknown screen sees "Unknown screen" and times out.
-Restore the case in ScreenshotPreviewView, or update the test with it.`);
+Restore the case in DebugHarnessLaunch, or update the test with it.`);
 process.exit(1);

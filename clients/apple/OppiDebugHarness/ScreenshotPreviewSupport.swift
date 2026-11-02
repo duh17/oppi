@@ -1,6 +1,5 @@
 #if DEBUG
 import Foundation
-import SwiftUI
 import UIKit
 
 // MARK: - Configuration
@@ -76,72 +75,7 @@ enum ScreenshotVolatileDefaults {
     }
 }
 
-// MARK: - Root Preview View
-
-/// Launches a standalone screen with mock data for screenshot capture in UI tests.
-struct ScreenshotPreviewView: View {
-    var body: some View {
-        switch ScreenshotPreviewConfig.screen {
-        case "chat-routes":
-            ChatRoutesHarnessPreview()
-        case "session-timeline":
-            SessionTimelinePreview()
-        case "chat-top-bar-default":
-            ChatTopBarScreenshotPreview(
-                order: ChatTopBarAction.allCases,
-                shown: ChatTopBarAction.defaultShown
-            )
-        case "chat-top-bar-all":
-            ChatTopBarScreenshotPreview(
-                order: ChatTopBarAction.allCases,
-                shown: Set(ChatTopBarAction.allCases)
-            )
-        case "chat-top-bar-reordered":
-            ChatTopBarScreenshotPreview(
-                order: [.outline, .files, .context, .git, .terminal],
-                shown: Set(ChatTopBarAction.allCases)
-            )
-        default:
-            Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
-        }
-    }
-}
-
-/// `SCREENSHOT_SCREEN=chat-routes`: the production chat over
-/// the `chat-routes` fixtures with Files, Git, Outline, and Context pinned in
-/// the argument domain. These screens are about the panels the bar opens, not
-/// the default bar (`chat-top-bar-default`), and a layout saved on this
-/// simulator cannot change what they show.
-private struct ChatRoutesHarnessPreview: View {
-    init() {
-        let layout = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: [.files, .git, .outline, .context])
-        ScreenshotVolatileDefaults.apply([
-            AppPreferences.ChatTopBar.orderKey: layout.storedOrder,
-            AppPreferences.ChatTopBar.shownKey: layout.storedShown,
-        ])
-    }
-
-    var body: some View { ChatRoutesHarnessView() }
-}
-
-/// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-all`, and `-reordered`: the
-/// chat's bar over the `chat-routes` fixtures with a chosen top bar. The layout goes in the volatile argument domain, so the simulator's
-/// saved settings are untouched and a test's bar does not depend on what an
-/// earlier run left behind.
-private struct ChatTopBarScreenshotPreview: View {
-    init(
-        order: [ChatTopBarAction],
-        shown: Set<ChatTopBarAction>
-    ) {
-        let layout = ChatTopBarLayout(order: order, shown: shown)
-        ScreenshotVolatileDefaults.apply([
-            AppPreferences.ChatTopBar.orderKey: layout.storedOrder,
-            AppPreferences.ChatTopBar.shownKey: layout.storedShown,
-        ])
-    }
-
-    var body: some View { ChatRoutesHarnessView() }
-}
+// MARK: - Previews
 
 /// `SCREENSHOT_SCREEN=settings-chat`: the Chat settings page as the root of a router stack, over fixture services.
 /// The page shares the app's `ThemeStore`. Nothing here calls a server.
@@ -216,99 +150,6 @@ private enum SettingsPageThemes {
         ]
         return (try? JSONSerialization.data(withJSONObject: themes)) ?? Data()
     }
-}
-
-/// A router screen at the root of a `RouterNavigationController`, the way the
-/// router presents a modal with `.inNavigation()`. Previews and harnesses of
-/// screens that rely on UIKit bars host them here; the app root comes from the
-/// window. `content` runs in the screen's own graph: put its fixture
-/// environment on it, not on this view.
-///
-/// The app puts the theme's appearance on its window (`AppRootViewController`),
-/// and system chrome that reads the window rather than the screen, such as the
-/// Duo's vertical rail, follows it there. A harness's window keeps the system
-/// appearance, which drew a light rail beside a dark chat, so this host
-/// asks for the theme's color scheme the same way.
-/// The preview's SwiftUI color scheme for a theme: the theme model is
-/// UIKit-side, so a preview maps it where SwiftUI wants one.
-private func previewColorScheme(_ scheme: ThemeColorScheme) -> ColorScheme {
-    scheme == .light ? .light : .dark
-}
-
-struct RouterPreviewNavigation<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-    @Environment(\.appRootEnvironment) private var root
-
-    var body: some View {
-        RouterPreviewNavigationHost(content: content)
-            .preferredColorScheme(root?.themeStore.preferredColorScheme.map(previewColorScheme))
-    }
-}
-
-/// `RouterPreviewNavigation` for a UIKit screen (the chat). A new `id`
-/// replaces the root screen, the way the shell builds a new screen for
-/// another session.
-struct RouterPreviewControllerNavigation: View {
-    let id: AnyHashable
-    let screen: () -> UIViewController
-    @Environment(\.appRootEnvironment) private var root
-
-    var body: some View {
-        RouterPreviewControllerNavigationHost(id: id, screen: screen)
-            .preferredColorScheme(root?.themeStore.preferredColorScheme.map(previewColorScheme))
-    }
-}
-
-private struct RouterPreviewControllerNavigationHost: UIViewControllerRepresentable {
-    let id: AnyHashable
-    let screen: () -> UIViewController
-    @Environment(\.appRootEnvironment) private var root
-
-    final class Coordinator {
-        var id: AnyHashable?
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIViewController(context: Context) -> RouterNavigationController {
-        guard let root else {
-            preconditionFailure("RouterPreviewControllerNavigation needs appRootEnvironment(_:) above it")
-        }
-        let navigation = RouterNavigationController(rootViewController: screen())
-        navigation.traitOverrides.appRootEnvironment = root
-        let themeStore = root.themeStore
-        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
-        context.coordinator.id = id
-        return navigation
-    }
-
-    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {
-        guard context.coordinator.id != id else { return }
-        context.coordinator.id = id
-        navigation.setViewControllers([screen()], animated: false)
-    }
-}
-
-private struct RouterPreviewNavigationHost<Content: View>: UIViewControllerRepresentable {
-    let content: () -> Content
-    @Environment(\.appRootEnvironment) private var root
-
-    func makeUIViewController(context: Context) -> RouterNavigationController {
-        guard let root else {
-            preconditionFailure("RouterPreviewNavigation needs appRootEnvironment(_:) above it")
-        }
-        let navigation = RouterNavigationController(
-            rootViewController: HarnessSwiftUIHost(content(), root: root, followsTheme: true)
-        )
-        navigation.viewControllers.first?.traitOverrides.appRootEnvironment = root
-        let themeStore = root.themeStore
-        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
-        return navigation
-    }
-
-    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 
 extension AppRootEnvironment {

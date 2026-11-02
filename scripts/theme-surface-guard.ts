@@ -52,7 +52,6 @@ const scanPaths = ["Oppi", "OppiDebugHarness"];
 
 // Preview and harness fixtures freeze system styling on purpose.
 const previewAllowlistGlobs = [
-  "**/ScreenshotPreviewView.swift",
   "**/ExtensionDockStressPreview.swift",
   "**/*Preview.swift",
   "**/*HarnessView.swift",

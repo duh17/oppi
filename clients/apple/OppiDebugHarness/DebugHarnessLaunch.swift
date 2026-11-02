@@ -1,6 +1,5 @@
 #if DEBUG
 import notify
-import SwiftUI
 import UIKit
 
 /// Launch-argument dispatch for the debug harnesses and screenshot previews.
@@ -41,20 +40,11 @@ enum DebugHarnessLaunch {
         )
     }
 
-    /// What the harness window root shows: a harness's own UIKit controller
-    /// when it has one, else the harness's SwiftUI view hosted for it.
+    /// What the harness window root shows: the harness or screenshot preview
+    /// the launch arguments chose, or nil for the app. A screenshot preview
+    /// the build does not serve shows its name, after the UI-hang harness had
+    /// its chance.
     private static func harnessContent(root: AppRootEnvironment) -> UIViewController? {
-        if let controller = uiKitHarness(root: root) {
-            return controller
-        }
-        guard let harness = harnessView else { return nil }
-        return HarnessSwiftUIHost(harness, root: root)
-    }
-
-    /// The harnesses that are their own UIKit screen, so the window hosts a
-    /// controller instead of a SwiftUI representable. Each family that drops
-    /// its wrappers adds its configs here.
-    private static func uiKitHarness(root: AppRootEnvironment) -> UIViewController? {
         if WikiLineAnchorHarnessConfig.isEnabled {
             return WikiLineAnchorHarnessViewController()
         }
@@ -67,61 +57,62 @@ enum DebugHarnessLaunch {
         if CodeBlockWrappingHarnessConfig.isEnabled {
             return HarnessViewHostController(content: CodeBlockWrappingHarnessRootView())
         }
-        // The ask-card and settings previews are UIKit roots too, so the preview
-        // switch (`ScreenshotPreviewView`) no longer carries them.
+        if ScreenshotPreviewConfig.isEnabled, let preview = screenshotPreview(root: root) {
+            return preview
+        }
+        if UIHangHarnessConfig.isEnabled {
+            return UIHangHarnessViewController.screenStack(root: root)
+        }
         if ScreenshotPreviewConfig.isEnabled {
-            if ScreenshotPreviewConfig.screen == "ask-card-intent-regression" {
-                return AskCardIntentRegressionPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "ask-card-tall-scroll" {
-                return AskCardTallScrollPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "settings-sweep" {
-                return SettingsSweepPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "workspace-settings" {
-                return WorkspaceSettingsPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "settings-chat" {
-                return SettingsPagePreviewController(themeStore: root.themeStore)
-            }
-            // The router family: its routes, the modal sites behind it, and the
-            // shell those routes are drawn in.
-            if ScreenshotPreviewConfig.screen == "router-routes" {
-                return RouterRoutesPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "router-modal-sites" {
-                return RouterModalSitesPreviewController()
-            }
-            if ScreenshotPreviewConfig.screen == "workspace-shell" {
-                return WorkspaceShellPreviewController()
-            }
-            // The files, terminal, and audio family: the motion captures, the
-            // terminal's three fixture connections, and the script reader.
-            switch ScreenshotPreviewConfig.screen {
-            case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
-            case "review-file-motion": return FileBrowserMotionPreviewController(review: true)
-            case "ssh-terminal": return SSHTerminalPreviewController()
-            case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
-            case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
-            case "ssh-terminal-rex-list": return SSHTerminalRexListPreviewController()
-            case "audio-script-reader": return AudioScriptReaderPreviewController(themeStore: root.themeStore)
-            default: break
-            }
+            return PreviewHost.unknownScreen("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
         return nil
     }
 
-    /// The SwiftUI harness or screenshot preview chosen by launch arguments, or
-    /// nil for the app.
-    private static var harnessView: AnyView? {
-        if UIHangHarnessConfig.isEnabled {
-            return AnyView(UIHangHarnessView())
+    /// The screenshot preview `SCREENSHOT_SCREEN` names (`--screenshot-preview`),
+    /// or nil for a name this build does not serve.
+    private static func screenshotPreview(root: AppRootEnvironment) -> UIViewController? {
+        switch ScreenshotPreviewConfig.screen {
+        case "ask-card-intent-regression": return AskCardIntentRegressionPreviewController()
+        case "ask-card-tall-scroll": return AskCardTallScrollPreviewController()
+        case "settings-sweep": return SettingsSweepPreviewController()
+        case "workspace-settings": return WorkspaceSettingsPreviewController()
+        case "settings-chat": return SettingsPagePreviewController(themeStore: root.themeStore)
+        // The router family: its routes, the modal sites behind it, and the
+        // shell those routes are drawn in.
+        case "router-routes": return RouterRoutesPreviewController()
+        case "router-modal-sites": return RouterModalSitesPreviewController()
+        case "workspace-shell": return WorkspaceShellPreviewController()
+        // The chat over the chat-routes fixtures. `chat-routes` pins the panel
+        // buttons its tests drive; the top-bar screens pin the bar under test.
+        case "chat-routes":
+            return ChatRoutesPreviewController(root: root, topBar: ChatTopBarLayout(
+                order: ChatTopBarAction.allCases, shown: [.files, .git, .outline, .context]
+            ))
+        case "chat-top-bar-default":
+            return ChatRoutesPreviewController(root: root, topBar: ChatTopBarLayout(
+                order: ChatTopBarAction.allCases, shown: ChatTopBarAction.defaultShown
+            ))
+        case "chat-top-bar-all":
+            return ChatRoutesPreviewController(root: root, topBar: ChatTopBarLayout(
+                order: ChatTopBarAction.allCases, shown: Set(ChatTopBarAction.allCases)
+            ))
+        case "chat-top-bar-reordered":
+            return ChatRoutesPreviewController(root: root, topBar: ChatTopBarLayout(
+                order: [.outline, .files, .context, .git, .terminal], shown: Set(ChatTopBarAction.allCases)
+            ))
+        case "session-timeline": return SessionTimelinePreviewController(root: root)
+        // The files, terminal, and audio family: the motion captures, the
+        // terminal's three fixture connections, and the script reader.
+        case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
+        case "review-file-motion": return FileBrowserMotionPreviewController(review: true)
+        case "ssh-terminal": return SSHTerminalPreviewController()
+        case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
+        case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
+        case "ssh-terminal-rex-list": return SSHTerminalRexListPreviewController()
+        case "audio-script-reader": return AudioScriptReaderPreviewController(themeStore: root.themeStore)
+        default: return nil
         }
-        if ScreenshotPreviewConfig.isEnabled {
-            return AnyView(ScreenshotPreviewView())
-        }
-        return nil
     }
 }
 
@@ -406,93 +397,4 @@ final class HarnessLaunchReset {
     }
 }
 
-// MARK: - The harness's SwiftUI roots
-
-extension ScenePhase {
-    init(_ phase: AppPhase) {
-        switch phase {
-        case .active: self = .active
-        case .inactive: self = .inactive
-        case .background: self = .background
-        }
-    }
-}
-
-extension EnvironmentValues {
-    /// The app root a harness's SwiftUI tree reads: the harness window has no
-    /// app root above it, so nothing inherits one.
-    @Entry var appRootEnvironment: AppRootEnvironment?
-}
-
-extension View {
-    /// The root services, stores, and theme values a harness's SwiftUI tree
-    /// gets: the same set the app root gave a hosted screen before `HostFactory`
-    /// was deleted.
-    ///
-    /// Keep it whole. Observed, mechanism unknown: with only the three values the
-    /// harness's own views name (`\.appRootEnvironment`, `\.theme`, `\.themeID`),
-    /// `UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership` failed 3 of
-    /// 3 runs in a concurrent two-shard iPad lane, each on the settle bound —
-    /// "The expanded row took 4.4s to rest (bound 3.0s): the content moves under
-    /// the finger" — while the whole set passed. Nothing in the harness reads a
-    /// store from the environment, so the cause is not a missing read; it is a
-    /// SwiftUI layout or settle difference we have not isolated.
-    ///
-    /// `\.theme` and `\.themeID` no longer exist on iOS (the theme files are
-    /// UIKit-side and those keys ship in `OppiMac`), so the harness's SwiftUI
-    /// roots read colors as `Color(uiColor: .themeX)` and pass a `ThemeID` down.
-    func harnessEnvironment(_ root: AppRootEnvironment) -> some View {
-        self
-            .environment(root.coordinator)
-            .environment(root.coordinator.activeConnection)
-            .environment(root.coordinator.activeConnection.chatState)
-            .environment(root.coordinator.activeConnection.sessionStore)
-            .environment(root.coordinator.activeConnection.workspaceStore)
-            .environment(root.coordinator.activeConnection.serverResourceStore)
-            .environment(root.coordinator.activeConnection.askRequestStore)
-            .environment(root.coordinator.activeConnection.audioPlayer)
-            .environment(root.coordinator.activeConnection.gitStatusStore)
-            .environment(root.coordinator.activeConnection.fileIndexStore)
-            .environment(root.coordinator.activeConnection.messageQueueStore)
-            .environment(root.navigation)
-            .environment(root.coordinator.serverStore)
-            .environment(root.themeStore)
-            .environment(root.quickCommentTemplateStore)
-            .environment(\.scenePhase, ScenePhase(AppScenePhase.shared.phase))
-            .environment(\.appRootEnvironment, root)
-            .environment(\.openURL, OpenURLAction { url in
-                root.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
-                return .handled
-            })
-            .tint(Color(uiColor: .themeBlue))
-    }
-}
-
-/// A harness's SwiftUI root as UIKit. `followsTheme` is for a screen at a router
-/// stack's root (the UI-hang harness), which the old hosted screen also gave the
-/// theme's color scheme and page; a harness window root gets neither.
-final class HarnessSwiftUIHost: UIHostingController<AnyView> {
-    private let root: AppRootEnvironment
-    private let followsTheme: Bool
-
-    init<Content: View>(_ content: Content, root: AppRootEnvironment, followsTheme: Bool = false) {
-        self.root = root
-        self.followsTheme = followsTheme
-        super.init(rootView: AnyView(content.harnessEnvironment(root)))
-    }
-
-    @available(*, unavailable)
-    required init?(coder aDecoder: NSCoder) {
-        return nil
-    }
-
-    override func updateProperties() {
-        super.updateProperties()
-        guard followsTheme else { return }
-        // Observation tracking re-runs this when the store changes, so a harness
-        // that toggles the theme keeps the system chrome in step.
-        overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
-        view.backgroundColor = root.themeStore.backgroundColor
-    }
-}
 #endif

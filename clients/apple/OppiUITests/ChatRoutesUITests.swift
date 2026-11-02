@@ -1135,9 +1135,13 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(app.navigationBars["Share Session"].waitUntilExists(timeout: 5), "Share sheet did not open")
     }
 
+    /// The chat-routes bar is complete once Outline is on it: Outline shows only
+    /// while the fixture timeline has rows, and it takes a slot before the ring,
+    /// so a tap before it arrives can land on the wrong button.
     private func launch(environment: [String: String] = [:]) {
         launchScreen("chat-routes", environment: environment)
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitUntilExists(timeout: 15), "Chat routes harness did not appear")
+        XCTAssertTrue(app.buttons["chat.toolbar.outline"].waitUntilExists(timeout: 10), "The fixture timeline did not load")
     }
 
     /// A chat preview whose test waits for the panel or bar it drives, so the

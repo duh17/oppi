@@ -1,5 +1,5 @@
 #if DEBUG
-import SwiftUI
+import Observation
 import UIKit
 
 // MARK: - Chat routes harness
@@ -17,81 +17,154 @@ import UIKit
 /// Leading controls open the timeline's commit and file viewers through the
 /// production presenter (a test tap on a timeline pill did not reach the pill
 /// control).
-struct ChatRoutesHarnessView: View {
-    @State private var connection = ChatRoutesFixture.connection
-    @State private var navigation = AppNavigation()
-    @State private var stub = ChatRoutesStubRecord.shared
-    @State private var landing = ""
-    @Environment(\.appRootEnvironment) private var root
+///
+/// `topBar` goes in the argument domain before the chat is built, so the
+/// simulator's saved layout is untouched and a test's bar does not depend on
+/// what an earlier run left behind: `chat-routes` pins Files, Git, Outline, and
+/// Context (its screens are about the panels the bar opens), and the
+/// `chat-top-bar-*` screens pin the bar under test.
+final class ChatRoutesPreviewController: PreviewRootController {
+    private let root: AppRootEnvironment
+    private let connection: ServerConnection
+    private let navigation: AppNavigation
+    /// The chat's own timeline, which the harness keeps seeded (`keepTimelineSeeded`).
+    private let reducer: TimelineReducer
+    private let landingProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.landing")
+    private let createdSessionsProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.createdSessions")
+    private var loops: [Task<Void, Never>] = []
+    /// The reader last pushed for app navigation, so each new one pushes once.
+    private var pushedReader: ChatReaderNavTarget?
 
-    var body: some View {
-        RouterPreviewControllerNavigation(id: ChatRoutesFixture.sessionId) { [connection, navigation] in
-            ChatViewController(
-                sessionId: ChatRoutesFixture.sessionId,
-                connection: connection,
-                navigation: navigation,
-                workspaceIdHint: ChatRoutesFixture.workspace.id
-            )
-        }
-        .ignoresSafeArea()
-        .overlay(alignment: .leading) {
-            VStack(alignment: .leading, spacing: 2) {
-                harnessControl("chatRoutes.openCommitViewer") {
-                    ChatRoutesFixture.openFromTimeline(.commitDetail(sha: ChatRoutesFixture.commitSha), connection: connection)
-                }
-                harnessControl("chatRoutes.openFileViewer") {
-                    ChatRoutesFixture.openFromTimeline(
-                        .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath)),
-                        connection: connection
-                    )
-                }
-            }
-            .padding(.top, 240)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            Text("\(stub.createdSessions)")
-                .font(.system(size: 8))
-                .opacity(0.02)
-                .accessibilityIdentifier("chatRoutes.createdSessions")
-                .accessibilityValue("\(stub.createdSessions)")
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .bottomLeading) {
-            Text(landing)
-                .font(.system(size: 8))
-                .opacity(0.02)
-                .accessibilityIdentifier("chatRoutes.landing")
-                .accessibilityValue(landing)
-                .allowsHitTesting(false)
-        }
-        .onChange(of: openedChatReader) { _, target in
-            // The chat opens its reader through app navigation; the shell that
-            // pushes it is not here, so the harness does.
-            guard let root, let target else { return }
-            ChatRoutesFixture.push(ChatReaderViewController(target: target, root: root))
-        }
-        .task {
-            while !Task.isCancelled {
-                landing = ChatRoutesFixture.landingProbe()
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
-        .task {
-            navigation.launchPhase = .ready
-            navigation.showOnboarding = false
-            // The connect loop has no server to stream from, and it resets the
-            // chat's state; keep the fixture timeline and Share loaded.
-            while !Task.isCancelled {
-                ChatRoutesFixture.seedTimelineIfNeeded()
-                ChatRoutesFixture.enableShare(on: connection)
-                ChatRoutesFixture.seedQueueIfNeeded(on: connection)
-                try? await Task.sleep(for: .milliseconds(200))
+    init(root: AppRootEnvironment, topBar: ChatTopBarLayout) {
+        ScreenshotVolatileDefaults.apply([
+            AppPreferences.ChatTopBar.orderKey: topBar.storedOrder,
+            AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
+        ])
+        let connection = ChatRoutesFixture.connection
+        let navigation = AppNavigation()
+        let chat = ChatViewController(
+            sessionId: ChatRoutesFixture.sessionId,
+            connection: connection,
+            navigation: navigation,
+            workspaceIdHint: ChatRoutesFixture.workspace.id
+        )
+        self.root = root
+        self.connection = connection
+        self.navigation = navigation
+        reducer = chat.reducer
+        super.init(
+            root: root,
+            themeStore: root.themeStore,
+            content: PreviewHost.screenStack(root: root) { chat }
+        )
+        keepTimelineSeeded()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    isolated deinit {
+        for loop in loops { loop.cancel() }
+    }
+
+    /// The fixture rows, and again on the next turn after anything drops them:
+    /// the chat's connect resets its reducer, and the connect never reaches a
+    /// server to load the rows back. Outline is on the bar only while the
+    /// timeline has rows, so a timeline that sat empty for a while (a 200 ms poll
+    /// did this) inserts Outline before the ring and moves Files and Git one slot
+    /// left under a test's tap: a Git tap opened the outline.
+    private func keepTimelineSeeded() {
+        ChatRoutesFixture.seedTimelineIfNeeded(into: reducer)
+        withObservationTracking {
+            _ = reducer.items
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.keepTimelineSeeded() }
             }
         }
     }
-}
 
-extension ChatRoutesHarnessView {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let controls = UIStackView(arrangedSubviews: [
+            control("chatRoutes.openCommitViewer") { [connection] in
+                ChatRoutesFixture.openFromTimeline(.commitDetail(sha: ChatRoutesFixture.commitSha), connection: connection)
+            },
+            control("chatRoutes.openFileViewer") { [connection] in
+                ChatRoutesFixture.openFromTimeline(
+                    .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath)),
+                    connection: connection
+                )
+            },
+        ])
+        controls.axis = .vertical
+        controls.spacing = 2
+        for subview in [controls, landingProbe, createdSessionsProbe] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
+        }
+        let safeArea = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            // Below the middle of the leading edge, clear of the bar and the composer.
+            controls.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
+            controls.topAnchor.constraint(equalTo: safeArea.centerYAnchor, constant: 107),
+            landingProbe.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
+            landingProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
+            createdSessionsProbe.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
+            createdSessionsProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
+        ])
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        guard loops.isEmpty else { return }
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        loops = [
+            Task { @MainActor [weak self] in
+                // Holds the controller only for the write: a reference across the
+                // sleep would keep a reset's previous root alive.
+                while !Task.isCancelled {
+                    guard let probe = self?.landingProbe else { return }
+                    self?.setProbe(probe, ChatRoutesFixture.landingProbe())
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            },
+            // The connect loop has no server to stream from, and it resets the
+            // chat's state; keep Share and the queued report loaded.
+            Task { @MainActor [connection] in
+                while !Task.isCancelled {
+                    ChatRoutesFixture.enableShare(on: connection)
+                    ChatRoutesFixture.seedQueueIfNeeded(on: connection)
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            },
+        ]
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        for loop in loops { loop.cancel() }
+        loops = []
+    }
+
+    /// Observation re-runs this when the stub records a session or the chat
+    /// asks app navigation for a reader.
+    override func updateProperties() {
+        super.updateProperties()
+        setProbe(createdSessionsProbe, "\(ChatRoutesStubRecord.shared.createdSessions)")
+        let target = openedChatReader
+        guard target != pushedReader else { return }
+        pushedReader = target
+        // The chat opens its reader through app navigation; the shell that
+        // pushes it is not here, so the harness does, after this update pass.
+        guard let target else { return }
+        let root = root
+        DispatchQueue.main.async {
+            ChatRoutesFixture.push(ChatReaderViewController(target: target, root: root))
+        }
+    }
+
     /// The reader the chat last asked app navigation to open.
     private var openedChatReader: ChatReaderNavTarget? {
         switch navigation.workspaceNavigationPresentation {
@@ -103,40 +176,36 @@ extension ChatRoutesHarnessView {
             return target
         }
     }
-}
 
-private func harnessControl(_ identifier: String, action: @escaping @MainActor () -> Void) -> some View {
-    HarnessControl(identifier: identifier, action: action)
-        .frame(width: 12, height: 12)
-}
-
-/// A UIKit button: on iPhone and iPad, test taps on a SwiftUI button in this
-/// overlay, above the chat's UIKit navigation controller, never reached it.
-private struct HarnessControl: UIViewRepresentable {
-    let identifier: String
-    let action: @MainActor () -> Void
-
-    final class Coordinator {
-        var action: @MainActor () -> Void
-        init(action: @escaping @MainActor () -> Void) { self.action = action }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(action: action)
-    }
-
-    func makeUIView(context: Context) -> UIButton {
+    /// A 12-point control a test taps by identifier.
+    private func control(_ identifier: String, action: @escaping @MainActor () -> Void) -> UIButton {
         let button = UIButton(type: .custom)
         button.backgroundColor = UIColor.black.withAlphaComponent(0.01)
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = identifier
-        let coordinator = context.coordinator
-        button.addAction(UIAction { _ in coordinator.action() }, for: .primaryActionTriggered)
+        button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 12),
+            button.heightAnchor.constraint(equalToConstant: 12),
+        ])
         return button
     }
 
-    func updateUIView(_ button: UIButton, context: Context) {
-        context.coordinator.action = action
+    /// A near-invisible text a test reads by identifier; it takes no touches.
+    private static func probeLabel(_ identifier: String) -> UILabel {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 8)
+        label.alpha = 0.02
+        label.isUserInteractionEnabled = false
+        label.isAccessibilityElement = true
+        label.accessibilityIdentifier = identifier
+        return label
+    }
+
+    private func setProbe(_ label: UILabel?, _ value: String) {
+        guard let label, label.text != value else { return }
+        label.text = value
+        label.accessibilityValue = value
     }
 }
 
@@ -398,10 +467,9 @@ enum ChatRoutesFixture {
     )
 
     /// A user message with a commit pill and a file pill, then filler turns so
-    /// the outline has entries.
-    @MainActor static func seedTimelineIfNeeded() {
-        guard let reducer = timelineReducer(),
-              !reducer.items.contains(where: { $0.id == seedMarkerId }) else { return }
+    /// the outline has entries, into the chat's own reducer.
+    @MainActor static func seedTimelineIfNeeded(into reducer: TimelineReducer) {
+        guard !reducer.items.contains(where: { $0.id == seedMarkerId }) else { return }
         let userText = UserMessageAttachmentPresentation.makeDisplayText(
             text: "Review the routes",
             pendingAttachments: [],
@@ -553,13 +621,6 @@ enum ChatRoutesFixture {
             }
         }
         return nil
-    }
-
-    @MainActor private static func timelineReducer() -> TimelineReducer? {
-        guard let controller = timelineCollectionInWindows()?.delegate as? ChatTimelineController,
-              let configuration = controller.ownedClock.lastConfiguration,
-              configuration.sessionId == sessionId else { return nil }
-        return configuration.reducer
     }
 
     @MainActor private static func timelineCollection(in view: UIView) -> UICollectionView? {

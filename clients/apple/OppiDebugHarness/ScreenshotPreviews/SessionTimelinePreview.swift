@@ -1,12 +1,80 @@
 #if DEBUG
-import SwiftUI
+import UIKit
 
 // MARK: - Session Timeline Preview
 
-struct SessionTimelinePreview: View {
-    @State private var inspectionFixture = ToolInspectionPreviewFixture.makeReducer()
-    @State private var lastTreeNavigationCapture = "none"
-    @Environment(\.appRootEnvironment) private var appRoot
+/// `SCREENSHOT_SCREEN=session-timeline`: the Session Outline at the root of a
+/// router stack, as chat presents it, over the tool-inspection fixture and a
+/// six-entry tree. Tree navigation never reaches a server: the request is
+/// captured into the "Last tree navigate" label above the stack
+/// (`session-timeline.last-navigation`), then refused.
+final class SessionTimelinePreviewController: PreviewRootController {
+    private let captureLabel: InsetLabel
+
+    init(root: AppRootEnvironment) {
+        let fixture = ToolInspectionPreviewFixture.makeReducer()
+        let captureLabel = InsetLabel(insets: UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10), capsule: false)
+        self.captureLabel = captureLabel
+        super.init(
+            root: root,
+            themeStore: root.themeStore,
+            content: PreviewHost.screenStack(root: root) {
+                SessionOutlineViewController(
+                    items: fixture.items,
+                    toolArgsStore: fixture.toolArgsStore,
+                    toolDetails: { fixture.toolDetailsStore.details(for: $0) },
+                    onSelect: { _ in },
+                    onFork: { _ in },
+                    onNavigateTreeNode: { request in
+                        let summary = Self.summary(of: request)
+                        await MainActor.run { Self.show(summary, in: captureLabel) }
+                        throw PreviewNavigationCaptureError(message: "Captured \(summary)")
+                    },
+                    initialTreeSnapshot: Self.previewTreeSnapshot,
+                    onClose: {}
+                )
+            }
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        captureLabel.font = UIFontMetrics(forTextStyle: .caption2).scaledFont(
+            for: .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular)
+        )
+        captureLabel.textColor = .themeComment
+        captureLabel.backgroundColor = UIColor.themeBgDark.withAlphaComponent(0.9)
+        captureLabel.layer.cornerRadius = 8
+        captureLabel.layer.cornerCurve = .continuous
+        captureLabel.accessibilityIdentifier = "session-timeline.last-navigation"
+        Self.show("none", in: captureLabel)
+        captureLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(captureLabel)
+        NSLayoutConstraint.activate([
+            captureLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 10),
+            captureLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            captureLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -10),
+        ])
+    }
+
+    private static func show(_ capture: String, in label: UILabel) {
+        label.text = "Last tree navigate: \(capture)"
+    }
+
+    private static func summary(of request: SessionTreeNavigationRequest) -> String {
+        let mode: String
+        if !request.summarize {
+            mode = "none"
+        } else if request.customInstructions?.isEmpty == false {
+            mode = "custom"
+        } else {
+            mode = "default"
+        }
+        return "mode=\(mode) instructions=\(request.customInstructions ?? "-")"
+    }
 
     private struct PreviewNavigationCaptureError: LocalizedError {
         let message: String
@@ -85,73 +153,5 @@ struct SessionTimelinePreview: View {
             ),
         ]
     )
-
-    /// The outline at the root of a router navigation controller, as chat
-    /// presents it; the capture overlay stays in this view's graph.
-    var body: some View {
-        Group {
-            if let appRoot {
-                SessionOutlinePreviewStack(root: appRoot, makeOutline: makeOutline)
-                    .ignoresSafeArea()
-            }
-        }
-        .overlay(alignment: .bottomLeading) {
-            Text("Last tree navigate: \(lastTreeNavigationCapture)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(Color(uiColor: .themeComment))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(uiColor: .themeBgDark).opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(10)
-                .accessibilityIdentifier("session-timeline.last-navigation")
-        }
-    }
-
-    private func makeOutline() -> SessionOutlineViewController {
-        let capture = $lastTreeNavigationCapture
-        let fixture = inspectionFixture
-        return SessionOutlineViewController(
-            items: fixture.items,
-            toolArgsStore: fixture.toolArgsStore,
-            toolDetails: { fixture.toolDetailsStore.details(for: $0) },
-            onSelect: { _ in },
-            onFork: { _ in },
-            onNavigateTreeNode: { request in
-                let mode: String
-                if !request.summarize {
-                    mode = "none"
-                } else if request.customInstructions?.isEmpty == false {
-                    mode = "custom"
-                } else {
-                    mode = "default"
-                }
-
-                let instructions = request.customInstructions ?? "-"
-                let summary = "mode=\(mode) instructions=\(instructions)"
-                await MainActor.run {
-                    capture.wrappedValue = summary
-                }
-                throw PreviewNavigationCaptureError(message: "Captured \(summary)")
-            },
-            initialTreeSnapshot: Self.previewTreeSnapshot,
-            onClose: {}
-        )
-    }
-}
-
-/// The outline in a router navigation controller, as chat presents it.
-private struct SessionOutlinePreviewStack: UIViewControllerRepresentable {
-    let root: AppRootEnvironment
-    let makeOutline: () -> SessionOutlineViewController
-
-    func makeUIViewController(context: Context) -> RouterNavigationController {
-        let navigation = RouterNavigationController(rootViewController: makeOutline())
-        let themeStore = root.themeStore
-        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
-        navigation.view.accessibilityIdentifier = "screenshot.ready"
-        return navigation
-    }
-
-    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 #endif
