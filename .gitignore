@@ -34,6 +34,7 @@ scripts/*
 !scripts/screenshot-screen-guard.ts
 !scripts/ax-id-guard.ts
 !scripts/ax-id-baseline.json
+!scripts/file-line-budget-baseline.json
 !scripts/pre-push-plan.ts
 !scripts/pre-push-plan.test.ts
 !scripts/heavy.sh

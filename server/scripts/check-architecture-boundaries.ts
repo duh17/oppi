@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  findFileLineBudgetViolations,
   findIosLayerViolations,
   findMacLayerViolations,
   findRelayLayerViolations,
@@ -139,12 +140,19 @@ function run(options) {
   const repoRoot = path.resolve(scriptDir, "../..");
 
   const checks = [];
+  const notices = [];
   if (options.scope === "all" || options.scope === "server") {
     checks.push(...findServerLayerViolations(repoRoot));
+    const budget = findFileLineBudgetViolations(repoRoot, "server");
+    checks.push(...budget.violations);
+    notices.push(...budget.notices);
   }
 
   if (options.scope === "all" || options.scope === "ios") {
     checks.push(...findIosLayerViolations(repoRoot));
+    const budget = findFileLineBudgetViolations(repoRoot, "ios");
+    checks.push(...budget.violations);
+    notices.push(...budget.notices);
   }
 
   if (options.scope === "all" || options.scope === "mac") {
@@ -180,6 +188,11 @@ function run(options) {
 
       return a.rule.localeCompare(b.rule);
     });
+
+  // Budget hints and the test/harness sizes the line budget reports instead of enforcing.
+  for (const notice of notices) {
+    console.log(`note: ${notice}`);
+  }
 
   if (violations.length === 0) {
     if (options.scope === "all" || options.scope === "ios") {

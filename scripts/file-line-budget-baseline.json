@@ -1,0 +1,229 @@
+{
+  "files": {
+    "clients/apple/Oppi/App/AppNavigation.swift": {
+      "budget": 1700,
+      "owner": "QS1 quick-session handoff",
+      "reason": "Scoped locks and the quick-session handoff sit beside navigation state; the handoff moves out later."
+    },
+    "clients/apple/Oppi/Core/Networking/APIClient.swift": {
+      "budget": 3200,
+      "owner": "API1-API3 transport and endpoint split",
+      "reason": "Endpoint families and transport mechanics in one actor; the transport split follows the route contract."
+    },
+    "clients/apple/Oppi/Core/Networking/ServerConnection.swift": {
+      "budget": 3300,
+      "owner": "SC1-SC3 ServerConnection state owners",
+      "reason": "Facade plus eight extension files that share its state; the owners are still landing."
+    },
+    "clients/apple/Oppi/Core/Services/AudioPlayerService.swift": {
+      "budget": 1900,
+      "owner": "voice plan (2026-10-26)",
+      "reason": "The voice consolidation plan owns playback."
+    },
+    "clients/apple/Oppi/Core/Services/ConnectionCoordinator.swift": {
+      "budget": 1700,
+      "owner": "SC2 route controller",
+      "reason": "Route selection is split with ServerConnection; LAN ranking moves to the route controller."
+    },
+    "clients/apple/Oppi/Core/Services/VoiceInputManager.swift": {
+      "budget": 2400,
+      "owner": "voice plan (2026-10-26)",
+      "reason": "The voice consolidation plan owns this file and its lifecycle."
+    },
+    "clients/apple/Oppi/Core/Views/AuthenticatedMediaPlayback.swift": {
+      "budget": 2400,
+      "owner": "media (M1)",
+      "reason": "Loader, player, and probes in one grab-bag; a move-only split, not urgent."
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeBodies.swift": {
+      "budget": 6400,
+      "owner": "document reader plan",
+      "reason": "One collection of full-screen reader bodies; the document-reader plan owns the split."
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
+      "budget": 1700,
+      "owner": "document reader plan",
+      "reason": "Reader support utilities; the document-reader plan owns the split."
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
+      "budget": 3000,
+      "owner": "document reader plan",
+      "reason": "Reader presentation, find, and selection in one controller; the document-reader plan owns the split."
+    },
+    "clients/apple/Oppi/Core/Views/InlineMediaPlayback.swift": {
+      "budget": 1700,
+      "owner": "media (M1)",
+      "reason": "Grab-bag of image, raster, preview, and player helpers; a move-only split."
+    },
+    "clients/apple/Oppi/Core/Views/MarkdownText.swift": {
+      "budget": 2800,
+      "owner": "client markdown (M2)",
+      "reason": "Segment cache, file URL identities, and the flat renderer; the URL identities move out first."
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
+      "budget": 1600,
+      "owner": "extension UI",
+      "reason": "One view per block kind, generic by protocol metadata; low churn, keep one file."
+    },
+    "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
+      "budget": 2000,
+      "owner": "WB1 commit graph",
+      "reason": "The commit graph is a whole feature inside the bar and moves out later."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownBlockViews.swift": {
+      "budget": 2100,
+      "owner": "client markdown",
+      "reason": "Two independent block views in one file; a move-only split, not urgent."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownSegmentApplier.swift": {
+      "budget": 1700,
+      "owner": "client markdown",
+      "reason": "Settle motion and the segment applier; low churn, keep one file."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownImageView.swift": {
+      "budget": 1800,
+      "owner": "client markdown",
+      "reason": "Image view plus remote image policy; a move-only split, not urgent."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView.swift": {
+      "budget": 3000,
+      "owner": "CT1-CT2 chat timeline split",
+      "reason": "Controller, diffing, and a 530-line apply(); the decision type and the scroll owner come out first."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift": {
+      "budget": 1700,
+      "owner": "TR2 timeline media access",
+      "reason": "Row config, chrome, and the image strip; the fetcher closures move out with TR2."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/NativeExpandedToolViews.swift": {
+      "budget": 1600,
+      "owner": "TR2 timeline media access",
+      "reason": "Per-kind expanded tool views plus caches and a parser; the fetcher closures move out with TR2."
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift": {
+      "budget": 2600,
+      "owner": "TR1-TR2 tool row owners",
+      "reason": "Row chrome, viewport math, and expanded render dispatch; the expanded controller comes out first."
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FileBrowserViewController.swift": {
+      "budget": 2200,
+      "owner": "file browser / list kit",
+      "reason": "List, search, and navigation state in one collection view; list-kit migration may take it."
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FileViewerViewController.swift": {
+      "budget": 1600,
+      "owner": "document reader plan",
+      "reason": "Viewer presentation; the document-reader plan owns the split."
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/RexClient.swift": {
+      "budget": 1800,
+      "owner": "SSH4 Rex lane set",
+      "reason": "Control, transports, and the session connection; the lane policy becomes a value type after the campaigns."
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalEngine.swift": {
+      "budget": 1900,
+      "owner": "SSH5 terminal engine",
+      "reason": "Cells, engine, input helpers, and snapshot feed; the input and snapshot move comes after the campaigns."
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalMetalRenderer.swift": {
+      "budget": 1800,
+      "owner": "terminal renderer",
+      "reason": "Cohesive render stack: pipeline, glyph atlas, kitty cache, renderer."
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSurface.swift": {
+      "budget": 2200,
+      "owner": "SSH3 terminal grid input owners",
+      "reason": "UITextInput has to stay on the first responder view, so owners hang off it; the terminal campaigns land first."
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": {
+      "budget": 2500,
+      "owner": "SSH2 terminal VC owners",
+      "reason": "Bar, notices, composer, and open routing in one controller; the terminal campaigns land first."
+    },
+    "clients/apple/OppiCore/Editing/VimEngine.swift": {
+      "budget": 1800,
+      "owner": "editor",
+      "reason": "One interpreter: parse, execute, motions; splitting scatters shared state."
+    },
+    "clients/apple/OppiCore/Formatting/MarkdownWikiLink.swift": {
+      "budget": 1600,
+      "owner": "client markdown",
+      "reason": "Source anchors and resource references; low churn, keep one file."
+    },
+    "clients/apple/OppiCore/Runtime/ChatSessionManager.swift": {
+      "budget": 3000,
+      "owner": "RT2 session history and conversation streams",
+      "reason": "Lifecycle, timeline routing, and history paging share 31 test hooks; the split is last on the plan."
+    },
+    "clients/apple/OppiCore/Runtime/TimelineReducer.swift": {
+      "budget": 3400,
+      "owner": "RT1 TimelineReducer owners",
+      "reason": "Replay, the conversation replica, and trace application share one item store; the split is last on the plan."
+    },
+    "clients/apple/Shared/Renderers/Mermaid/MermaidFlowchartRenderer.swift": {
+      "budget": 4200,
+      "owner": "client renderers",
+      "reason": "One layout-and-render algorithm; splitting scatters passes that read the same intermediate state."
+    },
+    "clients/apple/Shared/Renderers/Mermaid/MermaidParser.swift": {
+      "budget": 1900,
+      "owner": "client renderers",
+      "reason": "One parser; the plan keeps it whole."
+    },
+    "clients/apple/Shared/Renderers/Mermaid/MermaidSequenceRenderer.swift": {
+      "budget": 2400,
+      "owner": "client renderers",
+      "reason": "One renderer; the plan keeps it whole."
+    },
+    "server/src/cli/help.ts": {
+      "budget": 2500,
+      "owner": "server CLI",
+      "reason": "The help table is also the flag allow-list, so one file stays the source of truth; the plan keeps it whole."
+    },
+    "server/src/durable-harness.ts": {
+      "budget": 2300,
+      "owner": "SV2 durable session host and extension registry",
+      "reason": "Two classes in one file; the session host and the extension registry come out with SV2."
+    },
+    "server/src/pi-tui-mirror-runtime.ts": {
+      "budget": 2200,
+      "owner": "server runtime",
+      "reason": "Bridge protocol and runtime in one module; low churn, keep for now."
+    },
+    "server/src/sdk-backend.ts": {
+      "budget": 2800,
+      "owner": "SV3 SDK backend modules",
+      "reason": "Context collectors, resource policy, and a 640-line create(); the modules come out with SV3a and SV3b."
+    },
+    "server/src/search-index.ts": {
+      "budget": 2600,
+      "owner": "SI1 search index schema",
+      "reason": "One class holding schema, indexing, and durable sync; a move-only split later."
+    },
+    "server/src/server.ts": {
+      "budget": 2100,
+      "owner": "SV1 server composition root",
+      "reason": "The composition root stays; the WS registry, HTTP gate, upload GC, and Bonjour come out with SV1."
+    },
+    "server/src/session-protocol.ts": {
+      "budget": 1700,
+      "owner": "SP1 session protocol modules",
+      "reason": "Four topics and a 590-line translatePiEvent; a move-only split later."
+    },
+    "server/src/storage/config-store.ts": {
+      "budget": 1600,
+      "owner": "CF1 config schema validation",
+      "reason": "Hand-written normalizeConfig with 77 error pushes; needs its own scout."
+    },
+    "server/src/telemetry/catalog.ts": {
+      "budget": 1800,
+      "owner": "server telemetry",
+      "reason": "Declared-once event catalog that generates the Swift twin; keep one file."
+    },
+    "server/src/trace.ts": {
+      "budget": 1600,
+      "owner": "server trace",
+      "reason": "One cohesive trace projection; low churn, keep one file."
+    }
+  }
+}

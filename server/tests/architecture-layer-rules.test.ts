@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  findFileLineBudgetViolations,
   findIosLayerViolations,
   findMacLayerViolations,
   findServerLayerViolations,
@@ -14,6 +15,21 @@ import {
 function write(path: string, content: string): void {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, content);
+}
+
+// A file of exactly `count` lines, trailing newline included.
+function sourceLines(count: number): string {
+  return "let value = 0\n".repeat(count);
+}
+
+function writeLineBudgetBaseline(
+  repoRoot: string,
+  files: Record<string, { budget: number; reason: string; owner: string }>,
+): void {
+  write(
+    join(repoRoot, "scripts/file-line-budget-baseline.json"),
+    JSON.stringify({ files }, null, 2),
+  );
 }
 
 describe("architecture layer rule helpers", () => {
@@ -1074,6 +1090,105 @@ describe("Mac architecture layer rules", () => {
         "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift",
         "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
       ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a new production source file over the line budget", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-new-"));
+    const swift = "clients/apple/Oppi/Features/Chat/Timeline/NewOwnerView.swift";
+    const server = "server/src/new-owner.ts";
+    try {
+      write(join(repoRoot, swift), sourceLines(1501));
+      write(join(repoRoot, server), sourceLines(1501));
+      const ios = findFileLineBudgetViolations(repoRoot, "ios");
+      expect(ios.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
+        [swift, 1501, "file-line-budget"],
+      ]);
+      const serverViolations = findFileLineBudgetViolations(repoRoot, "server");
+      expect(serverViolations.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
+        [server, 1501, "file-line-budget"],
+      ]);
+
+      // Exactly at the limit is allowed, and a generated file is exempt.
+      write(join(repoRoot, swift), sourceLines(1500));
+      write(join(repoRoot, server), sourceLines(1500));
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Telemetry/TelemetryCatalog.generated.swift"),
+        sourceLines(2000),
+      );
+      expect(findFileLineBudgetViolations(repoRoot, "ios").violations).toEqual([]);
+      expect(findFileLineBudgetViolations(repoRoot, "server").violations).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a frozen file that grows past its budget", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-frozen-"));
+    const frozen = "server/src/durable-harness.ts";
+    try {
+      writeLineBudgetBaseline(repoRoot, {
+        [frozen]: { budget: 1600, reason: "SV2 moves the session host out.", owner: "SV2" },
+      });
+      write(join(repoRoot, frozen), sourceLines(1601));
+      const grown = findFileLineBudgetViolations(repoRoot, "server");
+      expect(grown.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
+        [frozen, 1601, "file-line-budget"],
+      ]);
+      expect(grown.violations[0].reason).toContain("1601 lines; its frozen budget is 1600");
+
+      write(join(repoRoot, frozen), sourceLines(1600));
+      expect(findFileLineBudgetViolations(repoRoot, "server").violations).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("passes a file under its frozen budget and asks for a lower one", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-shrink-"));
+    const shrinking = "clients/apple/Oppi/Core/Networking/ConnectionCoordinator.swift";
+    try {
+      writeLineBudgetBaseline(repoRoot, {
+        [shrinking]: { budget: 1700, reason: "SC2 moves LAN ranking out.", owner: "SC2" },
+      });
+      write(join(repoRoot, shrinking), sourceLines(1550));
+      const shrunk = findFileLineBudgetViolations(repoRoot, "ios");
+      expect(shrunk.violations).toEqual([]);
+      expect(shrunk.notices).toContain(
+        `${shrinking} is 1550 lines, 150 under its 1700 budget: lower the budget to 1600.`,
+      );
+
+      // A split that lands under the limit drops the entry instead of freezing a new number.
+      write(join(repoRoot, shrinking), sourceLines(1400));
+      expect(findFileLineBudgetViolations(repoRoot, "ios").notices).toContain(
+        `${shrinking} is 1400 lines, under the 1500-line limit: drop its entry from scripts/file-line-budget-baseline.json.`,
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports test and debug-harness size without enforcing it", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-reported-"));
+    const testFile = "clients/apple/OppiTests/Timeline/HugeTests.swift";
+    const harnessFile = "clients/apple/OppiDebugHarness/HugeHarness.swift";
+    try {
+      write(join(repoRoot, testFile), sourceLines(4000));
+      write(join(repoRoot, harnessFile), sourceLines(2000));
+      write(join(repoRoot, "server/tests/huge.test.ts"), sourceLines(3000));
+      const ios = findFileLineBudgetViolations(repoRoot, "ios");
+      expect(ios.violations).toEqual([]);
+      expect(ios.notices).toContain(
+        "file line budget (ios): tests and the debug harness are reported, not enforced; 2 over 1500 lines, 6000 lines together, largest " +
+          `${testFile} at 4000.`,
+      );
+      const server = findFileLineBudgetViolations(repoRoot, "server");
+      expect(server.violations).toEqual([]);
+      expect(server.notices).toContain(
+        "file line budget (server): tests and the debug harness are reported, not enforced; 1 over 1500 lines, 3000 lines together, largest server/tests/huge.test.ts at 3000.",
+      );
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

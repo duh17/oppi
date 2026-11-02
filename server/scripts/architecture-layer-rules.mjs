@@ -138,6 +138,36 @@ const IOS_CYCLOMATIC_DISABLE_BUDGETS = [
   { file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift", max: 0 },
 ];
 
+// Per-file line budget, a ratchet that only goes down. A new production source file over
+// FILE_LINE_BUDGET_LIMIT fails. A file that was already bigger is frozen at its size rounded up to
+// the next FILE_LINE_BUDGET_ROUNDING in FILE_LINE_BUDGET_BASELINE, with a reason and an owner, and
+// fails only once it grows past that; when a file drops FILE_LINE_BUDGET_ROUNDING lines under its
+// budget the guard asks for the lower number. Tests and the debug harness are measured and
+// reported, never enforced: they follow their production owner, so their size is not a rule.
+const FILE_LINE_BUDGET_RULE = "file-line-budget";
+const FILE_LINE_BUDGET_LIMIT = 1500;
+const FILE_LINE_BUDGET_ROUNDING = 100;
+const FILE_LINE_BUDGET_BASELINE = "scripts/file-line-budget-baseline.json";
+const FILE_LINE_BUDGET_GENERATED_FILE = /\.generated\.(?:swift|ts)$/;
+const FILE_LINE_BUDGET_SOURCES = {
+  ios: {
+    extension: ".swift",
+    production: ["clients/apple/Oppi/", "clients/apple/OppiCore/", "clients/apple/Shared/"],
+    reported: [
+      "clients/apple/OppiTests/",
+      "clients/apple/OppiUITests/",
+      "clients/apple/OppiE2ETests/",
+      "clients/apple/OppiPerfTests/",
+      IOS_DEBUG_HARNESS_ROOT,
+    ],
+  },
+  server: {
+    extension: ".ts",
+    production: ["server/src/"],
+    reported: ["server/tests/"],
+  },
+};
+
 // Apple's SpeechAnalyzer takes its contextual-strings hint before analysis starts: setContext
 // must come before start(inputSequence:) in the on-device session's start().
 const IOS_SPEECH_CONTEXT_ORDER = {
@@ -436,6 +466,219 @@ function makeServerViolation({ rule, importer, target, line, column, reason, rem
     remediation,
     guide: SERVER_ARCHITECTURE_GUIDE,
   };
+}
+
+function countSourceLines(absolutePath) {
+  const source = readFileSync(absolutePath, "utf8");
+  if (source.length === 0) {
+    return 0;
+  }
+
+  const lines = source.split("\n");
+  // A trailing newline ends the last line; it does not start another one.
+  return lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+}
+
+function roundUpFileLineBudget(lines) {
+  return Math.ceil(lines / FILE_LINE_BUDGET_ROUNDING) * FILE_LINE_BUDGET_ROUNDING;
+}
+
+/**
+ * The frozen per-file budgets, keyed by repo-relative path. A malformed or missing baseline is a
+ * guard error: the ratchet is the point, so it fails loudly instead of enforcing the default limit
+ * on files that are legitimately bigger today.
+ */
+function readFileLineBudgetBaseline(repoRoot) {
+  const absolutePath = path.join(repoRoot, FILE_LINE_BUDGET_BASELINE);
+  if (!existsSync(absolutePath)) {
+    return {};
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(absolutePath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `${FILE_LINE_BUDGET_BASELINE} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const files = parsed?.files;
+  if (!files || typeof files !== "object" || Array.isArray(files)) {
+    throw new Error(`${FILE_LINE_BUDGET_BASELINE} must hold a "files" object of budgets.`);
+  }
+
+  return files;
+}
+
+/**
+ * Per-file line budget violations and notices for one scope. `violations` fail the check;
+ * `notices` are printed: a budget that can go down, plus the test and harness sizes that the rule
+ * measures but does not enforce. Both come from the same scan, so they share one file list.
+ */
+export function findFileLineBudgetViolations(repoRoot, scope) {
+  const sources = FILE_LINE_BUDGET_SOURCES[scope];
+  if (!sources) {
+    throw new Error(`findFileLineBudgetViolations does not run for scope: ${scope}`);
+  }
+
+  const baseline = readFileLineBudgetBaseline(repoRoot);
+  const violations = [];
+  const notices = [];
+
+  const push = ({ file, line, reason, remediation }) => {
+    violations.push(
+      scope === "server"
+        ? makeServerViolation({
+            rule: FILE_LINE_BUDGET_RULE,
+            importer: file,
+            target: undefined,
+            line,
+            column: 1,
+            reason,
+            remediation,
+          })
+        : makeIosViolation({
+            rule: FILE_LINE_BUDGET_RULE,
+            file,
+            line,
+            column: 1,
+            reason,
+            remediation,
+          }),
+    );
+  };
+
+  const listFiles = (roots) =>
+    roots
+      .flatMap((root) => listFilesRecursively(path.join(repoRoot, root), sources.extension))
+      .map((absolutePath) => normalizeRepoPath(path.relative(repoRoot, absolutePath)))
+      .filter((file) => !FILE_LINE_BUDGET_GENERATED_FILE.test(file))
+      .sort();
+
+  const productionFiles = new Map();
+  const reportedFiles = [];
+  for (const file of listFiles(sources.production)) {
+    // server/src may not hold tests; the server-test-placement rule reports them, and their size
+    // is reported here rather than enforced.
+    if (scope === "server" && file.endsWith(".test.ts")) {
+      reportedFiles.push(file);
+      continue;
+    }
+    productionFiles.set(file, countSourceLines(path.join(repoRoot, file)));
+  }
+  reportedFiles.push(...listFiles(sources.reported));
+
+  const allProductionRoots = [
+    ...FILE_LINE_BUDGET_SOURCES.ios.production,
+    ...FILE_LINE_BUDGET_SOURCES.server.production,
+  ];
+  const budgetedFiles = new Set();
+
+  for (const file of Object.keys(baseline).sort()) {
+    if (!allProductionRoots.some((root) => file.startsWith(root))) {
+      push({
+        file,
+        line: 1,
+        reason:
+          "A budget entry must name a production source file; tests and the debug harness are reported, not enforced.",
+        remediation: `Remove the entry from ${FILE_LINE_BUDGET_BASELINE}, or move the budget onto the production files it actually covers.`,
+      });
+      continue;
+    }
+
+    if (!sources.production.some((root) => file.startsWith(root))) {
+      // Another scope's frozen file; that scope checks it.
+      continue;
+    }
+
+    const entry = baseline[file];
+    const budget = entry?.budget;
+    const metadata =
+      typeof entry?.reason === "string" &&
+      entry.reason.trim() !== "" &&
+      typeof entry?.owner === "string" &&
+      entry.owner.trim() !== "";
+
+    if (
+      !metadata ||
+      !Number.isInteger(budget) ||
+      budget % FILE_LINE_BUDGET_ROUNDING !== 0 ||
+      budget <= FILE_LINE_BUDGET_LIMIT
+    ) {
+      push({
+        file,
+        line: 1,
+        reason: `A frozen budget is the file's size rounded up to the next ${FILE_LINE_BUDGET_ROUNDING} above ${FILE_LINE_BUDGET_LIMIT}, with a reason and an owner.`,
+        remediation: `Rewrite the entry in ${FILE_LINE_BUDGET_BASELINE}: {"budget": <integer in steps of ${FILE_LINE_BUDGET_ROUNDING} above ${FILE_LINE_BUDGET_LIMIT}>, "reason": "...", "owner": "..."}.`,
+      });
+      continue;
+    }
+
+    budgetedFiles.add(file);
+    const lines = productionFiles.get(file);
+
+    if (lines === undefined) {
+      push({
+        file,
+        line: 1,
+        reason: "A frozen file budget is listed here but the file is gone.",
+        remediation: `Remove the entry from ${FILE_LINE_BUDGET_BASELINE} when the split or rename lands in the same commit.`,
+      });
+      continue;
+    }
+
+    if (lines > budget) {
+      push({
+        file,
+        line: budget + 1,
+        reason: `${file} has ${lines} lines; its frozen budget is ${budget}.`,
+        remediation:
+          "Split the file, or raise the budget deliberately in " +
+          `${FILE_LINE_BUDGET_BASELINE} with a reason. The budget only goes down.`,
+      });
+      continue;
+    }
+
+    if (budget - lines >= FILE_LINE_BUDGET_ROUNDING) {
+      notices.push(
+        lines <= FILE_LINE_BUDGET_LIMIT
+          ? `${file} is ${lines} lines, under the ${FILE_LINE_BUDGET_LIMIT}-line limit: drop its entry from ${FILE_LINE_BUDGET_BASELINE}.`
+          : `${file} is ${lines} lines, ${budget - lines} under its ${budget} budget: lower the budget to ${roundUpFileLineBudget(lines)}.`,
+      );
+    }
+  }
+
+  for (const [file, lines] of productionFiles) {
+    if (budgetedFiles.has(file) || lines <= FILE_LINE_BUDGET_LIMIT) {
+      continue;
+    }
+
+    push({
+      file,
+      line: FILE_LINE_BUDGET_LIMIT + 1,
+      reason: `${file} has ${lines} lines; production sources stay at or under ${FILE_LINE_BUDGET_LIMIT}.`,
+      remediation:
+        "Split it into files that each own one responsibility. If it has to stay one file, " +
+        `freeze it in ${FILE_LINE_BUDGET_BASELINE} in the same commit: ` +
+        `{"budget": ${roundUpFileLineBudget(lines)}, "reason": "...", "owner": "..."}.`,
+    });
+  }
+
+  const reportedOverLimit = reportedFiles
+    .map((file) => ({ file, lines: countSourceLines(path.join(repoRoot, file)) }))
+    .filter((entry) => entry.lines > FILE_LINE_BUDGET_LIMIT)
+    .sort((a, b) => b.lines - a.lines || a.file.localeCompare(b.file));
+  const reportedLines = reportedOverLimit.reduce((total, entry) => total + entry.lines, 0);
+  const largest = reportedOverLimit[0];
+
+  notices.push(
+    largest
+      ? `file line budget (${scope}): tests and the debug harness are reported, not enforced; ${reportedOverLimit.length} over ${FILE_LINE_BUDGET_LIMIT} lines, ${reportedLines} lines together, largest ${largest.file} at ${largest.lines}.`
+      : `file line budget (${scope}): tests and the debug harness are reported, not enforced; none is over ${FILE_LINE_BUDGET_LIMIT} lines.`,
+  );
+
+  return { violations, notices };
 }
 
 export function findServerLayerViolations(repoRoot, files = undefined) {
