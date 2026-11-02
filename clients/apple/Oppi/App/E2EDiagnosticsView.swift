@@ -65,7 +65,7 @@ final class E2EDiagnosticsView: UIView {
             ("e2e.ws.desiredSubscriptions", desiredSubscriptions(connection)),
             ("e2e.ws.ackedSubscriptions", ackedSubscriptions(connection)),
             ("e2e.extension.dialog", connection.activeExtensionDialog?.id ?? "none"),
-            ("e2e.extension.dialogs", connection.pendingExtensionDialogRequests.map(\.id).joined(separator: ",")),
+            ("e2e.extension.dialogs", connection.extensionDialogs.requests.map(\.id).joined(separator: ",")),
             ("e2e.root.modals", rootModalsSummary()),
             ("e2e.audio.liveTransportSession", connection.audioPlayer.activeLiveTransportSessionID ?? "none"),
             ("e2e.lifecycle", E2ELifecycleDiagnostics.shared.accessibilityValue),

@@ -120,7 +120,7 @@ extension ServerConnection {
         SessionListAttentionMerger.askCount(
             listCount: sessionStore.listPendingAskCount(for: sessionId),
             hasPendingAsk: askRequestStore.hasPending(for: sessionId),
-            hasPendingExtensionDialog: hasPendingExtensionDialog(for: sessionId)
+            hasPendingExtensionDialog: extensionDialogs.hasPending(for: sessionId)
         )
     }
 }

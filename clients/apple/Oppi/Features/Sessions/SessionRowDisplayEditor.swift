@@ -102,7 +102,7 @@ struct SessionRowPreviewSubject {
             SessionListAttentionMerger.askCount(
                 listCount: store.listPendingAskCount(for: sessionId),
                 hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
-                hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
+                hasPendingExtensionDialog: connection.extensionDialogs.hasPending(for: sessionId)
             )
         }
         let root = rollup.root

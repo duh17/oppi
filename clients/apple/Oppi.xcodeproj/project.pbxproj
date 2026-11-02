@@ -1204,6 +1204,7 @@
 		7E839EC40847B4F45E114704 /* SessionGridBadgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB36685F1E6207044407718C /* SessionGridBadgeView.swift */; };
 		7E845D44E2061F7DEA57B7F7 /* ExtensionSurfaceURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */; };
 		7E9B33621D6FBD23827D2BF1 /* LANEndpointSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */; };
+		7EB16767E7C3C1F489A69F40 /* ExtensionDialogQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64FE028F519687D9B5E6E9A8 /* ExtensionDialogQueue.swift */; };
 		7ED8798ADBEF4909B00E3671 /* TreeSitterBash in Frameworks */ = {isa = PBXBuildFile; productRef = 7544D61D11887ED3010A2A4D /* TreeSitterBash */; };
 		7EDB493D3448D0CFD92FD9DD /* PairingApprovalViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B8F7E398E5B4177F469700 /* PairingApprovalViewController.swift */; };
 		7EF6B2CDB66F103529530909 /* AgentEditorScreensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077474AA390E6661C6B8FFCC /* AgentEditorScreensTests.swift */; };
@@ -3403,6 +3404,7 @@
 		6471110914491DDC6F7DE2D2 /* LiveVoiceCallControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceCallControllerTests.swift; sourceTree = "<group>"; };
 		647313DD05F5684F1E9F54C9 /* SSHTerminalProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalProgressTests.swift; sourceTree = "<group>"; };
 		64AF3E296F82DF19DF4FDD9E /* SSHInstall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHInstall.swift; sourceTree = "<group>"; };
+		64FE028F519687D9B5E6E9A8 /* ExtensionDialogQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogQueue.swift; sourceTree = "<group>"; };
 		6542F0F690C9AE040DBC39D7 /* SSHTerminalExperimentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalExperimentsTests.swift; sourceTree = "<group>"; };
 		6555571A8BEC13631255650C /* MacSessionCommandPendingChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionCommandPendingChangeTests.swift; sourceTree = "<group>"; };
 		658CA553D9FA00CE4481C751 /* RexTailnet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnet.swift; sourceTree = "<group>"; };
@@ -6350,6 +6352,7 @@
 				67767CFD1B4077694488306B /* CommandTracker.swift */,
 				620673961F94D2666E3D7BEB /* DictationStreamClient.swift */,
 				FD0BA81311FF2E87958A035A /* DictationTransport.swift */,
+				64FE028F519687D9B5E6E9A8 /* ExtensionDialogQueue.swift */,
 				1A628DBFABDABE8A97B609CC /* ExtensionSurfaceStore.swift */,
 				4E10D0BC63408DE0048DCA84 /* IOSChatSessionRuntimeAdapter.swift */,
 				B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */,
@@ -10368,6 +10371,7 @@
 				46DFB9E5377ACAADFB5F7ED2 /* ExpandedComposerView.swift in Sources */,
 				474A4DDC809ECE7DE4406CC9 /* ExpandedRenderOutput.swift in Sources */,
 				5B4B3C7397CA34A52118DCD5 /* ExtensionDialogFallbackViewController.swift in Sources */,
+				7EB16767E7C3C1F489A69F40 /* ExtensionDialogQueue.swift in Sources */,
 				B0960F58A619C42156049EC3 /* ExtensionEditorComposer.swift in Sources */,
 				74E78F41585E8FE408BB256A /* ExtensionInfo.swift in Sources */,
 				F8E15EDC4E0CC362ACC6C81B /* ExtensionNativeBlockPresentation.swift in Sources */,

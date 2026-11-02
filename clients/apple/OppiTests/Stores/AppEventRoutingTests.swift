@@ -246,7 +246,7 @@ struct AppEventRoutingTests {
         )
 
         #expect(connection.askRequestStore.pending(for: "s1") == nil)
-        #expect(connection.pendingExtensionDialogQueues["s1"] == nil)
+        #expect(!connection.extensionDialogs.hasPending(for: "s1"))
         #expect(connection.extensionSurfaces.state(for: "s1")?.widgets["goal"]?.lines == ["Keep going"])
         #expect(connection.messageQueueStore.queue(for: "s1").steering.first?.id == "q1")
     }
@@ -423,7 +423,7 @@ private func appEventBadgeCount(_ connection: ServerConnection, sessionId: Strin
     SessionListAttentionMerger.askCount(
         listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
         hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
-        hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
+        hasPendingExtensionDialog: connection.extensionDialogs.hasPending(for: sessionId)
     )
 }
 
@@ -463,9 +463,10 @@ private func seedSessionScopedState(_ connection: ServerConnection, sessionId: S
         workspaceId: "w1"
     )
     connection.askRequestStore.set(ask, for: sessionId)
-    connection.pendingExtensionDialogQueues[sessionId] = [
-        ExtensionUIRequest(id: "dlg-\(sessionId)", sessionId: sessionId, method: "editor", title: "Edit")
-    ]
+    connection.extensionDialogs.enqueue(
+        ExtensionUIRequest(id: "dlg-\(sessionId)", sessionId: sessionId, method: "editor", title: "Edit"),
+        for: sessionId
+    )
     connection.extensionSurfaces.surface(for: sessionId).replace(with: ExtensionSurfaceState(
         widgets: [
             "goal": ExtensionWidgetState(key: "goal", lines: ["Keep going"], placement: "aboveEditor")
@@ -496,7 +497,7 @@ private func usageMetricsWouldEmit(_ connection: ServerConnection, sessionId: St
 @MainActor
 private func expectAppEventSessionScopedUICleared(_ connection: ServerConnection) {
     #expect(connection.askRequestStore.pending(for: "s2") == nil)
-    #expect(connection.pendingExtensionDialogQueues["s2"] == nil)
+    #expect(!connection.extensionDialogs.hasPending(for: "s2"))
     #expect(connection.extensionSurfaces.state(for: "s2") == nil)
     #expect(connection.messageQueueStore.queue(for: "s2") == .empty)
 }
@@ -504,7 +505,7 @@ private func expectAppEventSessionScopedUICleared(_ connection: ServerConnection
 @MainActor
 private func expectAppEventSessionScopedUIPreserved(_ connection: ServerConnection) {
     #expect(connection.askRequestStore.pending(for: "s2")?.id == "ask-s2")
-    #expect(connection.pendingExtensionDialogQueues["s2"]?.first?.id == "dlg-s2")
+    #expect(connection.extensionDialogs.requests(for: "s2").first?.id == "dlg-s2")
     #expect(connection.extensionSurfaces.state(for: "s2")?.widgets["goal"]?.lines == ["Keep going"])
     #expect(connection.messageQueueStore.queue(for: "s2").steering.first?.id == "q1")
 }

@@ -1384,11 +1384,11 @@ struct ForegroundRecoveryTests {
             for: "ready-root",
             isFocusedSession: false
         )
-        #expect(conn.hasPendingExtensionDialog(for: "ready-root") == true)
+        #expect(conn.extensionDialogs.hasPending(for: "ready-root") == true)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == true)
 
         conn.clearExtensionDialog(id: "ui-1")
-        #expect(conn.hasPendingExtensionDialog(for: "ready-root") == false)
+        #expect(conn.extensionDialogs.hasPending(for: "ready-root") == false)
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasAttention == false)
     }
 

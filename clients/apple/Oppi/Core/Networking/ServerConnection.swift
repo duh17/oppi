@@ -440,7 +440,7 @@ final class ServerConnection {
             // nothing is focused registers no dependency on the queue: the first
             // dialog to arrive then never invalidates the root, so its sheet never
             // presents and the extension waits for an answer that cannot be given.
-            let queues = pendingExtensionDialogQueues
+            let queues = extensionDialogs.queues
             guard let focusedSessionId else { return nil }
             return queues[focusedSessionId]?.first
         }
@@ -453,10 +453,7 @@ final class ServerConnection {
         }
     }
     /// Queued sheet-backed generic extension dialogs keyed by session id.
-    var pendingExtensionDialogQueues: [String: [ExtensionUIRequest]] = [:]
-    var pendingExtensionDialogRequests: [ExtensionUIRequest] {
-        pendingExtensionDialogQueues.values.flatMap { $0 }
-    }
+    let extensionDialogs = ExtensionDialogQueue()
     var extensionToast: String?
     /// Per-session extension `notify` chip. App-originated `extensionToast` stays a sheet.
     let extensionNotifyChipStore = ExtensionNotifyChipStore()
@@ -2468,7 +2465,7 @@ final class ServerConnection {
         if let workspaceId = normalizedWorkspaceId(askRequestStore.pending(for: sessionId)?.workspaceId) {
             return workspaceId
         }
-        return pendingExtensionDialogQueues[sessionId]?
+        return extensionDialogs.requests(for: sessionId)
             .compactMap { normalizedWorkspaceId($0.workspaceId) }
             .first
     }
@@ -2588,7 +2585,7 @@ final class ServerConnection {
             : focusedSessionStore.focus(sessionId: sessionId)
         sessionStore.setViewingSession(sessionId)
         // Reset per-connection chat state for the new focused session.
-        // Sheet-backed extension dialogs are derived from pendingExtensionDialogQueues.
+        // Sheet-backed extension dialogs are derived from extensionDialogs.
         chatState.resetSessionState()
 
         syncActiveAskWorkspaceSummary()

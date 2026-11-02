@@ -18,6 +18,7 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 
 - `PairingApprovalList` holds one server's pending pairing approvals and fences stale list reads; `PairingApprovalController` presents them across connections.
 - `SessionUsageMetricsReporter` sends `AppSessionUsage` once per changed session snapshot and forgets a session with its stream.
+- `ExtensionDialogQueue` holds each session's sheet-backed extension dialogs, the first being `activeExtensionDialog`; `extensionToast` is an app notice and stays on the connection.
 
 ## UIKit and SwiftUI ownership
 

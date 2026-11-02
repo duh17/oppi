@@ -396,9 +396,10 @@ struct AppRootModalsTests {
         let (host, window) = try show(root)
         defer { hide(window) }
 
-        connection.pendingExtensionDialogQueues["waiting"] = [
+        connection.extensionDialogs.enqueue(
             ExtensionUIRequest(id: "editor-waiting", sessionId: "waiting", method: "editor", prefill: "queued first"),
-        ]
+            for: "waiting"
+        )
         // Run the update pass this expectation is about: a root that never looked
         // after the queue changed would pass by not having looked yet.
         host.setNeedsUpdateProperties()

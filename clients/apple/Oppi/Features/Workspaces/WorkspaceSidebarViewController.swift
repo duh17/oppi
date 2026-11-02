@@ -296,7 +296,7 @@ final class WorkspaceSidebarViewController: UIViewController {
                 SessionListAttentionMerger.askCount(
                     listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
                     hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
-                    hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
+                    hasPendingExtensionDialog: connection.extensionDialogs.hasPending(for: sessionId)
                 )
             }
         )

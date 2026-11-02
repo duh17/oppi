@@ -283,7 +283,7 @@ extension ServerConnection {
                 workspaceIds.insert(workspaceId)
             }
         }
-        for request in pendingExtensionDialogRequests {
+        for request in extensionDialogs.requests {
             if let workspaceId = attentionWorkspaceId(
                 explicitWorkspaceId: request.workspaceId,
                 sessionId: request.sessionId
@@ -304,7 +304,7 @@ extension ServerConnection {
             ask.workspaceId == workspaceId
                 || (ask.workspaceId == nil && workspaceSessionIds.contains(ask.sessionId))
         }
-        let hasPendingExtensionDialog = pendingExtensionDialogRequests.contains { request in
+        let hasPendingExtensionDialog = extensionDialogs.requests.contains { request in
             request.workspaceId == workspaceId
                 || (request.workspaceId == nil && workspaceSessionIds.contains(request.sessionId))
         }

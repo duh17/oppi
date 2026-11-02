@@ -182,7 +182,7 @@ extension ServerConnection {
         for sessionId: String,
         isFocusedSession: Bool
     ) {
-        appendExtensionDialog(request, for: sessionId)
+        extensionDialogs.enqueue(request, for: sessionId)
         notePushDiscoveryMoment()
         syncExtensionDialogWorkspaceSummary(sessionId: sessionId, explicitWorkspaceId: request.workspaceId)
         if isFocusedSession {
@@ -194,62 +194,25 @@ extension ServerConnection {
     func clearExtensionDialog(for sessionId: String?) {
         guard let sessionId else {
             guard let focusedSessionId else { return }
-            let explicitWorkspaceId = pendingExtensionDialogQueues[focusedSessionId]?.first?.workspaceId
-            if pendingExtensionDialogQueues.removeValue(forKey: focusedSessionId) != nil {
-                syncExtensionDialogWorkspaceSummary(sessionId: focusedSessionId, explicitWorkspaceId: explicitWorkspaceId)
+            if let removed = extensionDialogs.removeQueue(for: focusedSessionId) {
+                syncExtensionDialogWorkspaceSummary(sessionId: focusedSessionId, explicitWorkspaceId: removed.first?.workspaceId)
             }
             return
         }
 
-        let explicitWorkspaceId = pendingExtensionDialogQueues[sessionId]?.first?.workspaceId
-        if pendingExtensionDialogQueues.removeValue(forKey: sessionId) != nil {
-            syncExtensionDialogWorkspaceSummary(sessionId: sessionId, explicitWorkspaceId: explicitWorkspaceId)
+        if let removed = extensionDialogs.removeQueue(for: sessionId) {
+            syncExtensionDialogWorkspaceSummary(sessionId: sessionId, explicitWorkspaceId: removed.first?.workspaceId)
         }
     }
 
     func clearExtensionDialog(id requestId: String) {
-        var changedSessions: [(sessionId: String, workspaceId: String?)] = []
-        for sessionId in Array(pendingExtensionDialogQueues.keys) {
-            guard var queue = pendingExtensionDialogQueues[sessionId] else { continue }
-            let removedWorkspaceId = queue.first(where: { $0.id == requestId })?.workspaceId
-            let originalCount = queue.count
-            queue.removeAll { $0.id == requestId }
-            guard queue.count != originalCount else { continue }
-            if queue.isEmpty {
-                pendingExtensionDialogQueues.removeValue(forKey: sessionId)
-            } else {
-                pendingExtensionDialogQueues[sessionId] = queue
-            }
-            changedSessions.append((sessionId: sessionId, workspaceId: removedWorkspaceId))
-        }
-
-        for changed in changedSessions {
+        for changed in extensionDialogs.remove(id: requestId) {
             syncExtensionDialogWorkspaceSummary(sessionId: changed.sessionId, explicitWorkspaceId: changed.workspaceId)
         }
     }
 
-    func hasPendingExtensionDialog(for sessionId: String) -> Bool {
-        !(pendingExtensionDialogQueues[sessionId]?.isEmpty ?? true)
-    }
-
-    func appendExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
-        var queue = pendingExtensionDialogQueues[sessionId] ?? []
-        if let existingIndex = queue.firstIndex(where: { $0.id == request.id }) {
-            queue[existingIndex] = request
-        } else {
-            queue.append(request)
-        }
-        pendingExtensionDialogQueues[sessionId] = queue
-    }
-
     func replaceActiveExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
-        var queue = pendingExtensionDialogQueues[sessionId] ?? []
-        if queue.isEmpty {
-            queue = [request]
-        } else {
-            queue[0] = request
-        }
-        pendingExtensionDialogQueues[sessionId] = queue
+        extensionDialogs.replaceFirst(request, for: sessionId)
         syncExtensionDialogWorkspaceSummary(sessionId: sessionId, explicitWorkspaceId: request.workspaceId)
     }
 

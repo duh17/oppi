@@ -121,7 +121,7 @@ extension ChatViewController {
     }
 
     var hasBlockingExtensionInput: Bool {
-        activeComposerAskRequest != nil || connection.hasPendingExtensionDialog(for: sessionId)
+        activeComposerAskRequest != nil || connection.extensionDialogs.hasPending(for: sessionId)
     }
 
     /// The router review-comment selections reach this chat through. Rebuilt
