@@ -72,7 +72,7 @@ struct ChatTimelineOwnedClockTests {
 
         let row = try #require(timelineAllViews(in: fixture.host.view).compactMap { $0 as? ToolTimelineRowContentView }.first)
         row.showFullScreenContent()
-        guard case .liveSource(_, let readerStream) = try #require(opened.last).content else {
+        guard case .liveSource(let readerStream, _) = try #require(opened.last).content else {
             Issue.record("a running write did not open a live reader")
             return
         }

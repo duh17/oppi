@@ -46,7 +46,7 @@
       "reason": "Reader support utilities; the document-reader plan owns the split."
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
-      "budget": 3000,
+      "budget": 2000,
       "owner": "document reader plan",
       "reason": "Reader presentation, find, and selection in one controller; the document-reader plan owns the split."
     },

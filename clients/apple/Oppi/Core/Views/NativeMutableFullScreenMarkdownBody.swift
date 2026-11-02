@@ -477,9 +477,10 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 }
 
-/// Plain-text fullscreen thinking surface. Thinking bypasses CommonMark and
-/// receives the already-coalesced snapshots directly, sharing only the common
-/// attached/detached viewport policy with other live surfaces.
+/// Plain-text fullscreen thinking surface while its trace is live. Thinking
+/// bypasses CommonMark and takes the already-coalesced snapshots the reader
+/// feeds it, sharing only the common attached/detached viewport policy with
+/// other live surfaces.
 final class NativeFullScreenThinkingBody: UIView,
     UITextViewDelegate,
     UICollectionViewDataSource,
@@ -548,19 +549,18 @@ final class NativeFullScreenThinkingBody: UIView,
         frame: .zero,
         collectionViewLayout: chunkLayout
     )
-    private let stream: ThinkingTraceStream?
     private let palette: ThemePalette
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
-    private let onCompletion: ((NativeFullScreenThinkingBody, String, FullScreenMarkdownViewportIntent) -> Void)?
     private var readerPreferences: FullScreenReaderPreferences
+    /// The finished trace's reading position and the reader's rebuild, held
+    /// while the person still owns the viewport.
     private struct PendingCompletion {
-        let text: String
         let viewportIntent: FullScreenMarkdownViewportIntent
+        let rebuild: (FullScreenMarkdownViewportIntent?) -> Void
     }
 
-    private var streamObserverID: UUID?
-    private var isStreaming: Bool
+    private var isStreaming = true
     private var completionDelivered = false
     private var pendingCompletion: PendingCompletion?
     private var isApplyingSnapshot = false
@@ -575,24 +575,16 @@ final class NativeFullScreenThinkingBody: UIView,
 
     init(
         content: String,
-        stream: ThinkingTraceStream?,
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        onCompletion: ((NativeFullScreenThinkingBody, String, FullScreenMarkdownViewportIntent) -> Void)? = nil
+        reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
-        let snapshot = stream?.snapshot
-        let initialText = snapshot?.text ?? content
-        let isStreaming = snapshot.map { !$0.isDone } ?? false
-        self.stream = stream
         self.palette = palette
         self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.onCompletion = onCompletion
-        self.isStreaming = isStreaming
-        self.followPolicy = LiveStreamingPresentation.ViewportPolicy(followsTail: isStreaming)
+        self.followPolicy = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
         super.init(frame: .zero)
 
         backgroundColor = palette.ui.bgDark
@@ -638,25 +630,11 @@ final class NativeFullScreenThinkingBody: UIView,
             chunkCollectionView.topAnchor.constraint(equalTo: topAnchor),
             chunkCollectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        render(initialText)
-
-        if let stream {
-            streamObserverID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
-                self?.apply(snapshot)
-            }
-        }
+        render(content)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        guard let streamObserverID else { return }
-        let stream = stream
-        Task { @MainActor in
-            stream?.removeObserver(streamObserverID)
-        }
-    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -667,16 +645,18 @@ final class NativeFullScreenThinkingBody: UIView,
         FullScreenCodeTypography.scaledFont(AppFont.messageBody, scale: readerPreferences.textScale)
     }
 
-    private func apply(_ snapshot: ThinkingTraceStream.Snapshot) {
+    /// Shows the trace's next snapshot. Once it is done, `rebuild` hands the
+    /// reader this body's reading position, after any scroll or selection ends.
+    func apply(_ snapshot: ThinkingSnapshot, rebuild: @escaping (FullScreenMarkdownViewportIntent?) -> Void) {
         let previousText = renderedText
         let wasStreaming = isStreaming
         if snapshot.isDone, wasStreaming, pendingCompletion == nil {
             pendingCompletion = PendingCompletion(
-                text: snapshot.text,
                 viewportIntent: .capturing(
                     scrollView: activeScrollView,
                     followsTail: followPolicy.followsTail
-                )
+                ),
+                rebuild: rebuild
             )
         }
 
@@ -950,7 +930,7 @@ final class NativeFullScreenThinkingBody: UIView,
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: maximumY), animated: false)
     }
 
-    var isViewportInteracting: Bool {
+    private var isViewportInteracting: Bool {
         isUIKitOwningViewport || followPolicy.isInteracting
     }
 
@@ -1008,7 +988,7 @@ final class NativeFullScreenThinkingBody: UIView,
               let pendingCompletion else { return }
         completionDelivered = true
         self.pendingCompletion = nil
-        onCompletion?(self, pendingCompletion.text, pendingCompletion.viewportIntent)
+        pendingCompletion.rebuild(pendingCompletion.viewportIntent)
     }
 
     @objc private func handlePanStateChange(_ recognizer: UIPanGestureRecognizer) {

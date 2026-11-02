@@ -1628,6 +1628,7 @@
 		A7F96ACEA8DF9CBB1455289C /* MultiplexerLogos-NOTICE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 06E444AC1434D62B3A8E71C3 /* MultiplexerLogos-NOTICE.txt */; };
 		A80A21FE00A569E255525696 /* LocalServerTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2538F87D78752BAA4B634D5A /* LocalServerTrustDelegate.swift */; };
 		A833F0FD50F2C4E54C1A0E0F /* SettingsSelectionRowCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C03926BB89C3F778F692D5 /* SettingsSelectionRowCell.swift */; };
+		A8572A6EB6468377E1A80E69 /* ReaderTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D758E717D0D4F4BAC3A75D9 /* ReaderTrace.swift */; };
 		A88EB3B76BB4D20F16D9298C /* MacKeyboardSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B458866CCE6ABB9C2B5B2DD /* MacKeyboardSettingsView.swift */; };
 		A88F96C217BE30F66EA1B5EF /* PushEnvelopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7427FDF2AA62E90D061133FA /* PushEnvelopeTests.swift */; };
 		A891A6E94603B2BB53FDD94C /* VimEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B4A730509E5EE736A8B3D86 /* VimEngine.swift */; };
@@ -2845,6 +2846,7 @@
 		1CA66487285CB30D8BF88370 /* McpAddServerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpAddServerViewController.swift; sourceTree = "<group>"; };
 		1CE2448FA9B2217CAEA09AC7 /* KeyboardSuppressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSuppressionTests.swift; sourceTree = "<group>"; };
 		1D5D05D179C3C173FB18B203 /* UIHangHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHangHarnessView.swift; sourceTree = "<group>"; };
+		1D758E717D0D4F4BAC3A75D9 /* ReaderTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderTrace.swift; sourceTree = "<group>"; };
 		1D920FA4562860EBED710D56 /* ChatActionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatActionHandler.swift; sourceTree = "<group>"; };
 		1D992CD9B2CF9E99CAB16C0A /* RexFakeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexFakeSession.swift; sourceTree = "<group>"; };
 		1DFFFEAE47DC2E8FE70380A0 /* HostDirectoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostDirectoryTests.swift; sourceTree = "<group>"; };
@@ -8024,6 +8026,7 @@
 				1716CC5986A09A38FFB7C07E /* NativeFullScreenSourceBody.swift */,
 				FBBEB94B9F1D46AD9836FD66 /* NativeFullScreenTerminalBody.swift */,
 				DE73B02AAEBCF087359D89F2 /* ReaderBody.swift */,
+				1D758E717D0D4F4BAC3A75D9 /* ReaderTrace.swift */,
 			);
 			path = Reader;
 			sourceTree = "<group>";
@@ -10676,6 +10679,7 @@
 				CAF23A1B89A16C0299383E40 /* QuietTimelineProjection.swift in Sources */,
 				9E6ABE453D9A1294ECD1AB5E /* QuietWorkLineTimelineRowContent.swift in Sources */,
 				0BC76C51D3F14F84DB606CC0 /* ReaderBody.swift in Sources */,
+				A8572A6EB6468377E1A80E69 /* ReaderTrace.swift in Sources */,
 				0EE6C7ED763B7CCD1BCB04EB /* RecordVersionConflict.swift in Sources */,
 				82280F6E55C11E2BC53FE322 /* RemoteTheme.swift in Sources */,
 				87EF26B456383F620E376A7B /* RestorationState.swift in Sources */,

@@ -12,7 +12,7 @@ struct NativeFullScreenTerminalWindowTests {
         ThemeRuntimeState.setThemeID(.dark)
         let first = "\u{1B}[32m" + String(repeating: "green line\n", count: 20_000)
         let rest = "\u{1B}[1A\r\u{1B}[2Kstill green after cursor rewrite\n"
-        let body = NativeFullScreenTerminalBody(content: first, command: "bash", stream: nil,
+        let body = NativeFullScreenTerminalBody(content: first, command: "bash",
             palette: ThemeID.dark.palette, reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         body.frame = host.bounds
@@ -54,8 +54,7 @@ struct NativeFullScreenTerminalWindowTests {
 
     @Test func liveReplayKeepsMountedReaderAndDetachedViewport() async throws {
         let first = (0..<20_000).map { "line \($0)\n" }.joined()
-        let stream = TerminalTraceStream(output: first, command: nil, isDone: false)
-        let body = NativeFullScreenTerminalBody(content: first, command: nil, stream: stream,
+        let body = NativeFullScreenTerminalBody(content: first, command: nil, isStreaming: true,
             palette: ThemeRuntimeState.currentThemeID().palette,
             reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -80,9 +79,9 @@ struct NativeFullScreenTerminalWindowTests {
         #expect(midpointPainted)
         let before = try #require(body.virtualizationDiagnosticsForTesting())
         let offset = collection.contentOffset.y
-        stream.update(output: first + "pending", command: nil, isDone: false)
+        body.apply(TerminalSnapshot(output: first + "pending", command: nil, isDone: false))
         let latest = first + "pending\r\u{1B}[2Kcomplete\n" + String(repeating: "after\n", count: 20_000)
-        stream.update(output: latest, command: nil, isDone: false)
+        body.apply(TerminalSnapshot(output: latest, command: nil, isDone: false))
         // These synchronous observations catch unmounting/cancel-on-every-delta,
         // before either worker can commit a replacement index.
         #expect(body.virtualizationDiagnosticsForTesting()?.chunkCount == before.chunkCount)
@@ -111,8 +110,7 @@ struct NativeFullScreenTerminalWindowTests {
     @Test func coldReaderPaintsIntermediateIndexWhileLargerReplayRuns() async throws {
         let first = String(repeating: "cold line\n", count: 20_000)
         let latest = first + String(repeating: "later line\n", count: 100_000) + "final marker\n"
-        let stream = TerminalTraceStream(output: first, command: nil, isDone: false)
-        let body = NativeFullScreenTerminalBody(content: first, command: nil, stream: stream,
+        let body = NativeFullScreenTerminalBody(content: first, command: nil, isStreaming: true,
             palette: ThemeRuntimeState.currentThemeID().palette,
             reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil)
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -120,7 +118,7 @@ struct NativeFullScreenTerminalWindowTests {
         host.addSubview(body)
         host.layoutIfNeeded()
         // Queue the larger successor before the actor yields to the first worker.
-        stream.update(output: latest, command: nil, isDone: false)
+        body.apply(TerminalSnapshot(output: latest, command: nil, isDone: false))
         let collection = try #require(body.subviews.compactMap { $0 as? UICollectionView }.first)
         let intermediatePainted = await waitForMainActorCondition(timeout: .seconds(5)) {
             host.layoutIfNeeded()
@@ -149,7 +147,7 @@ struct NativeFullScreenTerminalWindowTests {
             loadNext: { offset in
                 offset == first.utf8.count ? .init(text: rest, endByteOffset: total, totalBytes: total) : nil
             })
-        let body = NativeFullScreenTerminalBody(content: first, command: "bash", stream: nil,
+        let body = NativeFullScreenTerminalBody(content: first, command: "bash",
             palette: ThemeRuntimeState.currentThemeID().palette,
             reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil, sidecarSource: source)
         #expect(await body.resolvedCopyText() == "head\ncomplete\n")
@@ -167,7 +165,7 @@ struct NativeFullScreenTerminalWindowTests {
     @Test func fullScreenCopyButtonUsesResolvedOutput() async throws {
         let raw = "working 10%\r\u{1B}[2K\u{1B}[32mworking 100%\u{1B}[0m\n"
         let controller = FullScreenCodeViewController(
-            content: .terminal(content: raw, command: "bash", stream: nil, sidecarSource: nil))
+            content: .terminal(content: raw, command: "bash", trace: nil, sidecarSource: nil))
         controller.loadViewIfNeeded()
         var copied: String?
         FullScreenCopyDestination.testWriteOverride = { copied = $0 }

@@ -1,165 +1,5 @@
 import UIKit
 
-@MainActor
-final class ThinkingTraceStream {
-    struct Snapshot: Equatable {
-        let text: String
-        let isDone: Bool
-    }
-
-    private var snapshotStorage: Snapshot
-    private var observers: [UUID: (Snapshot) -> Void] = [:]
-
-    init(text: String, isDone: Bool) {
-        snapshotStorage = Snapshot(text: text, isDone: isDone)
-    }
-
-    var snapshot: Snapshot {
-        snapshotStorage
-    }
-
-    func update(text: String, isDone: Bool) {
-        let next = Snapshot(text: text, isDone: isDone)
-        guard next != snapshotStorage else { return }
-        // `DeltaCoalescer` is the only live clock. Deliver every distinct
-        // snapshot immediately so fullscreen thinking does not invent a
-        // second cadence.
-        snapshotStorage = next
-        deliver(next)
-    }
-
-    private func deliver(_ snapshot: Snapshot) {
-        for observer in observers.values {
-            observer(snapshot)
-        }
-    }
-
-    @discardableResult
-    func addObserver(deliverImmediately: Bool = true, _ observer: @escaping (Snapshot) -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        if deliverImmediately {
-            observer(snapshotStorage)
-        }
-        return id
-    }
-
-    func removeObserver(_ id: UUID) {
-        observers.removeValue(forKey: id)
-    }
-
-}
-
-@MainActor
-final class TerminalTraceStream {
-    /// Finished-call sidecar. A reader opened after completion loads this when
-    /// the content did not already pass a sidecar source. The snapshot is the
-    /// JSON text preview.
-    var completionSidecarSource: ToolOutputSidecarWindowSource?
-
-    struct Snapshot: Equatable {
-        let output: String
-        let command: String?
-        let isDone: Bool
-    }
-
-    private var snapshotStorage: Snapshot
-    private var observers: [UUID: (Snapshot) -> Void] = [:]
-
-    init(output: String, command: String?, isDone: Bool) {
-        snapshotStorage = Snapshot(output: output, command: command, isDone: isDone)
-    }
-
-    var snapshot: Snapshot { snapshotStorage }
-
-    func update(output: String, command: String?, isDone: Bool) {
-        let next = Snapshot(output: output, command: command, isDone: isDone)
-        guard next != snapshotStorage else { return }
-
-        snapshotStorage = next
-        for observer in observers.values {
-            observer(next)
-        }
-    }
-
-    @discardableResult
-    func addObserver(deliverImmediately: Bool = true, _ observer: @escaping (Snapshot) -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        if deliverImmediately {
-            observer(snapshotStorage)
-        }
-        return id
-    }
-
-    func removeObserver(_ id: UUID) {
-        observers.removeValue(forKey: id)
-    }
-}
-
-@MainActor
-final class SourceTraceStream {
-    struct Snapshot {
-        let text: String
-        let filePath: String?
-        let isDone: Bool
-        let finalContent: FullScreenCodeContent?
-    }
-
-    private var snapshotStorage: Snapshot
-    private var observers: [UUID: (Snapshot) -> Void] = [:]
-
-    init(text: String, filePath: String?, isDone: Bool, finalContent: FullScreenCodeContent?) {
-        snapshotStorage = Snapshot(
-            text: text,
-            filePath: filePath,
-            isDone: isDone,
-            finalContent: finalContent
-        )
-    }
-
-    // periphery:ignore
-    var snapshot: Snapshot {
-        snapshotStorage
-    }
-
-    func update(text: String, filePath: String?, isDone: Bool, finalContent: FullScreenCodeContent?) {
-        let next = Snapshot(
-            text: text,
-            filePath: filePath,
-            isDone: isDone,
-            finalContent: finalContent
-        )
-        guard shouldNotify(for: next) else { return }
-
-        snapshotStorage = next
-        for observer in observers.values {
-            observer(next)
-        }
-    }
-
-    @discardableResult
-    func addObserver(deliverImmediately: Bool = true, _ observer: @escaping (Snapshot) -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        if deliverImmediately {
-            observer(snapshotStorage)
-        }
-        return id
-    }
-
-    func removeObserver(_ id: UUID) {
-        observers.removeValue(forKey: id)
-    }
-
-    private func shouldNotify(for next: Snapshot) -> Bool {
-        next.text != snapshotStorage.text
-            || next.filePath != snapshotStorage.filePath
-            || next.isDone != snapshotStorage.isDone
-            || next.finalContent?.kindName != snapshotStorage.finalContent?.kindName
-    }
-}
-
 /// Lines-first payload for a completed full-screen tool diff.
 ///
 /// `lines` are the only diff authority. `copyText` is clipboard, share, and
@@ -187,14 +27,16 @@ indirect enum FullScreenCodeContent {
     case diff(ToolDiffDocument)
     case markdown(content: String, filePath: String?, resourceAccess: MarkdownResourceAccess = .empty, rawText: String? = nil, sidecarSource: ToolOutputSidecarWindowSource? = nil)
     case html(content: String, filePath: String?)
-    case thinking(content: String, stream: ThinkingTraceStream? = nil)
+    case thinking(content: String, trace: ReaderTrace<ThinkingSnapshot>? = nil)
     case terminal(
         content: String,
         command: String?,
-        stream: TerminalTraceStream? = nil,
+        trace: ReaderTrace<TerminalSnapshot>? = nil,
         sidecarSource: ToolOutputSidecarWindowSource? = nil
     )
-    case liveSource(snapshot: SourceTraceStream.Snapshot, stream: SourceTraceStream)
+    /// A file a running tool is still writing. `showsSource` is the reader's
+    /// Source toggle while it streams: the text so far, whatever its final kind.
+    case liveSource(ReaderTrace<SourceSnapshot>, showsSource: Bool = false)
 
     // Document renderers
     case latex(content: String, filePath: String?)

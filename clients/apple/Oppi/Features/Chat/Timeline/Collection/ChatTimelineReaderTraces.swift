@@ -20,9 +20,9 @@ final class ChatTimelineReaderTraces {
     /// a split or stack swap, so a rebuilt reader observes the same stream). A
     /// trace with no owner left is a reader nobody can see, and its entry goes.
     private final class Entry {
-        weak var thinking: ThinkingTraceStream?
-        weak var terminal: TerminalTraceStream?
-        weak var source: SourceTraceStream?
+        weak var thinking: ReaderTrace<ThinkingSnapshot>?
+        weak var terminal: ReaderTrace<TerminalSnapshot>?
+        weak var source: ReaderTrace<SourceSnapshot>?
         /// The last row this entry was fed, so an unchanged row costs one compare.
         var lastPreview: String?
         var lastIsLive: Bool?
@@ -42,55 +42,40 @@ final class ChatTimelineReaderTraces {
     // MARK: - Opening
 
     /// The row's thinking trace, seeded from what the row shows right now.
-    func thinkingTrace(itemID: String, text: String, isDone: Bool) -> ThinkingTraceStream {
+    func thinkingTrace(itemID: String, text: String, isDone: Bool) -> ReaderTrace<ThinkingSnapshot> {
         let entry = entry(for: itemID)
-        if let stream = entry.thinking {
-            stream.update(text: text, isDone: isDone)
-            return stream
+        let snapshot = ThinkingSnapshot(text: text, isDone: isDone)
+        if let trace = entry.thinking {
+            trace.update(snapshot)
+            return trace
         }
         entry.lastPreview = text
         entry.lastIsLive = !isDone
-        let stream = ThinkingTraceStream(text: text, isDone: isDone)
-        entry.thinking = stream
-        return stream
+        let trace = ReaderTrace(snapshot)
+        entry.thinking = trace
+        return trace
     }
 
-    func terminalTrace(
-        itemID: String,
-        output: String,
-        command: String?,
-        isDone: Bool
-    ) -> TerminalTraceStream {
+    func terminalTrace(itemID: String, _ snapshot: TerminalSnapshot) -> ReaderTrace<TerminalSnapshot> {
         let entry = entry(for: itemID)
-        if let stream = entry.terminal {
-            stream.update(output: output, command: command, isDone: isDone)
-            return stream
+        if let trace = entry.terminal {
+            trace.update(snapshot)
+            return trace
         }
-        let stream = TerminalTraceStream(output: output, command: command, isDone: isDone)
-        entry.terminal = stream
-        return stream
+        let trace = ReaderTrace(snapshot, isNews: TerminalSnapshot.isNews)
+        entry.terminal = trace
+        return trace
     }
 
-    func sourceTrace(
-        itemID: String,
-        text: String,
-        filePath: String?,
-        isDone: Bool,
-        finalContent: FullScreenCodeContent?
-    ) -> SourceTraceStream {
+    func sourceTrace(itemID: String, _ snapshot: SourceSnapshot) -> ReaderTrace<SourceSnapshot> {
         let entry = entry(for: itemID)
-        if let stream = entry.source {
-            stream.update(text: text, filePath: filePath, isDone: isDone, finalContent: finalContent)
-            return stream
+        if let trace = entry.source {
+            trace.update(snapshot)
+            return trace
         }
-        let stream = SourceTraceStream(
-            text: text,
-            filePath: filePath,
-            isDone: isDone,
-            finalContent: finalContent
-        )
-        entry.source = stream
-        return stream
+        let trace = ReaderTrace(snapshot, isNews: SourceSnapshot.isNews)
+        entry.source = trace
+        return trace
     }
 
     private func entry(for itemID: String) -> Entry {
@@ -148,7 +133,7 @@ final class ChatTimelineReaderTraces {
         item: ChatItem,
         liveRowIDs: Set<String>
     ) {
-        guard let stream = entry.thinking,
+        guard let trace = entry.thinking,
               case .thinking(_, let preview, _, let isDone) = item else {
             return
         }
@@ -158,10 +143,10 @@ final class ChatTimelineReaderTraces {
         guard entry.lastPreview != preview || entry.lastIsLive != isLive else { return }
         entry.lastPreview = preview
         entry.lastIsLive = isLive
-        stream.update(
+        trace.update(ThinkingSnapshot(
             text: preview.trimmingCharacters(in: .whitespacesAndNewlines),
             isDone: ThinkingTimelineRowConfiguration.traceIsComplete(isDone: isDone, isLive: isLive)
-        )
+        ))
     }
 
     /// A running call's output and source follow its row until the row reports
@@ -176,43 +161,38 @@ final class ChatTimelineReaderTraces {
         let needsFeed = (entry.terminal.map { !$0.snapshot.isDone } ?? false)
             || (entry.source.map { !$0.snapshot.isDone } ?? false)
         guard needsFeed, let configuration = toolConfiguration(itemID, item) else { return }
-        if entry.terminal?.snapshot.isDone != true, let stream = entry.terminal {
-            let trace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(configuration: configuration)
-            stream.completionSidecarSource = configuration.toolOutputSidecarSource
-            stream.update(output: trace.output, command: trace.command, isDone: trace.isDone)
+        if entry.terminal?.snapshot.isDone != true, let trace = entry.terminal {
+            trace.update(ToolTimelineRowFullScreenSupport.terminalTraceUpdate(configuration: configuration))
         }
-        if entry.source?.snapshot.isDone != true, let stream = entry.source {
-            let trace = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+        if entry.source?.snapshot.isDone != true, let trace = entry.source {
+            trace.update(ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
                 configuration: configuration,
                 outputCopyText: configuration.copyOutputText
-            )
-            stream.update(
-                text: trace?.text ?? "",
-                filePath: trace?.filePath,
-                isDone: trace?.isDone ?? true,
-                finalContent: trace?.finalContent
-            )
+            ) ?? SourceSnapshot(text: "", filePath: nil, isDone: true, finalContent: nil))
         }
     }
 
     private func settle(_ entry: Entry) {
-        if let stream = entry.thinking, !stream.snapshot.isDone {
-            stream.update(text: stream.snapshot.text, isDone: true)
+        if let trace = entry.thinking, !trace.snapshot.isDone {
+            trace.update(ThinkingSnapshot(text: trace.snapshot.text, isDone: true))
         }
-        if let stream = entry.terminal, !stream.snapshot.isDone {
-            stream.update(
-                output: stream.snapshot.output,
-                command: stream.snapshot.command,
-                isDone: true
-            )
-        }
-        if let stream = entry.source, !stream.snapshot.isDone {
-            stream.update(
-                text: stream.snapshot.text,
-                filePath: stream.snapshot.filePath,
+        if let trace = entry.terminal, !trace.snapshot.isDone {
+            let current = trace.snapshot
+            trace.update(TerminalSnapshot(
+                output: current.output,
+                command: current.command,
                 isDone: true,
-                finalContent: stream.snapshot.finalContent
-            )
+                sidecarSource: current.sidecarSource
+            ))
+        }
+        if let trace = entry.source, !trace.snapshot.isDone {
+            let current = trace.snapshot
+            trace.update(SourceSnapshot(
+                text: current.text,
+                filePath: current.filePath,
+                isDone: true,
+                finalContent: current.finalContent
+            ))
         }
     }
 

@@ -72,7 +72,7 @@ struct NotebookCellPresentationTests {
         }
         #expect(config.copyOutputText == "3")
         let reader = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
-            configuration: config, outputCopyText: config.copyOutputText, terminalStream: nil))
+            configuration: config, outputCopyText: config.copyOutputText, terminalTrace: nil))
         guard case .notebook(let opened) = reader else {
             Issue.record("Full-screen reader should show the same notebook cell")
             return
@@ -261,7 +261,7 @@ struct NotebookCellPresentationTests {
             #expect(policy.supportsFullScreenPreview)
             let reader = try #require(ToolTimelineRowFullScreenSupport.fullScreenContent(
                 configuration: config, outputCopyText: config.copyOutputText,
-                interactionPolicy: policy, terminalStream: nil, sourceStream: nil
+                interactionPolicy: policy, terminalTrace: nil, sourceTrace: nil
             ))
             guard case .notebook(let opened) = reader else {
                 Issue.record("The reader shows the same cell")

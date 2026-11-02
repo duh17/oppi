@@ -2222,8 +2222,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             configuration: currentConfiguration,
             outputCopyText: outputCopyText,
             interactionPolicy: currentInteractionPolicy,
-            terminalStream: nil,
-            sourceStream: nil
+            terminalTrace: nil,
+            sourceTrace: nil
         )
     }
 
@@ -2264,8 +2264,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             configuration: currentConfiguration,
             outputCopyText: outputCopyText,
             interactionPolicy: currentInteractionPolicy,
-            terminalStream: traces.terminal,
-            sourceStream: traces.source
+            terminalTrace: traces.terminal,
+            sourceTrace: traces.source
         ) else {
             return
         }
@@ -2279,34 +2279,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// The timeline's traces for this row. Without a timeline (a preview or a
     /// standalone row) the reader is static, like a finished row's.
-    private func openFullScreenTraces() -> (terminal: TerminalTraceStream?, source: SourceTraceStream?) {
+    private func openFullScreenTraces() -> (terminal: ReaderTrace<TerminalSnapshot>?, source: ReaderTrace<SourceSnapshot>?) {
         guard let owner = currentConfiguration.traceOwner else {
             return (nil, nil)
         }
         let itemID = currentConfiguration.itemID
-        let terminalTrace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(
-            configuration: currentConfiguration
-        )
         let terminal = owner.terminalTrace(
             itemID: itemID,
-            output: terminalTrace.output,
-            command: terminalTrace.command,
-            isDone: terminalTrace.isDone
+            ToolTimelineRowFullScreenSupport.terminalTraceUpdate(configuration: currentConfiguration)
         )
-        terminal.completionSidecarSource = currentConfiguration.toolOutputSidecarSource
-        let sourceTrace = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+        let source = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
             configuration: currentConfiguration,
             outputCopyText: outputCopyText
-        )
-        let source = sourceTrace.map { trace in
-            owner.sourceTrace(
-                itemID: itemID,
-                text: trace.text,
-                filePath: trace.filePath,
-                isDone: trace.isDone,
-                finalContent: trace.finalContent
-            )
-        }
+        ).map { owner.sourceTrace(itemID: itemID, $0) }
         return (terminal, source)
     }
 

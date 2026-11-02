@@ -456,7 +456,7 @@ struct ChatTimelineCoordinatorTests {
         #expect(command == "producer command")
         #expect(output == text)
         let reader = ToolTimelineRowFullScreenSupport.staticFullScreenContent(configuration: expanded,
-            outputCopyText: nil, terminalStream: nil)
+            outputCopyText: nil, terminalTrace: nil)
         guard case .terminal(let fullText, _, _, _) = reader else {
             Issue.record("Expected shared full-screen terminal reader"); return
         }

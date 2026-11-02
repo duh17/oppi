@@ -118,7 +118,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         collectionViewLayout: virtualizedLayout
     )
     private let palette: ThemePalette
-    private let stream: TerminalTraceStream?
     private var usingCompletedSidecar = false
     private let streamNoticeLabel = UILabel()
     private let streamNoticeContainer = UIStackView()
@@ -126,8 +125,15 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
 
-    private var latestSnapshot: TerminalTraceStream.Snapshot
-    private var renderedSnapshot: TerminalTraceStream.Snapshot?
+    /// What the body shows: the trace's text, or the sidecar's once loaded.
+    private struct Frame: Equatable {
+        let output: String
+        let command: String?
+        let isDone: Bool
+    }
+
+    private var latestSnapshot: Frame
+    private var renderedSnapshot: Frame?
     private var renderedOutputText = ""
     private var renderedOutputAttributedBase: NSAttributedString?
     private var stackWidthConstraint: NSLayoutConstraint?
@@ -171,7 +177,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         virtualizedCollectionView.isHidden ? standardTailFollowCoordinator : virtualizedTailFollowCoordinator
     }
 
-    private var streamObserverID: UUID?
     private var sidecarSource: ToolOutputSidecarWindowSource?
     private var sidecarTerminalResolved = false
     private var sidecarTask: Task<Void, Never>?
@@ -181,7 +186,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     init(
         content: String,
         command: String?,
-        stream: TerminalTraceStream?,
+        isStreaming: Bool = false,
         palette: ThemePalette,
         outputWrapped: Bool? = nil,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.terminal.defaultPreferences,
@@ -190,12 +195,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         sidecarSource: ToolOutputSidecarWindowSource? = nil
     ) {
         self.palette = palette
-        self.stream = stream
-        var resolvedSidecar = sidecarSource
-        if resolvedSidecar == nil, stream?.snapshot.isDone == true {
-            resolvedSidecar = stream?.completionSidecarSource
-        }
-        self.sidecarSource = resolvedSidecar
+        self.sidecarSource = sidecarSource
         var preferences = readerPreferences
         if let outputWrapped {
             preferences.wrapsText = outputWrapped
@@ -204,7 +204,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
 
-        let initialSnapshot = stream?.snapshot ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
+        let initialSnapshot = Frame(output: content, command: command, isDone: !isStreaming)
         latestSnapshot = initialSnapshot
 
         super.init(frame: .zero)
@@ -212,9 +212,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
         render(snapshot: initialSnapshot)
         startSidecarLoadingIfNeeded()
-        streamObserverID = stream?.addObserver { [weak self] snapshot in
-            self?.handleStreamUpdate(snapshot)
-        }
     }
 
     @available(*, unavailable)
@@ -224,12 +221,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         renderTask?.cancel()
         sidecarTask?.cancel()
         chunkRenderTasks.values.forEach { $0.cancel() }
-        if let streamObserverID {
-            let stream = stream
-            Task { @MainActor in
-                stream?.removeObserver(streamObserverID)
-            }
-        }
     }
 
     override func layoutSubviews() {
@@ -355,12 +346,13 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         setNeedsLayout()
     }
 
-    private func handleStreamUpdate(_ snapshot: TerminalTraceStream.Snapshot) {
-        latestSnapshot = snapshot
-        render(snapshot: snapshot)
+    /// Shows the running call's next output.
+    func apply(_ snapshot: TerminalSnapshot) {
+        latestSnapshot = Frame(output: snapshot.output, command: snapshot.command, isDone: snapshot.isDone)
+        render(snapshot: latestSnapshot)
     }
 
-    private func render(snapshot: TerminalTraceStream.Snapshot) {
+    private func render(snapshot: Frame) {
         guard snapshot != renderedSnapshot else {
             tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             return
@@ -568,7 +560,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         setStreamNotice(nil)
         sidecarExpectsMore = !window.isComplete
         sidecarHasPendingAppend = false
-        latestSnapshot = TerminalTraceStream.Snapshot(
+        latestSnapshot = Frame(
             output: window.text,
             command: latestSnapshot.command,
             isDone: true
@@ -583,7 +575,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         guard !text.isEmpty else { return }
         if virtualizedCollectionView.isHidden, !sidecarExpectsMore {
             let combined = (virtualizedSource.isEmpty ? latestSnapshot.output : virtualizedSource) + text
-            latestSnapshot = TerminalTraceStream.Snapshot(
+            latestSnapshot = Frame(
                 output: combined,
                 command: latestSnapshot.command,
                 isDone: true

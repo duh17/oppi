@@ -70,15 +70,16 @@ struct LiveStreamingPresentationTests {
 
     @Test("thinking stream delivers every coalesced snapshot without a second clock")
     func thinkingStreamHasNoSecondClock() {
-        let stream = ThinkingTraceStream(text: "Considering", isDone: false)
+        let stream = ReaderTrace(ThinkingSnapshot(text: "Considering", isDone: false))
         var deliveries = 0
-        _ = stream.addObserver(deliverImmediately: false) { _ in
+        let observation = stream.observe { _ in
             deliveries += 1
         }
 
         for index in 0..<8 {
-            stream.update(text: "Considering \(index)", isDone: false)
+            stream.update(ThinkingSnapshot(text: "Considering \(index)", isDone: false))
         }
+        observation.cancel()
 
         #expect(deliveries == 8)
         #expect(stream.snapshot.text == "Considering 7")

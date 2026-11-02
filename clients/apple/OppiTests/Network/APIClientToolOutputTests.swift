@@ -92,7 +92,6 @@ struct APIClientToolOutputTests {
         let body = NativeFullScreenTerminalBody(
             content: "held preview\n",
             command: nil,
-            stream: nil,
             palette: ThemeRuntimeState.currentThemeID().palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,

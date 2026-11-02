@@ -279,7 +279,7 @@ struct FullScreenReaderStreamTests {
         )
         // The payload a reader was opened from is what keeps its trace alive, so
         // closing the reader and dropping the payload is the exact release.
-        weak var releasedTrace: ThinkingTraceStream?
+        weak var releasedTrace: ReaderTrace<ThinkingSnapshot>?
         var reader: FullScreenCodeViewController?
         do {
             let row = try fixture.thinkingRow(at: 0)

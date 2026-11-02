@@ -229,7 +229,7 @@ struct ToolCallDocumentTests {
         guard case .rich(let formatted) = inline.output else { Issue.record("A JSON result is formatted"); return }
         #expect(formatted.contains("| z | 1 |"))
         let content = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
-            configuration: config, outputCopyText: nil, terminalStream: nil))
+            configuration: config, outputCopyText: nil, terminalTrace: nil))
         guard case .notebook(let reader) = content else { Issue.record("Notebook reader"); return }
         #expect(reader == inline)
         #expect(config.copyOutputText == "{\"z\":1}")

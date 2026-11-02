@@ -3,8 +3,8 @@ enum ToolTimelineRowFullScreenSupport {
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,
         interactionPolicy: ToolTimelineRowInteractionPolicy?,
-        terminalStream: TerminalTraceStream?,
-        sourceStream: SourceTraceStream?
+        terminalTrace: ReaderTrace<TerminalSnapshot>?,
+        sourceTrace: ReaderTrace<SourceSnapshot>?
     ) -> FullScreenCodeContent? {
         guard configuration.isExpanded,
               let content = configuration.expandedContent else {
@@ -21,7 +21,7 @@ enum ToolTimelineRowFullScreenSupport {
                 return .terminal(
                     content: terminalOutput,
                     command: command ?? configuration.copyCommandText,
-                    stream: terminalStream
+                    trace: terminalTrace
                 )
 
             case .text(let text, _):
@@ -29,7 +29,7 @@ enum ToolTimelineRowFullScreenSupport {
                 return .terminal(
                     content: text,
                     command: configuration.copyCommandText,
-                    stream: terminalStream
+                    trace: terminalTrace
                 )
 
             case .notebook(let plan):
@@ -43,8 +43,8 @@ enum ToolTimelineRowFullScreenSupport {
                     return nil
                 }
 
-                if let sourceStream {
-                    return .liveSource(snapshot: snapshot, stream: sourceStream)
+                if let sourceTrace {
+                    return .liveSource(sourceTrace)
                 }
 
                 return .plainText(content: snapshot.text, filePath: snapshot.filePath)
@@ -57,15 +57,15 @@ enum ToolTimelineRowFullScreenSupport {
         return staticFullScreenContent(
             configuration: configuration,
             outputCopyText: outputCopyText,
-            terminalStream: terminalStream
+            terminalTrace: terminalTrace
         )
     }
 
-    /// The terminal stream's payload. The row and the timeline's open-reader
+    /// The terminal trace's payload. The row and the timeline's open-reader
     /// feed share it, so a reader shows the text the apply produced.
     static func terminalTraceUpdate(
         configuration: ToolTimelineRowConfiguration
-    ) -> (output: String, command: String?, isDone: Bool) {
+    ) -> TerminalSnapshot {
         let output: String
         if case .text(let text, _) = configuration.expandedContent {
             // The stream drives full-screen display; keep its ANSI payload and
@@ -74,7 +74,12 @@ enum ToolTimelineRowFullScreenSupport {
         } else {
             output = configuration.copyOutputText ?? ""
         }
-        return (output, configuration.copyCommandText, configuration.isDone)
+        return TerminalSnapshot(
+            output: output,
+            command: configuration.copyCommandText,
+            isDone: configuration.isDone,
+            sidecarSource: configuration.toolOutputSidecarSource
+        )
     }
 
     /// The snapshot a live-source reader shows, and the finished content that
@@ -82,7 +87,7 @@ enum ToolTimelineRowFullScreenSupport {
     static func sourceTraceUpdate(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?
-    ) -> (text: String, filePath: String?, isDone: Bool, finalContent: FullScreenCodeContent?)? {
+    ) -> SourceSnapshot? {
         guard let snapshot = liveSourceSnapshot(
             configuration: configuration,
             outputCopyText: outputCopyText
@@ -94,18 +99,23 @@ enum ToolTimelineRowFullScreenSupport {
             finalContent = staticFullScreenContent(
                 configuration: configuration,
                 outputCopyText: outputCopyText,
-                terminalStream: nil
+                terminalTrace: nil
             )
         } else {
             finalContent = snapshot.finalContent
         }
-        return (snapshot.text, snapshot.filePath, configuration.isDone, finalContent)
+        return SourceSnapshot(
+            text: snapshot.text,
+            filePath: snapshot.filePath,
+            isDone: configuration.isDone,
+            finalContent: finalContent
+        )
     }
 
     static func staticFullScreenContent(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,
-        terminalStream: TerminalTraceStream?
+        terminalTrace: ReaderTrace<TerminalSnapshot>?
     ) -> FullScreenCodeContent? {
         guard configuration.isExpanded,
               let content = configuration.expandedContent else {
@@ -174,7 +184,7 @@ enum ToolTimelineRowFullScreenSupport {
             return .terminal(
                 content: terminalOutput,
                 command: command ?? configuration.copyCommandText,
-                stream: terminalStream,
+                trace: terminalTrace,
                 sidecarSource: configuration.toolOutputSidecarSource
             )
 
@@ -186,9 +196,9 @@ enum ToolTimelineRowFullScreenSupport {
                 content: text,
                 command: configuration.copyCommandText,
                 // Completed text is already the final ANSI display payload. The
-                // stream snapshot is the clipboard-safe representation and may
+                // trace snapshot is the clipboard-safe representation and may
                 // intentionally be stripped.
-                stream: nil
+                trace: nil
             )
 
         case .notebook(let plan):
@@ -202,7 +212,7 @@ enum ToolTimelineRowFullScreenSupport {
     static func liveSourceSnapshot(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?
-    ) -> SourceTraceStream.Snapshot? {
+    ) -> SourceSnapshot? {
         guard configuration.isExpanded,
               let content = configuration.expandedContent else {
             return nil
@@ -214,7 +224,7 @@ enum ToolTimelineRowFullScreenSupport {
             let renderContent: FullScreenCodeContent? = language == .html
                 ? .html(content: text, filePath: filePath)
                 : nil
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: text,
                 filePath: filePath,
                 isDone: configuration.isDone,
@@ -224,7 +234,7 @@ enum ToolTimelineRowFullScreenSupport {
         case .diff(let lines, let path):
             let diffText = outputCopyText ?? DiffEngine.formatUnified(lines)
             guard !diffText.isEmpty else { return nil }
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: diffText,
                 filePath: path,
                 isDone: configuration.isDone,
@@ -234,7 +244,7 @@ enum ToolTimelineRowFullScreenSupport {
         case .markdown(let text, let filePath):
             guard !text.isEmpty else { return nil }
             let path = resolvedMarkdownFilePath(filePath, configuration: configuration)
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: text,
                 filePath: path,
                 isDone: configuration.isDone,
@@ -253,7 +263,7 @@ enum ToolTimelineRowFullScreenSupport {
 
         case .document(let family):
             guard !family.text.isEmpty else { return nil }
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: family.text,
                 filePath: family.filePath,
                 isDone: configuration.isDone,
@@ -264,7 +274,7 @@ enum ToolTimelineRowFullScreenSupport {
             // Keep terminal styling in the full-screen display while copyOutputText
             // remains the ANSI-stripped clipboard representation.
             guard !text.isEmpty else { return nil }
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: text,
                 filePath: nil,
                 isDone: configuration.isDone,
@@ -272,7 +282,7 @@ enum ToolTimelineRowFullScreenSupport {
             )
 
         case .notebook(let plan):
-            return SourceTraceStream.Snapshot(
+            return SourceSnapshot(
                 text: plan.readerText,
                 filePath: nil,
                 isDone: configuration.isDone,

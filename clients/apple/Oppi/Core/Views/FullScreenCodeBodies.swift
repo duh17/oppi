@@ -426,9 +426,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var asyncRenderTask: Task<Void, Never>?
     private var renderAheadTask: Task<Void, Never>?
     private var scheduledRenderAheadFirstVisibleItem: Int?
-    private var latestSnapshot: ThinkingTraceStream.Snapshot
+    private var latestSnapshot: ThinkingSnapshot
     private var pendingReaderPreferences: FullScreenReaderPreferences?
-    private var renderedSnapshot: ThinkingTraceStream.Snapshot?
+    private var renderedSnapshot: ThinkingSnapshot?
     /// Configuration can change while the source snapshot stays byte-identical.
     /// Keep that independent from `renderedSnapshot` so append detection and
     /// interaction deferral retain the mounted document.
@@ -501,8 +501,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.trimsTextToViewport = !allowsVerticalScrolling && visibleHeightCeiling != nil
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let initialSnapshot = sourceFormat == .markdown
-            ? ThinkingTraceStream.Snapshot(text: content, isDone: true)
-            : ThinkingTraceStream.Snapshot(text: "", isDone: true)
+            ? ThinkingSnapshot(text: content, isDone: true)
+            : ThinkingSnapshot(text: "", isDone: true)
         latestSnapshot = initialSnapshot
         collectionView = UICollectionView(
             frame: .zero,
@@ -631,7 +631,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func shouldDeferInitialRender(
-        snapshot: ThinkingTraceStream.Snapshot
+        snapshot: ThinkingSnapshot
     ) -> Bool {
         snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
     }
@@ -728,7 +728,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
-    private func scheduleDeferredInitialRender(snapshot: ThinkingTraceStream.Snapshot) {
+    private func scheduleDeferredInitialRender(snapshot: ThinkingSnapshot) {
         deferredInitialRenderTask?.cancel()
         deferredInitialRenderTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(Self.deferredInitialRenderDelayMs))
@@ -745,7 +745,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         asyncRenderTask = nil
         renderAheadTask?.cancel()
         renderAheadTask = nil
-        let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: true)
+        let snapshot = ThinkingSnapshot(text: content, isDone: true)
         latestSnapshot = snapshot
         render(snapshot: snapshot)
     }
@@ -766,9 +766,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         applyPendingMutableTransitionViewportIntentIfReady()
     }
 
-    /// Visible so a remake torn down before the async restore write can refuse
-    /// to capture offset 0 as `.top`.
-    var hasSettledMarkdownViewportRestore: Bool {
+    /// False from a restore request until its offset write lands, so
+    /// `viewportIntent` never reads the unrestored offset 0 as `.top`.
+    private var hasSettledMarkdownViewportRestore: Bool {
         markdownViewportRestoreSettled
     }
 
@@ -836,7 +836,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
-    private func render(snapshot: ThinkingTraceStream.Snapshot) {
+    private func render(snapshot: ThinkingSnapshot) {
         guard snapshot != renderedSnapshot || needsSnapshotReconfiguration else {
             viewportOwner.scheduleFollowTail()
             return
@@ -935,7 +935,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func renderLargeCompletedSnapshotAsync(
-        snapshot: ThinkingTraceStream.Snapshot,
+        snapshot: ThinkingSnapshot,
         config: AssistantMarkdownContentView.Configuration,
         cycleStart: UInt64,
         anchorOverride: ViewportAnchor?,

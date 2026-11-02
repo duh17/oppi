@@ -647,7 +647,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     /// The reader's trace belongs to the timeline, which keeps feeding it while
     /// the row's cell is gone. Without a timeline (a preview or a standalone
     /// row) the reader is static, like a finished trace's.
-    private var fullScreenTraceStream: ThinkingTraceStream? {
+    private var fullScreenTrace: ReaderTrace<ThinkingSnapshot>? {
         guard let owner = currentConfiguration.traceOwner,
               let itemID = currentConfiguration.itemID else {
             return nil
@@ -706,7 +706,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
         let content = FullScreenCodeContent.thinking(
             content: trimmedDisplayText,
-            stream: fullScreenTraceStream
+            trace: fullScreenTrace
         )
         let reviewCommentSelectionContext = currentConfiguration.interactionContext?
             .reviewCommentSelectionContext?

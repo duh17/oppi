@@ -592,7 +592,7 @@ struct SessionContentAccessTests {
         return try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: row,
             outputCopyText: nil,
-            terminalStream: nil
+            terminalTrace: nil
         ))
     }
 

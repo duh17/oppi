@@ -49,7 +49,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
-            terminalStream: nil
+            terminalTrace: nil
         )
         guard case .terminal(let rendered, _, _, _) = content else {
             Issue.record("Expected terminal full-screen content")
@@ -290,25 +290,29 @@ struct ToolTimelineRowFullScreenActivationTests {
             .markdown(text: markdown),
             isDone: false
         )
-        let sourceStream = SourceTraceStream(
-            text: markdown,
-            filePath: nil,
-            isDone: false,
-            finalContent: nil
+        // The row opens its reader on the trace the timeline feeds (`openFullScreenTraces`).
+        let sourceTrace = ReaderTrace(
+            try #require(ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+                configuration: configuration,
+                outputCopyText: configuration.copyOutputText
+            )),
+            isNews: SourceSnapshot.isNews
         )
 
         let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
             interactionPolicy: interactionPolicy,
-            terminalStream: nil,
-            sourceStream: sourceStream
+            terminalTrace: nil,
+            sourceTrace: sourceTrace
         )
 
-        guard case .liveSource(let snapshot, _) = fullScreenContent else {
+        guard case .liveSource(let openedTrace, _) = fullScreenContent else {
             Issue.record("Expected .liveSource for streaming markdown content")
             return
         }
+        #expect(openedTrace === sourceTrace)
+        let snapshot = openedTrace.snapshot
         guard case .markdown(let content, _, _, _, _)? = snapshot.finalContent else {
             Issue.record("Expected streaming markdown to carry a markdown render hint")
             return
@@ -339,7 +343,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
             outputCopyText: body,
-            terminalStream: nil
+            terminalTrace: nil
         )
 
         guard case .markdown(let text, let filePath, let resourceAccess, _, _) = content else {
@@ -366,25 +370,29 @@ struct ToolTimelineRowFullScreenActivationTests {
             .code(text: html, language: .html, startLine: 1, filePath: "report.html"),
             isDone: false
         )
-        let sourceStream = SourceTraceStream(
-            text: html,
-            filePath: "report.html",
-            isDone: false,
-            finalContent: nil
+        // The row opens its reader on the trace the timeline feeds (`openFullScreenTraces`).
+        let sourceTrace = ReaderTrace(
+            try #require(ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+                configuration: configuration,
+                outputCopyText: configuration.copyOutputText
+            )),
+            isNews: SourceSnapshot.isNews
         )
 
         let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
             interactionPolicy: interactionPolicy,
-            terminalStream: nil,
-            sourceStream: sourceStream
+            terminalTrace: nil,
+            sourceTrace: sourceTrace
         )
 
-        guard case .liveSource(let snapshot, _) = fullScreenContent else {
+        guard case .liveSource(let openedTrace, _) = fullScreenContent else {
             Issue.record("Expected .liveSource for streaming HTML content")
             return
         }
+        #expect(openedTrace === sourceTrace)
+        let snapshot = openedTrace.snapshot
         guard case .html(let content, let filePath)? = snapshot.finalContent else {
             Issue.record("Expected streaming HTML to carry an HTML render hint")
             return
@@ -408,7 +416,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
             outputCopyText: csv,
-            terminalStream: nil
+            terminalTrace: nil
         )
 
         guard case .document(.delimitedTable(let text, let filePath)) = content else {
@@ -759,27 +767,26 @@ struct ToolTimelineRowFullScreenActivationTests {
             isExpanded: true
         )
 
-        let terminalStream = TerminalTraceStream(
-            output: ANSIParser.strip(formatted),
-            command: nil,
-            isDone: true
+        let terminalTrace = ReaderTrace(
+            TerminalSnapshot(output: ANSIParser.strip(formatted), command: nil, isDone: true),
+            isNews: TerminalSnapshot.isNews
         )
         let fullScreenContent = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
-            terminalStream: terminalStream
+            terminalTrace: terminalTrace
         )
 
         guard let fullScreenContent else {
             Issue.record("Expected ANSI text full-screen content")
             return
         }
-        guard case .terminal(let rendered, _, let stream, _) = fullScreenContent else {
+        guard case .terminal(let rendered, _, let trace, _) = fullScreenContent else {
             Issue.record("Expected terminal full-screen content")
             return
         }
         #expect(rendered == formatted)
-        #expect(stream == nil)
+        #expect(trace == nil)
         #expect(configuration.copyOutputText == ANSIParser.strip(formatted))
     }
 
@@ -797,26 +804,25 @@ struct ToolTimelineRowFullScreenActivationTests {
             .text(text: formatted, language: nil),
             isDone: false
         )
-        let terminalStream = TerminalTraceStream(
-            output: formatted,
-            command: nil,
-            isDone: false
+        let terminalTrace = ReaderTrace(
+            TerminalSnapshot(output: formatted, command: nil, isDone: false),
+            isNews: TerminalSnapshot.isNews
         )
 
         let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
             interactionPolicy: interactionPolicy,
-            terminalStream: terminalStream,
-            sourceStream: nil
+            terminalTrace: terminalTrace,
+            sourceTrace: nil
         )
 
-        guard case .terminal(let rendered, _, let stream, _) = fullScreenContent else {
+        guard case .terminal(let rendered, _, let trace, _) = fullScreenContent else {
             Issue.record("Expected streaming ANSI text to use terminal full-screen content")
             return
         }
         #expect(rendered == formatted)
-        #expect(stream?.snapshot.output == formatted)
+        #expect(trace?.snapshot.output == formatted)
     }
 
     @Test("streaming file-like tools use live source full screen content")
@@ -836,25 +842,29 @@ struct ToolTimelineRowFullScreenActivationTests {
         let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .code(text: "let draft = 1", language: .swift, startLine: 1, filePath: "Draft.swift"), isDone: false
         )
-        let sourceStream = SourceTraceStream(
-            text: "let draft = 1",
-            filePath: "Draft.swift",
-            isDone: false,
-            finalContent: nil
+        // The row opens its reader on the trace the timeline feeds (`openFullScreenTraces`).
+        let sourceTrace = ReaderTrace(
+            try #require(ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+                configuration: configuration,
+                outputCopyText: configuration.copyOutputText
+            )),
+            isNews: SourceSnapshot.isNews
         )
 
         let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: configuration,
             outputCopyText: configuration.copyOutputText,
             interactionPolicy: interactionPolicy,
-            terminalStream: nil,
-            sourceStream: sourceStream
+            terminalTrace: nil,
+            sourceTrace: sourceTrace
         )
 
-        guard case .liveSource(let snapshot, _) = fullScreenContent else {
+        guard case .liveSource(let openedTrace, _) = fullScreenContent else {
             Issue.record("Expected .liveSource for streaming file-like content")
             return
         }
+        #expect(openedTrace === sourceTrace)
+        let snapshot = openedTrace.snapshot
         #expect(snapshot.text == "let draft = 1")
         #expect(snapshot.filePath == "Draft.swift")
         #expect(!snapshot.isDone)

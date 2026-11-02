@@ -995,7 +995,7 @@ struct FullScreenReviewCommentSelectionTests {
             ToolTimelineRowFullScreenSupport.staticFullScreenContent(
                 configuration: configuration,
                 outputCopyText: nil,
-                terminalStream: nil
+                terminalTrace: nil
             )
         )
         guard case .diff(let produced) = content else {
@@ -1647,14 +1647,14 @@ struct FullScreenReviewCommentSelectionTests {
 
     @Test func liveMarkdownSourceUsesRichRenderingWhileStreaming() throws {
         let markdown = "# Streaming plan\n\n**Decision** with `inline code`."
-        let stream = SourceTraceStream(
+        let stream = ReaderTrace(SourceSnapshot(
             text: markdown,
             filePath: nil,
             isDone: false,
             finalContent: .markdown(content: markdown, filePath: nil)
-        )
+        ), isNews: SourceSnapshot.isNews)
         let controller = makeController(
-            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+            content: .liveSource(stream)
         )
 
         let markdownView = try #require(timelineFirstView(ofType: NativeMutableFullScreenMarkdownBody.self, in: controller.view))
@@ -1670,12 +1670,12 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(!renderedText.contains("`inline code`"))
 
         let nextMarkdown = markdown + "\n\n## Next section"
-        stream.update(
+        stream.update(SourceSnapshot(
             text: nextMarkdown,
             filePath: nil,
             isDone: false,
             finalContent: .markdown(content: nextMarkdown, filePath: nil)
-        )
+        ))
         controller.view.layoutIfNeeded()
 
         let updatedText = timelineAllTextViews(in: markdownView)
@@ -1705,7 +1705,7 @@ struct FullScreenReviewCommentSelectionTests {
 
     @Test func terminalBodyPrependsCommentAction() throws {
         let controller = makeController(
-            content: .terminal(content: "hello\nworld", command: "echo hello", stream: nil)
+            content: .terminal(content: "hello\nworld", command: "echo hello")
         )
         let textView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0).contains("hello") && !$0.isHidden
@@ -1726,7 +1726,7 @@ struct FullScreenReviewCommentSelectionTests {
             String(format: "%05d ", $0) + String(repeating: "x", count: 160) + "\n"
         }.joined()
         let body = NativeFullScreenTerminalBody(
-            content: content, command: nil, stream: nil, palette: ThemeID.dark.palette,
+            content: content, command: nil, palette: ThemeID.dark.palette,
             readerPreferences: FullScreenReaderPreferences(wrapsText: true),
             reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil
         )
@@ -1791,7 +1791,6 @@ struct FullScreenReviewCommentSelectionTests {
         let body = NativeFullScreenTerminalBody(
             content: content,
             command: "git push",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -1884,7 +1883,6 @@ struct FullScreenReviewCommentSelectionTests {
         let body = NativeFullScreenTerminalBody(
             content: longLine,
             command: nil,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -1925,7 +1923,7 @@ struct FullScreenReviewCommentSelectionTests {
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .terminal) }
         let longLine = String(repeating: "0123456789", count: 40)
         let controller = makeController(
-            content: .terminal(content: longLine, command: "printf", stream: nil)
+            content: .terminal(content: longLine, command: "printf")
         )
         let outputView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0) == longLine
@@ -2211,14 +2209,14 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func liveSourceBodyPrependsCommentAction() throws {
-        let stream = SourceTraceStream(
+        let stream = ReaderTrace(SourceSnapshot(
             text: "streaming source",
             filePath: "Draft.swift",
             isDone: false,
             finalContent: nil
-        )
+        ), isNews: SourceSnapshot.isNews)
         let controller = makeController(
-            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+            content: .liveSource(stream)
         )
         let textView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0).contains("streaming source")
@@ -2267,25 +2265,25 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func liveSourceChunkUpdateKeepsNavigationChromeWhenMetadataIsUnchanged() throws {
-        let stream = SourceTraceStream(
+        let stream = ReaderTrace(SourceSnapshot(
             text: "streaming source",
             filePath: "Draft.swift",
             isDone: false,
             finalContent: nil
-        )
+        ), isNews: SourceSnapshot.isNews)
         let controller = makeController(
-            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+            content: .liveSource(stream)
         )
         let navigationController = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigationController.topViewController)
         let copyButton = try #require(contentController.navigationItem.rightBarButtonItems?.first)
 
-        stream.update(
+        stream.update(SourceSnapshot(
             text: "streaming source\nnext chunk",
             filePath: "Draft.swift",
             isDone: false,
             finalContent: nil
-        )
+        ))
 
         #expect(contentController.navigationItem.rightBarButtonItems?.first === copyButton)
     }

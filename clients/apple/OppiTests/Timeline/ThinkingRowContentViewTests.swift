@@ -760,13 +760,13 @@ private func fullScreenButton(in view: ThinkingTimelineRowContentView) -> UIButt
 @Suite("FullScreenThinkingReader")
 struct FullScreenThinkingReaderTests {
     @Test func liveTraceMountsTheStreamingBodyAndKeepsAppending() throws {
-        let stream = ThinkingTraceStream(text: "plan the fix", isDone: false)
-        let controller = try makeReader(content: .thinking(content: "plan the fix", stream: stream))
+        let stream = ReaderTrace(ThinkingSnapshot(text: "plan the fix", isDone: false))
+        let controller = try makeReader(content: .thinking(content: "plan the fix", trace: stream))
 
         let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
         #expect(body.debugTextViewForTesting.text == "plan the fix")
 
-        stream.update(text: "plan the fix, then the test", isDone: false)
+        stream.update(ThinkingSnapshot(text: "plan the fix, then the test", isDone: false))
         controller.view.layoutIfNeeded()
 
         #expect(controller.installedBodyViewForTesting === body, "A live trace keeps one body")
@@ -775,8 +775,8 @@ struct FullScreenThinkingReaderTests {
     }
 
     @Test func settledTraceReadsAsFinished() throws {
-        let stream = ThinkingTraceStream(text: "plan the fix", isDone: true)
-        let controller = try makeReader(content: .thinking(content: "plan the fix", stream: stream))
+        let stream = ReaderTrace(ThinkingSnapshot(text: "plan the fix", isDone: true))
+        let controller = try makeReader(content: .thinking(content: "plan the fix", trace: stream))
 
         #expect(!(controller.installedBodyViewForTesting is NativeFullScreenThinkingBody))
     }
