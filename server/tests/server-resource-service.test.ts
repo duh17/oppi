@@ -456,6 +456,17 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(await hasPlugin("with-plugin")).toBe(true);
     expect(await hasPlugin("listed-plugin")).toBe(true);
     expect(await hasPlugin("broken-list")).toBe(false);
+
+    // No plugin of theirs is loaded here (no plugin host), so a row with a plugin on disk has
+    // both kinds and no plugin block: a package keeps its Plugin kind while it is switched off.
+    const kinds = (name: string) => listed.find((extension) => extension.name === name)!;
+    expect(kinds("classic-only")).toMatchObject({ kinds: ["pi-extension"] });
+    expect(kinds("with-plugin")).toMatchObject({ kinds: ["plugin", "pi-extension"] });
+    expect(kinds("listed-plugin")).toMatchObject({ kinds: ["plugin", "pi-extension"] });
+    expect(kinds("with-plugin").plugin).toBeUndefined();
+    const withPlugin = kinds("with-plugin");
+    const off = await service.setExtensionEnabled(withPlugin.id, false);
+    expect(off).toMatchObject({ state: "off", kinds: ["plugin", "pi-extension"] });
   });
 
   it("reads skill detail through a symlinked user skill directory", async () => {

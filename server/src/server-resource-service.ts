@@ -30,6 +30,7 @@ import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
+import { packageHasPlugin } from "./plugin-discovery.js";
 import type { PluginListing } from "./plugin-host.js";
 import {
   PiGlobalConfigError,
@@ -475,7 +476,6 @@ export class ServerResourceService {
     const context = await this.resolveContext();
     const resource = this.matchResourceById("extension", context.extensions, id);
     if (!resource) return false;
-    const { packageHasPlugin } = await import("./plugin-discovery.js");
     return packageHasPlugin(resource.path, resource.metadata);
   }
 
@@ -670,7 +670,12 @@ export class ServerResourceService {
       error: boundMessage(error.error),
     }));
 
-    const normal = resources.map(({ resource, canonicalPath: path }) => {
+    // A row's plugin kind is its package's on disk, so a package keeps it while switched off and
+    // its plugin is not loaded; `withPlugin` adds the loaded plugin's block.
+    const holdsPlugin = await Promise.all(
+      resources.map(({ resource }) => packageHasPlugin(resource.path, resource.metadata)),
+    );
+    const normal = resources.map(({ resource, canonicalPath: path }, index) => {
       const extension = extensions.find(
         (candidate) =>
           pathsMatch(candidate.resolvedPath, resource.path) ||
@@ -710,7 +715,7 @@ export class ServerResourceService {
         ...(loadError ? { loadError: boundMessage(loadError) } : {}),
         warnings,
         isRemovable: false,
-        kinds: ["pi-extension"],
+        kinds: holdsPlugin[index] ? ["plugin", "pi-extension"] : ["pi-extension"],
         source: "owner",
         ...(contributedTools ? { contributedTools } : {}),
         ...(contributedToolDetails ? { contributedToolDetails } : {}),
