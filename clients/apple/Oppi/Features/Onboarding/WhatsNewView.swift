@@ -104,63 +104,35 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
     private var rows: [FeatureRow] = []
     private var hasAppeared = false
 
-    /// Build 56 · Changes since Build 55
+    /// Build 57 · Changes since Build 56
     private static let features: [WhatsNewFeature] = [
         WhatsNewFeature(
             id: "uikit",
             icon: .symbol("bolt"),
             iconColor: \.blue,
-            title: String(localized: "Rebuilt in UIKit"),
-            description: String(localized: "We moved chats, the composer, session lists, Files, and many settings pages from SwiftUI to UIKit. Opening chats, scrolling, and moving between screens are much faster. If anything works differently than before, please report it through TestFlight feedback.")
+            title: String(localized: "Fully UIKit"),
+            description: String(localized: "Every screen is now built with UIKit, Apple’s native framework, so Oppi looks and behaves like the rest of iOS. If something feels off, tell us in TestFlight feedback.")
         ),
         WhatsNewFeature(
-            id: "ssh-terminal",
-            icon: .symbol("terminal"),
+            id: "threads",
+            icon: .symbol("list.bullet.indent"),
             iconColor: \.green,
-            title: String(localized: "Terminal"),
-            description: String(localized: "The terminal is out of Experiments and much more polished. We rewrote its rendering on the GPU, so it is a lot faster and scrolls smoothly, and added support for the Kitty image protocol. With an SSH host set up, a chat can open a terminal in its own folder.")
+            title: String(localized: "Subagent sessions, grouped"),
+            description: String(localized: "Subagent sessions now appear grouped under the session that started them. Tap the group to open it in place.")
         ),
         WhatsNewFeature(
-            id: "live-voice",
-            icon: .symbol("waveform"),
-            iconColor: \.cyan,
-            title: String(localized: "Live Voice (experimental)"),
-            description: String(localized: "Talk with a session hands-free from the composer mic, Control Center, or the Action Button. Turn it on in Settings → Experiments. It needs a voice backend on your server: Grok Voice with an xAI key works; our local reference implementation works but is still rough.")
-        ),
-        WhatsNewFeature(
-            id: "code-editor",
-            icon: .symbol("chevron.left.forwardslash.chevron.right"),
+            id: "durable",
+            icon: .symbol("infinity"),
             iconColor: \.purple,
-            title: String(localized: "Code editor"),
-            description: String(localized: "Workspace files open in a real code editor with tree-sitter syntax highlighting, line numbers, auto-indent, and optional Vim keybindings in Settings → Editor. Skill files can be edited in place too.")
+            title: String(localized: "Durable sessions"),
+            description: String(localized: "Durable sessions save every turn on your server and pick up where they left off after a restart. Turn on Server Settings → Durable Sessions, then tap Classic in Quick Session to switch to ∞ Durable.")
         ),
         WhatsNewFeature(
-            id: "push",
-            icon: .symbol("bell.badge"),
+            id: "rex",
+            icon: .symbol("terminal"),
             iconColor: \.orange,
-            title: String(localized: "Push and Live Activities (experimental)"),
-            description: String(localized: "Opt in for each server in Server Settings → Notifications to get end-to-end-encrypted alerts through Oppi's free relay when a session needs your answer or approval, a run fails, or an agent notifies you. Live Activities show running and waiting counts on the Lock Screen. Both are off by default, and the privacy policy lists what the relay can see. Limits are preliminary: up to 100 pushes per phone a day, 30 kept for alerts.")
-        ),
-        WhatsNewFeature(
-            id: "diff-engine",
-            icon: .symbol("plus.forwardslash.minus"),
-            iconColor: \.red,
-            title: String(localized: "Our own diff engine"),
-            description: String(localized: "We wrote our own diff engine and dropped Google's diff-match-patch. Diffs show the fewest changed lines, highlight only the words that changed, and scroll smoothly on long files.")
-        ),
-        WhatsNewFeature(
-            id: "top-bar",
-            icon: .gitLogo,
-            iconColor: \.yellow,
-            title: String(localized: "Reorganized top bar"),
-            description: String(localized: "The chat's top-right bar is reorganized: Context sits up front, and Files, Git, Outline, and Terminal are in its … menu. Settings → Chat → Top Bar pins the ones you use.")
-        ),
-        WhatsNewFeature(
-            id: "pi",
-            icon: .piMark,
-            iconColor: \.comment,
-            title: String(localized: "Pi 1.4"),
-            description: String(localized: "Oppi now runs the latest Pi, 1.4.0. Needs server 0.53.0.")
+            title: String(localized: "Rex in Terminal"),
+            description: String(localized: "An experiment: turn on Settings → Experiments → Rex, and the Terminal tab lists each computer’s Rex sessions and panes. Tap a pane to open it as a live terminal.")
         ),
     ]
 
