@@ -107,79 +107,6 @@ struct SettingsStyle {
     }
 }
 
-/// The list every settings page draws: pinned at the readable form width and
-/// painted in the theme.
-@MainActor
-enum SettingsListStyle {
-    /// Pins `collectionView` to `view`. With `endsAtKeyboard` the list ends at the
-    /// top of the keyboard rather than the bottom of the view, so a field or
-    /// editor in it can scroll above the keyboard; use it for a list that
-    /// edits text in place.
-    static func pin(_ collectionView: UICollectionView, in view: UIView, endsAtKeyboard: Bool = false) {
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        let bottom: NSLayoutConstraint
-        if endsAtKeyboard {
-            view.keyboardLayoutGuide.usesBottomSafeArea = false
-            bottom = collectionView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
-        } else {
-            bottom = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        }
-        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
-        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        fillWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            bottom,
-            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            maxWidth,
-            fillWidth,
-        ])
-    }
-
-    static func applyTheme(to view: UIView, collectionView: UICollectionView, themeID: ThemeID) {
-        view.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        let bg = themeID.palette.ui.bg
-        view.backgroundColor = bg
-        collectionView.backgroundColor = bg
-    }
-
-    /// Paints a settings row's card in the theme. A cell that already has its
-    /// own background handler keeps it.
-    @discardableResult
-    static func card(_ cell: UICollectionViewCell) -> UICollectionViewCell {
-        guard let cell = cell as? UICollectionViewListCell else { return cell }
-        if cell.configurationUpdateHandler == nil {
-            cell.configurationUpdateHandler = { cell, state in
-                cell.backgroundConfiguration = SettingsStyle.cardBackground(for: state)
-            }
-        }
-        // A theme change reconfigures the row through the data source, which
-        // comes back here; the handler reads the theme again.
-        cell.setNeedsUpdateConfiguration()
-        return cell
-    }
-
-    /// A data source's cell provider whose cells are painted with the theme's
-    /// card. Every settings list builds its data source with this.
-    static func cardProvider<Item>(
-        _ provider: @escaping (UICollectionView, IndexPath, Item) -> UICollectionViewCell?
-    ) -> (UICollectionView, IndexPath, Item) -> UICollectionViewCell? {
-        { collectionView, indexPath, item in provider(collectionView, indexPath, item).map(card) }
-    }
-
-    /// An inset-grouped list layout whose own background is clear, so the
-    /// theme's `bg` shows behind the cards instead of the system's grouped
-    /// background.
-    static func layoutConfiguration(headers: Bool, footers: Bool) -> UICollectionLayoutListConfiguration {
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.backgroundColor = .clear
-        if headers { config.headerMode = .supplementary }
-        if footers { config.footerMode = .supplementary }
-        return config
-    }
-}
-
 @MainActor
 extension UICellAccessory {
     /// A trailing switch. `identifier` makes it `app.switches[id]` in UI tests.
@@ -214,28 +141,6 @@ extension UICellAccessory {
         held.action = action
         toggle.addAction(action, for: .valueChanged)
         return .customView(configuration: .init(customView: toggle, placement: .trailing()))
-    }
-
-    /// A trailing pop-up button showing the current choice. Pages that are not
-    /// on the settings base use it; a page on the base uses `SettingsMenuRowCell`.
-    static func settingsPopUpMenu(
-        identifier: String,
-        isEnabled: Bool = true,
-        options: [(title: String, selected: Bool, action: () -> Void)]
-    ) -> UICellAccessory {
-        let button = UIButton(type: .system)
-        button.isEnabled = isEnabled
-        button.showsMenuAsPrimaryAction = true
-        button.changesSelectionAsPrimaryAction = true
-        button.accessibilityIdentifier = identifier
-        button.menu = UIMenu(children: options.map { option in
-            UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
-        })
-        var config = UIButton.Configuration.plain()
-        config.indicator = .popup
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 0)
-        button.configuration = config
-        return .customView(configuration: .init(customView: button, placement: .trailing()))
     }
 }
 

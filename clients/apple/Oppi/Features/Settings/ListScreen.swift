@@ -1,14 +1,13 @@
 import UIKit
 
-/// The kit's list chrome and row builders, for a screen that is not on
-/// `ListScreenController` yet: its collection view and layout, the theme, the
-/// bar's items, and rows whose one accessibility element is a button. A list
-/// is pinned at the readable form width by `SettingsListStyle.pin`.
+/// The kit's row builders: the items of a bar that changes, and rows whose one
+/// accessibility element is a button.
 ///
-/// No screen still builds its own list with these; a page on the base takes its
-/// look from `SettingsListStyle` instead. The row builders (`buttonRow`,
-/// `staticRow`, `stateRow`, `background`) are also what a page on the base draws
-/// its own cell classes with (`SidebarListCell`).
+/// The base draws its own list and theme (`ListScreenController`); a page on it
+/// uses these builders for its rows, and so does a list that keeps its own
+/// collection view. The row builders (`buttonRow`, `staticRow`, `stateRow`,
+/// `background`) are what a page on the base draws its own cell classes with
+/// (`SidebarListCell`).
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
@@ -17,32 +16,6 @@ import UIKit
 /// button's (the button takes the touch, so the list's own menu never sees it).
 @MainActor
 enum ListScreen {
-    /// The screen's list. It gets its layout in `viewDidLoad()`
-    /// (`layout(...)`), where the swipe provider can capture the screen.
-    static func makeCollectionView() -> UICollectionView {
-        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
-        collectionView.keyboardDismissMode = .interactive
-        collectionView.alwaysBounceVertical = true
-        return collectionView
-    }
-
-    static func layout(
-        appearance: UICollectionLayoutListConfiguration.Appearance,
-        headers: Bool = false,
-        footers: Bool = false,
-        trailingSwipe: ((IndexPath) -> UISwipeActionsConfiguration?)? = nil
-    ) -> UICollectionViewLayout {
-        var config = UICollectionLayoutListConfiguration(appearance: appearance)
-        config.headerMode = headers ? .supplementary : .none
-        config.footerMode = footers ? .supplementary : .none
-        config.backgroundColor = .clear
-        config.trailingSwipeActionsConfigurationProvider = trailingSwipe
-        if appearance == .plain {
-            config.showsSeparators = false
-        }
-        return UICollectionViewCompositionalLayout.list(using: config)
-    }
-
     /// Sets the bar's items only when they changed, as the chat does:
     /// `updateProperties()` runs often, and each assignment lays the bar out
     /// again.
@@ -53,14 +26,6 @@ enum ListScreen {
         if !(item.leftBarButtonItems ?? []).elementsEqual(leading, by: ===) {
             item.leftBarButtonItems = leading
         }
-    }
-
-    /// The theme's page behind the list and its color scheme on the screen.
-    /// Reads the theme store: call from `updateProperties()` to follow it.
-    static func applyTheme(_ theme: ThemeStore, to screen: UIViewController, collectionView: UICollectionView) {
-        screen.overrideUserInterfaceStyle = theme.userInterfaceStyle
-        screen.view.backgroundColor = theme.backgroundColor
-        collectionView.backgroundColor = .clear
     }
 
     /// Readies a reused row as a button with `action`.

@@ -324,7 +324,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     }
 
     /// The page's own cells are registered before the first row is dequeued; the
-    /// kit's theme card (its `cardProvider`) paints the ones that are list cells.
+    /// kit paints the theme's card behind the ones that are list cells.
     override func prepareRegistrations() {
         _ = (saveErrorRow, validationRow, noResultsRow, savingRow, chooserRow, searchRow, symbolCell)
     }

@@ -412,10 +412,9 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     }
 
     /// The Density picker is the page's own cell; every other row is the kit's
-    /// theme card.
+    /// card row. The kit paints its card like any list cell it dequeues.
     private lazy var densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
-        SettingsListStyle.card(cell)
         cell.configure(selected: draft.density) { [weak self] density in self?.draft.density = density }
     }
 

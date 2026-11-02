@@ -262,7 +262,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     ///     scope needs them, since the scope sentence is part of the footer.
     ///   - largeTitle: a page that roots its stack keeps the large title.
     ///   - endsAtKeyboard: a page that edits text in place ends its list at the
-    ///     keyboard (`SettingsListStyle.pin`), so the field scrolls above it.
+    ///     keyboard (`endsAtKeyboard`), so the field scrolls above it.
     ///   - dismissesKeyboardOnDrag: whether dragging the list puts the keyboard
     ///     away. The list dismisses it interactively and bounces even when its
     ///     rows do not fill it, which is what a list that built its own
@@ -611,7 +611,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.delegate = self
-        SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: listEndsAtKeyboard)
+        pinCollectionView()
         if dismissesKeyboardOnDrag {
             collectionView.keyboardDismissMode = .interactive
             collectionView.alwaysBounceVertical = true
@@ -626,6 +626,41 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         NotificationCenter.default.addObserver(self, selector: #selector(redrawRows), name: .oppiThemeDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(redrawRows), name: .oppiEntityIconDidLoad, object: nil)
         setNeedsUpdateProperties()
+    }
+
+    /// Pins the list to the view at the readable form width. With
+    /// `listEndsAtKeyboard` the list ends at the top of the keyboard rather than
+    /// the bottom of the view, so a field or editor in it can scroll above the
+    /// keyboard.
+    private func pinCollectionView() {
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(collectionView)
+        let bottom: NSLayoutConstraint
+        if listEndsAtKeyboard {
+            view.keyboardLayoutGuide.usesBottomSafeArea = false
+            bottom = collectionView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        } else {
+            bottom = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        }
+        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
+        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        fillWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
+            bottom,
+            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            maxWidth,
+            fillWidth,
+        ])
+    }
+
+    /// Paint the page and the list in the theme. The list's own background is
+    /// clear so the theme's `bg` shows behind the cards.
+    private func applyTheme(_ themeID: ThemeID) {
+        view.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        let bg = themeID.palette.ui.bg
+        view.backgroundColor = bg
+        collectionView.backgroundColor = bg
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -673,7 +708,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {
             appliedThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            applyTheme(themeID)
         }
         let sections = stateSections()
         applySnapshot(sections, themeID: themeID)
@@ -803,20 +838,37 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, slot in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: { [weak self] collectionView, indexPath, slot in
             guard let self else { return nil }
+            let cell: UICollectionViewCell?
             switch slot {
             case .item(let item):
-                return dequeue(item, at: indexPath)
+                cell = dequeue(item, at: indexPath)
             case .state:
-                return collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: slot)
+                cell = collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: slot)
             }
+            return cell.map(card)
         })
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             kind == UICollectionView.elementKindSectionHeader
                 ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
                 : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
         }
+    }
+
+    /// Paints a row's card in the theme. A cell that already has its own
+    /// background handler (the kit's `cardCell`, a page's own card row) keeps it.
+    private func card(_ cell: UICollectionViewCell) -> UICollectionViewCell {
+        guard let cell = cell as? UICollectionViewListCell else { return cell }
+        if cell.configurationUpdateHandler == nil {
+            cell.configurationUpdateHandler = { cell, state in
+                cell.backgroundConfiguration = SettingsStyle.cardBackground(for: state)
+            }
+        }
+        // A theme change reconfigures the row through the data source, which
+        // comes back here; the handler reads the theme again.
+        cell.setNeedsUpdateConfiguration()
+        return cell
     }
 
     private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {

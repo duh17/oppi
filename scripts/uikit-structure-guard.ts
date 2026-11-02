@@ -36,17 +36,15 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    place that converts palette colors for UIKit. The guard reads the argument
  *    by name, so a bridge through a variable that is not called a palette is not
  *    seen.
- *  - `SettingsListStyle.pin(`, `SettingsListStyle.applyTheme(`, and a hand-built
- *    `UICollectionLayoutListConfiguration(appearance: .insetGrouped)` are a
- *    ratchet of the same kind: a settings list that pins, themes, or lays
- *    itself out carries its own copy of what `ListScreenController` (the
- *    settings kit's base) does. The base and `SettingsListStyle.swift` are
- *    exempt, and so are the screens in `settingsThemingExceptions`, which never
- *    subclass the base. A new settings page subclasses the base and calls
- *    none of them, so a new file has baseline 0. Limits: the layout check is
- *    the literal inset-grouped configuration in a file that also paints the
- *    theme's background itself (`palette.bg`, `themeStore.backgroundColor`) or
- *    calls `SettingsListStyle`; a list built another way (a different
+ *  - A hand-built `UICollectionLayoutListConfiguration(appearance: .insetGrouped)`
+ *    is a ratchet of the same kind: a settings list that lays itself out carries
+ *    its own copy of what `ListScreenController` (the settings kit's base) does.
+ *    The base and `SettingsStyle.swift` are exempt, and so are the screens in
+ *    `settingsThemingExceptions`, which never subclass the base. A new settings
+ *    page subclasses the base and builds no layout, so a new file has baseline
+ *    0. Limits: the check is the literal inset-grouped configuration in a file
+ *    that also paints the theme's background itself (`palette.bg`,
+ *    `themeStore.backgroundColor`); a list built another way (a different
  *    appearance, a layout helper) is not seen.
  *
  *  - The settings-write ratchet (same file, same baseline) counts, in
@@ -166,7 +164,7 @@ const loadStateGuide = "dev/architecture-client.md, section \"Load states\"";
 const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmations\"";
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.swift";
-const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
+const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsStyle.swift";
 /** The one owner of entity artwork (the guide's shared UIKit building blocks). */
 const entityIconOwner = "clients/apple/Oppi/Core/Views/EntityIcon.swift";
 
@@ -425,26 +423,14 @@ const constructs: Construct[] = [
     // `.empty()` and friends are common words; only a file that uses the type is read.
     fileMustMatch: /UIContentUnavailable/,
   },
-  // Settings-list theming outside the kit's base: see "Settings pages" in the guide.
-  {
-    name: "SettingsListStyle.pin(",
-    pattern: /\bSettingsListStyle\s*\.\s*pin\s*\(/g,
-    disallowed: false,
-    exemptFiles: settingsThemingExempt,
-  },
-  {
-    name: "SettingsListStyle.applyTheme(",
-    pattern: /\bSettingsListStyle\s*\.\s*applyTheme\s*\(/g,
-    disallowed: false,
-    exemptFiles: settingsThemingExempt,
-  },
+  // A settings list laid out by hand outside the kit's base: see "Settings pages" in the guide.
   {
     name: "UICollectionLayoutListConfiguration(appearance: .insetGrouped)",
     pattern: /\bUICollectionLayoutListConfiguration\s*\(\s*appearance:\s*\.insetGrouped\s*\)/g,
     disallowed: false,
     exemptFiles: settingsThemingExempt,
     // An inset-grouped list that also paints the theme's background itself.
-    fileMustMatch: /\bpalette\.bg\b|\bthemeStore\.backgroundColor\b|\bSettingsListStyle\./,
+    fileMustMatch: /\bpalette\.bg\b|\bthemeStore\.backgroundColor\b/,
   },
   // Settings written outside `SettingsStore`: see "Settings pages" in the guide.
   {
@@ -678,12 +664,13 @@ multiplies into the token's own alpha, which an imported theme may set). The
 count only goes down; --update lowers the baseline behind it. ThemeCatalog.swift
 is exempt because ThemeUIKitPalette.init is where the UIKit colors come from.
 
-SettingsListStyle.pin(, SettingsListStyle.applyTheme(, and a hand-built
-UICollectionLayoutListConfiguration(appearance: .insetGrouped) outside the
-settings base mean a settings list is theming or laying itself out. Subclass
-ListScreenController instead (or, for a list that cannot, use
-SettingsListStyle.layoutConfiguration); see ${settingsGuide}. A screen that
-will never be a settings page goes in settingsThemingExceptions with a reason.
+Settings lists subclass ListScreenController, which pins the list, paints it in
+the theme, and lays out its rows. A hand-built
+UICollectionLayoutListConfiguration(appearance: .insetGrouped) in a file that
+paints the theme's background itself means a settings list is laying itself out;
+see ${settingsGuide}. A page that lays out one non-list section (a grid) through
+layoutSection(for:environment:) is a page on the base. A screen that will never
+be a settings page goes in settingsThemingExceptions with a reason.
 
 UIAlertController( outside ErrorAlertPresenter.swift and ConfirmationSheet.swift
 means a screen builds its own error alert or confirmation. Tell the person an
