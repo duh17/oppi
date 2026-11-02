@@ -274,6 +274,11 @@ export function buildVmHttpHooks(
     return {
       httpHooks: {
         ...baseHttpHooks,
+        // Gondolin resolves the guest's hostname on the host before it applies `isIpAllowed`, so a
+        // deny-all workspace that only set that one would answer from host DNS: a slow resolver
+        // stalls the guest's request past its timeout, and an offline host turns the refusal into
+        // 502 Bad Gateway. Refuse at the request policy, which Gondolin checks first.
+        isRequestAllowed: async () => false,
         isIpAllowed: async () => false,
       },
       env,

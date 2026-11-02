@@ -809,6 +809,25 @@ describe("buildVmHttpHooks", () => {
     await expect(httpHooks.isIpAllowed?.(publicHttpsProbe)).resolves.toBe(false);
   });
 
+  it("refuses a request before Gondolin resolves its hostname on the host", async () => {
+    const { httpHooks } = buildVmHttpHooks(createHttpHooks, { allowedHosts: [] });
+
+    // Gondolin checks the request policy before it resolves the guest's hostname on the host. A
+    // deny-all workspace must answer there: its block then cannot become a 5 s stall (a slow host
+    // resolver) or a 502 Bad Gateway (an offline host) instead of the refusal it owes the guest.
+    for (const url of ["https://example.com/", "http://example.com/", "https://93.184.216.34/"]) {
+      await expect(httpHooks.isRequestAllowed?.(new Request(url)), url).resolves.toBe(false);
+    }
+  });
+
+  it("does not refuse requests when allowedHosts names hosts", async () => {
+    const { httpHooks } = buildVmHttpHooks(createHttpHooks, { allowedHosts: ["api.example.com"] });
+
+    await expect(
+      httpHooks.isRequestAllowed?.(new Request("https://api.example.com/")),
+    ).resolves.toBe(true);
+  });
+
   it("preserves Gondolin host allowlists when allowedHosts is non-empty", async () => {
     const { httpHooks } = buildVmHttpHooks(createHttpHooks, {
       allowedHosts: ["api.example.com"],
