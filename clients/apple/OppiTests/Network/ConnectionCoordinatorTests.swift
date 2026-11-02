@@ -1539,7 +1539,7 @@ struct ConnectionCoordinatorTests {
         #expect(lanConnection.transportPath == .paired)
         #expect(otherConnection.transportPath == .paired)
 
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -1551,7 +1551,7 @@ struct ConnectionCoordinatorTests {
         #expect(lanConnection.transportPath == .lan)
         #expect(otherConnection.transportPath == .paired)
 
-        coordinator._applyLANDiscoveryForTesting([])
+        await coordinator._applyLANDiscoveryForTesting([])
         // Demotion rebuilds the paired route asynchronously, as in production.
         #expect(await waitForMainActorCondition {
             lanConnection.transportPath == .paired && !lanConnection.isTransportDemoting
@@ -1578,7 +1578,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(server)
         let connection = await coordinator.ensureTestConnectionReady(for: server)
 
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.10",
                 port: 7749,
@@ -1613,7 +1613,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(server)
         let connection = await coordinator.ensureTestConnectionReady(for: server)
 
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.10",
                 port: 7749,
@@ -1625,7 +1625,7 @@ struct ConnectionCoordinatorTests {
         #expect(connection.transportPath == .lan)
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.10:7749")
 
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.10",
                 port: 7749,

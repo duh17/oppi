@@ -123,9 +123,6 @@ extension ServerConnection {
         retryAfterJoinedFailure: Bool = false,
         origin: ServerListRefreshOrigin = .external
     ) async {
-        // Cold list/home paths also need capability discovery so the global
-        // app-event stream starts before users focus a chat session.
-        await refreshStreamCapabilitiesIfNeeded()
         guard !Task.isCancelled else { return }
 
         let callStartedAt = Date()

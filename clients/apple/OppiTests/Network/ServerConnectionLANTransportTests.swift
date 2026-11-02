@@ -21,7 +21,7 @@ struct ServerConnectionLANTransportTests {
         let credentials = makeCredentials()
         #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
-        connection._adoptVerifiedLANEndpointForTesting(
+        await discoverTestLANEndpoint(on: connection,
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -65,7 +65,7 @@ struct ServerConnectionLANTransportTests {
         let credentials = makeCredentials()
         #expect(await configureTestConnection(connection, credentials: credentials) == true)
 
-        connection._adoptVerifiedLANEndpointForTesting(
+        await discoverTestLANEndpoint(on: connection,
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -108,7 +108,7 @@ struct ServerConnectionLANTransportTests {
         #expect(await configureTestConnection(connection, credentials: credentials) == true)
         #expect(connection.wsClient?.configuredTLSServerName == nil)
 
-        connection._adoptVerifiedLANEndpointForTesting(
+        await discoverTestLANEndpoint(on: connection,
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,

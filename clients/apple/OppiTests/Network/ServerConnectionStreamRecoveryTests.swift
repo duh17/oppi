@@ -145,7 +145,7 @@ struct ServerConnectionStreamRecoveryTests {
             serverInfoBootstrap: { _, _ in try self.mockServerInfo() }
         )
         #expect(configured)
-        adoptVerifiedLAN(on: connection)
+        await adoptVerifiedLAN(on: connection)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
         return (connection, { connectCalls })
@@ -154,8 +154,8 @@ struct ServerConnectionStreamRecoveryTests {
     /// Paired/Tailscale is the first route (69f103303), so a verified LAN route
     /// exists only after a paired candidate fails or the LAN is adopted later.
     /// Start these LAN-loss scenarios from that settled LAN state.
-    private func adoptVerifiedLAN(on connection: ServerConnection) {
-        connection._adoptVerifiedLANEndpointForTesting(
+    private func adoptVerifiedLAN(on connection: ServerConnection) async {
+        await discoverTestLANEndpoint(on: connection,
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -212,7 +212,8 @@ struct ServerConnectionStreamRecoveryTests {
 
     /// While demotion is in flight, diagnostics/UI must not present a settled
     /// "local network" connection with nil clients.
-    @Test func lanPathLossMarksTransportDemotingDuringReconfigureHole() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func lanPathLossMarksTransportDemotingDuringReconfigureHole() async throws {
         let connection = ServerConnection()
         defer { cleanup(connection) }
 
@@ -224,7 +225,8 @@ struct ServerConnectionStreamRecoveryTests {
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in
                 bootstrapCalls += 1
-                if bootstrapCalls >= 2 {
+                // Setup, then the LAN promotion, then the demotion this test holds open.
+                if bootstrapCalls >= 3 {
                     while holdFirstDemotion.withLock({ $0 }) {
                         try await Task.sleep(for: .milliseconds(10))
                     }
@@ -232,7 +234,7 @@ struct ServerConnectionStreamRecoveryTests {
                 return try self.mockServerInfo()
             }
         ))
-        adoptVerifiedLAN(on: connection)
+        await adoptVerifiedLAN(on: connection)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
@@ -268,7 +270,8 @@ struct ServerConnectionStreamRecoveryTests {
 
     /// Silence-watchdog / session re-entry during demotion must wait for the
     /// next route instead of permanently failing with missingEndpointSelection.
-    @Test func streamSessionWaitsForTransportDemotionBeforeMissingEndpoint() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func streamSessionWaitsForTransportDemotionBeforeMissingEndpoint() async throws {
         let connection = ServerConnection()
         defer { cleanup(connection) }
         // The stub stream never reports connected; this test makes no claim about that wait.
@@ -287,7 +290,8 @@ struct ServerConnectionStreamRecoveryTests {
             credentials: pairedCredentials(),
             serverInfoBootstrap: { _, _ in
                 bootstrapCalls += 1
-                if bootstrapCalls >= 2 {
+                // Setup, then the LAN promotion, then the demotion this test holds open.
+                if bootstrapCalls >= 3 {
                     while holdDemotion.withLock({ $0 }) {
                         try await Task.sleep(for: .milliseconds(10))
                     }
@@ -295,7 +299,7 @@ struct ServerConnectionStreamRecoveryTests {
                 return try self.mockServerInfo()
             }
         ))
-        adoptVerifiedLAN(on: connection)
+        await adoptVerifiedLAN(on: connection)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 

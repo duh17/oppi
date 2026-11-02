@@ -172,7 +172,7 @@ struct ServerConnectionNetworkPathChangeTests {
         let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
         // Simulate Bonjour discovering a matching LAN endpoint
-        conn._adoptVerifiedLANEndpointForTesting(
+        await discoverTestLANEndpoint(on: conn,
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -301,7 +301,7 @@ struct ConnectionCoordinatorPathChangeTests {
         let conn = await coordinator.ensureTestConnectionReady(for: server)
 
         // Put connection on LAN
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -344,7 +344,7 @@ struct ConnectionCoordinatorPathChangeTests {
         let connB = await coordinator.ensureTestConnectionReady(for: serverB)
 
         // Put server A on LAN, server B stays paired
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -386,7 +386,7 @@ struct ConnectionCoordinatorPathChangeTests {
         )
         coordinator.serverStore.addOrUpdate(server)
         let connection = await coordinator.ensureTestConnectionReady(for: server)
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -423,7 +423,7 @@ struct ConnectionCoordinatorPathChangeTests {
         let conn = coordinator.activeConnection
 
         // Step 1: Bonjour discovers LAN endpoint (user is on home WiFi)
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -477,7 +477,7 @@ struct ConnectionCoordinatorPathChangeTests {
         let conn = coordinator.activeConnection
 
         // LAN endpoint active
-        coordinator._applyLANDiscoveryForTesting([
+        await coordinator._applyLANDiscoveryForTesting([
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,

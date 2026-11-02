@@ -489,7 +489,7 @@ struct ServerConnectionLifecycleTests {
             credentials: credentials,
             serverInfoBootstrap: successfulServerInfoBootstrap
         ))
-        conn._adoptVerifiedLANEndpointForTesting(LANDiscoveredEndpoint(
+        await discoverTestLANEndpoint(on: conn, LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",

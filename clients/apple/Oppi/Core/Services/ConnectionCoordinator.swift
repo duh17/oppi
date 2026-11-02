@@ -890,15 +890,10 @@ final class ConnectionCoordinator {
 
 #if DEBUG
     // periphery:ignore - used by OppiTests via @testable import
-    func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) {
+    func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) async {
         for server in serverStore.servers {
             let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
-            guard let connection = connections[server.id] else { continue }
-            if let endpoint {
-                connection._adoptVerifiedLANEndpointForTesting(endpoint)
-            } else {
-                connection.setDiscoveredLANEndpoint(nil)
-            }
+            await connections[server.id]?.setDiscoveredLANEndpoint(endpoint)?.value
         }
     }
 

@@ -877,7 +877,7 @@ final class ServerConnection {
         tlsCertFingerprint: String?,
         apiClient: APIClient,
         apiIdentity: UUID,
-        serverInfo: ServerInfo?,
+        serverInfo: ServerInfo,
         configurationGeneration: UInt64
     ) {
         persistentStreamGeneration &+= 1
@@ -893,9 +893,7 @@ final class ServerConnection {
         installedAPIClientIdentity = apiIdentity
         installedAPIClientConfigurationGeneration = configurationGeneration
         installAPIClient(apiClient)
-        if let serverInfo {
-            applyStreamCapabilities(serverInfo, startAppEventStream: false)
-        }
+        applyStreamCapabilities(serverInfo)
 
         // WebSocket composition is created only after authenticated bootstrap
         // succeeds and the exact winning API client is installed.
@@ -1058,35 +1056,6 @@ final class ServerConnection {
         lanDemotionTask = (id, task)
         return task
     }
-
-    #if DEBUG
-    func _adoptVerifiedLANEndpointForTesting(_ endpoint: LANDiscoveredEndpoint) {
-        guard let credentials,
-              let selection = LANEndpointSelection.select(
-                  credentials: credentials,
-                  discoveredEndpoint: endpoint
-              ), selection.transportPath == .lan else { return }
-        discoveredLANEndpoint = endpoint
-        lanCandidateGeneration &+= 1
-        sender.advanceTransportGeneration()
-        let prepared = makeCandidateAPIClient(
-            credentials: credentials,
-            selection: selection,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
-            configurationGeneration: transportConfigurationGeneration,
-            apiClientFactory: configuredAPIClientFactory
-        )
-        configureClients(
-            credentials: credentials,
-            selection: selection,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
-            apiClient: prepared.client,
-            apiIdentity: prepared.identity,
-            serverInfo: nil,
-            configurationGeneration: transportConfigurationGeneration
-        )
-    }
-    #endif
 
     // MARK: - Network Path Change
 
@@ -1285,11 +1254,6 @@ final class ServerConnection {
         }
     }
 
-    func refreshStreamCapabilitiesIfNeeded() async {
-        guard !streamCapabilitiesLoaded else { return }
-        await refreshStreamCapabilities()
-    }
-
     /// Single-flight `/server/info` load. A caller that joins a load in flight gets that
     /// load's behavior; `schedulesVoiceBackendFollowUp` applies to a load this call starts.
     func refreshStreamCapabilities(schedulesVoiceBackendFollowUp: Bool = true) async {
@@ -1304,32 +1268,24 @@ final class ServerConnection {
             guard let self else { return }
             defer { self.streamCapabilitiesRefreshTask = nil }
 
-            let hadLoadedCapabilities = self.streamCapabilitiesLoaded
             do {
                 let info = try await apiClient.serverInfo()
                 guard self.streamCapabilitiesGeneration == generation else { return }
 
-                // A reload of loaded capabilities (foreground, failed read aloud) leaves a
-                // running app-event stream alone; foreground recovery restarts a stopped one.
-                self.applyStreamCapabilities(info, startAppEventStream: !hadLoadedCapabilities)
+                // Capabilities are loaded whenever a client is installed (setup reads
+                // /server/info first), so a reload leaves a running app-event stream
+                // alone; foreground recovery restarts a stopped one.
+                self.applyStreamCapabilities(info)
                 if schedulesVoiceBackendFollowUp {
                     self.scheduleVoiceBackendFollowUpIfNeeded(info.voiceBackends)
                 }
             } catch {
                 guard self.streamCapabilitiesGeneration == generation else { return }
-                // Do not let a transient handoff failure permanently poison stream
-                // capability state. If we already had a good capability snapshot,
-                // keep using it; otherwise leave the state unloaded so the next
-                // session entry retries /server/info instead of returning nil forever.
+                // A transient failure keeps the snapshot setup loaded.
                 self.streamCapabilitiesRefreshFailed = true
-                if !hadLoadedCapabilities {
-                    self.disconnectAppEventStream()
-                    self.missingRequiredSplitStreamCapabilities = []
-                    self.streamCapabilitiesLoaded = false
-                }
 
                 var metadata = ClientLog.networkErrorMetadata(error)
-                metadata["hadLoadedCapabilities"] = hadLoadedCapabilities ? "true" : "false"
+                metadata["hadLoadedCapabilities"] = "true"
                 metadata["capabilityStatus"] = self.requiredSplitStreamCapabilitiesStatusForDiagnostics
                 metadata["transport"] = self.transportPath.rawValue
                 let apiBaseURL = apiClient.baseURL
@@ -1376,10 +1332,7 @@ final class ServerConnection {
         serverCapabilities?.durableSessions = available ? ServerInfo.CapabilityVersion(version: 1) : nil
     }
 
-    private func applyStreamCapabilities(
-        _ info: ServerInfo,
-        startAppEventStream: Bool
-    ) {
+    private func applyStreamCapabilities(_ info: ServerInfo) {
         connectedServerVersion = info.version
         let capabilities = info.capabilities
         let previousRelay = pushRelay
@@ -1401,13 +1354,6 @@ final class ServerConnection {
             .missingRequiredSplitStreamCapabilities(in: capabilities)
         streamCapabilitiesRefreshFailed = false
         streamCapabilitiesLoaded = true
-        if startAppEventStream {
-            if appEventStreamAvailable {
-                startAppEventStreamIfAvailable()
-            } else {
-                disconnectAppEventStream()
-            }
-        }
     }
 
     /// Reconsider HTTPS endpoints only at an explicit network or foreground boundary.
@@ -1955,7 +1901,6 @@ final class ServerConnection {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "stream_bind")
             return nil
         }
-        await refreshStreamCapabilitiesIfNeeded()
         guard !Task.isCancelled else { return nil }
         await waitForFocusedStreamBindReadinessIfNeeded(sessionId: sessionId)
         // Cancellation can retain the claim when the same runtime reconnects.
@@ -2140,9 +2085,6 @@ final class ServerConnection {
     }
 
     private func streamCapabilityUnavailableReason() -> String {
-        if streamCapabilitiesRefreshFailed && !streamCapabilitiesLoaded {
-            return "capabilityRefreshFailed"
-        }
         if !streamCapabilitiesLoaded {
             return "capabilityNotLoaded"
         }

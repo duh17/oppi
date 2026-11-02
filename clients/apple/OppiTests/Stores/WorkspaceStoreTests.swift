@@ -575,7 +575,7 @@ struct ServerBadgeConnectionStateTests {
             let connection = ServerConnection()
             try #require(await configureTestConnection(connection, credentials: credentials))
             if usesLAN {
-                connection._adoptVerifiedLANEndpointForTesting(LANDiscoveredEndpoint(
+                await discoverTestLANEndpoint(on: connection, LANDiscoveredEndpoint(
                     host: "192.168.1.42",
                     port: 7749,
                     serverFingerprintPrefix: "LANESERVER",

@@ -224,6 +224,14 @@ func configureTestConnection(
     )
 }
 
+/// Discover `endpoint` the way Bonjour does on Wi-Fi and wait for the route change
+/// it starts: an idle connection promotes to the LAN through its own setup path.
+@MainActor
+func discoverTestLANEndpoint(on connection: ServerConnection, _ endpoint: LANDiscoveredEndpoint) async {
+    connection.networkPathType = { "wifi" }
+    await connection.setDiscoveredLANEndpoint(endpoint)?.value
+}
+
 /// A first setup that fails the way an unreachable server does (`/server/info`
 /// times out): no route is committed and the failure stays retryable, so a
 /// focused-stream bind waits for the route instead of failing.
