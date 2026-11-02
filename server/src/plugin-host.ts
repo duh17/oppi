@@ -97,6 +97,73 @@ export interface PluginIssue {
   readonly plugin?: string;
 }
 
+/**
+ * A plugin whose last load or reload failed. It may still be installed (`plugins`) with its
+ * previous code; a plugin that never loaded is only here.
+ */
+interface PluginFailure {
+  readonly name: string;
+  readonly source: PluginSource;
+  readonly dir: string;
+  readonly facet: string | undefined;
+  readonly required: boolean;
+  readonly extensionIds: readonly string[];
+  /** Every problem of that load, in order. */
+  readonly message: string;
+}
+
+/** What a plugin's extension contributes, by name. */
+export interface PluginContributions {
+  readonly tools: string[];
+  /** Hook handler names, grouped by the task they hook, in registration order. */
+  readonly hooks: { task: string; handlers: string[] }[];
+  /** Prompt section keys. */
+  readonly sections: string[];
+  /** The tool or section each wrap targets. */
+  readonly wraps: ({ tool: string } | { section: string })[];
+  readonly tasks: string[];
+}
+
+/** A plugin as the extension list shows it: installed, failed, or both (its old code kept). */
+export interface PluginListing extends PluginContributions {
+  readonly name: string;
+  /** Its installed extension's name, which sessions select it by; absent when it never loaded. */
+  readonly extension?: string;
+  readonly source: PluginSource;
+  readonly dir: string;
+  readonly facet: string | undefined;
+  /** Server resource IDs of the classic extensions of its Pi package. */
+  readonly extensionIds: readonly string[];
+  readonly required: boolean;
+  /** Whether workspace sessions select its extension; false when it has none installed. */
+  readonly enabled: boolean;
+  readonly runtimes: readonly PluginRuntime[];
+  /** Why its last load or reload failed. */
+  readonly loadError?: string;
+  /** A failed reload left its previous code installed. */
+  readonly kept: boolean;
+}
+
+/** What `extension` contributes, read from the extension value itself. */
+function contributionsOf(extension: Extension | undefined): PluginContributions {
+  const hooks: { task: string; handlers: string[] }[] = [];
+  for (const registration of extension?.hooks ?? []) {
+    let group = hooks.find((known) => known.task === registration.task);
+    if (!group) hooks.push((group = { task: registration.task, handlers: [] }));
+    for (const handler of Object.keys(registration.handlers))
+      if (!group.handlers.includes(handler)) group.handlers.push(handler);
+  }
+  return {
+    tools: (extension?.tools ?? []).map((tool) => tool.name),
+    hooks,
+    sections: (extension?.sections ?? []).map((section) => section.key),
+    wraps: (extension?.wraps ?? []).map((wrap) =>
+      "tool" in wrap ? { tool: wrap.tool } : { section: wrap.section },
+    ),
+    tasks: (extension?.tasks ?? []).map((task) => task.definition.name),
+  };
+}
+
 /** What one load or reload did. */
 export interface PluginReport {
   /** Installed from this load; a plugin installed before had its code replaced in place. */
@@ -146,6 +213,8 @@ export class PluginHost {
   private host?: Host;
   /** Installed plugins in install order: built-ins, then owner plugins. */
   private entries: Entry[] = [];
+  /** The plugins the last load or reload failed, by name. */
+  private failed: PluginFailure[] = [];
   /** What the core facet's `compose` orders by: the plugin set Chord is committing or holds. */
   private composition: Composition = { order: new Map(), builtIns: new Set() };
   private classicIndex: ClassicPluginIndex = { bundled: new Set(), names: new Map() };
@@ -171,6 +240,48 @@ export class PluginHost {
 
   get classic(): ClassicPluginIndex {
     return this.classicIndex;
+  }
+
+  /**
+   * Every plugin: the installed ones in install order (built-ins first), each with why its last
+   * load failed if it did, then those that failed and have no code installed. `enabled` says
+   * whether sessions select an installed extension, by its name.
+   */
+  listings(enabled: (extension: string) => boolean): PluginListing[] {
+    const failures = new Map(this.failed.map((failure) => [failure.name, failure]));
+    const listings: PluginListing[] = this.plugins.map((plugin) => {
+      const failure = failures.get(plugin.name);
+      failures.delete(plugin.name);
+      return {
+        name: plugin.name,
+        extension: plugin.extension.name,
+        source: plugin.source,
+        dir: plugin.dir,
+        facet: plugin.facet,
+        extensionIds: plugin.extensionIds,
+        required: plugin.required,
+        enabled: enabled(plugin.extension.name),
+        runtimes: plugin.runtimes,
+        ...contributionsOf(plugin.extension),
+        ...(failure ? { loadError: failure.message } : {}),
+        kept: failure !== undefined,
+      };
+    });
+    for (const failure of failures.values())
+      listings.push({
+        name: failure.name,
+        source: failure.source,
+        dir: failure.dir,
+        facet: failure.facet,
+        extensionIds: failure.extensionIds,
+        required: failure.required,
+        enabled: false,
+        runtimes: [],
+        ...contributionsOf(undefined),
+        loadError: failure.message,
+        kept: false,
+      });
+    return listings;
   }
 
   /**
@@ -468,6 +579,7 @@ export class PluginHost {
     }
     this.entries = arranged(result);
     this.composition = compositionOf(this.entries);
+    this.failed = this.failuresOf(errors, [...(builtIns ?? []), ...(owners ?? [])], previous);
 
     const names = new Set(result.map((entry) => entry.loaded.extension.name));
     const pluginReport: PluginReport = {
@@ -481,6 +593,49 @@ export class PluginHost {
     };
     logReport(pluginReport);
     return pluginReport;
+  }
+
+  /**
+   * The plugins `errors` name, each with every message of its own. A folder's problem names no
+   * plugin: it belongs to the plugins installed from that folder that it hid this time, which keep
+   * their code.
+   */
+  private failuresOf(
+    errors: readonly PluginIssue[],
+    found: readonly Found[],
+    previous: ReadonlyMap<string, Entry>,
+  ): PluginFailure[] {
+    type Known = Pick<PluginFailure, "name" | "source" | "dir" | "facet" | "extensionIds">;
+    const failures = new Map<string, { known: Known; messages: string[] }>();
+    const add = (known: Known, message: string): void => {
+      const failure = failures.get(known.name) ?? { known, messages: [] };
+      failure.messages.push(message);
+      failures.set(known.name, failure);
+    };
+    for (const issue of errors) {
+      if (issue.plugin !== undefined) {
+        const known =
+          found.find((plugin) => plugin.name === issue.plugin) ??
+          previous.get(issue.plugin)?.loaded;
+        if (known) add(known, issue.message);
+        continue;
+      }
+      for (const old of previous.values())
+        if (
+          !found.some((plugin) => plugin.name === old.loaded.name) &&
+          (issue.path === old.loaded.dir || isInside(issue.path, old.loaded.dir))
+        )
+          add(old.loaded, issue.message);
+    }
+    return [...failures.values()].map(({ known, messages }) => ({
+      name: known.name,
+      source: known.source,
+      dir: known.dir,
+      facet: known.facet,
+      required: known.source === "built-in" && this.options.required.has(known.name),
+      extensionIds: known.extensionIds,
+      message: messages.join("; "),
+    }));
   }
 
   private takenByCore(): Taken {

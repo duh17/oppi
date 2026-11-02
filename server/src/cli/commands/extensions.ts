@@ -1,5 +1,6 @@
 import * as c from "../../ansi.js";
-import type { DurableExtensionListing, DurableExtensionReport } from "../../durable-harness.js";
+import type { DurableExtensionReport } from "../../durable-harness.js";
+import type { ServerExtensionSummary } from "../../server-resource-service.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import {
@@ -11,15 +12,42 @@ import {
 } from "../output.js";
 import { apiStatus } from "../resources.js";
 
-function listingLine(extension: DurableExtensionListing): string {
-  const state = extension.enabled ? c.green("on ") : c.dim("off");
-  const origin = extension.required ? "required" : extension.builtIn ? "built-in" : "plugin";
-  const tools = extension.tools.length ? extension.tools.join(", ") : "no tools";
-  return `${state}  ${extension.name}  ${c.dim(`${origin} \u00b7 ${tools}`)}`;
+const EXTENSIONS = "/server/resources/extensions";
+
+function listingLine(extension: ServerExtensionSummary): string {
+  const state =
+    extension.state === "on"
+      ? c.green("on   ")
+      : extension.state === "error"
+        ? c.red("error")
+        : c.dim("off  ");
+  const origin = extension.plugin?.required ? "required" : extension.source;
+  const kinds = extension.kinds.join(" + ");
+  const tools = extension.plugin?.tools ?? extension.contributedTools ?? [];
+  const detail = [origin, kinds, tools.length ? tools.join(", ") : "no tools"].join(" \u00b7 ");
+  const line = `${state}  ${extension.name}  ${c.dim(detail)}`;
+  return extension.loadError ? `${line}\n       ${c.red(extension.loadError)}` : line;
 }
 
 /**
- * `oppi extensions list|enable|disable|reload`: the durable extensions of the running server.
+ * The one row `key` names: its ID, its name, or its plugin's extension name. A name more than
+ * one row has is refused with their IDs.
+ */
+function rowFor(rows: readonly ServerExtensionSummary[], key: string): ServerExtensionSummary {
+  const byId = rows.find((row) => row.id === key);
+  if (byId) return byId;
+  const named = rows.filter((row) => row.name === key || row.plugin?.extension === key);
+  const [only] = named;
+  if (only && named.length === 1) return only;
+  if (!only) throw new Error(`No extension named ${key}`);
+  throw new Error(
+    `${named.length} extensions are named ${key}; name one by ID: ${named.map((row) => row.id).join(", ")}`,
+  );
+}
+
+/**
+ * `oppi extensions list|enable|disable|reload`: the server's extension list (classic Pi
+ * extensions and plugins), and plugin reload.
  */
 export async function cmdExtensions(
   connection: LocalApiConnection,
@@ -32,29 +60,35 @@ export async function cmdExtensions(
   const { call, output } = createLocalApiCommandContext(connection, json, signal);
   try {
     if (action === "list" && positional.length === 0) {
-      const { extensions } = await call<{ extensions: DurableExtensionListing[] }>(
-        "/durable/extensions",
-      );
+      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(EXTENSIONS);
       output({ extensions }, () => {
         for (const extension of extensions) writeHumanLine(listingLine(extension));
       });
       return;
     }
-    const [name] = positional;
-    if ((action === "enable" || action === "disable") && name && positional.length === 1) {
-      const { extension } = await call<{ extension: DurableExtensionListing }>(
-        `/durable/extensions/${encodeURIComponent(name)}/enabled`,
+    const [key] = positional;
+    if ((action === "enable" || action === "disable") && key && positional.length === 1) {
+      const { extensions } = await call<{ extensions: ServerExtensionSummary[] }>(EXTENSIONS);
+      const { id } = rowFor(extensions, key);
+      const extension = await call<ServerExtensionSummary>(
+        `${EXTENSIONS}/${encodeURIComponent(id)}/enabled`,
         { method: "PUT", body: { enabled: action === "enable" } },
       );
       output({ extension }, () => {
         writeHumanLine(listingLine(extension));
-        writeHumanLine(c.dim("New sessions follow now; open sessions at their next attach."));
+        writeHumanLine(
+          c.dim(
+            extension.kinds.includes("pi-extension")
+              ? "Classic sessions follow at their next start; durable sessions at their next attach."
+              : "New sessions follow now; open sessions at their next attach.",
+          ),
+        );
       });
       return;
     }
     if (action !== "reload" || positional.length > 0)
       throw new Error("Usage: oppi extensions list | enable <name> | disable <name> | reload");
-    const report = await call<DurableExtensionReport>("/durable/extensions/reload", {
+    const report = await call<DurableExtensionReport>(`${EXTENSIONS}/reload`, {
       method: "POST",
       body: {},
     });

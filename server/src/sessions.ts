@@ -85,12 +85,8 @@ type ActiveSession = SessionStartActiveSession;
 
 // ─── Session Manager ───
 
-import type {
-  DurableExtensionListing,
-  DurableExtensionReport,
-  DurableHarness,
-  SessionHost,
-} from "./durable-harness.js";
+import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
+import type { PluginListing } from "./plugin-host.js";
 import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
@@ -99,14 +95,6 @@ import {
   requireDurableStoreId,
 } from "./session-runtime-capabilities.js";
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
-
-/** Disabling a built-in plugin the server cannot run without. */
-export class RequiredExtensionError extends Error {
-  override readonly name = "RequiredExtensionError";
-  constructor(extension: string) {
-    super(`${extension} is required by the server and cannot be disabled`);
-  }
-}
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
   private readonly durableHarness: Promise<DurableHarness>;
@@ -673,27 +661,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return (await this.durableHarness).reloadExtensions();
   }
 
-  /** The durable extensions workspace sessions may select, each with whether it is enabled. */
-  async listDurableExtensions(): Promise<DurableExtensionListing[]> {
+  /** Every plugin, installed or failed, as the extension list shows it (`listPlugins`). */
+  async listPlugins(): Promise<PluginListing[]> {
     const harness = await this.durableHarness;
     await harness.ensureShared();
-    return harness.listExtensions();
+    return harness.listPlugins();
   }
 
   /**
-   * Enable or disable a loaded durable extension by name in the server config
+   * Enable or disable the installed durable extension `name` in the server config
    * (`experimental.durableExtensions.disabled`). New sessions follow at once; a bound session
-   * at its next attach. `null` for an unknown name; throws `RequiredExtensionError` for disabling
-   * a built-in the server cannot run without.
+   * at its next attach. A required built-in stays on whatever the config says.
    */
-  async setDurableExtensionEnabled(
-    name: string,
-    enabled: boolean,
-  ): Promise<DurableExtensionListing | null> {
-    const listing = await this.listDurableExtensions();
-    const found = listing.find((extension) => extension.name === name);
-    if (!found) return null;
-    if (found.required && !enabled) throw new RequiredExtensionError(name);
+  setPluginEnabled(name: string, enabled: boolean): void {
     // From the file as it is now: `oppi config set` writes it from another process.
     this.storage.mutateConfig((latest) => {
       const experimental = latest.experimental ?? {};
@@ -707,7 +687,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         },
       };
     });
-    return { ...found, enabled };
   }
 
   /**

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
-    "routeCount": 188
+    "routeCount": 186
   },
   "routes": [
     {
@@ -279,6 +279,15 @@
         "extensionId"
       ],
       "operationId": "setServerExtensionEnabled",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/server/resources/extensions/reload",
+      "params": [],
+      "operationId": "reloadServerExtensions",
       "surface": "admin",
       "auth": "owner",
       "transport": "http"
@@ -1339,35 +1348,6 @@
       "path": "/control-conversation",
       "params": [],
       "operationId": "openControlConversation",
-      "surface": "core",
-      "auth": "owner",
-      "transport": "http"
-    },
-    {
-      "method": "GET",
-      "path": "/durable/extensions",
-      "params": [],
-      "operationId": "listDurableExtensions",
-      "surface": "core",
-      "auth": "owner",
-      "transport": "http"
-    },
-    {
-      "method": "PUT",
-      "path": "/durable/extensions/{name}/enabled",
-      "params": [
-        "name"
-      ],
-      "operationId": "setDurableExtensionEnabled",
-      "surface": "core",
-      "auth": "owner",
-      "transport": "http"
-    },
-    {
-      "method": "POST",
-      "path": "/durable/extensions/reload",
-      "params": [],
-      "operationId": "reloadDurableExtensions",
       "surface": "core",
       "auth": "owner",
       "transport": "http"

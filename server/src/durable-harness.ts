@@ -50,7 +50,12 @@ import type { DurableControlCli } from "./durable-control-cli.js";
 import { fileToolsHost } from "./durable-file-tools-host.js";
 import { DurableUI } from "./durable-ui.js";
 import type { PluginRuntime } from "./oppi-v1.js";
-import { PluginHost, type LoadedPlugin, type PluginIssue } from "./plugin-host.js";
+import {
+  PluginHost,
+  type LoadedPlugin,
+  type PluginIssue,
+  type PluginListing,
+} from "./plugin-host.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
 import { OppiAgentDoc, type ClassicExtensionIndex } from "./durable-agent.js";
@@ -194,11 +199,6 @@ export interface DurableExtensionSummary {
   builtIn: boolean;
   /** A built-in the server cannot run without: it cannot be disabled. */
   required: boolean;
-}
-
-/** A durable extension workspace sessions may select, and whether the server enables it. */
-export interface DurableExtensionListing extends DurableExtensionSummary {
-  enabled: boolean;
 }
 
 /** A plugin, folder, or file that failed to load, or was left out on purpose. */
@@ -1635,14 +1635,15 @@ export class DurableHarness {
     return !this.disabledExtensions().includes(name);
   }
 
-  /** Every loaded durable extension a session may select, built-ins first, and whether it is on. */
-  listExtensions(): DurableExtensionListing[] {
-    return [
-      ...this.bundled
-        .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
-        .map(summarize),
-      ...this.packageExtensions.map(summarize),
-    ].map((summary) => ({ ...summary, enabled: this.isExtensionEnabled(summary.name) }));
+  /**
+   * Every plugin: the installed ones in install order (built-ins first), each with why its last
+   * load failed if it did, then those that failed and have no code installed. Oppi Control's built-in
+   * is selected only by Control sessions and is left out unless its reload failed.
+   */
+  listPlugins(): PluginListing[] {
+    return (this.pluginHost?.listings((name) => this.isExtensionEnabled(name)) ?? []).filter(
+      (plugin) => plugin.extension !== CONTROL_EXTENSION || plugin.loadError !== undefined,
+    );
   }
 
   /**

@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -11,19 +13,27 @@ import {
   type FauxResponseFactory,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import { GenerationTask, type ConversationId, type Harness } from "@earendil-works/pi-durable";
 import { WordsOwner } from "../plugins/working-words/contract.js";
+import { ConfigStore } from "../src/storage/config-store.js";
 import {
   DurableHarness,
   SessionHost,
   type DurableExtensionReport,
 } from "../src/durable-harness.js";
+import {
+  ServerResourceService,
+  type ServerExtensionSummary,
+} from "../src/server-resource-service.js";
+import { serverResourceId } from "../src/server-resource-id.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { createRouteHelpers } from "../src/routes/http.js";
-import { createDurableExtensionRoutes } from "../src/routes/durable-extensions.js";
+import { createServerResourceRoutes } from "../src/routes/server-resources.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { ServerMessage } from "../src/types.js";
+import { CLI, cliSpawnEnv } from "./harness/cli-process.js";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
@@ -57,7 +67,22 @@ const CONTRIBUTE = [
 
 /** A Pi package with a classic entry and a plugin facet whose tool reports `version.ts`. */
 function writePackage(name: string): string {
-  return writeEntry(name, [
+  return writeEntry(name, probeFacet(name));
+}
+
+/** A plugin in the owner's plugin root, with no classic entry, whose tool reports `version.ts`. */
+function writePlugin(name: string, lines = probeFacet(name)): string {
+  const root = join(agentDir, "plugins", name);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name }));
+  writeFileSync(join(root, "server.ts"), [...lines, ...CONTRIBUTE, ""].join("\n"));
+  writeFileSync(join(root, "version.ts"), 'export const VERSION: string = "v1";\n');
+  return root;
+}
+
+/** A facet defining `const extension` named `name`, whose tool reports `version.ts`. */
+function probeFacet(name: string): string[] {
+  return [
     'import { obj } from "oppi/v1/schema";',
     'import { defineExtension, defineTool } from "oppi/v1";',
     'import { VERSION } from "./version.js";',
@@ -72,7 +97,7 @@ function writePackage(name: string): string {
     "    },",
     "  })],",
     "});",
-  ]);
+  ];
 }
 
 /** A Pi package `name` whose `server.ts` is `lines`, which define `const extension`. */
@@ -152,48 +177,61 @@ async function fixture(responses: FauxResponseStep[]) {
   managers.push(manager);
   await manager.resumeDurableSessions();
   const helpers = createRouteHelpers();
-  const routes = createDurableExtensionRoutes(
-    { sessions: manager } as unknown as RouteContext,
+  const serverResources = new ServerResourceService({ dataDir: dir, agentDir, plugins: manager });
+  const routes = createServerResourceRoutes(
+    {
+      sessions: manager,
+      serverResources,
+      refreshModelCatalog: async () => undefined,
+    } as unknown as RouteContext,
     helpers,
   );
+  const route = async (
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const res = makeResponse();
+    const req = makeRequest(body);
+    if (body !== undefined) req.headers = { "content-type": "application/json" };
+    const handled = await routes({
+      method,
+      path,
+      url: new URL(`http://localhost${path}`),
+      req,
+      res,
+    });
+    expect(handled).toBe(true);
+    return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
+  };
   return {
     storage,
     workspace,
     manager,
     session,
+    routes,
+    route,
     harness: async (): Promise<Harness> => (await opening.mock.results.at(-1)!.value).harness,
-    /** One request to the durable extension routes, as the CLI sends it. */
-    async route(
-      method: string,
-      path: string,
-      body?: unknown,
-    ): Promise<{ status: number; body: Record<string, unknown> }> {
-      const res = makeResponse();
-      const handled = await routes({
-        method,
-        path,
-        url: new URL(`http://localhost${path}`),
-        req: makeRequest(body),
-        res,
-      });
-      expect(handled).toBe(true);
-      return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
+    /** The server's extension list, as the Extensions page and `oppi extensions list` read it. */
+    async rows(): Promise<ServerExtensionSummary[]> {
+      const listed = await route("GET", "/server/resources/extensions");
+      expect(listed.status).toBe(200);
+      return listed.body.extensions as ServerExtensionSummary[];
     },
-    /** `POST /durable/extensions/reload`, as `oppi extensions reload` sends it. */
+    /** `POST /server/resources/extensions/reload`, as `oppi extensions reload` sends it. */
     async reload(): Promise<DurableExtensionReport> {
-      const res = makeResponse();
-      const handled = await routes({
-        method: "POST",
-        path: "/durable/extensions/reload",
-        url: new URL("http://localhost/durable/extensions/reload"),
-        req: makeRequest(),
-        res,
-      });
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-      return JSON.parse(res.body) as DurableExtensionReport;
+      const reloaded = await route("POST", "/server/resources/extensions/reload", {});
+      expect(reloaded.status).toBe(200);
+      return reloaded.body as unknown as DurableExtensionReport;
     },
   };
+}
+
+/** The one row named `name`. */
+function rowNamed(rows: readonly ServerExtensionSummary[], name: string): ServerExtensionSummary {
+  const found = rows.filter((row) => row.name === name);
+  expect(found).toHaveLength(1);
+  return found[0]!;
 }
 
 async function prompt(manager: SessionManager, sessionId: string, text: string): Promise<void> {
@@ -224,8 +262,8 @@ async function toolResults(harness: Harness, id: ConversationId) {
 }
 
 describe("plugins from Pi packages", () => {
-  it("turns a package's and a built-in's durable extension off and on for workspace sessions", async () => {
-    writePackage("probe");
+  it("turns an owner plugin and a built-in off and on for workspace sessions from their rows", async () => {
+    writePlugin("probe");
     const f = await fixture(callsTool("probe_version"));
     await f.manager.startSession(f.session.id, f.workspace);
     const conversation = f.storage.getSession(f.session.id)!.serverDurable!
@@ -240,23 +278,24 @@ describe("plugins from Pi packages", () => {
     };
     expect(await offered()).toEqual(["sqlite_schema", "sqlite_query", "probe_version"]);
 
-    for (const name of ["probe", "sql-explorer"]) {
-      const off = await f.route("PUT", `/durable/extensions/${name}/enabled`, { enabled: false });
-      expect(off).toMatchObject({ status: 200, body: { extension: { name, enabled: false } } });
+    const before = await f.rows();
+    const enabled = (row: ServerExtensionSummary, on: boolean) =>
+      f.route("PUT", `/server/resources/extensions/${row.id}/enabled`, { enabled: on });
+    for (const name of ["probe", "oppi-sql-explorer"]) {
+      const off = await enabled(rowNamed(before, name), false);
+      expect(off).toMatchObject({
+        status: 200,
+        body: { name, state: "off", plugin: { enabled: false } },
+      });
     }
     expect(f.storage.getConfig().experimental?.durableExtensions).toEqual({
       disabled: ["probe", "sql-explorer"],
     });
-    const listed = (await f.route("GET", "/durable/extensions")).body.extensions as Array<{
-      name: string;
-      enabled: boolean;
-      builtIn: boolean;
-    }>;
-    expect(listed.filter((extension) => !extension.enabled)).toEqual([
-      expect.objectContaining({ name: "sql-explorer", builtIn: true }),
-      expect.objectContaining({ name: "probe", builtIn: false }),
+    const listed = await f.rows();
+    expect(listed.filter((row) => row.plugin && !row.plugin.enabled)).toEqual([
+      expect.objectContaining({ name: "oppi-sql-explorer", source: "built-in", state: "off" }),
+      expect.objectContaining({ name: "probe", source: "owner", state: "off" }),
     ]);
-    expect(listed.map((extension) => extension.name)).not.toContain("oppi.control");
 
     // An open session keeps what it has until it attaches again.
     expect(await offered()).toEqual(["sqlite_schema", "sqlite_query", "probe_version"]);
@@ -268,9 +307,10 @@ describe("plugins from Pi packages", () => {
       isError: true,
     });
 
-    expect(
-      await f.route("PUT", "/durable/extensions/probe/enabled", { enabled: true }),
-    ).toMatchObject({ status: 200, body: { extension: { name: "probe", enabled: true } } });
+    expect(await enabled(rowNamed(listed, "probe"), true)).toMatchObject({
+      status: 200,
+      body: { name: "probe", state: "on", plugin: { enabled: true } },
+    });
     await reattach();
     expect(await offered()).toEqual(["probe_version"]);
     await prompt(f.manager, f.session.id, "Which version now?");
@@ -281,13 +321,15 @@ describe("plugins from Pi packages", () => {
     });
 
     expect(
-      await f.route("PUT", "/durable/extensions/missing/enabled", { enabled: false }),
+      await f.route("PUT", `/server/resources/extensions/extension_${"0".repeat(64)}/enabled`, {
+        enabled: false,
+      }),
     ).toMatchObject({ status: 404 });
 
     // A built-in the server needs stays on.
-    expect(
-      await f.route("PUT", "/durable/extensions/working-words/enabled", { enabled: false }),
-    ).toMatchObject({ status: 409 });
+    expect(await enabled(rowNamed(listed, "oppi-working-words"), false)).toMatchObject({
+      status: 409,
+    });
     expect(f.storage.getConfig().experimental).toEqual({
       serverDurable: true,
       durableExtensions: { disabled: ["sql-explorer"] },
@@ -652,5 +694,171 @@ describe("plugins from Pi packages", () => {
         message: 'Tool "read" is built into Oppi',
       }),
     ]);
+  });
+});
+
+describe("plugins on the extension list", () => {
+  it("lists each plugin once with its kinds, source, and what its extension contributes", async () => {
+    writePlugin("durable-only", [
+      'import { obj } from "oppi/v1/schema";',
+      'import { defineExtension, defineTool, GenerationTask, hook, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "durable-only",',
+      '  runtimes: ["host", "sandbox"],',
+      "  tools: [defineTool({",
+      '    name: "durable_only_tool",',
+      '    description: "A tool.",',
+      "    parameters: obj({}),",
+      '    async execute() { return { output: [] }; },',
+      "  })],",
+      "  hooks: [",
+      "    hook(GenerationTask, { async beforeRequest() {} }),",
+      "    hook(GenerationTask, { async beforeProviderRequest() {} }),",
+      "  ],",
+      '  sections: [section("durable_only", () => "Only durable.")],',
+      "});",
+    ]);
+    const both = writePackage("both");
+    const f = await fixture(callsTool("unused"));
+    const rows = await f.rows();
+
+    const durableOnly = rowNamed(rows, "durable-only");
+    expect(durableOnly).toMatchObject({
+      kinds: ["plugin"],
+      source: "owner",
+      state: "on",
+      plugin: {
+        extension: "durable-only",
+        required: false,
+        enabled: true,
+        runtimes: ["host", "sandbox"],
+        tools: ["durable_only_tool"],
+        hooks: [
+          {
+            task: GenerationTask.definition.name,
+            handlers: ["beforeRequest", "beforeProviderRequest"],
+          },
+        ],
+        sections: ["durable_only"],
+        wraps: [],
+        tasks: [],
+        kept: false,
+      },
+    });
+    expect(durableOnly.plugin?.loadError).toBeUndefined();
+    // Its tools are a durable session's, never a classic Agent's tool group.
+    expect(durableOnly.contributedTools).toBeUndefined();
+
+    // A package with a classic entry and a plugin is one row under its classic ID.
+    expect(rowNamed(rows, "both")).toMatchObject({
+      id: serverResourceId("extension", join(both, "index.ts")),
+      kinds: ["plugin", "pi-extension"],
+      source: "owner",
+      state: "on",
+      plugin: { extension: "both", tools: ["both_version"], kept: false },
+    });
+
+    // Built-ins, the required ones marked; Oppi Control's selection stays off the list.
+    expect(rowNamed(rows, "oppi-working-words")).toMatchObject({
+      kinds: ["plugin"],
+      source: "built-in",
+      kind: "builtIn",
+      plugin: { required: true, enabled: true },
+    });
+    expect(rowNamed(rows, "oppi-sql-explorer")).toMatchObject({
+      source: "built-in",
+      plugin: { required: false, tools: ["sqlite_schema", "sqlite_query"] },
+    });
+    expect(rowNamed(rows, "oppi-file-tools").plugin?.wraps).toContainEqual({ tool: "read" });
+    expect(rows.map((row) => row.name)).not.toContain("oppi-control");
+  });
+
+  it("marks a broken plugin's row as an error, and whether its previous code still runs", async () => {
+    const probe = writePackage("probe");
+    const newcomer = writePlugin("newcomer");
+    writeFileSync(join(newcomer, "server.ts"), "export default {\n");
+    const f = await fixture(callsTool("unused"));
+
+    // Never loaded: nothing of it runs.
+    expect(rowNamed(await f.rows(), "newcomer")).toMatchObject({
+      kinds: ["plugin"],
+      source: "owner",
+      state: "error",
+      loadError: expect.any(String),
+      plugin: { enabled: false, tools: [], kept: false, loadError: expect.any(String) },
+    });
+
+    writeFileSync(join(probe, "server.ts"), "export default {\n");
+    await f.reload();
+    const broken = rowNamed(await f.rows(), "probe");
+    expect(broken).toMatchObject({
+      id: serverResourceId("extension", join(probe, "index.ts")),
+      kinds: ["plugin", "pi-extension"],
+      state: "error",
+      loadError: expect.any(String),
+      plugin: { tools: ["probe_version"], kept: true, loadError: broken.loadError },
+    });
+
+    writeFileSync(join(probe, "server.ts"), [...probeFacet("probe"), ...CONTRIBUTE].join("\n"));
+    await f.reload();
+    const fixed = rowNamed(await f.rows(), "probe");
+    expect(fixed).toMatchObject({ state: "on", plugin: { kept: false } });
+    expect(fixed.loadError).toBeUndefined();
+    expect(fixed.plugin?.loadError).toBeUndefined();
+  });
+
+  it("serves `oppi extensions list|disable|enable|reload` from the extension routes", async () => {
+    writePlugin("probe");
+    const f = await fixture(callsTool("unused"));
+    const cliDir = makeTempDir("oppi-durable-packages-cli-");
+    const api = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      void f.routes({ method: req.method ?? "GET", path: url.pathname, url, req, res });
+    });
+    await listenOnLocalApiFixture(api, cliDir);
+    writeFileSync(
+      join(cliDir, "config.json"),
+      JSON.stringify({
+        ...ConfigStore.getDefaultConfig(cliDir),
+        host: "127.0.0.1",
+        port: 0,
+        token: "test-owner-token",
+        tls: { mode: "disabled" },
+      }),
+    );
+    const cli = (...args: string[]) =>
+      new Promise<{ code: number; stdout: string }>((resolve) => {
+        execFile(
+          "node",
+          [CLI, "extensions", ...args],
+          { encoding: "utf-8", env: { ...cliSpawnEnv(), OPPI_DATA_DIR: cliDir } },
+          (error, stdout) =>
+            resolve({ code: error ? Number((error as { code?: unknown }).code ?? 1) : 0, stdout }),
+        );
+      });
+    try {
+      const listed = JSON.parse((await cli("list", "--json")).stdout);
+      expect(listed.data.extensions).toContainEqual(
+        expect.objectContaining({ name: "probe", kinds: ["plugin"], source: "owner" }),
+      );
+
+      // A name finds the row by its name or its extension's (`sql-explorer`).
+      const off = JSON.parse((await cli("disable", "sql-explorer", "--json")).stdout);
+      expect(off.data.extension).toMatchObject({ name: "oppi-sql-explorer", state: "off" });
+      expect(f.storage.getConfig().experimental?.durableExtensions).toEqual({
+        disabled: ["sql-explorer"],
+      });
+      const on = JSON.parse((await cli("enable", "oppi-sql-explorer", "--json")).stdout);
+      expect(on.data.extension).toMatchObject({ state: "on" });
+
+      const required = await cli("disable", "oppi-working-words", "--json");
+      expect(required.code).not.toBe(0);
+      expect(JSON.parse(required.stdout)).toMatchObject({ ok: false, error: { status: 409 } });
+
+      const reloaded = JSON.parse((await cli("reload", "--json")).stdout);
+      expect(fromPackages(reloaded.data)).toEqual({ loaded: ["probe"], kept: [] });
+    } finally {
+      await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
   });
 });

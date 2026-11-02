@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createLogger } from "../logger.js";
+import { safeErrorMessage } from "../log-utils.js";
 import { revisionConflictBody } from "../settings/config-settings.js";
 import { httpStatusForPiResourceError } from "../settings/pi-resource-errors.js";
 import { isRevision } from "../settings/revision.js";
@@ -150,6 +151,11 @@ function errorForResource(
   if (status === 400 && cause instanceof Error) {
     logRouteRejected(operation, resourceKind, "validation");
     helpers.error(res, 400, cause.message);
+    return;
+  }
+  if (status === 409 && cause instanceof Error) {
+    logRouteRejected(operation, resourceKind, "conflict");
+    helpers.error(res, 409, cause.message);
     return;
   }
 
@@ -355,7 +361,7 @@ export function createServerResourceRoutes(
       return;
     }
     try {
-      const summary = await ctx.serverResources.setExtensionEnabled(id, body.enabled);
+      let summary = await ctx.serverResources.setExtensionEnabled(id, body.enabled);
       try {
         await ctx.refreshModelCatalog({ force: true });
       } catch (refreshError: unknown) {
@@ -365,12 +371,13 @@ export function createServerResourceRoutes(
         });
       }
       // Durable sessions load a Pi package's plugins when their store opens and on reload, so the
-      // toggle reaches them only through a reload (`oppi extensions reload`). A package without a
-      // plugin changes nothing there: its toggle stays a settings write.
+      // toggle reaches them only through a reload, after which the row shows its plugin as it is
+      // now. A package without a plugin changes nothing there: its toggle stays a settings write.
       if (ctx.sessions.durableSessionsAvailable()) {
         try {
           if (await ctx.serverResources.hasPlugin(id)) {
             await ctx.sessions.reloadDurableExtensions();
+            summary = (await ctx.serverResources.getExtensionDetail(id)).summary;
           }
         } catch (reloadError: unknown) {
           log.warn("server_resources.durable_extensions_reload_failed", {
@@ -382,6 +389,19 @@ export function createServerResourceRoutes(
       helpers.json(res, summary);
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Extension", "mutation", cause);
+    }
+  }
+
+  /**
+   * Discover and load every plugin again in the running server, without a restart: the report of
+   * what loaded, kept its previous code, was removed, skipped, or failed.
+   */
+  async function reloadPlugins(res: ServerResponse): Promise<void> {
+    try {
+      helpers.json(res, await ctx.sessions.reloadDurableExtensions());
+    } catch (cause: unknown) {
+      logRouteFailure("mutation", "extension", cause);
+      helpers.error(res, 500, `Unable to reload plugins: ${safeErrorMessage(cause)}`);
     }
   }
 
@@ -521,6 +541,10 @@ export function createServerResourceRoutes(
     }
     if (path === "/server/resources/extensions" && method === "GET") {
       await listExtensions(url, res);
+      return true;
+    }
+    if (path === "/server/resources/extensions/reload" && method === "POST") {
+      await reloadPlugins(res);
       return true;
     }
     if (path === "/server/resources/pi/system-prompt" && method === "GET") {

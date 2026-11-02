@@ -30,6 +30,7 @@ import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
+import type { PluginListing } from "./plugin-host.js";
 import {
   PiGlobalConfigError,
   readPiDefaultTools,
@@ -83,6 +84,10 @@ export interface ServerToolSummary {
   defaultEnabled?: boolean;
 }
 
+/**
+ * One row of the extension list: a classic Pi extension, a plugin (durable sessions), or a Pi
+ * package's classic extension and its plugin together under the classic ID.
+ */
 export interface ServerExtensionSummary {
   id: string;
   name: string;
@@ -91,13 +96,49 @@ export interface ServerExtensionSummary {
   provenance: ResourceProvenance;
   path?: string;
   packageName?: string;
+  /** `error` when the classic extension or the plugin failed to load (`loadError`). */
   state: "on" | "off" | "error";
   loadError?: string;
   warnings: string[];
   isRemovable: false;
+  /** What the row is: a plugin, a classic Pi extension, or both. */
+  kinds: ServerExtensionRowKind[];
+  /** The layer it loads from: shipped with the server, the owner's, or a project's. */
+  source: "built-in" | "owner" | "project";
+  /** Its plugin, when it is one: from the plugin host's table and its loaded extension. */
+  plugin?: ServerPluginSummary;
+  /** A classic extension's tools; a plugin's are in `plugin.tools`. */
   contributedTools?: string[];
   contributedToolDetails?: ServerToolSummary[];
   contributedCommands?: string[];
+}
+
+export type ServerExtensionRowKind = "plugin" | "pi-extension";
+
+export interface ServerPluginSummary {
+  /** Its installed extension's name; absent when it never loaded. */
+  extension?: string;
+  /** A built-in the server cannot run without: it cannot be disabled. */
+  required: boolean;
+  /** Whether workspace sessions select it; false when it has no code installed. */
+  enabled: boolean;
+  runtimes: string[];
+  tools: string[];
+  hooks: { task: string; handlers: string[] }[];
+  sections: string[];
+  wraps: ({ tool: string } | { section: string })[];
+  tasks: string[];
+  /** Why its last load or reload failed. */
+  loadError?: string;
+  /** A failed reload left its previous code running. */
+  kept: boolean;
+}
+
+/** The plugin host's side of the extension list (`SessionManager`). */
+export interface ServerPluginCatalog {
+  listPlugins(): Promise<readonly PluginListing[]>;
+  /** Turn the installed extension `name` on or off for workspace sessions. */
+  setPluginEnabled(name: string, enabled: boolean): void;
 }
 
 export interface ServerExtensionDetail {
@@ -110,6 +151,8 @@ export interface ServerExtensionDetail {
 export interface ServerResourceServiceOptions {
   dataDir: string;
   agentDir: string;
+  /** Without it the list has the classic extensions only. */
+  plugins?: ServerPluginCatalog;
 }
 
 interface ResolutionContext {
@@ -136,6 +179,14 @@ interface ExtensionCatalogEntry {
   resource?: ResolvedResource;
   canonicalPath?: string;
   summary: ServerExtensionSummary;
+}
+
+/** Which row each plugin is on: a classic row of its Pi package, or its own. */
+interface PluginRows {
+  /** By classic extension ID. */
+  attached: Map<string, PluginListing>;
+  /** By the plugin's own row ID. */
+  own: Map<string, PluginListing>;
 }
 
 interface ExtensionCatalog {
@@ -173,16 +224,26 @@ export class ServerResourceValidationError extends ServerResourceServiceError {
   }
 }
 
+/** A change the resource's current state refuses, such as disabling a required built-in. */
+export class ServerResourceConflictError extends ServerResourceServiceError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ServerResourceConflictError";
+  }
+}
+
 export class ServerResourceService {
   private readonly dataDir: string;
   private readonly agentDir: string;
   private readonly catalogCwd: string;
+  private readonly plugins?: ServerPluginCatalog;
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(options: ServerResourceServiceOptions) {
     this.dataDir = resolve(options.dataDir);
     this.agentDir = resolve(options.agentDir);
     this.catalogCwd = join(this.dataDir, "resource-catalog-cwd");
+    this.plugins = options.plugins;
   }
 
   async listSkills(): Promise<{ skills: ServerSkillSummary[] }> {
@@ -195,11 +256,15 @@ export class ServerResourceService {
     builtInTools: ServerToolSummary[];
     optionalTools: ServerToolSummary[];
   }> {
-    const { entries, optionalTools } = await this.buildExtensionCatalog(
-      await this.resolveContext(),
-    );
+    const context = await this.resolveContext();
+    const { entries, optionalTools } = await this.buildExtensionCatalog(context);
+    const plugins = await this.pluginRows(context);
+    const rows = [
+      ...entries.map((entry) => withPlugin(entry.summary, plugins.attached.get(entry.summary.id))),
+      ...[...plugins.own].map(([id, plugin]) => pluginRow(id, plugin, this.agentDir)),
+    ].sort(compareSummaries);
     return {
-      extensions: entries.map((entry) => copyExtensionSummary(entry.summary)),
+      extensions: rows.map(copyExtensionSummary),
       builtInTools: builtInToolSummaries(this.catalogCwd),
       optionalTools: optionalTools.map(copyToolSummary),
     };
@@ -273,13 +338,16 @@ export class ServerResourceService {
 
   private async extensionDetail(id: string, inspectTools: boolean): Promise<ServerExtensionDetail> {
     const context = await this.resolveContext();
+    const plugins = await this.pluginRows(context);
+    const own = plugins.own.get(id);
+    if (own) return { summary: pluginRow(id, own, this.agentDir) };
     this.findResourceById("extension", context.extensions, id);
     const inspectToolIds = inspectTools ? new Set([id]) : new Set<string>();
     const entry = (await this.buildExtensionCatalog(context, inspectToolIds)).entries.find(
       (candidate) => candidate.summary.id === id,
     );
     if (!entry) throw new ServerResourceNotFoundError("extension");
-    const summary = copyExtensionSummary(entry.summary);
+    const summary = copyExtensionSummary(withPlugin(entry.summary, plugins.attached.get(id)));
     return {
       summary,
       contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
@@ -349,28 +417,79 @@ export class ServerResourceService {
     });
   }
 
+  /**
+   * A classic row (a plugin of its package included) is turned on or off in Pi's settings, which
+   * a durable session follows after a plugin reload. A plugin's own row is turned on or off in the
+   * server config, which sessions follow without a reload.
+   */
   async setExtensionEnabled(id: string, enabled: boolean): Promise<ServerExtensionSummary> {
     return this.withMutationLock(async () => {
       const context = await this.resolveContext();
+      const plugin = (await this.pluginRows(context)).own.get(id);
+      if (plugin) return this.setPluginEnabled(id, plugin, enabled);
       const resource = this.findResourceById("extension", context.extensions, id);
       this.writeResourceEnabled(context, resource, "extensions", enabled);
       await this.finishSettingsWrite(context.settingsManager);
-      const authoritative = await this.buildExtensionCatalog(await this.resolveContext());
+      const latest = await this.resolveContext();
+      const authoritative = await this.buildExtensionCatalog(latest);
       const current = authoritative.entries.find((entry) => entry.summary.id === id);
       if (!current) throw new ServerResourceNotFoundError("extension");
-      return copyExtensionSummary(current.summary);
+      const attached = (await this.pluginRows(latest)).attached.get(id);
+      return copyExtensionSummary(withPlugin(current.summary, attached));
     });
   }
 
+  private async setPluginEnabled(
+    id: string,
+    plugin: PluginListing,
+    enabled: boolean,
+  ): Promise<ServerExtensionSummary> {
+    if (!this.plugins) throw new ServerResourceNotFoundError("extension");
+    if (plugin.extension === undefined)
+      throw new ServerResourceConflictError(
+        `${plugin.name} has no code loaded to turn on or off: ${plugin.loadError ?? "not loaded"}`,
+      );
+    if (plugin.required && !enabled)
+      throw new ServerResourceConflictError(
+        `${plugin.name} is required by the server and cannot be disabled`,
+      );
+    this.plugins.setPluginEnabled(plugin.extension, enabled);
+    const current = (await this.plugins.listPlugins()).find((p) => p.name === plugin.name);
+    if (!current) throw new ServerResourceNotFoundError("extension");
+    return pluginRow(id, current, this.agentDir);
+  }
+
   /**
-   * Whether the Pi package behind extension `id` holds a plugin, so toggling it changes what
-   * durable sessions load. A classic-only extension does not.
+   * Whether the Pi package behind classic extension `id` holds a plugin, so toggling it changes
+   * what durable sessions load. A classic-only extension does not, and a plugin's own row is no
+   * Pi package.
    */
   async hasPlugin(id: string): Promise<boolean> {
     const context = await this.resolveContext();
-    const resource = this.findResourceById("extension", context.extensions, id);
+    const resource = this.matchResourceById("extension", context.extensions, id);
+    if (!resource) return false;
     const { packageHasPlugin } = await import("./plugin-discovery.js");
     return packageHasPlugin(resource.path, resource.metadata);
+  }
+
+  /**
+   * Each plugin's row: the classic row of the first of its package's classic extensions that
+   * has no plugin yet, else a row of its own, identified by its facet (or folder).
+   */
+  private async pluginRows(context: ResolutionContext): Promise<PluginRows> {
+    const rows: PluginRows = { attached: new Map(), own: new Map() };
+    if (!this.plugins) return rows;
+    const classicIds = new Set(
+      context.extensions.map((resource) => resourceId("extension", canonicalPath(resource.path))),
+    );
+    for (const plugin of await this.plugins.listPlugins()) {
+      const id = plugin.extensionIds.find(
+        (candidate) => classicIds.has(candidate) && !rows.attached.has(candidate),
+      );
+      if (id !== undefined) rows.attached.set(id, plugin);
+      else rows.own.set(resourceId("extension", plugin.facet ?? plugin.dir), plugin);
+    }
+    return rows;
   }
 
   private async resolveContext(): Promise<ResolutionContext> {
@@ -584,6 +703,8 @@ export class ServerResourceService {
         ...(loadError ? { loadError: boundMessage(loadError) } : {}),
         warnings,
         isRemovable: false,
+        kinds: ["pi-extension"],
+        source: "owner",
         ...(contributedTools ? { contributedTools } : {}),
         ...(contributedToolDetails ? { contributedToolDetails } : {}),
         ...(contributedCommands ? { contributedCommands } : {}),
@@ -599,15 +720,22 @@ export class ServerResourceService {
     resources: ResolvedResource[],
     id: string,
   ): ResolvedResource {
+    const resource = this.matchResourceById(kind, resources, id);
+    if (!resource) throw new ServerResourceNotFoundError(kind);
+    return resource;
+  }
+
+  private matchResourceById(
+    kind: "skill" | "extension",
+    resources: ResolvedResource[],
+    id: string,
+  ): ResolvedResource | undefined {
     const matches = resources.filter(
       (candidate) => resourceId(kind, canonicalPath(candidate.path)) === id,
     );
     const resource =
       matches.find((candidate) => candidate.metadata.origin === "package") ?? matches[0];
-    if (!resource || resource.metadata.scope !== "user") {
-      throw new ServerResourceNotFoundError(kind);
-    }
-    return resource;
+    return resource?.metadata.scope === "user" ? resource : undefined;
   }
 
   private writeResourceEnabled(
@@ -948,11 +1076,90 @@ function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {
   return { ...summary };
 }
 
+/**
+ * Classic row `summary` with its package's plugin: both kinds, and the plugin's load error
+ * (the classic one first, when both failed).
+ */
+function withPlugin(
+  summary: ServerExtensionSummary,
+  plugin: PluginListing | undefined,
+): ServerExtensionSummary {
+  if (!plugin) return summary;
+  const loadError = plugin.loadError === undefined ? undefined : boundMessage(plugin.loadError);
+  return {
+    ...summary,
+    kinds: ["plugin", "pi-extension"],
+    plugin: pluginSummary(plugin),
+    ...(loadError === undefined
+      ? {}
+      : summary.loadError === undefined
+        ? { state: "error" as const, loadError }
+        : { warnings: boundedWarnings([loadError, ...summary.warnings]) }),
+  };
+}
+
+/** The row of a plugin with no classic extension to share one with. */
+function pluginRow(id: string, plugin: PluginListing, agentDir: string): ServerExtensionSummary {
+  const loadError = plugin.loadError === undefined ? undefined : boundMessage(plugin.loadError);
+  const singleFile = plugin.facet !== undefined && !basename(plugin.facet).startsWith("server.");
+  return {
+    id,
+    name: boundMessage(plugin.name),
+    kind: plugin.source === "built-in" ? "builtIn" : singleFile ? "file" : "directory",
+    provenance: pluginProvenance(plugin, agentDir),
+    path: canonicalPath(plugin.facet ?? plugin.dir),
+    state: loadError ? "error" : plugin.enabled ? "on" : "off",
+    ...(loadError ? { loadError } : {}),
+    warnings: [],
+    isRemovable: false,
+    kinds: ["plugin"],
+    source: plugin.source,
+    plugin: pluginSummary(plugin),
+  };
+}
+
+function pluginSummary(plugin: PluginListing): ServerPluginSummary {
+  return {
+    ...(plugin.extension === undefined ? {} : { extension: plugin.extension }),
+    required: plugin.required,
+    enabled: plugin.enabled,
+    runtimes: [...plugin.runtimes],
+    tools: [...plugin.tools],
+    hooks: plugin.hooks.map((hook) => ({ task: hook.task, handlers: [...hook.handlers] })),
+    sections: [...plugin.sections],
+    wraps: plugin.wraps.map((wrap) => ({ ...wrap })),
+    tasks: [...plugin.tasks],
+    ...(plugin.loadError === undefined ? {} : { loadError: boundMessage(plugin.loadError) }),
+    kept: plugin.kept,
+  };
+}
+
+function pluginProvenance(plugin: PluginListing, agentDir: string): ResourceProvenance {
+  if (plugin.source === "built-in") return { kind: "builtIn", label: "Oppi" };
+  if (pathContains(join(agentDir, "plugins"), plugin.dir))
+    return { kind: "piAgent", label: "~/.pi/agent/plugins" };
+  if (pathContains(join(agentDir, "extensions"), plugin.dir))
+    return { kind: "piAgent", label: "~/.pi/agent/extensions" };
+  return { kind: "userSettings", label: "Pi user settings" };
+}
+
 function copyExtensionSummary(summary: ServerExtensionSummary): ServerExtensionSummary {
   return {
     ...summary,
     provenance: { ...summary.provenance },
     warnings: [...summary.warnings],
+    kinds: [...summary.kinds],
+    plugin: summary.plugin
+      ? {
+          ...summary.plugin,
+          runtimes: [...summary.plugin.runtimes],
+          tools: [...summary.plugin.tools],
+          hooks: summary.plugin.hooks.map((hook) => ({ ...hook, handlers: [...hook.handlers] })),
+          sections: [...summary.plugin.sections],
+          wraps: summary.plugin.wraps.map((wrap) => ({ ...wrap })),
+          tasks: [...summary.plugin.tasks],
+        }
+      : undefined,
     contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
     contributedToolDetails: summary.contributedToolDetails
       ? summary.contributedToolDetails.map(copyToolSummary)

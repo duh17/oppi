@@ -567,10 +567,6 @@ export class Server {
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
     this.identityFingerprint = identity.fingerprint;
     this.identityPublicKey = identity.publicKeyRaw;
-    this.serverResources = new ServerResourceService({
-      dataDir,
-      agentDir: getAgentDir(),
-    });
     // Server telemetry events (catalog-typed latencies, counts, resource samples).
     this.telemetryWriter = new TelemetryEventWriter(join(dataDir, "diagnostics", "telemetry"));
     this.opsMetrics = new ServerTelemetry(this.telemetryWriter);
@@ -598,6 +594,11 @@ export class Server {
       state: new FileLiveActivityStateStore(liveActivityStatePath(dataDir)),
     });
     this.sessions = new SessionManager(storage, this.opsMetrics);
+    this.serverResources = new ServerResourceService({
+      dataDir,
+      agentDir: getAgentDir(),
+      plugins: this.sessions,
+    });
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);

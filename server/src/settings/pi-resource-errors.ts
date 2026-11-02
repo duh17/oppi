@@ -4,6 +4,7 @@
  * Both map a failure to an HTTP status here, so the same failure answers the same status.
  */
 import {
+  ServerResourceConflictError,
   ServerResourceNotFoundError,
   ServerResourceServiceError,
   ServerResourceValidationError,
@@ -48,6 +49,7 @@ export function httpStatusForPiResourceError(error: unknown, fallback: 400 | 500
   if (error instanceof SettingValidationError || error instanceof ServerResourceValidationError) {
     return 400;
   }
+  if (error instanceof ServerResourceConflictError) return 409;
   if (error instanceof PiSettingsOperationError || error instanceof ServerResourceServiceError) {
     return 500;
   }
