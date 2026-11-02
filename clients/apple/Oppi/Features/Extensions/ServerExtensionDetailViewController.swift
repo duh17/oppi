@@ -49,7 +49,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 listIdentifier: "server.extension.list",
                 loadingCaption: String(localized: "Loading extension…"),
                 failureTitle: String(localized: "Couldn't Load Contents"),
-                expectedKind: .extension,
                 catalog: .extensions,
                 catalogRow: { $0.extensions(forServer: serverId).first { $0.id == resourceId } },
                 mutationKey: .normalExtension(resourceId),

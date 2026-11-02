@@ -66,8 +66,6 @@ struct ServerResourceDetailPage<Detail: ServerResourceDetailAnswer> {
     /// Whether the page says "Connecting…" until it has its server; a page that
     /// shows its catalog row first says what it is loading instead.
     var showsConnecting = false
-    /// The route the page serves: the base switches servers only for its own.
-    var expectedKind: ServerResourceDetailKind?
     /// Where the resource is kept, for the switch's pending and failure state.
     var catalog: ServerResourceCatalogKind
     /// The catalog's row for the page's resource: what the page shows until a
@@ -178,7 +176,6 @@ class ServerResourceDetailScreenController<
     /// asks it for the detail: the base runs it on every appearance and after a
     /// Retry.
     override func load() async throws {
-        guard page.expectedKind == nil || target.kind == page.expectedKind else { return }
         // A Retry starts from no failure: the rows show the load, not the last
         // one's reason.
         clearLoadFailure()

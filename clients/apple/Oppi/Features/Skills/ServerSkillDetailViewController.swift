@@ -42,7 +42,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                 loadingCaption: String(localized: "Loading skill…"),
                 failureTitle: String(localized: "Couldn't Load Contents"),
                 showsConnecting: true,
-                expectedKind: .skill,
                 catalog: .skills,
                 catalogRow: { $0.skills(forServer: serverId).first { $0.id == resourceId } },
                 mutationKey: .skill(resourceId),
