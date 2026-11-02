@@ -570,18 +570,20 @@ describe("GET /files/current/media-info", () => {
   it("answers without a length for unparseable, implausible, and non-audio files", async () => {
     const fixture = seed();
     writeFileSync(join(fixture.home, "broken.wav"), "not a wave file");
-    // A crafted header: 1 Hz with a `fact` sample count of 2^32-1 parses to
-    // ~4.3e9 s, which is not audio and must not reach the card.
-    const fact = Buffer.alloc(12);
-    fact.write("fact", 0, "ascii");
-    fact.writeUInt32LE(4, 4);
-    fact.writeUInt32LE(0xffff_ffff, 8);
-    const header = wav(0, 1);
-    const crafted = Buffer.concat([header.subarray(0, 36), fact, header.subarray(36)]);
-    crafted.writeUInt32LE(crafted.length - 8, 4);
-    writeFileSync(join(fixture.home, "crafted.wav"), crafted);
+    // A crafted header: an `mvhd` with timescale 1 and a duration of 2^40
+    // parses to ~1.1e12 s, which is not audio and must not reach the card.
+    const mvhd = Buffer.alloc(8 + 32);
+    mvhd.writeUInt32BE(mvhd.length, 0);
+    mvhd.write("mvhd", 4, "ascii");
+    mvhd[8] = 1;
+    mvhd.writeUInt32BE(1, 28);
+    mvhd.writeBigUInt64BE(2n ** 40n, 32);
+    const moov = Buffer.concat([Buffer.alloc(8), mvhd]);
+    moov.writeUInt32BE(moov.length, 0);
+    moov.write("moov", 4, "ascii");
+    writeFileSync(join(fixture.home, "crafted.m4a"), moov);
 
-    for (const path of ["~/broken.wav", "~/crafted.wav", "~/notes.md"]) {
+    for (const path of ["~/broken.wav", "~/crafted.m4a", "~/notes.md"]) {
       const res = await request(
         fixture,
         "GET",
@@ -592,11 +594,10 @@ describe("GET /files/current/media-info", () => {
     }
   });
 
-  it("gives up on a file whose metadata chunks would need more than a bounded read", async () => {
+  it("skips metadata chunks of any size without reading them", async () => {
     const fixture = seed();
-    // Each LIST/INFO tag is under the per-chunk allocation limit, but the parser
-    // keeps every one until the parse ends: unbounded, a sandboxed session
-    // could use this to exhaust the server's heap.
+    // 18 MiB of LIST/INFO tags ahead of the audio: a parser that buffered them
+    // would let a sandboxed session exhaust the server's heap.
     const tagBytes = 3 * 1024 * 1024;
     const list = Buffer.alloc(8 + 4 + 8 + tagBytes);
     list.write("LIST", 0, "ascii");
@@ -616,11 +617,11 @@ describe("GET /files/current/media-info", () => {
       `/files/current/media-info?${query({ origin: "host", path: "~/bloated.wav" })}`,
     );
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.text())).toEqual({});
+    expect(JSON.parse(res.text())).toEqual({ durationSeconds: 1 });
     const read = openedHandles
       .filter((entry) => entry.path === path)
       .reduce((total, entry) => total + entry.bytesRead, 0);
-    expect(read).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(read).toBeLessThanOrEqual(4 * 1024);
   });
 
   it("keeps sandbox confinement and 404s a missing file", async () => {

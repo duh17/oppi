@@ -450,7 +450,7 @@ export function createHostFileRoutes(
         helpers.json(res, {});
         return;
       }
-      const read = await readAudioMediaInfo(servable.file.filePath, servable.file.contentType);
+      const read = await readAudioMediaInfo(servable.file.filePath);
       if (read.kind === "error") {
         status = read.status;
         helpers.error(

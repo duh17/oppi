@@ -163,7 +163,7 @@ The player always reserves 16:9, because wiki-file syntax has no dimensions, and
 
 ### Markdown inline audio
 
-`![[audio-file]]` and `![label](audio-file)` show a compact 64 pt player strip with the file name and the clip's length (blank when the server cannot read it). Playback never starts automatically. Expanding the strip, or a plain `[[audio-file]]` link, opens the lyrics-first full-screen player. Eligible extensions are `wav`, `mp3`, `m4a`, `m4b`, `aac`, `flac`, `ogg`, `opus`, and `caf`. A failure keeps the strip with "Audio unavailable" and an open-file fallback. Voice `audio_presentation` rows keep their transcript and fetch no sidecar.
+`![[audio-file]]` and `![label](audio-file)` show a compact 64 pt player strip with the file name and the clip's length (blank when the server cannot read it). Playback never starts automatically. Expanding the strip, or a plain `[[audio-file]]` link, opens the lyrics-first full-screen player. Eligible extensions are `wav`, `mp3`, `m4a`, `m4b`, `aac`, `flac`, `ogg`, `opus`, and `caf`; the server reads a length from `wav`, `mp3`, `m4a`, `m4b`, and `flac` headers, so `aac`, `ogg`, `opus`, `caf`, `aif`/`aiff`, and `weba` audio shows no length before playback. A failure keeps the strip with "Audio unavailable" and an open-file fallback. Voice `audio_presentation` rows keep their transcript and fetch no sidecar.
 
 The full-screen player:
 
