@@ -5,12 +5,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type {
-  Api,
-  AssistantMessage,
-  Context,
-  Model,
-} from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
 
 /** The model calls the entries make, over Pi's `ModelRegistry` (classic) or pi-ai's `Models` (durable). */
 export interface TitleModels {
@@ -55,9 +50,7 @@ const GENERATION_TIMEOUT_MS = 15_000;
  * ("I can't see the attachment...") instead of titling it.
  */
 export function titlePrompt(firstMessage: string): string {
-  const source = Array.from(firstMessage.trim())
-    .slice(0, MAX_SOURCE_CHARACTERS)
-    .join("");
+  const source = Array.from(firstMessage.trim()).slice(0, MAX_SOURCE_CHARACTERS).join("");
   return `Create a concise session title from the first user message.
 
 <first_user_message>
@@ -108,9 +101,7 @@ export function normalizeTitle(raw: string | null | undefined): string | null {
 export function agentDir(env: NodeJS.ProcessEnv = process.env): string {
   const dir = env.PI_CODING_AGENT_DIR;
   if (!dir) return join(homedir(), ".pi", "agent");
-  return dir === "~" || dir.startsWith("~/")
-    ? join(homedir(), dir.slice(2))
-    : dir;
+  return dir === "~" || dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : dir;
 }
 
 export interface AutoNameConfig {
@@ -124,13 +115,9 @@ export interface AutoNameConfig {
  */
 export function readConfig(dir: string = agentDir()): AutoNameConfig {
   try {
-    const parsed: unknown = JSON.parse(
-      readFileSync(join(dir, "auto-name.json"), "utf8"),
-    );
+    const parsed: unknown = JSON.parse(readFileSync(join(dir, "auto-name.json"), "utf8"));
     const model = (parsed as { model?: unknown } | null)?.model;
-    return typeof model === "string" && model.trim()
-      ? { model: model.trim() }
-      : {};
+    return typeof model === "string" && model.trim() ? { model: model.trim() } : {};
   } catch {
     return {};
   }
@@ -138,9 +125,7 @@ export function readConfig(dir: string = agentDir()): AutoNameConfig {
 
 // ─── Model choice ───
 
-function parseModelId(
-  id: string,
-): { provider: string; model: string } | undefined {
+function parseModelId(id: string): { provider: string; model: string } | undefined {
   const slash = id.indexOf("/");
   return slash > 0 && slash < id.length - 1
     ? { provider: id.slice(0, slash), model: id.slice(slash + 1) }
@@ -209,26 +194,21 @@ export async function chooseModel(
     const model = parsed && models.find(parsed.provider, parsed.model);
     return model ?? { problem: `model ${configured} is not available` };
   }
-  if (!session)
-    return { problem: "no model configured and the session has none" };
+  if (!session) return { problem: "no model configured and the session has none" };
   if (NO_DEFAULT_PROVIDERS.has(session.provider))
     return {
       problem: `${session.provider} models cannot title a session by default; set a model of another provider in ~/.pi/agent/auto-name.json, such as {"model":"anthropic/claude-haiku-5-5"}`,
     };
   const small = pickSmallModel(await models.available(), session);
   const model = small ?? models.find(session.provider, session.id);
-  return (
-    model ?? { problem: `no model available for provider ${session.provider}` }
-  );
+  return model ?? { problem: `no model available for provider ${session.provider}` };
 }
 
 // ─── Generation ───
 
 function textOf(message: AssistantMessage): string {
   return message.content
-    .filter(
-      (part): part is { type: "text"; text: string } => part.type === "text",
-    )
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("");
 }
@@ -286,9 +266,7 @@ export function userText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .filter(
-      (part): part is { type: "text"; text: string } => part?.type === "text",
-    )
+    .filter((part): part is { type: "text"; text: string } => part?.type === "text")
     .map((part) => part.text)
     .join("\n");
 }

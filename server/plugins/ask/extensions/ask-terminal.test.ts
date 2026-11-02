@@ -157,7 +157,14 @@ type Status = {
  * looks up `terminal.setProgramStatus` on every report (as Pi does) and, like
  * Pi, skips a report identical to its previous one.
  */
-function createStatusHarness() {
+type StatusHarness = {
+  terminal: { setProgramStatus: (status: Status) => void };
+  original: (status: Status) => void;
+  written: Status[];
+  piReports: (status: Status) => void;
+};
+
+function createStatusHarness(): StatusHarness {
   const written: Status[] = [];
   const terminal = {
     setProgramStatus: (status: Status) => {
@@ -190,7 +197,7 @@ async function openDialog(
   tui: AskDialogTui,
   signal?: AbortSignal,
   getSessionName?: () => string | undefined,
-) {
+): Promise<{ component: TestComponent; dialogPromise: Promise<AskDialogResult | undefined> }> {
   let component: TestComponent | undefined;
   let resolveResult: ((value: AskDialogResult | undefined) => void) | undefined;
   const dialogPromise = runTerminalAskDialog(
@@ -279,10 +286,7 @@ describe("runTerminalAskDialog program status", () => {
     component.handleInput("\r");
     await dialogPromise;
 
-    expect(h.written).toEqual([
-      blocked,
-      { state: "working", app: "pi", message: "second" },
-    ]);
+    expect(h.written).toEqual([blocked, { state: "working", app: "pi", message: "second" }]);
   });
 
   it("restores Pi's status when the dialog is cancelled", async () => {
@@ -299,10 +303,7 @@ describe("runTerminalAskDialog program status", () => {
       allIgnored: true,
     });
 
-    expect(h.written).toEqual([
-      blocked,
-      { state: "working", app: "pi", message: "Named" },
-    ]);
+    expect(h.written).toEqual([blocked, { state: "working", app: "pi", message: "Named" }]);
     expect(h.terminal.setProgramStatus).toBe(h.original);
   });
 
@@ -435,10 +436,7 @@ describe("runTerminalAskDialog program status", () => {
       allIgnored: false,
     });
     expect(terminal.setProgramStatus).toBe(original);
-    expect(writes.map((status) => status.state)).toEqual([
-      "blocked",
-      "working",
-    ]);
+    expect(writes.map((status) => status.state)).toEqual(["blocked", "working"]);
   });
 
   it("restores the method and rethrows the original error when the blocked write fails", async () => {

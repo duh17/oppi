@@ -1,7 +1,4 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { autoName } from "./core.js";
 
@@ -38,18 +35,14 @@ export default function autoNameExtension(pi: ExtensionAPI): void {
     // Only a session's first message names it: a resumed session that already talked stays as it is.
     const talked = ctx.sessionManager
       .getBranch()
-      .some(
-        (entry) => entry.type === "message" && entry.message.role === "user",
-      );
+      .some((entry) => entry.type === "message" && entry.message.role === "user");
     if (talked) return;
 
     const registry = ctx.modelRegistry;
     // Not awaited: the title must not hold the turn.
     void autoName({
       firstMessage: event.prompt,
-      session: ctx.model
-        ? { provider: ctx.model.provider, id: ctx.model.id }
-        : undefined,
+      session: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
       models: {
         find: (provider, id) => registry.find(provider, id),
         available: () => registry.getAvailable(),

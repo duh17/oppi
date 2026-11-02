@@ -41,14 +41,8 @@ type RegisteredTool = {
           allIgnored: boolean;
         }>;
         custom: (...args: unknown[]) => Promise<unknown>;
-        select: (
-          question: string,
-          options: string[],
-        ) => Promise<string | undefined>;
-        input: (
-          question: string,
-          placeholder?: string,
-        ) => Promise<string | undefined>;
+        select: (question: string, options: string[]) => Promise<string | undefined>;
+        input: (question: string, placeholder?: string) => Promise<string | undefined>;
       };
     },
   ) => Promise<{
@@ -146,27 +140,15 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const first = await tool!.execute(
-      "tc-1",
-      params,
-      undefined,
-      undefined,
-      ctx,
-    );
+    const first = await tool!.execute("tc-1", params, undefined, undefined, ctx);
     expect(first.content[0]?.text).toContain("Defaults");
 
-    await expect(
-      tool!.execute("tc-2", params, undefined, undefined, ctx),
-    ).rejects.toThrow(/Only one ask call per turn/);
+    await expect(tool!.execute("tc-2", params, undefined, undefined, ctx)).rejects.toThrow(
+      /Only one ask call per turn/,
+    );
 
     await api.resetTurn();
-    const second = await tool!.execute(
-      "tc-3",
-      params,
-      undefined,
-      undefined,
-      ctx,
-    );
+    const second = await tool!.execute("tc-3", params, undefined, undefined, ctx);
     expect(second.content[0]?.text).toContain("Defaults");
   });
 
@@ -216,13 +198,7 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute(
-      "tc-multi",
-      params,
-      undefined,
-      undefined,
-      ctx,
-    );
+    const result = await tool.execute("tc-multi", params, undefined, undefined, ctx);
     const details = result.details as {
       answers: Record<string, string | string[]>;
     };
@@ -263,9 +239,9 @@ describe("createAskFactory", () => {
       ],
     };
 
-    await expect(
-      tool.execute("tc-herdr", params, undefined, undefined, ctx),
-    ).rejects.toThrow("dialog closed");
+    await expect(tool.execute("tc-herdr", params, undefined, undefined, ctx)).rejects.toThrow(
+      "dialog closed",
+    );
     expect(emittedDuringAsk).toEqual([{ active: true, label: "Which scope?" }]);
     expect(api.emitted).toEqual([
       { channel: "herdr:blocked", data: { active: true, label: "Which scope?" } },
@@ -313,13 +289,7 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute(
-      "tc-tui",
-      params,
-      undefined,
-      undefined,
-      ctx,
-    );
+    const result = await tool.execute("tc-tui", params, undefined, undefined, ctx);
     expect(result.details).toMatchObject({
       answers: { tools: ["ruff", "mypy"] },
       allIgnored: false,
@@ -360,13 +330,7 @@ describe("createAskFactory", () => {
       ],
     };
 
-    const result = await tool.execute(
-      "tc-missing-ask",
-      params,
-      undefined,
-      undefined,
-      ctx,
-    );
+    const result = await tool.execute("tc-missing-ask", params, undefined, undefined, ctx);
     expect(result.details).toMatchObject({
       answers: { approach: "unit" },
       allIgnored: false,

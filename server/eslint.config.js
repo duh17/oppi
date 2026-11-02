@@ -181,22 +181,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
-    ignores: [
-      "dist/",
-      "node_modules/",
-      // Classic Pi entries of the built-in plugins, still in Pi's own style.
-      "plugins/ask/extensions/",
-      "plugins/auto-name/core.ts",
-      "plugins/auto-name/index.ts",
-      "plugins/background-jobs/delivery.ts",
-      "plugins/background-jobs/index.ts",
-      "plugins/background-jobs/jobs.ts",
-      "plugins/background-jobs/*.test.ts",
-      "plugins/subagents/index.ts",
-      "plugins/subagents/subagents.ts",
-      "plugins/subagents/supervise.ts",
-      "plugins/subagents/*.test.ts",
-    ],
+    ignores: ["dist/", "node_modules/"],
   },
   {
     files: ["src/**/*.ts", "plugins/**/*.ts"],
