@@ -1,31 +1,6 @@
 import Foundation
 import Observation
 
-/// Read and write seams for one document. The live adapter calls
-/// `GET`/`PUT /files/current` with the owner's origin (`workspace`, `skill`, or
-/// `pi`); a record's prompt has its own route. Tests supply scripted closures.
-struct WorkspaceFileEditTransport: Sendable {
-    var read: @Sendable (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
-    var write: @Sendable (
-        WorkspaceFileEditIdentity,
-        Data,
-        WorkspaceFileWriteCondition
-    ) async -> WorkspaceFileWriteOutcome
-}
-
-extension WorkspaceFileEditTransport {
-    static func api(_ api: APIClient) -> WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(
-            read: { identity in
-                await api.readFileForEditingOutcome(identity)
-            },
-            write: { identity, bytes, condition in
-                await api.writeEditedFile(identity, bytes: bytes, condition: condition)
-            }
-        )
-    }
-}
-
 /// Headless edit core for one workspace file.
 ///
 /// The text view owns the live buffer. Keystrokes only bump `editGeneration`
@@ -95,22 +70,6 @@ final class WorkspaceFileEditSession {
         case unavailable
     }
 
-    private struct InFlight {
-        let token: UUID
-        let epoch: Int
-        let generation: Int
-        let bytes: Data
-        let origin: WriteOrigin
-    }
-
-    /// A person's save that arrived while a write was in flight: one write runs
-    /// at a time, so their bytes wait and go next as `.confirmed`, whatever
-    /// origin the flight had.
-    private struct PendingSave {
-        let generation: Int
-        let bytes: Data
-    }
-
     let identity: WorkspaceFileEditIdentity
     let maxBytes: Int
     private(set) var status: Status = .saved
@@ -131,23 +90,19 @@ final class WorkspaceFileEditSession {
     @ObservationIgnored private var bufferText: String
     @ObservationIgnored private var textProvider: (() -> String)?
     @ObservationIgnored private let transport: WorkspaceFileEditTransport
+    /// The write in flight, the save queued behind it, and the retry and
+    /// verify timers. It reports; this session decides.
+    @ObservationIgnored private let writes: WorkspaceFileWriteQueue
     /// Auto-Save, read at every write rather than captured, so the setting
     /// takes effect in an editor that is already open.
     @ObservationIgnored private let autoSaveSetting: @MainActor () -> Bool
     @ObservationIgnored private let draftStore: WorkspaceFileDraftStore
     @ObservationIgnored private let idleDelay: Duration
-    @ObservationIgnored private let retryDelay: Duration
     @ObservationIgnored private var idleDeadline: ContinuousClock.Instant?
     @ObservationIgnored private var idleTask: Task<Void, Never>?
-    @ObservationIgnored private var retryTask: Task<Void, Never>?
-    @ObservationIgnored private var inFlight: InFlight?
-    @ObservationIgnored private var inFlightTask: Task<Void, Never>?
-    @ObservationIgnored private var epoch = 0
     /// The generation a person last confirmed a save of: Done asks only for
     /// edits made after it, so `:wq` and Done → Save close without asking twice.
     @ObservationIgnored private var confirmedGeneration = 0
-    /// A person's save waiting for the write in flight; see `saveNow()`.
-    @ObservationIgnored private var pendingConfirmedSave: PendingSave?
     /// The notice a refused Discard left, so the write that was in flight can
     /// clear it when it lands instead of leaving a stale sentence behind.
     @ObservationIgnored private var refusedDiscardNotice: String?
@@ -155,9 +110,7 @@ final class WorkspaceFileEditSession {
 
     private init(
         identity: WorkspaceFileEditIdentity,
-        baseCondition: WorkspaceFileWriteCondition,
-        diskBytes: Data,
-        bufferText: String,
+        opening: WorkspaceFileEditOpening,
         maxBytes: Int,
         transport: WorkspaceFileEditTransport,
         draftStore: WorkspaceFileDraftStore,
@@ -168,22 +121,24 @@ final class WorkspaceFileEditSession {
         self.identity = identity
         self.maxBytes = maxBytes
         self.transport = transport
+        self.writes = WorkspaceFileWriteQueue(identity: identity, transport: transport, retryDelay: retryDelay)
         self.autoSaveSetting = isAutoSaveOn
         self.draftStore = draftStore
         self.idleDelay = idleDelay
-        self.retryDelay = retryDelay
-        self.baseCondition = baseCondition
-        self.diskBytes = diskBytes
-        self.bufferText = bufferText
+        self.baseCondition = opening.baseCondition
+        self.diskBytes = opening.diskBytes
+        self.bufferText = opening.bufferText
+        self.status = opening.status
+        self.recoveredDraft = opening.recoveredDraft
+        self.editGeneration = opening.recoveredDraft ? 1 : 0
+        self.draftNotice = opening.draftNotice
+        writes.onEvent = { [weak self] event in self?.handle(event) }
     }
 
     /// Opens a session from one tagged read, or from a read that answered a file
-    /// the server offers to create. Returns nil when the server offered neither a
-    /// version nor a creation, the bytes are not exact UTF-8, or they exceed
-    /// `maxBytes`, or when an unreadable stored draft could not be moved aside.
-    /// A stored draft is recovered: same base resumes saving; a different base
-    /// opens in conflict with saving stopped. A draft that cannot be applied is
-    /// quarantined, never deleted.
+    /// the server offers to create, and the stored draft (`WorkspaceFileEditOpening`).
+    /// Returns nil when the read cannot be edited, or when a stored draft that
+    /// cannot be applied could not be moved aside: it is quarantined, never deleted.
     convenience init?(
         identity: WorkspaceFileEditIdentity,
         disk: WorkspaceFileDiskSnapshot,
@@ -194,56 +149,23 @@ final class WorkspaceFileEditSession {
         retryDelay: Duration = .seconds(5),
         isAutoSaveOn: @MainActor @escaping () -> Bool = { CodeEditorPreferences.shared.autoSaves }
     ) {
-        guard let condition = disk.writeCondition,
-              disk.bytes.count <= maxBytes,
-              let diskText = WorkspaceFileTextCodec.decode(disk.bytes) else { return nil }
-        let stored = draftStore.loadResult(identity)
-        var recovered: (draft: WorkspaceFileDraft, text: String)?
-        var notice: String?
-        switch stored {
-        case .none:
-            break
-        case .draft(let draft) where draft.bytes == disk.bytes:
-            // Disk already holds exactly these bytes: the draft is saved.
-            draftStore.remove(identity)
-        case .draft(let draft):
-            if let text = WorkspaceFileTextCodec.decodeDraft(draft.bytes) {
-                recovered = (draft, text)
-            } else {
-                guard draftStore.quarantine(identity) else { return nil }
-                notice = Self.quarantineNotice
-            }
-        case .unreadable:
-            guard draftStore.quarantine(identity) else { return nil }
-            notice = Self.quarantineNotice
+        guard let opening = WorkspaceFileEditOpening(
+            disk: disk,
+            storedDraft: draftStore.loadResult(identity),
+            maxBytes: maxBytes
+        ) else { return nil }
+        switch opening.draftAction {
+        case .keep: break
+        case .remove: draftStore.remove(identity)
+        case .quarantine: guard draftStore.quarantine(identity) else { return nil }
         }
         self.init(
-            identity: identity,
-            baseCondition: condition,
-            diskBytes: disk.bytes,
-            bufferText: diskText,
-            maxBytes: maxBytes,
-            transport: transport,
-            draftStore: draftStore,
-            idleDelay: idleDelay,
-            retryDelay: retryDelay,
-            isAutoSaveOn: isAutoSaveOn
+            identity: identity, opening: opening, maxBytes: maxBytes, transport: transport,
+            draftStore: draftStore, idleDelay: idleDelay, retryDelay: retryDelay, isAutoSaveOn: isAutoSaveOn
         )
-        draftNotice = notice
-        guard let recovered else { return }
-        bufferText = recovered.text
-        editGeneration = 1
-        recoveredDraft = true
-        if recovered.draft.baseEtag == condition.storedTag {
-            status = .pending
-            // Recovery is not consent: with Auto-Save off the draft waits for a
-            // save, so opening a file never writes it.
-            if autoSaveSetting() { scheduleIdle() }
-        } else {
-            // Keep the draft's own base so a later recovery still sees conflict.
-            baseCondition = WorkspaceFileWriteCondition(storedTag: recovered.draft.baseEtag)
-            status = .conflict
-        }
+        // Recovery is not consent: with Auto-Save off the draft waits for a
+        // save, so opening a file never writes it.
+        if status == .pending, autoSaveSetting() { scheduleIdle() }
     }
 
     /// Reopens a kept draft whose file is gone (404). The session never writes:
@@ -258,28 +180,12 @@ final class WorkspaceFileEditSession {
         retryDelay: Duration = .seconds(5),
         isAutoSaveOn: @MainActor @escaping () -> Bool = { CodeEditorPreferences.shared.autoSaves }
     ) {
-        guard draft.identity == identity,
-              let text = WorkspaceFileTextCodec.decodeDraft(draft.bytes) else { return nil }
+        guard let opening = WorkspaceFileEditOpening(identity: identity, deletedFileDraft: draft) else { return nil }
         self.init(
-            identity: identity,
-            baseCondition: WorkspaceFileWriteCondition(storedTag: draft.baseEtag),
-            diskBytes: Data(),
-            bufferText: text,
-            maxBytes: maxBytes,
-            transport: transport,
-            draftStore: draftStore,
-            idleDelay: idleDelay,
-            retryDelay: retryDelay,
-            isAutoSaveOn: isAutoSaveOn
+            identity: identity, opening: opening, maxBytes: maxBytes, transport: transport,
+            draftStore: draftStore, idleDelay: idleDelay, retryDelay: retryDelay, isAutoSaveOn: isAutoSaveOn
         )
-        editGeneration = 1
-        recoveredDraft = true
-        status = .deleted
     }
-
-    private static let quarantineNotice = String(
-        localized: "A stored draft for this file could not be read. It was moved aside on this device and not applied."
-    )
 
     var currentText: String { textProvider?() ?? bufferText }
 
@@ -305,7 +211,7 @@ final class WorkspaceFileEditSession {
     }
 
     /// Clean, idle, and not shown. The registry may drop it.
-    var isSettled: Bool { !hasUnsavedChanges && inFlight == nil && !isEditorAttached }
+    var isSettled: Bool { !hasUnsavedChanges && !writes.isWriting && !isEditorAttached }
 
     // MARK: - Editor attachment
 
@@ -380,18 +286,18 @@ final class WorkspaceFileEditSession {
         checkpoint()
         guard !status.stopsAutosave else { return false }
         let bytes = WorkspaceFileTextCodec.encode(currentText)
-        if inFlight != nil {
+        if writes.isWriting {
             // One write at a time: their bytes wait for this one and go next.
             guard bytes.count <= maxBytes else {
                 setStatus(.tooLarge)
                 return false
             }
-            pendingConfirmedSave = PendingSave(generation: editGeneration, bytes: bytes)
+            writes.queueSave(.init(generation: editGeneration, bytes: bytes))
             confirmedGeneration = editGeneration
             return true
         }
         // Sent now: anything queued is older than this save.
-        pendingConfirmedSave = nil
+        writes.dropQueuedSave()
         guard startSaveIfPossible(origin: .confirmed) else { return false }
         confirmedGeneration = editGeneration
         return true
@@ -424,7 +330,7 @@ final class WorkspaceFileEditSession {
     /// - Returns: whether the edits were discarded (or already on their way).
     @discardableResult
     func discardChanges(from source: DiscardSource = .page) -> Bool {
-        if let flight = inFlight {
+        if let flight = writes.inFlight {
             if flight.generation == editGeneration,
                flight.bytes == WorkspaceFileTextCodec.encode(currentText) {
                 // The write out is exactly what is on screen: closing loses nothing.
@@ -437,7 +343,6 @@ final class WorkspaceFileEditSession {
         }
         draftNotice = nil
         refusedDiscardNotice = nil
-        pendingConfirmedSave = nil
         cancelPendingWork()
         textProvider = nil
         bufferText = WorkspaceFileTextCodec.decode(diskBytes) ?? ""
@@ -456,7 +361,7 @@ final class WorkspaceFileEditSession {
     /// that would have saved is dropped, and the edits are checkpointed now so
     /// the draft keeps them until the person saves.
     func autoSaveSettingChanged(isOn: Bool) {
-        guard hasUnsavedChanges, inFlight == nil else { return }
+        guard hasUnsavedChanges, !writes.isWriting else { return }
         if isOn {
             if idleTask == nil { scheduleIdle() }
         } else {
@@ -467,9 +372,7 @@ final class WorkspaceFileEditSession {
 
     /// Waits for the current write (and any follow-up it starts) to finish.
     func waitForInFlightWrite() async {
-        while let task = inFlightTask {
-            await task.value
-        }
+        await writes.waitForInFlightWrite()
     }
 
     /// An open read returned 404 while this session still holds unsaved edits.
@@ -490,9 +393,9 @@ final class WorkspaceFileEditSession {
     /// conflict resolves to that version.
     @discardableResult
     func reviewDisk() async -> WorkspaceFileReadOutcome {
-        let startEpoch = epoch
+        let startEpoch = writes.epoch
         let outcome = await transport.read(identity)
-        guard startEpoch == epoch else { return outcome }
+        guard startEpoch == writes.epoch else { return outcome }
         switch outcome {
         case .snapshot(let snapshot):
             guard let tag = snapshot.etag else {
@@ -500,7 +403,7 @@ final class WorkspaceFileEditSession {
                 setStatus(.failed(String(localized: "This file is no longer editable.")))
                 return outcome
             }
-            if snapshot.bytes == WorkspaceFileTextCodec.encode(currentText), inFlight == nil {
+            if snapshot.bytes == WorkspaceFileTextCodec.encode(currentText), !writes.isWriting {
                 acknowledge(
                     bytes: snapshot.bytes,
                     condition: .version(tag),
@@ -518,17 +421,17 @@ final class WorkspaceFileEditSession {
             // Any other base lost the file: there is no disk version to keep.
             reviewedDisk = nil
             if baseCondition == .absent {
-                if inFlight == nil {
+                if !writes.isWriting {
                     setStatus(.pending)
                     startSaveIfPossible()
                 }
-            } else if inFlight == nil {
+            } else if !writes.isWriting {
                 setStatus(.deleted)
             }
         case .missing:
             // No disk version at all: there is nothing to review or to keep.
             reviewedDisk = nil
-            if inFlight == nil { setStatus(.deleted) }
+            if !writes.isWriting { setStatus(.deleted) }
         case .failed:
             break
         }
@@ -539,7 +442,7 @@ final class WorkspaceFileEditSession {
     /// Never recreates a deleted file. A person chose Replace, so it writes
     /// whatever Auto-Save says.
     func replaceDiskVersion() {
-        guard status == .conflict, inFlight == nil,
+        guard status == .conflict, !writes.isWriting,
               let reviewed = reviewedDisk,
               case .version(let tag) = reviewed.writeCondition else { return }
         let bytes = WorkspaceFileTextCodec.encode(currentText)
@@ -550,21 +453,21 @@ final class WorkspaceFileEditSession {
         reviewedDisk = nil
         confirmedGeneration = editGeneration
         // Replace writes the buffer: a save queued behind the flight is older.
-        pendingConfirmedSave = nil
+        writes.dropQueuedSave()
         send(bytes: bytes, generation: editGeneration, condition: .version(tag), origin: .confirmed)
     }
 
     /// Discard the buffer for the disk version (reviewed, else freshly read).
     func useDiskVersion() async -> UseDiskResult {
-        guard inFlight == nil else { return .unavailable }
+        guard !writes.isWriting else { return .unavailable }
         let snapshot: WorkspaceFileDiskSnapshot
         if let reviewedDisk {
             snapshot = reviewedDisk
         } else {
-            let startEpoch = epoch
+            let startEpoch = writes.epoch
             switch await transport.read(identity) {
             case .snapshot(let read):
-                guard startEpoch == epoch, inFlight == nil else { return .unavailable }
+                guard startEpoch == writes.epoch, !writes.isWriting else { return .unavailable }
                 snapshot = read
             case .missing, .creatable:
                 // No disk version: a file that is not there is the same answer
@@ -620,7 +523,7 @@ final class WorkspaceFileEditSession {
     }
 
     private func startSaveIfPossible(origin: WriteOrigin = .automatic) -> Bool {
-        guard inFlight == nil, !status.stopsAutosave else { return false }
+        guard !writes.isWriting, !status.stopsAutosave else { return false }
         guard hasUnsavedChanges else {
             if status != .saved { setStatus(.saved) }
             return true
@@ -655,61 +558,57 @@ final class WorkspaceFileEditSession {
         origin: WriteOrigin
     ) -> Bool {
         guard origin == .confirmed || autoSaveSetting() else { return false }
-        retryTask?.cancel()
-        retryTask = nil
-        let flight = InFlight(
-            token: UUID(),
-            epoch: epoch,
-            generation: generation,
-            bytes: bytes,
-            origin: origin
-        )
-        inFlight = flight
+        writes.start(.init(generation: generation, bytes: bytes, origin: origin), condition: condition)
         setStatus(.saving)
-        let transport = transport
-        let identity = identity
-        inFlightTask = Task { [weak self] in
-            let outcome = await transport.write(identity, bytes, condition)
-            self?.handleWrite(outcome, for: flight)
-        }
         return true
     }
 
-    private func handleWrite(_ outcome: WorkspaceFileWriteOutcome, for flight: InFlight) {
-        guard inFlight?.token == flight.token else { return }
-        inFlight = nil
-        inFlightTask = nil
+    /// What the write queue reports. It has already dropped anything from before
+    /// the last `cancelPendingWork()`.
+    private func handle(_ event: WorkspaceFileWriteQueue.Event) {
+        switch event {
+        case .written(let write, let outcome):
+            handleWrite(outcome, for: write)
+        case .retryDue(let write):
+            guard status == .offline else { return }
+            retry(write)
+        case .verified(let write, let outcome):
+            handleVerify(outcome, for: write)
+        }
+    }
+
+    private func handleWrite(_ outcome: WorkspaceFileWriteOutcome, for write: WorkspaceFileWriteQueue.Write) {
         // The write it waited for is over, so the notice it left is stale.
         clearRefusedDiscardNotice()
-        guard flight.epoch == epoch else { return }
         switch outcome {
         case .saved(let etag):
-            acknowledge(bytes: flight.bytes, condition: .version(etag), generation: flight.generation)
+            acknowledge(bytes: write.bytes, condition: .version(etag), generation: write.generation)
         case .stale:
             // Nothing a person queued can be sent now: their save was made
             // against a version that is gone, and Review or Use Disk decides
             // what the buffer becomes.
-            pendingConfirmedSave = nil
+            writes.dropQueuedSave()
             reviewedDisk = nil
             setStatus(.conflict)
             checkpoint()
         case .missing:
-            pendingConfirmedSave = nil
+            writes.dropQueuedSave()
             reviewedDisk = nil
             setStatus(.deleted)
             checkpoint()
         case .rejected(let status, let message):
-            pendingConfirmedSave = nil
+            writes.dropQueuedSave()
             setStatus(status == 413 ? .tooLarge : .failed(message))
             checkpoint()
         case .notSent:
             setStatus(.offline)
             checkpoint()
-            scheduleRetry(after: flight)
+            scheduleRetry(after: write)
         case .unknown:
+            // Never re-send until a read says whether the write landed.
             setStatus(.verifying)
             checkpoint()
-            verify(after: flight, delay: nil)
+            writes.verify(write, afterRetryDelay: false)
         }
     }
 
@@ -745,8 +644,7 @@ final class WorkspaceFileEditSession {
     /// - Returns: whether it had something to send.
     @discardableResult
     private func sendPendingConfirmedSave() -> Bool {
-        guard let pending = pendingConfirmedSave else { return false }
-        pendingConfirmedSave = nil
+        guard let pending = writes.takeQueuedSave() else { return false }
         guard !status.stopsAutosave else { return false }
         guard pending.bytes != diskBytes else {
             // The flight that just landed wrote their bytes: nothing is left to
@@ -766,10 +664,10 @@ final class WorkspaceFileEditSession {
         )
     }
 
-    private func scheduleRetry(after flight: InFlight) {
+    private func scheduleRetry(after write: WorkspaceFileWriteQueue.Write) {
         // A retry is the session's own write. With Auto-Save off only bytes a
         // person already confirmed go again; the rest stay pending and kept.
-        guard flight.origin == .confirmed || autoSaveSetting() else {
+        guard write.origin == .confirmed || autoSaveSetting() else {
             // A save the person queued behind this flight is still theirs to
             // send: Auto-Save has nothing to do with it.
             if sendPendingConfirmedSave() { return }
@@ -777,24 +675,16 @@ final class WorkspaceFileEditSession {
             checkpoint()
             return
         }
-        retryTask?.cancel()
-        let delay = retryDelay
-        let startEpoch = epoch
-        retryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.epoch == startEpoch, self.status == .offline else { return }
-            self.retryTask = nil
-            self.retry(flight)
-        }
+        writes.scheduleRetry(write)
     }
 
     /// The same bytes under the same generation go again. A retry never picks up
     /// newer edits: a person's confirmed save stays the save they asked for, and
     /// the session's own retry is the write it started, not whatever the buffer
     /// holds by now.
-    private func retry(_ flight: InFlight) {
-        guard flight.epoch == epoch, inFlight == nil else { return }
-        guard flight.origin == .confirmed || autoSaveSetting() else {
+    private func retry(_ write: WorkspaceFileWriteQueue.Write) {
+        guard !writes.isWriting else { return }
+        guard write.origin == .confirmed || autoSaveSetting() else {
             // Auto-Save went off while this retry waited: nothing is owed. The
             // edits are unsaved, not unreachable — the banner says so, and the
             // draft keeps them. A save the person queued is still theirs to send.
@@ -804,44 +694,27 @@ final class WorkspaceFileEditSession {
             return
         }
         guard !status.stopsAutosave else { return }
-        send(bytes: flight.bytes, generation: flight.generation, condition: baseCondition, origin: flight.origin)
+        send(bytes: write.bytes, generation: write.generation, condition: baseCondition, origin: write.origin)
     }
 
-    /// Unknown outcome: never re-send until a read says whether the write landed.
-    private func verify(after flight: InFlight, delay: Duration?) {
-        retryTask?.cancel()
-        let transport = transport
-        let identity = identity
-        retryTask = Task { [weak self] in
-            if let delay {
-                try? await Task.sleep(for: delay)
-                if Task.isCancelled { return }
-            }
-            let outcome = await transport.read(identity)
-            guard let self, !Task.isCancelled else { return }
-            self.handleVerify(outcome, for: flight)
-        }
-    }
-
-    private func handleVerify(_ outcome: WorkspaceFileReadOutcome, for flight: InFlight) {
-        guard flight.epoch == epoch, status == .verifying, inFlight == nil else { return }
-        retryTask = nil
+    private func handleVerify(_ outcome: WorkspaceFileReadOutcome, for write: WorkspaceFileWriteQueue.Write) {
+        guard status == .verifying, !writes.isWriting else { return }
         switch outcome {
         case .snapshot(let snapshot):
-            if snapshot.bytes == flight.bytes, let tag = snapshot.etag {
-                acknowledge(bytes: flight.bytes, condition: .version(tag), generation: flight.generation)
+            if snapshot.bytes == write.bytes, let tag = snapshot.etag {
+                acknowledge(bytes: write.bytes, condition: .version(tag), generation: write.generation)
             } else if snapshot.writeCondition == baseCondition {
                 setStatus(.pending)
-                retry(flight)
+                retry(write)
             } else {
                 // Disk is a version nobody can write over: a queued save was
                 // made against the old one.
-                pendingConfirmedSave = nil
+                writes.dropQueuedSave()
                 setStatus(.conflict)
                 checkpoint()
             }
         case .missing:
-            pendingConfirmedSave = nil
+            writes.dropQueuedSave()
             setStatus(.deleted)
             checkpoint()
         case .creatable:
@@ -852,20 +725,19 @@ final class WorkspaceFileEditSession {
             if baseCondition == .absent {
                 setStatus(.pending)
                 checkpoint()
-                retry(flight)
+                retry(write)
             } else {
-                pendingConfirmedSave = nil
+                writes.dropQueuedSave()
                 setStatus(.deleted)
                 checkpoint()
             }
         case .failed:
-            verify(after: flight, delay: retryDelay)
+            writes.verify(write, afterRetryDelay: true)
         }
     }
 
     private func discardForMissingFile() {
         cancelPendingWork()
-        pendingConfirmedSave = nil
         textProvider = nil
         draftStore.remove(identity)
         savedGeneration = editGeneration
@@ -880,16 +752,11 @@ final class WorkspaceFileEditSession {
         idleDeadline = nil
     }
 
+    /// Drops the idle save and everything the write queue holds, and moves its
+    /// epoch so no late answer is applied.
     private func cancelPendingWork() {
-        epoch &+= 1
-        idleTask?.cancel()
-        idleTask = nil
-        idleDeadline = nil
-        retryTask?.cancel()
-        retryTask = nil
-        inFlight = nil
-        inFlightTask = nil
-        pendingConfirmedSave = nil
+        writes.cancelAll()
+        cancelIdleSave()
     }
 
     /// The notice a refused Discard left goes once the write it waited for ends:
