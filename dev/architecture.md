@@ -1,202 +1,67 @@
 # Oppi architecture
 
-Oppi pairs an Apple client with an Oppi server to view, prompt, and steer Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror live terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. It exposes HTTP over an owner-only Unix socket for the local CLI. Apple clients reach remote HTTP and scoped WebSocket handlers over authenticated HTTPS/WSS routes, including Tailscale.
+> **What belongs here:** the cross-system map: owners, boundaries, invariants that span server and clients, and where to read next. Feature behaviour and history belong in code comments and tests. Standard and budgets: [`dev/README.md`](README.md#what-belongs-in-dev).
 
-## Audience and scope
+Oppi pairs Apple clients with an Oppi server to view, prompt, and steer Pi sessions. The server embeds the Pi SDK for managed sessions, mirrors terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. The local CLI uses HTTP over an owner-only Unix socket; Apple clients use authenticated HTTPS/WSS, including over Tailscale.
 
-This page maps the system. Use it to understand how the Apple app, server, Pi SDK runtime, and terminal mirror runtime fit together.
-
-For implementation details, read the split pages:
-
-- [Server architecture](architecture-server.md) — HTTP routes, stream muxes, runtime ownership, session coordinators, storage, mirror bridge, and server boundary rules.
-- [Client architecture](architecture-client.md) — Apple stores, transport coordinators, workspace navigation, chat timeline pipeline, extension UI rendering, and client boundary rules.
-- [Networking and connection routing](networking.md) — LAN, paired HTTPS, route selection, fallback, recovery, and diagnostics.
-
-This page does not document every source file or operational runbook.
+Details: [Server architecture](architecture-server.md), [Client architecture](architecture-client.md), [Networking](networking.md).
 
 ## Runtime topology
 
-The Apple app is a remote control and renderer. The server is the authority for sessions, workspace access, runtime configuration, saved Agent and schedule state, and the mobile-facing session projection. Execution can be owned either by the server's Pi SDK runtime or by a terminal Pi TUI process connected through the mirror extension.
+The server is the authority for sessions, workspace access, runtime configuration, saved Agents and schedules, and the mobile session projection; the app is a remote control and renderer. Execution belongs to the server's Pi SDK runtime or to a terminal Pi TUI connected through the mirror bridge.
 
 ```mermaid
 graph TD
-  subgraph Apple[Apple clients]
-    App[iOS and Mac apps]
-    WorkspaceUI[Sessions inbox, workspace sidebar,<br/>and workspace detail]
-    Timeline[iOS UIKit and Mac AppKit/SwiftUI timelines]
-    Voice[Voice input and playback]
-  end
-
-  CLI[Local oppi CLI]
-
-  subgraph Server[Oppi server]
-    LocalHTTP[HTTP over owner-only Unix socket]
-    HTTP[Network REST API]
-    Streams[Focused session, app event,<br/>and audio streams]
-    Router[Session runtime router]
-    Sessions[Managed SessionManager]
-    Mirror[Pi TUI mirror runtime]
-    Bridge[Mirror bridge WebSocket]
-    ExtensionUI[Pi extension UI relay]
-    Automations[Saved Agents and schedule runner]
-    Storage[SQLite session store and local-session catalog]
-    Project[Shared Pi session projection]
-    Pi[Pi SDK AgentSession]
-  end
-
-  subgraph Workspace[Workspace runtime]
-    Files[Workspace files]
-    Tools[Tools and extensions]
-    Sandbox[Optional sandbox runtime]
-  end
-
-  CLI --> LocalHTTP
-  LocalHTTP --> Router
-  LocalHTTP --> Automations
-  LocalHTTP --> Storage
-  App --> HTTP
-  App --> Streams
+  App[iOS and Mac apps] --> HTTP[Network REST API]
+  App --> Streams[Focused session, app event, audio streams]
+  CLI[Local oppi CLI] --> LocalHTTP[HTTP over owner Unix socket]
+  LocalHTTP --> Router[SessionRuntimes]
   HTTP --> Router
-  HTTP --> Automations
-  HTTP --> Storage
   Streams --> Router
-  Router --> Sessions
-  Router --> Mirror
-  Bridge --> Mirror
-  Automations --> Sessions
-  Sessions --> ExtensionUI
-  Sessions --> Pi
-  Sessions --> Project
-  Mirror --> Project
-  Pi --> Tools
-  Tools --> Files
-  Project --> Storage
-  Tools --> Sandbox
-  HTTP --> WorkspaceUI
-  Streams --> WorkspaceUI
-  Streams --> Timeline
-  Voice --> Streams
+  Router --> Managed[SessionManager + Pi SDK]
+  Router --> Mirror[Pi TUI mirror runtime]
+  Bridge[Mirror bridge WebSocket] --> Mirror
+  Automations[Saved Agents and schedule runner] --> Managed
+  Managed --> Projection[Shared Pi session projection]
+  Mirror --> Projection
+  Projection --> Storage[SQLite session store]
 ```
 
-Both Apple clients share protocol DTOs, `ChatSessionManager`, reducers, and other framework-free semantics in `OppiCore`. iOS adapts that core over paired HTTPS/WSS and paints with UIKit. Mac adapts it over the owner Unix socket and paints with AppKit/SwiftUI. The Mac app starts by attaching to a healthy local runtime, waiting for an installed LaunchAgent, or spawning a child `oppi serve` process. iOS does not own that local process lifecycle.
+Both Apple clients share protocol DTOs, `ChatSessionManager`, and reducers in `OppiCore`. iOS adapts over paired HTTPS/WSS and paints with UIKit; Mac adapts over the owner Unix socket, paints with AppKit/SwiftUI, and attaches to, waits for, or spawns the local runtime.
 
 ## Runtime ownership and projection
 
-Oppi treats managed SDK sessions, mirrored terminal sessions, and local JSONL imports as adapters into one Pi-backed session model.
-
-```mermaid
-graph TD
-  Managed[Managed SDK adapter<br/>server owns execution]
-  Mirror[Mirror bridge adapter<br/>terminal Pi owns execution]
-  Local[Local JSONL catalog<br/>cold read-only projection]
-  Projection[Shared Pi session projection<br/>events, media, titles, summaries]
-  Store[SQLite session store]
-  Client[Apple clients]
-
-  Managed --> Projection
-  Mirror --> Projection
-  Local --> Store
-  Projection --> Store
-  Store --> Client
-```
-
-The adapters differ where ownership semantics differ: start, stop, abort, remote commands, queue control, and extension UI response delivery. Shared projection code owns Pi event translation, session mutation, media materialization, title and first-message policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `Session.id` (the Pi session UUID after import) and canonical `piSessionFile`, so one terminal session appears as one Oppi row.
-
-Persisted runtime ownership uses `Session.runtime == "oppi"` for server-owned SDK sessions and `Session.runtime == "pi-tui"` for terminal-owned mirror sessions. `SessionRuntimes` dispatches command, catch-up, pending UI, and snapshot calls by that field.
+Managed SDK sessions, mirrored terminal sessions, and local JSONL imports are adapters into one Pi-backed session model. Adapters differ only where ownership differs (start, stop, abort, commands, queue control, extension UI responses); shared projection owns event translation, session mutation, media, titles, summaries, and the SQLite read model. Live mirror and JSONL import coalesce by `Session.id` and canonical `piSessionFile`, so one terminal session is one row. `Session.runtime` is `"oppi"` (server-owned) or `"pi-tui"` (terminal-owned); `SessionRuntimes` dispatches on it.
 
 ## Transport map
 
-Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where streaming is required.
+| Lane | Transport | Carries |
+| --- | --- | --- |
+| Local CLI | HTTP over Unix socket | CLI routes, no host, port, TLS, DNS, or Tailscale |
+| Sessions inbox, workspace catalog, workspace recent list, archive buckets | HTTP | summaries, counts, attention, compact Git summary, importable local rows |
+| Files and media, host files | HTTP GET/HEAD | listings, bytes, uploads, attachments, byte ranges |
+| Quick actions, review comments, Agents, schedules | HTTP | definitions, launches, runs |
+| App event stream | server → client WebSocket | row updates, extension attention, workspace invalidation |
+| Focused session stream | bidirectional WebSocket | timeline events, prompts, commands, queue sync |
+| Focused session catch-up | HTTP GET | missed durable events after reconnect |
+| Mirror bridge | bidirectional WebSocket | terminal session registration, takeover, commands, extension UI proxying |
+| Dictation stream | JSON + binary WebSocket | control frames, PCM, transcripts |
 
-| Lane                                        | Transport                   | Carries                                                                                                  |
-| ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Local CLI control plane                     | HTTP over Unix socket       | Authenticated CLI routes without host, port, TLS, DNS, or Tailscale dependencies                         |
-| Global sessions inbox                       | HTTP                        | Recent session summaries across workspaces; the root groups active rows by attention and execution state |
-| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention/error flags, and optional compact Git summaries         |
-| Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
-| Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                                            |
-| Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                                    |
-| Host file raw                               | HTTP GET/HEAD               | Exact-path owner reads of any regular file the server process can already read                           |
-| Workspace quick actions and review comments | HTTP                        | Prompt-template options, selected-file preparation, review comments                                      |
-| Saved Agents and schedules                  | HTTP                        | Agent definitions, Agent launches, schedule definitions, manual runs, run history                        |
-| Global app event stream                     | Server-to-client WebSocket  | Session row updates, extension UI attention, workspace invalidation                                      |
-| Focused session stream                      | Bidirectional WebSocket     | Timeline events, prompts, commands, queue sync, focused session summaries                                |
-| Focused session catch-up                    | HTTP GET                    | Missed durable focused-session events after reconnect                                                    |
-| Mirror bridge                               | Bidirectional WebSocket     | Terminal-owned session registration, takeover, commands, queue, extension UI proxying                    |
-| Dictation stream                            | Bidirectional JSON + binary | Dictation control frames, PCM audio, transcript events                                                   |
-
-## Prompt to pixel
-
-Most chat work follows this path. Managed and mirror runtimes have different execution owners, then converge before projection and broadcast.
-
-```mermaid
-graph TD
-  Prompt[User sends prompt]
-  ClientMsg[ClientMessage]
-  Handler[ws-message-handler.ts]
-  Router[SessionRuntimes]
-  SessionMgr[SessionManager coordinators]
-  Mirror[PiTuiMirrorRuntime]
-  SDK[Pi SDK AgentSession]
-  Terminal[Pi TUI bridge]
-  Translate[Shared Pi session projection]
-  Sequence[session-broadcast.ts<br/>durable sequence]
-  Stream[Focused session stream]
-  Route[ServerConnection.routeStreamMessage]
-  Manager[ChatSessionManager]
-  Coalesce[DeltaCoalescer]
-  Reduce[TimelineReducer]
-  Render[iOS UIKit or Mac AppKit/SwiftUI timeline]
-
-  Prompt --> ClientMsg
-  ClientMsg --> Handler
-  Handler --> Router
-  Router --> SessionMgr
-  Router --> Mirror
-  SessionMgr --> SDK
-  Mirror --> Terminal
-  SDK --> Translate
-  Terminal --> Translate
-  Translate --> Sequence
-  Sequence --> Stream
-  Stream --> Route
-  Route --> Manager
-  Manager --> Coalesce
-  Coalesce --> Reduce
-  Reduce --> Render
-```
-
-Durable session events get per-session sequence numbers and can be replayed through focused-session catch-up. High-frequency deltas such as token text, thinking deltas, and tool output are hot live traffic. If a reconnect misses them, the client resumes the live stream or repairs from paged trace history instead of loading the entire trace at once.
+Prompt to pixel: `ClientMessage` → `ws-message-handler.ts` → `SessionRuntimes` → SDK or mirror → shared projection → `session-broadcast.ts` (durable sequence) → focused stream → `ServerConnection.routeStreamMessage` → `ChatSessionManager` → `DeltaCoalescer` → `TimelineReducer` → timeline. Durable events carry per-session sequence numbers for catch-up; high-frequency deltas are hot traffic repaired from paged trace history, never a full trace load.
 
 ## Cross-system invariants
 
-- The local CLI uses bearer-authenticated HTTP over the owner-only Unix socket. It does not discover or fall back to a host, port, DNS name, TLS identity, or plaintext network listener.
-- The local Mac app uses that same owner Unix socket for authenticated HTTP and live WebSocket upgrades, and does not send `sk_` over HTTPS or WSS. `GET /health` may stay on localhost HTTPS because it is unauthenticated.
-- Supported remote access uses HTTPS/WSS, including Tailscale, and is independent from the local CLI socket. Remote failures fail closed without disabling local CLI routes.
-- HTTPS/WSS device credentials are bound to a per-device P-256 key and short-lived token.
-- Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots; compact sidebar Git state comes from the workspace catalog snapshot, never raw Git payloads on the app-event stream.
-- The Workspaces root is a server-scoped active-session inbox. Workspace selection opens the workspace-scoped recent list, files, and configuration.
-- The hot workspace recent list is time-bounded. Older stopped/importable history belongs in archive buckets.
-- Workspace session-list endpoints return session summaries, not full `Session` payloads.
-- Hot workspace endpoints do not reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite read models.
-- Runtime adapters share Pi event projection. Managed SDK sessions and terminal mirror sessions use the same translation, session mutation, media materialization, title/first-message derivation, summary, and storage projection code where ownership semantics allow it.
-- Mirror sessions are terminal-owned. The server does not auto-start a Pi SDK runtime for a connected or stale `runtime == "pi-tui"` session.
-- Hot timeline traffic stays separate from cold workspace/session projections.
-- The global app event stream is store-level only. It must not carry timeline deltas, full state, queue state, command results, dictation/audio, or raw `GitStatus` payloads.
-- Reconnect repair for the global app event stream comes from HTTP snapshots, not app-event replay.
-- File previews, attachments, and media playback stay on authenticated HTTP routes with byte-range support.
-- Workspace quick-action discovery, selected-file prompt-template preparation, review comments, saved Agents, and schedules stay on HTTP routes. Only the created or focused session uses the session stream.
-- Automatic schedule runs use the server schedule runner and managed-session launch path; they do not create a separate runtime adapter.
-- Shared store updates apply exactly once per inbound live session event on the client.
-- Reducers, coalescers, and focused-session connect/load/stop policies stay UI-framework-free in OppiCore. iOS timeline paint lives under the UIKit timeline package; Mac timeline paint lives under OppiMac AppKit/SwiftUI views. A still-stopped session must stay history-only; opening its focused stream can resume server-owned execution.
-- Imported TUI sessions remain resumable without mutating original JSONL traces.
+- The local CLI uses bearer-authenticated HTTP over the owner Unix socket and never discovers or falls back to a network listener.
+- The Mac app uses the same socket for HTTP and live WebSocket upgrades and never sends `sk_` over HTTPS/WSS; unauthenticated `GET /health` may use localhost HTTPS.
+- Remote access is HTTPS/WSS, independent of the CLI socket; remote failures fail closed without disabling local routes. Device credentials bind a per-device P-256 key and a short-lived token.
+- Workspace navigation is HTTP-first. The app-event stream is store-level only: never timeline deltas, full state, queue state, command results, audio, or raw `GitStatus`; compact Git state comes from the catalog snapshot. App-event reconnect repairs from HTTP snapshots, not replay.
+- The Workspaces root is a server-scoped active-session inbox. The hot recent list is time-bounded; older history is in archive buckets. Session-list endpoints return summaries, not full `Session` payloads.
+- Hot workspace endpoints never reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite read models. Imported sessions stay resumable without mutating their JSONL.
+- Mirror sessions are terminal-owned: the server never auto-starts an SDK runtime for a `runtime == "pi-tui"` session.
+- Hot timeline traffic stays separate from cold projections. Files, attachments, and media stay on authenticated HTTP with byte ranges. Quick actions, review comments, Agents, and schedules stay on HTTP; only the created or focused session uses the session stream.
+- Scheduled runs use the managed-session launch path, not a separate adapter.
+- The client applies shared store updates exactly once per inbound live event. Reducers, coalescers, and focused-session policy stay UI-framework-free in `OppiCore`. A still-stopped session stays history-only: opening its focused stream can resume server-owned execution.
 
 ## Protocol boundary
 
-The protocol is mirrored manually on both sides:
-
-- Server source of truth: `server/src/types/protocol.ts`, re-exported by `server/src/types.ts`
-- Apple mirrors under `clients/apple/OppiCore/Models/` (`ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`) plus the stream wrappers
-- Snapshot and Codable tests guard focused-stream and app-event drift.
-
-When a message contract changes, update server types, Apple models, and protocol tests together. Partial protocol updates are invalid because a mismatched app/server pair can fail at the transport boundary. See [Server architecture](architecture-server.md#protocol-boundary) for the step-by-step checklist.
+The server source of truth is `server/src/types/protocol.ts` (re-exported by `server/src/types.ts`); Apple mirrors live in `clients/apple/OppiCore/Models/`. Change server types, Apple models, and protocol tests together: a mismatched pair fails at the transport boundary. Checklist: [Server architecture](architecture-server.md#protocol-boundary).
