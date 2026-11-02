@@ -42,6 +42,7 @@ import { Extensions, pluginRuntimes, type PluginRuntime } from "./oppi-v1.js";
 import * as oppiV1Schema from "./oppi-v1-schema.js";
 import {
   discoverPackage,
+  discoverPiPackage,
   discoverRoot,
   piPackageRoot,
   type DiscoveredPlugin,
@@ -755,9 +756,9 @@ async function discoverOwnerPlugins(agentDir: string): Promise<{
     packages.set(packageDir, ids);
   }
   for (const [packageDir, extensionIds] of packages) {
-    let found: Awaited<ReturnType<typeof discoverPackage>>;
+    let found: Awaited<ReturnType<typeof discoverPiPackage>>;
     try {
-      found = await discoverPackage(packageDir);
+      found = await discoverPiPackage(packageDir);
     } catch (error) {
       problems.push({ path: packageDir, error: safeErrorMessage(error) });
       continue;

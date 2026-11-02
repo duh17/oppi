@@ -83,6 +83,40 @@ export async function discoverPackage(dir: string): Promise<Discovery> {
 }
 
 /**
+ * The plugins of a Pi package in `dir`: those its `chord.plugins` lists, else itself when its top
+ * has a facet. A Pi package with neither is a classic-only package, not a problem: unlike a
+ * plugin root's packages, its subfolders are never scanned for plugins (a classic package's
+ * fixtures and examples are no plugins), and it may have no `package.json` at all. A package that
+ * still declares the retired `oppi.durable` manifest and has no facet is reported, so its owner
+ * learns why its durable extension is gone.
+ */
+export async function discoverPiPackage(dir: string): Promise<Discovery> {
+  const real = await realpath(dir);
+  const manifest = await manifestOf(real);
+  if (manifest.kind === "invalid")
+    return { plugins: [], problems: [{ path: real, error: manifest.error }] };
+  if (manifest.kind === "missing") return { plugins: [], problems: [] };
+  const value = manifest.value as {
+    chord?: { plugins?: unknown };
+    oppi?: { durable?: unknown };
+  } | null;
+  if (value?.chord?.plugins !== undefined || (await facetOf(real)).kind !== "none")
+    return discoverPackage(real);
+  if (value?.oppi?.durable !== undefined)
+    return {
+      plugins: [],
+      problems: [
+        {
+          path: real,
+          error:
+            "package.json: `oppi.durable` is no longer read; add a `server.ts` facet (docs/extensions.md#plugins)",
+        },
+      ],
+    };
+  return { plugins: [], problems: [] };
+}
+
+/**
  * Whether the Pi package of the classic extension at `path` holds a plugin with a server facet, so
  * enabling or disabling it changes what durable sessions load. A manifest problem counts as none.
  */
@@ -93,7 +127,7 @@ export async function packageHasPlugin(
   const root = piPackageRoot(path, metadata);
   if (!root) return false;
   try {
-    return (await discoverPackage(root)).plugins.some((plugin) => plugin.facet !== undefined);
+    return (await discoverPiPackage(root)).plugins.some((plugin) => plugin.facet !== undefined);
   } catch {
     return false;
   }
@@ -316,11 +350,16 @@ async function globFolders(dir: string, pattern: string): Promise<string[]> {
       return;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules")
-        continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
       const path = join(at, entry.name);
+      // A linked folder matches as a listed path does: `manifestPlugins` follows it when it stays
+      // in the package and reports it when it leaves. It is never walked into, so a link cannot
+      // loop the walk.
+      const linked =
+        entry.isSymbolicLink() && (await stat(path).catch(() => undefined))?.isDirectory() === true;
+      if (!entry.isDirectory() && !linked) continue;
       if (matchesGlob(posix(relative(dir, path)), pattern)) found.push(path);
-      await walk(path, depth + 1);
+      if (!linked) await walk(path, depth + 1);
     }
   };
   await walk(dir, 1);

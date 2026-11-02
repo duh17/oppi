@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -199,6 +199,75 @@ describe("plugin host", () => {
     expect(f.description("ask")).toBe("v1");
     expect([...f.host.classic.bundled]).toEqual([
       serverResourceId("extension", realpathSync(join(linked, "index.ts"))),
+    ]);
+  });
+
+  it("finds nothing, and no problem, in classic-only Pi packages", async () => {
+    const f = fixture({ builtIns: ["./core"] });
+    plugin(join(f.builtInDir, "core"), "core", facet("core", []));
+    // A top-level extension folder without a package.json, as Pi allows.
+    write(join(f.agentDir, "extensions/faster-resume/index.ts"), "export default function () {}\n");
+    // A package with a classic entry and a nested package that is no plugin (a fixture).
+    const classic = join(f.agentDir, "extensions/classic");
+    write(
+      join(classic, "package.json"),
+      JSON.stringify({ name: "classic", pi: { extensions: ["./index.ts"] } }),
+    );
+    write(join(classic, "index.ts"), "export default function () {}\n");
+    write(join(classic, "fixtures/package.json"), JSON.stringify({ name: "Not A Plugin" }));
+
+    expect((await f.host.load()).errors).toEqual([]);
+    expect((await f.host.reload()).errors).toEqual([]);
+  });
+
+  it("treats a symlinked plugin folder the same listed by path or by glob", async () => {
+    const f = fixture({ builtIns: ["./core"] });
+    plugin(join(f.builtInDir, "core"), "core", facet("core", []));
+    const outside = join(f.agentDir, "..", "outside");
+    plugin(outside, "outside", facet("outside", []));
+    for (const [repo, listed] of [
+      ["by-path", ["./inside", "./away"]],
+      ["by-glob", ["plugins/*"]],
+    ] as const) {
+      const root = join(f.agentDir, "plugins", repo);
+      const folder = listed[0] === "plugins/*" ? join(root, "plugins") : root;
+      write(join(root, "package.json"), JSON.stringify({ name: repo, chord: { plugins: listed } }));
+      plugin(join(root, "real"), `${repo}-inside`, facet(`${repo}-inside`, []));
+      mkdirSync(folder, { recursive: true });
+      // A link inside the package is followed; one out of it is refused.
+      symlinkSync(join(root, "real"), join(folder, "inside"));
+      symlinkSync(outside, join(folder, "away"));
+    }
+
+    const report = await f.host.load();
+
+    expect(f.installed()).toEqual(expect.arrayContaining(["by-path-inside", "by-glob-inside"]));
+    expect(f.installed()).not.toContain("outside");
+    expect(report.errors.map((issue) => issue.message)).toEqual([
+      "listed in chord.plugins, links out of the package",
+      "listed in chord.plugins, links out of the package",
+    ]);
+  });
+
+  it("names `oppi.durable` in a package that still declares it", async () => {
+    const f = fixture({ builtIns: ["./core"] });
+    plugin(join(f.builtInDir, "core"), "core", facet("core", []));
+    const old = join(f.agentDir, "extensions/old");
+    write(
+      join(old, "package.json"),
+      JSON.stringify({
+        name: "old",
+        pi: { extensions: ["./index.ts"] },
+        oppi: { durable: { entry: "./durable.ts" } },
+      }),
+    );
+    write(join(old, "index.ts"), "export default function () {}\n");
+
+    expect((await f.host.load()).errors).toEqual([
+      expect.objectContaining({
+        path: realpathSync(old),
+        message: expect.stringContaining("`oppi.durable` is no longer read"),
+      }),
     ]);
   });
 
