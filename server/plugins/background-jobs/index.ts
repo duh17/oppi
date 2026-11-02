@@ -23,7 +23,6 @@ import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -216,7 +215,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI): void {
     } else otherWakes.delete(source);
   });
   // Job ids restart at bash-1 in every instance; this run id makes stored keys unique.
-  const run = randomUUID();
+  const run = globalThis.crypto.randomUUID();
   const keyFor = (jobId: string): string => `${run}:${jobId}`;
   let announcedWake = 0;
   // Lost-job notices this instance queued for the next turn, until that turn starts.

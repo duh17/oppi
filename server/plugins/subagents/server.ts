@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { arr, bool, lit, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { withCancel } from "@earendil-works/chord/context";
@@ -939,7 +938,7 @@ export function createDurableSessions(
           if (!conversation) return reply(`Subagent ${name} has no conversation.`, details, true);
           // The commit that stores this call's token decides to abort; a rerun finds an earlier
           // decision and skips the abort, which may already have reached newer work.
-          const decision = randomUUID();
+          const decision = globalThis.crypto.randomUUID();
           if ((await api.memo<JsonValue>("stopped", decision, context)) === decision)
             await conversation.abort(context);
           return reply(`Stopped ${name}.`, details);

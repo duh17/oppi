@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { bool, lit, num, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import type { Context } from "@earendil-works/chord";
@@ -214,7 +213,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       const job = jobById(snapshot.jobs, task.input.jobId);
       // Claim before any external side effect. Re-entering this phase after a
       // crash OR a clean close reports interruption, never retries the shell.
-      const claim = randomUUID();
+      const claim = globalThis.crypto.randomUUID();
       const winner = await runtime.memo("exec-claim", claim, context);
       let status: Status = "interrupted";
       let output = "";
