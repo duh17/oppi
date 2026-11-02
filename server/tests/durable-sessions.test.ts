@@ -1796,6 +1796,11 @@ describe("durable-native threads", () => {
       async () => (await toolResults(harness, parentConversation)).length === 2,
       "both spawns",
     );
+    // A spawn that refuses (its branch taken, a worktree id still referenced) answers with an error
+    // result and makes no Session, so the child rows below would only show one child. Its own answer
+    // carries the reason: check both before the rows, so a red names what the spawn said.
+    const spawns = await toolResults(harness, parentConversation);
+    for (const spawn of spawns) expect(spawn.isError, spawn.text).toBeFalsy();
     const children = f.storage
       .listSessions()
       .filter((session) => session.id !== f.parent.id)
