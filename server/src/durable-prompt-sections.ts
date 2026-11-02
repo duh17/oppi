@@ -45,19 +45,23 @@ export async function syncProjectContext(
 /**
  * A conversation created while the workspace prompt was part of its instructions still carries
  * it there; the `oppi_append` section renders it now, so drop it from the instructions to send it
- * once. Matches the current workspace prompt exactly: a prompt edited since the conversation was
- * created stays in its instructions.
+ * once. Only where the old layout put it: a whole paragraph right after the `Working directory`
+ * line, so a saved Agent's appended text that merely starts with the same words stays. Matches
+ * the current workspace prompt exactly: a prompt edited since the conversation was created stays
+ * in its instructions.
  */
 export async function dropInstructionsWorkspacePrompt(
   conversation: Conversation,
   workspacePrompt: string | undefined,
 ): Promise<void> {
   if (!workspacePrompt) return;
-  const embedded = `\n\n${workspacePrompt}`;
-  if (!(await conversation.agent(BACKGROUND_CONTEXT)).instructions?.includes(embedded)) return;
+  const escaped = workspacePrompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const embedded = new RegExp(`(Working directory: [^\\n]*)\\n\\n${escaped}(?=\\n\\n|$)`);
+  const stored = (await conversation.agent(BACKGROUND_CONTEXT)).instructions;
+  if (stored === undefined || !embedded.test(stored)) return;
   await conversation.commit(async (tx) => {
     const agent = await tx.doc(AgentDoc, conversation.id);
-    if (typeof agent.instructions === "string" && agent.instructions.includes(embedded))
-      agent.instructions = agent.instructions.replace(embedded, "");
+    if (typeof agent.instructions === "string")
+      agent.instructions = agent.instructions.replace(embedded, "$1");
   }, BACKGROUND_CONTEXT);
 }

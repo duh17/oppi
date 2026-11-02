@@ -12,7 +12,6 @@ const REQUIRED_OPPI_DOCS = [
 ] as const;
 const OPPI_DOCS_HINT_PREFIX =
   "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):";
-const OLD_OPPI_DOCS_HINT_PREFIX = "Oppi documentation for mobile-compatible Pi extensions:";
 
 export const MOBILE_OUTPUT_GUIDE = [
   "You are running in Oppi: your Markdown renders in a native iPhone/iPad app.",
@@ -107,13 +106,4 @@ export function oppiAppendSystemPrompt(options: {
   if (options.mobileOutputGuide && target !== "terminal" && !options.replace)
     prompts.push(buildMobileOutputGuide());
   return prompts;
-}
-
-export function appendOppiSystemPromptHint(prompt: string): string {
-  if (prompt.includes(OPPI_DOCS_HINT_PREFIX) || prompt.includes(OLD_OPPI_DOCS_HINT_PREFIX)) {
-    return prompt;
-  }
-
-  const hint = buildOppiSystemPromptAppend();
-  return hint ? `${prompt}\n\n${hint}` : prompt;
 }

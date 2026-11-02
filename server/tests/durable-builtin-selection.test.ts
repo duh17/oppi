@@ -909,6 +909,32 @@ describe("durable prompt appends", () => {
     expect(tail).toMatch(/^REPLACEMENT_MARKER\n\nWorking directory: [^\n]+\n<\/instructions>$/);
   });
 
+  it("keeps a saved Agent's appended text that starts with the workspace prompt", async () => {
+    const { prompts, steps } = capturing(1);
+    const f = await fixture(steps);
+    const own = `${WORKSPACE_PROMPT} is also the Agent's own rule.`;
+    const agent = f.storage.getAgentDefinitionStore().createAgent({
+      name: "Appender",
+      instructions: { mode: "append", text: own },
+    });
+    const created = workspaceSession(f, "host", {
+      status: "launching",
+      requestedAt: 1,
+      agentId: agent.id,
+      agentVersion: 1,
+    } as Session["launch"]);
+    created.workspace.systemPrompt = WORKSPACE_PROMPT;
+    f.storage.updateWorkspace(created.workspace.id, { systemPrompt: WORKSPACE_PROMPT });
+    // Created, then attached again: the second attach runs the old-instructions cleanup.
+    await f.manager.startSession(created.session.id, created.workspace);
+    await f.manager.stopSession(created.session.id);
+    await f.manager.startSession(created.session.id, created.workspace);
+    await turn(f, created.session.id);
+    await f.manager.stopSession(created.session.id);
+
+    expect(prompts[0]).toMatch(new RegExp(`Working directory: [^\\n]+\\n\\n${own}`));
+  });
+
   it("gives an Oppi Control session the guide under the same setting, and no hints", async () => {
     const { prompts, steps } = capturing(2);
     const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });

@@ -306,9 +306,10 @@ function argvOf(entry: Entry, given: { [key: string]: unknown }): string[] {
 }
 
 /**
- * The prompt section: an Oppi Control session's whole setup (it loads no SYSTEM.md, AGENTS
- * files, or Skills). `themesDir` and `docsPath` come from the server's control host; without one
- * (an env the server did not make) the section names the defaults.
+ * The prompt section: an Oppi Control session's setup (it loads no SYSTEM.md, AGENTS files, or
+ * Skills). The `project-context` plugin's `oppi_append` section adds only the Mobile Output Guide,
+ * while that setting is on. `themesDir` and `docsPath` come from the server's control host;
+ * without one (an env the server did not make) the section names the defaults.
  */
 export function controlSection(
   host: Pick<DurableControlHost, "themesDir" | "docsPath"> | undefined,

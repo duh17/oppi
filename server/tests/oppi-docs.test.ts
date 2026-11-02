@@ -6,7 +6,6 @@ import * as PiSdk from "@earendil-works/pi-coding-agent";
 
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../src/oppi-cli-prompt.js";
 import {
-  appendOppiSystemPromptHint,
   buildMobileOutputGuide,
   buildOppiSystemPromptAppend,
   getOppiDocsPath,
@@ -53,17 +52,6 @@ describe("Oppi documentation prompt hint", () => {
         "- When working on Oppi topics, read the relevant docs completely and follow .md cross-references before implementing.",
       ].join("\n"),
     );
-  });
-
-  it("appends the hint only once", () => {
-    const base = "Custom prompt.";
-    const once = appendOppiSystemPromptHint(base);
-    const twice = appendOppiSystemPromptHint(once);
-
-    expect(once).toContain(
-      "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
-    );
-    expect(twice).toBe(once);
   });
 
   it("keeps the optional capability guide behind saved-Agent replacement authority", async () => {
