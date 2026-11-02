@@ -14,6 +14,12 @@ final class DurableSessionE2ETests: E2ETestCase {
     private static let liveAssistantPrefix = "chat.timeline.assistant.pi.live-"
     private static let replyStart = "Durable faux reply to"
     private static let replyEnd = "End of faux reply."
+    /// The faux reply quotes its prompt and streams about 16 characters a second (4 tokens a
+    /// second at 4 characters a token), so this padding stretches a reply from about 15 s to
+    /// about 30 s. The queue test's two queued sends and its check end about 11 s in; the rest
+    /// is margin for a loaded simulator.
+    private static let longReplyPadding = String(repeating: "Please take your time with this answer. ", count: 6)
+        .trimmingCharacters(in: .whitespaces)
 
     /// The auto-created launch session is classic; this test creates its own durable one.
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
@@ -86,14 +92,14 @@ final class DurableSessionE2ETests: E2ETestCase {
         let followUp = "E2E_DURABLE_FOLLOW_\(tag)"
         let steer = "E2E_DURABLE_STEER_\(tag)"
 
-        sendMessage(first)
+        sendMessage("\(first) \(Self.longReplyPadding)")
         XCTAssertTrue(waitForElementToExist(liveRow, timeout: 30), "No live row while the first reply streamed")
         XCTAssertTrue(waitForElementToExist(app.buttons["chat.stop"], timeout: 5), "The run did not show as busy")
 
         selectBusyMode("followUp")
-        sendMessage(followUp)
+        sendWhileBusy(followUp)
         selectBusyMode("steer")
-        sendMessage(steer)
+        sendWhileBusy(steer)
         let queue = queuePill
         XCTAssertTrue(
             waitForValue(queue, containing: "1 steering \u{2022} 1 follow-up", timeout: 15),
@@ -142,7 +148,7 @@ final class DurableSessionE2ETests: E2ETestCase {
         sendMessage(first)
         XCTAssertTrue(waitForElementToExist(liveRow, timeout: 30), "No live row while the reply streamed")
         selectBusyMode("followUp")
-        sendMessage(followUp)
+        sendWhileBusy(followUp)
         let queue = queuePill
         XCTAssertTrue(waitForValue(queue, containing: "0 steering \u{2022} 1 follow-up", timeout: 15), "The follow-up did not queue")
 
@@ -201,6 +207,15 @@ final class DurableSessionE2ETests: E2ETestCase {
         tap(app.textViews["chat.input"], named: "chat input", timeout: 5)
         tap(app.buttons["chat.busyMode"], named: "busy mode", timeout: 5)
         tap(app.buttons["chat.busyMode.option.\(mode)"], named: "busy mode \(mode)", timeout: 5)
+    }
+
+    /// Sends while the reply streams, after `selectBusyMode` reached the composer. The live
+    /// row means this launch's AI sharing consent is settled and no sheet covers the composer,
+    /// so this skips `sendMessage`'s waits for them (about 4 s per send). With them, two
+    /// queued sends outlast the faux reply (about 15 s) and the queue empties before it is read.
+    private func sendWhileBusy(_ message: String) {
+        focusChatInput().typeText(message)
+        tap(app.buttons["chat.send"], named: "send button", timeout: 3)
     }
 
     /// The chat's queue: a strip pill above the composer whose value counts steers and follow-ups.
