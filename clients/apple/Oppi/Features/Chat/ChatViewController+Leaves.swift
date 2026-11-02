@@ -65,7 +65,8 @@ extension ChatViewController {
         let store = connection.gitStatusStore
         return WorkspaceContextBarView.Context(
             gitStatus: loadedGitStatus,
-            // A session with no workspace has no status coming.
+            // No session or workspace yet reads as loading, as it always has;
+            // the Git button is not offered without a workspace (`mayHaveGit`).
             isLoading: session?.workspaceId.map {
                 store.isAwaitingStatus(workspaceId: $0, worktreeId: session?.worktreeId)
             } ?? true,

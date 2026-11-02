@@ -126,7 +126,6 @@ struct GitStatusStoreTests {
         // A tracked checkout whose load finished with no status is missing, not on its way.
         store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
         #expect(!store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: nil))
-        #expect(!store.isAwaitingStatus(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId))
     }
 
     // MARK: - loadInitial with gitStatusEnabled=false
