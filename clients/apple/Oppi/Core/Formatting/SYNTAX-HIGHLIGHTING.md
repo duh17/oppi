@@ -236,7 +236,7 @@ All current tree-sitter grammars meet these targets. Painters keep complete sour
 | `OppiCore/Formatting/SyntaxTokenScanner.swift` | Hand-written fallback + UTF-8 scanners + token budget |
 | `Oppi/Core/Formatting/SyntaxHighlighter.swift` | iOS painter: theme colors + NSAttributedString |
 | `Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownBlockViews.swift` | `NativeCodeBlockView` owns markdown fence highlight scheduling |
-| `Oppi/Core/Views/FullScreenCodeBodies.swift` | `NativeFullScreenCodeBody` owns full-file highlight scheduling |
+| `Oppi/Core/Views/Reader/NativeFullScreenCodeBody.swift` | `NativeFullScreenCodeBody` owns full-file highlight scheduling |
 | `Oppi/Features/Chat/Timeline/Tool/NotebookCellView.swift` | Notebook source highlight scheduling |
 | `Oppi/Features/Chat/Timeline/Tool/ToolRowCodeRenderStrategy.swift` | Expanded code-row highlight scheduling |
 | `Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift` | Bash command highlight scheduling |

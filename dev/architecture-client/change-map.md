@@ -7,7 +7,7 @@ Part of [Oppi client architecture](../architecture-client.md); same standard (ow
 A native document renderer draws a file format itself in the expanded tool row, the full-screen reader, and export (implemented: CSV/TSV, GeoJSON/TopoJSON).
 
 1. **Classify (only if new to `FileType`):** add the case and detection in `OppiCore/Formatting/FileType.swift`, and a UI-free parser and plan in `OppiCore/Formatting` with bounds and a described failure. The compiler then flags `DocumentFamily.init(fileType:)`, `ToolPresentationBuilder.expandedFileContent`, and the Mac renderer.
-2. **One view:** a `UIView` that takes the plan, conforms to `FullScreenReaderConfigurable`, shows its own fallback, and exposes `displays(_:)` for reuse.
+2. **One view:** a `UIView` that takes the plan, conforms to `ReaderBody`, shows its own fallback, and exposes `displays(_:)` for reuse.
 3. **One composition point:** add the case to `DocumentFamily` (`Core/Views/DocumentFamily.swift`). Its exhaustive switches are the list; there is no registry, and call sites forward `.document` without naming the kind. A different default is a new `InlineTraits` field, never a per-kind branch at a call site. `ToolContentDescriptorBuilder` resolves the type once; nothing reclassifies it.
 4. **Tests:** parser/plan tests, a `DocumentFamilyTests` case, a `ToolPresentationBuilderTests` case yielding `.document`, plus hosted-surface reuse or `FileShareServiceTests` where relevant.
 
