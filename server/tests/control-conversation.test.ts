@@ -446,6 +446,7 @@ describe("control conversation lifecycle on the durable harness", () => {
       "ask",
       "working-words",
       "oppi.control",
+      "project-context",
       "codemode",
       "coding-tools",
     ]);

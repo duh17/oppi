@@ -200,6 +200,7 @@ describe("Oppi Control sessions on the durable harness, experimental.serverDurab
       "ask",
       "working-words",
       "oppi.control",
+      "project-context",
       "codemode",
       "coding-tools",
     ]);

@@ -270,7 +270,7 @@ enum SettingsCatalog {
         default: false,
         copy: SettingCopy(
             title: String(localized: "Mobile Output Guide"),
-            footer: String(localized: "Adds Oppi's link and rich-content guide to new sessions and to sessions you reload. Oppi Control sessions don't use it, and sessions running in a terminal aren't changed.")
+            footer: String(localized: "Adds Oppi's link and rich-content guide to new sessions and to sessions you reload. Sessions running in a terminal aren't changed.")
         )
     )
 

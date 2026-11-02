@@ -306,8 +306,22 @@ const PINNED = {
   },
   control: {
     created: {
-      stored: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
-      extensions: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
+      stored: [
+        "ask",
+        "working-words",
+        "oppi.control",
+        "project-context",
+        "codemode",
+        "coding-tools",
+      ],
+      extensions: [
+        "ask",
+        "working-words",
+        "oppi.control",
+        "project-context",
+        "codemode",
+        "coding-tools",
+      ],
       tools: [
         "ask",
         "oppi",
@@ -333,11 +347,25 @@ const PINNED = {
         "edit",
         "bash",
       ],
-      sections: ["ask-guidelines", "oppi-control", "codemode"],
+      sections: ["ask-guidelines", "oppi-control", ...PROMPT_SECTIONS, "codemode"],
     },
     reattached: {
-      stored: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
-      extensions: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
+      stored: [
+        "ask",
+        "working-words",
+        "oppi.control",
+        "project-context",
+        "codemode",
+        "coding-tools",
+      ],
+      extensions: [
+        "ask",
+        "working-words",
+        "oppi.control",
+        "project-context",
+        "codemode",
+        "coding-tools",
+      ],
       tools: [
         "ask",
         "oppi",
@@ -363,7 +391,7 @@ const PINNED = {
         "edit",
         "bash",
       ],
-      sections: ["ask-guidelines", "oppi-control", "codemode"],
+      sections: ["ask-guidelines", "oppi-control", ...PROMPT_SECTIONS, "codemode"],
     },
   },
 };
@@ -879,6 +907,25 @@ describe("durable prompt appends", () => {
     // The prompt still ends with the Agent's own instructions: its text and the working directory.
     const tail = prompts[0]!.slice(prompts[0]!.indexOf("REPLACEMENT_MARKER"));
     expect(tail).toMatch(/^REPLACEMENT_MARKER\n\nWorking directory: [^\n]+\n<\/instructions>$/);
+  });
+
+  it("gives an Oppi Control session the guide under the same setting, and no hints", async () => {
+    const { prompts, steps } = capturing(2);
+    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    const { session: control } = ensureControlConversationSession(f.storage, {
+      model: "faux/faux-1",
+    });
+    setGuide(f, true);
+    await f.manager.startSession(control.id);
+    await turn(f, control.id);
+    setGuide(f, false);
+    await f.manager.runCommand(control.id, { type: "reload" });
+    await turn(f, control.id);
+    await f.manager.stopSession(control.id);
+
+    expect(prompts.map((prompt) => prompt.includes(GUIDE))).toEqual([true, false]);
+    expect(prompts[0]).not.toContain(DOCS);
+    expect(prompts[0]).not.toContain(OPPI_CLI_SYSTEM_PROMPT_HINT);
   });
 
   it("renders the workspace prompt once for a conversation whose instructions still carry it", async () => {
