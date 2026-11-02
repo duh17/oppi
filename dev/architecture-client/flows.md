@@ -50,6 +50,6 @@ When the server advertises `capabilities.conversationStream` and the session is 
 
 Extension UI is extension-agnostic: render protocol metadata, never branch on tool, extension, status, widget, or display names.
 
-- `OppiCore/Stores/AskRequestStore.swift`: ask cards. `pendingExtensionDialogQueues`: per-session dialogs. `OppiCore/Runtime/ExtensionSurfaceState.swift`: the shared snapshot, reducer, and placement, stored per session (`extensionSurfaceBySession` on iOS, `MacSessionTraceStore.extensionSurface` on Mac).
+- `OppiCore/Stores/AskRequestStore.swift`: ask cards. `ExtensionDialogQueue` (`Core/Networking/ExtensionDialogQueue.swift`): per-session dialogs. `OppiCore/Runtime/ExtensionSurfaceState.swift`: the shared snapshot, reducer, and placement, stored per session (`extensionSurfaceBySession` on iOS, `MacSessionTraceStore.extensionSurface` on Mac).
 - `ServerConnection+Ask.swift` responds over the focused stream, or over HTTP when the focused WebSocket is not bound to the target session.
 - `ExtensionSurfacePanel.swift` / `MacExtensionSurfacePanel.swift` paint. `ExtensionNativeBlockViews.swift` keeps block views by id so a replacement snapshot preserves view state; `OppiCore/Runtime/ExtensionNativeBlockPresentation.swift` holds the framework-free rules.
