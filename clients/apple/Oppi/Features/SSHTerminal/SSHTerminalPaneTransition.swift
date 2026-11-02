@@ -2,15 +2,23 @@ import UIKit
 
 /// The picture a Rex terminal's grid slides between panes with: a snapshot of
 /// the grid that follows the finger (or, for a menu choice or VoiceOver, slides
-/// by itself), and a placeholder for the incoming pane that it uncovers.
+/// by itself), and beside it the incoming page, which moves with it.
+///
+/// The incoming side is always one page (`SSHTerminalIncomingPage`), opaque
+/// and the grid's size, that travels beside the old screen: the two move as
+/// one strip. What the page shows is resolved on every move: the pane's own
+/// screen when the session keeps it live, else the last screen it streamed,
+/// else its card (its name). A screen draws over the card and the card shows
+/// until the screen's first frame lands, so a pane that becomes ready mid-drag
+/// swaps in on the page without the page moving, and nothing under the page
+/// ever shows through.
 ///
 /// The grid is never moved. It sits under both the whole time and keeps taking
-/// the old pane's output, so it is the placeholder, not the grid, that stands
-/// in for the new pane until Rex's snapshot of it has been applied and drawn.
-/// Only then does the placeholder fade away; otherwise the old pane's screen
-/// would slide in as if it were the new one. A pane that never answers cannot
-/// leave the screen blank: after `revealTimeout` the placeholder goes whatever
-/// the grid shows.
+/// the old pane's output, so it is the page, not the grid, that stands in for
+/// the new pane until Rex's snapshot of it has been applied and drawn. Only
+/// then does the page fade away; otherwise the old pane's screen would slide
+/// in as if it were the new one. A pane that never answers cannot leave the
+/// screen blank: after `revealTimeout` the page goes whatever the grid shows.
 ///
 /// Past the last pane the incoming side is the New Pane card. A release there
 /// slides it in like any switch, but there is no pane to wait for yet: the
@@ -36,8 +44,8 @@ final class SSHTerminalPaneTransition {
         case dragging
         /// Letting go: the snapshot is sliding off, or back.
         case settling
-        /// The slide is done and the placeholder covers the grid until the new
-        /// pane's screen is on it.
+        /// The slide is done and the incoming page covers the grid until the
+        /// new pane's screen is on it.
         case covering
     }
 
@@ -46,13 +54,14 @@ final class SSHTerminalPaneTransition {
     var revealTimeout = SSHTerminalPaneTransition.defaultRevealTimeout
     /// How long a new pane may take to open before the cover goes anyway.
     var creationTimeout = SSHTerminalPaneTransition.defaultCreationTimeout
-    /// The incoming pane's name on the placeholder, while one is shown.
-    var placeholderTitle: String? { placeholder?.title }
-    var isPlaceholderShown: Bool { placeholder != nil }
-    /// The placeholder is the New Pane card, and a release now would open one.
-    var isNewPaneArmed: Bool { placeholder?.showsNewPaneCard == true && placeholder?.isArmed == true }
-    /// The placeholder is the New Pane card.
-    var isShowingNewPaneCard: Bool { placeholder?.showsNewPaneCard == true }
+    /// The incoming pane's name on the page's card, while a page is up.
+    var placeholderTitle: String? { page?.card.title }
+    /// The page shows the pane's card: the pane has no screen to draw.
+    var isPlaceholderShown: Bool { page != nil && page?.screen == nil }
+    /// The card is the New Pane card, and a release now would open one.
+    var isNewPaneArmed: Bool { page?.card.showsNewPaneCard == true && page?.card.isArmed == true }
+    /// The card is the New Pane card.
+    var isShowingNewPaneCard: Bool { page?.card.showsNewPaneCard == true }
     /// A pane is being opened: the card waits for the owner's answer.
     private(set) var isAwaitingCreation = false
     /// `true` when a switch begins (a finger down on the swipe, or a switch
@@ -63,13 +72,14 @@ final class SSHTerminalPaneTransition {
 
     private weak var grid: SSHTerminalGridView?
     private var cover: UIView?
-    /// What slides in: the pane's own live screen when the session keeps it
-    /// ready (`SSHTerminalPanePreview`), else its card.
-    private var incoming: UIView?
-    /// The card, while the incoming side is one.
-    private var placeholder: SSHTerminalPanePlaceholderView?
-    /// The pane's own screen, while the incoming side is one: the grid paints it
-    /// after the slide instead of a restored snapshot.
+    /// What slides in, whatever it shows.
+    private var page: SSHTerminalIncomingPage?
+    /// The screen on the page while its pane is live: the grid paints that pane
+    /// after the slide instead of a restored snapshot. Nil while the page shows
+    /// the card or a pane's last screen: those wait as a card does, for the
+    /// pane's snapshot or for it to count as ready (`shownIsReady`), which a
+    /// reopened lane does before its snapshot lands, so the page can lift onto
+    /// the pane's own last screen and the fresh snapshot replaces it after.
     private var livePreview: SSHTerminalPanePreview?
     /// The settle in progress is the spring back, not a switch.
     private var returning = false
@@ -118,24 +128,25 @@ final class SSHTerminalPaneTransition {
         let newPane = neighbour == nil && offersNewPane && translationX < 0
         let offset = SSHTerminalPaneSwipe.offset(translation: translationX, width: width, canStep: neighbour != nil || newPane)
         let side = offset + (translationX < 0 ? width : -width)
-        let live = grid.paneStepping?.livePane(SSHTerminalPaneSwipe.direction(of: translationX))
-        installIncoming(target: live)
-        // The finger names this neighbour: it is taken and sized for this
+        // Every move asks again what the pane that way can show: one that
+        // became ready since the last move swaps in on the page.
+        installIncoming(target: grid.paneStepping?.target(SSHTerminalPaneSwipe.direction(of: translationX)))
+        // The finger names this live neighbour: it is taken and sized for this
         // screen now, so its program has redrawn for the phone by the release.
-        if let live, abs(translationX) >= Self.takeAheadTravel, takenAhead.insert(live).inserted {
+        if let live = livePreview?.block, abs(translationX) >= Self.takeAheadTravel, takenAhead.insert(live).inserted {
             grid.paneStepping?.takeAhead(live)
         }
         guard newPane else {
             tickedForNewPane = false
-            placeholder?.title = neighbour
+            page?.card.title = neighbour
             cover.transform = CGAffineTransform(translationX: offset, y: 0)
-            incoming?.transform = CGAffineTransform(translationX: side, y: 0)
+            page?.transform = CGAffineTransform(translationX: side, y: 0)
             return
         }
         let armed = SSHTerminalPaneSwipe.crossesThreshold(translationX)
-        placeholder?.showNewPane(armed: armed)
+        page?.card.showNewPane(armed: armed)
         cover.transform = CGAffineTransform(translationX: offset, y: 0)
-        incoming?.transform = CGAffineTransform(translationX: side, y: 0)
+        page?.transform = CGAffineTransform(translationX: side, y: 0)
         if armed, !tickedForNewPane {
             // Oppi's own switch for haptics: off in Settings, no tick.
             AppHaptics.selectionChanged()
@@ -162,9 +173,9 @@ final class SSHTerminalPaneTransition {
     /// `creationFailed`. A flick that never crossed the threshold ticks now,
     /// so the tick is made once either way.
     func endDragCreatingPane(velocityX: CGFloat) {
-        guard phase == .dragging, let placeholder else { return }
+        guard phase == .dragging, let page else { return }
         if !tickedForNewPane { AppHaptics.selectionChanged() }
-        placeholder.showCreating()
+        page.card.showCreating()
         isAwaitingCreation = true
         commit(step: 1, velocityX: velocityX)
     }
@@ -185,27 +196,28 @@ final class SSHTerminalPaneTransition {
             // cover and slide as from rest, so the new pane is still covered.
             cancel()
         case .settling:
-            // Another switch while one runs: a live pane is pane-specific, so
-            // the slide starts over toward the newest pane; a card only carries
-            // a name, and waits for the newest pane's snapshot as it always has.
-            guard livePreview == nil else {
+            // Another switch while one runs: a pane's screen is pane-specific,
+            // so the slide starts over toward the newest pane; a card only
+            // carries a name, and waits for the newest pane's snapshot as it
+            // always has.
+            guard page?.screen == nil else {
                 cancel()
                 break
             }
             onSwitching?(true)
             armReveal()
-            placeholder?.title = neighbour
+            page?.card.title = neighbour
             return
         case .covering:
             // The slide is over and the screen waits for a snapshot: the new
             // switch is a flash of its own, and the screen waits for the newest.
-            guard livePreview == nil else {
+            guard page?.screen == nil else {
                 cancel()
                 break
             }
             onSwitching?(true)
             armReveal()
-            placeholder?.title = neighbour
+            page?.card.title = neighbour
             onSwitching?(false)
             return
         case .idle:
@@ -221,8 +233,8 @@ final class SSHTerminalPaneTransition {
         // minimap cell knows its block) or, when the session already moved, the
         // pane it shows now.
         installIncoming(target: target ?? grid.paneStepping?.shown())
-        placeholder?.title = neighbour
-        incoming?.transform = CGAffineTransform(translationX: step > 0 ? grid.bounds.width : -grid.bounds.width, y: 0)
+        page?.card.title = neighbour
+        page?.transform = CGAffineTransform(translationX: step > 0 ? grid.bounds.width : -grid.bounds.width, y: 0)
         commit(step: step, velocityX: 0)
     }
 
@@ -239,8 +251,8 @@ final class SSHTerminalPaneTransition {
             return
         }
         installIncoming(target: nil)
-        placeholder?.showCreating()
-        incoming?.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
+        page?.card.showCreating()
+        page?.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
         isAwaitingCreation = true
         commit(step: 1, velocityX: 0)
     }
@@ -255,7 +267,7 @@ final class SSHTerminalPaneTransition {
             return
         }
         isAwaitingCreation = false
-        placeholder?.title = name
+        page?.card.title = name
         if let shown = grid?.paneStepping?.shown() { grid?.present(shown) }
         armReveal()
     }
@@ -295,8 +307,8 @@ final class SSHTerminalPaneTransition {
 
     /// The grid was resized under the incoming side.
     func gridLaidOut() {
-        guard let grid, let incoming, phase == .covering else { return }
-        incoming.frame = grid.frame
+        guard let grid, let page, phase == .covering else { return }
+        page.frame = grid.frame
     }
 
     /// Drops everything at once: the grid left its view, or the swipe is gone.
@@ -306,11 +318,10 @@ final class SSHTerminalPaneTransition {
         timeout?.cancel()
         timeout = nil
         cover?.removeFromSuperview()
-        incoming?.removeFromSuperview()
+        page?.removeFromSuperview()
         grid?.dropIncomingPane()
         cover = nil
-        incoming = nil
-        placeholder = nil
+        page = nil
         livePreview = nil
         returning = false
         isAwaitingCreation = false
@@ -351,40 +362,34 @@ final class SSHTerminalPaneTransition {
         return grid?.channel.isReady(shown) == true
     }
 
-    /// Puts the incoming side of a slide toward `target` in place: that pane's own
-    /// screen when the session keeps it ready (`SSHTerminalGridView
-    /// .incomingPane(for:)`), else its card, which is what the screen slid to
-    /// until now. It sits under the cover, as the incoming side always has.
+    /// Puts the incoming page of a slide toward `target` in place, under the
+    /// cover, and decides what it shows: that pane's screen when it has one
+    /// (`SSHTerminalGridView.incomingScreen(for:)`), live or its last, else its
+    /// card alone. The page is made once per switch and only its content
+    /// changes, so whatever it shows moves exactly as the page does.
     private func installIncoming(target: String?) {
         guard let grid, let container = grid.superview else { return }
-        if let live = grid.incomingPane(for: target) {
-            guard incoming !== live else { return }
-            incoming?.removeFromSuperview()
-            live.frame = grid.frame
-            if let cover { container.insertSubview(live, belowSubview: cover) } else { container.addSubview(live) }
-            incoming = live
-            placeholder = nil
-            livePreview = live
-            // It could not paint before it was in the hierarchy; let it now.
-            grid.incomingPaneDidInstall()
-            return
-        }
-        if incoming is SSHTerminalPanePlaceholderView { return }
-        incoming?.removeFromSuperview()
-        livePreview = nil
-        let placeholder = SSHTerminalPanePlaceholderView()
-        placeholder.frame = grid.frame
-        placeholder.apply(background: grid.backgroundColor ?? .black, foreground: grid.foreground)
-        if let cover { container.insertSubview(placeholder, belowSubview: cover) } else { container.addSubview(placeholder) }
-        incoming = placeholder
-        self.placeholder = placeholder
+        let page = self.page ?? {
+            let page = SSHTerminalIncomingPage(frame: grid.frame)
+            page.apply(background: grid.backgroundColor ?? .black, foreground: grid.foreground)
+            if let cover { container.insertSubview(page, belowSubview: cover) } else { container.addSubview(page) }
+            self.page = page
+            return page
+        }()
+        let drawn = page.screen?.block
+        let screen = grid.incomingScreen(for: target)
+        page.show(screen)
+        livePreview = screen?.block.map { grid.channel.isReady($0) } == true ? screen : nil
+        // A screen new to the page paints on the next tick; until it does, the
+        // card under it is what shows.
+        if let block = screen?.block, block != drawn { grid.incomingScreenDidChange() }
     }
 
     /// The old screen leaves toward `-step`, the incoming side arrives from the
     /// other side, and the grid takes the pane it slid to: a live pane's screen
     /// is already drawn, so only a card waits for a snapshot.
     private func commit(step: Int, velocityX: CGFloat) {
-        guard let grid, let cover, let incoming else { return cancel() }
+        guard let grid, let cover, let page else { return cancel() }
         phase = .settling
         returning = false
         slideFinished = false
@@ -412,7 +417,7 @@ final class SSHTerminalPaneTransition {
             self.revealIfReady()
         }
         if UIAccessibility.isReduceMotionEnabled {
-            incoming.transform = .identity
+            page.transform = .identity
             UIView.animate(withDuration: Self.settleDuration * 0.6, delay: 0, options: .curveEaseOut) {
                 cover.alpha = 0
             } completion: { finished in finish(finished) }
@@ -425,16 +430,16 @@ final class SSHTerminalPaneTransition {
             options: [.beginFromCurrentState]
         ) {
             cover.transform = CGAffineTransform(translationX: exit, y: 0)
-            incoming.transform = .identity
+            page.transform = .identity
         } completion: { finished in finish(finished) }
     }
 
     private func springBack(velocityX: CGFloat) {
-        guard let grid, let cover, let incoming else { return cancel() }
+        guard let grid, let cover, let page else { return cancel() }
         phase = .settling
         returning = true
         let token = generation
-        let side: CGFloat = incoming.transform.tx < 0 ? -grid.bounds.width : grid.bounds.width
+        let side: CGFloat = page.transform.tx < 0 ? -grid.bounds.width : grid.bounds.width
         let remaining = -cover.transform.tx
         let velocity = remaining == 0 ? 0 : min(max(velocityX / remaining, 0), 8)
         let finish: (Bool) -> Void = { [weak self] _ in
@@ -452,7 +457,7 @@ final class SSHTerminalPaneTransition {
             options: [.beginFromCurrentState]
         ) {
             cover.transform = .identity
-            incoming.transform = CGAffineTransform(translationX: side, y: 0)
+            page.transform = CGAffineTransform(translationX: side, y: 0)
         } completion: { finished in finish(finished) }
     }
 
@@ -475,7 +480,7 @@ final class SSHTerminalPaneTransition {
     }
 
     private func revealIfReady() {
-        guard phase == .covering, slideFinished, let incoming else { return }
+        guard phase == .covering, slideFinished, let page else { return }
         // A live pane is ready the moment the grid has painted it. A card waits
         // for the pane's snapshot — unless the pane already has its screen (a
         // second switch onto a neighbour that is live), in which case the frame
@@ -486,10 +491,9 @@ final class SSHTerminalPaneTransition {
         guard ready else { return }
         timeout?.cancel()
         timeout = nil
-        let leaving = incoming
+        let leaving = page
         let wasLive = livePreview != nil
-        self.incoming = nil
-        self.placeholder = nil
+        self.page = nil
         self.livePreview = nil
         grid?.dropIncomingPane()
         grid?.presentShownPane()
@@ -511,11 +515,10 @@ final class SSHTerminalPaneTransition {
     /// The pane did not open: the card leaves the way it came, to the right,
     /// off the grid's old pane (a fade with Reduce Motion).
     private func retreat() {
-        guard let grid, let incoming else { return cancel() }
+        guard let grid, let page else { return cancel() }
         timeout?.cancel()
         timeout = nil
-        self.incoming = nil
-        self.placeholder = nil
+        self.page = nil
         self.livePreview = nil
         grid.dropIncomingPane()
         grid.presentShownPane()
@@ -524,18 +527,59 @@ final class SSHTerminalPaneTransition {
         generation += 1
         if UIAccessibility.isReduceMotionEnabled {
             UIView.animate(withDuration: Self.settleDuration * 0.6, delay: 0, options: .curveEaseOut) {
-                incoming.alpha = 0
-            } completion: { _ in incoming.removeFromSuperview() }
+                page.alpha = 0
+            } completion: { _ in page.removeFromSuperview() }
             return
         }
         UIView.animate(springDuration: Self.settleDuration, bounce: 0, delay: 0, options: [.beginFromCurrentState]) {
-            incoming.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
-        } completion: { _ in incoming.removeFromSuperview() }
+            page.transform = CGAffineTransform(translationX: grid.bounds.width, y: 0)
+        } completion: { _ in page.removeFromSuperview() }
     }
 }
 
-/// What stands in for the incoming pane: the terminal's own background, and
-/// the pane's name dimmed in the middle. Past the last pane it is the New Pane
+/// The incoming side of every slide: one opaque page the grid's size, in the
+/// terminal's background, that moves beside the old screen. Its card is always
+/// at the bottom; the pane's screen, when it has one, is drawn over it and
+/// shows nothing until its first frame, so the page is never see-through and
+/// what it shows can change while it moves without the page jumping.
+final class SSHTerminalIncomingPage: UIView {
+    /// The pane's name, or the New Pane card: what the page shows with no screen.
+    let card = SSHTerminalPanePlaceholderView()
+    /// The pane's screen over the card, nil for the card alone.
+    private(set) var screen: SSHTerminalPanePreview?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        clipsToBounds = true
+        card.frame = bounds
+        card.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(card)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(background: UIColor, foreground: UIColor) {
+        backgroundColor = background
+        card.apply(background: background, foreground: foreground)
+    }
+
+    /// Puts `screen` over the card, or takes the screen away (nil).
+    func show(_ screen: SSHTerminalPanePreview?) {
+        guard screen !== self.screen || screen?.superview !== self else { return }
+        if let old = self.screen, old.superview === self { old.removeFromSuperview() }
+        self.screen = screen
+        guard let screen else { return }
+        screen.frame = bounds
+        screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(screen)
+    }
+}
+
+/// The incoming page's card: the terminal's own background, and the pane's
+/// name dimmed in the middle. Past the last pane it is the New Pane
 /// card instead: a plus and "New Pane", dimmed until the drag has gone far
 /// enough to open one, then lit.
 final class SSHTerminalPanePlaceholderView: UIView {

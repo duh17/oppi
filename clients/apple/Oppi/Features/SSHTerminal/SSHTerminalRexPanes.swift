@@ -103,11 +103,8 @@ struct SSHTerminalPaneStepping {
     /// is, the swipe past the last pane rubber-bands like the first pane's edge
     /// instead of offering a card that would spring back.
     var canCreatePane: () -> Bool
-    /// The block of the pane `delta` places along, when its terminal is already
-    /// live: the swipe slides in that pane's own screen instead of its card.
-    /// Nil past either end, and for a pane that is still opening.
-    var livePane: (Int) -> String?
-    /// The block of the pane `delta` places along, whether it is live or not:
+    /// The block of the pane `delta` places along, whether it is live or not,
+    /// nil past either end: the pane a drag's incoming page stands for, and
     /// what a switch with no finger names before the session moves.
     var target: (Int) -> String?
     /// A drag toward the live pane `block` named it: take it now, sized for

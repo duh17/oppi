@@ -1295,11 +1295,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         present(shown)
     }
 
-    /// The incoming side for `block`, when its screen is already up: the
-    /// transition slides it in place of the pane card. Nil (and no incoming
-    /// side) when that pane is not live yet.
-    func incomingPane(for block: String?) -> SSHTerminalPanePreview? {
-        guard let block, channel.isReady(block) else {
+    /// `block`'s screen for the incoming page, when it has one (live, or the
+    /// last one its closed lane streamed): the transition puts it over the
+    /// pane's card. Nil (and the card alone) when that pane has no screen yet.
+    func incomingScreen(for block: String?) -> SSHTerminalPanePreview? {
+        guard let block, channel.screenEngine(for: block) != nil else {
             panePreview.detach()
             return nil
         }
@@ -1308,9 +1308,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return panePreview
     }
 
-    /// The incoming side is in the view hierarchy now: it paints on the next
-    /// tick, which is the first it can (a view outside a window cannot draw).
-    func incomingPaneDidInstall() {
+    /// The incoming page has a pane's screen to draw, new or another pane's:
+    /// it paints on the next tick, which is the first it can (a view outside a
+    /// window cannot draw).
+    func incomingScreenDidChange() {
         needsPaint = true
         requestDisplayLink()
     }

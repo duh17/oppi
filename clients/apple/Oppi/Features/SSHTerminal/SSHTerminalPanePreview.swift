@@ -6,15 +6,21 @@ import UIKit
 ///
 /// A Rex session keeps its neighbours' panes streaming, each into its own
 /// engine (`SSHTerminalChannel`), so the pane a swipe reveals has its screen
-/// already. This view draws that screen on the grid's display-link tick — the
-/// screen keeps one display link — and takes no input: the grid under it owns
+/// already; a pane whose stream closed still has the last screen it streamed.
+/// This view draws that screen on the grid's display-link tick — the screen
+/// keeps one display link — and takes no input: the grid under it owns
 /// touches, first responder, scroll, and selection. It never draws for a pane
-/// that has no screen yet; the transition shows the pane card instead.
+/// that has no screen; the incoming page shows the pane's card instead.
+///
+/// It has no background of its own: it sits on the incoming page
+/// (`SSHTerminalIncomingPage`), whose card shows through until the first
+/// frame of the pane lands. Every pane it is given gets a fresh surface, so
+/// the picture another pane left on it can never slide in under this one's name.
 final class SSHTerminalPanePreview: UIView {
     /// The pane this draws, nil when there is no incoming side.
     private(set) var block: String?
     private weak var channel: SSHTerminalChannel?
-    private let metalHost = SSHTerminalMetalHostView()
+    private var metalHost = SSHTerminalMetalHostView()
     private var renderer: SSHTerminalMetalRenderer?
     /// Rebuilt when `AppFont` rebuilds, as the grid's is.
     private var metrics = SSHTerminalCellMetrics.codeFont()
@@ -27,7 +33,7 @@ final class SSHTerminalPanePreview: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isOpaque = true
+        isOpaque = false
         clipsToBounds = true
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
@@ -38,9 +44,12 @@ final class SSHTerminalPanePreview: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Draws `block`'s terminal from now on, with `adopt(_:)`'s colors.
+    /// Draws `block`'s terminal from now on, with `adopt(_:)`'s colors. A pane
+    /// it was not drawing starts on a blank surface: transparent until its
+    /// first frame is presented, never the last pane's picture.
     func show(block: String, channel: SSHTerminalChannel) {
         guard self.block != block || self.channel !== channel else { return }
+        if self.block != block { replaceSurface() }
         self.block = block
         self.channel = channel
         paintedKittyGeneration = 0
@@ -56,6 +65,17 @@ final class SSHTerminalPanePreview: UIView {
         channel = nil
         renderer = nil
         needsFullPaint = true
+    }
+
+    /// A Metal layer keeps showing the last drawable presented to it. A new
+    /// layer shows nothing until this pane's first frame is presented, so the
+    /// page's card stays visible underneath until then.
+    private func replaceSurface() {
+        metalHost.removeFromSuperview()
+        metalHost = SSHTerminalMetalHostView()
+        metalHost.isUserInteractionEnabled = false
+        metalHost.frame = bounds
+        addSubview(metalHost)
     }
 
     /// What draws with this view's colors: the grid's theme and font.
@@ -86,7 +106,7 @@ final class SSHTerminalPanePreview: UIView {
     @discardableResult
     func presentIfNeeded(scale: CGFloat) -> Paint {
         guard let block, let channel, window != nil, bounds.width > 0, bounds.height > 0 else { return .nothing }
-        guard let engine = channel.readyEngine(for: block) else { return .nothing }
+        guard let engine = channel.screenEngine(for: block) else { return .nothing }
         guard let renderer = rendererIfReady(scale: scale) else { return .nothing }
         if renderer.inFlightCount >= SSHTerminalMetalRenderer.ringSize { return .waiting }
         guard let metalLayer else { return .nothing }

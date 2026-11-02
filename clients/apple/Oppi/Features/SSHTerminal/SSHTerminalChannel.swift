@@ -452,8 +452,10 @@ final class SSHTerminalChannel {
     /// history. A pane keeps its engine while the session is open, so a swipe
     /// back to it costs no snapshot and no reload.
     @ObservationIgnored private var engines: [String: SSHTerminalEngine] = [:]
-    /// Panes whose snapshot's screen has arrived (READY) and whose lane is
-    /// still open: their screen can be shown, and a swipe to one needs no wait.
+    /// Panes whose snapshot's screen has arrived (READY) into an engine this
+    /// channel still keeps. A lane closing does not remove one (eviction on
+    /// the next present does), so this alone is not "live": `readyEngine`
+    /// adds the session's live set.
     @ObservationIgnored private var readyPanes: Set<String> = []
     private let own: SSHTerminalEngine
     private let answersTerminalQueries: Bool
@@ -482,13 +484,25 @@ final class SSHTerminalChannel {
         return made
     }
 
-    /// `block`'s terminal when its screen is up and its lane is still open,
+    /// `block`'s terminal when its screen is up and the session counts its lane
+    /// as open (from the moment the lane is asked for, before its snapshot),
     /// else nil: a swipe to that pane shows its own screen instead of waiting
     /// for a snapshot. A pane whose lane closed shows a frozen screen, which is
     /// not what a swipe should land on.
     func readyEngine(for block: String) -> SSHTerminalEngine? {
-        guard readyPanes.contains(block) else { return nil }
         if let live = rex?.latest.live, !live.contains(block) { return nil }
+        return screenEngine(for: block)
+    }
+
+    /// `block`'s terminal when it has a screen: live, or the last one its lane
+    /// streamed before it closed (a pane the window left, or whose stream
+    /// died, keeps its engine until the next present evicts it). What a swipe's
+    /// incoming page shows while it is not live, rather than an empty card. A
+    /// switch to it can land on that last screen: the lane it reopens counts as
+    /// live before its snapshot (`readyEngine`), so the page lifts onto the
+    /// pane's own last screen and the fresh snapshot replaces it when it lands.
+    func screenEngine(for block: String) -> SSHTerminalEngine? {
+        guard readyPanes.contains(block) else { return nil }
         return engines[block]
     }
 

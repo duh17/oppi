@@ -42,8 +42,7 @@ struct RexLivePanesTests {
             fake.dataHosts.first { $0.block == block }
         }
 
-        /// The stepping the screen uses: the pane a direction names, and
-        /// whether its screen is already up.
+        /// The stepping the screen uses: the pane a direction names.
         func stepping() -> SSHTerminalPaneStepping {
             SSHTerminalPaneStepping(
                 neighbour: { [model] delta in model.latest.neighbour(offsetBy: delta)?.name },
@@ -51,10 +50,6 @@ struct RexLivePanesTests {
                 shown: { [model] in model.latest.shown },
                 newPane: { false },
                 canCreatePane: { false },
-                livePane: { [channel, model] delta in
-                    guard let block = model.latest.pane(offsetBy: delta), channel.isReady(block) else { return nil }
-                    return block
-                },
                 target: { [model] delta in model.latest.pane(offsetBy: delta) },
                 takeAhead: { [model] block in model.takeAhead(block) }
             )
@@ -546,7 +541,6 @@ struct RexLivePanesTests {
             shown: { rig.model.latest.shown },
             newPane: { false },
             canCreatePane: { false },
-            livePane: { _ in b },
             target: { _ in b },
             takeAhead: { _ in }
         )
@@ -557,7 +551,7 @@ struct RexLivePanesTests {
         #expect(transition.beginDrag())
         transition.drag(translationX: -150, neighbour: "b", offersNewPane: false)
         #expect(!transition.isPlaceholderShown, "no card: the pane beside it is live")
-        let incoming = try #require(container.subviews.first { $0 is SSHTerminalPanePreview } as? SSHTerminalPanePreview)
+        let incoming = try #require(Self.preview(in: container))
         #expect(incoming.block == b)
         #expect(!incoming.isUserInteractionEnabled && incoming.accessibilityElementsHidden, "it never takes input")
 
@@ -566,10 +560,10 @@ struct RexLivePanesTests {
         transition.endDrag(committing: 1, velocityX: -800)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .covering })
         #expect(rig.channel.presented == b, "the grid took the pane the slide ended on")
-        #expect(container.subviews.contains { $0 === incoming }, "it stays until the grid has drawn that pane")
+        #expect(incoming.isDescendant(of: container), "it stays until the grid has drawn that pane")
         transition.frameDrawn()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !container.subviews.contains { $0 === incoming } })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !incoming.isDescendant(of: container) })
         #expect(rig.shows("screen of b"))
         await rig.stop()
     }
@@ -612,9 +606,59 @@ struct RexLivePanesTests {
         }
 
         /// The incoming side of a swipe, when it is the neighbour's own screen.
-        var incoming: SSHTerminalPanePreview? {
-            container.subviews.first { $0 is SSHTerminalPanePreview } as? SSHTerminalPanePreview
+        var incoming: SSHTerminalPanePreview? { RexLivePanesTests.preview(in: container) }
+
+        /// What sits over the grid in its container: the incoming side, then the old screen.
+        var layers: [UIView] { container.subviews.filter { $0 !== grid } }
+    }
+
+    /// A pane's own screen on the incoming side, wherever under `root` it sits.
+    static func preview(in root: UIView) -> SSHTerminalPanePreview? {
+        for view in root.subviews {
+            if let preview = view as? SSHTerminalPanePreview { return preview }
+            if let preview = preview(in: view) { return preview }
         }
+        return nil
+    }
+
+    /// What a person sees at `point` of `root`: the frontmost view there that
+    /// paints an opaque fill. A view with no fill (a Metal surface that has
+    /// not drawn, a clear container) paints nothing, so what is under it shows.
+    static func paintedView(at point: CGPoint, in root: UIView) -> UIView? {
+        for view in root.subviews.reversed() where !view.isHidden && view.alpha > 0.01 {
+            let local = root.convert(point, to: view)
+            guard view.bounds.contains(local) else { continue }
+            if let inner = paintedView(at: local, in: view) { return inner }
+            if let fill = view.backgroundColor, fill.cgColor.alpha >= 1 { return view }
+        }
+        return nil
+    }
+
+    /// A drag `translation` points to the left: the incoming side sits where
+    /// the drag puts it, beside the old screen, and it is what shows in the
+    /// space the old screen left, not the grid under both. Returns that side.
+    @discardableResult
+    static func expectIncomingPage(
+        _ screen: Screen, translation: CGFloat, sourceLocation: SourceLocation = #_sourceLocation
+    ) -> UIView? {
+        let width = screen.grid.bounds.width
+        guard screen.layers.count == 2 else {
+            Issue.record("no incoming side and old screen over the grid: \(screen.layers)", sourceLocation: sourceLocation)
+            return nil
+        }
+        let (incoming, cover) = (screen.layers[0], screen.layers[1])
+        #expect(cover.transform.tx == translation, "the old screen follows the finger", sourceLocation: sourceLocation)
+        #expect(incoming.transform.tx == translation + width, "the incoming page moves beside it", sourceLocation: sourceLocation)
+        // Just right of the old screen's edge, and further in.
+        for x in [width + translation + 12, width - 12] {
+            let probe = CGPoint(x: x, y: screen.grid.frame.midY)
+            let shown = paintedView(at: probe, in: screen.container)
+            #expect(shown.map { !$0.isDescendant(of: screen.grid) } == true,
+                    "the grid shows through at x \(x): \(String(describing: shown))", sourceLocation: sourceLocation)
+            #expect(shown.map { $0.isDescendant(of: incoming) } == true,
+                    "the incoming page is what shows at x \(x)", sourceLocation: sourceLocation)
+        }
+        return incoming
     }
 
     /// A pane closed in Rex on screen moves to a neighbour that is already
@@ -804,6 +848,89 @@ struct RexLivePanesTests {
         transition.frameDrawn()
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) { transition.phase == .idle },
                 "the card lifts on the frame, not after the wait")
+        screen.dismiss()
+        await rig.stop()
+    }
+
+    /// The first drag after the page opens, toward a live neighbour: the screen
+    /// beside the old one is a page moving with the finger. Before, it was the
+    /// neighbour's surface alone, which has no fill and shows nothing until the
+    /// grid's next tick draws it, so the grid under it (the old pane's screen,
+    /// standing still) showed in the space the old screen left: a page flip,
+    /// not a slide.
+    @Test func aDragTowardALiveNeighbourSlidesAPageThatHidesTheGrid() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        let screen = try Screen(rig: rig, shown: a)
+        try #require(rig.channel.isReady(b))
+        let transition = screen.transition
+
+        #expect(transition.beginDrag())
+        for travel: CGFloat in [-40, -150, -260] {
+            transition.drag(translationX: travel, neighbour: "title b", offersNewPane: false)
+            Self.expectIncomingPage(screen, translation: travel)
+        }
+        #expect(screen.incoming?.block == b, "its own screen is on the page")
+        #expect(!transition.isPlaceholderShown)
+
+        transition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
+        screen.dismiss()
+        await rig.stop()
+    }
+
+    /// A neighbour whose stream is still opening slides in as its card, on a
+    /// page that moves with the finger; when its screen arrives mid-drag, the
+    /// screen goes on that same page, which keeps its place. Before, the card
+    /// was swapped for the neighbour's bare surface, see-through until drawn.
+    @Test func aNeighbourThatBecomesReadyMidDragSwapsInOnTheSamePage() async throws {
+        let rig = try await open(["a", "b", "c"], warm: false)
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        rig.fake.hold(dataConnectFor: [b])
+        rig.model.isWarming = true
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == b }
+        }, "b's stream is asked for, and held")
+        #expect(!rig.channel.isReady(b))
+        let screen = try Screen(rig: rig, shown: a)
+        let transition = screen.transition
+
+        #expect(transition.beginDrag())
+        transition.drag(translationX: -120, neighbour: "title b", offersNewPane: false)
+        #expect(transition.isPlaceholderShown && transition.placeholderTitle == "title b", "no screen yet: its card")
+        let page = try #require(Self.expectIncomingPage(screen, translation: -120))
+
+        rig.fake.release(dataConnectFor: b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.channel.isReady(b) })
+        transition.drag(translationX: -140, neighbour: "title b", offersNewPane: false)
+        #expect(screen.layers.first === page, "the same page: what it shows changed, the page did not")
+        Self.expectIncomingPage(screen, translation: -140)
+        #expect(screen.incoming?.block == b && !transition.isPlaceholderShown, "its screen is on the page now")
+
+        transition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
+        screen.dismiss()
+        await rig.stop()
+    }
+
+    /// A neighbour whose stream ended keeps the last screen it streamed: a drag
+    /// slides that in rather than an empty card.
+    @Test func aNeighbourWhoseStreamEndedSlidesInItsLastScreen() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        try #require(rig.host(b)).end(status: 1)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.isReady(b) },
+                     "b's lane closed")
+        let screen = try Screen(rig: rig, shown: a)
+        let transition = screen.transition
+
+        #expect(transition.beginDrag())
+        transition.drag(translationX: -150, neighbour: "title b", offersNewPane: false)
+        Self.expectIncomingPage(screen, translation: -150)
+        #expect(!transition.isPlaceholderShown && screen.incoming?.block == b, "its last screen, not an empty card")
+
+        transition.endDrag(committing: nil, velocityX: 0)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase == .idle })
         screen.dismiss()
         await rig.stop()
     }

@@ -1098,13 +1098,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             shown: { [weak self] in self?.channel.rex?.latest.shown },
             newPane: { [weak self] in self?.openNewPane() ?? false },
             canCreatePane: { [weak self] in self?.newPaneTask == nil },
-            // The pane beside it is already streaming and has its screen: a
-            // swipe slides that in instead of a card.
-            livePane: { [weak self] delta in
-                guard let self, let block = self.channel.rex?.latest.pane(offsetBy: delta),
-                      self.channel.readyEngine(for: block) != nil else { return nil }
-                return block
-            },
             target: { [weak self] delta in self?.channel.rex?.latest.pane(offsetBy: delta) },
             takeAhead: { [weak self] block in self?.channel.rex?.takeAhead(block) }
         )
