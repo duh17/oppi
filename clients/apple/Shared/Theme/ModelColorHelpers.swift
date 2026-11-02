@@ -147,7 +147,7 @@ struct StatsDailyChart: View {
                 x: .value("Date", entry.date, unit: .day),
                 y: .value(metric.chartTitle, entry.value)
             )
-            .foregroundStyle(modelColor(entry.model))
+            .foregroundStyle(viewColor(modelColor(entry.model)))
             .opacity(selectedDate == nil || isSelected(entry) ? 1.0 : 0.3)
         }
         .chartOverlay { proxy in
@@ -223,7 +223,7 @@ struct StatsDailyChart: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(displayModelName(entry.model))
                     .font(style.modelFont)
-                    .foregroundStyle(modelColor(entry.model))
+                    .foregroundStyle(viewColor(modelColor(entry.model)))
                     .lineLimit(1)
 
                 if let provider = modelProviderLabel(entry.model) {
@@ -252,12 +252,16 @@ struct StatsDailyChart: View {
 ///
 /// Grok/xAI is the exception: the vendor mark is monochrome, so those models
 /// stay gray and flip with the theme — near-white on dark, near-black on light.
-func modelColor(_ model: String) -> Color {
+///
+/// The result is a `ThemeColor` (`UIColor` on iOS), so a UIKit call site paints
+/// it as it is; a SwiftUI leaf, the `StatsDailyChart` and the Mac's model rows,
+/// wraps it in `viewColor(_:)`.
+func modelColor(_ model: String) -> ThemeColor {
     let identity = modelDisplayIdentity(model)
     let normalized = identity.normalizedModelID
 
     guard !normalized.isEmpty, normalized != "unknown", normalized != "other" else {
-        return .secondary
+        return unknownModelColor
     }
 
     if normalized.contains("grok") {
@@ -275,7 +279,27 @@ func modelColor(_ model: String) -> Color {
     let saturation = clamp(0.58 + (salience * 1.15) + adjustment.saturation, lower: 0.44, upper: 0.96)
     let brightness = clamp(0.68 + (salience * 1.05) + adjustment.brightness, lower: 0.54, upper: 0.98)
 
-    return Color(hue: hue, saturation: saturation, brightness: brightness)
+    return srgbToken(hue: hue, saturation: saturation, brightness: brightness)
+}
+
+/// The color of a model the palette does not know: the platform's own secondary
+/// content color, which is what `Color.secondary` resolved to on iOS.
+private var unknownModelColor: ThemeColor {
+    #if canImport(UIKit)
+    .secondaryLabel
+    #else
+    .secondary
+    #endif
+}
+
+/// An sRGB token from hue/saturation/brightness: the model colors' one
+/// constructor, so both platforms build the same color.
+private func srgbToken(hue: Double, saturation: Double, brightness: Double) -> ThemeColor {
+    #if canImport(UIKit)
+    UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
+    #else
+    Color(hue: hue, saturation: saturation, brightness: brightness)
+    #endif
 }
 
 /// A provider's logo or monogram at `size` for the SwiftUI chrome that draws it:
@@ -287,7 +311,7 @@ struct ProviderGlyph: View {
     var color: Color = .secondary
 
     var body: some View {
-        let resolvedColor = providerIconTint(color)
+        let resolvedColor = viewColor(providerIconTint(themeToken(color)))
 
         Group {
             if let provider = normalizedProviderKey(provider) {
@@ -326,8 +350,10 @@ private struct DefaultProviderIconTintPalette: ProviderIconTintPalette {
     let fgDim = ThemeColor.themeSRGB(0.62, 0.66, 0.70)
 }
 
-/// A theme token as the SwiftUI color this file's contrast rules read.
-private func swiftUIColor(_ token: ThemeColor) -> Color {
+/// A theme token as the SwiftUI color a SwiftUI leaf draws with: the
+/// `StatsDailyChart` on both platforms and the Mac's model rows. A UIKit call
+/// site paints the token itself, so it converts nothing.
+func viewColor(_ token: ThemeColor) -> Color {
     #if canImport(UIKit)
     Color(uiColor: token)
     #else
@@ -335,13 +361,24 @@ private func swiftUIColor(_ token: ThemeColor) -> Color {
     #endif
 }
 
+/// A SwiftUI color as the token type the contrast rules read. `ProviderGlyph`'s
+/// callers hand it SwiftUI colors (the chart's style, a Mac theme token), and a
+/// token is already a `Color` on the Mac.
+func themeToken(_ color: Color) -> ThemeColor {
+    #if canImport(UIKit)
+    UIColor(color)
+    #else
+    color
+    #endif
+}
+
 func providerIconTint(
-    _ preferred: Color,
+    _ preferred: ThemeColor,
     palette: any ProviderIconTintPalette = DefaultProviderIconTintPalette(),
     minimumContrast: Double = 3.0
-) -> Color {
-    let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight].map(swiftUIColor)
-    let fallbackCandidates = [palette.fg, palette.fgDim, palette.bgDark].map(swiftUIColor)
+) -> ThemeColor {
+    let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
+    let fallbackCandidates = [palette.fg, palette.fgDim, palette.bgDark]
 
     guard let preferredComponents = resolvedSRGB(preferred) else {
         return preferred
@@ -383,7 +420,7 @@ func providerIconTint(
     return bestCandidate.color
 }
 
-func contrastRatio(between foreground: Color, and background: Color) -> Double? {
+func contrastRatio(between foreground: ThemeColor, and background: ThemeColor) -> Double? {
     guard let foreground = resolvedSRGB(foreground),
           let background = resolvedSRGB(background) else {
         return nil
@@ -391,7 +428,7 @@ func contrastRatio(between foreground: Color, and background: Color) -> Double? 
     return contrastRatio(between: foreground, and: background)
 }
 
-func minimumContrastRatio(of foreground: Color, on backgrounds: [Color]) -> Double? {
+func minimumContrastRatio(of foreground: ThemeColor, on backgrounds: [ThemeColor]) -> Double? {
     let resolvedBackgrounds = backgrounds.compactMap(resolvedSRGB)
     guard let foreground = resolvedSRGB(foreground),
           resolvedBackgrounds.count == backgrounds.count else {
@@ -412,8 +449,12 @@ private struct SRGBColor {
     let blue: Double
     let alpha: Double
 
-    var color: Color {
+    var color: ThemeColor {
+        #if canImport(UIKit)
+        UIColor(red: red, green: green, blue: blue, alpha: alpha)
+        #else
         Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+        #endif
     }
 }
 
@@ -442,7 +483,7 @@ private func modelFamilyKey(from normalizedModelID: String) -> String {
 /// xAI's mark is black/white. Flagship Grok sits nearest the extreme; other
 /// families step toward mid-gray. Newer versions move a bit closer to white
 /// on dark themes and black on light themes.
-private func grokModelColor(normalizedModelID: String) -> Color {
+private func grokModelColor(normalizedModelID: String) -> ThemeColor {
     let familyKey = modelFamilyKey(from: normalizedModelID)
     let familyStep = grokFamilyShadeStep(for: familyKey)
     let versionOffset = grokVersionBrightnessOffset(for: normalizedModelID)
@@ -504,12 +545,12 @@ private func grokVariantBrightnessOffset(for normalizedModelID: String) -> Doubl
     return offset
 }
 
-private func themeAdaptiveGray(darkBrightness: Double, lightBrightness: Double) -> Color {
+private func themeAdaptiveGray(darkBrightness: Double, lightBrightness: Double) -> ThemeColor {
     #if canImport(UIKit)
-    return Color(uiColor: UIColor { traits in
+    return UIColor { traits in
         let brightness = traits.userInterfaceStyle == .light ? lightBrightness : darkBrightness
         return UIColor(hue: 0, saturation: 0, brightness: brightness, alpha: 1)
-    })
+    }
     #elseif canImport(AppKit)
     return Color(nsColor: NSColor(name: nil) { appearance in
         let isLight = appearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
@@ -517,7 +558,7 @@ private func themeAdaptiveGray(darkBrightness: Double, lightBrightness: Double) 
         return NSColor(calibratedHue: 0, saturation: 0, brightness: brightness, alpha: 1)
     })
     #else
-    return Color(hue: 0, saturation: 0, brightness: darkBrightness)
+    return srgbToken(hue: 0, saturation: 0, brightness: darkBrightness)
     #endif
 }
 
@@ -661,14 +702,13 @@ private func isVersionToken(_ token: String) -> Bool {
     return token.unicodeScalars.allSatisfy { allowed.contains($0) }
 }
 
-private func resolvedSRGB(_ color: Color) -> SRGBColor? {
+private func resolvedSRGB(_ color: ThemeColor) -> SRGBColor? {
     #if canImport(UIKit)
-    let uiColor = UIColor(color)
     var red: CGFloat = 0
     var green: CGFloat = 0
     var blue: CGFloat = 0
     var alpha: CGFloat = 0
-    guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
         return nil
     }
     return SRGBColor(red: red, green: green, blue: blue, alpha: alpha)

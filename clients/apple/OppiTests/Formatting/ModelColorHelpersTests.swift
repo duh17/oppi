@@ -1,5 +1,4 @@
 import Testing
-import SwiftUI
 import UIKit
 @testable import Oppi
 
@@ -16,33 +15,33 @@ struct ModelColorHelpersTests {
     }
 
     @Test func modelColorIgnoresProviderAndTimestamp() {
-        let direct = UIColor(modelColor("openai/gpt-5.5"))
-        let aliasedProvider = UIColor(modelColor("openai-codex/gpt-5.5"))
-        let timestamped = UIColor(modelColor("openrouter/gpt-5.5-20250514"))
+        let direct = modelColor("openai/gpt-5.5")
+        let aliasedProvider = modelColor("openai-codex/gpt-5.5")
+        let timestamped = modelColor("openrouter/gpt-5.5-20250514")
 
         #expect(direct == aliasedProvider)
         #expect(direct == timestamped)
     }
 
     @Test func newerStableVersionsGetBrighterWithinFamily() {
-        let newer = hsba(UIColor(modelColor("openai/gpt-5.5")))
-        let older = hsba(UIColor(modelColor("openai/gpt-5.4")))
+        let newer = hsba(modelColor("openai/gpt-5.5"))
+        let older = hsba(modelColor("openai/gpt-5.4"))
 
         #expect(newer.brightness > older.brightness)
         #expect(newer.saturation >= older.saturation)
     }
 
     @Test func claudeModelsStayInAnthropicOrangeBand() {
-        let color = hsba(UIColor(modelColor("anthropic/claude-sonnet-4-6")))
+        let color = hsba(modelColor("anthropic/claude-sonnet-4-6"))
 
         #expect(color.hue >= 0.03)
         #expect(color.hue <= 0.09)
     }
 
     @Test func siblingVersionsGetNoticeablyDifferentHue() {
-        let a = hsba(UIColor(modelColor("openai/gpt-5.5")))
-        let b = hsba(UIColor(modelColor("openai/gpt-5.4")))
-        let c = hsba(UIColor(modelColor("openai/gpt-5.3-codex")))
+        let a = hsba(modelColor("openai/gpt-5.5"))
+        let b = hsba(modelColor("openai/gpt-5.4"))
+        let c = hsba(modelColor("openai/gpt-5.3-codex"))
 
         #expect(abs(a.hue - b.hue) >= 0.02)
         #expect(abs(b.hue - c.hue) >= 0.02)
@@ -140,8 +139,8 @@ struct ModelColorHelpersTests {
 
     @Test func providerIconTintMeetsContrastFloorOnThemeSurfaces() {
         let palette = ThemePalettes.dark
-        let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight].map(swiftUIColor)
-        let preferred = [palette.green, palette.blue, palette.orange, palette.red, palette.purple].map(swiftUIColor)
+        let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
+        let preferred = [palette.green, palette.blue, palette.orange, palette.red, palette.purple]
 
         for color in preferred {
             let tinted = providerIconTint(color, palette: palette)
@@ -149,11 +148,6 @@ struct ModelColorHelpersTests {
             #expect(ratio != nil)
             #expect((ratio ?? 0) >= 3.0)
         }
-    }
-
-    /// A theme token as the SwiftUI color `providerIconTint` works in.
-    private func swiftUIColor(_ token: ThemeColor) -> Color {
-        Color(uiColor: token)
     }
 
     private struct RasterAlpha {
@@ -215,11 +209,11 @@ struct ModelColorHelpersTests {
         return HSBA(hue: hue, saturation: saturation, brightness: brightness, alpha: alpha)
     }
 
-    private func resolvedUIColor(_ color: Color, style: UIUserInterfaceStyle) -> UIColor {
-        UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+    private func resolvedUIColor(_ color: ThemeColor, style: UIUserInterfaceStyle) -> UIColor {
+        color.resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
     }
 
-    private func resolvedHSBA(_ color: Color, style: UIUserInterfaceStyle) -> HSBA {
+    private func resolvedHSBA(_ color: ThemeColor, style: UIUserInterfaceStyle) -> HSBA {
         hsba(resolvedUIColor(color, style: style))
     }
 }

@@ -180,10 +180,10 @@ enum EntityIcon {
     private static func providerMark(_ provider: String, size: CGFloat) -> UIImage {
         let palette = ThemeRuntimeState.currentPalette()
         // `ProviderColor` owns the provider aliases (`openai-codex` reads as OpenAI).
-        let tint = UIColor(providerIconTint(
-            .init(uiColor: ProviderColor.color(forProvider: provider, palette: palette)),
+        let tint = providerIconTint(
+            ProviderColor.color(forProvider: provider, palette: palette),
             palette: palette
-        ))
+        )
         if let assetName = providerLogoAssetName(provider), let logo = UIImage(named: assetName) {
             return raster(size) { rect in
                 logo.withTintColor(tint, renderingMode: .alwaysOriginal)

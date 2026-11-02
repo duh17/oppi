@@ -212,13 +212,13 @@ struct ThemeRuntimeStateExtendedTests {
 
 // MARK: - UIKit accessors
 
-/// `UIColor.theme*` is the UIKit face of the palette: it reads the cached
-/// `palette.ui` the views paint with. A migration that swapped
-/// `UIColor(palette.x)` for `UIColor.themeX` would silently change pixels if
-/// these ever drifted, so every token is compared against the palette.
+/// `UIColor.theme*` is the UIKit face of the palette. The palette's own colors
+/// need no assertion: `ThemeUIKitPalette` copies them, so a row comparing one
+/// against itself would always pass. What is worth pinning is the derived
+/// tokens, which the accessors answer with the arithmetic below.
 @Suite("Theme UIColor accessors")
 struct ThemeUIColorAccessorTests {
-    @Test func readsTheSamePaletteAsTheSwiftUIAccessors() {
+    @Test func derivedTokensMatchTheirRules() {
         let original = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(original) }
 
@@ -226,37 +226,11 @@ struct ThemeUIColorAccessorTests {
             ThemeRuntimeState.setThemeID(themeID)
             let palette = ThemeRuntimeState.currentPalette()
             let mismatches = [
-                ("bg", UIColor.themeBg, palette.bg),
-                ("bgDark", UIColor.themeBgDark, palette.bgDark),
-                ("bgHighlight", UIColor.themeBgHighlight, palette.bgHighlight),
-                ("fg", UIColor.themeFg, palette.fg),
-                ("fgDim", UIColor.themeFgDim, palette.fgDim),
-                ("comment", UIColor.themeComment, palette.comment),
-                ("blue", UIColor.themeBlue, palette.blue),
-                ("cyan", UIColor.themeCyan, palette.cyan),
-                ("green", UIColor.themeGreen, palette.green),
-                ("orange", UIColor.themeOrange, palette.orange),
-                ("purple", UIColor.themePurple, palette.purple),
-                ("red", UIColor.themeRed, palette.red),
-                ("yellow", UIColor.themeYellow, palette.yellow),
-                ("toolSuccessBg", UIColor.themeToolSuccessBg, palette.toolSuccessBg),
-                ("toolTitle", UIColor.themeToolTitle, palette.toolTitle),
-                ("toolOutput", UIColor.themeToolOutput, palette.toolOutput),
                 ("scrim", UIColor.themeScrim, palette.bgDark.multiplyingAlpha(0.82)),
                 ("dimScrim", UIColor.themeDimScrim, palette.bg.multiplyingAlpha(0.5)),
                 ("recessedInset", UIColor.themeRecessedInset, palette.bg.multiplyingAlpha(0.30)),
                 ("onBlue", UIColor.themeOnBlue, ThemeColorContrast.foreground(for: palette.blue)),
-                ("onGreen", UIColor.themeOnGreen, ThemeColorContrast.foreground(for: palette.green)),
-                ("syntaxComment", UIColor.themeSyntaxComment, palette.syntaxComment),
-                ("syntaxKeyword", UIColor.themeSyntaxKeyword, palette.syntaxKeyword),
-                ("syntaxFunction", UIColor.themeSyntaxFunction, palette.syntaxFunction),
-                ("syntaxString", UIColor.themeSyntaxString, palette.syntaxString),
-                ("syntaxNumber", UIColor.themeSyntaxNumber, palette.syntaxNumber),
-                ("syntaxType", UIColor.themeSyntaxType, palette.syntaxType),
-                ("syntaxPunctuation", UIColor.themeSyntaxPunctuation, palette.syntaxPunctuation),
-                ("diffAdded", UIColor.themeDiffAdded, palette.toolDiffAdded),
-                ("diffRemoved", UIColor.themeDiffRemoved, palette.toolDiffRemoved),
-                ("diffContext", UIColor.themeDiffContext, palette.toolDiffContext)
+                ("onGreen", UIColor.themeOnGreen, ThemeColorContrast.foreground(for: palette.green))
             ].filter { !Self.sameColor($0.1, $0.2) }.map(\.0)
             #expect(mismatches.isEmpty, "\(themeID.rawValue) diverged: \(mismatches)")
         }

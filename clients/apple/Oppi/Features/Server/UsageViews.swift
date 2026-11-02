@@ -335,7 +335,7 @@ final class UsageModelRowView: UIView {
     required init?(coder: NSCoder) { nil }
 
     func configure(item: AggregatedStatsModel, metric: StatsMetric, total: Double, colors: UsageColors) {
-        let accent = UIColor(modelColor(item.representativeModel))
+        let accent = modelColor(item.representativeModel)
         let share = total > 0 ? max(0, item.value(for: metric) / total) : 0
         let value = metric.formatted(item.value(for: metric))
         let percent = "\(Int((share * 100).rounded()))%"
@@ -494,7 +494,7 @@ final class UsageSessionRowView: UIView {
         nameLabel.text = name
         nameLabel.textColor = colors.fg
         modelLabel.text = displayModelName(model)
-        modelLabel.textColor = UIColor(modelColor(model))
+        modelLabel.textColor = modelColor(model)
         let detail = [modelProviderLabel(model), session.workspaceName].compactMap { $0 }.joined(separator: " · ")
         detailLabel.text = detail
         detailLabel.textColor = colors.comment

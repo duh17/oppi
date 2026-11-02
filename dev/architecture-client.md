@@ -33,7 +33,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 4. **Reuse the [shared building blocks](#shared-uikit-building-blocks)** before writing one.
 5. **A list cell that changes its own layout re-measures:** session lists set `selfSizingInvalidation = .enabledIncludingConstraints` and a rearranging row invalidates its intrinsic size, or lines overlap.
 6. **SwiftUI only where Apple requires it:** widgets, control widgets, Live Activities (`OppiControlWidget`, `OppiActivityExtension`), App Intents UI.
-7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason.** `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too.
+7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason** ([Remaining SwiftUI](#remaining-swiftui)); `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too.
 8. **Observe notifications with a block on the main queue:** a `@MainActor` type uses `addObserver(forName:object:queue: .main)`, keeps the token, and removes it in `isolated deinit` or when it leaves; selector observers trap when the poster is off the main thread (`bd3b2b5d4`, `415f62e75`).
 
 ### Shared UIKit building blocks
@@ -71,8 +71,8 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Remaining SwiftUI
 
-- Framework leaves: Usage charts (`UsageCharts.swift`) and the USDZ canvas (`USDZRealityCanvas`) take values only and read no `@Environment` or app service; `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app.
-- `Shared/Theme/ModelColorHelpers.swift` (the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use), `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels; no SwiftUI and no Charts), and the Mac-only `ThinkingOrbAcknowledgmentsView.swift` and `Shared/Renderers/Orbs/OrbView.swift` (the orb's SwiftUI wrapper; excluded from `Oppi` in `project.yml`; the guard's `sharedMacOnlySwiftUI` names them and the two lists move together). `OrbMetalView.swift` is a UIKit/AppKit view on both platforms.
+- `swiftUIImporters` names exactly five files the app target compiles. The framework leaves are `UsageCharts.swift` and `USDZRealityCanvas.swift`: values only, no `@Environment` or app service, and `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app. `FeatureEducationTips.swift` holds the TipKit tips, whose `Text`/`Image` need SwiftUI while their display is UIKit. `Shared/Theme/ModelColorHelpers.swift` holds the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use: a model color is a `ThemeColor` too, and a SwiftUI leaf draws one with `viewColor(_:)`. `Shared/Activity/LiveActivityPresentation.swift` is the Live Activity surface, shared with the widget extension. `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels) imports neither SwiftUI nor Charts.
+- `sharedMacOnlySwiftUI` names the Mac-only `ThinkingOrbAcknowledgmentsView.swift` and `Shared/Renderers/Orbs/OrbView.swift` (the orb's SwiftUI wrapper; excluded from `Oppi` in `project.yml`; the two lists move together). `OrbMetalView.swift` is a UIKit/AppKit view on both platforms.
 
 ### App services
 

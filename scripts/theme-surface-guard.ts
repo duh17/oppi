@@ -16,14 +16,13 @@ import { fileURLToPath } from "node:url";
  *  2. Color.accentColor — resolves from the asset catalog, not the theme.
  *  3. foregroundStyle(.primary/.secondary/.blue/.white/.red) — system
  *     semantic or fixed colors instead of theme foregrounds.
- *  4. themeBg/themeBgDark.opacity(...) outside Color+Theme.swift — ad-hoc
- *     surface opacity; use a ThemeSurfaceRole via View.themedSurface(_:in:)
- *     or add a semantic accessor in Color+Theme.swift.
- *  5. Fixed black/white SwiftUI backgrounds and UIKit theme-background alpha
- *     re-derivations — common escape hatches that fail under light themes.
- *  6. Snapshot `Color.theme*` styling in SwiftUI. Those accessors, and the
- *     `.theme*` `ShapeStyle` that resolves them, ship in `OppiMac` only, so on
- *     iOS these checks are inert; the Mac's SwiftUI face is out of scope here.
+ *  4. Fixed black/white SwiftUI backgrounds — common escape hatches that fail
+ *     under light themes.
+ *
+ * The theme is UIKit-side on iOS: `Color.theme*`, the `.theme*` `ShapeStyle`
+ * shorthand, and the themed-surface modifiers ship in `OppiMac` only, so no iOS
+ * file can spell them and no check reads them here. The Mac's SwiftUI face is
+ * out of scope.
  *
  * Preview/screenshot harnesses are allowlisted: they intentionally freeze
  * styling for marketing shots and stress fixtures.
@@ -37,8 +36,6 @@ type GuardCheck = {
   title: string;
   pattern: string;
   fix: string;
-  scanPaths?: string[];
-  excludeGlobs?: string[];
 };
 
 type GuardViolation = {
@@ -63,86 +60,31 @@ const checks: GuardCheck[] = [
     title: "System material in background/presentationBackground",
     pattern:
       String.raw`\.(background|presentationBackground)\(\s*(Material\.|\.(ultraThin|thin|regular|thick|ultraThick)Material)`,
-    fix: "Use View.themedSurface(_:in:), Color.themeSurfaceFill(_:), or a Color.theme* background — system materials ignore the theme palette",
+    fix: "Use UIColor.themeSurfaceFill(role) or a UIColor.theme* background — system materials ignore the theme palette",
   },
   {
     id: "accent-color",
     title: "Color.accentColor usage",
     pattern: String.raw`Color\.accentColor|\(\.accentColor\b`,
-    fix: "Use a theme accent (Color.themeBlue/.themeCyan) — accentColor bypasses the runtime theme",
+    fix: "Use a theme accent (UIColor.themeBlue/.themeCyan) — accentColor bypasses the runtime theme",
   },
   {
     id: "system-foreground-style",
     title: "System foregroundStyle color",
     pattern: String.raw`\.foregroundStyle\(\s*\.(primary|secondary|blue|white|red)\s*\)`,
-    fix: "Use theme foregrounds: .themeFg/.themeFgDim/.themeComment/.themeBlue/.themeRed/.themeOnBlue",
-  },
-  {
-    id: "ad-hoc-surface-opacity",
-    title: "Ad-hoc themeBg/themeBgDark opacity",
-    pattern: String.raw`themeBg(Dark)?\.opacity\(`,
-    fix: "Pick a ThemeSurfaceRole via View.themedSurface(_:in:) or add a semantic accessor in Color+Theme.swift — surface opacity math lives in ThemeSurfaceStyle.resolve",
-    excludeGlobs: ["**/Core/Extensions/Color+Theme.swift"],
+    fix: "Use a theme foreground: UIColor.themeFg/.themeFgDim/.themeComment/.themeBlue/.themeRed/.themeOnBlue",
   },
   {
     id: "fixed-monochrome-background",
     title: "Fixed black/white background",
     pattern: String.raw`\.background\(\s*Color\.(black|white)(\.opacity\([^)]*\))?\s*\)`,
-    fix: "Use Color.themeBg/themeBgDark for content canvases or a ThemeSurfaceRole for floating chrome",
-  },
-  {
-    id: "uikit-ad-hoc-theme-surface-opacity",
-    title: "UIKit theme surface alpha re-derived at the call site",
-    pattern: String.raw`UIColor\(\s*(Color\.)?themeBg(Dark|Highlight)?\s*\)\.withAlphaComponent\(`,
-    fix: "Use UIColor.themeSurfaceFill(role) or an opaque semantic theme color",
-  },
-  {
-    id: "nonreactive-theme-shape-style",
-    title: "Theme shorthand backed by static Color",
-    pattern: String.raw`extension\s+ShapeStyle\s+where\s+Self\s*==\s*Color`,
-    fix: "Back .theme* SwiftUI shorthand with ThemeShapeStyle so it resolves from EnvironmentValues.theme on every render",
-  },
-  {
-    id: "snapshot-theme-foreground-style",
-    title: "Explicit snapshot theme color in foregroundStyle",
-    pattern: String.raw`\.foregroundStyle\(\s*Color\.theme`,
-    fix: "Use contextual .foregroundStyle(.theme*) shorthand so ThemeShapeStyle resolves from the current SwiftUI environment",
-  },
-  {
-    id: "snapshot-list-row-background",
-    title: "Snapshot Color.theme* in listRowBackground",
-    pattern: String.raw`\.listRowBackground\(\s*Color\.theme`,
-    fix: "Use .themedListRowBackground() so mounted list rows repaint when iOS day/night switches the active theme",
-  },
-  {
-    id: "snapshot-canvas-background",
-    title: "Snapshot Color.themeBg* canvas background",
-    pattern:
-      String.raw`\.background\(\s*Color\.themeBg(Dark|Highlight)?(\s*\.ignoresSafeArea\([^)]*\))?\s*(\)|,)`,
-    fix: "Use .background(.themeBg/.themeBgDark), .themedScrollSurface(), or .themedListSurface() so persistent canvases follow EnvironmentValues.theme",
-  },
-  {
-    id: "snapshot-canvas-opacity-background",
-    title: "Snapshot Color.themeBg* opacity background",
-    pattern: String.raw`\.background\(\s*Color\.themeBg(Dark|Highlight)?\s*\.opacity\(`,
-    fix: "Use .background(.themeBgHighlight.opacity(...), in:) so mounted capsules follow EnvironmentValues.theme",
-  },
-  {
-    id: "ask-card-snapshot-theme-style",
-    title: "AskCard captures a snapshot theme color",
-    pattern: String.raw`Color\.theme`,
-    fix: "Use contextual .theme* ShapeStyle values, or EnvironmentValues.theme when an API requires a concrete Color, so a mounted AskCard repaints after a theme switch",
-    scanPaths: [
-      "Oppi/Features/Chat/Composer/AskCard.swift",
-      "Oppi/Features/Chat/Composer/AskCardExpanded.swift",
-      "Oppi/Features/Chat/Composer/AskCardShared.swift",
-    ],
+    fix: "Use UIColor.themeBg/themeBgDark for content canvases or a ThemeSurfaceRole for floating chrome",
   },
 ];
 
 function ripgrep(check: GuardCheck): string[] {
-  const args = ["-n", "--type", "swift", check.pattern, ...(check.scanPaths ?? scanPaths)];
-  for (const glob of [...previewAllowlistGlobs, ...(check.excludeGlobs ?? [])]) {
+  const args = ["-n", "--type", "swift", check.pattern, ...scanPaths];
+  for (const glob of previewAllowlistGlobs) {
     args.push("-g", `!${glob}`);
   }
 

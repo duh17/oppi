@@ -13,19 +13,22 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - Navigation and presentation constructs (NavigationStack, .sheet(, ...),
  *    UIHostingController( calls, and UIHostingController<...> as a superclass
  *    or type are disallowed in every file, debug previews and harnesses
- *    included: SwiftUI never owns structure. The only exceptions are the
- *    commented entries in `allowed` below, which are the two framework leaves
- *    that have to be SwiftUI (Swift Charts, RealityKit). Nothing else in the
- *    app hosts SwiftUI.
+ *    included: SwiftUI never owns structure. The two framework leaves that have
+ *    to be SwiftUI (Swift Charts in `UsageCharts`, RealityKit's RealityView in
+ *    `USDZRealityCanvas`) host from the file that draws them and are the only
+ *    entries in `allowed` below; nothing else in the app hosts SwiftUI.
  *  - `import SwiftUI` is an allow-list (`swiftUIImporters` below), and it counts
  *    `import Charts`, `import TipKit` and `import struct SwiftUI.X` too, because
- *    both frameworks re-export SwiftUI. The iOS app target is UIKit everywhere
- *    except the two framework leaves, the chart and colour values that sit next
- *    to a SwiftUI-only framework, one TipKit file, and the `Shared/` files the
- *    target compiles; the debug harness is UIKit too. The theme itself is
- *    UIKit-side on iOS (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face
- *    of the same tokens ships in `OppiMac/Theme/`), so no theme file imports
- *    SwiftUI. Any other file fails, and a new entry needs Chen's approval.
+ *    both frameworks re-export SwiftUI. Exactly five files of the app target
+ *    may import it: the two framework leaves (`UsageCharts`,
+ *    `USDZRealityCanvas`), the TipKit file (`FeatureEducationTips`), the shared
+ *    `ModelColorHelpers` chart, and the Live Activity surface
+ *    (`LiveActivityPresentation`). The iOS app target is UIKit everywhere else,
+ *    and the debug harness is UIKit too. The theme itself is UIKit-side on iOS
+ *    (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face of the same
+ *    tokens ships in `OppiMac/Theme/`), so no theme file imports SwiftUI, model
+ *    colors included: `modelColor` and `providerIconTint` return `ThemeColor`.
+ *    Any other file fails, and a new entry needs Chen's approval.
  *    `@_exported import` of any of them fails even in an allow-listed file.
  *
  *  - A hand-built `UICollectionLayoutListConfiguration(appearance: .insetGrouped)`
@@ -258,6 +261,7 @@ const swiftUIImporters: { file: string; reason: string }[] = [
   },
 ];
 const swiftUIImporterFiles = swiftUIImporters.map((entry) => entry.file);
+const sharedImporterCount = swiftUIImporterFiles.filter((file) => file.includes("/Shared/")).length;
 
 /**
  * SwiftUI in `Shared/` that the iOS target excludes (the same path is in
@@ -559,8 +563,10 @@ UIKit owns iOS app structure, modal presentation, and new views, previews and
 harnesses included. Present and push through the router (Router.present,
 Router.push, and a RouterModalPresenter slot; previews that are their own window
 root host through PreviewHost.screenStack). SwiftUI survives only in the files
-\`swiftUIImporters\` names: the two framework leaves (Swift Charts, RealityKit),
-the chart and colour values, the TipKit file, and ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files. See ${guide}.
+\`swiftUIImporters\` names: the two framework leaves (\`UsageCharts\`,
+\`USDZRealityCanvas\`), the TipKit file (\`FeatureEducationTips\`), and the
+${sharedImporterCount} \`Shared/\` files the app target compiles (the
+\`ModelColorHelpers\` chart and \`LiveActivityPresentation\`). See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
 UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in

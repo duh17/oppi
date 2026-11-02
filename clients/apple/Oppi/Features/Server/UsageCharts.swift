@@ -108,7 +108,7 @@ struct UsageModelDonutLeaf: View {
                 innerRadius: .ratio(0.6),
                 angularInset: 1.5
             )
-            .foregroundStyle(modelColor(item.representativeModel))
+            .foregroundStyle(viewColor(modelColor(item.representativeModel)))
         }
         .chartLegend(.hidden)
         .frame(width: 140, height: 140)
@@ -131,7 +131,7 @@ struct UsageHourlyChartLeaf: View {
                 x: .value("Hour", entry.hour),
                 y: .value("Cost", entry.cost)
             )
-            .foregroundStyle(modelColor(entry.model))
+            .foregroundStyle(viewColor(modelColor(entry.model)))
         }
         .chartLegend(.hidden)
         .chartXAxis {
