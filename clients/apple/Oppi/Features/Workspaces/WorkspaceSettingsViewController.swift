@@ -12,6 +12,11 @@ import UIKit
 /// starts from the app root (the active server), so it gets this screen's
 /// server scope explicitly.
 ///
+/// A `ListScreenController`: the base owns the list, its theme, each row's
+/// redraw key, and the page's load, which here is the workspace's server switch
+/// (a load on every appearance). The lock is part of that load's subject, so a
+/// relock cancels a switch in flight.
+///
 /// The screen is its own lock gate and server switch: while the workspace is
 /// locked it shows the lock cover and nothing of the workspace; unlocked, it
 /// makes the workspace's server the active one ("Connecting…") and then shows
@@ -19,12 +24,29 @@ import UIKit
 /// Rows are real buttons, so a tap, a VoiceOver activation, and
 /// `app.buttons[id]` all run the row's own action.
 @MainActor
-final class WorkspaceSettingsViewController: UIViewController, UICollectionViewDelegate {
+final class WorkspaceSettingsViewController: ListScreenController<
+    WorkspaceSettingsViewController.Section,
+    WorkspaceSettingsViewController.Item
+> {
+    enum Section: Hashable, Sendable {
+        case summary, pages, trust, git, lock, error, delete
+    }
+
+    enum Item: Hashable, Sendable {
+        case summary
+        case instructions, skills, extensions, mcpServers, dictionary, networkAccess
+        case projectTrust
+        case gitStatus
+        case lock
+        case error
+        case delete
+    }
+
     let root: AppRootEnvironment
     private let serverId: String
     private let workspace: Workspace
-    private let model: WorkspaceSettingsModel
-    private let locks: ScopedLockService
+    let model: WorkspaceSettingsModel
+    let locks: ScopedLockService
 
     /// Closes this screen after Delete Workspace or a session prepared by the
     /// Oppi bar when it was pushed onto another screen. As a shell route it leaves through the
@@ -39,63 +61,38 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         didSet { setNeedsUpdateProperties() }
     }
 
-    /// The workspace's server once it is ready.
+    /// The workspace's server once it is ready: the list has nothing to show
+    /// before it.
     private var connection: ServerConnection? {
-        didSet { setNeedsUpdateProperties() }
+        didSet { if connection !== oldValue { setNeedsUpdateProperties() } }
     }
-    private var connectTask: Task<Void, Never>?
-    private var loadTask: Task<Void, Never>?
-    private var isOnScreen = false
     /// Whether this screen makes its server the active one (not the fixture).
     private let switchesServer: Bool
-    /// Set on each appearance and by a lock, as the hosted screen's
-    /// `.task(id:)` re-ran; the unlocked screen spends it on one server switch.
-    private var needsConnect: Bool
-    private var shown: Shown?
     private var lockCover: ScopedLockCoverViewController?
     /// The compact Oppi bar, made once the workspace's server is ready.
     private var composer: GuidedControlComposerController?
     private weak var deleteAlert: UIAlertController?
     private var sidebarToggle: UIBarButtonItem?
     private var doneItem: UIBarButtonItem?
-
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
     /// Bumped when a toggle's write ends, so its switch is redrawn from the
     /// stored value even where that value did not change (a cancelled unlock,
     /// a failed write).
     private var toggleRevision = 0
 
-    private enum Shown: Equatable { case locked, connecting, list }
-
-    private enum Section: Hashable {
-        case summary, pages, trust, git, lock, error, delete
-    }
-
-    private enum Item: Hashable {
-        case summary
-        case instructions, skills, extensions, mcpServers, dictionary, networkAccess
-        case projectTrust
-        case gitStatus
-        case lock
-        case error
-        case delete
-    }
-
     /// `serverId`: the workspace's server, made the active one before the
     /// list shows.
     init(serverId: String, workspace: Workspace, root: AppRootEnvironment, locks: ScopedLockService = .shared) {
         self.serverId = serverId
-        self.locks = locks
-        switchesServer = true
         self.workspace = workspace
         self.root = root
+        self.locks = locks
+        switchesServer = true
         model = WorkspaceSettingsModel(seed: workspace)
-        needsConnect = true
-        collectionView = Self.makeCollectionView()
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: String(localized: "Workspace Settings"),
+            listIdentifier: "workspace.edit.list",
+            footers: true
+        )
         setUp()
     }
 
@@ -109,16 +106,18 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         root: AppRootEnvironment,
         locks: ScopedLockService = .shared
     ) {
+        self.workspace = workspace
+        self.root = root
         self.locks = locks
         switchesServer = false
         serverId = connection.currentServerId ?? ""
-        self.workspace = workspace
-        self.root = root
         self.model = model
         self.connection = connection
-        needsConnect = false
-        collectionView = Self.makeCollectionView()
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: String(localized: "Workspace Settings"),
+            listIdentifier: "workspace.edit.list",
+            footers: true
+        )
         setUp()
     }
     #endif
@@ -126,20 +125,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        connectTask?.cancel()
-        loadTask?.cancel()
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    private static func makeCollectionView() -> UICollectionView {
-        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: true)
-        return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-    }
-
     private func setUp() {
         traitOverrides.appRootEnvironment = root
-        title = String(localized: "Workspace Settings")
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -155,21 +142,23 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             .map { .workspace(serverId: $0, workspaceId: workspace.id) }
     }
 
+    private var isLocked: Bool { locks.isLocked(lockTarget) }
+
+    /// Whether the list has anything to show: the workspace's server is ready
+    /// and its lock is off.
+    private var showsWorkspace: Bool { !isLocked && connection != nil }
+
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "workspace.edit.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         if #available(iOS 27.1, *) {
             registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
                 self.setNeedsUpdateProperties()
             }
         }
-        setNeedsUpdateProperties()
+        // A cover added before the list was pinned would sit behind it.
+        showLockCover()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -179,54 +168,59 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         setNeedsUpdateProperties()
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        isOnScreen = true
-        needsConnect = switchesServer
-        setNeedsUpdateProperties()
-        updatePropertiesIfNeeded()
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer?.insetContent(of: collectionView)
     }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
-        connectTask?.cancel()
-        connectTask = nil
-    }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        // Read the theme so a change re-runs this pass.
-        _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        if locks.isLocked(lockTarget) {
-            needsConnect = switchesServer
-            show(.locked)
-        } else {
-            if needsConnect, isOnScreen {
-                needsConnect = false
-                connect()
-            }
-            if connection == nil {
-                show(.connecting)
-            } else {
-                show(.list)
-                applySnapshot()
-            }
-        }
+        // Read the theme and the lock, so a change to either re-runs this pass.
+        _ = (root.themeStore.mode, root.themeStore.manualThemeID, locks.isAuthenticating)
+        collectionView.isHidden = !showsWorkspace
+        showLockCover()
         updateBar()
         updateComposer()
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        composer?.insetContent(of: collectionView)
+    // MARK: - Load
+
+    /// A load each time it shows: the workspace's server is made the active one
+    /// again, as the hosted screen's `.task(id:)` did.
+    override var loadPolicy: LoadPolicy { switchesServer ? .eachAppearance : .none }
+
+    /// The load is a server switch, not a read: a pull would switch again and show
+    /// a spinner that does nothing.
+    override var offersPullToRefresh: Bool { false }
+
+    /// The server it switches to, and whether the workspace is locked: a relock
+    /// cancels a switch in flight.
+    override func loadSubject() -> AnyHashable? {
+        AnyHashable([AnyHashable(serverId), AnyHashable(isLocked)])
+    }
+
+    /// Makes the workspace's server the active one, then binds the model to it
+    /// and loads the Pi resources (a repeat load is a no-op). A shown list stays
+    /// until the switch answers: `connection` is replaced only by its result.
+    override func load() async throws {
+        guard switchesServer, !isLocked else { return }
+        // A switch the lock ended while it ran does not take the server either.
+        guard await root.coordinator.switchToServerReady(
+            serverId,
+            shouldActivate: { [weak self] in !(self?.isLocked ?? true) }
+        ) else { return }
+        guard !Task.isCancelled, !isLocked else { return }
+        guard let ready = root.coordinator.connection(for: serverId) else { return }
+        connection = ready
+        model.attach(connection: ready, workspace: workspace)
+        await model.loadPiResourcesIfNeeded()
+    }
+
+    /// The list's own state while it has nothing to show: the server switch on
+    /// its way. A locked workspace shows its cover instead.
+    override func wholeScreenState() -> LoadState? {
+        guard !isLocked else { return nil }
+        return connection == nil ? .connecting : nil
     }
 
     /// The Oppi bar describes a change to this workspace on its own server.
@@ -235,10 +229,9 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private func updateComposer() {
         guard let connection else { return }
         let composer = composer ?? makeComposer(connection)
-        let locked = locks.isLocked(lockTarget)
-        composer.model.isDisabled = locked
+        composer.model.isDisabled = isLocked
         composer.model.updateTarget(id: workspace.id, name: current.name, path: nil)
-        composer.setHidden(locked || shown != .list || connection.apiClient == nil)
+        composer.setHidden(!showsWorkspace || connection.apiClient == nil)
     }
 
     private func makeComposer(_ connection: ServerConnection) -> GuidedControlComposerController {
@@ -260,46 +253,25 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         return composer
     }
 
-    /// Makes the workspace's server the active one, then binds the model to
-    /// it and loads the Pi resources (a repeat load is a no-op). A shown list
-    /// stays while the switch runs again.
-    private func connect() {
-        connectTask?.cancel()
-        let coordinator = root.coordinator
-        let serverId = serverId
-        connectTask = Task { [weak self] in
-            guard await coordinator.switchToServerReady(serverId), !Task.isCancelled,
-                  let ready = coordinator.connection(for: serverId), let self else { return }
-            connection = ready
-            attachModel(to: ready)
-        }
-    }
-
-    private func attachModel(to connection: ServerConnection) {
-        model.attach(connection: connection, workspace: workspace)
-        loadTask?.cancel()
-        let model = model
-        loadTask = Task { await model.loadPiResourcesIfNeeded() }
-    }
-
     // MARK: - Content
 
-    private func show(_ next: Shown) {
-        guard shown != next else { return }
-        shown = next
-        collectionView.isHidden = next != .list
-        if next != .locked, let lockCover {
+    /// The lock cover while the workspace is locked, and nothing of the rest:
+    /// it sits over the list, which the page hides with it.
+    private func showLockCover() {
+        guard isLocked else {
+            guard let lockCover else { return }
             lockCover.willMove(toParent: nil)
             lockCover.view.removeFromSuperview()
             lockCover.removeFromParent()
             self.lockCover = nil
+            return
         }
-        switch next {
-        case .locked:
-            connectTask?.cancel()
-            connectTask = nil
-            dismissPresentedModals()
-            let cover = ScopedLockCoverViewController(target: lockTarget, title: workspace.name)
+        dismissPresentedModals()
+        let cover: ScopedLockCoverViewController
+        if let lockCover {
+            cover = lockCover
+        } else {
+            cover = ScopedLockCoverViewController(target: lockTarget, title: workspace.name)
             addChild(cover)
             cover.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(cover.view)
@@ -311,16 +283,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             ])
             cover.didMove(toParent: self)
             lockCover = cover
-            contentUnavailableConfiguration = nil
-        case .connecting:
-            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-                .connecting,
-                palette: ThemeRuntimeState.currentPalette(),
-                background: root.themeStore.backgroundColor
-            )
-        case .list:
-            contentUnavailableConfiguration = nil
         }
+        view.bringSubviewToFront(cover.view)
     }
 
     /// Nothing of a locked workspace stays on screen: the Delete confirmation,
@@ -338,7 +302,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             WorkspaceSplitSidebarToggle.sync(toggle, root: root)
             leading.append(toggle)
         }
-        if shown == .list, let onDone {
+        if showsWorkspace, let onDone {
             let item = doneItem ?? UIBarButtonItem(systemItem: .done)
             item.title = String(localized: "Done")
             item.primaryAction = UIAction(title: String(localized: "Done")) { _ in onDone() }
@@ -349,49 +313,37 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         ListScreen.setBarItems(trailing: [], leading: leading, on: navigationItem)
     }
 
-    // MARK: - Snapshot
+    // MARK: - Rows
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.summary])
-        snapshot.appendItems([.summary], toSection: .summary)
+    override func sections() -> [ListSection<Section, Item>] {
+        // Read the theme so a change re-runs this pass.
+        _ = (root.themeStore.mode, root.themeStore.manualThemeID)
+        // A locked workspace and one whose server is not ready show nothing: the
+        // cover, or the whole screen's own state.
+        guard showsWorkspace else { return [] }
+        var sections = [
+            ListSection<Section, Item>(.summary, items: [.summary]),
+        ]
         var pages: [Item] = [.instructions, .skills, .extensions, .mcpServers, .dictionary]
         if model.isSandbox { pages.append(.networkAccess) }
-        snapshot.appendSections([.pages])
-        snapshot.appendItems(pages, toSection: .pages)
+        sections.append(ListSection(.pages, items: pages))
         if model.projectTrust != nil {
-            snapshot.appendSections([.trust])
-            snapshot.appendItems([.projectTrust], toSection: .trust)
+            sections.append(ListSection(.trust, footer: footerText(.trust), items: [.projectTrust]))
         }
-        snapshot.appendSections([.git])
-        snapshot.appendItems([.gitStatus], toSection: .git)
+        sections.append(ListSection(.git, footer: footerText(.git), items: [.gitStatus]))
         if lockScope != nil {
-            snapshot.appendSections([.lock])
-            snapshot.appendItems([.lock], toSection: .lock)
+            sections.append(ListSection(.lock, footer: footerText(.lock), items: [.lock]))
         }
         if model.error != nil {
-            snapshot.appendSections([.error])
-            snapshot.appendItems([.error], toSection: .error)
+            sections.append(ListSection(.error, items: [.error]))
         }
-        snapshot.appendSections([.delete])
-        snapshot.appendItems([.delete], toSection: .delete)
-
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        // The theme is in the key: a light/dark or theme change repaints every
-        // row, which otherwise keeps the colors it was configured with.
-        let themeID = ThemeRuntimeState.currentThemeID()
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
-        refreshFooters()
+        sections.append(ListSection(.delete, items: [.delete]))
+        return sections
     }
 
     /// Every value a row is drawn from, read here so any change re-runs this
     /// pass and reconfigures only the rows it touches.
-    private func inputs(of item: Item) -> AnyHashable {
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .summary:
             return AnyHashable([
@@ -439,60 +391,61 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     private var lockWord: String { locks.badge(lockTarget).accessibilityWord }
 
-    // MARK: - Data source
+    // MARK: - Cells
 
-    private func installDataSource() {
-        let summary = UICollectionView.CellRegistration<WorkspaceRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            let palette = ThemeRuntimeState.currentPalette()
-            cell.configure(
-                workspace: current,
-                folder: folderSummary,
-                server: serverSummary,
-                lock: locks.badge(lockTarget),
-                colors: ComposerThemeColors(palette: palette),
-                assetCache: connection?.iconAssetCache,
-                identifier: "workspace.edit.details"
-            ) { [weak self] in self?.perform(.summary) }
-        }
-        let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
-            guard let self else { return }
-            let row = indexRow(item)
-            cell.configure(
-                title: row.title,
-                image: row.systemImage.isEmpty ? nil : .symbol(row.systemImage),
-                value: row.value,
-                identifier: row.identifier
-            ) { [weak self] in self?.perform(item) }
-        }
-        let toggle = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureToggle(cell, item: item)
-        }
-        let info = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureInfo(cell, item: item)
-        }
-        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
-            self?.configureAction(cell, item: item)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            self?.configureFooter(view, at: indexPath)
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
-            switch item {
-            case .summary:
-                collectionView.dequeueConfiguredReusableCell(using: summary, for: indexPath, item: item)
-            case .instructions, .skills, .extensions, .mcpServers, .dictionary, .networkAccess:
-                collectionView.dequeueConfiguredReusableCell(using: index, for: indexPath, item: item)
-            case .gitStatus, .lock:
-                collectionView.dequeueConfiguredReusableCell(using: toggle, for: indexPath, item: item)
-            case .projectTrust, .error:
-                collectionView.dequeueConfiguredReusableCell(using: info, for: indexPath, item: item)
-            case .delete:
-                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            }
-        })
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    private lazy var summaryRow = UICollectionView.CellRegistration<WorkspaceRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        let palette = ThemeRuntimeState.currentPalette()
+        cell.configure(
+            workspace: current,
+            folder: folderSummary,
+            server: serverSummary,
+            lock: locks.badge(lockTarget),
+            colors: ComposerThemeColors(palette: palette),
+            assetCache: connection?.iconAssetCache,
+            identifier: "workspace.edit.details"
+        ) { [weak self] in self?.perform(.summary) }
+    }
+
+    private lazy var indexCell = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        let row = indexRow(item)
+        cell.configure(
+            title: row.title,
+            image: row.systemImage.isEmpty ? nil : .symbol(row.systemImage),
+            value: row.value,
+            identifier: row.identifier
+        ) { [weak self] in self?.perform(item) }
+    }
+
+    private lazy var switchRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+        self?.configureSwitch(cell, item: item)
+    }
+
+    private lazy var infoRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+        self?.configureInfo(cell, item: item)
+    }
+
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
+        self?.configureAction(cell, item: item)
+    }
+
+    override func prepareRegistrations() {
+        _ = (summaryRow, indexCell, switchRow, infoRow, actionRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .summary:
+            collectionView.dequeueConfiguredReusableCell(using: summaryRow, for: indexPath, item: item)
+        case .instructions, .skills, .extensions, .mcpServers, .dictionary, .networkAccess:
+            collectionView.dequeueConfiguredReusableCell(using: indexCell, for: indexPath, item: item)
+        case .gitStatus, .lock:
+            collectionView.dequeueConfiguredReusableCell(using: switchRow, for: indexPath, item: item)
+        case .projectTrust, .error:
+            collectionView.dequeueConfiguredReusableCell(using: infoRow, for: indexPath, item: item)
+        case .delete:
+            collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         }
     }
 
@@ -513,7 +466,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
-    private func configureToggle(_ cell: UICollectionViewListCell, item: Item) {
+    private func configureSwitch(_ cell: UICollectionViewListCell, item: Item) {
         let palette = ThemeRuntimeState.currentPalette()
         var content = UIListContentConfiguration.cell()
         content.textProperties.color = palette.ui.fg
@@ -626,28 +579,24 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
-    private func configureFooter(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.footer()
-        content.text = dataSource?.sectionIdentifier(for: indexPath.section).flatMap(footerText)
-        content.textProperties.numberOfLines = 0
-        view.contentConfiguration = content
+    // MARK: - Selection
+
+    /// A row's own action. Selecting a row runs the same one as its button, so
+    /// the two can never diverge.
+    override func isSelectable(_ item: Item) -> Bool {
+        switch item {
+        case .gitStatus, .lock, .projectTrust, .error: false
+        case .delete: canDelete
+        default: true
+        }
     }
 
-    /// Footers are not rows, so a reconfigure does not reach them: redraw the
-    /// ones on screen from the model's current values.
-    private func refreshFooters() {
-        let kind = UICollectionView.elementKindSectionFooter
-        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-            if let footer = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell {
-                configureFooter(footer, at: indexPath)
-            }
-        }
+    override func select(_ item: Item) {
+        perform(item)
     }
 
     // MARK: - Actions
 
-    /// A row's own action. Selecting a row runs the same one as its button, so
-    /// the two can never diverge.
     private func perform(_ item: Item) {
         switch item {
         case .summary, .instructions, .skills, .extensions, .mcpServers, .dictionary, .networkAccess:
@@ -704,7 +653,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     /// the Oppi bar prepared. A lock that engaged while Send was in flight
     /// refuses it.
     func openEditSession(_ target: WorkspaceSessionNavTarget) {
-        guard !locks.isLocked(lockTarget) else { return }
+        guard !isLocked else { return }
         onLeave?()
         let navigation = root.navigation
         Task { @MainActor in
@@ -716,12 +665,12 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     /// Delete runs only on an unlocked workspace with no write queued or delete
     /// in flight (a queued write could otherwise land after the delete).
     private var canDelete: Bool {
-        !locks.isLocked(lockTarget) && !model.isDeleting && model.isWriteQueueIdle
+        !isLocked && !model.isDeleting && model.isWriteQueueIdle
     }
 
     private func confirmDelete() {
         guard canDelete, deleteAlert == nil else { return }
-        let row = dataSource?.indexPath(for: .delete).flatMap(collectionView.cellForItem(at:))
+        let row = indexPath(for: .delete).flatMap(collectionView.cellForItem(at:))
         deleteAlert = Confirmation.deleteWorkspace(current).present(from: self, anchor: row) { [weak self] in
             guard let self else { return }
             Task { await self.deleteWorkspace() }
@@ -745,21 +694,5 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         )
         onLeave?()
         root.navigation.leaveDeletedWorkspace(serverId: deleted.serverId, workspaceId: deleted.workspaceId)
-    }
-
-    // MARK: - UICollectionViewDelegate
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        switch dataSource?.itemIdentifier(for: indexPath) {
-        case .gitStatus, .lock, .projectTrust, .error, nil: false
-        case .delete: canDelete
-        default: true
-        }
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
-        perform(item)
     }
 }

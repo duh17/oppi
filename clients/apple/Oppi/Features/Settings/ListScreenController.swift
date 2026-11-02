@@ -322,6 +322,11 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// What the page loads, and when. The default loads nothing.
     var loadPolicy: LoadPolicy { .none }
 
+    /// Whether the list offers a pull to refresh, which `loadPolicy` installs for
+    /// every page that loads. A page whose load is not a read (a server switch)
+    /// says no: the spinner would do nothing.
+    var offersPullToRefresh: Bool { true }
+
     /// What the page's load is for: the server it follows, the route it serves.
     /// Compared on every pass; a change cancels the running load, runs
     /// `subjectDidChange()`, and starts one for the new subject.
@@ -611,8 +616,8 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             collectionView.keyboardDismissMode = .interactive
             collectionView.alwaysBounceVertical = true
         }
-        collectionView.refreshControl = loadPolicy == .none ? nil : pullToRefreshControl
-        if loadPolicy != .none {
+        collectionView.refreshControl = loadPolicy == .none || !offersPullToRefresh ? nil : pullToRefreshControl
+        if loadPolicy != .none, offersPullToRefresh {
             pullToRefreshControl.addAction(UIAction { [weak self] _ in
                 self?.startLoad(.ask)
             }, for: .valueChanged)

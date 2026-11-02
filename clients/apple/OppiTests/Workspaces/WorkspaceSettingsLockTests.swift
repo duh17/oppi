@@ -212,4 +212,188 @@ struct WorkspaceSettingsLockTests {
 
         #expect(screen.controller.presentedViewController == nil, "a relock must close the delete confirmation")
     }
+
+    // MARK: The lock is the page's load
+
+    private static let activeServerId = "sha256:workspace-settings-active"
+
+    /// A server switch held inside its first `await`, so a test can end a load
+    /// the coordinator is still working on.
+    @MainActor
+    private final class SwitchGate {
+        private var started: CheckedContinuation<Void, Never>?
+        private var release: CheckedContinuation<Void, Never>?
+        private var hasStarted = false
+
+        func waitUntilStarted() async {
+            guard !hasStarted else { return }
+            await withCheckedContinuation { started = $0 }
+        }
+
+        func suspend() async {
+            hasStarted = true
+            started?.resume()
+            started = nil
+            await withCheckedContinuation { release = $0 }
+        }
+
+        func open() {
+            release?.resume()
+            release = nil
+        }
+    }
+
+    private struct Live {
+        let screen: WorkspaceSettingsViewController
+        let window: UIWindow
+        /// The app's own refreshes once a server is connected: answered as an
+        /// empty document, so a page that loads writes nothing the test must expect.
+        let routes: TestURLProtocol.RouteScope
+    }
+
+    /// The app's own refreshes once a server is connected are not what these
+    /// tests are about; this scope answers them as an empty document, and
+    /// nothing is left for it to report. Install it before the root that asks.
+    private func appRoutes() -> TestURLProtocol.RouteScope {
+        TestURLProtocol.routeScope { request in
+            try mockJSONResponse(json: "{}", for: request)
+        }
+    }
+
+    /// The screen's own init: the workspace's server is switched to when the
+    /// page loads, which is what the lock now drives. The window is tall enough
+    /// to realize every row.
+    private func mountLive(
+        root: AppRootEnvironment,
+        routes: TestURLProtocol.RouteScope,
+        locks: ScopedLockService,
+        workspace: Workspace,
+        locked: Bool
+    ) throws -> Live {
+        if locked { locks.lock(Self.scope) }
+        let controller = WorkspaceSettingsViewController(
+            serverId: Self.serverId, workspace: workspace, root: root, locks: locks
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
+        window.traitOverrides.appRootEnvironment = root
+        window.rootViewController = RouterNavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        return Live(screen: controller, window: window, routes: routes)
+    }
+
+    /// Waits for what the switch set going, then takes the window and the scope
+    /// down: a request that outlived its handler would be nobody's answer.
+    private func close(_ live: Live) async {
+        #expect(await live.routes.settle(), "a request outlived the test that answered it")
+        hideWindow(live)
+        live.routes.end()
+    }
+
+    private func hideWindow(_ live: Live) {
+        live.window.isHidden = true
+        live.window.rootViewController = nil
+    }
+
+    /// A locked workspace has nothing to list and no server of its own yet;
+    /// unlocking it is what makes the switch and puts its rows on screen.
+    @Test func unlockingSwitchesToTheWorkspacesServerAndShowsTheList() async throws {
+        let locks = try makeLocks()
+        let routes = appRoutes()
+        let root = try makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
+        let workspace = makeTestWorkspace(id: "w1", name: "oppi-dev")
+        let locked = try mountLive(root: root, routes: routes, locks: locks, workspace: workspace, locked: true)
+        defer { hideWindow(locked) }
+        locked.window.layoutIfNeeded()
+
+        #expect(locked.screen.shownItems.isEmpty, "a locked workspace lists nothing")
+        #expect(
+            locked.screen.children.contains { $0 is ScopedLockCoverViewController },
+            "a locked workspace shows its cover"
+        )
+        // A switch that should not have started would land after the first pass,
+        // not before it, so let everything the mount set going come back.
+        #expect(await routes.settle(quiet: .milliseconds(200)), "a request outlived the mount")
+        #expect(root.coordinator.activeServerId == Self.activeServerId, "nothing switched while locked")
+
+        let unlocked = await locks.removeLock(Self.scope)
+        #expect(unlocked)
+        try await waitUntil { !locked.screen.shownItems.isEmpty }
+
+        #expect(root.coordinator.activeServerId == Self.serverId, "unlocking must make the workspace's server active")
+        #expect(locked.screen.shownItems.contains(.delete), "the list is there once the switch answers")
+        #expect(!locked.screen.children.contains { $0 is ScopedLockCoverViewController }, "the cover goes with the lock")
+        await close(locked)
+    }
+
+    /// A relock while the switch runs ends the page's load: it is not a failure,
+    /// and the workspace stays behind its cover instead of a half-made server.
+    @Test func relockingCancelsASwitchInFlight() async throws {
+        let locks = try makeLocks()
+        let routes = appRoutes()
+        let pending = try #require(PairedServer(
+            from: makeTestCredentials(host: "pending.test", fingerprint: Self.serverId), sortOrder: 1
+        ))
+        let active = try #require(PairedServer(
+            from: makeTestCredentials(host: "active.test", fingerprint: Self.activeServerId), sortOrder: 0
+        ))
+        let serverStore = ServerStore()
+        serverStore.replaceServersForPreview([active, pending])
+        let coordinator = ConnectionCoordinator(serverStore: serverStore)
+        coordinator.ensureConnection(for: active).setAPIClientForTesting(
+            makeTestURLProtocolClient(host: "active.test")
+        )
+        #expect(coordinator.restoreActiveServer(active.id))
+        let root = makeTestAppRoot(coordinator: coordinator)
+        let gate = SwitchGate()
+        coordinator._initialLANEndpointForTesting = { _ in
+            await gate.suspend()
+            return nil
+        }
+        let workspace = makeTestWorkspace(id: "w1", name: "oppi-dev")
+        let live = try mountLive(root: root, routes: routes, locks: locks, workspace: workspace, locked: false)
+        defer { hideWindow(live) }
+
+        // The page's server has no connection yet, so its load is a switch the
+        // gate holds open.
+        await gate.waitUntilStarted()
+        #expect(live.screen.isLoading, "the switch is the page's load")
+        #expect(live.screen.shownItems.isEmpty, "a switch in flight has no rows yet")
+
+        locks.lock(Self.scope)
+        try await waitUntil { !live.screen.isLoading }
+
+        #expect(live.screen.loadFailure == nil, "a load the lock ended is not a failure")
+        #expect(live.screen.shownItems.isEmpty, "a locked workspace lists nothing")
+        #expect(live.screen.collectionView.isHidden, "the cover stands in place of the list")
+
+        // The switch the lock ended is the coordinator's to finish: it must not
+        // make the page's server the active one behind the cover.
+        gate.open()
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(
+            root.coordinator.activeServerId == Self.activeServerId,
+            "a switch the lock ended must not make its server active"
+        )
+        await close(live)
+    }
+
+    /// The page's load is the server switch, not a read: a pull would switch again
+    /// and show a spinner that does nothing, so the page offers none.
+    @Test func theWorkspaceSettingsListOffersNoPullToRefresh() async throws {
+        let locks = try makeLocks()
+        let routes = appRoutes()
+        let root = try makeTestTwoServerRoot(firstId: Self.activeServerId, otherId: Self.serverId)
+        let workspace = makeTestWorkspace(id: "w1", name: "oppi-dev")
+        let live = try mountLive(root: root, routes: routes, locks: locks, workspace: workspace, locked: false)
+        defer { hideWindow(live) }
+
+        #expect(
+            live.screen.collectionView.refreshControl == nil,
+            "a page whose load is a server switch offers no pull to refresh"
+        )
+        await close(live)
+    }
 }

@@ -121,8 +121,6 @@
       "APIClient settings write": 2
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsViewController.swift": {
-      "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1,
       ".settingsToggle(": 2
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {

@@ -6,14 +6,26 @@ import UIKit
 ///
 /// Presented by the router as a sheet in its own navigation controller
 /// (`.sheet.inNavigation()`). The form's state is `WorkspaceCreateModel`.
+///
+/// A `ListScreenController`: the base owns the list, its headings and footers,
+/// its theme, and the redraw that leaves a row alone until what it draws
+/// changes. The form has no load of its own: every row is the draft in
+/// `model`, and the model's own scans fill the project and folder rows. The name
+/// and description rows are keyed by what they draw, never by their text, so
+/// typing never reconfigures the field it is typed in; the folder row is keyed by
+/// the path it shows, which the page itself writes (a suggestion, a created
+/// folder).
 @MainActor
-final class WorkspaceCreateViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable {
+final class WorkspaceCreateViewController: ListScreenController<
+    WorkspaceCreateViewController.Section,
+    WorkspaceCreateViewController.Item
+> {
+    enum Section: Hashable, Sendable {
         case intro, oppi, sandbox, entry, scan, projects
         case name, folder, appearance, skills, options, advanced, error, submit
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case intro, createWithOppi, sandbox, manual, blank
         case scanning, scanError, noProjects, project(String)
         case name, folderFixed, folderField, folderCheck, suggestionsLabel, suggestion(String)
@@ -24,9 +36,6 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
     let model: WorkspaceCreateModel
     private let root: AppRootEnvironment
     private let onCreate: ((Workspace) -> Void)?
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     private var appliedStep: WorkspaceCreateStep?
     private let iconPicker = RouterModalPresenter()
     private var showsIconPicker = false {
@@ -79,14 +88,14 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             prefillName: prefillName,
             prefillPath: prefillPath
         )
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
-        collectionView = UICollectionView(
-            frame: .zero,
-            collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config)
+        super.init(
+            title: model.navigationTitle,
+            listIdentifier: "workspace.create.list",
+            headers: true,
+            footers: true,
+            endsAtKeyboard: true,
+            dismissesKeyboardOnDrag: true
         )
-        super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -105,24 +114,20 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
         // A row that rearranges (the folder check) re-measures.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-        collectionView.accessibilityIdentifier = "workspace.create.list"
-        pinCollectionViewAboveKeyboard()
-        installDataSource()
         navigationItem.leftBarButtonItem = cancelItem
         iconPicker.anchor = self
         // The icon picker's style follows the size classes.
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
         }
-        setNeedsUpdateProperties()
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // The scan of the server's folders is the model's own: the form has
+        // nothing for the kit to load.
         model.start()
     }
 
@@ -131,33 +136,24 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         iconPicker.sync()
     }
 
-    /// The form ends at the keyboard, so a field stays above it.
-    private func pinCollectionViewAboveKeyboard() {
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        view.keyboardLayoutGuide.usesBottomSafeArea = false
-        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
-        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        fillWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            maxWidth,
-            fillWidth,
-        ])
-    }
-
     override func updateProperties() {
         super.updateProperties()
-        let theme = root.themeStore
-        view.overrideUserInterfaceStyle = theme.userInterfaceStyle
-        view.backgroundColor = theme.backgroundColor
-        collectionView.backgroundColor = theme.backgroundColor
         title = model.navigationTitle
         ListScreen.setBarItems(trailing: trailingItems(), leading: [cancelItem], on: navigationItem)
         createItem.isEnabled = model.canCreate
-        applySnapshot()
+        let previous = appliedStep
+        appliedStep = model.step
+        if let previous, previous != model.step {
+            // The other step opens at its top. The pass that swapped the rows does
+            // not lay the screen out, so the reset happens here: waiting for the
+            // next layout would spend it on whatever moves the view first, which is
+            // the keyboard rising.
+            collectionView.setContentOffset(
+                CGPoint(x: 0, y: -collectionView.adjustedContentInset.top),
+                animated: false
+            )
+            view.setNeedsLayout()
+        }
         updateIconPicker()
     }
 
@@ -166,15 +162,13 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         return [model.isCreating ? creatingItem : createItem]
     }
 
-    // MARK: - Snapshot
+    // MARK: - Rows
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    override func sections() -> [ListSection<Section, Item>] {
+        var sections: [ListSection<Section, Item>] = []
         func add(_ section: Section, _ items: [Item]) {
             guard !items.isEmpty else { return }
-            snapshot.appendSections([section])
-            snapshot.appendItems(items, toSection: section)
+            sections.append(ListSection(section, header: header(section), footer: footer(section), items: items))
         }
 
         if model.isGuidedFirstWorkspace { add(.intro, [.intro]) }
@@ -209,25 +203,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             if model.error != nil { add(.error, [.error]) }
             add(.submit, [.submit])
         }
-
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        let stepChanged = appliedStep != model.step
-        let hadItems = dataSource.snapshot().numberOfItems > 0
-        appliedStep = model.step
-        dataSource.apply(snapshot, animatingDifferences: hadItems) { [weak self] in
-            guard let self, stepChanged, hadItems else { return }
-            // The other step opens at its top, not where this one was scrolled.
-            collectionView.setContentOffset(
-                CGPoint(x: 0, y: -collectionView.adjustedContentInset.top),
-                animated: false
-            )
-        }
-        refreshVisibleSupplementaries()
+        return sections
     }
 
     /// A snapshot traps on a repeated item identifier, so a response that
@@ -237,14 +213,18 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         return ids.filter { seen.insert($0).inserted }
     }
 
-    /// Every value a row is drawn from, so a change re-draws only that row.
-    private func inputs(of item: Item) -> AnyHashable {
+    /// Every value a row is drawn from, so a change re-draws only that row. A
+    /// field the person types in is keyed by what it draws and never by its text,
+    /// so a pass that adds, moves, or rewrites another row leaves it alone, with
+    /// its caret and its keyboard.
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .intro: AnyHashable(model.step == .pickProject)
         case .sandbox: AnyHashable(model.sandboxMode)
         case .scanError: AnyHashable(model.directoriesError)
         // The folder mode picks Name's Return target (next field or done).
-        case .name: AnyHashable([AnyHashable(model.name), AnyHashable(model.isHostMountFromProjectPicker)])
+        case .name: AnyHashable(model.isHostMountFromProjectPicker)
+        // The folder field shows what a suggestion or a checked path wrote.
         case .folderFixed, .folderField: AnyHashable(model.hostMount)
         case .folderCheck:
             AnyHashable([
@@ -255,7 +235,8 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .icon: AnyHashable(model.icon)
         case .skill(let id): AnyHashable(model.skills.first { $0.id == id }.map { [$0.name, $0.description] })
         case .gitStatus: AnyHashable(model.gitStatusEnabled)
-        case .description: AnyHashable(model.description)
+        // Typing in the description redraws nothing: the field shows itself.
+        case .description: AnyHashable(0)
         case .error: AnyHashable(model.error)
         case .submit: AnyHashable([AnyHashable(model.canCreate), AnyHashable(model.isCreating)])
         case .createWithOppi, .manual, .blank, .scanning, .noProjects, .project, .suggestionsLabel,
@@ -306,83 +287,36 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         }
     }
 
-    private func configureHeader(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.groupedHeader()
-        content.text = dataSource?.sectionIdentifier(for: indexPath.section).flatMap(header)
-        view.contentConfiguration = content
+    // MARK: - Cells
+
+    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
+        self?.configureField(cell, item: item)
     }
 
-    private func configureFooter(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.groupedFooter()
-        content.text = dataSource?.sectionIdentifier(for: indexPath.section).flatMap(footer)
-        content.textProperties.numberOfLines = 0
-        view.contentConfiguration = content
+    private lazy var checkRow = UICollectionView.CellRegistration<WorkspaceFolderCheckCell, Item> { [weak self] cell, _, _ in
+        self?.configureFolderCheck(cell)
     }
 
-    /// Diffable updates keep a section's header and footer views, so their
-    /// text is rewritten here when the state it describes changes.
-    private func refreshVisibleSupplementaries() {
-        let kinds: [(String, (UICollectionViewListCell, IndexPath) -> Void)] = [
-            (UICollectionView.elementKindSectionHeader, self.configureHeader),
-            (UICollectionView.elementKindSectionFooter, self.configureFooter),
-        ]
-        for (kind, configure) in kinds {
-            for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-                guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath)
-                    as? UICollectionViewListCell else { continue }
-                configure(view, indexPath)
-            }
-        }
+    override func prepareRegistrations() {
+        _ = (fieldRow, checkRow)
     }
 
-    // MARK: - Data source
-
-    private func installDataSource() {
-        let row = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureStatic(cell, item: item)
-        }
-        let button = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configureButton(cell, item: item)
-        }
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
-            self?.configureField(cell, item: item)
-        }
-        let check = UICollectionView.CellRegistration<WorkspaceFolderCheckCell, Item> { [weak self] cell, _, _ in
-            self?.configureFolderCheck(cell)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            self?.configureHeader(view, at: indexPath)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            self?.configureFooter(view, at: indexPath)
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .createWithOppi, .manual, .blank, .project, .suggestion, .icon, .showAdvanced, .submit:
-                collectionView.dequeueConfiguredReusableCell(using: button, for: indexPath, item: item)
-            case .name, .folderField, .description:
-                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .folderCheck:
-                collectionView.dequeueConfiguredReusableCell(using: check, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .createWithOppi, .manual, .blank, .project, .suggestion, .icon, .showAdvanced, .submit:
+            // A row that acts is one button in the kit's theme card.
+            cardCell(for: item, at: indexPath)
+        case .name, .folderField, .description:
+            collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .folderCheck:
+            collectionView.dequeueConfiguredReusableCell(using: checkRow, for: indexPath, item: item)
+        default:
+            super.dequeue(item, at: indexPath)
         }
     }
-
-    // MARK: - Rows
 
     /// Rows that do nothing on tap: text, switches, and the fixed folder.
-    private func configureStatic(_ cell: UICollectionViewListCell, item: Item) {
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
         let palette = palette
         var content = UIListContentConfiguration.cell()
         cell.accessories = []
@@ -476,7 +410,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
     }
 
     /// Rows whose one accessibility element is a button.
-    private func configureButton(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         var content = UIListContentConfiguration.cell()
         var identifier = ""
@@ -590,7 +524,6 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             enabled: enabled,
             action: action
         )
-        ListScreen.background(cell, grouped: true, palette: palette)
         cell.accessories = accessories
         cell.contentConfiguration = content
     }
@@ -686,7 +619,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
 
     /// Return in Name moves on to the folder field, where there is one.
     private func focusFolderField() {
-        guard let path = dataSource?.indexPath(for: .folderField),
+        guard let path = indexPath(for: .folderField),
               let cell = collectionView.cellForItem(at: path) as? SSHTerminalTextFieldCell else { return }
         // After a long test run in one process, UIKit has been seen to refuse this first
         // call after already resigning Name, so giving up would close the keyboard. An
@@ -716,10 +649,6 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             },
             onCancel: { [weak self] in self?.model.hostPathPendingCreation = nil }
         )
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
     }
 
     // MARK: - Actions

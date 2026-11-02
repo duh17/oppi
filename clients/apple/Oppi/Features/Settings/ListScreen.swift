@@ -5,10 +5,10 @@ import UIKit
 /// bar's items, and rows whose one accessibility element is a button. A list
 /// is pinned at the readable form width by `SettingsListStyle.pin`.
 ///
-/// The workspace forms still build their own list with these; a page on the base
-/// takes its look from `SettingsListStyle` instead. The row builders
-/// (`buttonRow`, `staticRow`, `stateRow`, `background`) are also what a page on
-/// the base draws its own cell classes with (`SidebarListCell`).
+/// No screen still builds its own list with these; a page on the base takes its
+/// look from `SettingsListStyle` instead. The row builders (`buttonRow`,
+/// `staticRow`, `stateRow`, `background`) are also what a page on the base draws
+/// its own cell classes with (`SidebarListCell`).
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because

@@ -297,6 +297,87 @@ struct WorkspaceCreateTests {
         #expect(await waitForMainActorCondition(timeout: Self.patience) { !folder.isFirstResponder })
     }
 
+    /// The kit redraws only the rows whose `inputs(of:)` changed, so the form
+    /// keys the Name row by what it draws and never by its text: typing leaves
+    /// that row alone — focus, caret, and the text the person typed — while the
+    /// rows that follow the name still change. With the base's per-pass key (or a
+    /// key holding the name) the field is configured again on each pass, which is
+    /// what the probe below fails on.
+    @Test("Typing in a field never configures its row again, and the form still follows it")
+    func typingInAFieldLeavesItsRowAlone() async throws {
+        let fixture = try Fixture()
+        let screen = WorkspaceCreateViewController(
+            root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
+        )
+        let window = try showInWindow(screen, height: 2400)
+        defer { hide(window) }
+        let name = try #require(await findTextField("workspace.create.name", in: screen.view))
+        let submit = try #require(await findButton("workspace.create.submit.form", in: screen.view))
+        // The server confirms the folder before Create is offered at all.
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { submit.isEnabled })
+
+        #expect(name.becomeFirstResponder())
+        // A field's configure restores its placeholder, so the test stamps its own:
+        // a placeholder that survives a pass is a row the kit left alone.
+        let probe = "typed-row-probe"
+        name.placeholder = probe
+
+        name.text = "App Two"
+        name.sendActions(for: .editingChanged)
+        #expect(screen.model.name == "App Two")
+        // A pass of its own (a theme repaint, a scan landing) leaves the field
+        // where the person left it; the form's own rows still read the name.
+        screen.setNeedsUpdateProperties()
+        try await Task.sleep(for: .milliseconds(200))
+        screen.view.layoutIfNeeded()
+        #expect(name.placeholder == probe, "a pass configured the field's row again")
+        #expect(name.isFirstResponder, "a pass took the keyboard from the field")
+        #expect(name.text == "App Two", "a pass rewrote what the person typed")
+
+        // The submit row follows the name: an empty one cannot create.
+        name.text = ""
+        name.sendActions(for: .editingChanged)
+        #expect(await waitForMainActorCondition(timeout: Self.patience) {
+            screen.view.layoutIfNeeded()
+            return !submit.isEnabled
+        })
+        #expect(name.placeholder == probe, "the submit row's redraw configured the field again")
+        #expect(name.isFirstResponder, "the submit row's redraw took the keyboard from the field")
+    }
+
+    /// The other step opens at its top. The pass that swaps the rows does not lay
+    /// the screen out, so a reset that waits for the next layout lands whenever
+    /// something else moves the view — the keyboard rising, at the form's own
+    /// scroll position, is the case that hurts. Two long lists make the case: a
+    /// short new step would be clamped to the top by the list itself.
+    @Test("Changing the step puts the form back at its top")
+    func changingTheStepScrollsToTheTop() async throws {
+        let fixture = try Fixture()
+        let screen = WorkspaceCreateViewController(root: fixture.root, server: fixture.second)
+        let window = try showInWindow(screen, height: 600)
+        defer { hide(window) }
+        let list = screen.collectionView
+        let top = { -list.adjustedContentInset.top }
+
+        // The person scrolled the project picker down.
+        #expect(await waitForMainActorCondition(timeout: Self.patience) {
+            screen.view.layoutIfNeeded()
+            return list.contentSize.height > list.bounds.height
+        })
+        list.setContentOffset(CGPoint(x: 0, y: top() + 120), animated: false)
+        #expect(list.contentOffset.y > top())
+
+        // Picking a project swaps that list for the form's. Nothing lays the
+        // screen out here, so only the page's own reset can put it back at the top.
+        screen.model.selectProject(Fixture.project)
+        var reset = false
+        for _ in 0..<40 {
+            if abs(list.contentOffset.y - top()) < 1 { reset = true; break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(reset, "the other step opens at its top")
+    }
+
     // MARK: Helpers
 
     private func findTextField(
@@ -337,10 +418,10 @@ struct WorkspaceCreateTests {
         return all
     }
 
-    private func showInWindow(_ controller: UIViewController) throws -> UIWindow {
+    private func showInWindow(_ controller: UIViewController, height: CGFloat = 844) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: height)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.layoutIfNeeded()
@@ -435,7 +516,17 @@ final class WorkspaceCreateURLProtocol: URLProtocol, @unchecked Sendable {
         let body: String
         switch url.path {
         case "/host/directories":
-            body = #"{"directories":[]}"#
+            // A folder's worth of projects, so the picker step is a list a person
+            // scrolls: a step change that swaps one long list for another is where
+            // the form's scroll position matters.
+            let projects = (1...8).map { index -> String in
+                let name = index == 1 ? "oppi" : "project-\(index)"
+                let fields = "\"path\":\"~/workspace/\(name)\",\"name\":\"\(name)\","
+                    + "\"isGitRepo\":true,\"gitRemote\":null,\"hasAgentsMd\":false,"
+                    + "\"projectType\":\"swift\",\"language\":\"Swift\""
+                return "{\(fields)}"
+            }
+            body = "{\"directories\":[\(projects.joined(separator: ","))]}"
         case "/host/path/status":
             let path = query.first { $0.name == "path" }?.value ?? ""
             let missing = path == "/nope"
