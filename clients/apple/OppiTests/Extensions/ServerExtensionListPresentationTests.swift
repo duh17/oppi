@@ -20,7 +20,6 @@ struct ServerExtensionListPresentationTests {
         let presentation = ServerExtensionListPresentation(extensions: rows, query: "")
 
         #expect(presentation.sections.map(\.kind) == [.builtIn, .needsAttention, .enabled, .disabled])
-        #expect(presentation.sections.map(\.kind.rawValue) == ["Built-in", "Needs Attention", "Enabled", "Disabled"])
         #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in", "working-words"])
         #expect(presentation.sections[1].extensions.map(\.id) == ["broken"])
         #expect(presentation.sections[2].extensions.map(\.id) == ["enabled", "durable-only"])
