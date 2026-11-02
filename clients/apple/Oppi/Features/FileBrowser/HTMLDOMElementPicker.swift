@@ -774,7 +774,7 @@ final class HTMLDOMPickController {
         chrome.onEnterPick = { [weak self] in self?.enterPick() }
         chrome.onExitPick = { [weak self] in self?.exitPick() }
         chrome.onSelectParent = { [weak self] in self?.selectParent() }
-        chrome.onComment = { [weak self] in self?.comment() }
+        chrome.onComment = { [weak self] in self?.commentOnSelection() }
     }
 
     func attach(to host: HTMLRenderView) {
@@ -823,8 +823,10 @@ final class HTMLDOMPickController {
         clearSelection(status: isPicking ? HTMLDOMSelectionRejection.staleGeneration.userMessage : nil)
     }
 
+    /// Whether the page can be picked follows its render state.
     func renderReadyChanged() {
         chrome.setReady(host?.isRenderReady == true)
+        onPickStateChange?(isPicking, hasSelection)
     }
 
     func refreshHighlightAfterViewportChange() {
@@ -874,7 +876,7 @@ final class HTMLDOMPickController {
         startLookup(mode: "parent", point: .zero, locator: snapshot.element.locator)
     }
 
-    func comment() {
+    func commentOnSelection() {
         guard let openedSnapshot = snapshot,
               let openedSource = sourceContext,
               let openedPickSessionID = activePickSessionID,
@@ -1339,6 +1341,24 @@ private func limitationStatus(_ limitation: HTMLDOMLookupLimitation?) -> String?
         return "Closed shadow root or custom element. Inner content was not inspected."
     case nil:
         return nil
+    }
+}
+
+extension HTMLDOMPickController: ReaderPicking {
+    func pickMenuActions() -> [UIAction] {
+        var actions: [UIAction] = []
+        if canPick {
+            let picking = isPicking
+            actions.append(pickModeAction(isPicking: picking, pickTitle: "Pick Element") { [weak self] in
+                if picking { self?.exitPick() } else { self?.enterPick() }
+            })
+        }
+        if canSelectParent {
+            actions.append(UIAction(title: "Select Parent", image: UIImage(systemName: "arrow.up.to.line")) { [weak self] _ in
+                self?.selectParent()
+            })
+        }
+        return actions
     }
 }
 

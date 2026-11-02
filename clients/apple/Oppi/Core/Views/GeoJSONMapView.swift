@@ -3,7 +3,7 @@ import UIKit
 
 /// Production MapKit surface for GeoJSON/TopoJSON. Tiles may fail offline;
 /// annotations and overlays stay. Never shows the user location puck.
-final class GeoJSONMapView: UIView, MKMapViewDelegate, FullScreenReaderConfigurable {
+final class GeoJSONMapView: UIView, MKMapViewDelegate, ReaderBody {
     private let plan: GeoJSONViewerPlan
     private let mapView = MKMapView(frame: .zero)
     private let failureLabel = UILabel()

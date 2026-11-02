@@ -1065,7 +1065,7 @@ final class NativeFullScreenThinkingBody: UIView,
     }
 }
 
-extension NativeFullScreenThinkingBody: FullScreenReaderConfigurable {
+extension NativeFullScreenThinkingBody: ReaderBody {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
@@ -1113,7 +1113,14 @@ extension NativeFullScreenThinkingBody {
 }
 #endif
 
-extension NativeMutableFullScreenMarkdownBody: FullScreenReaderConfigurable {
+extension NativeMutableFullScreenMarkdownBody: ReaderBody {
+    var viewportIntent: FullScreenMarkdownViewportIntent? { currentViewportIntent() }
+
+    func restoreViewport(_ intent: FullScreenMarkdownViewportIntent) -> Bool {
+        restoreMutableViewport(intent)
+        return true
+    }
+
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences

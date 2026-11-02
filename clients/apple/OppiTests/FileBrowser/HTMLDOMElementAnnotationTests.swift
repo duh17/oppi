@@ -311,7 +311,7 @@ struct HTMLDOMElementAnnotationTests {
             filePath: "page.html"
         ).get()
         #expect(currentAnchor.readableLabel.contains("3rd button on page"))
-        picker.comment()
+        picker.commentOnSelection()
         let composer = await waitForView("review-comment.inline-composer", in: fixture.host.view)
         #expect(composer != nil)
         #expect(picker.lastRejection == nil)

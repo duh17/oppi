@@ -2705,7 +2705,7 @@ struct FullScreenReviewCommentSelectionTests {
         picker.setExternalPickMode(true)
         picker.debugSelectTargetForTesting("node:A")
         fixture.controller.view.layoutIfNeeded()
-        #expect(picker.hasSelectedTarget)
+        #expect(picker.hasSelection)
         #expect(!comment.isHidden)
         let initial = comment.frame
         let host = try #require(comment.superview)

@@ -819,7 +819,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 /// the same shape as the LaTeX body: bounce so a short cell still gets
 /// safe-area insets, default inset adjustment, no tail policy.
 @MainActor
-final class NotebookReaderBody: UIScrollView, FullScreenReaderConfigurable {
+final class NotebookReaderBody: UIScrollView, ReaderBody {
     private let cell: NotebookCellView
 
     init(

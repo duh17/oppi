@@ -156,42 +156,7 @@ final class SourceTraceStream {
         next.text != snapshotStorage.text
             || next.filePath != snapshotStorage.filePath
             || next.isDone != snapshotStorage.isDone
-            || finalContentKind(next.finalContent) != finalContentKind(snapshotStorage.finalContent)
-    }
-
-    private func finalContentKind(_ content: FullScreenCodeContent?) -> String? {
-        switch content {
-        case .code:
-            return "code"
-        case .plainText:
-            return "plainText"
-        case .diff:
-            return "diff"
-        case .markdown:
-            return "markdown"
-        case .html:
-            return "html"
-        case .thinking:
-            return "thinking"
-        case .terminal:
-            return "terminal"
-        case .liveSource:
-            return "liveSource"
-        case .latex:
-            return "latex"
-        case .orgMode:
-            return "orgMode"
-        case .mermaid:
-            return "mermaid"
-        case .graphviz:
-            return "graphviz"
-        case .document(let family):
-            return family.kindName
-        case .notebook:
-            return "notebook"
-        case nil:
-            return nil
-        }
+            || next.finalContent?.kindName != snapshotStorage.finalContent?.kindName
     }
 }
 
@@ -213,12 +178,9 @@ struct ToolDiffDocument: Sendable {
     }
 }
 
-/// Full-screen content viewer for tool output.
-///
-/// Supports three modes:
-/// - `.code`: syntax-highlighted source with line numbers
-/// - `.diff`: lines-first tool diff with add/remove coloring
-/// - `.markdown`: full markdown note/reader rendering
+/// What the full-screen reader shows. Each case's answers to the reader's
+/// questions (body, Source, Copy, Share, Viewing Options) live in
+/// `Reader/FullScreenCodeContent+Reader.swift`.
 indirect enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case plainText(content: String, filePath: String?)
@@ -243,29 +205,6 @@ indirect enum FullScreenCodeContent {
     case document(DocumentFamily)
     /// Notebook cell. The reader wraps the same view.
     case notebook(NotebookCellPlan)
-
-    /// The file the content was read from, when it names one. A reader uses it to
-    /// find the live document behind the bytes.
-    var filePath: String? {
-        switch self {
-        case .code(_, _, let filePath, _),
-             .plainText(_, let filePath),
-             .html(_, let filePath),
-             .latex(_, let filePath),
-             .orgMode(_, let filePath),
-             .mermaid(_, let filePath),
-             .graphviz(_, let filePath):
-            return filePath
-        case .markdown(_, let filePath, _, _, _):
-            return filePath
-        case .diff(let document):
-            return document.filePath
-        case .document(let family):
-            return family.filePath
-        case .thinking, .terminal, .liveSource, .notebook:
-            return nil
-        }
-    }
 
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> Self {

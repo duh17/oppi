@@ -362,8 +362,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     func setExternalPickMode(_ enabled: Bool) { setPickMode(enabled) }
     var hasSemanticTargets: Bool { semanticMap?.targets.isEmpty == false }
     var isPickingObjects: Bool { pickModeEnabled }
-    var hasSelectedTarget: Bool { selectedTargetID != nil }
-    func commentOnExternalSelection() { commentOnSelection() }
+    var hasSelection: Bool { selectedTargetID != nil }
 
     private func selectSemanticObject(at layoutPoint: CGPoint) {
         guard let semanticMap, pickModeEnabled else { return }
@@ -437,7 +436,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         }
     }
 
-    @objc private func commentOnSelection() {
+    @objc func commentOnSelection() {
         guard let id = selectedTargetID,
               let target = semanticMap?.target(id: id) else { return }
         semanticCommentHandler?(target)
@@ -553,6 +552,16 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         scrollView.setContentOffset(offset, animated: false)
     }
 #endif
+}
+
+extension ZoomableGraphicalView: ReaderPicking {
+    func pickMenuActions() -> [UIAction] {
+        guard hasSemanticTargets else { return [] }
+        let picking = isPickingObjects
+        return [pickModeAction(isPicking: picking, pickTitle: "Pick Object") { [weak self] in
+            self?.setExternalPickMode(!picking)
+        }]
+    }
 }
 
 private final class SemanticPickHighlightView: UIView {

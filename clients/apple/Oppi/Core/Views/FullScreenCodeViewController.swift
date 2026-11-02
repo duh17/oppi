@@ -57,7 +57,7 @@ final class FullScreenCodeViewController: UIViewController {
         let scrollOffsets: [CGPoint]
         let selections: [NSRange]
         let firstResponderTextViewIndex: Int?
-        let mutableMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
+        let viewportIntent: FullScreenMarkdownViewportIntent?
     }
 
     private final class LiveSourceObserverCleanup: @unchecked Sendable {
@@ -96,7 +96,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var annotateBarItem: UIBarButtonItem?
     private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
-    private var installedBodyView: UIView?
+    private var installedBodyView: (any ReaderBody)?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
     private var liveSourceMarkdownBodyView: NativeMutableFullScreenMarkdownBody?
     private var liveSourceHTMLBodyView: HTMLRenderView?
@@ -162,58 +162,6 @@ final class FullScreenCodeViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Present the code viewer from the topmost view controller.
-    /// Works from both UIKit and SwiftUI contexts without needing a
-    /// responder-chain walk from a specific source view.
-    static func present(
-        content: FullScreenCodeContent,
-        reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
-        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
-        reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil
-    ) {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first,
-              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else { return }
-        var presenter = root
-        while let presented = presenter.presentedViewController {
-            presenter = presented
-        }
-        let reviewContext = reviewCommentSelectionContext
-            ?? ReviewCommentSelectionContext(
-                router: reviewCommentSelectionRouter,
-                sessionId: reviewCommentSessionId,
-                sourceLabel: reviewCommentSourceLabel
-            )
-        if ChatReaderOpenLookup.open(
-            .document(content: content, reviewCommentSelectionContext: reviewContext),
-            from: presenter
-        ) {
-            return
-        }
-        // A Markdown reader may open one focused rendered visual above itself.
-        // Every other viewer remains terminal so repeated taps cannot grow an
-        // unbounded modal stack.
-        if let codeViewer = presenter as? FullScreenCodeViewController {
-            guard codeViewer.allowsFocusedVisualPreview else { return }
-        } else if isFocusedViewer(presenter) {
-            return
-        }
-
-        let controller = FullScreenCodeViewController(
-            content: content,
-            reviewCommentSelectionContext: reviewContext,
-            addToChatDestination: capturedAddToChatDestination(from: presenter)
-        )
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            controller,
-            traitCollection: presenter.traitCollection
-        )
-        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID()
-            .preferredColorScheme == .light ? .light : .dark
-        presenter.present(controller, animated: true)
-    }
-
     /// Capture origin at present time. Nested viewers inherit the parent
     /// viewer's destination, including nil, so later chats cannot steal it.
     static func capturedAddToChatDestination(
@@ -234,19 +182,6 @@ final class FullScreenCodeViewController: UIViewController {
             return true
         }
         return false
-    }
-
-    private static func isFocusedViewer(_ controller: UIViewController) -> Bool {
-        if controller is FullScreenImageViewController
-            || controller is FullScreenImageDataPreviewViewController {
-            return true
-        }
-        guard let navigation = controller as? UINavigationController else { return false }
-        return navigation.viewControllers.contains {
-            $0 is FullScreenCodeViewController
-                || $0 is FullScreenImageViewController
-                || $0 is FullScreenImageDataPreviewViewController
-        }
     }
 
     deinit {
@@ -335,23 +270,15 @@ final class FullScreenCodeViewController: UIViewController {
         let interactionState = installedBodyView.map(captureInteractionState)
         clearLiveSourceBodyReferences()
         let presentation = makePresentation()
-        let themedBody: UIView
-        if case .liveSource(let initialSnapshot, _) = content {
-            let snapshot = liveSourceCurrentSnapshot ?? initialSnapshot
-            if !snapshot.isDone {
-                themedBody = makeFreshLiveSourceStreamingBody(
-                    snapshot: snapshot,
-                    themeID: themeID
-                )
-            } else {
-                themedBody = makeBodyView(
-                    for: presentation.bodyContent,
-                    themeID: themeID,
-                    focusLineAnchor: false
-                )
-            }
+        let themedBody: any ReaderBody
+        if case .liveSource(let initialSnapshot, _) = content,
+           !(liveSourceCurrentSnapshot ?? initialSnapshot).isDone {
+            themedBody = makeFreshLiveSourceStreamingBody(
+                snapshot: liveSourceCurrentSnapshot ?? initialSnapshot,
+                themeID: themeID
+            )
         } else {
-            themedBody = makeBodyView(
+            themedBody = makeBody(
                 for: presentation.bodyContent,
                 themeID: themeID,
                 focusLineAnchor: false
@@ -368,21 +295,20 @@ final class FullScreenCodeViewController: UIViewController {
         configureNavigation(on: viewController, palette: palette)
     }
 
-    private func captureInteractionState(in body: UIView) -> BodyInteractionState {
+    private func captureInteractionState(in body: any ReaderBody) -> BodyInteractionState {
         let scrollViews = descendantViews(of: UIScrollView.self, in: body)
         let textViews = descendantViews(of: UITextView.self, in: body)
         return BodyInteractionState(
             scrollOffsets: scrollViews.map(\.contentOffset),
             selections: textViews.map(\.selectedRange),
             firstResponderTextViewIndex: textViews.firstIndex(where: \.isFirstResponder),
-            mutableMarkdownViewportIntent: (body as? NativeMutableFullScreenMarkdownBody)?
-                .currentViewportIntent()
+            viewportIntent: body.viewportIntent
         )
     }
 
     private func restoreInteractionState(
         _ state: BodyInteractionState,
-        in body: UIView,
+        in body: any ReaderBody,
         host: UIView
     ) {
         host.setNeedsLayout()
@@ -404,9 +330,8 @@ final class FullScreenCodeViewController: UIViewController {
            textViews.indices.contains(index) {
             textViews[index].becomeFirstResponder()
         }
-        if let intent = state.mutableMarkdownViewportIntent,
-           let mutableMarkdown = body as? NativeMutableFullScreenMarkdownBody {
-            mutableMarkdown.restoreMutableViewport(intent)
+        if let intent = state.viewportIntent {
+            body.restoreViewport(intent)
         }
 
         // Some bodies complete TextKit/WebKit layout on the next run-loop turn.
@@ -418,9 +343,8 @@ final class FullScreenCodeViewController: UIViewController {
             for (scrollView, offset) in zip(deferredScrollViews, state.scrollOffsets) {
                 scrollView.setContentOffset(offset, animated: false)
             }
-            if let intent = state.mutableMarkdownViewportIntent,
-               let mutableMarkdown = body as? NativeMutableFullScreenMarkdownBody {
-                mutableMarkdown.restoreMutableViewport(intent)
+            if let intent = state.viewportIntent {
+                body.restoreViewport(intent)
             }
         }
     }
@@ -507,7 +431,7 @@ final class FullScreenCodeViewController: UIViewController {
             liveSourceCurrentSnapshot = snapshot
             if snapshot.isDone {
                 let presentation = makePresentation()
-                installBodyView(makeBodyView(for: presentation.bodyContent, themeID: bodyThemeID), on: viewController)
+                installBodyView(makeBody(for: presentation.bodyContent, themeID: bodyThemeID), on: viewController)
             } else {
                 installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: bodyThemeID)
             }
@@ -521,7 +445,7 @@ final class FullScreenCodeViewController: UIViewController {
         default:
             let presentation = makePresentation()
             installBodyView(
-                makeBodyView(
+                makeBody(
                     for: presentation.bodyContent,
                     themeID: bodyThemeID,
                     focusLineAnchor: shouldFocusLineAnchorWhileRestoring
@@ -542,7 +466,7 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    private func installBodyView(_ bodyView: UIView, on viewController: UIViewController) {
+    private func installBodyView(_ bodyView: any ReaderBody, on viewController: UIViewController) {
         installedBodyView?.removeFromSuperview()
         installedBodyView = bodyView
         bodyView.translatesAutoresizingMaskIntoConstraints = false
@@ -567,21 +491,14 @@ final class FullScreenCodeViewController: UIViewController {
         if let commentButton {
             viewController.view.bringSubviewToFront(commentButton)
         }
-        if let htmlView = bodyView as? HTMLRenderView {
-            htmlView.elementPicker.usesExternalPickControls = true
-            htmlView.elementPicker.onPickStateChange = { [weak self] _, _ in
-                self?.updatePickControls()
+        if let picker = bodyView.picker {
+            picker.usesExternalPickControls = true
+            // Also fires when a page's render state changes, which is when
+            // Annotate can start snapshotting it.
+            picker.onPickStateChange = { [weak self] _, _ in
+                self?.updateAnnotateAvailability()
             }
-            htmlView.elementPicker.onSelectionGeometryChange = { [weak self] in
-                self?.updateContextualCommentPosition()
-            }
-        }
-        if let diagram = (bodyView as? NativeFullScreenRenderedDocumentBody)?.mermaidPicker {
-            diagram.usesExternalPickControls = true
-            diagram.onPickStateChange = { [weak self] _, _ in
-                self?.updatePickControls()
-            }
-            diagram.onSelectionGeometryChange = { [weak self] in
+            picker.onSelectionGeometryChange = { [weak self] in
                 self?.updateContextualCommentPosition()
             }
         }
@@ -590,11 +507,6 @@ final class FullScreenCodeViewController: UIViewController {
         }
         if let stashBadgeLabel {
             viewController.view.bringSubviewToFront(stashBadgeLabel)
-        }
-        if let htmlView = bodyView as? HTMLRenderView {
-            htmlView.onRenderStateChange = { [weak self] in
-                self?.updateAnnotateAvailability()
-            }
         }
         restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
@@ -605,32 +517,13 @@ final class FullScreenCodeViewController: UIViewController {
         // A remake can take one layout pass at offset 0 before the stored
         // restore write runs. That looks like `.top` and must not replace the
         // stored mid-document intent.
-        if !hasSettledMarkdownViewportRestore {
-            return nil
-        }
-        let intent: FullScreenMarkdownViewportIntent
-        switch installedBodyView {
-        case let body as NativeFullScreenMarkdownBody:
-            intent = body.currentViewportIntent()
-        case let body as NativeMutableFullScreenMarkdownBody:
-            intent = body.currentViewportIntent()
-        default:
-            return nil
-        }
+        // The body answers nil until then.
+        guard let intent = installedBodyView?.viewportIntent else { return nil }
         // Offset 0 before the first layout is indistinguishable from `.top`.
         if intent == .top, !hasLaidOutMarkdownViewport {
             return nil
         }
         return intent
-    }
-
-    private var hasSettledMarkdownViewportRestore: Bool {
-        switch installedBodyView {
-        case let body as NativeFullScreenMarkdownBody:
-            return body.hasSettledMarkdownViewportRestore
-        default:
-            return true
-        }
     }
 
     private var hasLaidOutMarkdownViewport: Bool {
@@ -640,18 +533,10 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    private func restorePendingMarkdownViewportIfNeeded(in body: UIView) {
-        guard let intent = pendingMarkdownViewportIntent else { return }
-        switch body {
-        case let body as NativeFullScreenMarkdownBody:
-            pendingMarkdownViewportIntent = nil
-            body.restoreViewportAfterMutableTransition(intent)
-        case let body as NativeMutableFullScreenMarkdownBody:
-            pendingMarkdownViewportIntent = nil
-            body.restoreMutableViewport(intent)
-        default:
-            break
-        }
+    private func restorePendingMarkdownViewportIfNeeded(in body: any ReaderBody) {
+        guard let intent = pendingMarkdownViewportIntent,
+              body.restoreViewport(intent) else { return }
+        pendingMarkdownViewportIntent = nil
     }
 
     private func scheduleLineAnchorNotice() {
@@ -663,52 +548,11 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func reportLineAnchorNoticeIfNeeded() {
         guard let lineAnchor, !lineAnchorNoticeDelivered else { return }
-        let resolution = lineAnchorResolution(for: currentSemanticContent(), anchor: lineAnchor)
+        let resolution = currentSemanticContent().lineAnchorResolution(for: lineAnchor)
         guard let message = resolution.message else { return }
         lineAnchorNoticeDelivered = true
         lineAnchorNotice?(message)
         UIAccessibility.post(notification: .announcement, argument: message)
-    }
-
-    private func lineAnchorResolution(
-        for content: FullScreenCodeContent,
-        anchor: SourceLineAnchor?
-    ) -> SourceLineAnchorResolution {
-        guard let anchor else {
-            return SourceLineAnchorResolution(
-                requestedRange: 1...1,
-                existingRange: nil,
-                fileLineCount: 0,
-                availableRange: nil
-            )
-        }
-        let textAndFirstLine: (String, Int)
-        switch content {
-        case .code(let text, _, _, let startLine):
-            textAndFirstLine = (text, startLine)
-        case .plainText(let text, _),
-             .markdown(let text, _, _, _, _),
-             .html(let text, _),
-             .latex(let text, _),
-             .orgMode(let text, _),
-             .mermaid(let text, _),
-             .graphviz(let text, _),
-             .thinking(let text, _),
-             .terminal(let text, _, _, _):
-            textAndFirstLine = (text, 1)
-        case .document(let family):
-            textAndFirstLine = (family.text, 1)
-        case .notebook(let plan):
-            textAndFirstLine = (plan.readerText, 1)
-        case .diff(let document):
-            textAndFirstLine = (document.reconstructedNewSideText, 1)
-        case .liveSource(let snapshot, _):
-            return lineAnchorResolution(for: semanticContent(for: snapshot), anchor: anchor)
-        }
-        return anchor.resolution(
-            fileContent: textAndFirstLine.0,
-            firstFileLine: textAndFirstLine.1
-        )
     }
 
     private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
@@ -913,7 +757,8 @@ final class FullScreenCodeViewController: UIViewController {
         on viewController: UIViewController,
         palette: ThemePalette
     ) {
-        guard canAnnotateRenderedContent else {
+        guard let availability = installedBodyView?.annotateAvailability,
+              availability != .unavailable else {
             annotateButton?.removeFromSuperview()
             pickButton?.removeFromSuperview()
             commentButton?.removeFromSuperview()
@@ -927,7 +772,7 @@ final class FullScreenCodeViewController: UIViewController {
             return
         }
 
-        let usesPickControls = isHTMLViewer || isMermaidViewer
+        let usesPickControls = installedBodyView?.picker != nil
         let button: UIButton
         if let existing = annotateButton {
             button = existing
@@ -1004,10 +849,6 @@ final class FullScreenCodeViewController: UIViewController {
         if let commentButton { viewController.view.bringSubviewToFront(commentButton) }
     }
 
-    private var isHTMLViewer: Bool { canAnnotateRenderedHTML }
-    private var isMermaidViewer: Bool {
-        (installedBodyView as? NativeFullScreenRenderedDocumentBody)?.mermaidPicker != nil
-    }
     private var pickControlsBottomPadding: CGFloat {
         let viewingOptionsVisible = floatingViewingOptionsButton?.isHidden == false
         return FullScreenReviewCommentStashControl.bottomPadding(
@@ -1016,30 +857,10 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func updatePickControls() {
-        guard let button = pickButton, isHTMLViewer || isMermaidViewer else { return }
-        let htmlPicker = ((installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView)?.elementPicker
-        let diagramPicker = (installedBodyView as? NativeFullScreenRenderedDocumentBody)?.mermaidPicker
-        let picking = htmlPicker?.isPicking ?? diagramPicker?.isPickingObjects ?? false
-        let selected = htmlPicker?.hasSelection ?? diagramPicker?.hasSelectedTarget ?? false
-        commentButton?.isHidden = !selected
+        guard let button = pickButton, let picker = installedBodyView?.picker else { return }
+        commentButton?.isHidden = !picker.hasSelection
         updateContextualCommentPosition()
-        var actions: [UIAction] = []
-        if htmlPicker?.canPick == true || diagramPicker?.hasSemanticTargets == true {
-            actions.append(UIAction(title: picking ? "Browse" : (htmlPicker == nil ? "Pick Object" : "Pick Element"),
-                                    image: UIImage(systemName: picking ? "hand.draw" : "cursorarrow.rays")) { [weak self] _ in
-                guard self != nil else { return }
-                if let htmlPicker {
-                    if picking { htmlPicker.exitPick() } else { htmlPicker.enterPick() }
-                } else {
-                    diagramPicker?.setExternalPickMode(!picking)
-                }
-            })
-        }
-        if htmlPicker?.canSelectParent == true {
-            actions.append(UIAction(title: "Select Parent", image: UIImage(systemName: "arrow.up.to.line")) { _ in
-                htmlPicker?.selectParent()
-            })
-        }
+        let actions = picker.pickMenuActions()
         button.isEnabled = !actions.isEmpty
         button.menu = UIMenu(children: actions)
         button.showsMenuAsPrimaryAction = true
@@ -1047,10 +868,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func updateContextualCommentPosition() {
         guard let commentButton, let host = contentHostController?.view else { return }
-        let target = ((installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView)?
-            .elementPicker.selectedTargetRect(in: host)
-            ?? (installedBodyView as? NativeFullScreenRenderedDocumentBody)?
-                .mermaidPicker?.selectedTargetRect(in: host)
+        let target = installedBodyView?.picker?.selectedTargetRect(in: host)
         let controls = [pickButton, annotateButton, stashButton, stashBadgeLabel].compactMap { control -> CGRect? in
             guard let control, !control.isHidden else { return nil }
             return control.convert(control.bounds, to: host)
@@ -1069,12 +887,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     @objc private func commentOnPickedTarget() {
-        if let html = (installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView {
-            html.elementPicker.comment()
-        } else {
-            (installedBodyView as? NativeFullScreenRenderedDocumentBody)?
-                .mermaidPicker?.commentOnExternalSelection()
-        }
+        installedBodyView?.picker?.commentOnSelection()
     }
 
     private var reviewCommentStash: (any ReviewCommentStashHandling)? {
@@ -1326,11 +1139,11 @@ final class FullScreenCodeViewController: UIViewController {
     private func makePresentation() -> Presentation {
         let semanticContent = currentSemanticContent()
         let bodyContent = bodyContent(for: semanticContent)
-        let readerFamily = readerFamily(for: bodyContent)
+        let readerFamily = bodyContent.readerFamily
         return Presentation(
             bodyContent: bodyContent,
-            copyText: copyText(for: semanticContent),
-            sourceToggleTitle: sourceToggleTitle(for: semanticContent),
+            copyText: semanticContent.copyText(showingSource: showSource, completeRaw: completeRawText),
+            sourceToggleTitle: semanticContent.sourceToggleTitle(showingSource: showSource),
             readerFamily: readerFamily,
             readerPreferences: readerFamily.map { FullScreenReaderPreferencesStore.shared.preferences(for: $0) }
         )
@@ -1338,243 +1151,40 @@ final class FullScreenCodeViewController: UIViewController {
 
     // MARK: - Body
 
-    private func makeBodyView(
-        for content: FullScreenCodeContent,
-        themeID: ThemeID,
-        focusLineAnchor: Bool = true
-    ) -> UIView {
-        let palette = themeID.palette
-        switch content {
-        case .code(let text, let language, let filePath, let startLine):
-            return NativeFullScreenCodeBody(
-                content: text,
-                language: language,
-                startLine: startLine,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                themeID: themeID,
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenCode,
-                    filePath: filePath,
-                    languageHint: language
-                ),
-                lineAnchor: lineAnchor,
-                focusLineAnchor: focusLineAnchor
-            )
-        case .plainText(let text, let filePath):
-            return NativeFullScreenSourceBody(
-                content: text,
-                isStreaming: false,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenSource,
-                    filePath: filePath
-                ),
-                lineAnchor: lineAnchor,
-                focusLineAnchor: focusLineAnchor
-            )
-        case .diff(let document):
-            return NativeFullScreenDiffBody(
-                document: document,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenDiff,
-                    filePath: document.filePath
-                )
-            )
-        case .markdown(let text, let filePath, let resourceAccess, _, _):
-            let body = NativeFullScreenMarkdownBody(
-                content: text,
-                themeID: themeID,
-                palette: palette,
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenMarkdown,
-                    filePath: filePath
-                ),
-                resourceAccess: resourceAccess,
-                sourceFilePath: filePath,
-                lineAnchor: lineAnchor,
-                focusLineAnchor: focusLineAnchor,
-                readerPreferences: readerPreferences(for: content),
-                perfSurface: .fullScreenMarkdown
-            )
-            body.accessibilityIdentifier = "full-screen.markdown.body"
-            return body
-        case .html(let text, let filePath):
-            let view = HTMLRenderView(
-                htmlString: text,
-                reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
-                sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
-            )
-            view.backgroundColor = palette.ui.bgDark
-            view.applyReaderPreferences(readerPreferences(for: content))
-            return view
-        case .thinking(let text, let stream):
-            let snapshot = stream?.snapshot
-            let displayedText = snapshot?.text ?? text
-            guard snapshot?.isDone == false else {
-                return makeCompletedThinkingBody(text: displayedText, themeID: themeID)
-            }
-            return NativeFullScreenThinkingBody(
-                content: displayedText,
-                stream: stream,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenThinking,
-                    fallbackSourceLabel: String(localized: "Thinking")
-                ),
-                onCompletion: { [weak self] body, finalText, viewportIntent in
-                    self?.completeThinking(
-                        body: body,
-                        finalText: finalText,
-                        viewportIntent: viewportIntent
-                    )
-                }
-            )
-        case .terminal(let text, let command, let stream, let sidecarSource):
-            return NativeFullScreenTerminalBody(
-                content: text,
-                command: command,
-                stream: stream,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenTerminal,
-                    fallbackSourceLabel: command
-                ),
-                sidecarSource: sidecarSource
-            )
-        case .liveSource(let snapshot, _):
-            return makeBodyView(
-                for: bodyContent(for: snapshot),
-                themeID: themeID,
-                focusLineAnchor: focusLineAnchor
-            )
-
-        // Document renderers — use rendered views with source toggle
-        case .latex(let text, let filePath):
-            return NativeFullScreenRenderedDocumentBody(
-                content: .latex(text),
-                themeID: themeID,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenCode,
-                    filePath: filePath,
-                    languageHint: "latex"
-                )
-            )
-        case .orgMode(let text, let filePath):
-            let body = NativeFullScreenMarkdownBody(
-                content: text,
-                sourceFormat: .orgMode,
-                themeID: themeID,
-                palette: palette,
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenMarkdown,
-                    filePath: filePath,
-                    languageHint: "org"
-                ),
-                sourceFilePath: filePath,
-                readerPreferences: readerPreferences(for: content),
-                perfSurface: .fullScreenMarkdown
-            )
-            body.accessibilityIdentifier = "full-screen.org-mode.body"
-            return body
-        case .mermaid(let text, let filePath):
-            return NativeFullScreenRenderedDocumentBody(
-                content: .mermaid(text),
-                themeID: themeID,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenCode,
-                    filePath: filePath,
-                    languageHint: "mermaid"
-                )
-            )
-        case .graphviz(let text, let filePath):
-            return NativeFullScreenCodeBody(
-                content: text,
-                language: "dot",
-                startLine: 1,
-                palette: palette,
-                readerPreferences: readerPreferences(for: content),
-                themeID: themeID,
-                reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenCode,
-                    filePath: filePath,
-                    languageHint: "dot"
-                ),
-                lineAnchor: lineAnchor,
-                focusLineAnchor: focusLineAnchor
-            )
-        case .document(let family):
-            return family.makeFullScreenBody(
-                palette: palette,
-                readerPreferences: readerPreferences(for: content)
-            )
-        case .notebook(let plan):
-            let language = plan.sources.first?.language
-            return NotebookReaderBody(
-                plan: plan,
-                selection: .init(
-                    router: reviewCommentSelectionContext?.dispatcher,
-                    code: makeSourceContext(surface: .fullScreenCode, languageHint: language),
-                    output: makeSourceContext(surface: .fullScreenSource),
-                    markdown: makeSourceContext(surface: .fullScreenMarkdown)
-                ),
-                palette: palette,
-                readerPreferences: readerPreferences(for: content)
-            )
-        }
-    }
-
-    private func makeCompletedThinkingBody(
-        text: String,
-        themeID: ThemeID
-    ) -> NativeFullScreenMarkdownBody {
-        NativeFullScreenMarkdownBody(
-            content: text,
+    private func bodyContext(themeID: ThemeID, focusLineAnchor: Bool = true) -> ReaderBodyContext {
+        ReaderBodyContext(
             themeID: themeID,
-            palette: themeID.palette,
-            reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-            reviewCommentSourceContext: makeSourceContext(
-                surface: .fullScreenThinking,
-                fallbackSourceLabel: String(localized: "Thinking")
-            ),
-            readerPreferences: readerPreferences(for: .thinking(content: text)),
-            perfSurface: .fullScreenThinking
+            selection: reviewCommentSelectionContext,
+            lineAnchor: lineAnchor,
+            focusLineAnchor: focusLineAnchor,
+            completeThinking: { [weak self] body, finalText, viewportIntent in
+                self?.completeThinking(body: body, finalText: finalText, viewportIntent: viewportIntent)
+            }
         )
     }
 
+    private func makeBody(
+        for content: FullScreenCodeContent,
+        themeID: ThemeID,
+        focusLineAnchor: Bool = true
+    ) -> any ReaderBody {
+        content.makeFullScreenBody(bodyContext(themeID: themeID, focusLineAnchor: focusLineAnchor))
+    }
+
+    /// The thinking body has already waited for the person to stop scrolling.
     private func completeThinking(
-        body: NativeFullScreenThinkingBody,
+        body: any ReaderBody,
         finalText: String,
         viewportIntent: FullScreenMarkdownViewportIntent
     ) {
         guard installedBodyView === body,
-              !body.isViewportInteracting,
               case .thinking(_, let stream) = content,
               stream?.snapshot.isDone == true,
               let viewController = contentHostController else { return }
 
-        let completedBody = makeCompletedThinkingBody(text: finalText, themeID: bodyThemeID)
+        let completedBody = makeBody(for: .thinking(content: finalText), themeID: bodyThemeID)
         installBodyView(completedBody, on: viewController)
-        completedBody.restoreViewportAfterMutableTransition(viewportIntent)
+        completedBody.restoreViewport(viewportIntent)
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
 
@@ -1586,9 +1196,9 @@ final class FullScreenCodeViewController: UIViewController {
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             palette: palette,
-            readerPreferences: readerPreferences(for: .plainText(content: snapshot.text, filePath: snapshot.filePath)),
+            readerPreferences: FullScreenCodeContent.plainText(content: snapshot.text, filePath: snapshot.filePath).readerPreferences,
             reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-            reviewCommentSourceContext: makeSourceContext(
+            reviewCommentSourceContext: bodyContext(themeID: bodyThemeID).sourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
             )
@@ -1611,13 +1221,13 @@ final class FullScreenCodeViewController: UIViewController {
             themeID: themeID,
             palette: palette,
             reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-            reviewCommentSourceContext: makeSourceContext(
+            reviewCommentSourceContext: bodyContext(themeID: themeID).sourceContext(
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             ),
             resourceAccess: resourceAccess,
             sourceFilePath: filePath,
-            readerPreferences: readerPreferences(for: .markdown(content: text, filePath: filePath, resourceAccess: resourceAccess)),
+            readerPreferences: FullScreenCodeContent.markdown(content: text, filePath: filePath, resourceAccess: resourceAccess).readerPreferences,
             perfSurface: .fullScreenMarkdown
         )
     }
@@ -1631,10 +1241,10 @@ final class FullScreenCodeViewController: UIViewController {
         let view = HTMLRenderView(
             htmlString: text,
             reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
-            sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
+            sourceContext: bodyContext(themeID: themeID).sourceContext(surface: .fullScreenSource, filePath: filePath)
         )
         view.backgroundColor = palette.ui.bgDark
-        view.applyReaderPreferences(readerPreferences(for: .html(content: text, filePath: filePath)))
+        view.applyReaderPreferences(FullScreenCodeContent.html(content: text, filePath: filePath).readerPreferences)
         return view
     }
 
@@ -1647,7 +1257,7 @@ final class FullScreenCodeViewController: UIViewController {
     private func makeFreshLiveSourceStreamingBody(
         snapshot: SourceTraceStream.Snapshot,
         themeID: ThemeID
-    ) -> UIView {
+    ) -> any ReaderBody {
         switch bodyContent(for: snapshot) {
         case .markdown(let text, let filePath, let resourceAccess, _, _):
             let body = makeLiveSourceMarkdownBody(
@@ -1683,7 +1293,7 @@ final class FullScreenCodeViewController: UIViewController {
                     content: text,
                     isStreaming: true,
                     reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                    reviewCommentSourceContext: makeSourceContext(
+                    reviewCommentSourceContext: bodyContext(themeID: themeID).sourceContext(
                         surface: .fullScreenMarkdown,
                         filePath: filePath
                     ),
@@ -1745,7 +1355,7 @@ final class FullScreenCodeViewController: UIViewController {
                     content: text,
                     isStreaming: false,
                     reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                    reviewCommentSourceContext: makeSourceContext(
+                    reviewCommentSourceContext: bodyContext(themeID: themeID).sourceContext(
                         surface: .fullScreenMarkdown,
                         filePath: filePath
                     ),
@@ -1757,7 +1367,7 @@ final class FullScreenCodeViewController: UIViewController {
                 liveSourceHTMLBodyView = nil
             } else {
                 clearLiveSourceBodyReferences()
-                installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
+                installBodyView(makeBody(for: presentation.bodyContent, themeID: themeID), on: viewController)
             }
         } else {
             installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: themeID)
@@ -1769,142 +1379,19 @@ final class FullScreenCodeViewController: UIViewController {
     private func currentSemanticContent() -> FullScreenCodeContent {
         switch content {
         case .liveSource(let snapshot, _):
-            return semanticContent(for: liveSourceCurrentSnapshot ?? snapshot)
+            return (liveSourceCurrentSnapshot ?? snapshot).readerContent
         default:
             return content
         }
     }
 
-    private func semanticContent(for snapshot: SourceTraceStream.Snapshot) -> FullScreenCodeContent {
-        if snapshot.isDone,
-           let finalContent = snapshot.finalContent {
-            return finalContent
-        }
-        if let streamingContent = snapshot.finalContent {
-            return streamingSemanticContent(
-                from: streamingContent,
-                text: snapshot.text,
-                fallbackFilePath: snapshot.filePath
-            )
-        }
-        return .plainText(content: snapshot.text, filePath: snapshot.filePath)
-    }
-
-    private func streamingSemanticContent(
-        from content: FullScreenCodeContent,
-        text: String,
-        fallbackFilePath: String?
-    ) -> FullScreenCodeContent {
-        switch content {
-        case .markdown(_, let filePath, let resourceAccess, let rawText, let sidecarSource):
-            return .markdown(
-                content: text,
-                filePath: filePath ?? fallbackFilePath,
-                resourceAccess: resourceAccess, rawText: rawText, sidecarSource: sidecarSource
-            )
-        case .html(_, let filePath):
-            return .html(content: text, filePath: filePath ?? fallbackFilePath)
-        default:
-            return .plainText(content: text, filePath: fallbackFilePath)
-        }
-    }
-
     private func bodyContent(for snapshot: SourceTraceStream.Snapshot) -> FullScreenCodeContent {
-        bodyContent(for: semanticContent(for: snapshot))
+        bodyContent(for: snapshot.readerContent)
     }
 
     private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
-        if showSource {
-            if case .markdown(let text, let filePath, _, let rawText, _) = content {
-                return .plainText(content: completeRawText ?? rawText ?? text, filePath: filePath)
-            }
-            if case .html(let text, let filePath) = content {
-                return .code(content: text, language: "html", filePath: filePath, startLine: 1)
-            }
-            if case .diff(let document) = content,
-               Self.isHTMLFilePath(document.filePath) {
-                return .html(content: document.reconstructedNewSideText, filePath: document.filePath)
-            }
-            // Document types: toggle to source view
-            if case .latex(let text, let filePath) = content {
-                return .code(content: text, language: "latex", filePath: filePath, startLine: 1)
-            }
-            if case .orgMode(let text, let filePath) = content {
-                return .code(content: text, language: "org", filePath: filePath, startLine: 1)
-            }
-            if case .mermaid(let text, let filePath) = content {
-                return .code(content: text, language: "mermaid", filePath: filePath, startLine: 1)
-            }
-            if case .document(let family) = content {
-                return family.sourceContent
-            }
-        }
-        return content
-    }
-
-    private func sourceToggleTitle(for content: FullScreenCodeContent) -> String? {
-        switch content {
-        case .markdown(_, _, _, let rawText, _):
-            if rawText != nil { return showSource ? String(localized: "Rendered") : String(localized: "Raw") }
-            return showSource ? String(localized: "Reader") : String(localized: "Source")
-        case .html:
-            return showSource ? String(localized: "Preview") : String(localized: "Source")
-        case .diff(let document):
-            guard Self.isHTMLFilePath(document.filePath) else { return nil }
-            return showSource ? String(localized: "Diff") : String(localized: "Render")
-        case .latex, .orgMode, .mermaid:
-            return showSource ? String(localized: "Rendered") : String(localized: "Source")
-        case .document(let family):
-            return family.sourceToggleTitle(showingSource: showSource)
-        default:
-            return nil
-        }
-    }
-
-    private func readerFamily(for content: FullScreenCodeContent) -> FullScreenReaderContentFamily? {
-        switch content {
-        case .markdown, .thinking:
-            return .markdown
-        case .code, .graphviz:
-            return .code
-        case .plainText:
-            return .source
-        case .diff:
-            return .diff
-        case .terminal:
-            return .terminal
-        case .html:
-            return .html
-        case .orgMode:
-            return .markdown
-        case .latex:
-            return .renderedDocument
-        case .mermaid:
-            // Rendered diagrams ignore reader preferences; Source uses `.code`.
-            return nil
-        case .document(let family):
-            return family.readerFamily
-        case .notebook:
-            // A code cell and its printed output read like code.
-            return .code
-        case .liveSource(let snapshot, _):
-            return readerFamily(for: bodyContent(for: snapshot))
-        }
-    }
-
-    private func readerPreferences(for content: FullScreenCodeContent) -> FullScreenReaderPreferences {
-        guard let family = readerFamily(for: content) else {
-            return FullScreenReaderPreferences()
-        }
-        return FullScreenReaderPreferencesStore.shared.preferences(for: family)
-    }
-
-    // MARK: - HTML Diff Helpers
-
-    private static func isHTMLFilePath(_ filePath: String?) -> Bool {
-        guard let filePath else { return false }
-        let ext = (filePath as NSString).pathExtension.lowercased()
-        return ext == "html" || ext == "htm"
+        guard showSource else { return content }
+        return content.sourceContent(completeRaw: completeRawText) ?? content
     }
 
     // MARK: - Actions
@@ -2010,10 +1497,7 @@ final class FullScreenCodeViewController: UIViewController {
         let presentation = makePresentation()
         guard let family = presentation.readerFamily else { return }
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: family)
-        applyReaderPreferences(
-            family.defaultPreferences,
-            bodyContent: presentation.bodyContent
-        )
+        applyReaderPreferences(family.defaultPreferences)
     }
 
     private func updateReaderPreferences(_ mutate: (inout FullScreenReaderPreferences) -> Void) {
@@ -2024,18 +1508,11 @@ final class FullScreenCodeViewController: UIViewController {
         mutate(&preferences)
         FullScreenReaderPreferencesStore.shared.setPreferences(preferences, for: family)
         let normalized = FullScreenReaderPreferencesStore.shared.preferences(for: family)
-        applyReaderPreferences(normalized, bodyContent: presentation.bodyContent)
+        applyReaderPreferences(normalized)
     }
 
-    private func applyReaderPreferences(
-        _ preferences: FullScreenReaderPreferences,
-        bodyContent: FullScreenCodeContent
-    ) {
-        if let configurable = installedBodyView as? FullScreenReaderConfigurable {
-            configurable.applyReaderPreferences(preferences)
-        } else if let viewController = contentHostController {
-            installBodyView(makeBodyView(for: bodyContent, themeID: bodyThemeID), on: viewController)
-        }
+    private func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        installedBodyView?.applyReaderPreferences(preferences)
 
         guard let viewController = contentHostController else { return }
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
@@ -2047,63 +1524,8 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
-    private func copyText(for content: FullScreenCodeContent) -> String {
-        switch content {
-        case .code(let text, _, _, _):
-            return text
-        case .plainText(let text, _):
-            return text
-        case .diff(let document):
-            return document.copyText
-        case .markdown(let text, _, _, let rawText, _):
-            return showSource ? (completeRawText ?? rawText ?? text) : text
-        case .html(let text, _):
-            return text
-        case .thinking(let text, let stream):
-            return stream?.snapshot.text ?? text
-        case .terminal(let text, _, let stream, _):
-            return ANSIParser.strip(stream?.snapshot.output ?? text)
-        case .liveSource(let snapshot, _):
-            return copyText(for: semanticContent(for: snapshot))
-        case .latex(let text, _), .orgMode(let text, _),
-             .mermaid(let text, _), .graphviz(let text, _):
-            return text
-        case .document(let family):
-            return family.text
-        case .notebook(let plan):
-            return plan.readerText
-        }
-    }
-
-    private func makeSourceContext(
-        surface: ReviewCommentSurfaceKind,
-        filePath: String? = nil,
-        languageHint: String? = nil,
-        fallbackSourceLabel: String? = nil
-    ) -> ReviewCommentSourceContext? {
-        guard let selectionContext = reviewCommentSelectionContext else { return nil }
-        return selectionContext.sourceContextIgnoringSurfaceOverride(
-            surface: surface,
-            sourceLabel: selectionContext.sourceLabel ?? fallbackSourceLabel,
-            filePath: filePath,
-            languageHint: languageHint
-        )
-    }
-
-    private var canAnnotateRenderedHTML: Bool {
-        installedBodyView is HTMLRenderView || liveSourceHTMLBodyView != nil
-    }
-
-    private var canAnnotateRenderedDiagram: Bool {
-        !showSource && installedBodyView is NativeFullScreenRenderedDocumentBody
-    }
-
-    private var canAnnotateRenderedContent: Bool {
-        canAnnotateRenderedHTML || canAnnotateRenderedDiagram
-    }
-
     @objc private func annotateRenderedViewTapped() {
-        guard isRenderedContentReady, !isSnapshotting else { return }
+        guard let body = installedBodyView, body.annotateAvailability == .ready, !isSnapshotting else { return }
         isSnapshotting = true
         updateAnnotateAvailability()
         Task { @MainActor [self] in
@@ -2112,7 +1534,7 @@ final class FullScreenCodeViewController: UIViewController {
                 updateAnnotateAvailability()
             }
             do {
-                let image = try await snapshotRenderedContent()
+                let image = try await body.renderedSnapshot()
                 PaperMarkupCanvasHostController.present(
                     background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
                     from: self,
@@ -2132,87 +1554,17 @@ final class FullScreenCodeViewController: UIViewController {
         presentingViewController?.dismiss(animated: true)
     }
 
-    private var isHTMLRenderReady: Bool {
-        ((installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView)?.isRenderReady == true
-    }
-
-    private var isRenderedContentReady: Bool {
-        if canAnnotateRenderedHTML {
-            return isHTMLRenderReady
-        }
-        return canAnnotateRenderedDiagram
-    }
-
     private func updateAnnotateAvailability() {
-        let enabled = isRenderedContentReady && !isSnapshotting
+        let enabled = installedBodyView?.annotateAvailability == .ready && !isSnapshotting
         annotateButton?.isEnabled = enabled
         annotateBarItem?.isEnabled = enabled
         updatePickControls()
     }
 
-    private func snapshotRenderedHTML() async throws -> UIImage {
-        let renderView = (installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView
-        guard let renderView else {
-            throw PaperMarkupCanvasSession.SnapshotError.notReady
-        }
-        return try await renderView.snapshotRenderedImage()
-    }
-
-    private func snapshotRenderedContent() async throws -> UIImage {
-        if canAnnotateRenderedHTML {
-            return try await snapshotRenderedHTML()
-        }
-        guard let body = installedBodyView else {
-            throw PaperMarkupCanvasSession.SnapshotError.notReady
-        }
-        body.layoutIfNeeded()
-        let bounds = body.bounds
-        guard bounds.width > 1, bounds.height > 1 else {
-            throw PaperMarkupCanvasSession.SnapshotError.notReady
-        }
-        let renderer = UIGraphicsImageRenderer(bounds: bounds)
-        return renderer.image { _ in
-            body.drawHierarchy(in: bounds, afterScreenUpdates: true)
-        }
-    }
-
     // MARK: - Share
 
     private func shareableContent() -> FileShareService.ShareableContent? {
-        let content = currentSemanticContent()
-        switch content {
-        case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
-        case .latex(let text, let filePath): return .latex(text, fileName: filePath)
-        case .markdown(let text, let filePath, _, let rawText, _):
-            if showSource, let raw = completeRawText ?? rawText { return .plainText(raw, fileName: filePath) }
-            return .markdown(text, fileName: filePath)
-        case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
-        case .html(let text, let filePath): return .html(text, fileName: filePath)
-        case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
-        case .document(let family): return family.shareableContent(fileName: family.filePath)
-        case .code(let text, let lang, let filePath, _): return .code(text, language: lang, fileName: filePath)
-        case .plainText(let text, let filePath): return .plainText(text, fileName: filePath)
-        case .thinking(let text, let stream):
-            return .plainText(stream?.snapshot.text ?? text)
-        case .terminal(let text, _, let stream, _):
-            return .plainText(stream?.snapshot.output ?? text)
-        case .diff(let document):
-            // Copy text is a unified patch, not the source file. Never keep
-            // the original suffix (Foo.swift) or Save to Files can overwrite it.
-            guard let path = document.filePath, !path.isEmpty else {
-                return .plainText(document.copyText)
-            }
-            let diffName = FileShareService.exportFileName(
-                originalFileName: path,
-                genericBase: "diff",
-                ext: "diff"
-            )
-            return .plainText(document.copyText, fileName: diffName)
-        case .liveSource(let snapshot, _):
-            return .plainText(snapshot.text, fileName: snapshot.filePath)
-        case .notebook(let plan):
-            return .plainText(plan.readerText)
-        }
+        currentSemanticContent().shareableContent(showingSource: showSource, completeRaw: completeRawText)
     }
 
     private func loadRawSidecarIfNeeded() {
@@ -2239,7 +1591,7 @@ final class FullScreenCodeViewController: UIViewController {
                 guard !Task.isCancelled, output.utf8.count == total else { return }
                 self?.completeRawText = inputPrefix + output
                 guard let self, self.showSource, let host = self.contentHostController else { return }
-                self.installBodyView(self.makeBodyView(for: self.makePresentation().bodyContent, themeID: self.bodyThemeID), on: host)
+                self.installBodyView(self.makeBody(for: self.makePresentation().bodyContent, themeID: self.bodyThemeID), on: host)
             } catch {
                 // The preview remains the honest fallback if the sidecar is gone.
             }
@@ -2252,8 +1604,8 @@ final class FullScreenCodeViewController: UIViewController {
             return
         }
 
-        if let mutableMarkdown = installedBodyView as? NativeMutableFullScreenMarkdownBody {
-            liveSourceMarkdownViewportIntent = mutableMarkdown.currentViewportIntent()
+        if let intent = installedBodyView?.viewportIntent {
+            liveSourceMarkdownViewportIntent = intent
         }
         showSource.toggle()
         if showSource { loadRawSidecarIfNeeded() }
@@ -2269,7 +1621,7 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         let presentation = makePresentation()
-        installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
+        installBodyView(makeBody(for: presentation.bodyContent, themeID: themeID), on: viewController)
         configureNavigation(on: viewController, palette: palette)
     }
 }

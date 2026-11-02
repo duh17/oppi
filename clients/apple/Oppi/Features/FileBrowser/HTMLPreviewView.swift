@@ -161,13 +161,16 @@ enum HostFilePreviewPolicy {
 /// Defers `loadHTMLString` until the view has a window AND a non-zero frame.
 /// Checks both `didMoveToWindow` and `layoutSubviews` — whichever fires last
 /// with all conditions met triggers the load.
-final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfigurable {
+final class HTMLRenderView: UIView, WKNavigationDelegate, ReaderBody {
     private let webView: ReviewCommentWKWebView
     private let contentTracker = HTMLContentTracker()
     private let pickController: HTMLDOMPickController
+    /// A change reaches the reader through the picker's `onPickStateChange`:
+    /// what can be picked and whether Annotate can snapshot change together.
     private(set) var isRenderReady = false
-    var onRenderStateChange: (() -> Void)?
     var elementPicker: HTMLDOMPickController { pickController }
+    var picker: (any ReaderPicking)? { pickController }
+    var annotateAvailability: ReaderAnnotateAvailability { isRenderReady ? .ready : .loading }
 
     init(htmlString: String) {
         let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
@@ -262,7 +265,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         pickController.refreshHighlightAfterViewportChange()
     }
 
-    func snapshotRenderedImage() async throws -> UIImage {
+    func renderedSnapshot() async throws -> UIImage {
         guard isRenderReady else {
             throw PaperMarkupCanvasSession.SnapshotError.notReady
         }
@@ -281,7 +284,6 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         guard isRenderReady != ready else { return }
         isRenderReady = ready
         pickController.renderReadyChanged()
-        onRenderStateChange?()
     }
 
     // MARK: - Private

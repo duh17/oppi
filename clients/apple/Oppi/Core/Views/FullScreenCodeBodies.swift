@@ -1415,7 +1415,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
 
 }
 
-extension NativeFullScreenCodeBody: FullScreenReaderConfigurable {
+extension NativeFullScreenCodeBody: ReaderBody {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
@@ -1680,7 +1680,7 @@ final class NativeFullScreenDiffBody: UIView {
     required init?(coder: NSCoder) { nil }
 }
 
-extension NativeFullScreenDiffBody: FullScreenReaderConfigurable {
+extension NativeFullScreenDiffBody: ReaderBody {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
@@ -2838,7 +2838,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 }
 
-extension NativeFullScreenTerminalBody: FullScreenReaderConfigurable {
+extension NativeFullScreenTerminalBody: ReaderBody {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         let textSizeChanged = preferences.textScale != readerPreferences.textScale
@@ -5271,7 +5271,16 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 }
 
-extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
+extension NativeFullScreenMarkdownBody: ReaderBody {
+    var viewportIntent: FullScreenMarkdownViewportIntent? {
+        hasSettledMarkdownViewportRestore ? currentViewportIntent() : nil
+    }
+
+    func restoreViewport(_ intent: FullScreenMarkdownViewportIntent) -> Bool {
+        restoreViewportAfterMutableTransition(intent)
+        return true
+    }
+
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != (pendingReaderPreferences ?? readerPreferences) else { return }
         if isCollectionUserInteracting {
@@ -5993,7 +6002,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     }
 }
 
-extension NativeFullScreenSourceBody: FullScreenReaderConfigurable {
+extension NativeFullScreenSourceBody: ReaderBody {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
@@ -6053,9 +6062,12 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     }
 
     private let scrollView = UIScrollView()
-    private let readerPreferences: FullScreenReaderPreferences
+    private var readerPreferences: FullScreenReaderPreferences
     private let themeID: ThemeID
+    private var latexText: String?
+    private var latexContentView: UIView?
     private var latexZoomContentView: UIView?
+    private var installedLatexDoubleTap = false
     private(set) var mermaidPicker: ZoomableGraphicalView?
     private var mermaidSource: (text: String, theme: RenderTheme)?
     /// Layout width the current diagram was built for; nil before the first.
@@ -6103,69 +6115,80 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
                 zoomable.bottomAnchor.constraint(equalTo: bottomAnchor),
             ])
 
-        default:
+        case .latex(let text):
             // LaTeX uses the outer scroll view.
             scrollView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.alwaysBounceVertical = true
             scrollView.showsVerticalScrollIndicator = true
             scrollView.showsHorizontalScrollIndicator = true
             scrollView.backgroundColor = palette.ui.bgDark
-            addSubview(scrollView)
-
-            let contentView: UIView
-            let enablesGraphicalZoom: Bool
-            switch content {
-            case .latex(let text):
-                let latex = makeLatexView(text: text)
-                contentView = latex.view
-                enablesGraphicalZoom = latex.isGraphical
-                scrollView.accessibilityIdentifier = "fullscreen-latex.scroll"
-                scrollView.accessibilityLabel = "Full-screen formula"
-            case .mermaid:
-                fatalError("Handled above")
-            }
-
+            scrollView.accessibilityIdentifier = "fullscreen-latex.scroll"
+            scrollView.accessibilityLabel = "Full-screen formula"
             scrollView.alwaysBounceHorizontal = true
-            contentView.translatesAutoresizingMaskIntoConstraints = false
-            scrollView.addSubview(contentView)
-
+            addSubview(scrollView)
             NSLayoutConstraint.activate([
                 scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
                 scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
                 scrollView.topAnchor.constraint(equalTo: topAnchor),
                 scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-                contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 14),
-                contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
-                contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
-                contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
             ])
-
-            // LaTeX keeps its natural width. The content guide grows beyond
-            // the viewport when needed, creating real two-axis overflow.
-            contentView.widthAnchor.constraint(
-                greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor,
-                constant: -28
-            ).isActive = true
-
-            if enablesGraphicalZoom {
-                latexZoomContentView = contentView
-                scrollView.minimumZoomScale = 1
-                scrollView.maximumZoomScale = 4
-                scrollView.bouncesZoom = true
-                scrollView.delegate = self
-                DoubleTapZoom.install(
-                    on: scrollView,
-                    target: self,
-                    action: #selector(handleLatexDoubleTap(_:))
-                )
-                updateLatexAccessibilityValue()
-            }
+            latexText = text
+            installLatexContent(text: text)
         }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Lays the formulas out at the current text size, replacing any earlier
+    /// layout. A replacement starts at the top at fit zoom, as a new body would.
+    private func installLatexContent(text: String) {
+        if let previous = latexContentView {
+            scrollView.zoomScale = scrollView.minimumZoomScale
+            previous.removeFromSuperview()
+            latexZoomContentView = nil
+        }
+        let latex = makeLatexView(text: text)
+        let contentView = latex.view
+        latexContentView = contentView
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+
+        NSLayoutConstraint.activate([
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 14),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
+        ])
+
+        // LaTeX keeps its natural width. The content guide grows beyond
+        // the viewport when needed, creating real two-axis overflow.
+        contentView.widthAnchor.constraint(
+            greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor,
+            constant: -28
+        ).isActive = true
+
+        if latex.isGraphical {
+            latexZoomContentView = contentView
+            scrollView.minimumZoomScale = 1
+            scrollView.maximumZoomScale = 4
+            scrollView.bouncesZoom = true
+            scrollView.delegate = self
+            if !installedLatexDoubleTap {
+                installedLatexDoubleTap = true
+                DoubleTapZoom.install(
+                    on: scrollView,
+                    target: self,
+                    action: #selector(handleLatexDoubleTap(_:))
+                )
+            }
+            updateLatexAccessibilityValue()
+        }
+        scrollView.contentOffset = CGPoint(
+            x: -scrollView.adjustedContentInset.left,
+            y: -scrollView.adjustedContentInset.top
+        )
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -6210,7 +6233,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             self?.presentSemanticComment(for: target)
         }
         // Pick availability is known only now; let the host refresh its controls.
-        zoomable.onPickStateChange?(zoomable.isPickingObjects, zoomable.hasSelectedTarget)
+        zoomable.onPickStateChange?(zoomable.isPickingObjects, zoomable.hasSelection)
     }
 
     private func presentSemanticComment(for target: SemanticTarget) {
@@ -6300,6 +6323,33 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
         return LatexView(view: stack, isGraphical: true)
     }
 
+}
+
+extension NativeFullScreenRenderedDocumentBody: ReaderBody {
+    /// LaTeX lays out again at the new text size; a diagram ignores reader
+    /// preferences (its content has no Viewing Options).
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        guard let latexText else { return }
+        installLatexContent(text: latexText)
+    }
+
+    var picker: (any ReaderPicking)? { mermaidPicker }
+
+    var annotateAvailability: ReaderAnnotateAvailability { .ready }
+
+    func renderedSnapshot() async throws -> UIImage {
+        layoutIfNeeded()
+        let bounds = bounds
+        guard bounds.width > 1, bounds.height > 1 else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        let renderer = UIGraphicsImageRenderer(bounds: bounds)
+        return renderer.image { _ in
+            drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+    }
 }
 
 #if DEBUG

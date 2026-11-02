@@ -832,11 +832,6 @@ enum FullScreenDiffTextStyle {
     }
 }
 
-@MainActor
-protocol FullScreenReaderConfigurable: AnyObject {
-    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences)
-}
-
 func fullScreenAttributedCodeText(
     from attributed: NSAttributedString,
     font: UIFont = AppFont.monoMedium

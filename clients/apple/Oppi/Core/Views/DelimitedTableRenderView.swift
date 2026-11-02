@@ -1,7 +1,7 @@
 import UIKit
 
 /// Read-only CSV/TSV grid. Cells are clipped to the parser bounds; source bytes stay elsewhere.
-final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullScreenReaderConfigurable {
+final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, ReaderBody {
     private let plan: DelimitedTableViewerPlan
     private let themeID: ThemeID
     private let summaryLabel = UILabel()

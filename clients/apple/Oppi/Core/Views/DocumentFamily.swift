@@ -146,7 +146,7 @@ enum DocumentFamily: Equatable {
     func makeFullScreenBody(
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences
-    ) -> UIView {
+    ) -> any ReaderBody {
         switch self {
         case .delimitedTable(let text, let filePath):
             let view = DelimitedTableRenderView(

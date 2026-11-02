@@ -225,6 +225,40 @@ struct DoubleTapZoomTests {
         #expect(abs(hosted.scrollView.zoomScale - fit) < 0.02)
     }
 
+    @Test func latexTextSizeLaysFormulasOutLargerAtFitZoom() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .renderedDocument)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .renderedDocument) }
+        let controller = FullScreenCodeViewController.makeHarnessController(
+            content: .latex(
+                content: #"\int_0^1 x^2 \, dx = \frac{1}{3}"#,
+                filePath: nil
+            ),
+            reviewCommentSelectionContext: nil
+        )
+        let hosted = try attachFullscreenViewer(controller)
+        let body = try #require(
+            timelineFirstView(ofType: NativeFullScreenRenderedDocumentBody.self, in: controller.view)
+        )
+        let fit = hosted.scrollView.minimumZoomScale
+        let heightBefore = hosted.scrollView.contentSize.height
+        body.debugToggleLatexZoomForTesting(at: CGPoint(x: 80, y: 60))
+        #expect(hosted.scrollView.zoomScale > fit + 0.05)
+
+        controller.setReaderTextScaleForTesting(FullScreenReaderPreferences.maximumTextScale)
+        controller.view.layoutIfNeeded()
+
+        // A new text size starts over, as a freshly opened formula would: at fit
+        // zoom, still zoomable by one double tap, with larger formulas.
+        let scrollView = try #require(
+            timelineAllViews(in: controller.view)
+                .compactMap { $0 as? UIScrollView }
+                .first { $0.maximumZoomScale > 1 }
+        )
+        #expect(abs(scrollView.zoomScale - fit) < 0.02)
+        #expect(doubleTapRecognizerCount(on: scrollView) == 1)
+        #expect(scrollView.contentSize.height > heightBefore + 1)
+    }
+
     // MARK: - Fixtures
 
     private struct HostedDiagram {
