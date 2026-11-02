@@ -25,6 +25,7 @@ import {
   CompactionEntry,
   InboxDoc,
   LiveDoc,
+  defineDocFamily,
   defineExtension,
   defineTask,
   type ConversationId,
@@ -3846,6 +3847,119 @@ describe("server durable managed runtime", () => {
       b.withdrawNativeQueue(undefined, permit),
     );
     expect(taken.followUp).toEqual(before.followUp);
+    await b.detachForRestart();
+  });
+
+  it("stores a queued image prompt's content once and still refuses a changed replay after withdrawal", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const b = await backend(harness, f.models, f.session, f.dir);
+    const conversation = (await harness.conversation(
+      f.session.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    await conversation.commit(async (tx) => {
+      (await tx.doc(LiveDoc, conversation.id)).run = {
+        taskId: 999 as never,
+        inputs: [998 as never],
+        turns: 0,
+      };
+    }, context);
+    const image = (fill: string) => ({
+      type: "image" as const,
+      data: Buffer.alloc(64 * 1024, fill).toString("base64"),
+      mimeType: "image/png",
+    });
+    const send = (data: ReturnType<typeof image>) =>
+      b.prompt("Look at this", {
+        streamingBehavior: "followUp",
+        clientTurnId: "image-turn",
+        images: [data],
+      });
+    const requestRecordBytes = () => {
+      const db = new DatabaseSync(join(f.dir, "restart.sqlite"), { readOnly: true });
+      try {
+        return (
+          db
+            .prepare(
+              "SELECT coalesce(sum(length(r.content)), 0) AS bytes FROM document_revisions r JOIN documents d ON d.id = r.document_id WHERE json_extract(d.kind, '$') = 'oppi.request-content'",
+            )
+            .get() as { bytes: number }
+        ).bytes;
+      } finally {
+        db.close();
+      }
+    };
+
+    await send(image("a"));
+    // The inbox item holds the image; the request record keeps only its fingerprint and display.
+    expect((await b.nativeMessageQueue()).followUp).toMatchObject([{ message: "Look at this" }]);
+    expect(requestRecordBytes()).toBeGreaterThan(0);
+    expect(requestRecordBytes()).toBeLessThan(1024);
+
+    const taken = await b.withRuntimeLifecycleTransaction("take", (permit) =>
+      b.withdrawNativeQueue(undefined, permit),
+    );
+    expect(taken.followUp).toMatchObject([{ message: "Look at this" }]);
+    // Withdrawn, only the fingerprint can tell an identical replay from a changed image.
+    await expect(send(image("a"))).resolves.toEqual({ duplicate: true });
+    await expect(send(image("b"))).rejects.toThrow("clientTurnId conflict");
+    expect((await b.nativeMessageQueue()).followUp).toEqual([]);
+    await b.detachForRestart();
+  });
+
+  it("checks a withdrawn replay against the full content an older store recorded", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const b = await backend(harness, f.models, f.session, f.dir);
+    const conversation = (await harness.conversation(
+      f.session.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    await conversation.commit(async (tx) => {
+      (await tx.doc(LiveDoc, conversation.id)).run = {
+        taskId: 999 as never,
+        inputs: [998 as never],
+        turns: 0,
+      };
+    }, context);
+    const image = (fill: string) => ({
+      type: "image" as const,
+      data: Buffer.alloc(1024, fill).toString("base64"),
+      mimeType: "image/png",
+    });
+    const content = [{ type: "text" as const, text: "Older input" }, image("a")];
+    // What an earlier server stored for a queued input: the content JSON itself.
+    const RequestContentV1 = defineDocFamily<{ content: string; display?: string }, null>({
+      kind: "oppi.request-content",
+      version: 1,
+      family: true,
+      scope: "conversation",
+      history: "latest",
+      fork: "initial",
+      initial: () => ({ content: "" }),
+      checkpointWhen: () => false,
+    });
+    await conversation.commit(async (tx) => {
+      (await tx.doc(RequestContentV1, conversation.id, "older-turn", null)).content =
+        JSON.stringify(content);
+    }, context);
+    await conversation.submit(
+      { type: "input", content, requestId: "older-turn", whenBusy: "followUp" },
+      context,
+    );
+    const taken = await b.withRuntimeLifecycleTransaction("take", (permit) =>
+      b.withdrawNativeQueue(undefined, permit),
+    );
+    expect(taken.followUp).toMatchObject([{ message: "Older input" }]);
+    const send = (data: ReturnType<typeof image>) =>
+      b.prompt("Older input", {
+        streamingBehavior: "followUp",
+        clientTurnId: "older-turn",
+        images: [data],
+      });
+    await expect(send(image("a"))).resolves.toEqual({ duplicate: true });
+    await expect(send(image("b"))).rejects.toThrow("clientTurnId conflict");
     await b.detachForRestart();
   });
 

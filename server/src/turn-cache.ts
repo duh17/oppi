@@ -114,7 +114,7 @@ export class TurnDedupeCache {
  * orders keys differently from one encode to the next, so a resent attachment ref must
  * not read as a different payload.
  */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, field: unknown) => {
     if (field === null || typeof field !== "object" || Array.isArray(field)) return field;
     const record = field as Record<string, unknown>;

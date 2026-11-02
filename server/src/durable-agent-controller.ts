@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
@@ -24,20 +25,37 @@ import { DURABLE_CONTINUE_REQUEST_ID_PREFIX } from "./durable-request-ids.js";
 import type { SessionHost } from "./durable-harness.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { canonicalJson } from "./turn-cache.js";
 import type { ChatAttachmentRef, MessageQueueItem } from "./types.js";
 
 const log = createLogger({ base: { component: "durable-agent-controller" } });
 
-// Submission records omit content after queued input withdrawal. Keep its
-// fingerprint durable too, so a later replay cannot silently change that input.
-const RequestContent = defineDocFamily<{ content: string; display?: string }, null>({
+/** SHA-256 of an input's content as key-sorted JSON: an identical replay, images included, matches. */
+function contentHash(content: unknown): string {
+  return createHash("sha256").update(canonicalJson(content)).digest("hex");
+}
+
+// Submission records omit content after queued input withdrawal. Keep a fingerprint of it
+// durable, so a later replay cannot silently change that input. The content itself lives in
+// the inbox item while queued and the `pi.user` entry once placed; nothing reads a withdrawn
+// input's content, so only its hash stays here (`hash` is empty when none was recorded).
+const RequestContent = defineDocFamily<{ hash: string; display?: string }, null>({
   kind: "oppi.request-content",
-  version: 1,
+  version: 2,
   family: true,
   scope: "conversation",
   history: "latest",
   fork: "initial",
-  initial: () => ({ content: "" }),
+  initial: () => ({ hash: "" }),
+  // Version 1 kept the content JSON itself. Reads hash it; members are written once, so one
+  // a version 1 wrote keeps its stored bytes.
+  migrate: (value) => {
+    const { content, display } = value as { content: string; display?: string };
+    return {
+      hash: content ? contentHash(JSON.parse(content)) : "",
+      ...(display !== undefined ? { display } : {}),
+    };
+  },
   // One member per request, written once.
   checkpointWhen: () => false,
 });
@@ -166,7 +184,7 @@ export class DurableAgentController {
               : undefined;
         const fingerprint = await tx.doc(RequestContent, this.conversation.id, requestId, null);
         if (!record) {
-          fingerprint.content = JSON.stringify(content);
+          fingerprint.hash = contentHash(content);
           if (options.display)
             fingerprint.display = JSON.stringify({
               ...options.display,
@@ -178,7 +196,7 @@ export class DurableAgentController {
         if (
           stored !== undefined
             ? !isDeepStrictEqual(content, stored)
-            : fingerprint.content !== JSON.stringify(content)
+            : fingerprint.hash !== contentHash(content)
         )
           throw new Error(
             "clientTurnId conflict: the stored durable submission has different content",
