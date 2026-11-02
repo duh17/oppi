@@ -60,6 +60,21 @@ describe("route registry against the running server", () => {
     expect((await sendFull("GET", "/agents/a/b/c", owner)).status).toBe(404);
   });
 
+  it("lets the enabled UI test harness answer its unregistered /e2e/ui/ fixtures", async () => {
+    const previous = process.env.OPPI_E2E_UI_HARNESS;
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    try {
+      // The harness's own refusal (POST-only fixture), not the registry gate's 404.
+      const res = await sendFull("GET", "/e2e/ui/reset-chat-style", {
+        Authorization: `Bearer ${token}`,
+      });
+      expect(res).toEqual({ status: 405 });
+    } finally {
+      if (previous === undefined) delete process.env.OPPI_E2E_UI_HARNESS;
+      else process.env.OPPI_E2E_UI_HARNESS = previous;
+    }
+  });
+
   function samplePath(template: string): string {
     return template.replace(/\{[A-Za-z0-9_]+\+?\}/g, "x");
   }

@@ -4,9 +4,10 @@ export type RouteAuth = "none" | "owner";
 export type RouteTransport = "http" | "websocket";
 
 /**
- * Every route the server answers. `RouteHandler` refuses a request that matches no row here, so a
- * handler without its row is unreachable, and the auth integration test holds `auth` to what the
- * server enforces.
+ * Every route the server answers. `RouteHandler` refuses an HTTP request that matches no row here,
+ * so an HTTP handler without its row is unreachable. WebSocket upgrades and `/health` are answered
+ * in `server.ts` before `RouteHandler`; the auth integration test is what keeps their rows, and
+ * every row's `auth`, true to the server.
  */
 export interface ApiRouteSpec {
   method: HttpMethod;
