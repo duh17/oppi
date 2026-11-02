@@ -3670,7 +3670,7 @@ struct SSHTerminalTests {
         channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
         grid.drawFrame()
         try await settle(mounted)
-        #expect(grid.isFirstResponder, "the prompt is typed into the terminal")
+        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "the prompt is typed into the terminal")
 
         let strip = try #require(grid.inputAccessoryView)
         let hide = try #require(mounted.find(in: strip, matching: {
@@ -3685,7 +3685,7 @@ struct SSHTerminalTests {
         } as? UIButton)
         typeInTerminal.sendActions(for: .touchUpInside)
         try await settle(mounted)
-        #expect(grid.isFirstResponder, "Type in Terminal brings the keyboard back")
+        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "Type in Terminal brings the keyboard back")
         #expect(grid.isSecureTextEntry)
         #expect(draft() == nil, "the password still cannot reach the draft")
 
@@ -3770,27 +3770,28 @@ struct SSHTerminalTests {
         try button("sshTerminal.bar.chatBar").sendActions(for: .touchUpInside)
         try await settle(mounted)
         let textView = try #require(draft(), "Chat Bar brings the chat bar")
-        #expect(textView.isFirstResponder, "and focuses it")
+        #expect(await waitForMainActorCondition { textView.isFirstResponder }, "and focuses it")
         #expect(try selected("sshTerminal.bar.chatBar"))
         #expect(try !selected("sshTerminal.bar.keyboard"))
 
         try button("sshTerminal.bar.keyboard").sendActions(for: .touchUpInside)
         try await settle(mounted)
-        #expect(grid.isFirstResponder, "Type in Terminal types into the terminal")
+        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "Type in Terminal types into the terminal")
         #expect(draft() == nil)
         #expect(try selected("sshTerminal.bar.keyboard"))
         #expect(try !selected("sshTerminal.bar.chatBar"))
     }
 
-    /// The screen updates its properties on the next runloop pass.
+    /// The screen updates its properties on the next runloop pass, and asks for
+    /// first responder from a block it dispatches to the main queue. Await those
+    /// passes instead of sleeping: a block queued now runs after the screen's,
+    /// so what follows observes the change rather than racing a deadline.
     private func settle(_ mounted: MountedTerminalTestController) async throws {
         for _ in 0..<4 {
-            await Task.yield()
+            await mounted.nextRunLoopPass()
             mounted.host.view.setNeedsLayout()
             mounted.host.view.layoutIfNeeded()
         }
-        try await Task.sleep(for: .milliseconds(250))
-        mounted.host.view.layoutIfNeeded()
     }
 }
 
@@ -3903,6 +3904,14 @@ private final class MountedTerminalTestController {
 
     func find(_ predicate: (UIView) -> Bool) -> UIView? {
         find(in: host.view, matching: predicate)
+    }
+
+    /// One runloop pass: the main queue drains, so every block the screen
+    /// dispatched before this one has run, then UIKit lays out.
+    func nextRunLoopPass() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 
     /// The person's explicit ask for the chat bar: the bottom bar's button.

@@ -68,6 +68,7 @@ Each of these has cost a worker a false red or a false green.
 
 - **A filter that matches nothing passes in raw xcodebuild** ("0 tests passed"). sim-pool and every gate lane fail it as `zero tests ran for ...`, but a run with several selectors passes when only some match, so name declared types in land-queue `--tests`.
 - **A removed cell lingers** one run-loop turn on iOS 27: assert on the data source, not on walking `subviews`.
+- **A first-responder ask lands on a turn, not a deadline:** the SSH terminal asks for the grid's keyboard from a block it dispatches, and UIKit can refuse an ask that arrives while the chat bar's text view is still resigning. Await the turn (`nextRunLoopPass()`) or the responder state; a fixed sleep races both.
 - **An anchored confirmation has no Cancel** (iOS 26+ popover action sheets drop `.cancel`): dismiss by tapping outside.
 - **Sheet and alert buttons can appear twice** on iOS 27: query by identifier and take `firstMatch`.
 - **A `UIAction`/`UIAlertAction` handler can't run in a unit test:** test the owner method it calls and prove the menu item in a UI test; never add a test-only property to reach the closure.

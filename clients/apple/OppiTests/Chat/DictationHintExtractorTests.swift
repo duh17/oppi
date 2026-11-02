@@ -571,9 +571,13 @@ struct DictationHintWiringTests {
         defer { resetHintPreferences() }
 
         let gate = AsyncGate()
+        let entered = AsyncGate()
         let systemAccess = MockVoiceInputSystemAccess()
         systemAccess.hasMicPermission = false
         systemAccess.requestMicPermissionHandler = {
+            // The answer is what this test holds still. The ask is the signal
+            // that the take is frozen and the live credentials may change.
+            await entered.open()
             await gate.wait()
             return true
         }
@@ -597,9 +601,8 @@ struct DictationHintWiringTests {
                 source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue
             )
         }
-        #expect(await waitForMainActorCondition {
-            systemAccess.requestMicPermissionCallCount == 1
-        })
+        await entered.wait()
+        #expect(systemAccess.requestMicPermissionCallCount == 1)
         manager.setServerCredentials(mutated.credentials)
         manager.setServerConnection(nil)
         await gate.open()
