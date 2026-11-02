@@ -696,6 +696,10 @@ struct RexLivePanesTests {
                      "the slide ends first; Rex's answer comes after it (phase \(transition.phase))")
         #expect(transition.isPlaceholderShown && transition.isAwaitingCreation, "the card waits")
         let name = try await rig.model.newPane()
+        // `newPane` returns Rex's answer; the sessions read that lists the pane follows it.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.model.latest.panes.contains { $0.name == name }
+        }, "the session's panes list never named the new pane")
         let created = try #require(rig.model.latest.panes.first { $0.name == name }?.blockID)
         // Rex answered: the card takes the pane's name, the grid takes the pane
         // underneath it, and the card stays because that pane has no screen yet.
