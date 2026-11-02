@@ -114,9 +114,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "AppPreferences.*.set": 3
     },
-    "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
     },

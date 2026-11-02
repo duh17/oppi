@@ -130,21 +130,30 @@ struct SessionRowPreviewSubject {
 /// Session Rows settings page: an inert preview drawn by the production row
 /// and Thread strip, pinned above the controls. Changes apply immediately, so
 /// the preview and every session list repaint as you toggle.
-final class SessionRowDisplayEditorViewController: UIViewController {
-    private enum Section: Hashable {
+///
+/// A page on `ListScreenController`: the preview is a pinned overlay at the
+/// safe area's top edge and the kit's list scrolls under it, its first row
+/// inset past the preview on every layout pass, so no row starts behind the
+/// preview at any text size. The page keeps the Density picker's own cell and
+/// the switches it holds across reconfigures.
+final class SessionRowDisplayEditorViewController: ListScreenController<
+    SessionRowDisplayEditorViewController.Section,
+    SessionRowDisplayEditorViewController.Item
+> {
+    enum Section: Hashable, Sendable {
         case density
         case details
         case thread
         case restore
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case density
         case toggle(Toggle)
         case restore
     }
 
-    private enum Toggle: String, CaseIterable {
+    enum Toggle: String, CaseIterable, Sendable {
         case model, time, context, cost, files, compactions, agentSummary
 
         var title: String {
@@ -173,8 +182,11 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    /// The gap between the pinned preview and the list's first row.
+    private static let previewGap: CGFloat = 14
+    /// What the list is inset by now, so a pass that changed nothing leaves the
+    /// scroll position alone.
+    private var previewInset: CGFloat = 0
 
     private let previewPane = UIStackView()
     private let previewLabel = UILabel()
@@ -207,8 +219,13 @@ final class SessionRowDisplayEditorViewController: UIViewController {
 
     init(root: AppRootEnvironment) {
         self.root = root
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Session Rows")
+        super.init(
+            title: String(localized: "Session Rows"),
+            listIdentifier: "sessionRows.form",
+            headers: true,
+            footers: true,
+            dismissesKeyboardOnDrag: true
+        )
         navigationItem.largeTitleDisplayMode = .never
         // The editor reads the loaded thread once, when it opens.
         loaded = SessionRowPreviewSubject.loaded(from: root.coordinator.activeConnection)
@@ -219,36 +236,26 @@ final class SessionRowDisplayEditorViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // The preview pins over the kit's list, which scrolls under it.
         buildPreviewPane()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.accessibilityIdentifier = "sessionRows.form"
-        // The first section sits a SwiftUI section gap below the preview.
-        collectionView.contentInset.top = 14
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
-        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        fillWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            previewPane.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            previewPane.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            previewPane.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: previewPane.bottomAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            maxWidth,
-            fillWidth,
-        ])
-        installDataSource()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // The list starts below the pinned preview, which grows with the text
+        // size: the inset follows the pane's own height on every pass.
+        let inset = previewPane.bounds.height + Self.previewGap
+        guard inset != previewInset else { return }
+        let wasAtTop = collectionView.contentOffset.y <= -collectionView.adjustedContentInset.top + 0.5
+        previewInset = inset
+        collectionView.contentInset.top = inset
+        collectionView.verticalScrollIndicatorInsets.top = inset
+        if wasAtTop { collectionView.contentOffset.y = -collectionView.adjustedContentInset.top }
     }
 
     override func updateProperties() {
         super.updateProperties()
         let themeStore = root.themeStore
-        ListScreen.applyTheme(themeStore, to: self, collectionView: collectionView)
         let themeID = themeStore.activeThemeID
         let colors = SessionRowStyle.for(themeID).colors
         previewPane.backgroundColor = themeStore.backgroundColor
@@ -286,8 +293,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         }
         previewData.isHidden = loaded == nil
         previewData.selectedSegmentIndex = usesLoaded ? 1 : 0
-
-        applySnapshot()
     }
 
     // MARK: Preview
@@ -339,6 +344,12 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         [previewLabel, previewBox, previewNote, previewData].forEach(previewPane.addArrangedSubview)
         previewPane.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(previewPane)
+        // Pinned, not scrolled: the preview stays while the controls move under it.
+        NSLayoutConstraint.activate([
+            previewPane.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            previewPane.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            previewPane.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
 
         previewDivider.translatesAutoresizingMaskIntoConstraints = false
         previewPane.addSubview(previewDivider)
@@ -350,18 +361,84 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         ])
     }
 
-    // MARK: Controls
+    // MARK: - Rows
 
-    private func installDataSource() {
-        let toggleCell = UICollectionView.CellRegistration<UICollectionViewListCell, Toggle> { [weak self] cell, _, toggle in
-            self?.configure(cell, toggle: toggle)
+    /// The switches and Restore Defaults are the kit's theme cards; the Density
+    /// picker is the page's own cell (`dequeue(_:at:)`).
+    override var rowStyle: ListRowStyle { .card }
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(.density, footer: densityFooter, items: [.density]),
+            ListSection(
+                .details,
+                header: String(localized: "Details"),
+                footer: String(localized: "Details keep this order. Title, status, questions, Incognito, workspace, and search matches always show."),
+                items: [.model, .time, .context, .cost, .files, .compactions].map(Item.toggle)
+            ),
+            ListSection(
+                .thread,
+                header: String(localized: "Thread Rows"),
+                footer: String(localized: "The Thread control, a child's question, who is working, the status dots, and the status counts always show. Cost in the Thread row follows Cost above."),
+                items: [.toggle(.agentSummary)]
+            ),
+            ListSection(.restore, items: [.restore]),
+        ]
+    }
+
+    /// Only the two groups that carry a name show a heading.
+    override func showsHeader(for section: Section) -> Bool {
+        switch section {
+        case .details, .thread: true
+        case .density, .restore: false
         }
-        let densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(selected: draft.density) { [weak self] density in self?.draft.density = density }
+    }
+
+    /// Each control is keyed by the choice it draws, so flipping one redraws its
+    /// own row (and the density footer the kit redraws anyway), never the switch
+    /// beside it.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .density: AnyHashable(draft.density)
+        case .toggle(let toggle): AnyHashable(draft[keyPath: toggle.keyPath])
+        case .restore: AnyHashable(draft != .standard)
         }
-        let restoreCell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
+    }
+
+    private var densityFooter: String {
+        draft.density == .compact
+            ? String(localized: "Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on.")
+            : String(localized: "Standard stacks details in two rows with roomier spacing.")
+    }
+
+    /// The Density picker is the page's own cell; every other row is the kit's
+    /// theme card.
+    private lazy var densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        SettingsListStyle.card(cell)
+        cell.configure(selected: draft.density) { [weak self] density in self?.draft.density = density }
+    }
+
+    override func prepareRegistrations() {
+        _ = densityCell
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .density:
+            collectionView.dequeueConfiguredReusableCell(using: densityCell, for: indexPath, item: item)
+        case .toggle, .restore:
+            cardCell(for: item, at: indexPath)
+        }
+    }
+
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
+        switch item {
+        case .density:
+            break
+        case .toggle(let toggle):
+            configureToggleRow(cell, toggle: toggle)
+        case .restore:
             let enabled = draft != .standard
             ListScreen.buttonRow(
                 cell,
@@ -369,94 +446,10 @@ final class SessionRowDisplayEditorViewController: UIViewController {
                 label: String(localized: "Restore Defaults"),
                 enabled: enabled
             ) { [weak self] in self?.draft = .standard }
-            var content = UIListContentConfiguration.cell()
+            var content = content(.plain)
             content.text = String(localized: "Restore Defaults")
             content.textProperties.color = enabled ? root.themeStore.activeThemeID.palette.ui.blue : .tertiaryLabel
             cell.contentConfiguration = content
-        }
-        let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
-            collectionView: collectionView
-        ) { collectionView, indexPath, item in
-            switch item {
-            case .density:
-                collectionView.dequeueConfiguredReusableCell(using: densityCell, for: indexPath, item: item)
-            case .toggle(let toggle):
-                collectionView.dequeueConfiguredReusableCell(using: toggleCell, for: indexPath, item: toggle)
-            case .restore:
-                collectionView.dequeueConfiguredReusableCell(using: restoreCell, for: indexPath, item: item)
-            }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).flatMap(Self.headerText)
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            guard let self else { return }
-            var content = UIListContentConfiguration.footer()
-            content.text = self.dataSource?.sectionIdentifier(for: indexPath.section).flatMap(footerText)
-            view.contentConfiguration = content
-        }
-        dataSource.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-        self.dataSource = dataSource
-    }
-
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.density, .details])
-        snapshot.appendItems([.density], toSection: .density)
-        snapshot.appendItems([.model, .time, .context, .cost, .files, .compactions].map(Item.toggle), toSection: .details)
-        snapshot.appendSections([.thread])
-        snapshot.appendItems([.agentSummary].map(Item.toggle), toSection: .thread)
-        snapshot.appendSections([.restore])
-        snapshot.appendItems([.restore], toSection: .restore)
-        // Every control and the density footer follow the draft.
-        snapshot.reconfigureItems(snapshot.itemIdentifiers)
-        dataSource.apply(snapshot, animatingDifferences: false)
-        refreshFooters()
-    }
-
-    /// Reconfiguring items leaves supplementary views as they were.
-    private func refreshFooters() {
-        let kind = UICollectionView.elementKindSectionFooter
-        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-            guard let footer = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell,
-                  let section = dataSource?.sectionIdentifier(for: indexPath.section) else { continue }
-            var content = UIListContentConfiguration.footer()
-            content.text = footerText(section)
-            footer.contentConfiguration = content
-        }
-    }
-
-    private static func headerText(_ section: Section) -> String? {
-        switch section {
-        case .details: String(localized: "Details")
-        case .thread: String(localized: "Thread Rows")
-        case .density, .restore: nil
-        }
-    }
-
-    private func footerText(_ section: Section) -> String? {
-        switch section {
-        case .density:
-            draft.density == .compact
-                ? String(localized: "Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on.")
-                : String(localized: "Standard stacks details in two rows with roomier spacing.")
-        case .details:
-            String(localized: "Details keep this order. Title, status, questions, Incognito, workspace, and search matches always show.")
-        case .thread:
-            String(localized: "The Thread control, a child's question, who is working, the status dots, and the status counts always show. Cost in the Thread row follows Cost above.")
-        case .restore:
-            nil
         }
     }
 
@@ -474,10 +467,12 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         return control
     }
 
-    private func configure(_ cell: UICollectionViewListCell, toggle: Toggle) {
-        var content = UIListContentConfiguration.cell()
+    /// A switch row: the title, and the switch the page holds at its trailing
+    /// edge. The switch is the row's one element and takes its own taps.
+    private func configureToggleRow(_ cell: SidebarListCell, toggle: Toggle) {
+        ListScreen.staticRow(cell)
+        var content = content(.plain)
         content.text = toggle.title
-        content.textProperties.color = root.themeStore.activeThemeID.palette.ui.fg
         cell.contentConfiguration = content
         let control = toggleSwitch(toggle)
         // The app tint SwiftUI toggles drew in, following the theme.

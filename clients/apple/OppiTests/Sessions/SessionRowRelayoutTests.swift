@@ -309,4 +309,66 @@ struct SessionRowRelayoutTests {
             "The indented row was sized as if it had the full width: \(child) vs \(twoLines) (one line is \(oneLine))"
         )
     }
+
+    /// The Session Rows editor's preview is pinned over the list, so the list's
+    /// first row must start below it — at a large text size too, where the
+    /// preview is tall and a row would otherwise be drawn behind it.
+    @Test func editorFormStartsBelowThePinnedPreviewAtALargeTextSize() async throws {
+        let page = SessionRowDisplayEditorViewController(root: makeTestAppRoot())
+        page.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        defer {
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
+
+        /// The first row's frame, the pinned preview's frame, and the list's own,
+        /// all in the page's coordinates.
+        func laidOut() -> (row: CGRect, preview: CGRect, list: CGRect, previewIsAbove: Bool)? {
+            page.view.layoutIfNeeded()
+            guard let box = Self.firstView(identified: "sessionRows.preview", in: page.view),
+                  let pane = box.superview,
+                  let cell = page.indexPath(for: .density).flatMap({ page.collectionView.cellForItem(at: $0) })
+            else { return nil }
+            let subviews = page.view.subviews
+            let paneIndex = subviews.firstIndex(of: pane) ?? -1
+            let listIndex = subviews.firstIndex(of: page.collectionView) ?? .max
+            return (
+                cell.convert(cell.bounds, to: page.view),
+                pane.convert(pane.bounds, to: page.view),
+                page.collectionView.frame,
+                paneIndex > listIndex
+            )
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { laidOut() != nil },
+                "the form did not lay out")
+        // A pass of its own: the inset follows the preview's settled height.
+        try await Task.sleep(for: .milliseconds(200))
+        let laid = try #require(laidOut())
+
+        #expect(laid.previewIsAbove, "the preview is not pinned over the list")
+        #expect(laid.list.minY == 0, "the list is the page's whole height, not a pane under the preview")
+        #expect(
+            laid.row.minY >= laid.preview.maxY - 0.5,
+            "the first row starts behind the pinned preview: row \(laid.row) vs preview \(laid.preview)"
+        )
+        #expect(
+            page.collectionView.contentInset.top >= laid.preview.height - 0.5,
+            "the list was not inset past the preview: \(page.collectionView.contentInset.top) vs \(laid.preview.height)"
+        )
+    }
+
+    /// The first view in `view` carrying `identifier`.
+    private static func firstView(identified identifier: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == identifier { return view }
+        for subview in view.subviews {
+            if let found = firstView(identified: identifier, in: subview) { return found }
+        }
+        return nil
+    }
 }

@@ -225,6 +225,98 @@ struct ServerSkillsViewControllerTests {
         await TimelineCache.shared.removeServer(retryServerId)
     }
 
+    /// An opened folder stays open when the Skill's detail is read again — the
+    /// files are the same — and closing it takes its own nested folder's files
+    /// with it.
+    @Test("an opened folder stays open when the detail reloads with the same files")
+    func openFolderSurvivesADetailReload() async throws {
+        let detail = ServerSkillDetail(
+            summary: skill(),
+            skillMarkdown: "# release",
+            files: ["SKILL.md", "references/review.md", "references/nested/checklist.md"]
+        )
+        let reads = SkillReadCounter()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard request.url?.path.hasSuffix("/server/resources/skills/release") == true else { return nil }
+            reads.record()
+            return try mockJSONResponse(
+                json: String(decoding: JSONEncoder().encode(detail), as: UTF8.self),
+                for: request
+            )
+        })
+        defer { routes.end() }
+        let root = try makeRoot()
+        let connection = try #require(root.coordinator.connection(for: serverId))
+        // The Skill's page read the detail just before it opened the tree.
+        connection.serverResourceStore.rememberSkillDetail(detail, serverId: serverId)
+
+        let screen = ServerSkillBrowserViewController(
+            target: ServerSkillBrowserNavTarget(serverId: serverId, resourceId: "release"),
+            root: root,
+            connection: connection
+        )
+        let window = try show(UINavigationController(rootViewController: screen))
+        defer { hide(window) }
+
+        /// The row the list shows now, by its identifier: the cells it holds,
+        /// never one it has removed from its snapshot.
+        func row(_ identifier: String) -> UIButton? {
+            screen.view.layoutIfNeeded()
+            for cell in screen.collectionView.visibleCells {
+                if let button = Self.button(withIdentifier: identifier, in: cell) { return button }
+            }
+            return nil
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { row("skills.dir.references") != nil },
+                "the tree did not show the store's detail")
+        // The page appeared before anything is asked of it: its own load starts on
+        // the way in, and one asked for later replaces it.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { screen.isShowing },
+                "the page never appeared")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !screen.isLoading },
+                "the page's first load never settled")
+        #expect(reads.reads == 0, "the store had the detail: opening the tree asked for nothing")
+
+        // Open a folder, then the folder inside it.
+        try #require(row("skills.dir.references")).sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            row("skills.file.references/review.md") != nil
+        }, "opening a folder did not list its files")
+        #expect(row("skills.dir.references")?.accessibilityValue == "Expanded")
+        try #require(row("skills.dir.references/nested")).sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            row("skills.file.references/nested/checklist.md") != nil
+        }, "opening the nested folder did not list its file")
+
+        // The detail is read again, with the same files: what was open stays open.
+        // The two inserts settle first, each its own animated snapshot pass.
+        try await Task.sleep(for: .milliseconds(300))
+        screen.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { reads.reads == 1 }, """
+            the reload did not ask the server: reads \(reads.reads), loading \(screen.isLoading), \
+            failure \(String(describing: screen.loadFailure)), rows \(screen.shownItems.map(\.nodeId))
+            """)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            row("skills.dir.references")?.accessibilityValue == "Expanded"
+                && row("skills.dir.references/nested")?.accessibilityValue == "Expanded"
+                && row("skills.file.references/nested/checklist.md") != nil
+        }, "a reload of the same files closed the folders: rows \(screen.shownItems.map(\.nodeId))")
+
+        // Closing the outer folder takes the nested folder's files with it.
+        try await Task.sleep(for: .milliseconds(300))
+        try #require(row("skills.dir.references")).sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            row("skills.dir.references")?.accessibilityValue == "Collapsed"
+                && row("skills.dir.references/nested") == nil
+                && row("skills.file.references/nested/checklist.md") == nil
+                && screen.shownItems.map(\.nodeId) == ["directory:references", "file:SKILL.md"]
+        }, """
+           closing a folder left its nested files listed: references \
+           \(String(describing: row("skills.dir.references")?.accessibilityValue)), rows \(screen.shownItems.map(\.nodeId))
+           """)
+    }
+
     private func makeRoot() throws -> AppRootEnvironment {
         try makeTestAppRoot(
             readyServerId: serverId,
@@ -261,4 +353,14 @@ struct ServerSkillsViewControllerTests {
         }
         return nil
     }
+}
+
+/// How many skill-detail reads a test's route answered.
+private final class SkillReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var reads: Int { lock.withLock { count } }
+
+    func record() { lock.withLock { count += 1 } }
 }

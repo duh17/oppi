@@ -3,48 +3,53 @@ import UIKit
 /// A Skill's files as an expandable tree (route `.serverSkillBrowser`): folders
 /// open in place and a file opens in `ServerSkillFileViewController` through
 /// `AppNavigation`. The Skill's page loaded the detail just before opening
-/// this, so the tree usually shows at once; otherwise the screen asks the server.
+/// this, so the tree usually shows at once; otherwise (or on a Retry, a pull, a
+/// return) the page asks the server.
+///
+/// A page on `ListScreenController`: the tree is flattened into the kit's rows
+/// from the page's own open set, so an opened folder is a row insert under its
+/// own row, indented, with a chevron — not an outline snapshot. The kit owns the
+/// list, its pin, its theme, the load, and the whole-screen states.
 ///
 /// The route makes the Skill's server the active one on every appearance
 /// ("Connecting…" until it is ready).
 @MainActor
-final class ServerSkillBrowserViewController: UIViewController, UICollectionViewDelegate {
-    let target: ServerSkillBrowserNavTarget
+final class ServerSkillBrowserViewController: ListScreenController<
+    ServerSkillBrowserViewController.Section,
+    ServerSkillBrowserViewController.Item
+> {
+    enum Section: Hashable, Sendable { case files }
 
-    private enum Shown: Equatable {
-        case connecting
-        case loading
-        case empty
-        case unavailable(String)
-        case tree
+    /// One row of the flattened tree. Its identity is the node's, so opening or
+    /// closing a folder changes which rows the list has, never who they are: an
+    /// open folder's own row stays where it was.
+    struct Item: Hashable, Sendable {
+        let nodeId: String
     }
+
+    /// What a row draws: the node, how deep it sits, and whether its children
+    /// are out.
+    private struct Row {
+        let node: ServerSkillFileTreeNode
+        let depth: Int
+        let isOpen: Bool
+    }
+
+    let target: ServerSkillBrowserNavTarget
 
     private let root: AppRootEnvironment
     /// The route makes the Skill's server the active one on every appearance.
     private let switchesServer: Bool
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
-    private var nodes: [String: ServerSkillFileTreeNode] = [:]
-    /// The file list the tree was built from, so a redraw keeps open folders.
-    private var builtFiles: [String]?
-    private var builtTree: [ServerSkillFileTreeNode] = []
-    private var needsRebuild = false
-    private var appliedThemeID: ThemeID?
-    private var footerText = ""
+    /// The folders the person opened, by node id, as they left them: a reload
+    /// replaces the files, not this.
+    private var expanded: Set<String> = []
+    /// The rows of the last pass, by node id, for the cells to draw from.
+    private var rows: [String: Row] = [:]
 
     /// The Skill's server once it is ready.
-    private var connection: ServerConnection? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var fetchedDetail: ServerSkillDetail? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var error: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var connectTask: Task<Void, Never>?
-    private var loadTask: Task<Void, Never>?
-    private var isOnScreen = false
+    private var connection: ServerConnection?
+    /// The detail the last request returned.
+    private var fetchedDetail: ServerSkillDetail?
 
     /// `connection`: the Skill's server when the caller already has it ready;
     /// nil makes it the active server first.
@@ -53,19 +58,14 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         self.root = root
         self.connection = connection
         switchesServer = connection == nil
-        super.init(nibName: nil, bundle: nil)
+        super.init(title: String(localized: "Skill Files"), listIdentifier: "skills.files.list", footers: true)
         traitOverrides.appRootEnvironment = root
-        title = String(localized: "Skill Files")
+        // The page titles itself with the Skill's name once it has it.
         navigationItem.largeTitleDisplayMode = .never
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        connectTask?.cancel()
-        loadTask?.cancel()
-    }
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
 
@@ -74,18 +74,18 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         fetchedDetail ?? connection.serverResourceStore.skillDetail(id: target.resourceId, serverId: target.serverId)
     }
 
+    /// What the rows show now: nil until the Skill's server has the detail.
+    private var shownDetail: ServerSkillDetail? {
+        connection.flatMap(detail(in:))
+    }
+
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "skills.files.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
+        // A folder and a file act through their own button: the list selects
+        // nothing.
+        collectionView.allowsSelection = false
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -93,212 +93,159 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        isOnScreen = true
-        // The server switch and the load run on every appearance, as the
-        // hosted screen's tasks did.
-        if switchesServer {
-            connect()
-        } else {
-            loadIfNeeded()
-        }
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
-        connectTask?.cancel()
-        connectTask = nil
-        loadTask?.cancel()
-        loadTask = nil
-    }
-
     override func updateProperties() {
+        title = shownDetail?.summary.name ?? String(localized: "Skill Files")
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        guard let connection else {
-            title = String(localized: "Skill Files")
-            show(.connecting)
-            return
+    }
+
+    // MARK: - Load
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func loadSubject() -> AnyHashable? { AnyHashable(target) }
+
+    /// Another Skill or another server is another tree, closed.
+    override func subjectDidChange() {
+        fetchedDetail = nil
+        expanded = []
+    }
+
+    /// Makes the Skill's server the active one (when the route does), then asks
+    /// it for the detail — which it already has when the Skill's page just
+    /// loaded it, unless something asked for a fresh read.
+    override func load() async throws {
+        // A Retry, a pull, or a return to the page re-reads; appearing again
+        // shows what the store has.
+        let forced = loadTrigger == .ask
+        clearLoadFailure()
+        if switchesServer {
+            guard await root.coordinator.switchToServerReady(target.serverId), !Task.isCancelled else { return }
+            connection = root.coordinator.connection(for: target.serverId)
         }
-        if let detail = detail(in: connection) {
-            title = detail.summary.name
-            let tree = fileTree(for: detail.files)
-            if tree.isEmpty {
-                show(.empty)
-                return
-            }
-            show(.tree)
-            applyTree(tree)
-            updateFooter(detail.summary.editable
-                ? "Open a file to select text, stage comments, and revise it in an Oppi session."
-                : "Files are read-only and come from \(detail.summary.provenance.label).")
-        } else {
-            title = String(localized: "Skill Files")
-            show(error.map(Shown.unavailable) ?? .loading)
+        guard let connection else { throw LoadFailure(String(localized: "Server offline")) }
+        if !forced, detail(in: connection) != nil { return }
+        guard let apiClient = connection.apiClient else { throw LoadFailure(String(localized: "Not connected")) }
+        let fetched = try await apiClient.getServerSkill(id: target.resourceId)
+        guard !Task.isCancelled else { return }
+        // The Skill's own page and file reader read the same copy.
+        connection.serverResourceStore.rememberSkillDetail(fetched, serverId: target.serverId)
+        fetchedDetail = fetched
+    }
+
+    override func loadingCaption() -> String? { String(localized: "Loading skill files…") }
+
+    override func failureTitle() -> String? { String(localized: "Files Unavailable") }
+
+    override func emptyState() -> LoadState? {
+        .empty(
+            title: String(localized: "No Skill Files"),
+            systemImage: "folder",
+            message: String(localized: "This skill did not expose any browsable files.")
+        )
+    }
+
+    /// The route's server first: until it is ready there is nothing to list.
+    override func wholeScreenState() -> LoadState? {
+        guard connection != nil else { return .connecting }
+        return super.wholeScreenState()
+    }
+
+    // MARK: - Rows
+
+    /// Every row is a button of the kit's theme card.
+    override var rowStyle: ListRowStyle { .card }
+
+    override func sections() -> [ListSection<Section, Item>] {
+        guard let detail = shownDetail else {
+            rows = [:]
+            return []
+        }
+        let tree = ServerSkillFileTree.build(paths: detail.files)
+        let flattened = flatten(tree)
+        rows = Dictionary(uniqueKeysWithValues: flattened.map { ($0.node.id, $0) })
+        guard !flattened.isEmpty else { return [] }
+        return [ListSection(
+            .files,
+            footer: detail.summary.editable
+                ? String(localized: "Open a file to select text, stage comments, and revise it in an Oppi session.")
+                : String(localized: "Files are read-only and come from \(detail.summary.provenance.label)."),
+            items: flattened.map { Item(nodeId: $0.node.id) }
+        )]
+    }
+
+    /// The tree in list order: a folder's children follow it, one level in,
+    /// while it is open.
+    private func flatten(_ nodes: [ServerSkillFileTreeNode], depth: Int = 0) -> [Row] {
+        nodes.flatMap { node -> [Row] in
+            let row = [Row(node: node, depth: depth, isOpen: expanded.contains(node.id))]
+            guard node.kind == .directory, expanded.contains(node.id) else { return row }
+            return row + flatten(node.children, depth: depth + 1)
         }
     }
 
-    // MARK: - Content
-
-    private func show(_ next: Shown) {
-        collectionView.isHidden = next != .tree
-        // Rebuilt on every pass, so a theme change recolors these states.
-        let state: LoadState
-        switch next {
-        case .tree:
-            contentUnavailableConfiguration = nil
-            return
-        case .connecting:
-            state = .connecting
-        case .loading:
-            state = .loading(String(localized: "Loading skill files…"))
-        case .empty:
-            state = .empty(
-                title: String(localized: "No Skill Files"),
-                systemImage: "folder",
-                message: String(localized: "This skill did not expose any browsable files.")
-            )
-        case .unavailable(let reason):
-            state = .failed(
-                title: String(localized: "Files Unavailable"),
-                message: reason,
-                retry: RetryAction { [weak self] in self?.load() }
-            )
-        }
-        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: root.themeStore.backgroundColor)
+    /// A folder's row draws what it draws — its open state — so opening or
+    /// closing it reconfigures that row and no other.
+    override func inputs(of item: Item) -> AnyHashable {
+        AnyHashable([AnyHashable(item.nodeId), AnyHashable(expanded.contains(item.nodeId))])
     }
 
-    // MARK: - Tree
-
-    /// The tree for `files`, built once per file list.
-    private func fileTree(for files: [String]) -> [ServerSkillFileTreeNode] {
-        if builtFiles != files {
-            builtFiles = files
-            builtTree = ServerSkillFileTree.build(paths: files)
-            needsRebuild = true
-        }
-        return builtTree
-    }
-
-    private func applyTree(_ tree: [ServerSkillFileTreeNode]) {
-        guard let dataSource else { return }
-        if needsRebuild {
-            needsRebuild = false
-            nodes = [:]
-            var section = NSDiffableDataSourceSectionSnapshot<String>()
-            func append(_ children: [ServerSkillFileTreeNode], to parent: String?) {
-                section.append(children.map(\.id), to: parent)
-                for child in children {
-                    nodes[child.id] = child
-                    if !child.children.isEmpty { append(child.children, to: child.id) }
-                }
-            }
-            append(tree, to: nil)
-            var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
-            snapshot.appendSections([0])
-            dataSource.apply(snapshot, animatingDifferences: false)
-            dataSource.apply(section, to: 0, animatingDifferences: false)
-        }
-        // Rows read the theme in `configure`; a theme change redraws them.
-        let themeID = root.themeStore.activeThemeID
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            var snapshot = dataSource.snapshot()
-            snapshot.reconfigureItems(snapshot.itemIdentifiers)
-            dataSource.apply(snapshot, animatingDifferences: false)
-        }
-    }
-
-    /// The footer depends on the Skill's summary, not on its files, so it
-    /// redraws on its own: the shown footer is reconfigured, and one still
-    /// off screen reads the new text when it is made.
-    private func updateFooter(_ text: String) {
-        guard text != footerText else { return }
-        footerText = text
-        let footer = collectionView.supplementaryView(
-            forElementKind: UICollectionView.elementKindSectionFooter,
-            at: IndexPath(item: 0, section: 0)
-        ) as? UICollectionViewListCell
-        guard let footer else { return }
-        var content = UIListContentConfiguration.footer()
-        content.text = text
-        footer.contentConfiguration = content
-        collectionView.collectionViewLayout.invalidateLayout()
-    }
-
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, String> { [weak self] cell, _, id in
-            self?.configure(cell, id: id)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, _ in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.footerText
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: id)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
-    }
-
-    private func configure(_ cell: SidebarListCell, id: String) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
+        guard let row = rows[item.nodeId] else { return }
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
-        guard let node = nodes[id] else { return }
-        var content = UIListContentConfiguration.cell()
-        content.text = node.name
-        content.textProperties.color = palette.ui.fg
+        var content = content(.plain)
+        content.text = row.node.name
         content.imageProperties.tintColor = palette.ui.fg
-        switch node.kind {
+        // A child sits one level in from its folder, as a tree draws it.
+        content.directionalLayoutMargins.leading += CGFloat(row.depth) * Self.indent
+        switch row.node.kind {
         case .directory:
-            let isOpen = dataSource?.snapshot(for: 0).isExpanded(id) ?? false
             ListScreen.buttonRow(
                 cell,
-                identifier: "skills.dir.\(node.path)",
-                label: node.name,
-                value: isOpen ? "Expanded" : "Collapsed"
+                identifier: "skills.dir.\(row.node.path)",
+                label: row.node.name,
+                value: row.isOpen ? "Expanded" : "Collapsed"
             ) { [weak self] in
-                self?.toggle(id)
+                self?.toggle(row.node.id)
             }
             content.image = UIImage(systemName: "folder")
             cell.contentConfiguration = content
-            cell.accessories = [.outlineDisclosure(options: .init(style: .cell))]
+            cell.accessories = [.customView(configuration: .init(
+                customView: Self.chevron(isOpen: row.isOpen, palette: palette),
+                placement: .trailing()
+            ))]
         case .file:
             ListScreen.buttonRow(
                 cell,
-                identifier: "skills.file.\(node.path)",
-                label: "Open \(node.path)"
+                identifier: "skills.file.\(row.node.path)",
+                label: "Open \(row.node.path)"
             ) { [weak self] in
-                self?.open(path: node.path)
+                self?.open(path: row.node.path)
             }
-            content.image = UIImage(systemName: Self.fileIcon(for: node.path))
+            content.image = UIImage(systemName: Self.fileIcon(for: row.node.path))
             cell.contentConfiguration = content
         }
     }
 
-    private func toggle(_ id: String) {
-        guard let dataSource else { return }
-        var section = dataSource.snapshot(for: 0)
-        if section.isExpanded(id) {
-            section.collapse([id])
+    /// How far a level of the tree indents its rows.
+    private static let indent: CGFloat = 18
+
+    /// The folder's own state: a chevron that points at its children while they
+    /// are shown. The row's button owns the tap, so this only draws.
+    private static func chevron(isOpen: Bool, palette: ThemePalette) -> UIImageView {
+        let chevron = UIImageView(image: UIImage(systemName: isOpen ? "chevron.down" : "chevron.right"))
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
+        chevron.tintColor = palette.ui.comment
+        chevron.isAccessibilityElement = false
+        return chevron
+    }
+
+    private func toggle(_ nodeId: String) {
+        if expanded.contains(nodeId) {
+            expanded.remove(nodeId)
         } else {
-            section.expand([id])
+            expanded.insert(nodeId)
         }
-        dataSource.apply(section, to: 0, animatingDifferences: true)
-        // The row's Expanded / Collapsed value follows.
-        var snapshot = dataSource.snapshot()
-        snapshot.reconfigureItems([id])
-        dataSource.apply(snapshot, animatingDifferences: false)
+        setNeedsUpdateProperties()
     }
 
     private static func fileIcon(for path: String) -> String {
@@ -319,46 +266,5 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
             resourceId: target.resourceId,
             path: path
         ))
-    }
-
-    // MARK: - Data
-
-    private func connect() {
-        connectTask?.cancel()
-        let coordinator = root.coordinator
-        let serverId = target.serverId
-        connectTask = Task { [weak self] in
-            guard await coordinator.switchToServerReady(serverId), !Task.isCancelled, let self else { return }
-            connection = coordinator.connection(for: serverId)
-            loadIfNeeded()
-        }
-    }
-
-    private func loadIfNeeded() {
-        guard isOnScreen, let connection, detail(in: connection) == nil else { return }
-        load()
-    }
-
-    private func load() {
-        guard let connection else { return }
-        loadTask?.cancel()
-        let target = target
-        loadTask = Task { [weak self] in
-            guard let self else { return }
-            guard let apiClient = connection.apiClient else {
-                error = "Not connected"
-                return
-            }
-            error = nil
-            do {
-                let response = try await apiClient.getServerSkill(id: target.resourceId)
-                guard !Task.isCancelled else { return }
-                connection.serverResourceStore.rememberSkillDetail(response, serverId: target.serverId)
-                fetchedDetail = response
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.error = error.localizedDescription
-            }
-        }
     }
 }
