@@ -1,5 +1,4 @@
-import SwiftUI
-import TipKit
+import Foundation
 import Testing
 import UIKit
 @testable import Oppi
@@ -7,10 +6,6 @@ import UIKit
 @MainActor
 @Suite("Feature education tip host")
 struct FeatureEducationTipHostViewTests {
-    private struct HostedTip: Tip {
-        var title: Text { Text("Hosted tip") }
-    }
-
     private static let defaultsSuiteName = "FeatureEducationTipHostViewTests"
 
     private static let hostedDescriptor = FeatureEducationTipDescriptor(
@@ -20,11 +15,19 @@ struct FeatureEducationTipHostViewTests {
         systemImageName: "star"
     )
 
+    /// This suite is about the claim a host takes and gives back, not about
+    /// TipKit's datastore, so its tip is always eligible.
+    private static let alwaysEligible = FeatureEducationTipPresenter(
+        shouldDisplay: { _ in true },
+        displayUpdates: { _ in AsyncStream<Bool> { $0.yield(true) } },
+        invalidate: { _, _ in }
+    )
+
     /// Leaving a chat while its tip is shown destroys the host without a
     /// `stop()`. The claim must go with it, or no other tip shows until relaunch.
     @Test func destroyedHostGivesBackItsClaimSoAnotherTipCanShow() async throws {
         // A private coordinator: other suites claim the shared one while this
-        // test awaits TipKit.
+        // test waits for its host.
         let defaults = try #require(UserDefaults(suiteName: Self.defaultsSuiteName))
         defaults.removePersistentDomain(forName: Self.defaultsSuiteName)
         defer { defaults.removePersistentDomain(forName: Self.defaultsSuiteName) }
@@ -33,13 +36,13 @@ struct FeatureEducationTipHostViewTests {
         )
 
         var host: FeatureEducationTipHostView? = FeatureEducationTipHostView(
-            tip: HostedTip(),
             descriptor: Self.hostedDescriptor,
             insets: .zero,
-            coordinator: coordinator
+            coordinator: coordinator,
+            presenter: Self.alwaysEligible
         )
         host?.start()
-        // TipKit reports eligibility asynchronously; a loaded machine can take a while.
+        // The host claims from the task it starts, so the claim lands after this.
         for _ in 0..<500 where coordinator.activePresentation == nil {
             try await Task.sleep(for: .milliseconds(10))
         }

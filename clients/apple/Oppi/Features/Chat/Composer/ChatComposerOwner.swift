@@ -69,7 +69,6 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     private var heightConstraint: NSLayoutConstraint?
     private lazy var tipHost: FeatureEducationTipHostView = {
         let host = FeatureEducationTipHostView(
-            tip: FeatureEducationTips.BusySendModeTip(),
             descriptor: FeatureEducationTips.busySendMode,
             insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12),
             ownsHeight: false

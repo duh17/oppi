@@ -1,4 +1,3 @@
-import TipKit
 import UIKit
 
 // periphery:ignore - marker enum; comments grep this name for the fullscreen chrome convention
@@ -1146,14 +1145,14 @@ final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLine
             clearReviewCommentSelectionTip()
             return
         }
-        let tip = FeatureEducationTips.ReviewCommentSelectionTip()
+        let presenter = FeatureEducationTipPresenter.live
 #if DEBUG
         let forceTip = ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
             || Self.forcesReviewSelectionTipForTesting
 #else
         let forceTip = false
 #endif
-        guard tip.shouldDisplay || forceTip else {
+        guard presenter.shouldDisplay(FeatureEducationTips.reviewCommentSelection) || forceTip else {
             clearReviewCommentSelectionTip()
             return
         }
@@ -1168,7 +1167,7 @@ final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLine
 
         let tipView = FeatureEducationTipBannerView()
         tipView.configure(descriptor: FeatureEducationTips.reviewCommentSelection) { [weak self] in
-            tip.invalidate(reason: .tipClosed)
+            presenter.invalidate(FeatureEducationTips.reviewCommentSelection, reason: .closed)
             self?.clearReviewCommentSelectionTip()
         }
         tipView.translatesAutoresizingMaskIntoConstraints = false

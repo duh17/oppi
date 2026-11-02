@@ -125,7 +125,6 @@ final class ChatViewController: UIViewController {
     /// The one-time "Chat tools are in the menu" hint under the bar, for a chat on the
     /// default bar (`updateTopBarTip`).
     let topBarTip = FeatureEducationTipHostView(
-        tip: FeatureEducationTips.TopBarMoreToolsTip(),
         descriptor: FeatureEducationTips.topBarMoreTools,
         insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12),
         // The message names four tools and a settings path: two lines on a phone.

@@ -1,4 +1,3 @@
-import TipKit
 import UIKit
 
 /// Native UIKit tool row.
@@ -1366,8 +1365,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     ) {
         if shouldShowToolDetailsTip(configuration: configuration) {
             showInlineFeatureEducationTip(
-                FeatureEducationTips.OpenToolDetailsTip(),
-                descriptor: FeatureEducationTips.openToolDetails,
+                FeatureEducationTips.openToolDetails,
                 before: previewLabel
             )
             return
@@ -1379,8 +1377,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             showOutput: showOutput
         ) {
             showInlineFeatureEducationTip(
-                FeatureEducationTips.ToolOutputShortcutsTip(),
-                descriptor: FeatureEducationTips.toolOutputShortcuts,
+                FeatureEducationTips.toolOutputShortcuts,
                 before: showExpanded ? expandedContainer : bashToolRowView
             )
             return
@@ -1389,18 +1386,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         clearInlineFeatureEducationTip()
     }
 
-    private func showInlineFeatureEducationTip<TipType: Tip>(
-        _ tip: TipType,
-        descriptor: FeatureEducationTipDescriptor,
+    private func showInlineFeatureEducationTip(
+        _ descriptor: FeatureEducationTipDescriptor,
         before arrangedView: UIView
     ) {
+        let presenter = FeatureEducationTipPresenter.live
 #if DEBUG
         let force = Self.forcesInlineFeatureTipsForTesting
             || ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
-        let shouldDisplay = tip.shouldDisplay || force
+        let shouldDisplay = presenter.shouldDisplay(descriptor) || force
 #else
         let force = false
-        let shouldDisplay = tip.shouldDisplay
+        let shouldDisplay = presenter.shouldDisplay(descriptor)
 #endif
         guard shouldDisplay else {
             if featureTipID == descriptor.id { clearInlineFeatureEducationTip() }
@@ -1417,9 +1414,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         clearInlineFeatureEducationTip()
 
         let tipView = FeatureEducationTipBannerView()
-        let tipToClose = tip
         tipView.configure(descriptor: descriptor) { [weak self] in
-            tipToClose.invalidate(reason: .tipClosed)
+            presenter.invalidate(descriptor, reason: .closed)
             self?.clearInlineFeatureEducationTip()
         }
         tipView.translatesAutoresizingMaskIntoConstraints = false

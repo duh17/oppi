@@ -1,4 +1,3 @@
-import TipKit
 import UIKit
 
 /// Header-only element. Body controls stay siblings so expansion does not hide them.
@@ -405,23 +404,20 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
             clearInlineFeatureEducationTip()
             return
         }
-        showInlineFeatureEducationTip(
-            FeatureEducationTips.OpenToolDetailsTip(),
-            descriptor: FeatureEducationTips.openToolDetails
-        )
+        showInlineFeatureEducationTip(FeatureEducationTips.openToolDetails)
     }
 
-    private func showInlineFeatureEducationTip<TipType: Tip>(
-        _ tip: TipType,
-        descriptor: FeatureEducationTipDescriptor
+    private func showInlineFeatureEducationTip(
+        _ descriptor: FeatureEducationTipDescriptor
     ) {
+        let presenter = FeatureEducationTipPresenter.live
 #if DEBUG
         let force = ToolTimelineRowContentView.forcesInlineFeatureTipsForTesting
             || ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
-        let shouldDisplay = tip.shouldDisplay || force
+        let shouldDisplay = presenter.shouldDisplay(descriptor) || force
 #else
         let force = false
-        let shouldDisplay = tip.shouldDisplay
+        let shouldDisplay = presenter.shouldDisplay(descriptor)
 #endif
         guard shouldDisplay else {
             if featureTipID == descriptor.id { clearInlineFeatureEducationTip() }
@@ -438,9 +434,8 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         clearInlineFeatureEducationTip()
 
         let tipView = FeatureEducationTipBannerView()
-        let tipToClose = tip
         tipView.configure(descriptor: descriptor) { [weak self] in
-            tipToClose.invalidate(reason: .tipClosed)
+            presenter.invalidate(descriptor, reason: .closed)
             self?.clearInlineFeatureEducationTip()
         }
         tipView.translatesAutoresizingMaskIntoConstraints = false

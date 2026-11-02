@@ -1,10 +1,15 @@
 import Foundation
 import TipKit
 
-/// Contextual tips for app behaviors that are easy to miss.
+/// Contextual tips for app behaviors that are easy to miss, and the one file
+/// that knows TipKit.
 ///
 /// Keep each tip tied to one immediate action. Call the matching `mark...` method
 /// when the user completes the action so TipKit stops showing that lesson.
+///
+/// A tip's copy is SwiftUI `Text` and an SF Symbol `Image`, so TipKit stays in
+/// this file: every other file names a `FeatureEducationTipDescriptor` and asks
+/// `FeatureEducationTipPresenter` whether that tip shows and when it ends.
 enum FeatureEducationTips {
     private static let testingArgument = "--show-feature-tips-for-testing"
     private static let resetArgument = "--reset-feature-tips"
@@ -92,39 +97,59 @@ enum FeatureEducationTips {
 
     @MainActor
     static func markToolDetailsOpened() {
-        OpenToolDetailsTip().invalidate(reason: .actionPerformed)
+        invalidate(openToolDetails, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: openToolDetails.id)
     }
 
     @MainActor
     static func markToolOutputShortcutUsed() {
-        ToolOutputShortcutsTip().invalidate(reason: .actionPerformed)
+        invalidate(toolOutputShortcuts, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: toolOutputShortcuts.id)
     }
 
     @MainActor
     static func markPromptAnswered() {
-        AnswerPromptTip().invalidate(reason: .actionPerformed)
+        invalidate(answerPrompt, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: answerPrompt.id)
     }
 
     @MainActor
     static func markBusySendModeUsed() {
-        BusySendModeTip().invalidate(reason: .actionPerformed)
+        invalidate(busySendMode, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: busySendMode.id)
     }
 
     /// The top bar's menu opened, or Customize Top Bar: the person found the tools.
     @MainActor
     static func markTopBarMoreToolsFound() {
-        TopBarMoreToolsTip().invalidate(reason: .actionPerformed)
+        invalidate(topBarMoreTools, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: topBarMoreTools.id)
     }
 
     @MainActor
     static func markReviewCommentCreated() {
-        ReviewCommentSelectionTip().invalidate(reason: .actionPerformed)
+        invalidate(reviewCommentSelection, reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: reviewCommentSelection.id)
+    }
+
+    /// Ends a tip: TipKit stops offering it, and the banner drawn for its
+    /// descriptor comes down.
+    @MainActor
+    static func invalidate(_ descriptor: FeatureEducationTipDescriptor, reason: FeatureEducationTipInvalidation) {
+        tip(for: descriptor)?.invalidate(reason)
+    }
+
+    /// The tip a descriptor names. Each tip has its own type because TipKit
+    /// tracks one by that type's identity, so a descriptor with no type of its
+    /// own has no tip and shows nothing.
+    fileprivate static func tip(for descriptor: FeatureEducationTipDescriptor) -> FeatureEducationTipHandle? {
+        if descriptor == openToolDetails { return FeatureEducationTipHandle(OpenToolDetailsTip()) }
+        if descriptor == toolOutputShortcuts { return FeatureEducationTipHandle(ToolOutputShortcutsTip()) }
+        if descriptor == answerPrompt { return FeatureEducationTipHandle(AnswerPromptTip()) }
+        if descriptor == busySendMode { return FeatureEducationTipHandle(BusySendModeTip()) }
+        if descriptor == reviewCommentSelection { return FeatureEducationTipHandle(ReviewCommentSelectionTip()) }
+        if descriptor == topBarMoreTools { return FeatureEducationTipHandle(TopBarMoreToolsTip()) }
+        return nil
     }
 
     struct OpenToolDetailsTip: Tip {
@@ -167,5 +192,87 @@ enum FeatureEducationTips {
         var message: Text? { Text(FeatureEducationTips.reviewCommentSelection.message) }
         var image: Image? { Image(systemName: FeatureEducationTips.reviewCommentSelection.systemImageName) }
         var options: [any TipOption] { MaxDisplayCount(1) }
+    }
+}
+
+/// The two ways a tip ends, so no caller names TipKit's `Tips.InvalidationReason`.
+enum FeatureEducationTipInvalidation {
+    /// The person closed the banner.
+    case closed
+    /// The person did the thing the tip teaches.
+    case actionPerformed
+}
+
+/// One tip's TipKit surface, as closures: `Tip` has associated types, so an
+/// erased tip cannot be called, and no `Tip` leaves this file.
+private struct FeatureEducationTipHandle {
+    let shouldDisplay: () -> Bool
+    let displayUpdates: () -> AsyncStream<Bool>
+    let invalidate: (FeatureEducationTipInvalidation) -> Void
+
+    init<TipType: Tip>(_ tip: TipType) {
+        shouldDisplay = { tip.shouldDisplay }
+        displayUpdates = {
+            AsyncStream { continuation in
+                let observation = Task {
+                    for await display in tip.shouldDisplayUpdates {
+                        continuation.yield(display)
+                    }
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in observation.cancel() }
+            }
+        }
+        invalidate = { reason in
+            switch reason {
+            case .closed: tip.invalidate(reason: .tipClosed)
+            case .actionPerformed: tip.invalidate(reason: .actionPerformed)
+            }
+        }
+    }
+}
+
+/// The tip definitions above, in descriptor terms: the only way another file
+/// asks about a tip.
+///
+/// The app uses `live`. A test passes its own presenter so its claims do not
+/// read TipKit's shared datastore.
+@MainActor
+struct FeatureEducationTipPresenter {
+    static let live = FeatureEducationTipPresenter(
+        shouldDisplay: { FeatureEducationTips.tip(for: $0)?.shouldDisplay() ?? false },
+        displayUpdates: {
+            FeatureEducationTips.tip(for: $0)?.displayUpdates() ?? AsyncStream<Bool> { $0.finish() }
+        },
+        invalidate: { descriptor, reason in
+            FeatureEducationTips.tip(for: descriptor)?.invalidate(reason)
+        }
+    )
+
+    private let isEligible: (FeatureEducationTipDescriptor) -> Bool
+    private let eligibilityUpdates: (FeatureEducationTipDescriptor) -> AsyncStream<Bool>
+    private let endTip: (FeatureEducationTipDescriptor, FeatureEducationTipInvalidation) -> Void
+
+    init(
+        shouldDisplay: @escaping (FeatureEducationTipDescriptor) -> Bool,
+        displayUpdates: @escaping (FeatureEducationTipDescriptor) -> AsyncStream<Bool>,
+        invalidate: @escaping (FeatureEducationTipDescriptor, FeatureEducationTipInvalidation) -> Void
+    ) {
+        isEligible = shouldDisplay
+        eligibilityUpdates = displayUpdates
+        endTip = invalidate
+    }
+
+    func shouldDisplay(_ descriptor: FeatureEducationTipDescriptor) -> Bool {
+        isEligible(descriptor)
+    }
+
+    /// Eligibility as it changes; the stream ends when its observer is cancelled.
+    func displayUpdates(for descriptor: FeatureEducationTipDescriptor) -> AsyncStream<Bool> {
+        eligibilityUpdates(descriptor)
+    }
+
+    func invalidate(_ descriptor: FeatureEducationTipDescriptor, reason: FeatureEducationTipInvalidation) {
+        endTip(descriptor, reason)
     }
 }

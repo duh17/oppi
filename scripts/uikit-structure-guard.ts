@@ -21,7 +21,7 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `import Charts`, `import TipKit` and `import struct SwiftUI.X` too, because
  *    both frameworks re-export SwiftUI. The iOS app target is UIKit everywhere
  *    except the two framework leaves, the theme and colour files that carry the
- *    palette's SwiftUI tokens, five TipKit files, the `Shared/` files the target
+ *    palette's SwiftUI tokens, one TipKit file, the `Shared/` files the target
  *    compiles, and the debug harness's previews. Any other file fails, and a new
  *    entry needs Chen's approval. `@_exported import` of any of them fails even
  *    in an allow-listed file.
@@ -272,26 +272,11 @@ const swiftUIImporters: { file: string; reason: string }[] = [
     file: "clients/apple/Oppi/Core/Extensions/Color+Theme.swift",
     reason: "`Color.theme…` helpers over the palette.",
   },
-  // TipKit: the framework re-exports SwiftUI (`TipView`, `Text` inside a tip).
+  // TipKit: the framework re-exports SwiftUI (`Text` and `Image` inside a tip),
+  // so the tips' definitions and their display live in this one file.
   {
     file: "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTips.swift",
-    reason: "TipKit re-exports SwiftUI; the tip rules and the tip views it draws.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift",
-    reason: "TipKit re-exports SwiftUI; the banner's `TipView`.",
-  },
-  {
-    file: "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift",
-    reason: "TipKit re-exports SwiftUI; its hover tip is a `Tip`.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
-    reason: "TipKit re-exports SwiftUI; the tool row's tip anchor.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/CollapsedToolTimelineRowContent.swift",
-    reason: "TipKit re-exports SwiftUI; the collapsed tool row's tip.",
+    reason: "TipKit re-exports SwiftUI; the tip definitions, their TipKit state, and the presenter every other file asks.",
   },
   // Shared/ files the iOS target compiles.
   {
@@ -644,7 +629,7 @@ harnesses included. Present and push through the router (Router.present,
 Router.push, and a RouterModalPresenter slot; previews that are their own window
 root host through PreviewHost.screenStack). SwiftUI survives only in the files
 \`swiftUIImporters\` names: the two framework leaves (Swift Charts, RealityKit),
-the theme and colour files, the TipKit files, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
+the theme and colour files, the TipKit file, ${swiftUIImporters.filter((entry) => entry.file.includes("/Shared/")).length} \`Shared/\` files, and the
 debug harness's previews. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and

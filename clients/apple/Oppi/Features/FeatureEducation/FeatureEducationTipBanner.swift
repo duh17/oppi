@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import TipKit
 import UIKit
 
 struct FeatureEducationTipDescriptor: Hashable, Sendable {
@@ -290,27 +289,28 @@ final class FeatureEducationTipHostView: UIView {
 
     /// `ownsHeight` pins this view's height to `reservedHeight`; a host whose
     /// container sizes the slot from `reservedHeight` passes false.
-    /// `coordinator` is the shared one except in tests, which isolate their claims.
+    /// `coordinator` is the shared one except in tests, which isolate their claims;
+    /// `presenter` is TipKit except in tests, which do not read its datastore.
     /// `fitsMessage` grows the banner past its standard height so a message
     /// too long for one line at this width shows its second line instead of
     /// being cut off (only a host that owns its height can use it).
-    init<TipType: Tip>(
-        tip: TipType,
+    init(
         descriptor: FeatureEducationTipDescriptor,
         insets: NSDirectionalEdgeInsets,
         ownsHeight: Bool = true,
         coordinator: FeatureEducationTipPresentationCoordinator = .shared,
+        presenter: FeatureEducationTipPresenter = .live,
         fitsMessage: Bool = false
     ) {
         self.coordinator = coordinator
         self.descriptor = descriptor
         self.insets = insets
         self.fitsMessage = fitsMessage && ownsHeight
-        invalidateTip = { tip.invalidate(reason: .tipClosed) }
+        invalidateTip = { presenter.invalidate(descriptor, reason: .closed) }
         observeTip = { update in
             Task { @MainActor in
-                update(tip.shouldDisplay)
-                for await display in tip.shouldDisplayUpdates {
+                update(presenter.shouldDisplay(descriptor))
+                for await display in presenter.displayUpdates(for: descriptor) {
                     if Task.isCancelled { return }
                     update(display)
                 }
