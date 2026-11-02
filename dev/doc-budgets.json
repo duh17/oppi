@@ -79,7 +79,7 @@
     },
     "dev/testing/ios-accessibility-testability.md": {
       "words": 820,
-      "reason": "Accessibility contract for agent-facing controls: timeline headers, identifier naming and its guard, Live Voice ids, semantic journey proof. 712 words; headroom max(15%, 100 words)."
+      "reason": "Accessibility contract for agent-facing controls: the visual-accessibility non-target and its size-style rule, timeline headers, identifier naming and its guard, Live Voice ids, semantic journey proof. 765 words; headroom max(15%, 100 words)."
     },
     "dev/testing/mac.md": {
       "words": 290,

@@ -2,6 +2,10 @@
 
 Part of [Testing Guide](README.md). The contract for controls a semantic journey (a person or XCUITest) must identify, activate, and observe; it does not require labelling every button or replace gesture and visual tests.
 
+## Visual accessibility is not a target
+
+No captures at accessibility text sizes, no VoiceOver passes, and no fixes, waivers, tests, or follow-ups for Apple's accessibility audit (`dynamicType`, `textClipped`, `contrast`) unless Chen reports the bug. Use system text styles (or `UIFont.scaled` with `adjustsFontForContentSizeCategory`) and stop. The automation semantics this guide describes stay required.
+
 ## Tool timeline headers
 
 - The cell keeps `chat.timeline.row.<itemID>`; the actionable header is its own element, `chat.timeline.row.<itemID>.header` (stable item id, never an index or rendered text).

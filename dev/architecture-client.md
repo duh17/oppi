@@ -23,17 +23,17 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 
 ## UIKit and SwiftUI ownership
 
-UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.ts` holds the ratchet ([Structure guard](#structure-guard)).
+UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.ts` enforces that ownership and the rules below ([Structure guard](#structure-guard)).
 
 ### Rules (iOS, `clients/apple/Oppi`)
 
-1. **New screens and views are UIKit.** Read `@Observable` stores in `updateProperties()`. Lists and settings use `UICollectionView` list layout with content configurations; bars use `navigationItem` items (`visibilityPriority`, `axisBehavior` where the Duo's vertical bars matter); sheets `UISheetPresentationController`; custom glass `UIGlassEffect`.
-2. **Touched SwiftUI converts whole:** the whole screen moves to UIKit in the same work item, with behaviour and accessibility-identifier parity, and the commit says so. Never put a UIKit view inside a SwiftUI screen; a SwiftUI leaf hosted in a UIKit screen converts on its own.
+1. **Every iOS view is UIKit.** Read `@Observable` stores in `updateProperties()`. Lists and settings use `UICollectionView` list layout with content configurations; bars use `navigationItem` items (`visibilityPriority`, `axisBehavior` where the Duo's vertical bars matter); sheets `UISheetPresentationController`; custom glass `UIGlassEffect`.
+2. **SwiftUI is a framework leaf, never a screen:** a file that has to draw Swift Charts, a `RealityView`, or a tip keeps its SwiftUI values and their one UIKit host in that same file, and no other file hosts SwiftUI.
 3. **One router presents and pushes.** `AppNavigation` drives the window, split view, stacks, and every sheet, cover, popover, and side panel through `Oppi/App/Router.swift`. Screens use `Router.present`/`Router.push` (theme and app-root trait come from the presenter) or a `RouterModalPresenter` slot set in `updateProperties()`; `ModalPresentation` picks the style. An iPad side panel is a `TrailingColumnController` column in regular width and a router sheet in compact. A modal root that mirrors presenter state uses `RouterScreen.liveController(_:update:)`.
 4. **Reuse the [shared building blocks](#shared-uikit-building-blocks)** before writing one.
 5. **A list cell that changes its own layout re-measures:** session lists set `selfSizingInvalidation = .enabledIncludingConstraints` and a rearranging row invalidates its intrinsic size, or lines overlap.
 6. **SwiftUI only where Apple requires it:** widgets, control widgets, Live Activities (`OppiControlWidget`, `OppiActivityExtension`), App Intents UI.
-7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason** ([Remaining SwiftUI](#remaining-swiftui)); `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too.
+7. **A file imports SwiftUI only if the guard's `swiftUIImporters` names it, with a reason** ([the SwiftUI allow-list](#the-swiftui-allow-list)); `import Charts`, `import TipKit`, and `import struct SwiftUI.X` count too, and a new entry needs Chen's approval.
 8. **Observe notifications with a block on the main queue:** a `@MainActor` type uses `addObserver(forName:object:queue: .main)`, keeps the token, and removes it in `isolated deinit` or when it leaves; selector observers trap when the poster is off the main thread (`bd3b2b5d4`, `415f62e75`).
 
 ### Shared UIKit building blocks
@@ -69,9 +69,9 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 - A content-unavailable button cannot carry an identifier: put scoped ids on the view, query Retry inside it, and carry the state kind in `accessibilityValue`. A controller's own `contentUnavailableConfiguration` has no view a test can hold, so a screen with an agent-facing failure hosts its own `UIContentUnavailableView`.
 - A list states itself in a row (`ListSection.state`/`ListStateRow`, `SettingsStateRowCell`). A `ListScreenController` page never writes its own loading, failed, or empty row: it names `stateSection()` and `emptyState()` and the base picks; a store-backed page uses `stateRow(hasContent:isLoading:failure:)`. A page with no rows is its state (`wholeScreenState()`), never both.
 
-### Remaining SwiftUI
+### The SwiftUI allow-list
 
-- `swiftUIImporters` names exactly five files the app target compiles. The framework leaves are `UsageCharts.swift` and `USDZRealityCanvas.swift`: values only, no `@Environment` or app service, and `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app. `FeatureEducationTips.swift` holds the TipKit tips, whose `Text`/`Image` need SwiftUI while their display is UIKit. `Shared/Theme/ModelColorHelpers.swift` holds the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use: a model color is a `ThemeColor` too, and a SwiftUI leaf draws one with `viewColor(_:)`. `Shared/Activity/LiveActivityPresentation.swift` is the Live Activity surface, shared with the widget extension. `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels) imports neither SwiftUI nor Charts.
+- `swiftUIImporters` names exactly five files the app target compiles, the whole of SwiftUI in the iOS app. The framework leaves are `UsageCharts.swift` and `USDZRealityCanvas.swift`: values only, no `@Environment` or app service, and `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app. `FeatureEducationTips.swift` holds the TipKit tips, whose `Text`/`Image` need SwiftUI while their display is UIKit. `Shared/Theme/ModelColorHelpers.swift` holds the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use: a model color is a `ThemeColor` too, and a SwiftUI leaf draws one with `viewColor(_:)`. `Shared/Activity/LiveActivityPresentation.swift` is the Live Activity surface, shared with the widget extension. `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels) imports neither SwiftUI nor Charts.
 - `sharedMacOnlySwiftUI` names the Mac-only `ThinkingOrbAcknowledgmentsView.swift` and `Shared/Renderers/Orbs/OrbView.swift` (the orb's SwiftUI wrapper; excluded from `Oppi` in `project.yml`; the two lists move together). `OrbMetalView.swift` is a UIKit/AppKit view on both platforms.
 
 ### App services
@@ -87,7 +87,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Structure guard
 
-`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs Chen's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (palette bridges, settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a migration commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
+`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs Chen's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
 
 **Mac (`clients/apple/OppiMac`):** new views are AppKit; existing SwiftUI stays until a separate decision.
 
