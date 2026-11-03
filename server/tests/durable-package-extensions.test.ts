@@ -903,6 +903,9 @@ describe("plugins on the extension list", () => {
     const f = await fixture(callsTool("unused"));
     const path = `/server/resources/extensions/${rowNamed(await f.rows(), "counted").id}`;
 
+    // An Agent's tool picker needs no prompt sections, so its inspection renders none.
+    expect((await f.route("GET", `${path}?agentTools=true`)).body.promptSections).toBeUndefined();
+    expect(counted.__oppiCountedRenders).toBe(0);
     for (let open = 0; open < 2; open++)
       expect((await f.route("GET", path)).body.promptSections).toEqual([
         { name: "counted", text: "Counted.", perConversation: false },

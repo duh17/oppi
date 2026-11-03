@@ -367,12 +367,17 @@ export class ServerResourceService {
     return this.extensionDetail(id, true);
   }
 
+  /**
+   * `inspectTools` is an Agent's tool picker asking for one extension's tool names: it gets no
+   * definitions, so it never pays for a plugin's trial renders.
+   */
   private async extensionDetail(id: string, inspectTools: boolean): Promise<ServerExtensionDetail> {
     const context = await this.resolveContext();
     const plugins = await this.pluginRows(context);
     const own = plugins.own.get(id);
     if (own) {
-      const definitions = own.extension === undefined ? undefined : own.definitions();
+      const definitions =
+        own.extension === undefined || inspectTools ? undefined : own.definitions();
       return {
         summary: pluginRow(id, own, this.agentDir),
         ...(definitions
@@ -388,12 +393,16 @@ export class ServerResourceService {
     if (!entry) throw new ServerResourceNotFoundError("extension");
     const summary = copyExtensionSummary(withPlugin(entry.summary, plugins));
     const attached = plugins.attached.get(id);
-    const definitions = attached?.extension === undefined ? undefined : attached.definitions();
-    const classic = entry.extension ? classicToolDefinitions(entry.extension.tools.values()) : [];
-    const toolDefinitions = [...(definitions?.tools ?? []), ...classic];
+    const definitions =
+      attached?.extension === undefined || inspectTools ? undefined : attached.definitions();
+    const classic =
+      entry.extension && !inspectTools
+        ? classicToolDefinitions(entry.extension.tools.values())
+        : undefined;
+    const toolDefinitions = [...(definitions?.tools ?? []), ...(classic ?? [])];
     return {
       summary,
-      ...(definitions || entry.extension ? { toolDefinitions } : {}),
+      ...(definitions || classic ? { toolDefinitions } : {}),
       ...(definitions ? { promptSections: definitions.sections } : {}),
       contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
       contributedToolDetails: summary.contributedToolDetails
