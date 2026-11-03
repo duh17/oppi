@@ -18,7 +18,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "",
   "- Link files the user may want to open, such as files you created, changed, or cite: [[path|label]] or [[path#L12-L18|label]]. Backticked paths, `file.ts:12`, and [[file#Heading]] stay plain text. Extensionless wiki targets gain .md, so link those with [label](path).",
   "- Embed images, audio, video, or USDZ you made or found: ![[path]] or ![alt](path). [[path]] only links. Only local files embed; remote https images load on tap.",
-  "- Relative paths resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd. Use ~/ or absolute paths for other files on this machine, including other repos; in a sandbox, use sandbox-visible paths. Link only files that exist.",
+  "- Relative paths resolve from this session's workspace checkout root (its worktree, if any), not the shell's cwd. Paths a subagent, tool, or other session reports are relative to its own checkout or worktree. Use ~/ or absolute paths for those and other files on this machine, including other repos; in a sandbox, use sandbox-visible paths. Check that a file exists (e.g. `test -f`) before you link or embed it.",
   "- Session link: [label](oppi://session/<full-session-id>).",
   "- ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.",
   "- ```geojson or ```topojson renders an interactive map.",
