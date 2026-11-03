@@ -139,13 +139,24 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             XCTAssertTrue(button.waitForExistence(timeout: 10), "Expected chat toolbar control did not appear")
         }
 
-        // The bar confines custom item views to its control row, so the ring
-        // keeps that row's full height and its own 44-point width. The edge tap
-        // below proves the whole target opens Context.
-        XCTAssertGreaterThanOrEqual(
-            contextButton.frame.width,
-            44,
-            "Context toolbar control must expose a 44-point-wide hit target"
+        // Every action control takes the bar's own slot width, and the width is
+        // 38 pt on purpose: 44 pt slots squeezed the session title out of an
+        // iPhone bar with four controls pinned. Back is not one of them: it sits
+        // alone in its own glass circle at the leading edge. The edge tap below
+        // proves the whole slot opens Context, so the narrow slot costs no reach.
+        for button in [filesButton, outlineButton, contextButton] {
+            XCTAssertEqual(
+                button.frame.width,
+                38,
+                accuracy: 0.5,
+                "Every action control must keep the bar's 38 pt slot: \(button.identifier)"
+            )
+        }
+        XCTAssertEqual(
+            backButton.frame.width,
+            36,
+            accuracy: 0.5,
+            "Back keeps its own 36 pt circle"
         )
         XCTAssertEqual(
             contextButton.frame.height,
@@ -157,15 +168,6 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             contextButton.frame.height,
             36,
             "Context toolbar control must keep the bar row's full height"
-        )
-
-        let leadingControlWidth = backButton.frame.union(filesButton.frame).width
-        let trailingControlWidth = outlineButton.frame.union(contextButton.frame).width
-        XCTAssertEqual(
-            trailingControlWidth,
-            leadingControlWidth,
-            accuracy: 2,
-            "The leading and trailing toolbar pills must keep matching visual widths"
         )
 
         contextButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).tap()
