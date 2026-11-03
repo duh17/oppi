@@ -90,10 +90,12 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
         )
         try saveLabScreenshot(name: "host-captions-inline-cue-one")
 
-        // Playback moves the cue.
-        tapPlay(on: inlinePlayer)
+        // Playback moves the cue. The player mounted playing, so this starts a paused one
+        // and leaves a running one alone: tapping Pause here would freeze the clock the
+        // next cue needs.
+        continuePlayback(on: inlinePlayer)
         XCTAssertTrue(
-            waitForCaption(containing: "Caption two", in: inlinePlayer, timeout: 12),
+            waitForCaption(containing: "Caption two", in: inlinePlayer, timeout: 25),
             "Inline caption did not follow playback to cue two. probe=\(playbackProbe()) tree=\(captionSummary())"
         )
         XCTAssertFalse(captionExists(containing: "Caption one", in: inlinePlayer), "Cue one stayed visible after its end time")
@@ -244,11 +246,14 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
         _ = playPauseButton().waitForExistence(timeout: 2)
     }
 
-    private func tapPlay(on player: XCUIElement) {
+    /// Starts a paused player, and leaves one already playing from its mount alone.
+    private func continuePlayback(on player: XCUIElement) {
         showControls(on: player)
         let button = playPauseButton()
         XCTAssertTrue(button.waitForExistence(timeout: 8), "Native Play did not appear")
-        button.tap()
+        if button.label.caseInsensitiveCompare("Play") == .orderedSame {
+            button.tap()
+        }
     }
 
     private func tapPause(on player: XCUIElement) {
@@ -261,13 +266,17 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
 
     nonisolated private static let videoFilename = "host-clip.mp4"
 
+    /// The first cue holds long enough for a mounted player to be queried: the mount and the
+    /// accessibility snapshot cost more than the second a terse first cue would allow, and a
+    /// cue is authored time, not a race. Both tracks share these windows, so the language
+    /// switch lands on the same cue as the bare track.
     nonisolated private static let bareSRT = """
     1
-    00:00:00,000 --> 00:00:01,500
+    00:00:00,000 --> 00:00:14,000
     Caption one
 
     2
-    00:00:02,000 --> 00:00:30,000
+    00:00:14,000 --> 00:00:30,000
     Caption two
 
     3
@@ -278,11 +287,11 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
 
     nonisolated private static let frenchSRT = """
     1
-    00:00:00,000 --> 00:00:01,500
+    00:00:00,000 --> 00:00:14,000
     Légende une
 
     2
-    00:00:02,000 --> 00:00:30,000
+    00:00:14,000 --> 00:00:30,000
     Légende deux
 
     3
