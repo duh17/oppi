@@ -96,7 +96,11 @@ final class ServerExtensionToolViewController: ListScreenController<
             sections.append(ListSection(
                 .parameters,
                 header: "Parameters",
-                footer: parameters.isEmpty ? String(localized: "The tool takes no arguments.") : nil,
+                // Only an empty property list says so: a schema without one (`anyOf`,
+                // `$ref`) takes arguments this page does not list.
+                footer: tool.parameters?.objectValue?["properties"]?.objectValue?.isEmpty == true
+                    ? String(localized: "The tool takes no arguments.")
+                    : nil,
                 items: parameters.map { Item.parameter($0.name) }
             ))
             sections.append(ListSection(.schema, items: [.schema]))

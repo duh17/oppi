@@ -329,10 +329,12 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     title: name, subtitle: ServerExtensionListPresentation.firstLine(of: text)
                 ) { [weak self] in self?.openSection(name) }
             } else {
-                // Nothing to open: the text is written for each conversation.
+                // Nothing to open: there is no one text. The server cannot tell a section
+                // that reads the conversation from one that leaves itself out, so the note
+                // claims neither.
                 titledRow(
                     cell, identifier: "server.extension.section.\(name)",
-                    title: name, subtitle: String(localized: "Written for each conversation from its workspace."), open: nil
+                    title: name, subtitle: String(localized: "Written for each conversation."), open: nil
                 )
             }
         case .command(let name), .pluginLine(_, let name):

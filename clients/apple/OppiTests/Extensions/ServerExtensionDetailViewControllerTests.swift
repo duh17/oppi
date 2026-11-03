@@ -163,9 +163,23 @@ struct ServerExtensionDetailViewControllerTests {
         #expect((element as? SidebarListCell)?.element.isHidden == true)
         #expect((element as? SidebarListCell)?.accessories.isEmpty == true, "no chevron")
         #expect(page.texts(in: "server.extension.section.project_context")
-            == ["project_context", "Written for each conversation from its workspace."])
+            == ["project_context", "Written for each conversation."])
         #expect(page.controller.sections().compactMap(\.header).filter { $0 == "Prompt Sections" }.count == 1,
                 "listed once, from the detail rather than the plugin's names")
+    }
+
+    @Test func aToolPageSaysItTakesNoArgumentsOnlyForAnEmptyPropertyList() {
+        let root = makeTestAppRoot()
+        let footer = { (schema: JSONValue) in
+            ServerExtensionToolViewController(
+                tool: ServerToolDefinition(name: "tool", parameters: schema, from: .plugin), root: root
+            ).sections().first { $0.id == .parameters }?.footer
+        }
+
+        #expect(footer(.object(["type": .string("object"), "properties": .object([:])])) == "The tool takes no arguments.")
+        // A schema that says what it takes some other way takes arguments.
+        #expect(footer(.object(["anyOf": .array([.object(["type": .string("object")])])])) == nil)
+        #expect(footer(.object(["$ref": .string("#/definitions/args")])) == nil)
     }
 
     // MARK: - Harness
