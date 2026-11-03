@@ -71,7 +71,7 @@ actor CodeEditorHighlightEngine {
         case .orgMode: language = .orgMode
         case .mermaid: language = .mermaid
         case .graphviz: language = .dot
-        case .csv, .tsv, .plain, .image, .audio, .video, .pdf, .usdz, .binary: return .plain
+        case .csv, .tsv, .plain, .image, .audio, .video, .pdf, .usdz, .book, .binary: return .plain
         }
         if language == .unknown { return .plain }
         return TreeSitterHighlighter.supports(language) ? .treeSitter(language) : .scanner(language)

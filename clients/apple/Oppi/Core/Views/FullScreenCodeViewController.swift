@@ -961,6 +961,10 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     @objc private func copyTapped() {
+        if let live = installedBodyView?.liveCopyText {
+            finishCopy(live)
+            return
+        }
         if let terminal = installedBodyView as? NativeFullScreenTerminalBody {
             // Small settled readers keep instant Copy; complete-sidecar and
             // virtualized copies do their materialization off the UI executor.

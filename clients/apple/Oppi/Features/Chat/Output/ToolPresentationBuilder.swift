@@ -619,7 +619,7 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 filePath: metadata.filePath
             )
-        case .html, .plain, .code, .pdf, .usdz, .binary,
+        case .html, .plain, .code, .pdf, .usdz, .book, .binary,
              .latex, .mermaid, .graphviz, .none,
              // Classified above by `DocumentFamily`; listed so the switch stays exhaustive.
              .csv, .tsv, .geojson, .topojson:

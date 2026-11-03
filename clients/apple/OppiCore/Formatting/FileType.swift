@@ -13,6 +13,8 @@ enum FileType: Equatable {
     case video
     case pdf
     case usdz
+    /// An EPUB book: a whole archive the phone opens and reads itself.
+    case book
     case binary
     case plain
 
@@ -109,6 +111,8 @@ enum FileType: Equatable {
             return .pdf
         case "usdz":
             return .usdz
+        case "epub":
+            return .book
         case "bin", "gz", "zip", "tar", "bz2", "xz", "7z", "rar",
              "dmg", "iso", "img",
              "car", "nib", "mobileprovision", "p12", "cer",
@@ -182,6 +186,7 @@ enum FileType: Equatable {
         case .video: return "Video"
         case .pdf: return "PDF"
         case .usdz: return "USDZ"
+        case .book: return "EPUB"
         case .binary: return "Binary"
         case .plain: return "Text"
         case .latex: return "LaTeX"
@@ -217,7 +222,8 @@ enum FileType: Equatable {
             return .dot
         case .geojson, .topojson:
             return .json
-        case .markdown, .image, .audio, .video, .pdf, .usdz, .binary, .plain, .csv, .tsv:
+        case .markdown, .image, .audio, .video, .pdf, .usdz, .book, .binary, .plain,
+             .csv, .tsv:
             return nil
         }
     }
@@ -231,6 +237,8 @@ enum FilePreviewCategory: Equatable {
     case video
     case pdf
     case usdz
+    /// An EPUB book, opened by the native reader after it downloads.
+    case book
     case text
     case binary
 }
@@ -248,6 +256,8 @@ extension FileType {
             return .pdf
         case .usdz:
             return .usdz
+        case .book:
+            return .book
         case .markdown, .html, .code, .json, .plain,
              .latex, .orgMode, .mermaid, .graphviz, .csv, .tsv,
              .geojson, .topojson:

@@ -26,6 +26,8 @@ extension FullScreenCodeContent {
             return document.filePath
         case .document(let family):
             return family.filePath
+        case .book(let document):
+            return document.filePath
         case .thinking, .terminal, .liveSource, .notebook:
             return nil
         }
@@ -48,6 +50,7 @@ extension FullScreenCodeContent {
         case .graphviz: return "graphviz"
         case .document(let family): return family.kindName
         case .notebook: return "notebook"
+        case .book: return "book"
         }
     }
 
@@ -78,6 +81,9 @@ extension FullScreenCodeContent {
         case .notebook:
             // A code cell and its printed output read like code.
             return .code
+        case .book:
+            // A chapter is Markdown in the reader body, so text size applies.
+            return .markdown
         case .liveSource(let trace, let showsSource):
             let reading = trace.snapshot.readerContent
             return (showsSource ? reading.sourceContent(completeRaw: nil) ?? reading : reading).readerFamily
@@ -141,7 +147,7 @@ extension FullScreenCodeContent {
             return family.sourceContent
         case .liveSource(let trace, _):
             return trace.snapshot.readerContent.sourceContent(completeRaw: completeRaw)
-        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook:
+        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book:
             return nil
         }
     }
@@ -165,7 +171,7 @@ extension FullScreenCodeContent {
             return family.sourceToggleTitle(showingSource: showingSource)
         case .liveSource(let trace, _):
             return trace.snapshot.readerContent.sourceToggleTitle(showingSource: showingSource)
-        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook:
+        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book:
             return nil
         }
     }
@@ -192,6 +198,9 @@ extension FullScreenCodeContent {
             return family.text
         case .notebook(let plan):
             return plan.readerText
+        case .book:
+            // The body's chapter is what Copy copies (`ReaderBody.liveCopyText`).
+            return ""
         }
     }
 
@@ -230,6 +239,8 @@ extension FullScreenCodeContent {
             return trace.snapshot.readerContent.shareableContent(showingSource: showingSource, completeRaw: completeRaw)
         case .notebook(let plan):
             return .plainText(plan.readerText)
+        case .book(let document):
+            return .plainText(document.title, fileName: document.filePath)
         }
     }
 
@@ -257,6 +268,8 @@ extension FullScreenCodeContent {
             text = family.text
         case .notebook(let plan):
             text = plan.readerText
+        case .book:
+            text = ""
         case .diff(let document):
             text = document.reconstructedNewSideText
         case .liveSource(let trace, _):
@@ -468,6 +481,20 @@ extension FullScreenCodeContent {
             )
         case .document(let family):
             return family.makeFullScreenBody(palette: palette, readerPreferences: readerPreferences)
+        case .book(let document):
+            let body = BookReaderBody(
+                document: document,
+                themeID: themeID,
+                palette: palette,
+                readerPreferences: readerPreferences,
+                reviewCommentSelectionRouter: router,
+                reviewCommentSourceContext: context.sourceContext(
+                    surface: .fullScreenMarkdown,
+                    filePath: document.filePath
+                )
+            )
+            body.accessibilityIdentifier = "fullScreen.book"
+            return body
         case .notebook(let plan):
             return NotebookReaderBody(
                 plan: plan,

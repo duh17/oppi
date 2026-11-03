@@ -45,6 +45,9 @@ enum DebugHarnessLaunch {
     /// the build does not serve shows its name, after the UI-hang harness had
     /// its chance.
     private static func harnessContent(root: AppRootEnvironment) -> UIViewController? {
+        if BookReaderHarnessConfig.isEnabled {
+            return BookReaderHarnessViewController()
+        }
         if WikiLineAnchorHarnessConfig.isEnabled {
             return WikiLineAnchorHarnessViewController()
         }

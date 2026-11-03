@@ -102,6 +102,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case audio(AuthenticatedMediaSource)
         case pdf(Data)
         case usdz(USDZLocalFileStore.Handle)
+        /// A downloaded book the native reader opens itself.
+        case book(EPUBBook)
         case binary
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -115,6 +117,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             case (.audio(let a), .audio(let b)): a.identity == b.identity
             case (.pdf(let a), .pdf(let b)): a == b
             case (.usdz(let a), .usdz(let b)): a == b
+            // A book's archive has no value identity; a re-read mounts anew.
+            case (.book, .book): false
             case (.binary, .binary): true
             default: false
             }
@@ -153,6 +157,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var loadedMediaPath: String?
     /// Path whose text `content` holds, so a re-shown viewer revalidates instead of rebuilding.
     private var loadedTextPath: String?
+    /// Path whose book `content` holds. Re-showing the viewer keeps the open
+    /// chapter and its position instead of downloading the archive again.
+    private var loadedBookPath: String?
     private var loadedHostFilePath: String?
     private var isExpensiveNetwork = false {
         didSet { if isExpensiveNetwork != oldValue { setNeedsUpdateProperties() } }
@@ -433,7 +440,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     /// Text, PDF, and 3D scenes own the back swipe; the viewer handles it for the rest.
     private var parentOwnsBackSwipe: Bool {
         switch content {
-        case .text, .pdf, .usdz:
+        case .text, .pdf, .usdz, .book:
             false
         case .loading, .sizeWarning, .error, .image, .video, .audio, .binary:
             true
@@ -523,6 +530,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             mounted = mountPDF(data)
         case .usdz(let handle):
             mounted = mountUSDZ(handle)
+        case .book(let book):
+            mounted = mountBookReader(book)
         case .binary:
             mounted = unavailable(.empty(
                 title: String(localized: "Binary File"),
@@ -676,6 +685,64 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         page.addSubview(reader.view)
         let safe = page.safeAreaLayoutGuide
         // The reader's own glass bar sits at the top of a pushed screen.
+        NSLayoutConstraint.activate([
+            reader.view.topAnchor.constraint(
+                equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
+            ),
+            reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+            reader.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            reader.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+        ])
+        reader.didMove(toParent: self)
+        mountedChildren.append(reader)
+        self.reader = reader
+        readerPage = page
+        return page
+    }
+
+    /// Where this file came from, as the viewer knows it. A book's saved
+    /// position is keyed by it, so two books at one path in two workspaces, two
+    /// sessions, or on the host do not share one slot.
+    private var bookOrigin: String {
+        return switch configuration.source {
+        case .workspaceFile: "workspace:\(configuration.workspaceId)"
+        case .sessionFile(let sessionId): "session:\(sessionId)"
+        case .hostFile: "host"
+        case .sessionTouched(let origin): "session:\(origin.sessionId)"
+        }
+    }
+
+    /// The reader for a downloaded book: one chapter at a time with its own TOC
+    /// and Previous/Next, at the position this book was left.
+    private func mountBookReader(_ book: EPUBBook) -> UIView {
+        let document = EPUBReaderDocument(
+            book: book,
+            positionKey: EPUBReadingPositionStore.key(
+                serverId: configuration.serverId,
+                origin: bookOrigin,
+                path: loadedHostFilePath ?? currentFilePath
+            ),
+            filePath: loadedHostFilePath ?? currentFilePath,
+            title: book.title.isEmpty ? currentFileName : book.title
+        )
+        let back: @MainActor @Sendable () -> Void = { [weak self] in self?.navigateBack() }
+        let reader = FullScreenCodeViewController(
+            content: .book(document),
+            presentationMode: showsEmbeddedNavigationChrome
+                ? .embedded(onDismiss: back)
+                : .contentOnly(onBackSwipe: back),
+            reviewCommentSelectionContext: readerSelectionContext,
+            editItems: [],
+            addToChatDestination: configuration.addToChatDestination
+        )
+        reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
+        reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
+        let page = UIView()
+        addPage(page)
+        addChild(reader)
+        reader.view.translatesAutoresizingMaskIntoConstraints = false
+        page.addSubview(reader.view)
+        let safe = page.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             reader.view.topAnchor.constraint(
                 equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
@@ -1174,6 +1241,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
         loadedMediaPath = nil
         loadedTextPath = nil
+        loadedBookPath = nil
         loadedHostFilePath = nil
         timedText = .empty
         timedTextLoadFinished = false
@@ -1230,6 +1298,26 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 }
                 loadedMediaPath = requestedPath
                 content = .usdz(handle)
+            case .book:
+                if !force, loadedBookPath == requestedPath, case .book = content { return }
+                guard let read = try await readReaderBytes(
+                    api: api, path: requestedPath, category: requestedCategory
+                ) else { return }
+                switch read {
+                case .deletedDraft(let text):
+                    content = .text(text)
+                case .bytes(let data, _, let resolvedHostPath):
+                    if let resolvedHostPath { loadedHostFilePath = resolvedHostPath }
+                    do {
+                        let book = try EPUBBook.open(data: data)
+                        guard isCurrentFile(requestedPath) else { return }
+                        loadedBookPath = requestedPath
+                        content = .book(book)
+                    } catch {
+                        guard isCurrentFile(requestedPath) else { return }
+                        content = .error(error.localizedDescription)
+                    }
+                }
             case .image, .pdf, .text, .binary:
                 guard let read = try await readReaderBytes(
                     api: api, path: requestedPath, category: requestedCategory

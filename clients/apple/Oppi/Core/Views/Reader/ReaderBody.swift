@@ -20,6 +20,10 @@ protocol ReaderBody: UIView {
     @discardableResult
     func restoreViewport(_ intent: FullScreenMarkdownViewportIntent) -> Bool
 
+    /// What Copy copies when the body, not the content, owns the text: a book
+    /// chapter changes under the reader, so its content's text would be stale.
+    var liveCopyText: String? { get }
+
     /// What the reader's Pick menu and Comment button act on (HTML elements,
     /// Mermaid objects).
     var picker: (any ReaderPicking)? { get }
@@ -41,6 +45,8 @@ enum ReaderAnnotateAvailability: Equatable {
 }
 
 extension ReaderBody {
+    var liveCopyText: String? { nil }
+
     var viewportIntent: FullScreenMarkdownViewportIntent? { nil }
 
     @discardableResult

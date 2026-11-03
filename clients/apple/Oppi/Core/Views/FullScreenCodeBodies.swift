@@ -392,6 +392,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     #endif
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let sourceFormat: MarkdownReaderSourceFormat
+    /// False when each top-level block keeps its own segment: a book chapter
+    /// merges into one text view otherwise, which is expensive to lay out and
+    /// leaves no block to restore a reading position to.
+    private let mergesAdjacentTextSegments: Bool
     private let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -481,9 +485,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         allowsVerticalBounce: Bool = true,
         allowsVerticalScrolling: Bool = true,
         visibleHeightCeiling: CGFloat? = nil,
-        deferredInitialRenderByteThreshold: Int = NativeFullScreenMarkdownBody.defaultDeferredInitialRenderByteThreshold
+        deferredInitialRenderByteThreshold: Int = NativeFullScreenMarkdownBody.defaultDeferredInitialRenderByteThreshold,
+        mergeAdjacentTextSegments: Bool = true
     ) {
         self.sourceFormat = sourceFormat
+        self.mergesAdjacentTextSegments = mergeAdjacentTextSegments
         self.deferredInitialRenderByteThreshold = deferredInitialRenderByteThreshold
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.perfSurface = perfSurface
@@ -898,7 +904,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         #endif
         let build = segmentSource.buildSegmentsWithSourceLineRanges(
             config,
-            mergeAdjacentTextSegments: lineAnchor == nil
+            mergeAdjacentTextSegments: mergesAdjacentTextSegments && lineAnchor == nil
         )
         renderedSegments = build.segments
         untrimmedSegments = nil
@@ -956,6 +962,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         // source (including the checkout) that every synchronous path reads.
         let identity = config.resourceAccess.identity
         let sourceDirectory = config.sourceDirectory
+        let mergesAdjacentTextSegments = mergesAdjacentTextSegments
         asyncRenderTask = Task { @MainActor [weak self] in
             let build: AsyncMarkdownBuild? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
@@ -973,7 +980,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                     serverBaseURL: identity.serverBaseURL,
                     sourceDirectory: sourceDirectory,
                     worktreeId: identity.worktreeId,
-                    mergeAdjacentTextSegments: true
+                    mergeAdjacentTextSegments: mergesAdjacentTextSegments
                 )
                 let buildEnd = DispatchTime.now().uptimeNanoseconds
                 guard !Task.isCancelled else { return nil }

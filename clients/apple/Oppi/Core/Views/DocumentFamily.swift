@@ -27,7 +27,7 @@ enum DocumentFamily: Equatable {
             self = .delimitedTable(text: text, filePath: filePath)
         case .geojson, .topojson:
             self = .geoJSON(text: text, filePath: filePath)
-        case .markdown, .html, .code, .json, .image, .audio, .video, .pdf, .usdz,
+        case .markdown, .html, .code, .json, .image, .audio, .video, .pdf, .usdz, .book,
              .binary, .plain, .latex, .orgMode, .mermaid, .graphviz:
             return nil
         }
