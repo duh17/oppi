@@ -176,6 +176,48 @@ describe("ServerResourceService catalogs", () => {
     ]);
   });
 
+  it("gives a classic extension's tool definitions in its detail", async () => {
+    const fixture = makeFixture();
+    mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(fixture.agentDir, "extensions", "classic.js"),
+      `export default function (pi) { pi.registerTool({ ...${JSON.stringify({
+        name: "classic_tool",
+        label: "Classic",
+        description: "Counts things.\nOne line per thing.",
+        promptSnippet: "Count things with classic_tool",
+        promptGuidelines: ["Prefer classic_tool for counting."],
+        parameters: {
+          type: "object",
+          properties: { n: { type: "number", description: "How many" } },
+        },
+      })}, execute: async () => ({ content: [] }) }); }\n`,
+    );
+
+    const service = makeService(fixture);
+    const listed = await service.listExtensions();
+    const classic = listed.extensions.find((extension) => extension.name === "classic")!;
+    // The list stays slim: definitions are the detail's.
+    expect(classic).not.toHaveProperty("toolDefinitions");
+
+    const detail = await service.getExtensionDetail(classic.id);
+    expect(detail.toolDefinitions).toEqual([
+      {
+        name: "classic_tool",
+        description: "Counts things.\nOne line per thing.",
+        parameters: {
+          type: "object",
+          properties: { n: { type: "number", description: "How many" } },
+        },
+        promptSnippet: "Count things with classic_tool",
+        promptGuidelines: ["Prefer classic_tool for counting."],
+        from: "pi-extension",
+      },
+    ]);
+    // No plugin: no prompt sections to show.
+    expect(detail.promptSections).toBeUndefined();
+  });
+
   it("inspects tools from one explicitly selected disabled extension without enabling it", async () => {
     const fixture = makeFixture();
     mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });

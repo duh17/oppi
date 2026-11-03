@@ -30,6 +30,11 @@ import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
+import {
+  classicToolDefinitions,
+  type ServerPromptSection,
+  type ServerToolDefinition,
+} from "./extension-definitions.js";
 import { packageHasPlugin } from "./plugin-discovery.js";
 import type { PluginCatalog, PluginListing } from "./plugin-host.js";
 import {
@@ -147,6 +152,13 @@ export interface ServerExtensionDetail {
   contributedTools?: string[];
   contributedToolDetails?: ServerToolSummary[];
   contributedCommands?: string[];
+  /**
+   * What its tools tell the model: its plugin's (`from: "plugin"`), then its classic extension's
+   * when that is loaded (`"pi-extension"`). Absent when neither is.
+   */
+  toolDefinitions?: ServerToolDefinition[];
+  /** Its plugin's prompt sections, with the text of those that are the same in every conversation. */
+  promptSections?: ServerPromptSection[];
 }
 
 export interface ServerResourceServiceOptions {
@@ -180,6 +192,8 @@ interface ExtensionCatalogEntry {
   resource?: ResolvedResource;
   canonicalPath?: string;
   summary: ServerExtensionSummary;
+  /** The classic extension as the catalog loaded it; absent when it was not loaded. */
+  extension?: Extension;
 }
 
 /** Which row each plugin is on: a classic row of its Pi package, or its own. */
@@ -357,7 +371,15 @@ export class ServerResourceService {
     const context = await this.resolveContext();
     const plugins = await this.pluginRows(context);
     const own = plugins.own.get(id);
-    if (own) return { summary: pluginRow(id, own, this.agentDir) };
+    if (own) {
+      const definitions = own.extension === undefined ? undefined : own.definitions();
+      return {
+        summary: pluginRow(id, own, this.agentDir),
+        ...(definitions
+          ? { toolDefinitions: definitions.tools, promptSections: definitions.sections }
+          : {}),
+      };
+    }
     this.findResourceById("extension", context.extensions, id);
     const inspectToolIds = inspectTools ? new Set([id]) : new Set<string>();
     const entry = (await this.buildExtensionCatalog(context, inspectToolIds)).entries.find(
@@ -365,8 +387,14 @@ export class ServerResourceService {
     );
     if (!entry) throw new ServerResourceNotFoundError("extension");
     const summary = copyExtensionSummary(withPlugin(entry.summary, plugins));
+    const attached = plugins.attached.get(id);
+    const definitions = attached?.extension === undefined ? undefined : attached.definitions();
+    const classic = entry.extension ? classicToolDefinitions(entry.extension.tools.values()) : [];
+    const toolDefinitions = [...(definitions?.tools ?? []), ...classic];
     return {
       summary,
+      ...(definitions || entry.extension ? { toolDefinitions } : {}),
+      ...(definitions ? { promptSections: definitions.sections } : {}),
       contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
       contributedToolDetails: summary.contributedToolDetails
         ? summary.contributedToolDetails.map(copyToolSummary)
@@ -755,7 +783,7 @@ export class ServerResourceService {
         ...(contributedToolDetails ? { contributedToolDetails } : {}),
         ...(contributedCommands ? { contributedCommands } : {}),
       };
-      return { resource, canonicalPath: path, summary };
+      return { resource, canonicalPath: path, summary, ...(extension ? { extension } : {}) };
     });
     normal.sort((a, b) => compareSummaries(a.summary, b.summary));
     return { entries: normal, optionalTools: optionalToolSummaries(extensions) };

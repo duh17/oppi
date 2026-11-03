@@ -824,6 +824,139 @@ describe("plugins on the extension list", () => {
     expect((await f.rows({ plugins: false })).map((row) => row.name)).not.toContain("oppi-control");
   });
 
+  it("shows a plugin's tool definitions and the text of a section that is the same everywhere", async () => {
+    writePlugin("inspect", [
+      'import { defineExtension, defineTool, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "inspect",',
+      "  tools: [defineTool({",
+      '    name: "inspect_tool",',
+      '    description: "Inspect a path.\\nThen report what is there.",',
+      '    parameters: { type: "object", properties: { path: { type: "string", description: "Where to look" } }, required: ["path"] },',
+      "    async execute() { return { output: [] }; },",
+      "  })],",
+      '  sections: [section("inspect-guidelines", () => "Inspect before you edit.\\n\\n- One path at a time.")],',
+      "});",
+    ]);
+    const f = await fixture(callsTool("unused"));
+    const detail = async (name: string) => {
+      const answer = await f.route(
+        "GET",
+        `/server/resources/extensions/${rowNamed(await f.rows(), name).id}`,
+      );
+      expect(answer.status).toBe(200);
+      return answer.body;
+    };
+
+    expect(await detail("inspect")).toMatchObject({
+      toolDefinitions: [
+        {
+          name: "inspect_tool",
+          description: "Inspect a path.\nThen report what is there.",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string", description: "Where to look" } },
+            required: ["path"],
+          },
+          from: "plugin",
+        },
+      ],
+      promptSections: [
+        {
+          name: "inspect-guidelines",
+          text: "Inspect before you edit.\n\n- One path at a time.",
+          perConversation: false,
+        },
+      ],
+    });
+    // Oppi's own: Ask's guidelines are one sentence for every conversation; Project Context
+    // reads each conversation's document.
+    const ask = await detail("ask");
+    expect(ask.promptSections).toEqual([
+      {
+        name: "ask-guidelines",
+        text: expect.stringContaining("Call ask at most ONCE per turn"),
+        perConversation: false,
+      },
+    ]);
+    expect((ask.toolDefinitions as { name: string }[]).map((tool) => tool.name)).toEqual(["ask"]);
+    const projectContext = await detail("oppi-project-context");
+    expect(projectContext.promptSections).not.toHaveLength(0);
+    for (const section of projectContext.promptSections as Record<string, unknown>[])
+      expect(section).toEqual({ name: expect.any(String), perConversation: true });
+  });
+
+  it("flags a section that reads the conversation, and no section can break the detail", async () => {
+    writePlugin("sections", [
+      'import { defineExtension, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "sections",',
+      "  sections: [",
+      '    section("reads", (input) => `Conversation ${input.conversationId}`),',
+      // A render that swallows the read still read the conversation.
+      '    section("catches", (input) => { try { return String(input.env); } catch { return "fallback"; } }),',
+      '    section("async", async () => "later"),',
+      '    section("throws", () => { throw new Error("boom"); }),',
+      '    section("rejects", () => Promise.reject(new Error("boom"))),',
+      '    section("never", () => new Promise(() => {})),',
+      '    section("nothing", () => undefined),',
+      '    section("static", () => "Still shown."),',
+      "  ],",
+      "});",
+    ]);
+    const f = await fixture(callsTool("unused"));
+    const row = rowNamed(await f.rows(), "sections");
+    const answer = await f.route("GET", `/server/resources/extensions/${row.id}`);
+
+    expect(answer.status).toBe(200);
+    expect(answer.body.toolDefinitions).toEqual([]);
+    expect(answer.body.promptSections).toEqual([
+      { name: "reads", perConversation: true },
+      { name: "catches", perConversation: true },
+      { name: "async", perConversation: true },
+      { name: "throws", perConversation: true },
+      { name: "rejects", perConversation: true },
+      { name: "never", perConversation: true },
+      { name: "nothing", perConversation: true },
+      { name: "static", text: "Still shown.", perConversation: false },
+    ]);
+  });
+
+  it("leaves out what is over its cap, and stops rendering a slow plugin's sections", async () => {
+    writePlugin("large", [
+      'import { defineExtension, defineTool, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "large",',
+      "  tools: [defineTool({",
+      '    name: "large_tool",',
+      '    description: "Takes one of many values.",',
+      '    parameters: { type: "object", properties: { pick: { enum: Array.from({ length: 20000 }, (_, i) => `value-${i}`) } } },',
+      "    async execute() { return { output: [] }; },",
+      "  })],",
+      "  sections: [",
+      '    section("huge", () => "x".repeat(40 * 1024)),',
+      '    section("slow", () => { const end = Date.now() + 400; while (Date.now() < end) {} return "Slow."; }),',
+      '    section("after-slow", () => "Never rendered."),',
+      "  ],",
+      "});",
+    ]);
+    const f = await fixture(callsTool("unused"));
+    const row = rowNamed(await f.rows(), "large");
+    const answer = await f.route("GET", `/server/resources/extensions/${row.id}`);
+
+    expect(answer.status).toBe(200);
+    // The schema is over its cap, so the tool has none rather than a cut one.
+    expect(answer.body.toolDefinitions).toEqual([
+      { name: "large_tool", description: "Takes one of many values.", from: "plugin" },
+    ]);
+    // The slow render spent the time budget, so it and every section after it are per conversation.
+    expect(answer.body.promptSections).toEqual([
+      { name: "huge", perConversation: true },
+      { name: "slow", perConversation: true },
+      { name: "after-slow", perConversation: true },
+    ]);
+  });
+
   it("turns a package's plugin back on with its row when the server config had it off", async () => {
     const probe = writePackage("probe");
     const f = await fixture(callsTool("unused"));

@@ -344,17 +344,121 @@ struct ServerExtensionDetail: Codable, Sendable, Equatable {
     let contributedTools: [String]?
     let contributedToolDetails: [ServerToolSummary]?
     let contributedCommands: [String]?
+    /// What its tools tell the model: its plugin's, then its classic extension's. Absent from
+    /// servers that predate them, and when neither is loaded.
+    let toolDefinitions: [ServerToolDefinition]?
+    /// Its plugin's prompt sections. Absent from servers that predate them and for a row
+    /// without a loaded plugin.
+    let promptSections: [ServerPromptSection]?
 
     init(
         summary: ServerExtensionSummary,
         contributedTools: [String]? = nil,
         contributedToolDetails: [ServerToolSummary]? = nil,
-        contributedCommands: [String]? = nil
+        contributedCommands: [String]? = nil,
+        toolDefinitions: [ServerToolDefinition]? = nil,
+        promptSections: [ServerPromptSection]? = nil
     ) {
         self.summary = summary
         self.contributedTools = contributedTools
         self.contributedToolDetails = contributedToolDetails
         self.contributedCommands = contributedCommands
+        self.toolDefinitions = toolDefinitions
+        self.promptSections = promptSections
+    }
+}
+
+/// One tool as the model sees it, from an extension's detail.
+struct ServerToolDefinition: Codable, Sendable, Equatable {
+    /// Which sessions it reaches: a plugin's durable sessions, or a classic extension's Pi sessions.
+    enum Origin: String, Codable, Sendable, Equatable {
+        case plugin
+        case piExtension = "pi-extension"
+        case unknown
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            self = Self(rawValue: try container.decode(String.self)) ?? .unknown
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+
+    let name: String
+    let description: String?
+    /// The arguments' JSON Schema; absent when the server could not send it whole.
+    let parameters: JSONValue?
+    /// A classic tool's line in Pi's default prompt's tool list.
+    let promptSnippet: String?
+    /// A classic tool's bullets in Pi's default prompt's guidelines.
+    let promptGuidelines: [String]?
+    let from: Origin
+
+    init(
+        name: String,
+        description: String? = nil,
+        parameters: JSONValue? = nil,
+        promptSnippet: String? = nil,
+        promptGuidelines: [String]? = nil,
+        from: Origin
+    ) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.promptSnippet = promptSnippet
+        self.promptGuidelines = promptGuidelines
+        self.from = from
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, parameters, promptSnippet, promptGuidelines, from
+    }
+
+    /// Lenient: a field a later server leaves out decodes as absent, an origin it adds as unknown.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            description: try container.decodeIfPresent(String.self, forKey: .description),
+            parameters: try container.decodeIfPresent(JSONValue.self, forKey: .parameters),
+            promptSnippet: try container.decodeIfPresent(String.self, forKey: .promptSnippet),
+            promptGuidelines: try container.decodeIfPresent([String].self, forKey: .promptGuidelines),
+            from: try container.decodeIfPresent(Origin.self, forKey: .from) ?? .unknown
+        )
+    }
+}
+
+/// One of a plugin's prompt sections, from an extension's detail.
+struct ServerPromptSection: Codable, Sendable, Equatable {
+    let name: String
+    /// The section as its plugin writes it, before other plugins' wraps; nil when it is
+    /// written for each conversation.
+    let text: String?
+    /// Written for each conversation: there is no one text to show.
+    let perConversation: Bool
+
+    init(name: String, text: String? = nil, perConversation: Bool) {
+        self.name = name
+        self.text = text
+        self.perConversation = perConversation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, text, perConversation
+    }
+
+    /// Lenient: without the flag, a section with no text is per conversation.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let text = try container.decodeIfPresent(String.self, forKey: .text)
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            text: text,
+            perConversation: try container.decodeIfPresent(Bool.self, forKey: .perConversation) ?? (text == nil)
+        )
     }
 }
 

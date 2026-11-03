@@ -32,6 +32,12 @@ import * as piSchema from "@earendil-works/pi-schema";
 import { createJiti } from "jiti";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
+import {
+  pluginToolDefinitions,
+  promptSections,
+  type ServerPromptSection,
+  type ServerToolDefinition,
+} from "./extension-definitions.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import * as oppiV1 from "./oppi-v1.js";
@@ -142,6 +148,23 @@ export interface PluginListing extends PluginContributions {
   readonly loadError?: string;
   /** A failed reload left its previous code installed. */
   readonly kept: boolean;
+  /**
+   * What its installed extension tells the model, read when asked: the trial renders run the
+   * plugin's code, so only an extension's detail reads it. Empty when nothing is installed.
+   */
+  readonly definitions: () => PluginDefinitions;
+}
+
+/** A plugin's tool definitions and prompt sections, as its extension's detail shows them. */
+export interface PluginDefinitions {
+  readonly tools: ServerToolDefinition[];
+  readonly sections: ServerPromptSection[];
+}
+
+/** What `extension` tells the model (`extension-definitions.ts`). */
+function definitionsOf(extension: Extension | undefined): PluginDefinitions {
+  if (!extension) return { tools: [], sections: [] };
+  return { tools: pluginToolDefinitions(extension), sections: promptSections(extension) };
 }
 
 /** What `extension` contributes, read from the extension value itself. */
@@ -278,6 +301,7 @@ export class PluginHost {
         ...contributionsOf(plugin.extension),
         ...(failure ? { loadError: failure.message } : {}),
         kept: failure !== undefined,
+        definitions: () => definitionsOf(plugin.extension),
       };
     });
     for (const failure of failures.values())
@@ -293,6 +317,7 @@ export class PluginHost {
         ...contributionsOf(undefined),
         loadError: failure.message,
         kept: false,
+        definitions: () => definitionsOf(undefined),
       });
     return listings;
   }

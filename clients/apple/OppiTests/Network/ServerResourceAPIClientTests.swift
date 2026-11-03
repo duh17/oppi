@@ -118,7 +118,7 @@ struct ServerResourceAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/server/resources/extensions/extension_abc")
             return mockResponse(json: """
-            {"summary":{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false,"contributedTools":["review"]},"contributedTools":["review"],"contributedToolDetails":[{"name":"review","description":"Review changes"}]}
+            {"summary":{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false,"contributedTools":["review"]},"contributedTools":["review"],"contributedToolDetails":[{"name":"review","description":"Review changes"}],"toolDefinitions":[{"name":"review","description":"Review changes","parameters":{"type":"object"},"from":"pi-extension"}]}
             """)
         }
 
@@ -131,6 +131,8 @@ struct ServerResourceAPIClientTests {
         #expect(catalog.pluginsUnavailable == "Oppi's built-in plugins failed to load")
         #expect(detail.summary.kind == .file)
         #expect(detail.contributedToolDetails?.first?.description == "Review changes")
+        #expect(detail.toolDefinitions?.first?.from == .piExtension)
+        #expect(detail.toolDefinitions?.first?.parameters == .object(["type": .string("object")]))
     }
 
     @Test func agentToolInspectionUsesExplicitExtensionDetailQuery() async throws {

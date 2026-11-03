@@ -114,6 +114,46 @@ struct ServerResourceModelTests {
         #expect(detail.summary.kinds == nil)
         #expect(detail.summary.source == nil)
         #expect(detail.summary.plugin == nil)
+        // Nor definitions.
+        #expect(detail.toolDefinitions == nil)
+        #expect(detail.promptSections == nil)
+    }
+
+    @Test func decodesToolDefinitionsAndPromptSectionsLeniently() throws {
+        let detail = try JSONDecoder().decode(ServerExtensionDetail.self, from: Data("""
+        {
+          "summary": {
+            "id": "ask", "name": "ask", "kind": "builtIn",
+            "provenance": { "kind": "builtIn", "label": "Oppi" },
+            "state": "on", "warnings": [], "isRemovable": false
+          },
+          "toolDefinitions": [
+            {
+              "name": "ask", "description": "Ask the user.\\nOnce per turn.", "from": "plugin",
+              "parameters": { "type": "object", "properties": { "questions": { "type": "array" } }, "required": ["questions"] }
+            },
+            { "name": "count", "from": "pi-extension", "promptSnippet": "Count", "promptGuidelines": ["Prefer count."] },
+            { "name": "later", "from": "mcp" }
+          ],
+          "promptSections": [
+            { "name": "ask-guidelines", "text": "Call ask once.", "perConversation": false },
+            { "name": "project_context", "perConversation": true },
+            { "name": "older" }
+          ]
+        }
+        """.utf8))
+
+        let tools = try #require(detail.toolDefinitions)
+        #expect(tools.map(\.from) == [.plugin, .piExtension, .unknown], "an origin a later server adds decodes")
+        #expect(tools[0].description == "Ask the user.\nOnce per turn.")
+        #expect(tools[0].parameters?.objectValue?["required"] == .array([.string("questions")]))
+        #expect(tools[1].parameters == nil)
+        #expect(tools[1].promptGuidelines == ["Prefer count."])
+        #expect(detail.promptSections == [
+            ServerPromptSection(name: "ask-guidelines", text: "Call ask once.", perConversation: false),
+            ServerPromptSection(name: "project_context", perConversation: true),
+            ServerPromptSection(name: "older", perConversation: true),
+        ])
     }
 
     @Test func decodesPluginRowsWithKindsSourceAndContributions() throws {
