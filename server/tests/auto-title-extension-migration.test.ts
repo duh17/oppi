@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { setUpAutoNamePackage } from "../src/auto-name-package.js";
@@ -21,6 +22,27 @@ import {
   readAutoTitleCarryover,
 } from "../src/storage/auto-title-extension-migration.js";
 
+/** What `oppi serve`'s step logged, so a failure told apart from a warning is readable here. */
+const { logged } = vi.hoisted(() => ({
+  logged: [] as Array<{ level: string; event: string; context?: Record<string, unknown> }>,
+}));
+
+vi.mock("../src/logger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/logger.js")>();
+  const record = (level: string) => (event: string, context?: Record<string, unknown>) => {
+    logged.push({ level, event, context });
+  };
+  const logger: import("../src/logger.js").Logger = {
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
+    child: () => logger,
+    isEnabled: () => true,
+  };
+  return { ...actual, createLogger: () => logger };
+});
+
 const AUTO_NAME = join(import.meta.dirname, "../plugins/auto-name");
 const KEY = "auto_title_to_extension_v1";
 
@@ -29,6 +51,7 @@ let agentDir: string;
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "auto-title-migration-data-"));
   agentDir = mkdtempSync(join(tmpdir(), "auto-title-migration-agent-"));
+  logged.length = 0;
 });
 afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
@@ -197,6 +220,88 @@ describe("the shipped auto-name package in Pi's settings", () => {
 
     expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: ["+index.ts"] }]);
     expect(readAutoTitleCarryover(dataDir)).toBeUndefined();
+  });
+
+  // A permission is what makes the file unwritable to a user; root writes it anyway, so these two
+  // tests skip there and the read-only path is only covered where the test runner is not root.
+  it.skipIf(process.getuid?.() === 0)(
+    "warns, instead of failing, when Pi's settings file is read-only, and applies the step once it can write",
+    async () => {
+      seedConfig({ enabled: true, model: "anthropic/claude-haiku-5" });
+      new Storage(dataDir);
+      const settingsPath = join(agentDir, "settings.json");
+      writeFileSync(settingsPath, JSON.stringify({ defaultProvider: "mock" }));
+      chmodSync(settingsPath, 0o444);
+
+      await serve();
+
+      // A read-only settings file is the deployment's choice, not a failure to log as one.
+      expect(logged.filter((entry) => entry.level === "error")).toEqual([]);
+      expect(logged).toContainEqual({
+        level: "warn",
+        event: "auto_name_package.settings_unwritable",
+        context: { operation: "write", code: "EACCES" },
+      });
+      expect(readSettings()).toEqual({ defaultProvider: "mock" });
+      // Pending, not carried over: nothing reached Pi's settings, and the one-time offer was not
+      // spent on a start that could not write it.
+      expect(JSON.parse(readFileSync(join(agentDir, "auto-name.json"), "utf8"))).toEqual({
+        model: "anthropic/claude-haiku-5",
+      });
+      expect(readAutoTitleCarryover(dataDir)?.model).toBe("anthropic/claude-haiku-5");
+
+      chmodSync(settingsPath, 0o644);
+      await serve();
+
+      expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: ["+index.ts"] }]);
+      expect(readAutoTitleCarryover(dataDir)).toBeUndefined();
+    },
+  );
+
+  it.skipIf(process.getuid?.() === 0)(
+    "leaves the one-time offer pending while Pi's settings file is read-only, and lists the row once it can write",
+    async () => {
+      const settingsPath = join(agentDir, "settings.json");
+      writeFileSync(settingsPath, JSON.stringify({ defaultProvider: "mock" }));
+      chmodSync(settingsPath, 0o444);
+
+      await serve();
+
+      // The offer's own write never landed: one warning, and nothing reported as offered.
+      expect(logged.filter((entry) => entry.level === "error")).toEqual([]);
+      expect(logged).toContainEqual({
+        level: "warn",
+        event: "auto_name_package.settings_unwritable",
+        context: { operation: "write", code: "EACCES" },
+      });
+      expect(logged.some((entry) => entry.event === "auto_name_package.offered")).toBe(false);
+      expect(readSettings()).toEqual({ defaultProvider: "mock" });
+
+      chmodSync(settingsPath, 0o644);
+      await serve();
+
+      // The offer was still pending, and lists the row disabled as on a fresh install.
+      expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: [] }]);
+      expect(await piSeesEnabled()).toBe(false);
+    },
+  );
+
+  it("still logs a write that failed for another reason as a failure", async () => {
+    seedConfig({ enabled: true, model: "anthropic/claude-haiku-5" });
+    new Storage(dataDir);
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "mock" }));
+    // A lock nobody holds and proper-lockfile will not break: the write fails with ELOCKED.
+    mkdirSync(join(agentDir, "settings.json.lock"));
+
+    await serve();
+
+    expect(logged).toContainEqual(
+      expect.objectContaining({ level: "error", event: "auto_name_package.failed" }),
+    );
+    expect(logged.some((entry) => entry.event === "auto_name_package.settings_unwritable")).toBe(
+      false,
+    );
+    expect(readAutoTitleCarryover(dataDir)?.model).toBe("anthropic/claude-haiku-5");
   });
 
   it("carries the old setting over: its model in auto-name.json, the package listed on", async () => {

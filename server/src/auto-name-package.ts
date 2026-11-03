@@ -12,6 +12,9 @@ import {
 
 const log = createLogger({ base: { component: "auto_name_package" } });
 
+/** A write the file system refused: the step stays pending, and the `once` caller is not told. */
+const UNWRITTEN_SETTINGS = Symbol("auto_name_package.unwritten_settings");
+
 /** Oppi's copy of the auto-name Pi package: the source tree in development, the build when built. */
 export const AUTO_NAME_PACKAGE_DIR = fileURLToPath(
   new URL("../plugins/auto-name", import.meta.url),
@@ -70,7 +73,9 @@ export interface AutoNamePackageOptions {
  *
  * A user's own `~/.pi/agent/extensions/auto-name` is the same extension, so the package is
  * not listed beside it, and an entry listed before the user linked their copy is removed at the
- * next start. A failure is logged and retried at the next start; it never stops the server.
+ * next start. A failure is logged and retried at the next start, and so is a Pi settings path
+ * that refuses writes (a container's read-only mount), which warns instead of failing: neither
+ * ever stops the server.
  */
 export async function setUpAutoNamePackage(options: AutoNamePackageOptions): Promise<void> {
   const agentDir = options.agentDir ?? getAgentDir();
@@ -86,7 +91,7 @@ export async function setUpAutoNamePackage(options: AutoNamePackageOptions): Pro
     const carryover = readAutoTitleCarryover(options.dataDir);
     if (carryover) writeModel(agentDir, carryover.model);
 
-    await editPackages(agentDir, (packages) => {
+    const written = await editPackages(agentDir, (packages) => {
       // A user's own copy and the shipped one are the same extension: one copy, theirs.
       const next = userInstall
         ? packages.filter((entry) => !isShipped(entry))
@@ -102,17 +107,29 @@ export async function setUpAutoNamePackage(options: AutoNamePackageOptions): Pro
       }
       return JSON.stringify(next) === JSON.stringify(packages) ? undefined : next;
     });
+    // Nothing reached Pi's settings: the carried model and the one-time offer stay pending for a
+    // start that can write them, instead of being reported and cleared as if applied.
+    if (!written) return;
+
     if (carryover) {
       clearAutoTitleCarryover(options.dataDir);
       log.info("auto_name_package.carried_over", { model: carryover.model, enabled: !userInstall });
     }
 
     if (userInstall) return;
-    const offered = await options.once(AUTO_NAME_PACKAGE_REGISTERED_KEY, async () => {
-      await editPackages(agentDir, (packages) =>
-        packages.some(isShipped) ? undefined : [...packages, entryFor(packageDir, false)],
-      );
-    });
+    // The ledger records this step after a `run` that did not throw, so an offer whose write never
+    // landed throws to stay pending; only that failure is swallowed, and it is not logged as one.
+    const offered = await options
+      .once(AUTO_NAME_PACKAGE_REGISTERED_KEY, async () => {
+        const wrote = await editPackages(agentDir, (packages) =>
+          packages.some(isShipped) ? undefined : [...packages, entryFor(packageDir, false)],
+        );
+        if (!wrote) throw UNWRITTEN_SETTINGS;
+      })
+      .catch((error: unknown) => {
+        if (error === UNWRITTEN_SETTINGS) return false;
+        throw error;
+      });
     if (offered) log.info("auto_name_package.offered", { packageDir });
   } catch (error) {
     log.error("auto_name_package.failed", { error: safeErrorMessage(error) });
@@ -135,22 +152,51 @@ function writeModel(agentDir: string, model: string): void {
   writeFileSync(path, `${JSON.stringify({ model }, null, 2)}\n`, { flag: "wx" });
 }
 
-/** Rewrites Pi's global `packages` through its settings manager, when `edit` returns a new list. */
+/**
+ * Rewrites Pi's global `packages` through its settings manager, when `edit` returns a new list.
+ * Says whether Pi's settings ended up saying what `edit` asked for.
+ */
 async function editPackages(
   agentDir: string,
   edit: (packages: Packages) => Packages | undefined,
-): Promise<void> {
+): Promise<boolean> {
   const settings = SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
-  throwSettingsErrors(settings.drainErrors(), "read");
+  reportSettingsErrors(settings.drainErrors(), "read");
   const next = edit([...(settings.getGlobalSettings().packages ?? [])]);
-  if (!next) return;
+  // Already what `edit` would write, so a file that cannot be written costs nothing.
+  if (!next) return true;
   settings.setPackages(next);
   await settings.flush();
-  throwSettingsErrors(settings.drainErrors(), "write");
+  return reportSettingsErrors(settings.drainErrors(), "write");
 }
 
-function throwSettingsErrors(errors: Array<{ error: Error }>, operation: string): void {
-  if (errors.length === 0) return;
+/** Codes of a write the path refused, however the server asked: the deployment's choice. */
+const UNWRITABLE_CODES = new Set(["EROFS", "EACCES", "EPERM"]);
+
+/**
+ * Reports Pi settings errors and says whether the settings were written: `true` when there were
+ * none, `false` for a write the file system refused, and throws for anything else.
+ *
+ * A write the file system refused as unwritable is not a failure: Pi's settings on a read-only or
+ * unwritable path is how a deployment mounts it (the review compose stack binds `settings.json`
+ * read-only), so that is one warning naming the operation and code, and the caller leaves its step
+ * for a start that can write.
+ */
+function reportSettingsErrors(errors: Array<{ error: Error }>, operation: string): boolean {
+  if (errors.length === 0) return true;
+  const codes = errors.map(({ error }) => (error as NodeJS.ErrnoException).code);
+  const named = codes.filter((code): code is string => code !== undefined);
+  if (
+    operation === "write" &&
+    named.length === codes.length &&
+    named.every((code) => UNWRITABLE_CODES.has(code))
+  ) {
+    log.warn("auto_name_package.settings_unwritable", {
+      operation,
+      code: [...new Set(named)].join(","),
+    });
+    return false;
+  }
   throw new Error(
     `Pi settings ${operation} failed: ${errors.map((e) => e.error.message).join("; ")}`,
   );
