@@ -9,7 +9,7 @@ Do not reuse `server/e2e/docker-compose.e2e.yml`.
 - Origin backend is unpublished
 - Writable state is named volumes; checkout binds are read-only fixtures
 - No `docker.sock`, no home mounts, no global CA or `/etc/hosts` edits
-- Model lane: `oppi-rp39-deterministic` (never oMLX, ds4, or mlx-serve)
+- Model lane: `oppi-rp39-deterministic` (a deterministic stub, never a local model server)
 - Four-way matrix modes set `proxy.trustedPeers` even for verified-HTTPS origins so pairing rate limits use overwritten XFF (not skip-verify); attacker and legitimate client both go through the same edge with CA+hostname
 
 ## Bring up

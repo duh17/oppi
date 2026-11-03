@@ -4,8 +4,8 @@ End-to-end tests exercise the HTTP/TLS compatibility path against native or cont
 
 ## Prerequisites
 
-- Model-backed suites run `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash) through the OpenCode Go API key in your Pi login (`~/.pi/agent/auth.json`, or `OPENCODE_API_KEY`; override the dir with `E2E_SOURCE_PI_AGENT_DIR`). Run `pi` and `/login` to OpenCode Go first. In strict mode the harness fails when that credential is missing. The lane used to be Anthropic Claude Haiku, which bills a subscription token sent through Pi's built-in provider as extra usage; the DeepSeek lane needs no extension and has no Anthropic fallback.
-- Explicit Docker Compose mode requires Docker (OrbStack recommended).
+- Model-backed suites run `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash) through the OpenCode Go API key in your Pi login (`~/.pi/agent/auth.json`, or `OPENCODE_API_KEY`; override the dir with `E2E_SOURCE_PI_AGENT_DIR`). Run `pi` and `/login` to OpenCode Go first. In strict mode the harness fails when that credential is missing. The lane needs no Pi extension and has no Anthropic fallback.
+- Explicit Docker Compose mode requires Docker.
 - The Tailscale benchmark requires local `tailscale`, `ssh`, `rsync`, and `scp` commands, plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer requires Node.js, npm, Tailscale, and npm registry access. The runner installs locked dependencies in a unique `/tmp` directory, then removes it.
 
 ## Test Suites
@@ -76,7 +76,7 @@ cd server && \
   npm run bench:tailscale-network
 ```
 
-On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context and mounts the generated model-lane `auth.json` and `settings.json` (see `model-lane.ts`) read-only as a seed. The entrypoint copies that seed into a writable agent volume, so the server can update Pi settings, and stores server state in a named volume. Use native mode for normal local iteration.
+On a workstation that runs the Docker lane, do not add writable repository, worktree, report, or output bind mounts to it. The current E2E compose file builds from a copied context and mounts the generated model-lane `auth.json` and `settings.json` (see `model-lane.ts`) read-only as a seed. The entrypoint copies that seed into a writable agent volume, so the server can update Pi settings, and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 
