@@ -80,11 +80,18 @@ struct AuthenticatedMediaSource: Sendable {
         configuration: URLSessionConfiguration = .ephemeral
     ) async throws -> TimeInterval? {
         guard let mediaInfoURL else { return nil }
-        struct MediaInfo: Decodable { let durationSeconds: Double? }
         let data = try await authenticatedGET(mediaInfoURL, configuration: configuration)
-        let seconds = try JSONDecoder().decode(MediaInfo.self, from: data).durationSeconds
-        guard let seconds, seconds.isFinite, seconds >= 0 else { return nil }
-        return seconds
+        // A `format` or `tags` section this app cannot decode costs those fields,
+        // not the length the body states.
+        let decoder = JSONDecoder()
+        guard
+            let duration =
+                (try? decoder.decode(MediaInfo.self, from: data))?.durationSeconds
+                ?? (try? decoder.decode(MediaInfoDuration.self, from: data))?.durationSeconds,
+            duration.isFinite,
+            duration >= 0
+        else { return nil }
+        return duration
     }
 
     private func authenticatedGET(
@@ -158,4 +165,10 @@ final class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendabl
     ) {
         completionHandler(nil)
     }
+}
+
+/// `durationSeconds` alone, for a body whose `format` or `tags` section does not
+/// decode: the length the player needs is a field of its own.
+private struct MediaInfoDuration: Decodable {
+    let durationSeconds: Double?
 }

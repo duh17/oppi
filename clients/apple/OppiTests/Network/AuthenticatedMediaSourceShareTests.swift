@@ -144,6 +144,38 @@ struct AuthenticatedMediaSourceShareTests {
         )
         #expect(try await attachment.loadDurationSeconds(configuration: configuration) == nil)
     }
+
+    @Test("clip length survives a format or tags section the app cannot decode")
+    func keepsDurationWhenTheRestDoesNotDecode() async throws {
+        defer { AudioShareURLProtocol.handler = nil }
+        let mediaInfoURL = testUnwrap(URL(string: "https://server.example.com/files/current/media-info?origin=host&path=~/a.m4a"))
+        // A newer server naming a codec as a number, and a tag value as one: the
+        // whole body fails to decode as `MediaInfo` and still states the length.
+        let body = #"{"durationSeconds":2712.4,"format":{"codec":6},"tags":{"title":12}}"#
+        AudioShareURLProtocol.handler = { _ in
+            (
+                Data(body.utf8),
+                (try #require(HTTPURLResponse(
+                    url: mediaInfoURL,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )))
+            )
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioShareURLProtocol.self]
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/files/current?origin=host&path=~/a.m4a")),
+            authorizationProvider: { "Bearer fresh-token" },
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/mp4",
+            sourceFileExtension: "m4a",
+            mediaInfoURL: mediaInfoURL
+        )
+
+        #expect(try await source.loadDurationSeconds(configuration: configuration) == 2712.4)
+    }
 }
 
 private final class RedirectRequestCapture: @unchecked Sendable {

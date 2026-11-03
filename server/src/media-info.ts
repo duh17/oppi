@@ -1,19 +1,20 @@
 import type { FileHandle } from "node:fs/promises";
 
-import { readAudioDuration } from "./audio-duration.js";
+import { readAudioHeaders } from "./audio-duration.js";
+import { readAudioTags } from "./audio-tags.js";
 import { openVerifiedFile } from "./current-file.js";
+import type { MediaInfo } from "./types/workspace-files.js";
 
 /**
- * Audio length from file headers, so a compact player can label a clip before
+ * Audio metadata from file headers, so a compact player can label a clip before
  * playback without the client downloading audio bytes.
  *
- * `audio-duration.ts` reads WAV/RF64, MP3, MP4/M4A and FLAC headers with
- * bounded reads; other formats have no label. Results, including "unknown",
- * are cached per file version so a file is parsed once.
+ * Two bounded passes read the same file: `audio-duration.ts` for the length and
+ * format, `audio-tags.ts` for title, artist and album. Each pass has its own
+ * 512 KiB budget, so a malformed tag section never costs the length. Formats
+ * with no parser here have no label. Results, including "unknown", are cached
+ * per file version so a file is parsed once.
  */
-export interface MediaInfo {
-  durationSeconds?: number;
-}
 
 const PARSE_DEADLINE_MS = 5_000;
 const MAX_CACHE_ENTRIES = 256;
@@ -43,7 +44,7 @@ export async function readAudioMediaInfo(
   if (parsed) {
     await handle.close();
   } else {
-    parsed = parseDuration(handle, size);
+    parsed = parseMediaInfo(handle, size);
     cache.set(key, parsed);
     if (cache.size > MAX_CACHE_ENTRIES) {
       const oldest = cache.keys().next().value;
@@ -53,19 +54,23 @@ export async function readAudioMediaInfo(
   return { kind: "ok", info: await parsed };
 }
 
-async function parseDuration(handle: FileHandle, size: number): Promise<MediaInfo> {
+async function parseMediaInfo(handle: FileHandle, size: number): Promise<MediaInfo> {
   try {
+    const source = {
+      size,
+      read: async (buffer: Uint8Array, position: number) =>
+        (await handle.read(buffer, 0, buffer.length, position)).bytesRead,
+    };
     // Unknown, truncated, or over-deadline audio has no label, not an error:
     // the client keeps its playback controls and learns the length on play.
-    const duration = await readAudioDuration(
-      {
-        size,
-        read: async (buffer, position) =>
-          (await handle.read(buffer, 0, buffer.length, position)).bytesRead,
-      },
-      AbortSignal.timeout(PARSE_DEADLINE_MS),
-    );
-    return duration === undefined ? {} : { durationSeconds: duration };
+    const deadline = AbortSignal.timeout(PARSE_DEADLINE_MS);
+    const headers = await readAudioHeaders(source, deadline);
+    const tags = await readAudioTags(source, deadline);
+    const info: MediaInfo = {};
+    if (headers.durationSeconds !== undefined) info.durationSeconds = headers.durationSeconds;
+    if (headers.format) info.format = headers.format;
+    if (tags) info.tags = tags;
+    return info;
   } finally {
     await handle.close().catch(() => {});
   }

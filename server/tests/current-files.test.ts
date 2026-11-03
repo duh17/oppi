@@ -546,6 +546,9 @@ function wav(seconds: number, sampleRate = 8_000): Buffer {
   return Buffer.concat([header, Buffer.alloc(dataBytes)]);
 }
 
+/** `fmt ` states 8 kHz mono 16-bit PCM: 16,000 bytes a second, 128 kbit/s. */
+const PCM_8K_MONO = { codec: "pcm", sampleRate: 8_000, channels: 1, bitrate: 128_000 };
+
 describe("GET /files/current/media-info", () => {
   it("reports audio length from the header and follows a rewrite of the same path", async () => {
     const fixture = seed();
@@ -555,16 +558,97 @@ describe("GET /files/current/media-info", () => {
 
     const first = await request(fixture, "GET", url);
     expect(first.statusCode).toBe(200);
-    expect(JSON.parse(first.text())).toEqual({ durationSeconds: 4.5 });
+    expect(JSON.parse(first.text())).toEqual({ durationSeconds: 4.5, format: PCM_8K_MONO });
 
     // An agent regenerating the clip in place must not keep the old length.
     writeFileSync(clip, wav(1.25));
     const rewritten = await request(fixture, "GET", url);
-    expect(JSON.parse(rewritten.text())).toEqual({ durationSeconds: 1.25 });
+    expect(JSON.parse(rewritten.text())).toEqual({ durationSeconds: 1.25, format: PCM_8K_MONO });
 
     const clipHandles = openedHandles.filter((entry) => entry.path === clip);
     expect(clipHandles.length).toBeGreaterThan(0);
     for (const { handle } of clipHandles) expect(handle.fd).toBe(-1);
+  });
+
+  it("reports tags beside the length from a LIST that follows the audio", async () => {
+    const fixture = seed();
+    const value = Buffer.from("Episode 12", "utf8");
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(value.length);
+    const subchunk = Buffer.concat([Buffer.from("INFOINAM", "latin1"), size, value]);
+    const listSize = Buffer.alloc(4);
+    listSize.writeUInt32LE(subchunk.length);
+    const list = Buffer.concat([Buffer.from("LIST", "latin1"), listSize, subchunk]);
+    const clip = Buffer.concat([wav(1), list]);
+    writeFileSync(join(fixture.home, "episode.wav"), clip);
+
+    const res = await request(
+      fixture,
+      "GET",
+      `/files/current/media-info?${query({ origin: "host", path: "~/episode.wav" })}`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.text())).toEqual({
+      durationSeconds: 1,
+      format: PCM_8K_MONO,
+      tags: { title: "Episode 12" },
+    });
+  });
+
+  it("keeps the length and format of a file whose tag section is garbage", async () => {
+    const fixture = seed();
+    const garbage = Buffer.alloc(64, 0xff);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(garbage.length);
+    const chunk = Buffer.concat([Buffer.from("id3 ", "latin1"), size, garbage]);
+    writeFileSync(join(fixture.home, "bad-tags.wav"), Buffer.concat([wav(2), chunk]));
+
+    const res = await request(
+      fixture,
+      "GET",
+      `/files/current/media-info?${query({ origin: "host", path: "~/bad-tags.wav" })}`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.text())).toEqual({ durationSeconds: 2, format: PCM_8K_MONO });
+  });
+
+  it("keeps the length when the tag pass exhausts its own budget", async () => {
+    const fixture = seed();
+    // 600 text frames of 4,000 bytes: more than the tag pass's 512 KiB budget.
+    const text = Buffer.concat([Buffer.from([3]), Buffer.from("x".repeat(4_000), "utf8")]);
+    const frames: Buffer[] = [];
+    for (let i = 0; i < 600; i++) {
+      const frame = Buffer.alloc(10);
+      frame.write("TIT2", 0, "latin1");
+      frame.writeUInt32BE(text.length, 4);
+      frames.push(frame, text);
+    }
+    const body = Buffer.concat(frames);
+    const tag = Buffer.concat([
+      Buffer.from("ID3", "latin1"),
+      Buffer.from([3, 0, 0]),
+      Buffer.from([
+        (body.length >> 21) & 0x7f,
+        (body.length >> 14) & 0x7f,
+        (body.length >> 7) & 0x7f,
+        body.length & 0x7f,
+      ]),
+      body,
+    ]);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(tag.length);
+    writeFileSync(
+      join(fixture.home, "heavy-tags.wav"),
+      Buffer.concat([wav(2), Buffer.from("id3 ", "latin1"), size, tag]),
+    );
+
+    const res = await request(
+      fixture,
+      "GET",
+      `/files/current/media-info?${query({ origin: "host", path: "~/heavy-tags.wav" })}`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.text())).toEqual({ durationSeconds: 2, format: PCM_8K_MONO });
   });
 
   it("answers without a length for unparseable, implausible, and non-audio files", async () => {
@@ -617,7 +701,7 @@ describe("GET /files/current/media-info", () => {
       `/files/current/media-info?${query({ origin: "host", path: "~/bloated.wav" })}`,
     );
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.text())).toEqual({ durationSeconds: 1 });
+    expect(JSON.parse(res.text())).toEqual({ durationSeconds: 1, format: PCM_8K_MONO });
     const read = openedHandles
       .filter((entry) => entry.path === path)
       .reduce((total, entry) => total + entry.bytesRead, 0);
@@ -637,7 +721,7 @@ describe("GET /files/current/media-info", () => {
       "GET",
       sandboxURL("/workspace/deep-research/reports/take.wav"),
     );
-    expect(JSON.parse(inside.text())).toEqual({ durationSeconds: 3 });
+    expect(JSON.parse(inside.text())).toEqual({ durationSeconds: 3, format: PCM_8K_MONO });
 
     const escape = await request(fixture, "GET", sandboxURL("/workspace/deep-research/escape.wav"));
     expect(escape.statusCode).toBe(403);

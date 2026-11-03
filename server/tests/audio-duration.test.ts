@@ -1,26 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  type AudioByteSource,
-  MAX_DURATION_SECONDS,
-  readAudioDuration,
-} from "../src/audio-duration.js";
+import { MAX_DURATION_SECONDS, readAudioHeaders } from "../src/audio-duration.js";
+import { boundedPassProblem, formatProblem, mutate, seeded, source } from "./harness/audio-fuzz.js";
 
-/** An in-memory file that counts the bytes a parse reads. */
-function source(bytes: Buffer): AudioByteSource & { bytesRead: number } {
-  return {
-    size: bytes.length,
-    bytesRead: 0,
-    async read(buffer, position) {
-      const n = bytes.copy(buffer, 0, position, position + buffer.length);
-      this.bytesRead += n;
-      return n;
-    },
-  };
-}
-
-function duration(bytes: Buffer, deadline = AbortSignal.timeout(5_000)) {
-  return readAudioDuration(source(bytes), deadline);
+/** Seconds only: `readAudioHeaders` also reports the format. */
+async function duration(bytes: Buffer, deadline = AbortSignal.timeout(5_000)) {
+  const headers = await readAudioHeaders(source(bytes), deadline);
+  return headers.durationSeconds;
 }
 
 function ascii(text: string): Buffer {
@@ -437,13 +423,50 @@ const crafted: [string, Buffer][] = [
   ],
 ];
 
-describe("readAudioDuration on malformed input", () => {
+/** `ftyp`, a movie stating 7 s, then whatever the file has after it. */
+function faststartM4A(afterMovie: Buffer): Buffer {
+  return Buffer.concat([
+    box("ftyp", ascii("M4A "), u32be(0)),
+    box("moov", mvhd(0, 44_100, 44_100 * 7)),
+    afterMovie,
+  ]);
+}
+
+/**
+ * A broken box after the movie is a partial download, a corrupt size, or a
+ * count of fragments, and the movie already answered the length.
+ */
+const lengthAfterBrokenBox: [string, Buffer][] = [
+  [
+    "an `mdat` header claiming more bytes than the file holds",
+    faststartM4A(Buffer.concat([u32be(200_000), ascii("mdat"), Buffer.alloc(64)])),
+  ],
+  ["an `mdat` size of 3", faststartM4A(Buffer.concat([u32be(3), ascii("mdat"), Buffer.alloc(64)]))],
+  [
+    "an `mdat` 64-bit largesize of ~0",
+    faststartM4A(Buffer.concat([u32be(1), ascii("mdat"), Buffer.alloc(8, 0xff), Buffer.alloc(64)])),
+  ],
+  [
+    "1,100 boxes after the movie",
+    faststartM4A(Buffer.concat(Array.from({ length: 1_100 }, () => box("free")))),
+  ],
+];
+
+describe("readAudioHeaders after a broken box past the movie", () => {
+  it.each(lengthAfterBrokenBox)("keeps the length `mvhd` states for %s", async (_name, bytes) => {
+    expect(await duration(bytes)).toBeCloseTo(7, 6);
+  });
+});
+
+describe("readAudioHeaders on malformed input", () => {
   it.each(crafted)(
     "reports %s as unknown quickly, within its read budget",
     async (_name, bytes) => {
       const file = source(bytes);
       const started = performance.now();
-      expect(await readAudioDuration(file, AbortSignal.timeout(5_000))).toBeUndefined();
+      expect(
+        (await readAudioHeaders(file, AbortSignal.timeout(5_000))).durationSeconds,
+      ).toBeUndefined();
       expect(performance.now() - started).toBeLessThan(500);
       expect(file.bytesRead).toBeLessThanOrEqual(512 * 1024);
     },
@@ -462,7 +485,7 @@ describe("readAudioDuration on malformed input", () => {
       deadline.abort();
       return n;
     };
-    expect(await readAudioDuration(file, deadline.signal)).toBeUndefined();
+    expect((await readAudioHeaders(file, deadline.signal)).durationSeconds).toBeUndefined();
     expect(file.bytesRead).toBe(12);
   });
 
@@ -479,11 +502,13 @@ describe("readAudioDuration on malformed input", () => {
       size: 1_000,
       read: () => Promise.reject(new Error("EIO")),
     };
-    expect(await readAudioDuration(failing, AbortSignal.timeout(5_000))).toBeUndefined();
+    expect(
+      (await readAudioHeaders(failing, AbortSignal.timeout(5_000))).durationSeconds,
+    ).toBeUndefined();
   });
 });
 
-describe("readAudioDuration", () => {
+describe("readAudioHeaders", () => {
   it.each(valid)("reads the length of %s", async (_name, bytes, seconds) => {
     expect(await duration(bytes)).toBeCloseTo(seconds, 6);
   });
@@ -493,112 +518,6 @@ describe("readAudioDuration", () => {
 
 const FUZZ_SEED = 0x5eed_a0d1;
 const FUZZ_CASES_PER_FORMAT = 2_000;
-const DEADLINE_MS = 5_000;
-const READ_BUDGET_BYTES = 512 * 1024;
-
-/** mulberry32: small and seeded, so a failing case replays from its seed. */
-function seeded(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b_79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32;
-  };
-}
-
-/** Size, count, and timing fields worth overwriting, with their byte order. */
-function sizeFields(bytes: Buffer): { at: number; littleEndian: boolean }[] {
-  const fields: { at: number; littleEndian: boolean }[] = [];
-  const each = (tag: string, offsets: number[], littleEndian: boolean) => {
-    for (let at = bytes.indexOf(tag, 0, "latin1"); at !== -1;) {
-      for (const offset of offsets) fields.push({ at: at + offset, littleEndian });
-      at = bytes.indexOf(tag, at + 1, "latin1");
-    }
-  };
-  for (const tag of ["RIFF", "RF64", "fmt ", "data", "ds64"]) each(tag, [4], true);
-  each("ds64", [16, 20], true);
-  for (const tag of ["ftyp", "moov", "trak", "mdia", "hdlr", "mdat", "free", "udta"]) {
-    each(tag, [-4], false);
-  }
-  // Box size, then timescale and duration (v0 layout).
-  for (const tag of ["mvhd", "mdhd"]) each(tag, [-4, 16, 20], false);
-  for (const tag of ["Xing", "Info"]) each(tag, [4, 8], false);
-  each("VBRI", [14], false);
-  each("ID3", [6], false);
-  // Block header, then STREAMINFO's sample rate and sample count.
-  each("fLaC", [4, 18, 22], false);
-  return fields.filter(({ at }) => at >= 0 && at + 4 <= bytes.length);
-}
-
-const INTERESTING_U32 = [0, 1, 7, 8, 16, 0x7fff_ffff, 0x8000_0000, 0xffff_fffe, 0xffff_ffff];
-
-/** One to four byte flips, truncations, insertions, or size-field overwrites. */
-function mutate(base: Buffer, random: () => number): Buffer {
-  const pick = (n: number) => Math.floor(random() * n);
-  const fields = sizeFields(base);
-  let bytes = Buffer.from(base);
-  for (let steps = 1 + pick(4); steps > 0; steps--) {
-    switch (pick(4)) {
-      case 0:
-        for (let flips = 1 + pick(8); flips > 0 && bytes.length > 0; flips--) {
-          const at = pick(bytes.length);
-          bytes.writeUInt8(bytes.readUInt8(at) ^ (1 + pick(255)), at);
-        }
-        break;
-      case 1:
-        bytes = bytes.subarray(0, pick(bytes.length + 1));
-        break;
-      case 2: {
-        const at = pick(bytes.length + 1);
-        const inserted = Buffer.from(Array.from({ length: 1 + pick(64) }, () => pick(256)));
-        bytes = Buffer.concat([bytes.subarray(0, at), inserted, bytes.subarray(at)]);
-        break;
-      }
-      default: {
-        const field = fields[pick(fields.length)];
-        if (!field || field.at + 4 > bytes.length) break;
-        const values = [...INTERESTING_U32, bytes.length, bytes.length - field.at, pick(2 ** 32)];
-        const value = (values[pick(values.length)] ?? 0) >>> 0;
-        if (field.littleEndian) bytes.writeUInt32LE(value, field.at);
-        else bytes.writeUInt32BE(value, field.at);
-      }
-    }
-  }
-  return bytes;
-}
-
-/** The first broken guarantee for one input, or undefined when all hold. */
-async function boundedParseProblem(bytes: Buffer): Promise<string | undefined> {
-  const file = source(bytes);
-  const read = file.read.bind(file);
-  let outside: string | undefined;
-  file.read = (buffer, position) => {
-    if (position < 0 || position + buffer.length > bytes.length) {
-      outside ??= `read ${buffer.length} bytes at ${position} of ${bytes.length}`;
-    }
-    return read(buffer, position);
-  };
-  const started = performance.now();
-  let seconds: number | undefined;
-  try {
-    seconds = await readAudioDuration(file, AbortSignal.timeout(DEADLINE_MS));
-  } catch (error) {
-    return `threw ${String(error)}`;
-  }
-  const elapsed = performance.now() - started;
-  if (outside) return outside;
-  if (file.bytesRead > READ_BUDGET_BYTES) return `read ${file.bytesRead} bytes in total`;
-  if (
-    seconds !== undefined &&
-    !(Number.isFinite(seconds) && seconds >= 0 && seconds <= MAX_DURATION_SECONDS)
-  ) {
-    return `length ${seconds}`;
-  }
-  if (elapsed >= DEADLINE_MS) return `took ${elapsed.toFixed(0)} ms`;
-  return undefined;
-}
 
 const fuzzBases: [string, Buffer][] = [
   ["WAV", wav(0.5)],
@@ -612,7 +531,7 @@ const fuzzBases: [string, Buffer][] = [
   ["FLAC", flac(44_100, 44_100 * 3.5)],
 ];
 
-describe("readAudioDuration under seeded mutation", () => {
+describe("readAudioHeaders under seeded mutation", () => {
   it.each(fuzzBases.map(([name, bytes], index) => [name, bytes, index] as const))(
     "keeps every guarantee for 2,000 mutated %s files",
     async (name, base, index) => {
@@ -620,7 +539,23 @@ describe("readAudioDuration under seeded mutation", () => {
       const failures: string[] = [];
       for (let n = 0; n < FUZZ_CASES_PER_FORMAT; n++) {
         const seed = Math.floor(caseSeeds() * 2 ** 32);
-        const problem = await boundedParseProblem(mutate(base, seeded(seed)));
+        const problem = await boundedPassProblem(
+          mutate(base, seeded(seed)),
+          async (file, deadline) => {
+            const headers = await readAudioHeaders(file, deadline);
+            const { durationSeconds } = headers;
+            const lengthProblem =
+              durationSeconds !== undefined &&
+              !(
+                Number.isFinite(durationSeconds) &&
+                durationSeconds > 0 &&
+                durationSeconds <= MAX_DURATION_SECONDS
+              )
+                ? `length ${durationSeconds}`
+                : undefined;
+            return { result: headers, problem: lengthProblem ?? formatProblem(headers.format) };
+          },
+        );
         // Replay one case with mutate(base, seeded(seed)).
         if (problem) failures.push(`${name} case ${n}, seed 0x${seed.toString(16)}: ${problem}`);
       }

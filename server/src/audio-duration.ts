@@ -1,28 +1,38 @@
 /**
- * Audio length from container headers: WAV/RF64 chunks, MP3 Xing/Info/VBRI
- * frames (or a constant-bitrate estimate), MP4 `mvhd` (or the audio track's
- * `mdhd`), FLAC STREAMINFO.
+ * Audio length and format from container headers: WAV/RF64 chunks, MP3
+ * Xing/Info/VBRI frames (or a constant-bitrate estimate), MP4 `mvhd` (or the
+ * audio track's `mdhd`) with the first audio `stsd`/`esds`, FLAC STREAMINFO.
  *
  * Input may be crafted, so every read goes through `BoundedReader`: it stays
- * inside the file, each read is at most `MAX_READ_BYTES`, one parse reads at
- * most `MAX_TOTAL_READ_BYTES`, and the deadline is checked before every read.
- * Every walk has an iteration cap and no buffer is sized from file data.
- * Anything unrecognized or malformed is "unknown" (`undefined`), never a throw.
+ * inside the file, each read is at most 64 KiB, one parse reads at most 512 KiB,
+ * the deadline is checked before every read, and every walk has an iteration cap
+ * and no buffer is sized from file data. Anything unrecognized or malformed is
+ * "unknown" (`undefined`), never a throw.
+ *
+ * Tags are a second pass with their own budget (`audio-tags.ts`), and format
+ * extraction never costs the length: a container that walks to its length but
+ * not to its format still reports the length.
  */
 
-/** Positional reads over one already-open file. */
-export interface AudioByteSource {
-  readonly size: number;
-  /** Fills `buffer` from `position`; resolves to the bytes read. */
-  read(buffer: Uint8Array, position: number): Promise<number>;
-}
+import {
+  BoundedReader,
+  type AudioByteSource,
+  type Box,
+  type BoxBudget,
+  childBoxes,
+  findBox,
+  newBoxBudget,
+  uint64BE,
+  uint64LE,
+  unknown,
+} from "./audio-bytes.js";
+import { detectContainer } from "./audio-container.js";
+import type { MediaInfoFormat } from "./types/workspace-files.js";
 
-const MAX_READ_BYTES = 64 * 1024;
-/** Far above any real header walk; MP3 sync search is the largest reader. */
-const MAX_TOTAL_READ_BYTES = 512 * 1024;
 const MAX_WAV_CHUNKS = 1_024;
 const MAX_MP4_BOXES = 1_024;
-const MAX_ID3_TAGS = 8;
+/** Bytes of the `fmt ` body that carry the codec, channels, rate and byte rate. */
+const WAV_FMT_BYTES = 40;
 /**
  * About 115 days. A crafted MP4 or FLAC header (timescale or sample rate 1,
  * huge duration) parses to billions of seconds; that is not audio, and a client
@@ -33,100 +43,69 @@ export const MAX_DURATION_SECONDS = 10_000_000;
 const MP3_SYNC_WINDOW_BYTES = 64 * 1024;
 /** Frames that must share one bitrate before an MP3 counts as constant-bitrate. */
 const CBR_CHECK_FRAMES = 16;
+/** An `esds` body larger than this is not a real decoder configuration. */
+const ESDS_MAX_BYTES = 512;
 
-class Unknown extends Error {}
+/** Format numbers outside these ranges are not audio; the field is omitted. */
+const SAMPLE_RATE_RANGE = [8_000, 768_000] as const;
+const CHANNEL_RANGE = [1, 32] as const;
+const BITRATE_RANGE = [1_000, 10_000_000] as const;
 
-function unknown(): never {
-  throw new Unknown();
-}
-
-class BoundedReader {
-  private budgetLeft = MAX_TOTAL_READ_BYTES;
-
-  constructor(
-    private readonly source: AudioByteSource,
-    private readonly deadline: AbortSignal,
-  ) {}
-
-  get size(): number {
-    return this.source.size;
-  }
-
-  /** Exactly `length` bytes at `position`, or unknown. */
-  async read(position: number, length: number): Promise<Buffer> {
-    this.deadline.throwIfAborted();
-    if (
-      !Number.isSafeInteger(position) ||
-      position < 0 ||
-      !Number.isSafeInteger(length) ||
-      length < 0 ||
-      length > MAX_READ_BYTES ||
-      position + length > this.source.size
-    ) {
-      unknown();
-    }
-    this.budgetLeft -= length;
-    if (this.budgetLeft < 0) unknown();
-    const buffer = Buffer.alloc(length);
-    let filled = 0;
-    while (filled < length) {
-      const n = await this.source.read(buffer.subarray(filled), position + filled);
-      if (n <= 0) unknown();
-      filled += n;
-    }
-    return buffer;
-  }
+export interface AudioHeaders {
+  durationSeconds?: number;
+  format?: MediaInfoFormat;
 }
 
 /**
- * Seconds of audio the headers describe, or undefined when the format is not
- * one of WAV, RF64, MP3, MP4/M4A/MOV, FLAC, or the headers are malformed.
- * Zero-length audio is reported as unknown: there is nothing to label, and so
- * is a length over `MAX_DURATION_SECONDS`.
+ * Seconds of audio and the format the headers describe. Either may be missing:
+ * an unknown container, a malformed walk, a length over `MAX_DURATION_SECONDS`,
+ * or format numbers outside their ranges drop only that field.
  */
-export async function readAudioDuration(
+export async function readAudioHeaders(
   source: AudioByteSource,
   deadline: AbortSignal,
-): Promise<number | undefined> {
+): Promise<AudioHeaders> {
+  let parsed: AudioHeaders;
   try {
-    const duration = await parse(new BoundedReader(source, deadline));
-    return Number.isFinite(duration) && duration > 0 && duration <= MAX_DURATION_SECONDS
-      ? duration
-      : undefined;
+    parsed = await parse(new BoundedReader(source, deadline));
   } catch {
-    return undefined;
+    return {};
   }
+  const headers: AudioHeaders = {};
+  const { durationSeconds } = parsed;
+  // Zero-length audio has nothing to label; a length past the cap is not audio.
+  if (
+    durationSeconds !== undefined &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds > 0 &&
+    durationSeconds <= MAX_DURATION_SECONDS
+  ) {
+    headers.durationSeconds = durationSeconds;
+  }
+  const format = formatWithinRange(parsed.format);
+  if (format) headers.format = format;
+  return headers;
 }
 
-async function parse(reader: BoundedReader): Promise<number> {
-  const head = await reader.read(0, Math.min(12, reader.size));
-  const magic = head.toString("latin1", 0, 4);
-  if ((magic === "RIFF" || magic === "RF64") && head.toString("latin1", 8, 12) === "WAVE") {
-    return wavDuration(reader, magic === "RF64");
+async function parse(reader: BoundedReader): Promise<AudioHeaders> {
+  const container = await detectContainer(reader);
+  switch (container.kind) {
+    case "wav":
+      return wavHeaders(reader, container.rf64);
+    case "flac":
+      return flacHeaders(reader, container.start);
+    case "mp4":
+      return mp4Headers(reader);
+    case "mp3":
+      return mp3Headers(reader, container.audioStart);
   }
-  if (magic === "fLaC") return flacDuration(reader, 0);
-  if (head.length >= 8 && MP4_FIRST_BOXES.has(head.toString("latin1", 4, 8))) {
-    return mp4Duration(reader);
-  }
-  if (UNPARSED_MAGICS.has(magic)) unknown();
-  const audioStart = await skipId3v2(reader);
-  if (audioStart + 4 <= reader.size) {
-    const marker = await reader.read(audioStart, 4);
-    if (marker.toString("latin1") === "fLaC") return flacDuration(reader, audioStart);
-  }
-  return mp3Duration(reader, audioStart);
 }
-
-/**
- * AIFF, CAF, Ogg and Matroska/WebM have no parser here; stop before the MP3
- * frame search, which could otherwise mistake their payload for frames.
- */
-const UNPARSED_MAGICS = new Set(["FORM", "caff", "OggS", "\x1a\x45\xdf\xa3"]);
 
 // MARK: - WAV / RF64
 
-async function wavDuration(reader: BoundedReader, rf64: boolean): Promise<number> {
-  let byteRate: number | undefined;
+async function wavHeaders(reader: BoundedReader, rf64: boolean): Promise<AudioHeaders> {
+  let fmt: Buffer | undefined;
+  let fmtSize = 0;
   let dataSize: number | undefined;
   /** RF64 keeps the real data size in `ds64`; the `data` header holds 0xFFFFFFFF. */
   let ds64DataSize: number | undefined;
@@ -142,9 +121,8 @@ async function wavDuration(reader: BoundedReader, rf64: boolean): Promise<number
       ds64DataSize = uint64LE(ds64, 8);
     } else if (id === "fmt ") {
       if (size < 16) unknown();
-      const fmt = await reader.read(body, 16);
-      byteRate = fmt.readUInt32LE(8);
-      if (byteRate === 0) unknown();
+      fmtSize = size;
+      fmt = await reader.read(body, Math.min(size, WAV_FMT_BYTES));
     } else if (id === "data") {
       if (rf64 && size === 0xffff_ffff) {
         if (ds64DataSize === undefined) unknown();
@@ -156,57 +134,113 @@ async function wavDuration(reader: BoundedReader, rf64: boolean): Promise<number
       dataSize = size;
     }
     if (size > reader.size - body) unknown();
-    if (byteRate !== undefined && dataSize !== undefined) return dataSize / byteRate;
+    if (fmt !== undefined && dataSize !== undefined) break;
     // Chunks are word-aligned: an odd-size chunk carries one pad byte.
     offset = body + size + (size & 1);
   }
-  return unknown();
+  if (fmt === undefined) unknown();
+  const byteRate = fmt.readUInt32LE(8);
+  if (byteRate === 0) unknown();
+  const codec = wavCodec(fmt, fmtSize);
+  // A codec this reader cannot name costs the format, not the length.
+  const format: MediaInfoFormat | undefined =
+    codec === undefined
+      ? undefined
+      : {
+          codec,
+          sampleRate: fmt.readUInt32LE(4),
+          channels: fmt.readUInt16LE(2),
+          bitrate: byteRate * 8,
+        };
+  // A header with `fmt ` but no `data` states a format and no length.
+  return dataSize === undefined ? { format } : { durationSeconds: dataSize / byteRate, format };
+}
+
+/** WAV format tags worth naming; anything else reports no format. */
+const WAV_CODECS: Record<number, string | undefined> = {
+  1: "pcm",
+  3: "pcm_float",
+  0x55: "mp3",
+};
+
+function wavCodec(fmt: Buffer, fmtSize: number): string | undefined {
+  let tag = fmt.readUInt16LE(0);
+  // WAVE_FORMAT_EXTENSIBLE states the real format in its sub-format GUID.
+  if (tag === 0xfffe && fmtSize >= 26 && fmt.length >= 26) tag = fmt.readUInt16LE(24);
+  return WAV_CODECS[tag];
 }
 
 // MARK: - FLAC
 
-async function flacDuration(reader: BoundedReader, start: number): Promise<number> {
+async function flacHeaders(reader: BoundedReader, start: number): Promise<AudioHeaders> {
   // STREAMINFO is always the first metadata block after the marker.
   const block = await reader.read(start + 4, 4 + 34);
   if ((block.readUInt8(0) & 0x7f) !== 0 || block.readUIntBE(1, 3) < 34) unknown();
   const info = block.subarray(4);
   // 20-bit sample rate, 3-bit channels, 5-bit sample size, 36-bit sample count.
   const sampleRate = info.readUIntBE(10, 3) >>> 4;
+  const channels = ((info.readUInt8(12) >>> 1) & 0x07) + 1;
   const totalSamples = (info.readUInt8(13) & 0x0f) * 2 ** 32 + info.readUInt32BE(14);
   if (sampleRate === 0) unknown();
-  return totalSamples / sampleRate;
+  const durationSeconds = totalSamples / sampleRate;
+  const format: MediaInfoFormat = {
+    codec: "flac",
+    sampleRate,
+    channels,
+    // Average over the whole stream, tags included: STREAMINFO states no bitrate.
+    bitrate: durationSeconds > 0 ? ((reader.size - start) * 8) / durationSeconds : undefined,
+  };
+  return { durationSeconds, format };
 }
 
 // MARK: - MP4 / M4A / MOV
 
-/** Box types a QuickTime or ISO BMFF file plausibly starts with. */
-const MP4_FIRST_BOXES = new Set(["ftyp", "moov", "mdat", "free", "skip", "wide", "pnot"]);
-
-interface Box {
-  type: string;
-  /** Payload range, after the header. */
-  start: number;
-  end: number;
+interface Mp4Movie {
+  /** The first audio track's `mdia`, when the movie has one. */
+  audioMedia?: Box;
+  /** `mvhd` duration, or 0 when it is absent or zero. */
+  movieDuration: number;
+  /** A fragmented movie's samples live outside `moov`; its `mdhd` is partial. */
+  fragmented: boolean;
+  /** Payload bytes of every top-level `mdat`, for a bitrate the `esds` omits. */
+  mdatBytes: number;
 }
 
 /**
  * `mvhd`'s duration, or when it is 0 or missing, the first audio track's
- * `mdhd` (`moov` → `trak` → `mdia` → `hdlr` `soun` → `mdhd`). Only these
- * paths are walked, so depth is four by construction, and every box header
- * read counts against one `MAX_MP4_BOXES` cap.
+ * `mdhd` (`moov` → `trak` → `mdia` → `hdlr` `soun` → `mdhd`). The audio track is
+ * walked anyway for `stsd`, so the format comes from the same traversal. Only
+ * these paths are walked, so depth is fixed, and every box header read counts
+ * against one `MAX_MP4_BOXES` cap; the top-level `mdat` count that feeds the
+ * bitrate fallback walks with a budget of its own.
  */
-async function mp4Duration(reader: BoundedReader): Promise<number> {
-  const boxes = { left: MAX_MP4_BOXES };
-  const moov = (await findBox(reader, 0, reader.size, "moov", boxes)) ?? unknown();
-  const mvhd = await findBox(reader, moov.start, moov.end, "mvhd", boxes);
+async function mp4Headers(reader: BoundedReader): Promise<AudioHeaders> {
+  const boxes = newBoxBudget(MAX_MP4_BOXES);
+  const movie = await readMovie(reader, boxes);
+  let durationSeconds: number | undefined;
+  if (movie.movieDuration > 0) {
+    durationSeconds = movie.movieDuration;
+  } else if (!movie.fragmented && movie.audioMedia) {
+    const mdhd = await findBox(reader, movie.audioMedia.start, movie.audioMedia.end, "mdhd", boxes);
+    durationSeconds = mdhd ? await headerDuration(reader, mdhd) : undefined;
+  }
+  // A malformed audio track costs the format, not the length the movie states.
+  const format = await mp4Format(reader, movie, durationSeconds, boxes).catch(() => undefined);
+  return { durationSeconds, format };
+}
+
+async function readMovie(reader: BoundedReader, boxes: BoxBudget): Promise<Mp4Movie> {
+  // `findBox` returns at `moov`, so a header broken after the movie cannot cost
+  // a length the movie already stated (a truncated download, a corrupt size, or
+  // many fragments).
+  const movie = (await findBox(reader, 0, reader.size, "moov", boxes)) ?? unknown();
+  const mvhd = await findBox(reader, movie.start, movie.end, "mvhd", boxes);
   const movieDuration = mvhd ? await headerDuration(reader, mvhd) : 0;
-  if (movieDuration > 0) return movieDuration;
 
   let audioMedia: Box | undefined;
-  for await (const child of childBoxes(reader, moov.start, moov.end, boxes)) {
-    // Fragmented MP4 keeps its samples in `moof` boxes that `mvex` announces;
-    // a track header covers only the samples in `moov`, so it is not the length.
-    if (child.type === "mvex") unknown();
+  let fragmented = false;
+  for await (const child of childBoxes(reader, movie.start, movie.end, boxes)) {
+    if (child.type === "mvex") fragmented = true;
     if (child.type !== "trak" || audioMedia) continue;
     const mdia = await findBox(reader, child.start, child.end, "mdia", boxes);
     if (!mdia) continue;
@@ -216,9 +250,26 @@ async function mp4Duration(reader: BoundedReader): Promise<number> {
     const handler = (await reader.read(hdlr.start + 8, 4)).toString("latin1");
     if (handler === "soun") audioMedia = mdia;
   }
-  if (!audioMedia) return unknown();
-  const mdhd = await findBox(reader, audioMedia.start, audioMedia.end, "mdhd", boxes);
-  return headerDuration(reader, mdhd ?? unknown());
+  return { audioMedia, movieDuration, fragmented, mdatBytes: await sumTopLevelMdat(reader) };
+}
+
+/**
+ * Payload bytes of every top-level `mdat`, which only feed the bitrate the
+ * `esds` omits. Best-effort with its own box budget: a walk that fails stops the
+ * sum where it failed, so a broken box costs sample bytes, never a length or
+ * format the movie already answered.
+ */
+async function sumTopLevelMdat(reader: BoundedReader): Promise<number> {
+  const boxes = newBoxBudget(MAX_MP4_BOXES);
+  let bytes = 0;
+  try {
+    for await (const box of childBoxes(reader, 0, reader.size, boxes)) {
+      if (box.type === "mdat") bytes += box.end - box.start;
+    }
+  } catch {
+    return bytes;
+  }
+  return bytes;
 }
 
 /** Seconds from an `mvhd` or `mdhd`, which share their leading layout. */
@@ -243,75 +294,133 @@ async function headerDuration(reader: BoundedReader, box: Box): Promise<number> 
   return unknown();
 }
 
-/** The first `type` box among the boxes in [start, end), if any. */
-async function findBox(
+/** Codecs an audio `stsd` sample entry can name. */
+const MP4_CODECS: Record<string, string | undefined> = {
+  mp4a: "aac",
+  alac: "alac",
+  fLaC: "flac",
+  Opus: "opus",
+  "ac-3": "ac3",
+  "ec-3": "eac3",
+};
+
+/**
+ * The first audio sample entry's codec, channels and rate (`mdia` → `minf` →
+ * `stbl` → `stsd`). Bitrate comes from the `esds` decoder configuration, else
+ * from the `mdat` bytes over the movie's length.
+ */
+async function mp4Format(
+  reader: BoundedReader,
+  movie: Mp4Movie,
+  durationSeconds: number | undefined,
+  boxes: BoxBudget,
+): Promise<MediaInfoFormat | undefined> {
+  const media = movie.audioMedia;
+  if (!media) return undefined;
+  const minf = await findBox(reader, media.start, media.end, "minf", boxes);
+  if (!minf) return undefined;
+  const stbl = await findBox(reader, minf.start, minf.end, "stbl", boxes);
+  if (!stbl) return undefined;
+  const stsd = await findBox(reader, stbl.start, stbl.end, "stsd", boxes);
+  // `stsd` is a full box: version/flags, then the entry count, then the entries.
+  if (!stsd || stsd.end - stsd.start < 8) return undefined;
+  const entry = await firstBox(reader, stsd.start + 8, stsd.end, boxes);
+  if (!entry) return undefined;
+  const codec = MP4_CODECS[entry.type];
+  if (codec === undefined) return undefined;
+  // ISO audio sample entry: reserved, data reference, version/revision/vendor,
+  // channels, sample size, compression, packet size, 16.16 sample rate.
+  if (entry.end - entry.start < 28) return { codec };
+  const fields = await reader.read(entry.start, 28);
+  const stated = await esdsAverageBitrate(reader, entry, boxes).catch(() => undefined);
+  const format: MediaInfoFormat = {
+    codec,
+    channels: fields.readUInt16BE(16),
+    sampleRate: fields.readUInt32BE(24) >>> 16,
+  };
+  // An encoder that writes 0 states no bitrate; the sample bytes over the length do.
+  const bitrate =
+    stated !== undefined && stated > 0 ? stated : mdatBitrate(movie.mdatBytes, durationSeconds);
+  if (bitrate !== undefined) format.bitrate = bitrate;
+  return format;
+}
+
+async function firstBox(
   reader: BoundedReader,
   start: number,
   end: number,
-  type: string,
-  boxes: { left: number },
+  boxes: BoxBudget,
 ): Promise<Box | undefined> {
-  for await (const box of childBoxes(reader, start, end, boxes)) {
-    if (box.type === type) return box;
-  }
+  for await (const box of childBoxes(reader, start, end, boxes)) return box;
   return undefined;
 }
 
-/** The boxes in [start, end), in order; a malformed header is unknown. */
-async function* childBoxes(
+/** Average bitrate the `esds` decoder configuration states, if any. */
+async function esdsAverageBitrate(
   reader: BoundedReader,
-  start: number,
-  end: number,
-  boxes: { left: number },
-): AsyncGenerator<Box> {
-  let offset = start;
-  while (offset + 8 <= end) {
-    if (--boxes.left < 0) unknown();
-    const header = await reader.read(offset, 8);
-    const declared = header.readUInt32BE(0);
-    let headerSize = 8;
-    let boxEnd: number;
-    if (declared === 1) {
-      if (offset + 16 > end) unknown();
-      boxEnd = offset + uint64BE(await reader.read(offset + 8, 8), 0);
-      headerSize = 16;
-    } else if (declared === 0) {
-      boxEnd = end; // The box runs to the end of its parent (the file at top level).
-    } else {
-      boxEnd = offset + declared;
-    }
-    if (boxEnd - offset < headerSize || boxEnd > end) unknown();
-    yield { type: header.toString("latin1", 4, 8), start: offset + headerSize, end: boxEnd };
-    offset = boxEnd;
+  entry: Box,
+  boxes: BoxBudget,
+): Promise<number | undefined> {
+  // Sample entry children follow the 28 fixed bytes in the ISO layout.
+  const esds = await findBox(reader, entry.start + 28, entry.end, "esds", boxes);
+  if (!esds) return undefined;
+  const length = Math.min(esds.end - esds.start, ESDS_MAX_BYTES);
+  if (length < 8) return undefined;
+  const bytes = await reader.read(esds.start, length);
+  // Past the full-box version/flags is the ES_Descriptor.
+  const decoderConfig = findDecoderConfig(bytes, 4);
+  // OTI(1), streamType(1), bufferSizeDB(3), maxBitrate(4), avgBitrate(4).
+  if (!decoderConfig || decoderConfig.length < 13) return undefined;
+  return decoderConfig.readUInt32BE(9);
+}
+
+/**
+ * The `DecoderConfigDescriptor` payload inside an `ES_Descriptor`, or undefined.
+ * MPEG-4 descriptors are tag + 7-bit-grouped length + payload; the optional ES
+ * flags (dependency, URL, OCR) shift the decoder configuration that follows.
+ */
+function findDecoderConfig(bytes: Buffer, at: number): Buffer | undefined {
+  const es = readDescriptor(bytes, at);
+  if (!es) return undefined;
+  if (es.tag === 0x04) return bytes.subarray(es.start, es.end);
+  if (es.tag !== 0x03 || es.end - es.start < 3) return undefined;
+  let childAt = es.start + 3;
+  const flags = bytes[childAt - 1] ?? 0;
+  if ((flags & 0x80) !== 0) childAt += 2;
+  if ((flags & 0x40) !== 0) childAt += 1 + (bytes[childAt] ?? 0);
+  if ((flags & 0x20) !== 0) childAt += 2;
+  const config = readDescriptor(bytes, childAt);
+  return config?.tag === 0x04 ? bytes.subarray(config.start, config.end) : undefined;
+}
+
+function readDescriptor(
+  bytes: Buffer,
+  at: number,
+): { tag: number; start: number; end: number } | undefined {
+  if (at + 2 > bytes.length) return undefined;
+  const tag = bytes.readUInt8(at);
+  let size = 0;
+  let offset = at + 1;
+  for (let group = 0; ; group++) {
+    if (offset >= bytes.length || group === 4) return undefined;
+    const byte = bytes.readUInt8(offset++);
+    size = size * 128 + (byte & 0x7f);
+    if ((byte & 0x80) === 0) break;
   }
+  if (offset + size > bytes.length) return undefined;
+  return { tag, start: offset, end: offset + size };
+}
+
+/** Bits per second over the sample bytes, when both are known. */
+function mdatBitrate(mdatBytes: number, durationSeconds: number | undefined): number | undefined {
+  if (durationSeconds === undefined || !(durationSeconds > 0) || mdatBytes === 0) return undefined;
+  return (mdatBytes * 8) / durationSeconds;
 }
 
 // MARK: - MP3
 
-/**
- * Offset just past any leading ID3v2 tags (0 without one). More tags than
- * `MAX_ID3_TAGS` is unknown, not a frame search through the next tag.
- */
-async function skipId3v2(reader: BoundedReader): Promise<number> {
-  let offset = 0;
-  for (let tags = 0; offset + 10 <= reader.size; tags++) {
-    const header = await reader.read(offset, 10);
-    if (header.toString("latin1", 0, 3) !== "ID3") break;
-    if (tags === MAX_ID3_TAGS) unknown();
-    // Syncsafe: four 7-bit bytes, high bit clear.
-    const syncsafe = header.readUInt32BE(6);
-    if ((syncsafe & 0x8080_8080) !== 0) unknown();
-    const tagSize =
-      ((syncsafe >>> 3) & 0x0fe0_0000) |
-      ((syncsafe >>> 2) & 0x001f_c000) |
-      ((syncsafe >>> 1) & 0x0000_3f80) |
-      (syncsafe & 0x7f);
-    const hasFooter = (header.readUInt8(5) & 0x10) !== 0;
-    offset += 10 + tagSize + (hasFooter ? 10 : 0);
-    if (offset > reader.size) unknown();
-  }
-  return offset;
-}
+/** MPEG layer as a codec name: a Layer III stream is an MP3. */
+const MP3_CODECS: Record<number, string | undefined> = { 1: "mp1", 2: "mp2", 3: "mp3" };
 
 interface Mp3Frame {
   mpeg1: boolean;
@@ -373,7 +482,7 @@ function parseFrameHeader(bytes: Buffer, at: number): Mp3Frame | undefined {
   };
 }
 
-async function mp3Duration(reader: BoundedReader, audioStart: number): Promise<number> {
+async function mp3Headers(reader: BoundedReader, audioStart: number): Promise<AudioHeaders> {
   const window = await reader.read(
     audioStart,
     Math.min(MP3_SYNC_WINDOW_BYTES, reader.size - audioStart),
@@ -391,9 +500,21 @@ async function mp3Duration(reader: BoundedReader, audioStart: number): Promise<n
     if (!frame) continue;
     const frameStart = audioStart + at;
     if (frameStart >= audioEnd) break;
-    const frameBytes = await bytesAt(frameStart, Math.min(frame.length, audioEnd - frameStart));
+    const audioBytes = audioEnd - frameStart;
+    const frameBytes = await bytesAt(frameStart, Math.min(frame.length, audioBytes));
+    // The first frame states the format whether or not the length is knowable.
+    const format: MediaInfoFormat = {
+      codec: MP3_CODECS[frame.layer] ?? unknown(),
+      sampleRate: frame.sampleRate,
+      channels: frame.mono ? 1 : 2,
+    };
     const frames = vbrFrameCount(frameBytes, frame);
-    if (frames !== undefined) return (frames * frame.samplesPerFrame) / frame.sampleRate;
+    if (frames !== undefined) {
+      const durationSeconds = (frames * frame.samplesPerFrame) / frame.sampleRate;
+      // A VBR stream states no bitrate: average the audio bytes over its length.
+      if (durationSeconds > 0) format.bitrate = (audioBytes * 8) / durationSeconds;
+      return { durationSeconds, format };
+    }
     const stream = classifyStream(window, at, frame, audioEnd - audioStart);
     if (stream === "noise") continue;
     // VBR without a Xing/Info/VBRI frame states no length; only a full scan has one.
@@ -402,7 +523,8 @@ async function mp3Duration(reader: BoundedReader, audioStart: number): Promise<n
     // judged constant bitrate from its first four frames, so this is no regression.
     if (stream === "variable") unknown();
     // No Xing/Info/VBRI frame: a constant-bitrate estimate from the audio bytes.
-    return ((audioEnd - frameStart) * 8) / (frame.bitrateKbps * 1000);
+    format.bitrate = frame.bitrateKbps * 1000;
+    return { durationSeconds: (audioBytes * 8) / (frame.bitrateKbps * 1000), format };
   }
   return unknown();
 }
@@ -473,19 +595,31 @@ async function id3v1Size(reader: BoundedReader, audioStart: number): Promise<num
 
 // MARK: - Helpers
 
+/** A finite number in [min, max], rounded when asked, else undefined. */
+function inRange(
+  value: number | undefined,
+  min: number,
+  max: number,
+  round: boolean,
+): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  const bounded = round ? Math.round(value) : value;
+  return bounded >= min && bounded <= max ? bounded : undefined;
+}
+
+/** The codec with every number that is in range and no field that is not. */
+function formatWithinRange(format: MediaInfoFormat | undefined): MediaInfoFormat | undefined {
+  if (!format || typeof format.codec !== "string" || format.codec.length === 0) return undefined;
+  const sanitized: MediaInfoFormat = { codec: format.codec };
+  const sampleRate = inRange(format.sampleRate, ...SAMPLE_RATE_RANGE, true);
+  const channels = inRange(format.channels, ...CHANNEL_RANGE, true);
+  const bitrate = inRange(format.bitrate, ...BITRATE_RANGE, true);
+  if (sampleRate !== undefined) sanitized.sampleRate = sampleRate;
+  if (channels !== undefined) sanitized.channels = channels;
+  if (bitrate !== undefined) sanitized.bitrate = bitrate;
+  return sanitized;
+}
+
 function nonZero(value: number): number {
   return value === 0 ? unknown() : value;
-}
-
-/** A 64-bit field as a safe integer, or unknown. */
-function uint64BE(bytes: Buffer, at: number): number {
-  return safe(bytes.readUInt32BE(at) * 2 ** 32 + bytes.readUInt32BE(at + 4));
-}
-
-function uint64LE(bytes: Buffer, at: number): number {
-  return safe(bytes.readUInt32LE(at + 4) * 2 ** 32 + bytes.readUInt32LE(at));
-}
-
-function safe(value: number): number {
-  return Number.isSafeInteger(value) ? value : unknown();
 }

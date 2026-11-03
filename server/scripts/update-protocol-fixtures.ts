@@ -9,6 +9,10 @@ import {
   CONVERSATION_STREAM_GOLDEN_FILE,
 } from "../tests/conversation-stream-golden.js";
 import { ROUTES_SNAPSHOT_PATH, serializeRouteFixture } from "../tests/route-fixtures.js";
+import {
+  MEDIA_INFO_SNAPSHOT_FILE,
+  serializeMediaInfoFixture,
+} from "../tests/media-info-fixtures.js";
 
 import {
   APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
@@ -41,6 +45,8 @@ const fixtures = [
   },
   // Every route the server answers, for the client's route contract test.
   { path: ROUTES_SNAPSHOT_PATH, content: serializeRouteFixture() },
+  // The media-info body shape the client decodes.
+  { path: MEDIA_INFO_SNAPSHOT_FILE, content: serializeMediaInfoFixture() },
 ];
 
 for (const fixture of fixtures) {
