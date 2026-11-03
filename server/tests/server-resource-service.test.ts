@@ -185,8 +185,14 @@ describe("ServerResourceService catalogs", () => {
         name: "classic_tool",
         label: "Classic",
         description: "Counts things.\nOne line per thing.",
-        promptSnippet: "Count things with classic_tool",
-        promptGuidelines: ["Prefer classic_tool for counting."],
+        // As Pi sends them: the snippet on one line, the guidelines trimmed, without
+        // blanks or repeats.
+        promptSnippet: "  Count things\n  with classic_tool ",
+        promptGuidelines: [
+          " Prefer classic_tool for counting. ",
+          "",
+          "Prefer classic_tool for counting.",
+        ],
         parameters: {
           type: "object",
           properties: { n: { type: "number", description: "How many" } },

@@ -43,8 +43,9 @@ const MAX_DESCRIPTION = 16 * 1024;
 const MAX_SECTION_TEXT = 32 * 1024;
 /** Bytes of the schema's JSON text. */
 const MAX_SCHEMA_JSON = 64 * 1024;
-const MAX_GUIDELINES = 32;
-const MAX_GUIDELINE = 2048;
+/** Caps on a classic tool's prompt text, sized so a real snippet or guideline always fits. */
+const MAX_GUIDELINES = 64;
+const MAX_GUIDELINE = MAX_DESCRIPTION;
 /**
  * How long one extension's trial renders may take together. A synchronous render cannot be
  * interrupted, so this bounds the route by sections, not by the clock: a render that finishes past
@@ -193,10 +194,21 @@ function toolDefinition(
   promptGuidelines: unknown,
 ): ServerToolDefinition {
   const schema = jsonSchema(parameters);
+  // As Pi puts them in its prompt (`AgentSession`'s `_normalizePromptSnippet` and
+  // `_normalizePromptGuidelines`): the snippet on one line, the guidelines trimmed, without blanks
+  // or repeats.
+  const snippet =
+    typeof promptSnippet === "string" ? promptSnippet.replace(/\s+/g, " ").trim() : "";
   const guidelines = Array.isArray(promptGuidelines)
-    ? promptGuidelines
+    ? [
+        ...new Set(
+          promptGuidelines
+            .filter((line): line is string => typeof line === "string")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && line.length <= MAX_GUIDELINE),
+        ),
+      ]
         .slice(0, MAX_GUIDELINES)
-        .filter((line): line is string => typeof line === "string" && line.length <= MAX_GUIDELINE)
         .map((line) => boundText(line, MAX_GUIDELINE))
     : [];
   return {
@@ -205,8 +217,8 @@ function toolDefinition(
       ? { description: boundText(description, MAX_DESCRIPTION) }
       : {}),
     ...(schema ? { parameters: schema } : {}),
-    ...(typeof promptSnippet === "string" && promptSnippet && promptSnippet.length <= MAX_GUIDELINE
-      ? { promptSnippet: boundText(promptSnippet, MAX_GUIDELINE) }
+    ...(snippet && snippet.length <= MAX_GUIDELINE
+      ? { promptSnippet: boundText(snippet, MAX_GUIDELINE) }
       : {}),
     ...(guidelines.length > 0 ? { promptGuidelines: guidelines } : {}),
     from,
