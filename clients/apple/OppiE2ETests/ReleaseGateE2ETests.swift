@@ -379,7 +379,18 @@ final class ReleaseGateE2ETests: E2ETestCase {
             waitForElementToExist(renderedLink, timeout: 20),
             "Assistant response did not render a tappable session wiki link"
         )
+        XCTAssertTrue(
+            waitForSettledHittable(renderedLink, timeout: 20),
+            "Assistant response's session wiki link never took touches"
+        )
         tap(renderedLink, named: "rendered session wiki link", timeout: 5)
+        // A tap synthesized while the reply is still settling reaches nothing: the link's
+        // handler never runs and no scroll or route changes. Tap once more at a settled
+        // frame; the assertion below still requires the switch.
+        if !e2eDiagnosticMatches("e2e.ws.focusedSession", timeout: 10, matching: { $0 == targetSessionID }),
+           waitForSettledHittable(renderedLink, timeout: 20) {
+            tap(renderedLink, named: "rendered session wiki link", timeout: 5)
+        }
         XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
     }
 
