@@ -102,6 +102,77 @@ struct LocalCacheAtRestTests {
         #expect(await files.diskSize() == 0)
     }
 
+    /// Clear Local Cache deletes cache bytes and nothing else. App Lock lives in
+    /// the App Group suite; every other setting lives in the app's own domain. Both
+    /// are `Library/Preferences` plists (the group's in its own container), so the
+    /// cache roots and the two marker files below prove where Clear stops: a root
+    /// that widened to `Library` or to the bare Caches directory would take a
+    /// marker with it.
+    @Test func clearingTheCacheOnDiskKeepsSettingsAndAppLock() async throws {
+        let settings = UserDefaults.standard
+        let shared = SharedConstants.sharedDefaults
+        let marker = UUID().uuidString
+        let settingsKey = "oppi.test.clearCache.standard.\(marker)"
+        let sharedKey = "oppi.test.clearCache.shared.\(marker)"
+        let previousTimeout = shared.string(forKey: AppLockSettings.timeoutKey)
+        defer {
+            settings.removeObject(forKey: settingsKey)
+            shared.removeObject(forKey: sharedKey)
+            if let previousTimeout {
+                shared.set(previousTimeout, forKey: AppLockSettings.timeoutKey)
+            } else {
+                shared.removeObject(forKey: AppLockSettings.timeoutKey)
+            }
+        }
+
+        AppLockSettings.setTimeout(.immediately, in: shared)
+        settings.set(marker, forKey: settingsKey)
+        shared.set(marker, forKey: sharedKey)
+
+        // Markers where preferences live: the app's Library/Preferences and the
+        // App Group container the Share extension and widget read App Lock from.
+        let library = try #require(fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first)
+        let preferences = library.appending(path: "Preferences", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: preferences, withIntermediateDirectories: true)
+        let preferencesMarker = preferences.appending(path: "oppi-clear-cache-\(marker).marker")
+        try Data("keep".utf8).write(to: preferencesMarker)
+        let groupContainer = try #require(fileManager.containerURL(
+            forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier
+        ))
+        let groupMarker = groupContainer.appending(path: "oppi-clear-cache-\(marker).marker")
+        try Data("keep".utf8).write(to: groupMarker)
+
+        // Cache bytes the real Clear must delete, through the real default roots.
+        let caches = try #require(fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        let cachesNeighbour = caches.appending(path: "oppi-clear-cache-\(marker).marker")
+        try Data("keep".utf8).write(to: cachesNeighbour)
+        let timeline = TimelineCache()
+        let files = FileBrowserCache()
+        await timeline.saveWorkspaces([makeTestWorkspace(id: "w1", name: "One")], serverId: "sha256:a")
+        await files.cacheFileIndex(["a.txt"], workspaceId: "w1", serverId: "sha256:a")
+        #expect(await timeline.diskSize() > 0)
+
+        defer {
+            try? fileManager.removeItem(at: preferencesMarker)
+            try? fileManager.removeItem(at: groupMarker)
+            try? fileManager.removeItem(at: cachesNeighbour)
+        }
+
+        await LocalCache.clear()
+
+        // Caches gone.
+        #expect(await timeline.loadWorkspaces(serverId: "sha256:a") == nil)
+        #expect(await files.fileIndex(workspaceId: "w1", serverId: "sha256:a") == nil)
+
+        // Settings, App Lock, and their storage still there.
+        #expect(AppLockSettings.timeout(in: shared) == .immediately)
+        #expect(settings.string(forKey: settingsKey) == marker)
+        #expect(shared.string(forKey: sharedKey) == marker)
+        #expect(fileManager.fileExists(atPath: preferencesMarker.path))
+        #expect(fileManager.fileExists(atPath: groupMarker.path))
+        #expect(fileManager.fileExists(atPath: cachesNeighbour.path))
+    }
+
     // MARK: - Remove Server
 
     @Test func removingAServerDeletesItsCachedDataAndLeavesOtherServersAlone() async throws {
