@@ -1799,6 +1799,7 @@
 		B8CB5A96FE9DA60D5639D52A /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3CDFE03CCDA0189D60646F5 /* MainWindowView.swift */; };
 		B8E55E00A4C9F02AE61B2C3B /* SettingsRootViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 007BCD1FDE3E8C264DD58A7F /* SettingsRootViewController.swift */; };
 		B8F15C8E01E87724E0921295 /* ReviewCommentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1BDBA047D273D32E5223BC4 /* ReviewCommentStoreTests.swift */; };
+		B8FBE906EF0BD834007AFA62 /* eleven-chapters.m4a in Resources */ = {isa = PBXBuildFile; fileRef = BF56FF6B20CD6DE367E3A32E /* eleven-chapters.m4a */; };
 		B90485A671EB70215415C1D3 /* MermaidGanttRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */; };
 		B904AC780251405F4C84F445 /* MacWorkspaceFileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB51C9B31EDB9813506AD28 /* MacWorkspaceFileBrowserView.swift */; };
 		B90BB3B9FB906018A0B8A9E2 /* MacLegacyToolCallFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D92AFA08272B607E9F1CF8 /* MacLegacyToolCallFormatting.swift */; };
@@ -4199,6 +4200,7 @@
 		BF0775E4210C1032398BC76B /* MacQuickSessionLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacQuickSessionLauncher.swift; sourceTree = "<group>"; };
 		BF0EE9336AA75DA9CF4EFBBE /* ServerExtensionListPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionListPresentationTests.swift; sourceTree = "<group>"; };
 		BF3CE35BDDA9F008DCFB4A3E /* FileViewerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerViews.swift; sourceTree = "<group>"; };
+		BF56FF6B20CD6DE367E3A32E /* eleven-chapters.m4a */ = {isa = PBXFileReference; path = "eleven-chapters.m4a"; sourceTree = "<group>"; };
 		BFB76D3C9EC9853CB06809C5 /* MermaidClassParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidClassParser.swift; sourceTree = "<group>"; };
 		BFF83F29DBFB9DE129123A79 /* RendererTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererTestSupport.swift; sourceTree = "<group>"; };
 		C052695B50C1BDBD0DBD9677 /* ToolRowRenderCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowRenderCache.swift; sourceTree = "<group>"; };
@@ -6671,6 +6673,7 @@
 			isa = PBXGroup;
 			children = (
 				864385622E9BE372025A7A62 /* 2026-08-22-anthropic-s1-report.md */,
+				BF56FF6B20CD6DE367E3A32E /* eleven-chapters.m4a */,
 				C52A7A25435385872BD3EDB0 /* known-good-h264.mp4 */,
 				F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */,
 				776FDBD7D6EB1C0D4603C712 /* mixed-markdown-stress-corpus.md */,
@@ -8645,6 +8648,7 @@
 				1B7D47808689D687E86B63DD /* 2026-08-22-anthropic-s1-report.md in Resources */,
 				F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */,
 				ACEF24896B7C5CD12327E9C4 /* LICENSE in Resources */,
+				B8FBE906EF0BD834007AFA62 /* eleven-chapters.m4a in Resources */,
 				DC352F589D285632FC9224DB /* known-good-h264.mp4 in Resources */,
 				BFC5A1E291D0C798583FFA4C /* mermaid-rendering-gallery.md in Resources */,
 				C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */,

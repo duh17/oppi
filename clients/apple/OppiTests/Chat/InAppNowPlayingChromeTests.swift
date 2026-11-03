@@ -714,6 +714,49 @@ struct InAppNowPlayingChromeTests {
         back.sendActions(for: .primaryActionTriggered)
         #expect(leaves == 1)
     }
+
+    /// The listening row sits near the bottom, so its menus open upward, and
+    /// UIKit's `.automatic` order would list chapter 1 last. Every listening
+    /// menu is an ordered list and keeps its built order.
+    @Test func listeningMenusKeepTheirOrderWhenOpeningUpward() async throws {
+        // 22 s of silence with chapter markers "Part 1"…"Part 11", two seconds each.
+        let player = AudioPlayerService()
+        player.toggleFilePlayback(fileURL: try TestFixtures.url("eleven-chapters.m4a"), itemID: "audio-1")
+        defer { player.stop() }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { player.chapters.count == 11 })
+        player.seek(to: 5)
+        let page = InAppNowPlayingPlayerViewController(audioPlayer: player)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        page.view.layoutIfNeeded()
+        let transport = try #require(firstSubview(ofType: AudioPlaybackTransportView.self, in: page.view))
+        transport.updatePropertiesIfNeeded()
+        transport.layoutIfNeeded()
+
+        let chaptersButton = try #require(
+            firstSubview(withAccessibilityIdentifier: "audioLyrics.chapters", in: page.view) as? UIButton
+        )
+        #expect(!chaptersButton.isHidden)
+        #expect(chaptersButton.convert(chaptersButton.bounds, to: window).midY > window.bounds.midY)
+        for identifier in ["audioLyrics.speed", "audioLyrics.chapters", "audioLyrics.sleepTimer"] {
+            let button = try #require(firstSubview(withAccessibilityIdentifier: identifier, in: page.view) as? UIButton)
+            #expect(button.preferredMenuElementOrder == .fixed, "\(identifier) menu reverses when it opens upward")
+        }
+
+        let rows = transport.chapterMenuElements(player).compactMap { $0 as? UIAction }
+        #expect(rows.map(\.title) == (1...11).map { "Part \($0)" })
+        #expect(rows.map(\.state) == (0..<11).map { $0 == 2 ? .on : .off })
+    }
+}
+
+private func firstSubview<View: UIView>(ofType type: View.Type, in root: UIView) -> View? {
+    if let match = root as? View { return match }
+    for subview in root.subviews {
+        if let match = firstSubview(ofType: type, in: subview) { return match }
+    }
+    return nil
 }
 
 private func firstSubview(withAccessibilityIdentifier identifier: String, in root: UIView) -> UIView? {

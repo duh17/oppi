@@ -275,6 +275,9 @@ final class AudioPlaybackTransportView: UIView {
         sleepButton.menu = sleepMenu()
         for button in [speedButton, chaptersButton, sleepButton] {
             button.showsMenuAsPrimaryAction = true
+            // These rows are ordered lists (rates, chapters, minutes). The row sits
+            // low on the screen, and `.automatic` reverses a menu that opens upward.
+            button.preferredMenuElementOrder = .fixed
             listeningRow.addArrangedSubview(button)
         }
         listeningRow.axis = .horizontal
@@ -526,16 +529,21 @@ final class AudioPlaybackTransportView: UIView {
 
     private func chapterMenu() -> UIMenu {
         deferredMenu { [weak self] player in
-            guard let self, matchesPlayback else { return [] }
-            let chapters = player.chapters
-            let current = AudioChapters.index(in: chapters, at: player.currentTime)
-            return chapters.enumerated().map { index, chapter in
-                UIAction(title: chapter.title, state: index == current ? .on : .off) { _ in
-                    player.seek(to: chapter.start)
-                }
+            self?.chapterMenuElements(player) ?? []
+        }
+    }
+
+    func chapterMenuElements(_ player: AudioPlayerService) -> [UIMenuElement] {
+        guard matchesPlayback else { return [] }
+        let chapters = player.chapters
+        let current = AudioChapters.index(in: chapters, at: player.currentTime)
+        return chapters.enumerated().map { index, chapter in
+            UIAction(title: chapter.title, state: index == current ? .on : .off) { _ in
+                player.seek(to: chapter.start)
             }
         }
     }
+
 
     private func sleepMenu() -> UIMenu {
         deferredMenu { player in
