@@ -296,6 +296,8 @@ extension ChatViewController {
         let sessionStore = sessionStore
         let sessionId = sessionId
         let connection = connection
+        let reducer = reducer
+        let actionHandler = actionHandler
         let session = { sessionStore.sessions.first { $0.id == sessionId } }
         return ContextInspectorViewController(
             session: session,
@@ -306,13 +308,15 @@ extension ChatViewController {
             connection: connection,
             reviewCommentSelectionScope: .activeSession(reviewCommentSelectionRouter),
             loadSessionStats: { try await connection.getSessionStats() },
-            reloadSession: { [weak self] in
-                guard let self else { return }
+            reloadSession: {
+                // This panel covers the chat, so the success toast presented from the
+                // app root would never show: the panel prints the outcome itself.
                 await actionHandler.performReload(
                     connection: connection,
                     reducer: reducer,
                     sessionStore: sessionStore,
-                    sessionId: sessionId
+                    sessionId: sessionId,
+                    announcesSuccess: false
                 )
             },
             onClose: { [weak self] in self?.model.showContextInspector = false }

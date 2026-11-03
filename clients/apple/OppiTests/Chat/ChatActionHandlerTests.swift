@@ -224,12 +224,12 @@ struct ChatActionHandlerTests {
             onAsyncFailure: { failed += 1 }
         )
 
-        #expect(reloaded)
+        #expect(reloaded == .reloaded)
         #expect(steps == ["reload", "succeeded", "state", "commands"])
         #expect(succeeded == 1)
         #expect(failed == 0)
         #expect(noticeWhenSent == [nil, nil], "the notice is the last step, after the state and the commands")
-        #expect(connection.extensionToast == "Reloaded tools, extensions, skills, and prompts.")
+        #expect(connection.extensionToast == ChatActionHandler.reloadSuccessMessage)
 
         var refusedSteps: [String] = []
         let refusedReducer = TimelineReducer()
@@ -258,13 +258,59 @@ struct ChatActionHandlerTests {
             onAsyncFailure: { refusedSteps.append("failed") }
         )
 
-        #expect(!refused)
+        #expect(refused == .failed("Reload failed: reload rejected: reload requires an idle session"))
         #expect(refusedSteps == ["reload", "failed"], "a refusal calls the failure callback, not the success one")
         #expect(refusedConnection.extensionToast == nil, "a refusal announces nothing")
         #expect(refusedReducer.items.contains { item in
             guard case .error(_, let message) = item else { return false }
             return message == "Reload failed: reload rejected: reload requires an idle session"
         }, "the refusal reaches the timeline as the command reports it")
+    }
+
+    /// The Context panel covers the chat, so the toast, a sheet presented from the app
+    /// root, would never show: the panel asks for silence and prints the outcome in its
+    /// own list. The composer's `/reload` keeps the toast. Silence is not a failure.
+    @Test func performReloadAnnouncesOnlyWhenTheCallerAsksItTo() async {
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: "s1"))
+
+        func reloadingConnection() -> ServerConnection {
+            let connection = ServerConnection()
+            connection._sendMessageForTesting = { message in
+                guard case .reload(let requestId?) = message else { return }
+                _ = connection.commands.resolveCommandResult(
+                    command: "reload",
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                )
+            }
+            return connection
+        }
+
+        let quiet = reloadingConnection()
+        let quietReducer = TimelineReducer()
+        let quietOutcome = await ChatActionHandler().performReload(
+            connection: quiet,
+            reducer: quietReducer,
+            sessionStore: sessionStore,
+            sessionId: "s1",
+            announcesSuccess: false
+        )
+        #expect(quietOutcome == .reloaded)
+        #expect(quiet.extensionToast == nil, "the panel reports the success itself")
+        #expect(quietReducer.items.isEmpty, "a quiet success still puts nothing on the timeline")
+
+        let loud = reloadingConnection()
+        let loudOutcome = await ChatActionHandler().performReload(
+            connection: loud,
+            reducer: TimelineReducer(),
+            sessionStore: sessionStore,
+            sessionId: "s1"
+        )
+        #expect(loudOutcome == .reloaded)
+        #expect(loud.extensionToast == ChatActionHandler.reloadSuccessMessage)
     }
 
     // MARK: - Send Prompt Logic

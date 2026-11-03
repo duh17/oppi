@@ -4,6 +4,13 @@ import os.log
 
 private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "Action")
 
+/// What one `/reload` reports back: it ran, or the line the timeline shows for why
+/// it did not. A surface that cannot raise the toast prints the same words.
+enum ReloadOutcome: Equatable {
+    case reloaded
+    case failed(String)
+}
+
 /// Handles user actions in the chat: sending prompts, stopping the agent,
 /// model/thinking changes, and session management.
 ///
@@ -564,6 +571,9 @@ final class ChatActionHandler {
         }
     }
 
+    /// The composer's toast and the Context panel's status line say one thing.
+    static let reloadSuccessMessage = "Reloaded tools, extensions, skills, and prompts."
+
     func reloadResources(
         connection: ServerConnection,
         reducer: TimelineReducer,
@@ -587,16 +597,22 @@ final class ChatActionHandler {
     /// The one `/reload` sequence: reload the runtime, refresh state and slash
     /// commands, announce it, and report a refusal on the timeline. The composer
     /// wraps it in a task for its submission; the Context panel awaits it to reload
-    /// its own stats afterwards. Returns whether the runtime reloaded.
+    /// its own stats afterwards and prints the outcome itself.
+    ///
+    /// `announcesSuccess: false` leaves `extensionToast` alone: the toast is a sheet
+    /// presented from the app root, which a surface that is already presenting (the
+    /// Context panel) never sees, so that surface reports the success in its own list.
+    /// A failure still reaches the timeline, which is the session's record.
     @discardableResult
     func performReload(
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionStore: SessionStore,
         sessionId: String,
+        announcesSuccess: Bool = true,
         onSendSucceeded: (() -> Void)? = nil,
         onAsyncFailure: (() -> Void)? = nil
-    ) async -> Bool {
+    ) async -> ReloadOutcome {
         do {
             try await connection.reloadResources()
             onSendSucceeded?()
@@ -604,12 +620,15 @@ final class ChatActionHandler {
             if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 await connection.refreshSlashCommands(for: session, force: true)
             }
-            connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
-            return true
+            if announcesSuccess {
+                connection.extensionToast = Self.reloadSuccessMessage
+            }
+            return .reloaded
         } catch {
             onAsyncFailure?()
-            reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
-            return false
+            let message = "Reload failed: \(error.localizedDescription)"
+            reducer.process(.error(sessionId: sessionId, message: message))
+            return .failed(message)
         }
     }
 

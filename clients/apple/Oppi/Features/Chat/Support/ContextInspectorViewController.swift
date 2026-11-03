@@ -6,15 +6,16 @@ import UIKit
 ///
 /// The session row drives the window totals live; the breakdown comes from
 /// `get_session_stats`, loaded when the panel opens and on every refresh. The bar's
-/// Reload button runs the session's `/reload` and then re-fetches those stats, so the
-/// sections show the runtime the session has now; pulling down only re-fetches the
-/// stats, which is cheap and safe to do by accident.
+/// Reload button runs the session's `/reload`, prints its outcome at the top of this
+/// list, and then re-fetches those stats, so the sections show the runtime the session
+/// has now; pulling down only re-fetches the stats, which is cheap and safe to do by
+/// accident.
 final class ContextInspectorViewController: UIViewController, UICollectionViewDelegate {
     private let readSession: () -> Session?
     private let readWorkspace: () -> Workspace?
     private let connection: ServerConnection
     private let loadSessionStats: @MainActor () async throws -> SessionStatsSnapshot?
-    private let reloadSession: @MainActor () async -> Void
+    private let reloadSession: @MainActor () async -> ReloadOutcome
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     private let onClose: () -> Void
 
@@ -29,6 +30,10 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private var reloadItem: UIBarButtonItem?
     /// A `/reload` this panel started and has not seen finish.
     private var isReloading = false
+    /// What the last reload reported: the panel's own notice, since the composer's
+    /// toast is presented from the app root behind this sheet. Cleared by the next
+    /// reload and by a pull.
+    private var reloadOutcome: ReloadOutcome?
 
     /// Open groups, kept for the app run so the panel reopens the way it was left.
     @MainActor private static var expanded: Set<Item> = []
@@ -54,6 +59,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         case onDemand
         case header(Section)
         case status(Section)
+        /// The one line the last reload left, above the window card.
+        case reloadStatus
         case agentsFile(String)
         case skill(String)
         case toolGroup(String)
@@ -69,7 +76,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         connection: ServerConnection,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
         loadSessionStats: @escaping @MainActor () async throws -> SessionStatsSnapshot?,
-        reloadSession: @escaping @MainActor () async -> Void,
+        reloadSession: @escaping @MainActor () async -> ReloadOutcome,
         onClose: @escaping () -> Void
     ) {
         readSession = session
@@ -121,7 +128,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "chat.context.list"
         let refreshControl = UIRefreshControl()
-        refreshControl.addAction(UIAction { [weak self] _ in self?.reloadStats() }, for: .valueChanged)
+        refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefreshStats() }, for: .valueChanged)
         collectionView.refreshControl = refreshControl
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -155,17 +162,49 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private func reloadFromBarButton() {
         guard !isReloading, sessionCanReload else { return }
         isReloading = true
+        // The line belongs to the reload that finished; a new one retires it.
+        reloadOutcome = nil
         updateReloadButton()
+        rebuild()
         // Read the closure before the task: a panel that closes mid-reload is not
         // kept alive until the command returns, and a closed one fetches no stats.
         let reload = reloadSession
         Task { [weak self] in
-            await reload()
+            let outcome = await reload()
             guard let self else { return }
             isReloading = false
             updateReloadButton()
+            showReloadOutcome(outcome)
             // Whatever happened, the runtime may have changed: read the stats again.
             reloadStats()
+        }
+    }
+
+    /// Reload runs while this sheet covers the chat, so neither the toast nor the
+    /// timeline behind it is reachable: the panel shows the result itself and hands
+    /// the same words to VoiceOver. The line stays until the next reload or a pull.
+    private func showReloadOutcome(_ outcome: ReloadOutcome) {
+        reloadOutcome = outcome
+        rebuild()
+        // A sheet that is already leaving still holds `self` until the dismissal
+        // finishes; announcing then would speak over the chat it returned to.
+        guard let text = reloadStatusText, viewIfLoaded?.window != nil else { return }
+        UIAccessibility.post(notification: .announcement, argument: text)
+    }
+
+    /// A failure reads as a warning, the colour the stats error already uses.
+    private var reloadStatusIsFailure: Bool {
+        switch reloadOutcome {
+        case .failed?: true
+        default: false
+        }
+    }
+
+    private var reloadStatusText: String? {
+        switch reloadOutcome {
+        case nil: nil
+        case .reloaded?: ChatActionHandler.reloadSuccessMessage
+        case .failed(let message)?: message
         }
     }
 
@@ -201,6 +240,13 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             collectionView.refreshControl?.endRefreshing()
             rebuild()
         }
+    }
+
+    /// A pull re-reads the stats and retires the line the last reload left: the
+    /// cheapest way for a reader to say they have seen it.
+    private func pullToRefreshStats() {
+        reloadOutcome = nil
+        reloadStats()
     }
 
     // MARK: - Model
@@ -347,7 +393,11 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     }
 
     private func contextItems() -> [Item] {
-        var items: [Item] = [.card]
+        var items: [Item] = []
+        if reloadStatusText != nil {
+            items.append(.reloadStatus)
+        }
+        items.append(.card)
         items += model.segments.map { .segment($0.kind) }
         if model.usage.windowTokens > 0, !model.segments.isEmpty {
             items.append(.freeSpace)
@@ -453,6 +503,19 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         )
     }
 
+    /// The one footnote line every status row paints, shared so the stats rows and
+    /// the reload line cannot drift apart. A warning can be long — a reload failure
+    /// carries the server's own message — so it wraps to a second line; the calm
+    /// line stays single-line.
+    private func statusRow(_ cell: UICollectionViewListCell, text: String, isWarning: Bool) {
+        var content = UIListContentConfiguration.cell()
+        content.text = text
+        content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+        content.textProperties.color = isWarning ? palette.ui.orange : palette.ui.comment
+        content.textProperties.numberOfLines = isWarning ? 2 : 1
+        cell.contentConfiguration = content
+    }
+
     private func configure(_ cell: UICollectionViewListCell, item: Item) {
         let palette = palette
         cell.accessories = []
@@ -491,13 +554,15 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             )
             cell.accessibilityIdentifier = "chat.context.segment.onDemand"
         case .status(let section):
-            var content = UIListContentConfiguration.cell()
-            content.text = statusText(section)
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = statsError != nil && stats == nil && section != .usage
-                ? palette.ui.orange
-                : palette.ui.comment
-            cell.contentConfiguration = content
+            statusRow(
+                cell,
+                text: statusText(section),
+                isWarning: statsError != nil && stats == nil && section != .usage
+            )
+        case .reloadStatus:
+            guard let text = reloadStatusText else { return }
+            statusRow(cell, text: text, isWarning: reloadStatusIsFailure)
+            cell.accessibilityIdentifier = "chat.context.reloadStatus"
         case .agentsFile(let path):
             guard let file = model.agentsFiles.first(where: { $0.path == path }) else { return }
             var content = UIListContentConfiguration.cell()

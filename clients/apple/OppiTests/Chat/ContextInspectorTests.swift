@@ -316,6 +316,8 @@ struct ContextInspectorReloadTests {
         var statsLoads = 0
         var reloads = 0
         var steps: [String] = []
+        /// What the panel's reload reports for the reload it is running.
+        var outcome: ReloadOutcome = .reloaded
     }
 
     /// Holds a reload open until the test lets it finish.
@@ -335,6 +337,19 @@ struct ContextInspectorReloadTests {
         var list: UICollectionView? {
             panel.view.subviews.compactMap { $0 as? UICollectionView }.first
         }
+
+        /// The panel's own reload line, once the list is showing one.
+        var reloadStatusCell: UICollectionViewListCell? {
+            window.layoutIfNeeded()
+            guard let list else { return nil }
+            return list.indexPathsForVisibleItems.sorted()
+                .compactMap { list.cellForItem(at: $0) as? UICollectionViewListCell }
+                .first { $0.accessibilityIdentifier == "chat.context.reloadStatus" }
+        }
+
+        var reloadStatusText: String? {
+            (reloadStatusCell?.contentConfiguration as? UIListContentConfiguration)?.text
+        }
     }
 
     private func mount(row: LiveRow, recorder: Recorder, gate: Gate? = nil) -> Mounted {
@@ -352,6 +367,7 @@ struct ContextInspectorReloadTests {
                 recorder.reloads += 1
                 recorder.steps.append("reload")
                 while let gate, !gate.isOpen { try? await Task.sleep(for: .milliseconds(10)) }
+                return recorder.outcome
             },
             onClose: {}
         )
@@ -453,5 +469,106 @@ struct ContextInspectorReloadTests {
 
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 2 })
         #expect(recorder.reloads == 0, "a pull must not rebuild the runtime")
+    }
+
+    // MARK: - The reload's own result
+
+    /// Reload runs while this panel covers the chat, so the toast (a sheet from the app
+    /// root) and the timeline error both stay out of sight. The panel prints the result
+    /// at the top of its own list instead, in the words VoiceOver is handed.
+    @Test func aReloadReportsItsSuccessInThePanel() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+        #expect(mounted.reloadStatusCell == nil, "nothing has reloaded yet")
+
+        let button = try #require(mounted.reloadItem)
+        button.primaryAction?.performWithSender(button, target: nil)
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) {
+                mounted.reloadStatusText == ChatActionHandler.reloadSuccessMessage
+            },
+            "the panel says what the toast would have said"
+        )
+        let list = try #require(mounted.list)
+        let top = list.cellForItem(at: IndexPath(item: 0, section: 0)) as? UICollectionViewListCell
+        #expect(
+            top?.accessibilityIdentifier == "chat.context.reloadStatus",
+            "the line sits above the window card"
+        )
+    }
+
+    @Test func aFailedReloadReportsTheFailureInThePanel() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        recorder.outcome = .failed("Reload failed: reload requires an idle session")
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+
+        let button = try #require(mounted.reloadItem)
+        button.primaryAction?.performWithSender(button, target: nil)
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) {
+                mounted.reloadStatusText == "Reload failed: reload requires an idle session"
+            },
+            "a failure reads as the timeline's line, not as nothing happening"
+        )
+    }
+
+    @Test func pullingDownClearsTheReloadLine() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+
+        let button = try #require(mounted.reloadItem)
+        button.primaryAction?.performWithSender(button, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusText != nil })
+
+        let control = try #require(mounted.list?.refreshControl)
+        control.sendActions(for: .valueChanged)
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusCell == nil },
+            "a pull retires the line it re-read the stats for"
+        )
+        #expect(recorder.reloads == 1, "clearing the line does not reload the runtime")
+    }
+
+    /// The line reports one reload: the next one retires it as it starts, so a slow
+    /// reload never leaves the previous result on screen.
+    @Test func aNewReloadRetiresThePreviousLine() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let gate = Gate()
+        let mounted = mount(row: row, recorder: recorder, gate: gate)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+        let button = try #require(mounted.reloadItem)
+
+        button.primaryAction?.performWithSender(button, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
+        gate.isOpen = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusText != nil })
+
+        gate.isOpen = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { button.isEnabled })
+        button.primaryAction?.performWithSender(button, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 2 })
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusCell == nil },
+            "the second reload retires the first one's line while it runs"
+        )
+
+        gate.isOpen = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            mounted.reloadStatusText == ChatActionHandler.reloadSuccessMessage
+        })
     }
 }
