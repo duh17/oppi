@@ -493,7 +493,7 @@ describe("qa-verify source bytes", () => {
       "clients/apple/OppiActivityExtension",
       "clients/apple/OppiControlWidget",
       "clients/apple/OppiShareExtension",
-      "server/extensions",
+      "server/plugins",
       "server/e2e",
     ].map((tree) => {
       expect(SOURCE_TREES).toContain(tree as (typeof SOURCE_TREES)[number]);

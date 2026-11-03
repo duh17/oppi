@@ -148,7 +148,7 @@ const scans: ScanConfig[] = [
   {
     id: "server-prod",
     title: "Server TypeScript production",
-    paths: ["server/src", "server/extensions", "server/scripts", "protocol"],
+    paths: ["server/src", "server/plugins", "server/scripts", "protocol"],
     format: "typescript,javascript",
     minLines: 12,
     minTokens: 120,

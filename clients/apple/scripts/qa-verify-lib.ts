@@ -149,7 +149,7 @@ export const SOURCE_TREES = [
   "clients/apple/OppiShareExtension",
   "clients/apple/scripts",
   "server/src",
-  "server/extensions",
+  "server/plugins",
   "server/e2e",
 ] as const;
 
@@ -197,7 +197,7 @@ export const REQUIRED_SOURCE_DIRS = [
   "clients/apple/OppiControlWidget",
   "clients/apple/OppiShareExtension",
   "server/src",
-  "server/extensions",
+  "server/plugins",
   "server/e2e",
 ] as const;
 
