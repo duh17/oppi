@@ -421,5 +421,40 @@ extension ServerConnection {
             }
         }
     }
+}
 
+// MARK: - Surface capabilities
+
+extension ServerConnection {
+    /// Declare what this build draws on the session socket that just opened.
+    ///
+    /// This is the earliest moment the socket can carry a frame. `server/src/stream.ts` holds a
+    /// `client_capabilities` that arrives before the subscribe replay and applies it first, so a
+    /// bootstrap that outlasts a round trip replays the session's surfaces already in the shape
+    /// this screen draws. A declaration that lands after the replay still takes: the server sends
+    /// the clears for the projections it already sent, so the end state matches either order.
+    /// Every socket open declares again — first connect, reconnect, and a switch to another
+    /// focused session — because the server keeps one declaration per socket. Fire-and-forget:
+    /// the frames are the answer, and the subscribe never waits on one.
+    ///
+    /// Only a server advertising the same capability is told. A build predating the v2 stack does
+    /// not know this command and answers it with an error frame on the session stream.
+    func declareStreamSurfaceCapabilities() {
+        guard let sessionId = focusedStreamBinder.boundSessionId,
+              let advertised = serverCapabilities?.extensionNativeUI?.capabilities,
+              advertised.contains(ClientCapability.extensionNativeUIComposites) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await sender.dispatchSend(
+                    .clientCapabilities(capabilities: [ClientCapability.extensionNativeUIComposites]),
+                    sessionIdOverride: sessionId
+                )
+            } catch {
+                var metadata = ClientLog.networkErrorMetadata(error)
+                metadata["sessionId"] = String(sessionId.prefix(8))
+                ClientLog.warning("Stream", "Surface capability declaration failed", metadata: metadata)
+            }
+        }
+    }
 }

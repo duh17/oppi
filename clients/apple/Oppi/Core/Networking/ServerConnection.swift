@@ -843,6 +843,7 @@ final class ServerConnection {
         // Handle stream-level events (no sessionId)
         if case .streamConnected = message {
             sessionStreamCoordinator.clearSessionBootstrap()
+            declareStreamSurfaceCapabilities()
             handleStreamReconnected()
             return
         }
@@ -2141,7 +2142,8 @@ final class ServerConnection {
         conversationStreamVersion: Int = 1,
         speech: Bool = false,
         liveVoice: Bool = false,
-        pushRelay: URL? = nil
+        pushRelay: URL? = nil,
+        extensionNativeUICapabilities: [String]? = nil
     ) {
         func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
             enabled ? ServerInfo.CapabilityVersion(version: 1) : nil
@@ -2150,7 +2152,9 @@ final class ServerConnection {
             sessionStream: version(sessionStream),
             dictationStream: version(dictationStream),
             appEventStream: version(appEventStream),
-            extensionNativeUI: nil,
+            extensionNativeUI: extensionNativeUICapabilities.map {
+                ServerInfo.ExtensionNativeUICapability(version: 1, capabilities: $0)
+            },
             durableSessions: version(durableSessions),
             conversationStream: conversationStream ? .init(version: conversationStreamVersion) : nil,
             speech: version(speech),

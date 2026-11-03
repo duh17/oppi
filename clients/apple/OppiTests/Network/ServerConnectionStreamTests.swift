@@ -1305,6 +1305,153 @@ struct ServerConnectionStreamTests {
         #expect(emittedTypes.isEmpty)
     }
 
+    // MARK: - Composable surface capability
+
+    /// A socket that just opened, announced by the server before it replays the session's surfaces.
+    private func streamConnectedFrame() -> StreamMessage {
+        StreamMessage(
+            sessionId: nil,
+            seq: nil,
+            currentSeq: nil,
+            message: .streamConnected(userName: "test", serverDictationAvailable: false)
+        )
+    }
+
+    /// A connection whose focused-session socket can open, recording the frames it sends.
+    ///
+    /// `advertised` is what the server's `/server/info` lists for extension native UI, and so what
+    /// the connection is allowed to declare. Passing nil is a server predating the v2 stack.
+    private func makeDeclaringConnection(
+        sessionId: String = "s1",
+        advertised: [String]? = [ClientCapability.extensionNativeUIComposites]
+    ) async -> (conn: ServerConnection, sent: SentClientFrames) {
+        let (conn, _) = await makeTestConnection(sessionId: sessionId)
+        conn.setSplitStreamCapabilitiesForTesting(
+            sessionStream: true,
+            extensionNativeUICapabilities: advertised
+        )
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: sessionId, workspaceId: "w1")
+        let sent = SentClientFrames()
+        conn.wsClient?._sendFrameForTesting = { sent.append($0) }
+        return (conn, sent)
+    }
+
+    @Test func openingTheSessionSocketDeclaresComposableSurfaces() async {
+        let (conn, sent) = await makeDeclaringConnection()
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+
+        let declared = await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            !sent.capabilityDeclarations.isEmpty
+        }
+        #expect(declared, "A socket that opens for a session declares what this build draws")
+        #expect(sent.capabilityDeclarations == [[ClientCapability.extensionNativeUIComposites]])
+        #expect(sent.capabilityRequestIds.allSatisfy { $0 == nil },
+                "Fire-and-forget: no requestId, so nothing waits on an answer")
+    }
+
+    @Test func reconnectingDeclaresComposableSurfacesAgain() async {
+        let (conn, sent) = await makeDeclaringConnection()
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 1
+        })
+
+        // The socket died and reopened: the server replays surfaces on the new one too.
+        conn.routeStreamMessage(streamConnectedFrame())
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 2
+        })
+        #expect(sent.capabilityDeclarations == [
+            [ClientCapability.extensionNativeUIComposites],
+            [ClientCapability.extensionNativeUIComposites],
+        ], "One declaration per socket open; a repeat declaration is idempotent on the server")
+    }
+
+    @Test func aServerWithoutTheCapabilityIsNotDeclaredTo() async {
+        let (conn, sent) = await makeDeclaringConnection(advertised: nil)
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+        // The declaration runs in a task; give a bug every chance to send before asserting silence.
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(sent.capabilityDeclarations.isEmpty,
+                "A server predating the v2 stack never sees a command it cannot answer")
+    }
+
+    @Test func aSocketWithNoBoundSessionDeclaresNothing() async {
+        let (conn, _) = await makeTestConnection(sessionId: "s1")
+        conn.setSplitStreamCapabilitiesForTesting(
+            sessionStream: true,
+            extensionNativeUICapabilities: [ClientCapability.extensionNativeUIComposites]
+        )
+        let sent = SentClientFrames()
+        conn.wsClient?._sendFrameForTesting = { sent.append($0) }
+        defer { conn.disconnectStream() }
+        conn.focusedStreamBinder.clearBinding()
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(conn.focusedStreamBinder.boundSessionId == nil)
+        #expect(sent.capabilityDeclarations.isEmpty, "No session socket, nothing to declare on")
+    }
+
+    @Test func switchingFocusedSessionDeclaresOnTheNewSocket() async {
+        let (conn, sent) = await makeDeclaringConnection(sessionId: "s1")
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.routeStreamMessage(streamConnectedFrame())
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 1
+        })
+
+        // Switching focus rebinds the socket to the next session; this build declares there too.
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s2", workspaceId: "w1")
+        #expect(conn.focusedStreamBinder.boundSessionId == "s2")
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.routeStreamMessage(streamConnectedFrame())
+
+        // The frame arrives through the WebSocket binding guard, so it carries the new session.
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 2
+        })
+        #expect(sent.capabilityDeclarations == [
+            [ClientCapability.extensionNativeUIComposites],
+            [ClientCapability.extensionNativeUIComposites],
+        ])
+    }
+
+}
+
+/// Frames one test connection sent, in send order.
+@MainActor
+private final class SentClientFrames {
+    private var frames: [ClientMessage] = []
+
+    func append(_ message: ClientMessage) { frames.append(message) }
+
+    var capabilityDeclarations: [[String]] {
+        frames.compactMap { message in
+            guard case .clientCapabilities(let capabilities, _) = message else { return nil }
+            return capabilities
+        }
+    }
+
+    var capabilityRequestIds: [String?] {
+        frames.compactMap { message in
+            guard case .clientCapabilities(_, let requestId) = message else { return nil }
+            return requestId
+        }
+    }
 }
 
 private enum BindingGuardCommand: CaseIterable {
