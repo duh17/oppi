@@ -921,6 +921,7 @@
 		5FC6001A997603E757175C72 /* SSHTerminalGlyphRasterCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */; };
 		5FD5955CE0B602F6382E11BC /* ReaderChunkStackLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 579269BA95A073BE136C1F31 /* ReaderChunkStackLayout.swift */; };
 		5FF360E26969FA024CE7468C /* MacSessionPaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78B02D0BD7F4F507002C1B0 /* MacSessionPaneLayout.swift */; };
+		5FFB6391A3CAA6F5EDC08BA2 /* ServerExtensionToolViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16516D3681021FAB527D3CF /* ServerExtensionToolViewController.swift */; };
 		60041A966585E044BB0F6C18 /* OppiTestLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E0745E77AFF2885EAC526F /* OppiTestLaunch.swift */; };
 		600B97B02AB697A1A60FC43B /* MobileOutputGuideSettingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B4DD6B9235D0666446237CD /* MobileOutputGuideSettingTests.swift */; };
 		601D7262035FC92D20646668 /* MacAuthenticatedAVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE76BD002D360FBE84ADC5 /* MacAuthenticatedAVPlayerView.swift */; };
@@ -2427,6 +2428,7 @@
 		F661D321D58CA2D90F215470 /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
 		F671045E81A913EFC81609EF /* PendingFileReference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B36170C993C7F4ABCCED07F /* PendingFileReference.swift */; };
 		F68226068E5C3859341C147E /* ChatViewController+Navigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B076D2A451864C4B526CD03A /* ChatViewController+Navigation.swift */; };
+		F6B0CE5BE35B91CE72721943 /* ServerExtensionReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC7FAD2D7AB74C808867331 /* ServerExtensionReaderViewController.swift */; };
 		F6B108C544E0985F38D2CB61 /* RouterUIKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400708A6C7E8625C7C25A0F7 /* RouterUIKitTests.swift */; };
 		F6D31488B5541F190B76A1B7 /* ServerAboutViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E04B07FBDDC85B462C36B2D /* ServerAboutViewController.swift */; };
 		F6F983275E93A6C4586A8164 /* MermaidGanttParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */; };
@@ -4615,6 +4617,7 @@
 		F10DAFC602A678F0A1BACE53 /* OppiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiApp.swift; sourceTree = "<group>"; };
 		F11D1081783BA588EC260344 /* ServerConnectionUsageMetricTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionUsageMetricTests.swift; sourceTree = "<group>"; };
 		F144A39E16E9A4DB2684A293 /* ReusedHarnessLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReusedHarnessLaunch.swift; sourceTree = "<group>"; };
+		F16516D3681021FAB527D3CF /* ServerExtensionToolViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionToolViewController.swift; sourceTree = "<group>"; };
 		F1690F8BD4ECE1153A608FED /* Oppi.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Oppi.entitlements; sourceTree = "<group>"; };
 		F17D26E561A679A0CA5CE519 /* SessionBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionBadge.swift; sourceTree = "<group>"; };
 		F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttRenderer.swift; sourceTree = "<group>"; };
@@ -4739,6 +4742,7 @@
 		FF85E903CAD1579096DFC5AB /* ComposerSwiftUIInterop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSwiftUIInterop.swift; sourceTree = "<group>"; };
 		FF8F79D6AF32DB9D32E50056 /* FontSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontSystemTests.swift; sourceTree = "<group>"; };
 		FFC60863CF7F077CBACD8305 /* SessionThreadStripViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionThreadStripViewTests.swift; sourceTree = "<group>"; };
+		FFC7FAD2D7AB74C808867331 /* ServerExtensionReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionReaderViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -7819,8 +7823,10 @@
 			children = (
 				C53B31985EBE5D6920270657 /* ServerExtensionDetailViewController.swift */,
 				5BF5CE9F5FA051497A8877B8 /* ServerExtensionListPresentation.swift */,
+				FFC7FAD2D7AB74C808867331 /* ServerExtensionReaderViewController.swift */,
 				94B27E3695C8A22FD5F26F7B /* ServerExtensionRowCell.swift */,
 				7A26B8CACF183944E79F245F /* ServerExtensionsViewController.swift */,
+				F16516D3681021FAB527D3CF /* ServerExtensionToolViewController.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -10921,7 +10927,9 @@
 				FB821D62C22BFCDFFB55BD81 /* ServerConnectionTypes.swift in Sources */,
 				BEB112494828033EF43CE6EA /* ServerExtensionDetailViewController.swift in Sources */,
 				2171C2692EAB9962EB04FF43 /* ServerExtensionListPresentation.swift in Sources */,
+				F6B0CE5BE35B91CE72721943 /* ServerExtensionReaderViewController.swift in Sources */,
 				F898612A422BE29D20BBEC04 /* ServerExtensionRowCell.swift in Sources */,
+				5FFB6391A3CAA6F5EDC08BA2 /* ServerExtensionToolViewController.swift in Sources */,
 				A8CB5AED241D3090DC3A9C4A /* ServerExtensionsViewController.swift in Sources */,
 				C5970DFD7A1CB724BE32E66F /* ServerInfo.swift in Sources */,
 				47ACF07FEDAF8C7024F4326F /* ServerMessage.swift in Sources */,

@@ -6,7 +6,10 @@ import UIKit
 /// type, where it comes from, and a plugin's runtimes), and what it contributes:
 /// one Tools section (split by the sessions each reaches when it is both kinds),
 /// a Pi extension's commands, a plugin's hooks by task, prompt sections, wraps
-/// and tasks, all from the row's protocol fields. An extension with a
+/// and tasks, all from the row's protocol fields. A tool with a definition opens
+/// its page (`ServerExtensionToolViewController`); a prompt section with text
+/// opens it in the reader, and one written per conversation says so and opens
+/// nothing. An extension with a
 /// user-editable host file also carries the compact Oppi bar, the shared guided
 /// composer on this screen's server, which starts a session for that file.
 ///
@@ -20,7 +23,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
     ServerExtensionDetailViewController.Section, ServerExtensionDetailViewController.Item
 > {
     enum Section: Hashable, Sendable {
-        case summary, serverDefault, about, status, loading, commands
+        case summary, serverDefault, about, status, loading, commands, promptSections
         /// The tools of one origin.
         case tools(ServerExtensionToolOrigin)
         /// One group of what a plugin contributes, by its title.
@@ -45,6 +48,8 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         /// One tool by its origin and name: a plugin and its package's classic
         /// extension may both have a tool of one name.
         case tool(ServerExtensionToolOrigin, String)
+        /// One of the plugin's prompt sections, by name, from the detail.
+        case promptSection(String)
         case command(String)
         /// One line of a plugin group: the group's title, then the line.
         case pluginLine(String, String)
@@ -124,8 +129,21 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 .commands, header: "Commands", items: Self.unique(commands).map(Item.command)
             ))
         }
+        let promptSections = state.detail?.promptSections ?? []
+        if !promptSections.isEmpty {
+            sections.append(ListSection(
+                .promptSections,
+                header: "Prompt Sections",
+                items: Self.unique(promptSections.map(\.name)).map(Item.promptSection)
+            ))
+        }
         if let plugin = state.summary.plugin {
-            for group in ServerExtensionListPresentation.pluginSections(for: plugin) {
+            // A server that sends the sections themselves lists them above; an older
+            // one sends only their names, listed with the plugin's other groups.
+            let groups = ServerExtensionListPresentation.pluginSections(
+                for: plugin, listsSections: state.detail?.promptSections == nil
+            )
+            for group in groups {
                 sections.append(ListSection(
                     .plugin(group.title),
                     header: group.title,
@@ -198,7 +216,8 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             AnyHashable(summary.plugin?.runtimes),
         ])
         case .pluginLine(let group, let line): AnyHashable([group, line])
-        case .tool(let origin, let name): AnyHashable([AnyHashable(name), AnyHashable(toolRow(origin, name)?.summary)])
+        case .tool(let origin, let name): AnyHashable(toolRow(origin, name))
+        case .promptSection(let name): AnyHashable(promptSection(name))
         case .command(let name):
             // A contribution name is selectable text: a pass that redrew the row
             // would drop a selection or the copy menu, so it is keyed by it.
@@ -295,25 +314,78 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 )
             }
         case .tool(let origin, let name):
-            ListScreen.staticRow(cell, identifier: "server.extension.tool.\(origin.rawValue).\(name)")
-            let subtitle = toolRow(origin, name)?.summary
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                var views: [UIView] = [ControlRowViews.label(name, style: .body, color: palette.ui.fg)]
-                if let subtitle {
-                    views.append(ControlRowViews.label(subtitle, style: .footnote, color: palette.ui.comment, lines: 2))
-                }
-                return ControlRowViews.stack(views, spacing: 2)
+            let row = toolRow(origin, name)
+            // A tool opens its page only when the server sent its definition.
+            let open: (() -> Void)? = row?.definition == nil ? nil : { [weak self] in self?.openTool(origin, name) }
+            titledRow(
+                cell, identifier: "server.extension.tool.\(origin.rawValue).\(name)",
+                title: name, subtitle: row?.summary, open: open
+            )
+        case .promptSection(let name):
+            let section = promptSection(name)
+            if let text = section?.text {
+                titledRow(
+                    cell, identifier: "server.extension.section.\(name)",
+                    title: name, subtitle: ServerExtensionListPresentation.firstLine(of: text)
+                ) { [weak self] in self?.openSection(name) }
+            } else {
+                // Nothing to open: the text is written for each conversation.
+                titledRow(
+                    cell, identifier: "server.extension.section.\(name)",
+                    title: name, subtitle: String(localized: "Written for each conversation from its workspace."), open: nil
+                )
             }
-            // One element: the name, then its description's first line.
-            cell.isAccessibilityElement = true
-            cell.accessibilityLabel = name
-            cell.accessibilityValue = subtitle
         case .command(let name), .pluginLine(_, let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
                 ControlRowViews.selectableText(name, style: .body, color: palette.ui.fg)
             }
         }
+    }
+
+    /// A name over a one- or two-line subtitle. With `open` it is one button with a
+    /// disclosure chevron that runs it; without, one read-only element.
+    private func titledRow(
+        _ cell: SidebarListCell,
+        identifier: String,
+        title: String,
+        subtitle: String?,
+        open: (() -> Void)?
+    ) {
+        let palette = palette
+        if let open {
+            ListScreen.buttonRow(cell, identifier: identifier, label: title, value: subtitle, action: open)
+            cell.accessories = [.disclosureIndicator()]
+        } else {
+            ListScreen.staticRow(cell, identifier: identifier)
+            cell.isAccessibilityElement = true
+            cell.accessibilityLabel = title
+            cell.accessibilityValue = subtitle
+        }
+        cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
+            var views: [UIView] = [ControlRowViews.label(title, style: .body, color: palette.ui.fg)]
+            if let subtitle {
+                views.append(ControlRowViews.label(subtitle, style: .footnote, color: palette.ui.comment, lines: 2))
+            }
+            return ControlRowViews.stack(views, spacing: 2)
+        }
+    }
+
+    private func promptSection(_ name: String) -> ServerPromptSection? {
+        state?.detail?.promptSections?.first { $0.name == name }
+    }
+
+    // MARK: - Actions
+
+    /// Resolved from the row's item when it runs, so a reloaded detail opens its own copy.
+    private func openTool(_ origin: ServerExtensionToolOrigin, _ name: String) {
+        guard let definition = toolRow(origin, name)?.definition else { return }
+        Router.push(ServerExtensionToolViewController(tool: definition, root: root), from: self)
+    }
+
+    private func openSection(_ name: String) {
+        guard let text = promptSection(name)?.text else { return }
+        Router.push(ServerExtensionReaderViewController.section(named: name, text: text, root: root), from: self)
     }
 
     // MARK: - Oppi bar

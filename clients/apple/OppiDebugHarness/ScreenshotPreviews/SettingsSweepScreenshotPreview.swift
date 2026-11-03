@@ -100,6 +100,54 @@ final class SettingsSweepPreviewController: PreviewRootController {
         )
     }
 
+    /// The runtime built-in's detail: what its tool and prompt sections tell the
+    /// model, one section the same in every conversation and one written for each.
+    private static var controlDetail: ServerExtensionDetail {
+        let row = builtInPlugin(id: "oppi-control", required: true, enabled: true, tools: ["oppi_control"])
+        let plugin = row.plugin.map {
+            ServerPluginSummary(
+                extensionName: $0.extensionName, required: true, enabled: true, runtimes: ["host", "sandbox"],
+                tools: $0.tools, hooks: [], sections: ["control-guidelines", "oppi-control"], wraps: [], tasks: [],
+                loadError: nil, kept: false
+            )
+        }
+        let summary = ServerExtensionSummary(
+            id: row.id, name: row.name, description: "Lets a session read and change this server's settings.",
+            kind: row.kind, provenance: row.provenance,
+            path: "/opt/homebrew/lib/node_modules/oppi-server/dist/plugins/control/server.js",
+            state: row.state, loadError: nil, warnings: [], isRemovable: false,
+            kinds: row.kinds, source: row.source, plugin: plugin
+        )
+        return ServerExtensionDetail(
+            summary: summary,
+            toolDefinitions: [ServerToolDefinition(
+                name: "oppi_control",
+                description: "Read or change one server setting. Each write waits for the owner's confirmation card.\nUse `get` before `set`.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "action": .object([
+                            "type": .string("string"), "enum": .array([.string("get"), .string("set")]),
+                            "description": .string("Read the setting, or write it."),
+                        ]),
+                        "key": .object(["type": .string("string"), "description": .string("The setting's key, such as `asr.sttEndpoint`.")]),
+                        "value": .object(["description": .string("The new value, for `set`.")]),
+                    ]),
+                    "required": .array([.string("action"), .string("key")]),
+                ]),
+                from: .plugin
+            )],
+            promptSections: [
+                ServerPromptSection(
+                    name: "control-guidelines",
+                    text: "Change server settings only when the owner asks.\n\n- Read a setting before you write it.\n- One write per confirmation card.",
+                    perConversation: false
+                ),
+                ServerPromptSection(name: "oppi-control", perConversation: true),
+            ]
+        )
+    }
+
     private static func catalogExtensions(page: String) -> [ServerExtensionSummary] {
         page == "extensions-builtin-only" ? extensions.filter { $0.kind == .builtIn } : extensions
     }
@@ -698,9 +746,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 contributedTools: ["workflow_run", "workflow_status"],
                 contributedCommands: ["/workflow"]
             )),
-            "/server/resources/extensions/oppi-control": json(ServerExtensionDetail(
-                summary: builtInPlugin(id: "oppi-control", required: true, enabled: true, tools: ["oppi_control"])
-            )),
+            "/server/resources/extensions/oppi-control": json(controlDetail),
             "/agents": json(Agents(agents: [agentSummary])),
             "/schedules": json(Schedules(schedules: [scheduleSummary])),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),

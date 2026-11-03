@@ -369,9 +369,9 @@ struct ServerExtensionDetail: Codable, Sendable, Equatable {
 }
 
 /// One tool as the model sees it, from an extension's detail.
-struct ServerToolDefinition: Codable, Sendable, Equatable {
+struct ServerToolDefinition: Codable, Sendable, Hashable {
     /// Which sessions it reaches: a plugin's durable sessions, or a classic extension's Pi sessions.
-    enum Origin: String, Codable, Sendable, Equatable {
+    enum Origin: String, Codable, Sendable, Hashable {
         case plugin
         case piExtension = "pi-extension"
         case unknown
@@ -432,7 +432,7 @@ struct ServerToolDefinition: Codable, Sendable, Equatable {
 }
 
 /// One of a plugin's prompt sections, from an extension's detail.
-struct ServerPromptSection: Codable, Sendable, Equatable {
+struct ServerPromptSection: Codable, Sendable, Hashable {
     let name: String
     /// The section as its plugin writes it, before other plugins' wraps; nil when it is
     /// written for each conversation.

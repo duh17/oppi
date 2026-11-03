@@ -98,6 +98,39 @@ final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("extension-detail-builtin")
     }
 
+    /// A tool opens its page and its schema; a section with text opens the reader; a section
+    /// written per conversation is a read-only row.
+    func testDetailOpensAToolPageAndASectionReader() {
+        launchSettingsSweep(page: "extension-detail-builtin")
+        let list = app.collectionViews["server.extension.list"]
+        let tool = app.buttons["server.extension.tool.plugin.oppi_control"]
+        XCTAssertTrue(tool.waitUntilExists(timeout: 10), "A tool with a definition is a button")
+        XCTAssertTrue(app.cells["server.extension.about.runsIn"].exists)
+        attachScreenshot("extension-detail-redesign")
+
+        tool.tap()
+        let schema = app.buttons["server.extensionTool.schema"]
+        XCTAssertTrue(schema.waitUntilExists(timeout: 5), "The tool page did not open")
+        XCTAssertTrue(app.cells["server.extensionTool.parameter.action"].exists)
+        attachScreenshot("extension-tool-page")
+        schema.tap()
+        let close = app.buttons["fullScreen.code.close"].firstMatch
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The schema did not open in the reader")
+        close.tap()
+        XCTAssertTrue(schema.waitUntilExists(timeout: 5), "Back returns to the tool page")
+        app.navigationBars.buttons["BackButton"].firstMatch.tap()
+
+        let section = app.buttons["server.extension.section.control-guidelines"]
+        for _ in 0..<3 where !section.isHittable { list.swipeUp() }
+        XCTAssertTrue(section.waitUntilExists(timeout: 5), "A section with text is a button")
+        let perConversation = app.cells["server.extension.section.oppi-control"]
+        XCTAssertTrue(perConversation.exists, "A per-conversation section is listed")
+        XCTAssertFalse(app.buttons["server.extension.section.oppi-control"].exists, "and opens nothing")
+        section.tap()
+        XCTAssertTrue(app.buttons["fullScreen.code.close"].firstMatch.waitUntilExists(timeout: 5), "The section did not open in the reader")
+        attachScreenshot("extension-section-reader")
+    }
+
     func testCatalogWithoutPiExtensionsSaysSo() {
         launchSettingsSweep(page: "extensions-builtin-only")
         XCTAssertTrue(app.staticTexts["extensions.noPi"].waitUntilExists(timeout: 10))

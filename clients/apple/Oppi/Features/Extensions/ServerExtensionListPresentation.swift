@@ -40,11 +40,12 @@ enum ServerExtensionToolOrigin: String, Hashable, Sendable {
     case plugin, piExtension
 }
 
-/// One tool row on an extension's detail page: its name and the first line of
-/// its description.
-struct ServerExtensionToolRow: Sendable, Equatable {
+/// One tool row on an extension's detail page: its name, the first line of its
+/// description, and its definition when the server sent one, which the row opens.
+struct ServerExtensionToolRow: Sendable, Hashable {
     let name: String
     let summary: String?
+    var definition: ServerToolDefinition?
 }
 
 /// The tools of one origin. A row that is a plugin and a Pi extension lists two
@@ -218,29 +219,53 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         return line?.isEmpty == false ? line : nil
     }
 
-    /// The detail page's tools: a plugin's (from its summary) and a classic extension's
-    /// (from the detail), each name once per group. When both have tools, each group says
-    /// which sessions it is for.
+    /// The detail page's tools, each name once per group. From the detail's definitions
+    /// when the server sends them, grouped by their `from`; otherwise a plugin's names from
+    /// its summary and a classic extension's from the detail. When both kinds have tools,
+    /// each group says which sessions it is for.
     static func toolGroups(
         summary: ServerExtensionSummary,
         detail: ServerExtensionDetail?
     ) -> [ServerExtensionToolGroup] {
-        let descriptions = Dictionary(
-            (detail?.contributedToolDetails ?? []).map { ($0.name, $0.description) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let classic = detail?.contributedTools ?? detail?.contributedToolDetails?.map(\.name) ?? []
-        let groups: [(ServerExtensionToolOrigin, [ServerExtensionToolRow])] = [
-            (.plugin, uniqueNames(summary.plugin?.tools ?? []).map { ServerExtensionToolRow(name: $0, summary: nil) }),
-            (.piExtension, uniqueNames(classic).map {
-                ServerExtensionToolRow(name: $0, summary: firstLine(of: descriptions[$0] ?? nil))
-            }),
-        ].filter { !$0.1.isEmpty }
+        let groups = (detail?.toolDefinitions.map(definedTools) ?? namedTools(summary: summary, detail: detail))
+            .filter { !$0.1.isEmpty }
         return groups.map { origin, tools in
             let title = groups.count == 1 ? "Tools"
                 : origin == .plugin ? "Tools in Durable Sessions" : "Tools in Pi Sessions"
             return ServerExtensionToolGroup(origin: origin, title: title, tools: tools)
         }
+    }
+
+    /// Rows from the server's definitions. An origin this client does not know is left out.
+    private static func definedTools(
+        _ definitions: [ServerToolDefinition]
+    ) -> [(ServerExtensionToolOrigin, [ServerExtensionToolRow])] {
+        let rows = { (from: ServerToolDefinition.Origin) in
+            uniqueNames(definitions.filter { $0.from == from }.map(\.name)).compactMap { name in
+                definitions.first { $0.from == from && $0.name == name }.map {
+                    ServerExtensionToolRow(name: name, summary: firstLine(of: $0.description), definition: $0)
+                }
+            }
+        }
+        return [(.plugin, rows(.plugin)), (.piExtension, rows(.piExtension))]
+    }
+
+    /// Rows from the names alone, for a server that predates definitions.
+    private static func namedTools(
+        summary: ServerExtensionSummary,
+        detail: ServerExtensionDetail?
+    ) -> [(ServerExtensionToolOrigin, [ServerExtensionToolRow])] {
+        let descriptions = Dictionary(
+            (detail?.contributedToolDetails ?? []).map { ($0.name, $0.description) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let classic = detail?.contributedTools ?? detail?.contributedToolDetails?.map(\.name) ?? []
+        return [
+            (.plugin, uniqueNames(summary.plugin?.tools ?? []).map { ServerExtensionToolRow(name: $0, summary: nil) }),
+            (.piExtension, uniqueNames(classic).map {
+                ServerExtensionToolRow(name: $0, summary: firstLine(of: descriptions[$0].flatMap { $0 }))
+            }),
+        ]
     }
 
     private static func uniqueNames(_ names: [String]) -> [String] {
@@ -250,8 +275,9 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
 
     /// What a plugin's extension contributes besides its tools (the Tools section) and
     /// runtimes (the About card), one group each, empty groups left out. Hooks are grouped
-    /// by task, each handler once.
-    static func pluginSections(for plugin: ServerPluginSummary) -> [ServerPluginDetailSection] {
+    /// by task, each handler once. `listsSections` is false when the page draws the prompt
+    /// sections from the detail's `promptSections` instead of their names.
+    static func pluginSections(for plugin: ServerPluginSummary, listsSections: Bool = true) -> [ServerPluginDetailSection] {
         var tasks: [String] = []
         var handlers: [String: [String]] = [:]
         for hook in plugin.hooks {
@@ -270,7 +296,7 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
                 title: "Hooks",
                 lines: tasks.map { "\($0): \((handlers[$0] ?? []).joined(separator: ", "))" }
             ),
-            ServerPluginDetailSection(title: "Prompt Sections", lines: plugin.sections),
+            ServerPluginDetailSection(title: "Prompt Sections", lines: listsSections ? plugin.sections : []),
             ServerPluginDetailSection(title: "Wraps", lines: wraps),
             ServerPluginDetailSection(title: "Tasks", lines: plugin.tasks),
         ].filter { !$0.lines.isEmpty }

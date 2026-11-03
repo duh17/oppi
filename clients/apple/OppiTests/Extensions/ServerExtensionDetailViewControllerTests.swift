@@ -71,7 +71,112 @@ struct ServerExtensionDetailViewControllerTests {
         #expect(page.texts(in: "server.extension.about.from") == ["From", "@alex/webtools", "/opt/node_modules/@alex/webtools/index.ts"])
     }
 
+    @Test func aToolWithADefinitionOpensItsPageWithItsParametersAndSchema() async throws {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "timeout": .object(["type": .string("number")]),
+                "questions": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("object")]),
+                    "description": .string("What to ask"),
+                ]),
+            ]),
+            "required": .array([.string("questions")]),
+        ])
+        let row = askRow(sections: [])
+        let detail = ServerExtensionDetail(
+            summary: row,
+            toolDefinitions: [ServerToolDefinition(
+                name: "ask", description: "Asks the user structured questions.\nBundle them.",
+                parameters: schema, from: .plugin
+            )],
+            promptSections: []
+        )
+        let page = try await mount(row: row, detail: detail)
+        defer { page.close() }
+
+        // The catalog row already names the tool, as a plain row: it opens once the
+        // detail brings its definition.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.cell("server.extension.tool.plugin.ask") is UIControl
+        }, "the tool row becomes a button once the detail lands")
+        #expect(page.texts(in: "server.extension.tool.plugin.ask") == ["ask", "Asks the user structured questions."])
+        let toolPage: ServerExtensionToolViewController = try await page.activate("server.extension.tool.plugin.ask")
+
+        #expect(await RowProbe.waitForRow("server.extensionTool.schema", in: toolPage.view))
+        #expect(toolPage.shownItems == [.description, .parameter("questions"), .parameter("timeout"), .schema],
+                "required parameters first, then the rest by name")
+        #expect(RowProbe.texts(in: "server.extensionTool.description", of: toolPage.view)
+            == ["Asks the user structured questions.\nBundle them."])
+        #expect(RowProbe.texts(in: "server.extensionTool.parameter.questions", of: toolPage.view)
+            == ["questions", "array of object · Required", "What to ask"])
+        #expect(RowProbe.texts(in: "server.extensionTool.parameter.timeout", of: toolPage.view) == ["timeout", "number"])
+
+        let reader: ServerExtensionReaderViewController = try await page.activate("server.extensionTool.schema", in: toolPage)
+        guard case .code(let json, let language, _, _) = reader.content else {
+            Issue.record("the schema opens as code")
+            return
+        }
+        #expect(language == "json")
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8)) == schema, "the whole schema, as JSON")
+    }
+
+    @Test func aSectionWithTextOpensTheReaderWithTheWrapFooter() async throws {
+        let text = "Call ask at most once per turn.\n\n- Bundle questions."
+        let row = askRow(sections: ["ask-guidelines"])
+        let detail = ServerExtensionDetail(
+            summary: row,
+            toolDefinitions: [],
+            promptSections: [ServerPromptSection(name: "ask-guidelines", text: text, perConversation: false)]
+        )
+        let page = try await mount(row: row, detail: detail)
+        defer { page.close() }
+
+        #expect(await page.waitForCell("server.extension.section.ask-guidelines"))
+        #expect(page.texts(in: "server.extension.section.ask-guidelines") == ["ask-guidelines", "Call ask at most once per turn."])
+        let reader: ServerExtensionReaderViewController = try await page.activate("server.extension.section.ask-guidelines")
+
+        guard case .markdown(let content, _, _, let raw, _) = reader.content else {
+            Issue.record("a section opens as Markdown")
+            return
+        }
+        #expect(content.hasPrefix(text))
+        #expect(content.contains("a wrapping plugin can change what a session sees"), "the footer says wraps may change it")
+        #expect(raw == text, "Raw is the section's own text")
+        #expect(reader.hidesNavigationBar, "the reader draws its own Back")
+    }
+
+    @Test func aSectionWrittenPerConversationSaysSoAndOpensNothing() async throws {
+        let row = askRow(sections: ["project_context"])
+        let detail = ServerExtensionDetail(
+            summary: row,
+            toolDefinitions: [],
+            promptSections: [ServerPromptSection(name: "project_context", perConversation: true)]
+        )
+        let page = try await mount(row: row, detail: detail)
+        defer { page.close() }
+
+        #expect(await page.waitForCell("server.extension.section.project_context"))
+        let element = try #require(page.cell("server.extension.section.project_context"))
+        #expect(element is SidebarListCell, "a read-only row: the cell is the element, no button")
+        #expect((element as? SidebarListCell)?.element.isHidden == true)
+        #expect((element as? SidebarListCell)?.accessories.isEmpty == true, "no chevron")
+        #expect(page.texts(in: "server.extension.section.project_context")
+            == ["project_context", "Written for each conversation from its workspace."])
+        #expect(page.controller.sections().compactMap(\.header).filter { $0 == "Prompt Sections" }.count == 1,
+                "listed once, from the detail rather than the plugin's names")
+    }
+
     // MARK: - Harness
+
+    private func askRow(sections: [String]) -> ServerExtensionSummary {
+        summary(
+            id: "ask", name: "ask", kind: .builtIn, provenance: .init(kind: .builtIn, label: "Oppi"),
+            path: nil, kinds: [.plugin], source: .builtIn,
+            plugin: plugin(runtimes: ["host"], tools: ["ask"], sections: sections)
+        )
+    }
 
     /// The page over `row` and its `detail`, in a window tall enough that every row
     /// is loaded.
@@ -144,29 +249,62 @@ struct MountedDetailPage {
 
     /// Waits for the row `identifier` once the detail has landed.
     func waitForCell(_ identifier: String) async -> Bool {
-        await waitForMainActorCondition(timeout: .seconds(5)) {
-            controller.view.layoutIfNeeded()
-            return cell(identifier) != nil
-        }
+        await RowProbe.waitForRow(identifier, in: controller.view)
     }
 
     /// The loaded row or row button whose identifier is `identifier`.
     func cell(_ identifier: String) -> UIView? {
-        controller.view.layoutIfNeeded()
-        return Self.view(identifier, in: controller.collectionView)
+        RowProbe.row(identifier, in: controller.view)
     }
 
-    /// The row's text in reading order: every label and text view under it.
+    /// The row's text in reading order.
     func texts(in identifier: String) -> [String] {
-        guard let row = cell(identifier) else { return [] }
-        let cellView = sequence(first: row, next: \.superview).first { $0 is UICollectionViewCell } ?? row
-        return Self.texts(in: cellView)
+        RowProbe.texts(in: identifier, of: controller.view)
     }
 
-    private static func view(_ identifier: String, in view: UIView) -> UIView? {
+    /// Taps the row button `identifier` on `screen` (the detail page by default) and
+    /// returns the page it pushed.
+    func activate<Pushed: UIViewController>(
+        _ identifier: String,
+        in screen: UIViewController? = nil
+    ) async throws -> Pushed {
+        let host = screen ?? controller
+        let button = try #require(RowProbe.row(identifier, in: host.view) as? UIControl, "\(identifier) is a button")
+        button.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { navigation.topViewController is Pushed },
+                "\(identifier) pushes its page")
+        let pushed = try #require(navigation.topViewController as? Pushed)
+        pushed.loadViewIfNeeded()
+        return pushed
+    }
+}
+
+/// Finds a list's rows by identifier and reads what they draw.
+@MainActor
+enum RowProbe {
+    /// Waits until the row `identifier` is loaded under `root`.
+    static func waitForRow(_ identifier: String, in root: UIView) async -> Bool {
+        await waitForMainActorCondition(timeout: .seconds(5)) { row(identifier, in: root) != nil }
+    }
+
+    /// The visible view under `root` whose identifier is `identifier`: a read-only
+    /// row's cell or a row's button.
+    static func row(_ identifier: String, in root: UIView) -> UIView? {
+        root.layoutIfNeeded()
+        return find(identifier, in: root)
+    }
+
+    /// The row's text in reading order: every label and text view in its cell.
+    static func texts(in identifier: String, of root: UIView) -> [String] {
+        guard let row = row(identifier, in: root) else { return [] }
+        let cell = sequence(first: row, next: \.superview).first { $0 is UICollectionViewCell } ?? row
+        return texts(in: cell)
+    }
+
+    private static func find(_ identifier: String, in view: UIView) -> UIView? {
         if view.accessibilityIdentifier == identifier, !view.isHidden { return view }
         for subview in view.subviews {
-            if let found = Self.view(identifier, in: subview) { return found }
+            if let found = find(identifier, in: subview) { return found }
         }
         return nil
     }
