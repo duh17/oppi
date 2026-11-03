@@ -50,7 +50,7 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
         // Argument-domain values only: no persistent defaults and no Keychain are written.
         let catalog = SSHTerminalCatalog(profiles: [
             SSHTerminalProfile(
-                id: Self.rexHostID, host: "mac-studio.invalid", username: "chen", opensRexSessions: true
+                id: Self.rexHostID, host: "mac-studio.invalid", username: "alex", opensRexSessions: true
             ),
             SSHTerminalProfile(host: "devbox.invalid", port: 2222, username: "dev", authentication: .deviceKey),
         ])
@@ -76,7 +76,7 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
                     guard let list = listRef, let channel = try? SSHTerminalChannel() else { return }
                     if let task = await SSHTerminalPreviewController.playRexSession(on: channel) { consumers.tasks.append(task) }
                     Router.push(SSHTerminalViewController(
-                        channel: channel, reconnect: {}, editHost: {}, hostLabel: "chen@mac-studio \u{00B7} \(pane.label)"
+                        channel: channel, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio \u{00B7} \(pane.label)"
                     ), from: list)
                 }
             }

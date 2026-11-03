@@ -15,11 +15,11 @@ struct SSHTerminalExperimentTests {
     /// Nothing answers on this port: an attempt fails as a dial, and a device key
     /// never stops at a password prompt.
     private func rexHost() -> SSHTerminalProfile {
-        SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
     }
 
     private func herdrHost() -> SSHTerminalProfile {
-        SSHTerminalProfile(host: "mac-studio.local", username: "chen", startupCommand: "herdr")
+        SSHTerminalProfile(host: "mac-studio.local", username: "alex", startupCommand: "herdr")
     }
 
     @Test("A host saved with Rex opens its plain shell while Rex is off, and its sessions while it is on")
@@ -79,7 +79,7 @@ struct SSHTerminalExperimentTests {
 
     @Test("A Rex pane's reconnect, a Rex screen, and a Rex on your tailnet say Rex is off instead of dialing it")
     func rexConnectWhileOffSaysSo() {
-        let profile = SSHTerminalProfile(host: "mac-studio.local", username: "chen", rexTailnet: URL(string: "https://rex.tail.ts.net"))
+        let profile = SSHTerminalProfile(host: "mac-studio.local", username: "alex", rexTailnet: URL(string: "https://rex.tail.ts.net"))
         let pane = RexPaneTarget(sessionID: "session:1", blockID: "block:1", label: "shell")
         for ask in ["pane", "list", "tailnet"] {
             let session = SSHTerminalConnectSession(registry: SSHTerminalRegistry(), access: { self.off })

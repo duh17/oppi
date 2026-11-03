@@ -10,7 +10,7 @@ struct SSHTerminalMultiplexerDetectionTests {
     @Test func theFirstWordNamesTheMultiplexer() {
         let herdr = [
             "herdr", "  herdr  ", "herdr --attach", "herdr\n",
-            "/Users/duh/.local/bin/herdr", "herdr\tworkspace",
+            "/Users/alex/.local/bin/herdr", "herdr\tworkspace",
             "herdr session attach main", "  herdr\tattach", "/opt/homebrew/bin/herdr",
         ]
         for command in herdr {
@@ -32,7 +32,7 @@ struct SSHTerminalMultiplexerDetectionTests {
 
     @Test func eachMultiplexerSaysHowItOpensAFolder() throws {
         let target = SSHTerminalFolderTarget(
-            serverHost: "mac-studio", folder: "/Users/chen/oppi", label: "oppi"
+            serverHost: "mac-studio", folder: "/Users/alex/oppi", label: "oppi"
         )
         for kind in SSHTerminalMultiplexerKind.allCases {
             switch kind.multiplexer.opening(target) {
@@ -97,11 +97,11 @@ struct HerdrMultiplexerTests {
     @Test func aWorkspaceWithAPaneInTheFolderIsOnlyFocused() throws {
         let snapshot = try snapshot(
             workspaces: [("w1", "oppi", false), ("w2", "scratch", true)],
-            panes: [("w1:p1", "w1", "/Users/chen/oppi"), ("w2:p2", "w2", "/Users/chen/scratch")]
+            panes: [("w1:p1", "w1", "/Users/alex/oppi"), ("w2:p2", "w2", "/Users/alex/scratch")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-            matching: ["/Users/chen/oppi"], snapshot: snapshot
+            folder: "/Users/alex/oppi", label: "oppi", isWorktree: false,
+            matching: ["/Users/alex/oppi"], snapshot: snapshot
         )
         try assertFocus(commands, id: "w1", "an existing workspace")
     }
@@ -111,11 +111,11 @@ struct HerdrMultiplexerTests {
         // and opening it again would be a second workspace for one folder.
         let snapshot = try snapshot(
             workspaces: [("w3", "oppi · fix-x", true)],
-            panes: [("w3:p1", "w3", "/Users/chen/oppi-fix-x")]
+            panes: [("w3:p1", "w3", "/Users/alex/oppi-fix-x")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi-fix-x", label: "oppi · fix-x", isWorktree: true,
-            matching: ["/Users/chen/oppi-fix-x"], snapshot: snapshot
+            folder: "/Users/alex/oppi-fix-x", label: "oppi · fix-x", isWorktree: true,
+            matching: ["/Users/alex/oppi-fix-x"], snapshot: snapshot
         )
         try assertFocus(commands, id: "w3", "an existing worktree")
     }
@@ -123,11 +123,11 @@ struct HerdrMultiplexerTests {
     @Test func theFocusedWorkspaceWinsWhenSeveralHaveTheFolder() throws {
         let snapshot = try snapshot(
             workspaces: [("w1", "oppi", false), ("w2", "oppi copy", true)],
-            panes: [("w1:p1", "w1", "/Users/chen/oppi"), ("w2:p2", "w2", "/Users/chen/oppi")]
+            panes: [("w1:p1", "w1", "/Users/alex/oppi"), ("w2:p2", "w2", "/Users/alex/oppi")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-            matching: ["/Users/chen/oppi"], snapshot: snapshot
+            folder: "/Users/alex/oppi", label: "oppi", isWorktree: false,
+            matching: ["/Users/alex/oppi"], snapshot: snapshot
         )
         try assertFocus(commands, id: "w2", "the focused match")
     }
@@ -148,14 +148,14 @@ struct HerdrMultiplexerTests {
     }
 
     @Test func aTrailingSlashIsStillTheSameFolder() throws {
-        for pane in ["/Users/chen/oppi/", "/Users/chen/oppi"] {
+        for pane in ["/Users/alex/oppi/", "/Users/alex/oppi"] {
             let snapshot = try snapshot(
                 workspaces: [("w1", "oppi", true)],
                 panes: [("w1:p1", "w1", pane)]
             )
             let commands = try HerdrMultiplexer.commands(
-                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-                matching: ["/Users/chen/oppi"], snapshot: snapshot
+                folder: "/Users/alex/oppi", label: "oppi", isWorktree: false,
+                matching: ["/Users/alex/oppi"], snapshot: snapshot
             )
             try assertFocus(commands, id: "w1", pane)
         }
@@ -170,11 +170,11 @@ struct HerdrMultiplexerTests {
         // its own workspace instead of borrowing that one.
         let snapshot = try snapshot(
             workspaces: [("w1", "oppi", true)],
-            panes: [("w1:p1", "w1", "/Users/chen/oppi")]
+            panes: [("w1:p1", "w1", "/Users/alex/oppi")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi/Sources", label: "oppi", isWorktree: false,
-            matching: ["/Users/chen/oppi/Sources"], snapshot: snapshot
+            folder: "/Users/alex/oppi/Sources", label: "oppi", isWorktree: false,
+            matching: ["/Users/alex/oppi/Sources"], snapshot: snapshot
         )
         #expect(commands.count == 1)
         #expect(commands[0].contains("herdr workspace create --cwd"))
@@ -183,9 +183,9 @@ struct HerdrMultiplexerTests {
     @Test func aFolderWithNoPaneGetsAWorkspaceCreatedInIt() throws {
         let snapshot = try snapshot(
             workspaces: [("w1", "scratch", true)],
-            panes: [("w1:p1", "w1", "/Users/chen/scratch")]
+            panes: [("w1:p1", "w1", "/Users/alex/scratch")]
         )
-        let folder = "/Users/chen/oppi"
+        let folder = "/Users/alex/oppi"
         let commands = try HerdrMultiplexer.commands(
             folder: folder, label: "oppi", isWorktree: false,
             matching: [folder], snapshot: snapshot
@@ -204,7 +204,7 @@ struct HerdrMultiplexerTests {
 
     @Test func aWorktreeIsOpenedAsAWorktree() throws {
         let snapshot = try snapshot(workspaces: [("w1", "scratch", true)], panes: [])
-        let folder = "/Users/chen/oppi-fix-x"
+        let folder = "/Users/alex/oppi-fix-x"
         let commands = try HerdrMultiplexer.commands(
             folder: folder, label: "oppi · fix-x", isWorktree: true,
             matching: [folder], snapshot: snapshot
@@ -217,7 +217,7 @@ struct HerdrMultiplexerTests {
     }
 
     @Test func aNamespaceWithoutANameIsCalledAfterItsFolder() throws {
-        #expect(HerdrMultiplexer.workspaceLabel("  ", folder: "/Users/chen/oppi") == "oppi")
+        #expect(HerdrMultiplexer.workspaceLabel("  ", folder: "/Users/alex/oppi") == "oppi")
         #expect(HerdrMultiplexer.workspaceLabel("", folder: "~/workspace/oppi") == "oppi")
         #expect(HerdrMultiplexer.workspaceLabel(" oppi · fix-x ", folder: "/x") == "oppi · fix-x")
     }
@@ -229,13 +229,13 @@ struct HerdrMultiplexerTests {
             let json = """
             {"workspaces":[{"workspace_id":"\(id)","label":"x","focused":true}],
              "tabs":[],"agents":[],
-             "panes":[{"pane_id":"p","workspace_id":"\(id)","cwd":"/Users/chen/oppi"}]}
+             "panes":[{"pane_id":"p","workspace_id":"\(id)","cwd":"/Users/alex/oppi"}]}
             """
             let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
             #expect(throws: HerdrRemoteError.unusableID) {
                 try HerdrMultiplexer.commands(
-                    folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-                    matching: ["/Users/chen/oppi"], snapshot: snapshot
+                    folder: "/Users/alex/oppi", label: "oppi", isWorktree: false,
+                    matching: ["/Users/alex/oppi"], snapshot: snapshot
                 )
             }
         }
@@ -249,23 +249,23 @@ struct HerdrMultiplexerTests {
         // Herdr takes a path, not shell syntax: `~` is expanded from the host's
         // home that was read over SSH, never from this device's home.
         #expect(
-            HerdrMultiplexer.absoluteFolder("~/workspace/oppi", home: "/Users/chen")
-                == "/Users/chen/workspace/oppi"
+            HerdrMultiplexer.absoluteFolder("~/workspace/oppi", home: "/Users/alex")
+                == "/Users/alex/workspace/oppi"
         )
-        #expect(HerdrMultiplexer.absoluteFolder("~", home: "/Users/chen") == "/Users/chen")
-        #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "/Users/chen/") == "/Users/chen/x")
-        #expect(HerdrMultiplexer.absoluteFolder("/opt/x", home: "/Users/chen") == "/opt/x")
+        #expect(HerdrMultiplexer.absoluteFolder("~", home: "/Users/alex") == "/Users/alex")
+        #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "/Users/alex/") == "/Users/alex/x")
+        #expect(HerdrMultiplexer.absoluteFolder("/opt/x", home: "/Users/alex") == "/opt/x")
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "/") == "/x")
         // No home, no guess: a wrong home opens the wrong folder.
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "") == nil)
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "relative/home") == nil)
-        #expect(HerdrMultiplexer.absoluteFolder("relative/x", home: "/Users/chen") == nil)
+        #expect(HerdrMultiplexer.absoluteFolder("relative/x", home: "/Users/alex") == nil)
     }
 
     @Test func theLookupReadsTheHomeAndThePhysicalFolder() throws {
         let lookup = try HerdrMultiplexer.parse(SSHExecResult(
             output: Data("""
-            oppi-home /Users/chen
+            oppi-home /Users/alex
             oppi-cwd /private/tmp/oppi
             \(Self.snapshotJSON)
 
@@ -273,7 +273,7 @@ struct HerdrMultiplexerTests {
             errorOutput: Data(),
             exitStatus: 0
         ))
-        #expect(lookup.home == "/Users/chen")
+        #expect(lookup.home == "/Users/alex")
         #expect(lookup.physicalFolder == "/private/tmp/oppi")
         #expect(lookup.snapshot == (try snapshot()))
     }
@@ -281,12 +281,12 @@ struct HerdrMultiplexerTests {
     @Test func aMissingFolderHasNoPhysicalPath() throws {
         // `cd` failed, so nothing can match and Herdr's create reports it.
         let lookup = try HerdrMultiplexer.parse(SSHExecResult(
-            output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
+            output: Data("oppi-home /Users/alex\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
             errorOutput: Data(),
             exitStatus: 0
         ))
         #expect(lookup.physicalFolder == nil)
-        #expect(lookup.home == "/Users/chen")
+        #expect(lookup.home == "/Users/alex")
     }
 
     @Test func aFolderWithANewlineCannotSpoofTheSnapshot() throws {
@@ -298,7 +298,7 @@ struct HerdrMultiplexerTests {
             #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)), "\(folder)")
             #expect(!command.contains(folder), "\(folder)")
             let lookup = try HerdrMultiplexer.parse(SSHExecResult(
-                output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
+                output: Data("oppi-home /Users/alex\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
                 errorOutput: Data(),
                 exitStatus: 0
             ))
@@ -310,7 +310,7 @@ struct HerdrMultiplexerTests {
         // snapshot cannot be read. Nothing a folder name holds reaches that
         // region, which is what keeps the parse honest.
         let odd = SSHExecResult(
-            output: Data("oppi-home /Users/chen\noppi-cwd\n{\"not\":\"snapshot\"}\n\(Self.snapshotJSON)\n".utf8),
+            output: Data("oppi-home /Users/alex\noppi-cwd\n{\"not\":\"snapshot\"}\n\(Self.snapshotJSON)\n".utf8),
             errorOutput: Data(),
             exitStatus: 0
         )
@@ -347,19 +347,19 @@ struct TmuxMultiplexerTests {
     }
 
     @Test func theSessionIsNamedAfterTheWorkspaceAndItsFolder() {
-        let name = TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/chen/oppi-fix-x")
+        let name = TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/alex/oppi-fix-x")
         #expect(name.hasPrefix("oppi · fix-x-"))
         // Six hex digits: stable for this folder, and different for another.
         #expect(name.count == "oppi · fix-x-".count + 6)
-        #expect(name == TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/chen/oppi-fix-x"))
-        #expect(name != TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/chen/oppi"))
+        #expect(name == TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/alex/oppi-fix-x"))
+        #expect(name != TmuxMultiplexer.sessionName(label: "oppi · fix-x", folder: "/Users/alex/oppi"))
         // Two workspaces with the same name never share a session.
         #expect(
             TmuxMultiplexer.sessionName(label: "oppi", folder: "/one/oppi")
                 != TmuxMultiplexer.sessionName(label: "oppi", folder: "/two/oppi")
         )
         // A caller with no name still gets a session.
-        #expect(TmuxMultiplexer.sessionName(label: "  ", folder: "/Users/chen/oppi").hasPrefix("oppi-"))
+        #expect(TmuxMultiplexer.sessionName(label: "  ", folder: "/Users/alex/oppi").hasPrefix("oppi-"))
     }
 
     @Test func aSessionNameCannotCarryTmuxTargetSyntaxOrAFormat() {
@@ -498,7 +498,7 @@ struct SSHTerminalMultiplexerQuotingTests {
                     )
                 }
             }
-            let absolute = folder.hasPrefix("/") ? folder : "/Users/chen/oppi"
+            let absolute = folder.hasPrefix("/") ? folder : "/Users/alex/oppi"
             let plans = [
                 try HerdrMultiplexer.commands(
                     folder: absolute, label: folder, isWorktree: false,

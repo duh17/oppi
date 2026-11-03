@@ -48,7 +48,7 @@ struct SSHTerminalPageModeTests {
     /// does Rex mode's before any host exists.
     @Test func plusStartsASessionInRexModeAndSavesAHostOtherwise() {
         let one = SSHTerminalProfile(host: "devbox.local", username: "dev")
-        let two = SSHTerminalProfile(host: "studio.local", username: "chen")
+        let two = SSHTerminalProfile(host: "studio.local", username: "alex")
         #expect(SSHTerminalHostListViewController.plus(mode: .shell, hosts: [one, two]) == .newHost)
         #expect(SSHTerminalHostListViewController.plus(mode: .rex, hosts: []) == .newHost)
         #expect(SSHTerminalHostListViewController.plus(mode: .rex, hosts: [one]) == .newSession([one]))
@@ -86,7 +86,7 @@ struct SSHTerminalPageModeTests {
     @Test func createPaneAsksRexForASplitAndOpensTheNewPane() async throws {
         let world = RexFakeWorld.preview()
         let follower = SSHTerminalRexFollower(
-            profile: SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey),
+            profile: SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey),
             promptsAutomatically: true,
             standIn: RexPreviewStreamHost(world: world)
         )
@@ -168,7 +168,7 @@ struct SSHTerminalPageModeTests {
     /// Session row.
     @Test func aHostWithNoSessionsOffersOnlyNewSession() {
         let state = SSHTerminalRexListState(snapshot: RexSnapshot(sessions: []), canManage: true)
-        let rows = SSHTerminalRexListRow.rows(hostName: "chen@devbox", state: state)
+        let rows = SSHTerminalRexListRow.rows(hostName: "alex@devbox", state: state)
         #expect(rows.map(\.id) == ["header", "new"])
         guard case .newSession(let busy)? = rows.last?.kind else {
             Issue.record("the empty section must offer New Session")
@@ -187,7 +187,7 @@ struct SSHTerminalPageModeTests {
             ])]
         )
         let state = SSHTerminalRexListState(snapshot: RexSnapshot(sessions: [session]), canManage: true)
-        let rows = SSHTerminalRexListRow.rows(hostName: "chen@devbox", state: state)
+        let rows = SSHTerminalRexListRow.rows(hostName: "alex@devbox", state: state)
         #expect(rows.map(\.id) == ["header", "session|session:1"])
     }
 
@@ -197,7 +197,7 @@ struct SSHTerminalPageModeTests {
     /// the page lists every saved host, and this is what one with nothing says.
     @Test func aHostWithNoRexSaysSoInOneMutedLine() {
         let state = SSHTerminalRexListState(absence: .notInstalled)
-        let rows = SSHTerminalRexListRow.rows(hostName: "chen@devbox", state: state)
+        let rows = SSHTerminalRexListRow.rows(hostName: "alex@devbox", state: state)
         #expect(rows.map(\.id) == ["header", "reason", "retry"])
         guard case .placeholder(let text)? = rows.first(where: { $0.id == "reason" })?.kind else {
             Issue.record("a host with no Rex must say so in a placeholder, not a failure")
@@ -210,7 +210,7 @@ struct SSHTerminalPageModeTests {
     /// Rex that is installed but not running keeps its advice: it can be started.
     @Test func rexThatIsNotRunningKeepsItsAdviceAndTheWayToAskAgain() {
         let state = SSHTerminalRexListState(absence: .notRunning)
-        let rows = SSHTerminalRexListRow.rows(hostName: "chen@devbox", state: state)
+        let rows = SSHTerminalRexListRow.rows(hostName: "alex@devbox", state: state)
         #expect(rows.map(\.id) == ["header", "reason", "retry"])
         guard case .failure(let advice)? = rows.first(where: { $0.id == "reason" })?.kind else {
             Issue.record("Rex not running must keep its advice row")

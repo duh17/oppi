@@ -115,8 +115,8 @@ struct TailnetStatusProjectionTests {
 
         #expect(snapshot.backendState == .running)
         #expect(snapshot.selfDNSName == "oppi-ios.tail1234.ts.net")
-        #expect(snapshot.tailnetName == "chen@example.com")
-        #expect(snapshot.selfLoginName == "chen@example.com", "the account a Rex refusal names")
+        #expect(snapshot.tailnetName == "alex@example.com")
+        #expect(snapshot.selfLoginName == "alex@example.com", "the account a Rex refusal names")
         #expect(snapshot.peers.map(\.displayName) == ["build-box", "mac-studio", "old-laptop"])
 
         let online = snapshot.onlinePeers
@@ -606,7 +606,7 @@ private enum TailnetFixtures {
       },
       "Health": [],
       "MagicDNSSuffix": "tail1234.ts.net",
-      "CurrentTailnet": {"Name": "chen@example.com", "MagicDNSSuffix": "tail1234.ts.net", "MagicDNSEnabled": true},
+      "CurrentTailnet": {"Name": "alex@example.com", "MagicDNSSuffix": "tail1234.ts.net", "MagicDNSEnabled": true},
       "CertDomains": ["oppi-ios.tail1234.ts.net"],
       "Peer": {
         "nodekey:studio": {
@@ -646,7 +646,7 @@ private enum TailnetFixtures {
           "ExitNodeOption": true
         }
       },
-      "User": {"123": {"ID": 123, "LoginName": "chen@example.com", "DisplayName": "Chen"}},
+      "User": {"123": {"ID": 123, "LoginName": "alex@example.com", "DisplayName": "Alex"}},
       "ClientVersion": null
     }
     """

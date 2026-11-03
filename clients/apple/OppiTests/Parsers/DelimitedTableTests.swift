@@ -34,12 +34,12 @@ struct DelimitedTableTests {
 
     @Test func quotedCommaStaysOneCell() {
         let table = DelimitedTable.parse(
-            "name,note\n\"Chen, Da\",\"hello, world\"\n",
+            "name,note\n\"Doe, Alex\",\"hello, world\"\n",
             separator: ","
         )
 
         #expect(table.headers == ["name", "note"])
-        #expect(table.rows == [["Chen, Da", "hello, world"]])
+        #expect(table.rows == [["Doe, Alex", "hello, world"]])
     }
 
     @Test func doubledQuotesUnescapeInsideQuotedFields() {

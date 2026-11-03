@@ -7,9 +7,9 @@ import Testing
 struct DictationDictionarySelectionTests {
     @Test func workspaceFirstDedupeAndGlobalOnly() {
         let local = DictationDictionarySelection.make(
-            workspace: ["Yuwp", "Duh Ifone"], global: ["Duh Ifone", "kypu"]
+            workspace: ["Yuwp", "Alex Ifone"], global: ["Alex Ifone", "kypu"]
         )
-        #expect(local.selected == ["Yuwp", "Duh Ifone", "kypu"])
+        #expect(local.selected == ["Yuwp", "Alex Ifone", "kypu"])
         #expect(local.entries[2].exclusion == .duplicate)
         #expect(DictationDictionarySelection.make(workspace: [], global: ["kypu"]).selected == ["kypu"])
     }

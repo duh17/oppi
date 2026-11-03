@@ -519,7 +519,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 backendState: .running,
                 authURL: nil,
                 selfDNSName: "oppi-ios.tail1234.ts.net",
-                tailnetName: "chen@example.com",
+                tailnetName: "alex@example.com",
                 peers: tailnetPeers
             )
         )
@@ -528,7 +528,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
     private static func seedSSHHosts() {
         // Argument-domain values only: no persistent defaults and no Keychain are written.
         let catalog = SSHTerminalCatalog(profiles: [
-            SSHTerminalProfile(host: "mac-studio.tail1234.ts.net", username: "chenda", startupCommand: "herdr"),
+            SSHTerminalProfile(host: "mac-studio.tail1234.ts.net", username: "alex", startupCommand: "herdr"),
             SSHTerminalProfile(host: "devbox.invalid", port: 2222, username: "dev", authentication: .deviceKey),
         ])
         var values: [String: Any] = [:]
@@ -555,7 +555,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
     )
 
     private static let pendingApproval = PendingPairingApproval(
-        id: "pa-preview", deviceName: "Chen's iPad", method: "invite", source: nil,
+        id: "pa-preview", deviceName: "Alex's iPad", method: "invite", source: nil,
         requestedAt: Int64(Date().timeIntervalSince1970 * 1_000),
         expiresAt: Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1_000),
         keyThumbprint: "thumb"
@@ -643,7 +643,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
             // Server Settings' pages: the server's facts, its providers and its
             // devices. `paired-devices-offline` and `about-failed` drop one.
-            "/auth/devices": Data(#"{"devices":[{"id":"dev-iphone","name":"Chen's iPhone","scope":"device","createdAt":1770000000000,"lastUsedAt":1770000900000,"revokedAt":null,"keyEnrolled":true},{"id":"dev-ipad","name":"Chen's iPad","scope":"device","createdAt":1769000000000,"lastUsedAt":1769900000000,"revokedAt":null,"keyEnrolled":true}]}"#.utf8),
+            "/auth/devices": Data(#"{"devices":[{"id":"dev-iphone","name":"Alex's iPhone","scope":"device","createdAt":1770000000000,"lastUsedAt":1770000900000,"revokedAt":null,"keyEnrolled":true},{"id":"dev-ipad","name":"Alex's iPad","scope":"device","createdAt":1769000000000,"lastUsedAt":1769900000000,"revokedAt":null,"keyEnrolled":true}]}"#.utf8),
             // Model Providers: the statuses and the usage the page loads.
             "/provider-auth/status": json(Providers(providers: providers)),
             "/server/provider-quotas": json(providerQuotas),

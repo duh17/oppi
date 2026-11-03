@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// What `EntityIcon` draws for each entity: the fallback symbol Chen chose, an
+/// What `EntityIcon` draws for each entity: the chosen fallback symbol, an
 /// Agent's Genmoji coming from the server's icon cache (and what a failed load
 /// leaves behind), and the geometry a sandbox workspace needs for its mark. The
 /// suite is serialized because the owner keeps one process-wide raster cache and

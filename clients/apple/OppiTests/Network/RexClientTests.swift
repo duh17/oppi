@@ -1051,8 +1051,8 @@ struct RexSessionLayoutTests {
     /// A new pane starts where the shown one is: Rex's `pwd` is a path or the
     /// `file://` URL OSC 7 carries, whose host and escapes are not the folder.
     @Test func aNewPanesFolderComesFromThePwdRexReports() {
-        #expect(RexSessionConnection.folder(fromPwd: "/Users/chen/oppi") == "/Users/chen/oppi")
-        #expect(RexSessionConnection.folder(fromPwd: "file://mac-studio.local/Users/chen/my%20proj") == "/Users/chen/my proj")
+        #expect(RexSessionConnection.folder(fromPwd: "/Users/alex/oppi") == "/Users/alex/oppi")
+        #expect(RexSessionConnection.folder(fromPwd: "file://mac-studio.local/Users/alex/my%20proj") == "/Users/alex/my proj")
         #expect(RexSessionConnection.folder(fromPwd: "file:///tmp") == "/tmp")
         #expect(RexSessionConnection.folder(fromPwd: "") == nil && RexSessionConnection.folder(fromPwd: "~/oppi") == nil)
         #expect(RexSessionConnection.folder(fromPwd: "file://host") == nil)

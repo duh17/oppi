@@ -523,12 +523,12 @@ struct TimelineReducerEdgeCaseTests {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.textDelta(sessionId: "s1", delta: "and installed on Duh Ifone."))
+        reducer.process(.textDelta(sessionId: "s1", delta: "and installed on Alex Ifone."))
         reducer.process(.agentEnd(sessionId: "s1"))
         // Stale messageEnd arrives after turn ended
         reducer.process(.messageEnd(
             sessionId: "s1",
-            content: "Committed and installed on Duh Ifone."
+            content: "Committed and installed on Alex Ifone."
         ))
 
         let assistantItems = reducer.items.filter {

@@ -365,7 +365,7 @@ struct ServerExtensionListPresentationTests {
     }
 
     @Test func theOppiBarNeedsAUserOwnedEntryFile() {
-        let path = "/Users/chen/.pi/agent/extensions/workflow.ts"
+        let path = "/Users/alex/.pi/agent/extensions/workflow.ts"
 
         #expect(ServerExtensionListPresentation.editablePath(
             for: extensionRow(id: "workflow", name: "workflow", state: .on, path: path)
@@ -379,7 +379,7 @@ struct ServerExtensionListPresentationTests {
             ("package", extensionRow(id: "p", name: "p", kind: .package, state: .on, path: "/opt/node_modules/p/index.js")),
             ("package provenance", extensionRow(id: "q", name: "q", provenanceKind: .package, state: .on, path: path)),
             ("built-in", extensionRow(id: "b", name: "b", kind: .builtIn, state: .on, path: "builtin:b")),
-            ("directory", extensionRow(id: "d", name: "d", kind: .directory, state: .on, path: "/Users/chen/.pi/agent/extensions/d")),
+            ("directory", extensionRow(id: "d", name: "d", kind: .directory, state: .on, path: "/Users/alex/.pi/agent/extensions/d")),
             ("unknown kind", extensionRow(id: "u", name: "u", kind: .unknown, state: .on, path: path)),
             ("no path", extensionRow(id: "n", name: "n", state: .on, path: nil)),
             ("relative path", extensionRow(id: "r", name: "r", state: .on, path: "extensions/r.ts")),

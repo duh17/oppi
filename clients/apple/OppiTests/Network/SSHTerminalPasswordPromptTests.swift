@@ -9,9 +9,9 @@ struct SSHTerminalPasswordPromptTests {
     @Test func matchesWhatShellsAndSudoPrint() {
         for line in [
             "Password:",
-            "[sudo] password for duh:",
-            "duh@host's password:",
-            "Enter passphrase for key '/Users/duh/.ssh/id_ed25519':",
+            "[sudo] password for alex:",
+            "alex@host's password:",
+            "Enter passphrase for key '/Users/alex/.ssh/id_ed25519':",
             "Passphrase:",
             "PIN:",
             "PASSWORD:",
@@ -32,7 +32,7 @@ struct SSHTerminalPasswordPromptTests {
             "Password: **",
             "Password: ••",
             "Password: ●",
-            "[sudo] password for duh: ***",
+            "[sudo] password for alex: ***",
             "│ Password: *",
         ] {
             #expect(SSHTerminalPasswordPrompt.matches(lineBeforeCursor: line, atShellPrompt: false), "\(line)")
@@ -54,7 +54,7 @@ struct SSHTerminalPasswordPromptTests {
             // last thing on the line.
             "Password: hunter2",
             "Password: *hunter2",
-            "[sudo] password for duh: hunter2",
+            "[sudo] password for alex: hunter2",
             "Passphrase for key '/x/id': typed",
         ] {
             #expect(!SSHTerminalPasswordPrompt.matches(lineBeforeCursor: line, atShellPrompt: false), "\(line)")
@@ -62,21 +62,21 @@ struct SSHTerminalPasswordPromptTests {
     }
 
     @Test func neverMatchesWhileTheShellWaitsAtItsOwnInput() {
-        for line in ["Password:", "[sudo] password for duh:", "echo Password: ", "Password: *"] {
+        for line in ["Password:", "[sudo] password for alex:", "echo Password: ", "Password: *"] {
             #expect(!SSHTerminalPasswordPrompt.matches(lineBeforeCursor: line, atShellPrompt: true), "\(line)")
         }
     }
 
     @Test func theEngineReadsThePromptTextOnlyFromAPaintedSnapshot() throws {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 40, rows: 6)) { _ in }
-        engine.receive(Data("$ sudo ls\r\n[sudo] password for duh: ".utf8))
+        engine.receive(Data("$ sudo ls\r\n[sudo] password for alex: ".utf8))
         // No frame has drawn this output yet: the row is stale, not empty.
         #expect(engine.cursorLineBeforeCursor == nil)
 
         _ = engine.frame()
         // The row keeps its empty cells past the cursor's space; the matcher trims.
         let prompt = try #require(engine.cursorLineBeforeCursor)
-        #expect(prompt.hasPrefix("[sudo] password for duh: "))
+        #expect(prompt.hasPrefix("[sudo] password for alex: "))
         #expect(SSHTerminalPasswordPrompt.matches(lineBeforeCursor: prompt, atShellPrompt: engine.cursorAtPrompt))
         #expect(!engine.cursorAtPrompt)
         #expect(SSHTerminalPasswordPrompt.prompt(inLineBeforeCursor: prompt, atShellPrompt: false) == prompt.trimmingCharacters(in: .whitespaces))

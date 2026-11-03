@@ -195,7 +195,7 @@ struct SSHTerminalFloatingPillTests {
 
     /// The capsule is the effect view's own shape, not a layer mask. UIKit
     /// draws glass with squared corners by default, so a pill whose mask is
-    /// lost showed as a square-cornered rectangle with a flat grey fill (Chen,
+    /// lost showed as a square-cornered rectangle with a flat grey fill (seen
     /// on device). Strip the mask and the pill must still be a capsule.
     @Test func glassPillsKeepTheirCapsuleWithoutALayerMask() throws {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)

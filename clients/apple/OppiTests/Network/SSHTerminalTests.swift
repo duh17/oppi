@@ -1622,7 +1622,7 @@ struct SSHTerminalTests {
                 return titles[block].map { .result(#"{"title":"\#($0)"}"#) } ?? .refuse(code: "not_found", message: "no block")
             case "com.superlogical.terminal.pwd":
                 return block == SSHTerminalTests.rexPi
-                    ? .result(#"{"pwd":"file://Mac-Studio.local/Users/duh/.config/dotfiles"}"#) : .result("{}")
+                    ? .result(#"{"pwd":"file://Mac-Studio.local/Users/alex/.config/dotfiles"}"#) : .result("{}")
             case "com.superlogical.terminal.program_status":
                 switch block {
                 case SSHTerminalTests.rexPi:
@@ -1717,7 +1717,7 @@ struct SSHTerminalTests {
         ])
         #expect(sessions[0].rows.first?.focus == nil, "a session row has nothing to focus")
         #expect(sessions[0].rows.last?.focus == .init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false))
-        #expect(monitor.snapshot?.pane(session: Self.rexSession, block: Self.rexPi)?.pwd == "file://Mac-Studio.local/Users/duh/.config/dotfiles")
+        #expect(monitor.snapshot?.pane(session: Self.rexSession, block: Self.rexPi)?.pwd == "file://Mac-Studio.local/Users/alex/.config/dotfiles")
 
         await rig.stop()
         #expect(host.isClosed)
@@ -2516,7 +2516,7 @@ struct SSHTerminalTests {
     /// switcher counts it, and typing goes to it.
     @Test func swipingPastTheLastRexPaneOpensANewPaneAfterTheShownOne() async throws {
         let rig = try await RexSessionTerminalTests().open(
-            ["a", "b"], folders: ["b": "file://mac-studio.local/Users/chen/my%20proj"]
+            ["a", "b"], folders: ["b": "file://mac-studio.local/Users/alex/my%20proj"]
         )
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
@@ -2565,7 +2565,7 @@ struct SSHTerminalTests {
         let split = try NewSplitRequest(try #require(splits.first))
         #expect(split.anchor == "block:b" && split.direction == "horizontal" && split.side == "after" && split.focus == false)
         #expect(split.flavor == "com.superlogical.terminal.shell" && split.blocks == 1)
-        #expect(split.folder == "/Users/chen/my proj", "the shown pane's folder, from its OSC 7 report")
+        #expect(split.folder == "/Users/alex/my proj", "the shown pane's folder, from its OSC 7 report")
         #expect(rig.fake.requests("com.superlogical.terminal.pwd").first?.string("block_id") == "block:b")
 
         // The new pane went through the switch path, and the host's focus never moved.
@@ -2720,8 +2720,8 @@ struct SSHTerminalTests {
         herdrOK(#"{"result":{"snapshot":{"workspaces":[],"tabs":[],"agents":\#(agents),"focused_pane_id":"\#(focused)","panes":\#(panes)}}}"#)
     }
     private static let herdrTwoPanes = #"""
-    [{"pane_id":"w1:p1","cwd":"/Users/duh/workspace/oppi","foreground_cwd":"/Users/duh/workspace/oppi/server","focused":false},
-     {"pane_id":"w1:p2","cwd":"/Users/duh/notes","focused":true}]
+    [{"pane_id":"w1:p1","cwd":"/Users/alex/workspace/oppi","foreground_cwd":"/Users/alex/workspace/oppi/server","focused":false},
+     {"pane_id":"w1:p2","cwd":"/Users/alex/notes","focused":true}]
     """#
     private static let herdrDown = SSHExecResult(output: Data(), errorOutput: Data("herdr: server not running".utf8), exitStatus: 1)
 
@@ -2746,15 +2746,15 @@ struct SSHTerminalTests {
         #expect(channel.workingDirectory.isEmpty)
 
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server", "foreground_cwd leads")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server", "foreground_cwd leads")
 
         await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/notes", "cwd when there is no foreground folder; focus moved")
+        #expect(channel.workingDirectory == "/Users/alex/notes", "cwd when there is no foreground folder; focus moved")
 
         // A report made before or inside Herdr is not the focused pane's folder.
-        channel.event(.data(Self.osc7("/Users/duh/stale")))
-        #expect(channel.workingDirectory == "/Users/duh/notes")
+        channel.event(.data(Self.osc7("/Users/alex/stale")))
+        #expect(channel.workingDirectory == "/Users/alex/notes")
     }
 
     @Test func herdrFolderNeedsTheAlternateScreenAndOppisOwnLaunch() async throws {
@@ -2765,35 +2765,35 @@ struct SSHTerminalTests {
             let channel = try SSHTerminalChannel()
             channel.opened(fixture, command: command)
             defer { channel.close(reason: "done") }
-            channel.event(.data(Self.osc7("/Users/duh/outer")))
+            channel.event(.data(Self.osc7("/Users/alex/outer")))
             channel.event(.data(Self.enterHerdr))
             await HerdrMonitor().refresh(on: channel)
-            #expect(channel.workingDirectory == "/Users/duh/outer", "\(command ?? "nil"): typed or other launches keep the shell's folder")
+            #expect(channel.workingDirectory == "/Users/alex/outer", "\(command ?? "nil"): typed or other launches keep the shell's folder")
         }
         // Started by Oppi, but Herdr's screen is not up.
         let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
         defer { channel.close(reason: "done") }
-        channel.event(.data(Self.osc7("/Users/duh/outer")))
+        channel.event(.data(Self.osc7("/Users/alex/outer")))
         await HerdrMonitor().refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/outer")
+        #expect(channel.workingDirectory == "/Users/alex/outer")
         channel.event(.data(Self.enterHerdr))
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server")
         channel.event(.data(Data("\u{1b}[?1006l\u{1b}[?1000l\u{1b}[?1049l".utf8)))
-        #expect(channel.workingDirectory == "/Users/duh/outer", "the shell's report is back when the screen goes")
+        #expect(channel.workingDirectory == "/Users/alex/outer", "the shell's report is back when the screen goes")
     }
 
     @Test func aReportFromAnotherHostLeavesTheHerdrFolderUnknown() async throws {
         let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
         defer { channel.close(reason: "done") }
         channel.event(.data(Self.enterHerdr))
-        channel.event(.data(Self.osc7("/home/duh", host: "mac-studio")))
+        channel.event(.data(Self.osc7("/home/alex", host: "mac-studio")))
         await HerdrMonitor().refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server")
         // A pane that ssh'd elsewhere: the outer host's Herdr says nothing about it.
         channel.event(.data(Self.osc7("/srv/app", host: "other-box")))
         #expect(channel.workingDirectory.isEmpty)
-        channel.event(.data(Self.osc7("/home/duh", host: "mac-studio")))
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        channel.event(.data(Self.osc7("/home/alex", host: "mac-studio")))
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server")
     }
 
     @Test func aFailedReadKeepsTheHerdrFolderOnlyForTheGracePeriod() async throws {
@@ -2807,11 +2807,11 @@ struct SSHTerminalTests {
 
         await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server")
 
         await fixture.setRunResult(Self.herdrDown, for: "herdr api snapshot")
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server", "one failed read keeps it")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server", "one failed read keeps it")
         #expect(await waitForMainActorCondition { channel.workingDirectory.isEmpty }, "then it is unknown")
 
         // A good read within the grace period restarts it.
@@ -2824,7 +2824,7 @@ struct SSHTerminalTests {
         await second.refresh(on: longer)
         await again.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
         await second.refresh(on: longer)
-        #expect(longer.workingDirectory == "/Users/duh/notes")
+        #expect(longer.workingDirectory == "/Users/alex/notes")
     }
 
     @Test func stoppingThePollClearsTheHerdrFolder() async throws {
@@ -2833,7 +2833,7 @@ struct SSHTerminalTests {
         channel.event(.data(Self.enterHerdr))
         let monitor = HerdrMonitor()
         let poll = Task { await monitor.run(on: channel) }
-        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/duh/workspace/oppi/server" })
+        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/alex/workspace/oppi/server" })
 
         // Switched away, reconnecting, or disconnected: the poll's task ends.
         poll.cancel()
@@ -2844,7 +2844,7 @@ struct SSHTerminalTests {
         await monitor.refresh(on: channel)
         #expect(channel.workingDirectory.isEmpty)
         let again = Task { await monitor.run(on: channel) }
-        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/duh/workspace/oppi/server" }, "polling again sets it again")
+        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/alex/workspace/oppi/server" }, "polling again sets it again")
         again.cancel()
         await again.value
     }
@@ -2876,7 +2876,7 @@ struct SSHTerminalTests {
 
         // The new poll's next read is still applied.
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        #expect(channel.workingDirectory == "/Users/alex/workspace/oppi/server")
 
         // Only the current poll's end clears it.
         new.cancel()
@@ -2927,7 +2927,7 @@ struct SSHTerminalTests {
             """#,
             machines: #"[{"id":"aa11","label":"mac-mini","enabled":true}]"#,
             machineSnapshot: head + #"""
-            "focused_pane_id":"w1:p1","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"/Users/duh/elsewhere"}]}}}
+            "focused_pane_id":"w1:p1","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"/Users/alex/elsewhere"}]}}}
             """#
         ) == "")
     }
@@ -3588,7 +3588,7 @@ struct SSHTerminalTests {
         try await settle(mounted)
         #expect(draft() === textView, "a report change leaves the bar open")
 
-        channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
+        channel.engine.receive(Data("\r\n[sudo] password for alex: ".utf8))
         grid.drawFrame()
         try await settle(mounted)
         #expect(grid.isSecureTextEntry)
@@ -3613,7 +3613,7 @@ struct SSHTerminalTests {
         try await settle(mounted)
         #expect(grid.isSecureTextEntry, "one off frame is not a release")
         #expect(draft() == nil, "and the chat bar does not come back for it")
-        let prompt = "[sudo] password for duh: "
+        let prompt = "[sudo] password for alex: "
         channel.engine.receive(Data("\u{1b}[\(promptRow + 1);\(prompt.count + 1)H".utf8))
         grid.drawFrame()
         try await settle(mounted)
@@ -3667,7 +3667,7 @@ struct SSHTerminalTests {
         let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
         #expect(draft() != nil, "Chat Bar brings the chat bar")
 
-        channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
+        channel.engine.receive(Data("\r\n[sudo] password for alex: ".utf8))
         grid.drawFrame()
         try await settle(mounted)
         #expect(await waitForMainActorCondition { grid.isFirstResponder }, "the prompt is typed into the terminal")

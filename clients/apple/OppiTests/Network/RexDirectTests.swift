@@ -18,7 +18,7 @@ struct RexDirectTests {
     }
 
     static func profile(host: String = "mac-studio", port: UInt16 = 22, id: UUID = UUID()) -> SSHTerminalProfile {
-        SSHTerminalProfile(id: id, host: host, port: port, username: "chen", opensRexSessions: true)
+        SSHTerminalProfile(id: id, host: host, port: port, username: "alex", opensRexSessions: true)
     }
 
     /// Waits for `condition` up to `timeout`; a busy simulator can be slow.

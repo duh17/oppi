@@ -11,7 +11,7 @@ import UIKit
 struct PairingApprovalSheetTests {
     private func approval(_ id: String, requestedAt: Int64 = 1, expiresAt: Int64 = 9_999_999_999_999) -> PendingPairingApproval {
         PendingPairingApproval(
-            id: id, deviceName: "Chen's iPad", method: "invite", source: "100.64.0.7",
+            id: id, deviceName: "Alex's iPad", method: "invite", source: "100.64.0.7",
             requestedAt: requestedAt, expiresAt: expiresAt, keyThumbprint: "thumb"
         )
     }

@@ -77,7 +77,7 @@ struct SSHPreflightProbeTests {
         end: Bool = true
     ) -> String {
         """
-        user=chen
+        user=alex
         kernel=Darwin
         release=25.1.0
         arch=arm64
@@ -100,7 +100,7 @@ struct SSHPreflightProbeTests {
 
     @Test func macWithoutOppiOffersInstall() throws {
         let report = try SSHPreflightProbe.parse(Self.output())
-        #expect(report.user == "chen")
+        #expect(report.user == "alex")
         #expect(report.isMacOS)
         #expect(statuses(report) == [
             "System": .ok, "Node.js": .ok, "git": .ok, "Tailscale CLI": .ok, "Oppi": .installs,
@@ -153,7 +153,7 @@ struct SSHPreflightProbeTests {
     }
 
     // `oppi status --json` as the server prints it: pretty-printed, wrapped in `{ok, data}`.
-    private static let oppiStatusLine = #"{ "ok": true, "data": { "status": { "paired": true, "dataDir": "/Users/chen/.config/oppi", "#
+    private static let oppiStatusLine = #"{ "ok": true, "data": { "status": { "paired": true, "dataDir": "/Users/alex/.config/oppi", "#
         + #""server": { "host": "0.0.0.0", "port": 7749, "transport": "https", "tlsMode": "tailscale", "trustedPeers": [] } } } }"#
 
     @Test func macAnsweringWithTailscaleHTTPSOffersPair() throws {
@@ -216,7 +216,7 @@ struct SSHPreflightProbeTests {
     @Test func loginShellNoiseAndCRLFAreIgnored() throws {
         let noisy = "Last login: Mon\r\nwelcome=to zsh\r\n" + Self.output().replacingOccurrences(of: "\n", with: "\r\n")
         let report = try SSHPreflightProbe.parse(noisy)
-        #expect(report.user == "chen")
+        #expect(report.user == "alex")
         #expect(report.nodeVersion == "v22.19.0")
     }
 
@@ -231,7 +231,7 @@ struct SSHPreflightProbeTests {
 
     @Test func linuxHostIsSupportedAndDoesNotNeedCommandLineTools() throws {
         let linux = """
-        user=chen
+        user=alex
         kernel=Linux
         release=6.8.0
         arch=x86_64
@@ -260,7 +260,7 @@ struct SSHPreflightProbeTests {
 
     @Test func linuxWithoutOsReleaseStillCounts() throws {
         let report = try SSHPreflightProbe.parse("""
-        user=chen
+        user=alex
         kernel=Linux
         release=6.8.0-alpine
         arch=aarch64
@@ -282,7 +282,7 @@ struct SSHPreflightProbeTests {
 
     @Test func linuxServingTailscaleHTTPSIsReadyToPair() throws {
         let report = try SSHPreflightProbe.parse("""
-        user=chen
+        user=alex
         kernel=Linux
         release=6.8.0
         arch=x86_64
@@ -303,7 +303,7 @@ struct SSHPreflightProbeTests {
     @Test(arguments: ["Windows_NT", "FreeBSD"])
     func otherKernelsAreUnsupported(kernel: String) throws {
         let report = try SSHPreflightProbe.parse("""
-        user=chen
+        user=alex
         kernel=\(kernel)
         release=10.0
         arch=x86_64
@@ -348,7 +348,7 @@ struct SSHPairMintTests {
 
     @Test func selfSignedHTTPSCanPairWithoutTailscale() throws {
         let report = try SSHPreflightProbe.parse("""
-        user=chen
+        user=alex
         kernel=Darwin
         release=25.1.0
         arch=arm64

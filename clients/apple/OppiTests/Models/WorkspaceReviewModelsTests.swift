@@ -203,7 +203,7 @@ struct WorkspaceReviewModelsTests {
                 sha: "abc1234",
                 message: "Test commit",
                 date: "2026-07-11T00:00:00Z",
-                author: "Chen",
+                author: "Alex",
                 files: [GitCommitFileInfo(path: "Sources/App.swift", status: "M", addedLines: 1, removedLines: 0)],
                 addedLines: 1,
                 removedLines: 0

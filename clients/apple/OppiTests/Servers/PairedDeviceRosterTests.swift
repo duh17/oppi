@@ -17,7 +17,7 @@ struct PairedDeviceRosterTests {
             ),
             AuthDevice(
                 id: "dev_me",
-                name: "Chen iPhone",
+                name: "Alex iPhone",
                 scope: "device",
                 createdAt: 20,
                 lastUsedAt: 30,
@@ -40,7 +40,7 @@ struct PairedDeviceRosterTests {
         #expect(rows.map(\.id) == ["dev_me", "dev_other"])
         #expect(rows[0].isThisDevice)
         #expect(!rows[0].canRevoke)
-        #expect(rows[0].title == "Chen iPhone")
+        #expect(rows[0].title == "Alex iPhone")
         #expect(!rows[1].isThisDevice)
         #expect(rows[1].canRevoke)
     }
@@ -141,7 +141,7 @@ struct PairedDeviceRosterTests {
 @Suite("Pairing device name")
 struct PairingDeviceNameTests {
     @Test func trimsAndDropsBlankNames() {
-        #expect(PairingDeviceName.resolved("  Chen iPhone  ") == "Chen iPhone")
+        #expect(PairingDeviceName.resolved("  Alex iPhone  ") == "Alex iPhone")
         #expect(PairingDeviceName.resolved("   ") == nil)
         #expect(PairingDeviceName.resolved(nil) == nil)
     }
@@ -161,7 +161,7 @@ struct PairingDeviceNameTests {
 
     @Test func userAssignedNameIsKeptVerbatim() {
         let id = UUID()
-        #expect(PairingDeviceName.resolved("Chen's iPhone", model: "iPhone", vendorId: id) == "Chen's iPhone")
+        #expect(PairingDeviceName.resolved("Alex's iPhone", model: "iPhone", vendorId: id) == "Alex's iPhone")
     }
 
     @Test func genericNameWithoutVendorIdIsKept() {

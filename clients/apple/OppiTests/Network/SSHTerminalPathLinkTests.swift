@@ -6,20 +6,20 @@ import UIKit
 @Suite("SSH terminal working directory")
 struct SSHTerminalWorkingDirectoryTests {
     @Test func osc7FileURLKeepsOnlyThePath() {
-        #expect(SSHTerminalWorkingDirectory.path(from: "file://mac-studio/Users/duh/workspace") == "/Users/duh/workspace")
-        #expect(SSHTerminalWorkingDirectory.path(from: "file:///Users/duh") == "/Users/duh")
+        #expect(SSHTerminalWorkingDirectory.path(from: "file://mac-studio/Users/alex/workspace") == "/Users/alex/workspace")
+        #expect(SSHTerminalWorkingDirectory.path(from: "file:///Users/alex") == "/Users/alex")
         #expect(SSHTerminalWorkingDirectory.path(from: "FILE://Host/tmp/x") == "/tmp/x")
         #expect(SSHTerminalWorkingDirectory.path(from: "file://host/a%20b/c") == "/a b/c")
-        #expect(SSHTerminalWorkingDirectory.path(from: "file://host/Users/duh/") == "/Users/duh")
+        #expect(SSHTerminalWorkingDirectory.path(from: "file://host/Users/alex/") == "/Users/alex")
         #expect(SSHTerminalWorkingDirectory.path(from: "file://host/") == "/")
         #expect(SSHTerminalWorkingDirectory.path(from: "  file://host/tmp  ") == "/tmp")
     }
 
     @Test func theReportedHostDecidesWhetherTheFolderIsUsable() {
-        let first = SSHTerminalWorkingDirectory.report(from: "file://mac-studio/Users/duh/workspace")
-        #expect(first == .init(host: "mac-studio", path: "/Users/duh/workspace"))
-        #expect(first?.folder(firstHost: nil) == "/Users/duh/workspace")
-        #expect(first?.folder(firstHost: "mac-studio") == "/Users/duh/workspace")
+        let first = SSHTerminalWorkingDirectory.report(from: "file://mac-studio/Users/alex/workspace")
+        #expect(first == .init(host: "mac-studio", path: "/Users/alex/workspace"))
+        #expect(first?.folder(firstHost: nil) == "/Users/alex/workspace")
+        #expect(first?.folder(firstHost: "mac-studio") == "/Users/alex/workspace")
         #expect(first?.folder(firstHost: "other-box") == nil, "a nested shell on another host is unknown here")
         // A host that says nothing about the machine is always usable.
         #expect(SSHTerminalWorkingDirectory.report(from: "file:///tmp/x")?.isLocal == true)
@@ -29,7 +29,7 @@ struct SSHTerminalWorkingDirectoryTests {
 
     @Test func onlyFileURLsAreAFolder() {
         #expect(SSHTerminalWorkingDirectory.path(from: "") == nil)
-        #expect(SSHTerminalWorkingDirectory.path(from: "/Users/duh") == nil, "a bare path is not OSC 7")
+        #expect(SSHTerminalWorkingDirectory.path(from: "/Users/alex") == nil, "a bare path is not OSC 7")
         #expect(SSHTerminalWorkingDirectory.path(from: "file:/tmp/x") == "/tmp/x", "a local file URL either way")
         #expect(SSHTerminalWorkingDirectory.path(from: "https://example.com/a") == nil)
         #expect(SSHTerminalWorkingDirectory.path(from: "file://host/tmp?x=1") == nil)
@@ -49,8 +49,8 @@ struct SSHTerminalWorkingDirectoryTests {
     @Test @MainActor func enginePublishesTheShellFolderAndClearsItOnReset() throws {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 40, rows: 6)) { _ in }
         #expect(engine.workingDirectory.isEmpty)
-        engine.receive(Data("\u{1b}]7;file://mac-studio/Users/duh/workspace/oppi\u{1b}\\".utf8))
-        #expect(engine.workingDirectory == "/Users/duh/workspace/oppi")
+        engine.receive(Data("\u{1b}]7;file://mac-studio/Users/alex/workspace/oppi\u{1b}\\".utf8))
+        #expect(engine.workingDirectory == "/Users/alex/workspace/oppi")
         engine.receive(Data("\u{1b}]7;file://mac-studio/tmp/a%20b\u{7}".utf8))
         #expect(engine.workingDirectory == "/tmp/a b", "BEL-terminated OSC 7 reads the same")
         // A nested shell on another machine must not resolve this server's paths.
@@ -66,7 +66,7 @@ struct SSHTerminalWorkingDirectoryTests {
 
 @Suite("SSH terminal open targets")
 struct SSHTerminalOpenResolutionTests {
-    private let folder = "/Users/duh/workspace/oppi"
+    private let folder = "/Users/alex/workspace/oppi"
 
     @Test func trailingLineAndColumnAreDroppedOnlyForPaths() {
         #expect(SSHTerminalOpenResolution.strippingLineColumn("/a/b.swift:42") == "/a/b.swift")
@@ -123,19 +123,19 @@ struct SSHTerminalOpenResolutionTests {
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "Sources/App.swift", hyperlink: nil, folder: folder)
-                == .path("/Users/duh/workspace/oppi/Sources/App.swift")
+                == .path("/Users/alex/workspace/oppi/Sources/App.swift")
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "../other/x.md", hyperlink: nil, folder: folder)
-                == .path("/Users/duh/workspace/other/x.md")
+                == .path("/Users/alex/workspace/other/x.md")
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "README.md", hyperlink: nil, folder: folder)
-                == .path("/Users/duh/workspace/oppi/README.md")
+                == .path("/Users/alex/workspace/oppi/README.md")
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "src/x.swift:42", hyperlink: nil, folder: folder)
-                == .path("/Users/duh/workspace/oppi/src/x.swift")
+                == .path("/Users/alex/workspace/oppi/src/x.swift")
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "~/notes.md", hyperlink: nil, folder: nil)
@@ -214,7 +214,7 @@ struct SSHTerminalServerMatchTests {
 
 @Suite("SSH terminal host path plan")
 struct SSHTerminalHostPathPolicyTests {
-    private let home = "/Users/duh"
+    private let home = "/Users/alex"
 
     private func status(
         _ path: String, exists: Bool = true, directory: Bool = false, file: Bool = true
@@ -226,24 +226,24 @@ struct SSHTerminalHostPathPolicyTests {
     }
 
     @Test func insideHomeMeansTheHomeFolderOrBelowIt() {
-        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/duh"))
-        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/duh/"))
-        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/duh/workspace/x"))
-        #expect(!SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/duh2/x"))
+        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/alex"))
+        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/alex/"))
+        #expect(SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/alex/workspace/x"))
+        #expect(!SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users/alex2/x"))
         #expect(!SSHTerminalHostPathPolicy.isInside(home: home, path: "/opt/homebrew/bin/brew"))
         #expect(!SSHTerminalHostPathPolicy.isInside(home: home, path: "/Users"))
-        #expect(!SSHTerminalHostPathPolicy.isInside(home: "/", path: "/Users/duh/x"), "never every path")
+        #expect(!SSHTerminalHostPathPolicy.isInside(home: "/", path: "/Users/alex/x"), "never every path")
         #expect(!SSHTerminalHostPathPolicy.isInside(home: "relative", path: "relative/x"))
     }
 
     @Test func aFileOpensInTheViewerAndAFolderInTheBrowser() {
         #expect(
-            SSHTerminalHostPathPolicy.plan(status: status("/Users/duh/notes.md"), home: home)
-                == .file("/Users/duh/notes.md")
+            SSHTerminalHostPathPolicy.plan(status: status("/Users/alex/notes.md"), home: home)
+                == .file("/Users/alex/notes.md")
         )
         #expect(
-            SSHTerminalHostPathPolicy.plan(status: status("/Users/duh/workspace", directory: true), home: home)
-                == .folder("/Users/duh/workspace")
+            SSHTerminalHostPathPolicy.plan(status: status("/Users/alex/workspace", directory: true), home: home)
+                == .folder("/Users/alex/workspace")
         )
     }
 
@@ -253,11 +253,11 @@ struct SSHTerminalHostPathPolicyTests {
                 == .refused("Files open inside the server's home folder.")
         )
         #expect(
-            SSHTerminalHostPathPolicy.plan(status: status("/Users/duh/x", exists: false, file: false), home: home)
+            SSHTerminalHostPathPolicy.plan(status: status("/Users/alex/x", exists: false, file: false), home: home)
                 == .refused("That path is not on the host.")
         )
         #expect(
-            SSHTerminalHostPathPolicy.plan(status: status("/Users/duh/x", file: false), home: home)
+            SSHTerminalHostPathPolicy.plan(status: status("/Users/alex/x", file: false), home: home)
                 == .refused("That path is not a file or a folder.")
         )
     }
@@ -268,22 +268,22 @@ struct SSHTerminalMenuHeaderTests {
     @Test func theHeaderNamesTheScreenAndTheFolder() {
         #expect(SSHTerminalMenuHeader.text(title: "pi", folder: "") == "pi")
         #expect(SSHTerminalMenuHeader.text(title: "", folder: "") == "Terminal")
-        #expect(SSHTerminalMenuHeader.text(title: "pi", folder: "/Users/duh/workspace") == "pi — /Users/duh/workspace")
+        #expect(SSHTerminalMenuHeader.text(title: "pi", folder: "/Users/alex/workspace") == "pi — /Users/alex/workspace")
         #expect(SSHTerminalMenuHeader.text(title: "  pi  ", folder: "  /tmp  ") == "pi — /tmp")
     }
 
     @Test func theHostLabelsRequestedFolderIsDroppedOnceTheShellReportsItsOwn() {
-        let label = "chen@mac-studio \u{00B7} ~/workspace/oppi"
+        let label = "alex@mac-studio \u{00B7} ~/workspace/oppi"
         // Before the shell reports a folder, the label's own folder is all there is.
-        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: label, hostName: "chen@mac-studio", shellFolder: "") == label)
+        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: label, hostName: "alex@mac-studio", shellFolder: "") == label)
         // After, the OSC 7 folder follows the name, so the requested one must not repeat.
         let name = SSHTerminalMenuHeader.name(
-            shellTitle: "", hostLabel: label, hostName: "chen@mac-studio", shellFolder: "/Users/chen/workspace/oppi"
+            shellTitle: "", hostLabel: label, hostName: "alex@mac-studio", shellFolder: "/Users/alex/workspace/oppi"
         )
-        #expect(name == "chen@mac-studio")
+        #expect(name == "alex@mac-studio")
         #expect(
-            SSHTerminalMenuHeader.text(title: name, folder: "/Users/chen/workspace/oppi")
-                == "chen@mac-studio — /Users/chen/workspace/oppi"
+            SSHTerminalMenuHeader.text(title: name, folder: "/Users/alex/workspace/oppi")
+                == "alex@mac-studio — /Users/alex/workspace/oppi"
         )
         // A title the shell set wins, and no host at all keeps the generic name.
         #expect(SSHTerminalMenuHeader.name(shellTitle: " pi ", hostLabel: label, hostName: nil, shellFolder: "/tmp") == "pi")
@@ -293,7 +293,7 @@ struct SSHTerminalMenuHeaderTests {
     }
 
     @Test func aLongFolderKeepsItsTail() {
-        let long = "/Users/duh/" + Array(repeating: "a-very-long-folder", count: 8).joined(separator: "/")
+        let long = "/Users/alex/" + Array(repeating: "a-very-long-folder", count: 8).joined(separator: "/")
         let header = SSHTerminalMenuHeader.text(title: "pi", folder: long)
         #expect(header.count <= SSHTerminalMenuHeader.maximumLength)
         #expect(header.hasPrefix("pi — "))
@@ -310,7 +310,7 @@ struct SSHTerminalHoldMenuTitleTests {
             SSHTerminalGridView.openTitle(for: .web(url: URL(string: "https://example.com/a")!, hostLabel: "example.com"))
                 == "Open example.com"
         )
-        #expect(SSHTerminalGridView.openTitle(for: .path("/Users/duh/notes.md")) == "Open notes.md")
+        #expect(SSHTerminalGridView.openTitle(for: .path("/Users/alex/notes.md")) == "Open notes.md")
         #expect(SSHTerminalGridView.openTitle(for: .path("/")) == "Open")
     }
 
@@ -318,7 +318,7 @@ struct SSHTerminalHoldMenuTitleTests {
         let held = SSHTerminalHeldCell(text: "src/x.swift:42", spans: [], hyperlink: nil)
         let menu = try #require(SSHTerminalGridView.holdMenu(
             held: held,
-            target: .path("/Users/duh/src/x.swift"),
+            target: .path("/Users/alex/src/x.swift"),
             canPaste: true,
             open: { _ in },
             copy: {},

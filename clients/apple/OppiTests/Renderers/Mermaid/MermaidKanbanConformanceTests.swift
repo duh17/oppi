@@ -30,10 +30,10 @@ struct MermaidKanbanConformanceTests {
         ---
         kanban
           backlog[Backlog]
-            task1[Collect every diagram type]@{ ticket: MD-1, priority: 'Very High', assigned: 'Chen' }
+            task1[Collect every diagram type]@{ ticket: MD-1, priority: 'Very High', assigned: 'Alex' }
             task2[Check native vs fallback]@{ ticket: MD-2, priority: 'High' }
           doing[In progress]
-            task3[Steer-test on Duh Ifone]@{ ticket: MD-3, assigned: 'Chen' }
+            task3[Steer-test on Alex Ifone]@{ ticket: MD-3, assigned: 'Alex' }
           review[Review]
             task4[Fullscreen pinch-zoom]
           done[Done]
@@ -62,7 +62,7 @@ struct MermaidKanbanConformanceTests {
         #expect(task1.id == "task1")
         #expect(task1.description == "Collect every diagram type")
         #expect(task1.ticket == "MD-1")
-        #expect(task1.assigned == "Chen")
+        #expect(task1.assigned == "Alex")
         #expect(task1.priority == .veryHigh)
         #expect(task1.ticketURL == "https://example.invalid/browse/MD-1")
         #expect(diagram.columns[0].tasks[1].priority == .high)

@@ -35,7 +35,7 @@ struct TableBodyLeakRegressionTests {
     | Cached-height timeline layout | `2b075fe2` | Custom layout already exists. |
     | Suffix-only native attributed conversion and TextKit append | `36cc390e` | Upstream segment construction and change detection remain. |
     | Unused streaming cache/test surface/plain-host fallback deletion | `f227e4f1` | Do not count those as remaining removals. |
-    | Reserved Mermaid/math geometry and source fallback | `1a4a253b`, `0e78323c` | Later session records Chen's device confirmation. |
+    | Reserved Mermaid/math geometry and source fallback | `1a4a253b`, `0e78323c` | Later session records the device confirmation. |
     """
 
     @Test func staticParseKeepsEveryRowOnce() throws {

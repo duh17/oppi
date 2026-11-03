@@ -678,7 +678,7 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 "sha": "abc1234",
                 "message": "Route commit",
                 "date": "2026-10-15T18:00:00Z",
-                "author": "Chen",
+                "author": "Alex",
                 "files": [["path": "Sources/App.swift", "status": "M", "addedLines": 2, "removedLines": 1]],
                 "addedLines": 2,
                 "removedLines": 1,

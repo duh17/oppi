@@ -17,7 +17,7 @@ struct MacBashCommandChromeTests {
         let command = MacBashCommandChrome.commandText(
             tool: "functions.bash",
             argsSummary: "command: ls -la",
-            outputText: "total 8\ndrwxr-xr-x  5 chenda  staff  160 ."
+            outputText: "total 8\ndrwxr-xr-x  5 alex  staff  160 ."
         )
 
         #expect(command == "ls -la")

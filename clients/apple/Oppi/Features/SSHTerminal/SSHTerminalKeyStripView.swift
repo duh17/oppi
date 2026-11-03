@@ -58,7 +58,7 @@ final class SSHTerminalKeyStripView: UIView {
     /// Fill Password, with what stands beside it, hidden until offered.
     private var fillKey: SSHTerminalKeyButton?
     private var fillDivider: UIView?
-    /// The label's host (`duh@mac-studio`) while Fill Password is offered, else nil.
+    /// The label's host (`alex@mac-studio`) while Fill Password is offered, else nil.
     private var passwordFillHost: String?
     private var appliedSignature = ""
 
@@ -130,7 +130,7 @@ final class SSHTerminalKeyStripView: UIView {
         secureCue?.isHidden = !on
     }
 
-    /// Shows Fill Password for `host` (`duh@mac-studio`) while a password prompt
+    /// Shows Fill Password for `host` (`alex@mac-studio`) while a password prompt
     /// is up and the host has a password to fill; nil hides it.
     func setPasswordFill(host: String?) {
         guard host != passwordFillHost else { return }

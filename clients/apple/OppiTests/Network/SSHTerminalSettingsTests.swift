@@ -107,7 +107,7 @@ struct SSHTerminalSettingsTests {
     private let hosts: IsolatedStores
 
     private let plain = SSHTerminalProfile(host: "devbox.local", port: 2222, username: "dev", authentication: .deviceKey)
-    private let other = SSHTerminalProfile(host: "mac-studio.local", username: "chen", startupCommand: "herdr")
+    private let other = SSHTerminalProfile(host: "mac-studio.local", username: "alex", startupCommand: "herdr")
 
     init() throws {
         hosts = try IsolatedStores()
@@ -287,7 +287,7 @@ struct SSHTerminalSettingsTests {
 struct SSHTerminalHostRowActionTests {
     private let hosts: IsolatedStores
     private let plain = SSHTerminalProfile(host: "devbox.local", port: 2222, username: "dev", authentication: .deviceKey)
-    private let other = SSHTerminalProfile(host: "mac-studio.local", username: "chen", startupCommand: "herdr")
+    private let other = SSHTerminalProfile(host: "mac-studio.local", username: "alex", startupCommand: "herdr")
 
     init() throws {
         hosts = try IsolatedStores()
@@ -407,7 +407,7 @@ struct SSHTerminalSetupPageTests {
         #expect(try #require(page.element("sshTerminal.connect.list") as? UIButton).isEnabled == false,
                 "a host alone cannot connect")
         let username = try #require(page.element("sshTerminal.username") as? UITextField, "the form has no username field")
-        username.text = "chen"
+        username.text = "alex"
         username.sendActions(for: .editingChanged)
         page.reload()
         #expect(try #require(page.element("sshTerminal.connect.list") as? UIButton).isEnabled,
@@ -524,7 +524,7 @@ struct SSHTerminalSetupPageTests {
     /// A Mac whose Oppi answers: the next step is an invite to pair with.
     private static var readyReport: SSHPreflightReport {
         SSHPreflightReport(
-            user: "chen",
+            user: "alex",
             kernel: "Darwin",
             release: "25.1.0",
             arch: "arm64",
@@ -534,7 +534,7 @@ struct SSHTerminalSetupPageTests {
             nodeVersion: "v22.19.0",
             oppiNodeVersion: nil,
             gitPath: "/usr/bin/git",
-            oppiPath: "/Users/chen/.oppi/bin/oppi",
+            oppiPath: "/Users/alex/.oppi/bin/oppi",
             tailscalePath: "/opt/homebrew/bin/tailscale",
             oppiStatus: SSHOppiStatus(
                 json: #"{"data":{"status":{"paired":true,"server":{"transport":"https","tlsMode":"selfSigned","port":7443}}}}"#
@@ -547,7 +547,7 @@ struct SSHTerminalSetupPageTests {
     /// The same Mac before Oppi is installed: the next step is Install & Start.
     private static var bareReport: SSHPreflightReport {
         SSHPreflightReport(
-            user: "chen",
+            user: "alex",
             kernel: "Darwin",
             release: "25.1.0",
             arch: "arm64",

@@ -69,8 +69,8 @@ private struct IsolatedProfiles {
 @Suite("SSH terminal switcher", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct SSHTerminalSwitcherTests {
-    private let studio = SSHTerminalProfile(host: "mac-studio", username: "chen")
-    private let mini = SSHTerminalProfile(host: "mac-mini", username: "chen", startupCommand: "herdr")
+    private let studio = SSHTerminalProfile(host: "mac-studio", username: "alex")
+    private let mini = SSHTerminalProfile(host: "mac-mini", username: "alex", startupCommand: "herdr")
 
     private func makeRegistry() -> SSHTerminalRegistry {
         SSHTerminalRegistry(
@@ -102,14 +102,14 @@ struct SSHTerminalSwitcherTests {
         let plain = try open(registry, studio)
         let other = try open(registry, mini)
         // A terminal that is not connected is not open.
-        let dead = try open(registry, SSHTerminalProfile(host: "gone", username: "chen"))
+        let dead = try open(registry, SSHTerminalProfile(host: "gone", username: "alex"))
         dead.close(reason: "done")
 
         let terminals = registry.openTerminals()
         #expect(terminals.map { ObjectIdentifier($0.channel) } == [other, plain, folder].map(ObjectIdentifier.init))
 
         let items = SSHTerminalSwitcher.items(terminals: terminals, current: plain)
-        #expect(items.map(\.title) == ["chen@mac-mini", "chen@mac-studio", "chen@mac-studio"])
+        #expect(items.map(\.title) == ["alex@mac-mini", "alex@mac-studio", "alex@mac-studio"])
         #expect(items.map(\.subtitle) == ["herdr", "Login shell", "oppi"])
         #expect(items.map(\.isCurrent) == [false, true, false])
         #expect(items.allSatisfy { $0.state == .connected })
@@ -212,7 +212,7 @@ struct SSHTerminalSwitcherTests {
         let registry = makeRegistry()
         defer { closeEverything(registry) }
         let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
-        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
         let shell = try open(registry, rexHost)
 
         SSHTerminalFolderEntry.prepare(session: session, profile: rexHost, target: nil)
@@ -245,7 +245,7 @@ struct SSHTerminalSwitcherTests {
     @Test func aRexTerminalStandsForItsSessionAndAPaneRowMovesIt() async throws {
         let registry = makeRegistry()
         defer { closeEverything(registry) }
-        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
         let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
         let (a, b, c) = ("block:a", "block:b", "block:c")
         let target = { (block: String, label: String) in
@@ -549,7 +549,7 @@ struct SSHTerminalSwitcherTests {
         let second = try open(registry, mini)
         session.show(try #require(registry.terminal(for: studio.id)))
         let terminal = SSHTerminalViewController(
-            channel: first, reconnect: {}, editHost: {}, hostLabel: "chen@mac-studio", session: session
+            channel: first, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio", session: session
         )
         let window = try mount(terminal)
         defer {
@@ -628,7 +628,7 @@ struct SSHTerminalSwitcherTests {
         let first = try open(registry, studio)
         session.show(try #require(registry.terminal(for: studio.id)))
         let terminal = SSHTerminalViewController(
-            channel: first, reconnect: {}, editHost: {}, hostLabel: "chen@mac-studio", session: session
+            channel: first, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio", session: session
         )
         let window = try mount(terminal)
         defer {

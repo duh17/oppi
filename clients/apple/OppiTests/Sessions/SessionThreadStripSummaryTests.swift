@@ -51,7 +51,7 @@ struct SessionThreadStripSummaryTests {
     }
 
     /// The strip's stopped count is the fold's count: both answer "is this member stopped", never "has the
-    /// person looked at it". The fixture is Chen's screenshot: stopped members whose result this device has
+    /// person looked at it". The fixture is a device screenshot: stopped members whose result this device has
     /// not opened read Done on their own rows, and the fold holds every one of them.
     @Test func theStoppedCountIsTheFoldsOwnCount() {
         var unseenResult = session("unseen-result", .stopped)

@@ -376,7 +376,7 @@ struct SSHTerminalRegistryTests {
 
     // MARK: - Folder terminals
 
-    private static let workspaceFolder = "/Users/chen/workspace/oppi"
+    private static let workspaceFolder = "/Users/alex/workspace/oppi"
 
     /// A connected channel registered under `profile` + `folder`, as the
     /// folder-terminal connect does.

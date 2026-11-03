@@ -68,7 +68,7 @@ struct SSHTerminalFolderCommandTests {
     }
 
     @Test func theScriptChangesFolderThenStartsTheLoginShell() throws {
-        let script = word("/Users/chen/oppi")
+        let script = word("/Users/alex/oppi")
         #expect(script.contains("p=\"$(printf \"\\057\\125\\163\\145\\162\\163"))
         // The sentinel is stripped, so a folder that ends in a newline stays exact.
         #expect(script.contains("p=\"${p%x}\""))
@@ -123,7 +123,7 @@ struct SSHTerminalFolderCommandTests {
         }
         #expect(!SSHTerminalFolderCommand.isUsablePath(""))
         #expect(!SSHTerminalFolderCommand.isUsablePath("relative/path"))
-        #expect(SSHTerminalFolderCommand.isUsablePath("/Users/chen"))
+        #expect(SSHTerminalFolderCommand.isUsablePath("/Users/alex"))
         #expect(SSHTerminalFolderCommand.isUsablePath("~/code"))
         #expect(SSHTerminalFolderCommand.isUsablePath("~"))
     }

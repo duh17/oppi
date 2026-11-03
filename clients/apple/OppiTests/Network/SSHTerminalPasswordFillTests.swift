@@ -9,10 +9,10 @@ struct SSHTerminalPasswordFillTests {
     // MARK: Offer
 
     @Test func offeredOnlyAtAPromptOnTheLiveScreenForAHostWithAPassword() {
-        let password = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .password, savesPassword: true)
-        let sudo = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey, savesSudoPassword: true)
-        let none = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey)
-        let unsaved = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .password)
+        let password = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .password, savesPassword: true)
+        let sudo = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey, savesSudoPassword: true)
+        let none = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey)
+        let unsaved = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .password)
 
         func offered(_ profile: SSHTerminalProfile?, secure: Bool = true, history: Bool = false, connected: Bool = true) -> Bool {
             SSHTerminalPasswordFill.isOffered(profile: profile, secureEntry: secure, inHistory: history, connected: connected)
@@ -28,9 +28,9 @@ struct SSHTerminalPasswordFillTests {
     }
 
     @Test func aPasswordHostFillsItsSignInPasswordAndOnlyAKeyHostKeepsASudoPassword() {
-        let key = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .password, savesSudoPassword: true).normalized()
+        let key = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .password, savesSudoPassword: true).normalized()
         #expect(!key.savesSudoPassword, "a password host fills its sign-in password, never a second one")
-        let device = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey, savesPassword: true, savesSudoPassword: true).normalized()
+        let device = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey, savesPassword: true, savesSudoPassword: true).normalized()
         #expect(!device.savesPassword)
         #expect(device.savesSudoPassword)
         #expect(device.hasPasswordToFill)
@@ -38,7 +38,7 @@ struct SSHTerminalPasswordFillTests {
 
     @Test func catalogsSavedBeforeTheSudoPasswordStillDecode() throws {
         let id = UUID()
-        let old = Data(#"{"profiles":[{"id":"\#(id.uuidString)","host":"a.ts.net","port":22,"username":"duh","authentication":"deviceKey","savesPassword":false}]}"#.utf8)
+        let old = Data(#"{"profiles":[{"id":"\#(id.uuidString)","host":"a.ts.net","port":22,"username":"alex","authentication":"deviceKey","savesPassword":false}]}"#.utf8)
         let catalog = try JSONDecoder().decode(SSHTerminalCatalog.self, from: old)
         #expect(catalog.profiles.first?.savesSudoPassword == false)
         #expect(catalog.profiles.first?.id == id)
@@ -52,8 +52,8 @@ struct SSHTerminalPasswordFillTests {
         defer { defaults.removePersistentDomain(forName: name) }
         let keychain = FakeKeychain()
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let profile = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey, savesSudoPassword: true)
-        let other = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey, savesSudoPassword: true, startupCommand: "herdr")
+        let profile = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey, savesSudoPassword: true)
+        let other = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey, savesSudoPassword: true, startupCommand: "herdr")
 
         try store.save(profile, sudoPassword: "sudo-fixture")
         try store.save(other, sudoPassword: "other-fixture")
@@ -86,7 +86,7 @@ struct SSHTerminalPasswordFillTests {
         defer { defaults.removePersistentDomain(forName: name) }
         let keychain = FakeKeychain()
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let profile = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .deviceKey, savesSudoPassword: true)
+        let profile = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .deviceKey, savesSudoPassword: true)
         let account = SSHTerminalProfileStore.sudoPasswordAccount(for: profile.id)
         try store.save(profile, sudoPassword: "sudo-fixture")
 
@@ -119,7 +119,7 @@ struct SSHTerminalPasswordFillTests {
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: FakeKeychain())
-        let profile = SSHTerminalProfile(host: "a.ts.net", username: "duh", authentication: .password, savesPassword: true)
+        let profile = SSHTerminalProfile(host: "a.ts.net", username: "alex", authentication: .password, savesPassword: true)
         try store.save(profile, password: "sign-in-fixture")
         let bytes = try await store.passwordToFill(for: profile, reason: "r") { _, _ in }
         #expect(bytes == Data("sign-in-fixture".utf8))
@@ -137,7 +137,7 @@ struct SSHTerminalPasswordFillTests {
             #expect(outcome == .filled)
         }
         let reasons = await fixture.asked.reasons
-        #expect(reasons == ["Fill the password for duh@mac-studio", "Fill the password for duh@mac-studio"],
+        #expect(reasons == ["Fill the password for alex@mac-studio", "Fill the password for alex@mac-studio"],
                 "the person is asked each time; a recent approval is not reused")
         let expected = Data("p@ss wörd!\u{1F511}".utf8)
         #expect(fixture.sent == [expected, expected])
@@ -167,12 +167,12 @@ struct SSHTerminalPasswordFillTests {
     // The send-time check reads the live terminal. A real engine is fed what a
     // program would send while the Face ID sheet is up.
 
-    private static let promptText = "[sudo] password for duh:"
+    private static let promptText = "[sudo] password for alex:"
 
     /// One line of other output, then the prompt on row 1 with the cursor after it.
     @MainActor private static func engineAtPrompt() throws -> (engine: SSHTerminalEngine, row: Int) {
         let engine = try SSHTerminalChannel().engine
-        engine.receive(Data("other pane\r\n[sudo] password for duh: ".utf8))
+        engine.receive(Data("other pane\r\n[sudo] password for alex: ".utf8))
         return (engine, engine.cursorCell.row)
     }
 
@@ -300,7 +300,7 @@ private final class Fixture {
         let defaults = try #require(UserDefaults(suiteName: name))
         let keychain = FakeKeychain()
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let profile = SSHTerminalProfile(host: "mac-studio", username: "duh", authentication: .deviceKey, savesSudoPassword: true)
+        let profile = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .deviceKey, savesSudoPassword: true)
         try store.save(profile, sudoPassword: password)
         keychain.loads = 0
         let asked = asked

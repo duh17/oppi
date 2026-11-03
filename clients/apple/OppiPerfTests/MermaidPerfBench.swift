@@ -366,10 +366,10 @@ struct MermaidPerfBench {
     private static let largerKanban = """
     kanban
         backlog[Backlog]
-            t1[Collect types]@{ ticket: MD-1, priority: 'High', assigned: 'Chen' }
+            t1[Collect types]@{ ticket: MD-1, priority: 'High', assigned: 'Alex' }
             t2[Check fallback]@{ ticket: MD-2 }
         doing[In progress]
-            t3[Steer-test]@{ assigned: 'Chen' }
+            t3[Steer-test]@{ assigned: 'Alex' }
         review[Review]
             t4[Pinch zoom]
         done[Done]

@@ -1509,7 +1509,7 @@ struct ControlSessionStarterPromptTests {
         ControlSessionDomain.agents, .extensions, .schedules, .skills, .themes, .workspaces,
     ])
     func hostFileLineAppearsForEveryDomainWhenAPathIsGiven(domain: ControlSessionDomain) {
-        let path = "/Users/chen/.pi/agent/thing/FILE.md"
+        let path = "/Users/alex/.pi/agent/thing/FILE.md"
         let withPath = ControlSessionStarterPrompt.make(
             domain: domain,
             intent: .revise,

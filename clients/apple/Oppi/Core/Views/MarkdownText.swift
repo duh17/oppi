@@ -2495,7 +2495,7 @@ enum FlatSegment: Sendable {
     /// Web and session links keep the underline. File links (resource
     /// references) skip it: the link color and file icon already mark them, and
     /// TextKit's underline skips around `_` glyphs that sit lower than the
-    /// underline, so names like `Da_Chen_Resume.pdf` draw a stepped, broken line.
+    /// underline, so names like `Alex_Doe_Resume.pdf` draw a stepped, broken line.
     /// UIKit scope: these strings render in UITextViews, and SwiftUI's
     /// `underlineStyle` does not survive the `NSAttributedString` conversion.
     private static func linkUnderline(destination: String?) -> NSUnderlineStyle? {

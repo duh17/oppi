@@ -7,13 +7,13 @@ struct SSHInstallEventTests {
     @Test func stepLinesCarryStepStatusAndTheRestOfTheLineAsDetail() {
         #expect(SSHInstallEvent.parse("oppi-install: step=node status=begin detail=Downloading Node.js v22.20.0 (darwin-arm64)")
             == .step(.node, .begin, detail: "Downloading Node.js v22.20.0 (darwin-arm64)"))
-        #expect(SSHInstallEvent.parse("oppi-install: step=service status=fail detail=loginctl enable-linger needs an admin: run sudo loginctl enable-linger chen")
-            == .step(.service, .fail, detail: "loginctl enable-linger needs an admin: run sudo loginctl enable-linger chen"))
+        #expect(SSHInstallEvent.parse("oppi-install: step=service status=fail detail=loginctl enable-linger needs an admin: run sudo loginctl enable-linger alex")
+            == .step(.service, .fail, detail: "loginctl enable-linger needs an admin: run sudo loginctl enable-linger alex"))
         #expect(SSHInstallEvent.parse("oppi-install: step=oppi status=skip detail=key=value stays in the detail")
             == .step(.oppi, .skip, detail: "key=value stays in the detail"))
         #expect(SSHInstallEvent.parse("oppi-install: step=start status=ok") == .step(.start, .ok, detail: ""))
-        #expect(SSHInstallEvent.parse("oppi-install: step=service status=warn detail=stops at logout until an admin runs sudo loginctl enable-linger chen")
-            == .step(.service, .warn, detail: "stops at logout until an admin runs sudo loginctl enable-linger chen"))
+        #expect(SSHInstallEvent.parse("oppi-install: step=service status=warn detail=stops at logout until an admin runs sudo loginctl enable-linger alex")
+            == .step(.service, .warn, detail: "stops at logout until an admin runs sudo loginctl enable-linger alex"))
         // sshd output may arrive with CRLF.
         #expect(SSHInstallEvent.parse("oppi-install: step=oppi status=ok detail=0.31.0\r") == .step(.oppi, .ok, detail: "0.31.0"))
     }

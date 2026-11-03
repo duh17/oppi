@@ -306,7 +306,7 @@ describe("sim-pool reap", () => {
         { name: "Oppi-Pool-31", state: "Booted" },
         { name: "Oppi-Pool-32", state: "Booted" },
         { name: "Oppi-Pool-33", state: "Booted" },
-        { name: "Chen iPhone", state: "Booted", type: IPHONE },
+        { name: "Alex iPhone", state: "Booted", type: IPHONE },
       ],
       {
         "worker-busy": { status: "busy", ageMinutes: 300 },
@@ -330,7 +330,7 @@ describe("sim-pool reap", () => {
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
     expect(sim.state("Oppi-Pool-31")).toBe("Booted");
     expect(sim.state("Oppi-Pool-33")).toBe("Booted");
-    expect(sim.state("Chen iPhone")).toBe("Booted");
+    expect(sim.state("Alex iPhone")).toBe("Booted");
     expect(slotStatus(sim.lockDir, 30)).toBe("reusable");
     expect(readSlotState(sim.lockDir, 32)).toMatchObject({ status: "claimed", claim: { owner: "lead-idle" } });
     expect(readSlotState(sim.lockDir, 33)).toMatchObject({ status: "claimed", claim: { owner: "lead-resumes" } });
@@ -398,7 +398,7 @@ describe("sim-pool booted ceiling", () => {
       { name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE },
       { name: "Oppi-Pool-3", state: "Booted", type: IPHONE },
       { name: "Oppi-Pool-4", state: "Booted", type: IPHONE },
-      { name: "Chen iPhone", state: "Booted", type: IPHONE },
+      { name: "Alex iPhone", state: "Booted", type: IPHONE },
     ]);
     seedSlot(sim.lockDir, 3, 10);
     seedSlot(sim.lockDir, 4, 50);
@@ -411,10 +411,10 @@ describe("sim-pool booted ceiling", () => {
       OPPI_SIM_POOL_MAX_BOOTED: "1",
       OPPI_SIM_POOL_IDLE_MINUTES: "0",
     });
-    // Both idle pool simulators went, least recently used first, and Chen's own stayed: the ceiling
+    // Both idle pool simulators went, least recently used first, and the user's own stayed: the ceiling
     // (1) is still full, so the run does not boot past it.
     expect(sim.shutdowns().filter((name) => name !== "Oppi-Pool-0")).toEqual(["Oppi-Pool-4", "Oppi-Pool-3"]);
-    expect(sim.state("Chen iPhone")).toBe("Booted");
+    expect(sim.state("Alex iPhone")).toBe("Booted");
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("1 simulators booted (limit 1) and none is idle in the pool");
     expect(sim.state("Oppi-Pool-0")).toBe("Shutdown");
@@ -423,7 +423,7 @@ describe("sim-pool booted ceiling", () => {
   test("a run waits for capacity instead of booting past the ceiling, and boots once one frees up", async () => {
     const sim = fakeSimulators([
       { name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE },
-      { name: "Chen iPhone", state: "Booted", type: IPHONE },
+      { name: "Alex iPhone", state: "Booted", type: IPHONE },
     ]);
     writeCheckout(sim.root);
     const child = spawn(
@@ -454,7 +454,7 @@ describe("sim-pool booted ceiling", () => {
     // Still waiting: nothing was booted past the ceiling.
     expect(stderr).toContain("waiting up to 40s for capacity");
     expect(sim.state("Oppi-Pool-0")).toBe("Shutdown");
-    spawnSync("xcrun", ["simctl", "shutdown", "UDID-Chen iPhone"], { env: sim.env });
+    spawnSync("xcrun", ["simctl", "shutdown", "UDID-Alex iPhone"], { env: sim.env });
     expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
   });
@@ -513,7 +513,7 @@ describe("sim-pool first boot of a new simulator", () => {
   });
 
   test("the first-boot slot is not held while the run waits for booted-simulator capacity", async () => {
-    const sim = fakeSimulators([{ name: "Chen iPhone", state: "Booted", type: IPHONE }]);
+    const sim = fakeSimulators([{ name: "Alex iPhone", state: "Booted", type: IPHONE }]);
     writeCheckout(sim.root);
     const heavyEnv = { ...sim.env, OPPI_HEAVY_DIR: join(sim.root, "heavy"), OPPI_HEAVY_POLL: "0.2" };
     const child = spawn(
@@ -539,7 +539,7 @@ describe("sim-pool first boot of a new simulator", () => {
     const free = await acquireHeavySlot("sim-first-boot", { ...heavyEnv, OPPI_HEAVY_POLL: "0.1" }, { canceled: false, waitWhileIdle: async () => {} }, () => {}, 0);
     expect(free?.lock).toBeDefined();
     free!.lock!.release();
-    spawnSync("xcrun", ["simctl", "shutdown", "UDID-Chen iPhone"], { env: sim.env });
+    spawnSync("xcrun", ["simctl", "shutdown", "UDID-Alex iPhone"], { env: sim.env });
     expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
   });

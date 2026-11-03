@@ -860,10 +860,10 @@ config:
 ---
 kanban
   backlog[Backlog]
-    task1[Collect every diagram type]@{ ticket: MD-1, priority: 'Very High', assigned: 'Chen' }
+    task1[Collect every diagram type]@{ ticket: MD-1, priority: 'Very High', assigned: 'Alex' }
     task2[Check native vs fallback]@{ ticket: MD-2, priority: 'High' }
   doing[In progress]
-    task3[Steer-test on Duh Ifone]@{ ticket: MD-3, assigned: 'Chen' }
+    task3[Steer-test on Alex Ifone]@{ ticket: MD-3, assigned: 'Alex' }
   review[Review]
     task4[Fullscreen pinch-zoom]
   done[Done]

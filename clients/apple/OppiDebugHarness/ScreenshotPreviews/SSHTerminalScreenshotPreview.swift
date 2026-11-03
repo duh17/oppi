@@ -28,7 +28,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
     private var playback: Task<Void, Never>?
     private var consumption: Task<Void, Never>?
 
-    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "chen@mac-studio") {
+    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "alex@mac-studio") {
         self.status = status
         // `SCREENSHOT_COLOR_SCHEME` picks the side; a fresh `ThemeStore` reads it
         // and puts it in `ThemeRuntimeState`, which the terminal's chrome reads.

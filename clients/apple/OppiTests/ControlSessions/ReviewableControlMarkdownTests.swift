@@ -15,19 +15,19 @@ struct ReviewableControlMarkdownTests {
     @Test func skillFilePresentationResolvesDirectoryTopLevelAndNestedFiles() {
         let cases = [
             SkillPathCase(
-                resourcePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
+                resourcePath: "/Users/alex/.pi/agent/skills/review/SKILL.md",
                 selectedPath: "SKILL.md",
-                expected: "/Users/chen/.pi/agent/skills/review/SKILL.md"
+                expected: "/Users/alex/.pi/agent/skills/review/SKILL.md"
             ),
             SkillPathCase(
-                resourcePath: "/Users/chen/.pi/agent/skills/review.md",
+                resourcePath: "/Users/alex/.pi/agent/skills/review.md",
                 selectedPath: "review.md",
-                expected: "/Users/chen/.pi/agent/skills/review.md"
+                expected: "/Users/alex/.pi/agent/skills/review.md"
             ),
             SkillPathCase(
-                resourcePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
+                resourcePath: "/Users/alex/.pi/agent/skills/review/SKILL.md",
                 selectedPath: "references/checklist.md",
-                expected: "/Users/chen/.pi/agent/skills/review/references/checklist.md"
+                expected: "/Users/alex/.pi/agent/skills/review/references/checklist.md"
             ),
         ]
 
@@ -46,18 +46,18 @@ struct ReviewableControlMarkdownTests {
         #expect(
             ServerSkillFilePresentation.resolve(
                 editable: true,
-                resourcePath: "/Users/chen/.pi/agent/skills/./review/SKILL.md",
+                resourcePath: "/Users/alex/.pi/agent/skills/./review/SKILL.md",
                 selectedFilePath: "references/checklist.md"
             ) == .editable(
-                hostPath: "/Users/chen/.pi/agent/skills/review/references/checklist.md"
+                hostPath: "/Users/alex/.pi/agent/skills/review/references/checklist.md"
             )
         )
 
         for (resourcePath, selectedPath) in [
-            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "../outside.md"),
-            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "references/../outside.md"),
-            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "/outside.md"),
-            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "refs\\outside.md"),
+            ("/Users/alex/.pi/agent/skills/review/SKILL.md", "../outside.md"),
+            ("/Users/alex/.pi/agent/skills/review/SKILL.md", "references/../outside.md"),
+            ("/Users/alex/.pi/agent/skills/review/SKILL.md", "/outside.md"),
+            ("/Users/alex/.pi/agent/skills/review/SKILL.md", "refs\\outside.md"),
             ("relative/review/SKILL.md", "SKILL.md"),
         ] {
             guard case .unavailable = ServerSkillFilePresentation.resolve(
@@ -77,9 +77,9 @@ struct ReviewableControlMarkdownTests {
         #expect(
             ServerSkillFilePresentation.resolve(
                 editable: true,
-                resourcePath: "/Users/chen/.pi/agent/skills/review.md",
+                resourcePath: "/Users/alex/.pi/agent/skills/review.md",
                 selectedFilePath: "other.md"
-            ) == .readOnly(hostPath: "/Users/chen/.pi/agent/skills/other.md")
+            ) == .readOnly(hostPath: "/Users/alex/.pi/agent/skills/other.md")
         )
         #expect(
             ServerSkillFilePresentation.resolve(

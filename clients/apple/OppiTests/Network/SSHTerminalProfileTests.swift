@@ -198,7 +198,7 @@ struct SSHTerminalProfileTests {
     /// all); Rex runs none, saved or not; None drops only a multiplexer's
     /// command, never another program the person typed.
     @Test func theMultiplexerChoiceIsRunOnConnectForHerdrAndTmuxAndNoCommandForRex() throws {
-        var host = SSHTerminalProfile(host: "mac-studio", username: "chen", startupCommand: "herdr --session work")
+        var host = SSHTerminalProfile(host: "mac-studio", username: "alex", startupCommand: "herdr --session work")
         #expect(host.multiplexerChoice == .herdr)
         host.choose(.herdr)
         #expect(host.startupCommand == "herdr --session work")
@@ -219,7 +219,7 @@ struct SSHTerminalProfileTests {
         #expect(host.startupCommand == "htop")
 
         // A command left on a Rex host (typed before Rex was chosen) never runs.
-        var rex = SSHTerminalProfile(host: "mac-studio", username: "chen", startupCommand: "htop", opensRexSessions: true)
+        var rex = SSHTerminalProfile(host: "mac-studio", username: "alex", startupCommand: "htop", opensRexSessions: true)
         #expect(rex.normalized().startupCommand == nil)
         rex.choose(.herdr)
         #expect(!rex.opensRexSessions && rex.startupCommand == "herdr")
@@ -231,11 +231,11 @@ struct SSHTerminalProfileTests {
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: SSHKeychain(service: name))
-        let rex = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let rex = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
         try store.save(rex)
         #expect(store.profile(id: rex.id)?.opensRexSessions == true)
 
-        let older = #"{"id":"\#(UUID().uuidString)","host":"mac-mini","port":22,"username":"chen","authentication":"deviceKey","savesPassword":false,"startupCommand":"herdr"}"#
+        let older = #"{"id":"\#(UUID().uuidString)","host":"mac-mini","port":22,"username":"alex","authentication":"deviceKey","savesPassword":false,"startupCommand":"herdr"}"#
         let decoded = try JSONDecoder().decode(SSHTerminalProfile.self, from: Data(older.utf8))
         #expect(!decoded.opensRexSessions)
         #expect(decoded.multiplexerChoice == .herdr)

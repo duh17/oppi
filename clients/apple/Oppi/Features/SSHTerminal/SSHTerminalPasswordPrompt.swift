@@ -7,8 +7,8 @@ import Foundation
 /// whole word.
 ///
 ///   `Password:`                          `su`, `ssh`, `mysql`
-///   `[sudo] password for duh:`           `sudo`
-///   `duh@host's password:`               `ssh`
+///   `[sudo] password for alex:`          `sudo`
+///   `alex@host's password:`              `ssh`
 ///   `Enter passphrase for key '/x/id':`  `ssh-agent`
 ///   `Passphrase:` `PIN:`                 `gpg`, LUKS, smartcards
 ///   `│ Password:`                        a Herdr pane's border
@@ -39,7 +39,7 @@ enum SSHTerminalPasswordPrompt {
         let text = trimmingEcho(lineBeforeCursor)
         guard text.last == ":" else { return nil }
         // Split the text before the colon into words: `[sudo]`, `for`, and
-        // `duh@host's` all become tokens to ignore.
+        // `alex@host's` all become tokens to ignore.
         let words = text.dropLast().lowercased().split { !$0.isLetter && !$0.isNumber }
         guard words.contains(where: { secretWords.contains($0) }) else { return nil }
         return String(text)

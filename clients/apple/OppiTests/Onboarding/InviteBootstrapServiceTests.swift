@@ -265,11 +265,11 @@ struct InviteBootstrapServiceTests {
             existingCredentials: nil,
             confirmTrust: { _ in true },
             apiFactory: { _, _, _ in apis.removeFirst() },
-            deviceName: "Chen iPhone",
+            deviceName: "Alex iPhone",
             deviceKeyProvider: { InMemoryP256DeviceKey() }
         )
 
-        #expect(await pairingAPI.lastPairedDeviceName() == "Chen iPhone")
+        #expect(await pairingAPI.lastPairedDeviceName() == "Alex iPhone")
     }
 
     /// The server enrolls the device at the approval poll's 200, so the wait (and its

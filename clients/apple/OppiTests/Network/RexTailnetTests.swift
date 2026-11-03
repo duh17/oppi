@@ -77,7 +77,7 @@ struct RexTailnetTests {
         #expect(rows.map(\.id) == ["header", "loading"], "a node not read yet is a host's section, loading")
 
         // An SSH host on the tab that reaches the same Rex lists it instead.
-        let ssh = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let ssh = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
         let said = try #require(URL(string: "https://Rex.Tail0000.ts.net/"))
         store.apply(.available(url: said, hostID: "host-1"), for: RexDirectHost(profile: ssh))
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [ssh], active: false)

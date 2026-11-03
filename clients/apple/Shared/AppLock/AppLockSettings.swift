@@ -61,7 +61,7 @@ enum AppLockSettings {
 /// The one LocalAuthentication entry point for App Lock, protected actions,
 /// Confirm New Servers, and the Share extension.
 enum DeviceOwnerAuthentication {
-    /// Face ID / Touch ID with device passcode fallback. Chen decided
+    /// Face ID / Touch ID with device passcode fallback. The owner decided
     /// (2026-10-07) to keep passcode fallback everywhere, including protected
     /// destructive actions; the App Lock footer says so. Change it here only.
     static let policy: LAPolicy = .deviceOwnerAuthentication

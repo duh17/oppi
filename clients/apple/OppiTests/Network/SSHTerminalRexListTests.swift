@@ -54,7 +54,7 @@ struct SSHTerminalRexListRowTests {
     }
 
     private func rows(_ state: SSHTerminalRexListState) -> [SSHTerminalRexListRow] {
-        SSHTerminalRexListRow.rows(hostName: "chen@studio", state: state)
+        SSHTerminalRexListRow.rows(hostName: "alex@studio", state: state)
     }
 
     @Test func aSessionShowsItsNamePaneCountAndWhoWaitsOnYou() throws {
@@ -65,7 +65,7 @@ struct SSHTerminalRexListRowTests {
         ])
         let listed = rows(.init(snapshot: snapshot, needsYou: snapshot.needsAttention))
 
-        #expect(listed.first?.kind == .header(name: "chen@studio", needsYou: 1))
+        #expect(listed.first?.kind == .header(name: "alex@studio", needsYou: 1))
         let sessions: [SSHTerminalRexListSession] = listed.compactMap {
             if case .session(let session) = $0.kind { session } else { nil }
         }
@@ -92,8 +92,8 @@ struct SSHTerminalRexListRowTests {
     /// terminal glyph for a shell that never reported.
     @Test func expandedPanesDrawTheBarsIconsAndNameTheirFolder() throws {
         let agents = [
-            RexSnapshot.Pane(blockID: "pi", label: "shell", title: "\u{03C0} - oppi", pwd: "file://studio/Users/chen/workspace/oppi", records: [working]),
-            RexSnapshot.Pane(blockID: "claude", label: "shell", title: "\u{2733} Fixing", pwd: "/Users/chen/server/", records: [blocked]),
+            RexSnapshot.Pane(blockID: "pi", label: "shell", title: "\u{03C0} - oppi", pwd: "file://studio/Users/alex/workspace/oppi", records: [working]),
+            RexSnapshot.Pane(blockID: "claude", label: "shell", title: "\u{2733} Fixing", pwd: "/Users/alex/server/", records: [blocked]),
             RexSnapshot.Pane(blockID: "bare", label: "shell", title: nil, pwd: nil, records: [working]),
             RexSnapshot.Pane(blockID: "sh", label: "shell", title: "zsh", pwd: "file://studio/", records: []),
         ]
@@ -141,8 +141,8 @@ struct SSHTerminalRexListRowTests {
 
     @Test func aSessionNamesTheFolderItsFocusedPaneIsIn() {
         let snapshot = session("s", "s", [[
-            RexSnapshot.Pane(blockID: "a", label: nil, title: nil, pwd: "file://studio/Users/chen/dotfiles", records: []),
-            RexSnapshot.Pane(blockID: "b", label: nil, title: nil, pwd: "file://studio/Users/chen/oppi", records: []),
+            RexSnapshot.Pane(blockID: "a", label: nil, title: nil, pwd: "file://studio/Users/alex/dotfiles", records: []),
+            RexSnapshot.Pane(blockID: "b", label: nil, title: nil, pwd: "file://studio/Users/alex/oppi", records: []),
         ]], focused: "b")
         let row = SSHTerminalRexListSession(snapshot)
         #expect(row.folder == "oppi")
@@ -159,7 +159,7 @@ struct SSHTerminalRexListRowTests {
     }
 
     @Test func aHostNotReadYetShowsLoadingAndAnEmptyRexSaysSo() {
-        #expect(rows(.init()).map(\.kind) == [.header(name: "chen@studio", needsYou: 0), .placeholder("Loading\u{2026}")])
+        #expect(rows(.init()).map(\.kind) == [.header(name: "alex@studio", needsYou: 0), .placeholder("Loading\u{2026}")])
         let empty = rows(.init(snapshot: RexSnapshot(sessions: [])))
         #expect(empty.last?.kind == .placeholder("No Rex sessions."))
     }
@@ -175,9 +175,9 @@ struct SSHTerminalRexListRowTests {
 
     @Test func aHostThatWouldAskShowsTapToConnectNotLoading() {
         let listed = rows(.init(needsTap: true))
-        #expect(listed.map(\.kind) == [.header(name: "chen@studio", needsYou: 0), .tapToConnect])
+        #expect(listed.map(\.kind) == [.header(name: "alex@studio", needsYou: 0), .tapToConnect])
         let failed = rows(.init(connectFailure: "Connection refused", needsTap: true))
-        #expect(failed.map(\.kind) == [.header(name: "chen@studio", needsYou: 0), .failure("Connection refused"), .tapToConnect])
+        #expect(failed.map(\.kind) == [.header(name: "alex@studio", needsYou: 0), .failure("Connection refused"), .tapToConnect])
     }
 
     @Test func rexThatCannotBeReadShowsItsAdviceAndStopsThere() {
@@ -244,7 +244,7 @@ private final class ExitingStreamHost: RexStreamHost {
 @MainActor
 struct SSHTerminalRexHostMemoryTests {
     private let hosts = IsolatedHosts()
-    private let studio = SSHTerminalProfile(host: "mac-studio", port: 22, username: "chen", authentication: .deviceKey)
+    private let studio = SSHTerminalProfile(host: "mac-studio", port: 22, username: "alex", authentication: .deviceKey)
 
     /// A mark is for the account it was seen as: a host edited to another
     /// machine, port, or user is not one Rex was seen on, and deleting the host
@@ -312,7 +312,7 @@ struct SSHTerminalRexHostMemoryTests {
 @MainActor
 struct SSHTerminalRexSectionTests {
     private let hosts = IsolatedHosts()
-    private let rexHost = SSHTerminalProfile(host: "mac-studio", username: "chen", authentication: .deviceKey, opensRexSessions: true)
+    private let rexHost = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .deviceKey, opensRexSessions: true)
     private let plainHost = SSHTerminalProfile(host: "devbox", username: "dev", startupCommand: "herdr")
 
     /// The session ids and blocks `RexFakeHost.preview()` serves.
@@ -437,7 +437,7 @@ struct SSHTerminalRexSectionTests {
         #expect(!connects(rexHost), "an approval older than the window is a prompt again")
 
         // A password that is not saved is typed: it needs the person.
-        var password = SSHTerminalProfile(host: rexHost.host, username: "chen", opensRexSessions: true)
+        var password = SSHTerminalProfile(host: rexHost.host, username: "alex", opensRexSessions: true)
         #expect(!connects(password))
         password.savesPassword = true
         try hosts.store().save(password, password: "secret")
@@ -447,7 +447,7 @@ struct SSHTerminalRexSectionTests {
     }
 
     @Test func aTabFollowerDoesNotSignInOnItsOwnAndSaysTapToConnect() {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let follower = SSHTerminalRexFollower(
             profile: host, promptsAutomatically: false,
             session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
@@ -609,7 +609,7 @@ struct SSHTerminalRexSectionTests {
 
     // MARK: Hosts Rex was seen on
 
-    private let seenHost = SSHTerminalProfile(host: "mac-studio", username: "chen", authentication: .deviceKey)
+    private let seenHost = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .deviceKey)
 
     /// A host saved with no Multiplexer that Oppi has seen Rex on leads with the
     /// section too; one it has never seen Rex on gets no follower, so nothing
@@ -648,7 +648,7 @@ struct SSHTerminalRexSectionTests {
         // A dial to a blackholed address never answers, so a started sign-in stays
         // `connecting` for the length of the test.
         let hosts = (0..<4).map {
-            SSHTerminalProfile(host: "10.255.255.1", port: UInt16(22 + $0), username: "chen", authentication: .deviceKey)
+            SSHTerminalProfile(host: "10.255.255.1", port: UInt16(22 + $0), username: "alex", authentication: .deviceKey)
         }
         let rig = try mountDialingTab(hosts, silent: Silent(true))
         defer { rig.tearDown() }
@@ -669,9 +669,9 @@ struct SSHTerminalRexSectionTests {
     /// two password hosts ahead of a key host, and the key host still signs in.
     @Test func aHostWaitingForATapDoesNotBlockAKeyHost() async throws {
         let passwords = (0..<2).map {
-            SSHTerminalProfile(host: "10.255.255.2", port: UInt16(30 + $0), username: "chen", authentication: .password)
+            SSHTerminalProfile(host: "10.255.255.2", port: UInt16(30 + $0), username: "alex", authentication: .password)
         }
-        let key = SSHTerminalProfile(host: "10.255.255.3", port: 40, username: "chen", authentication: .deviceKey)
+        let key = SSHTerminalProfile(host: "10.255.255.3", port: 40, username: "alex", authentication: .deviceKey)
         let built = Built()
         let store = hosts.store
         let rig = try mount(passwords + [key], built: built) { profile in
@@ -695,7 +695,7 @@ struct SSHTerminalRexSectionTests {
     /// What a seen host does not get is a prompt: the tab dials it only when
     /// nothing would ask, and otherwise says Tap to connect.
     @Test func aHostRexWasSeenOnIsNeverSignedInWhenItWouldAsk() async throws {
-        let seen = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey)
+        let seen = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey)
         try hosts.save([seen])
         hosts.store().rexHosts.markSeen(seen)
         let rig = try mountDialingTab([seen], silent: Silent(false))
@@ -751,7 +751,7 @@ struct SSHTerminalRexSectionTests {
     /// Rex added by its Tailscale name is one of them: that is found in the pass, after the
     /// page appeared, so the comparison has to run there too.
     @Test func plusOffersAHostMenuWhenATailnetRexIsAdded() async throws {
-        let saved = SSHTerminalProfile(host: "mac-studio", username: "chen", authentication: .deviceKey)
+        let saved = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .deviceKey)
         let tailnetStore = RexDirectStore(
             defaults: try #require(UserDefaults(suiteName: "rex-plus-tests-\(UUID().uuidString)"))
         )
@@ -781,7 +781,7 @@ struct SSHTerminalRexSectionTests {
     /// other pass does: two sign-ins at once, the rest as those answer.
     @Test func aPullAsksRememberedHostsTwoAtATime() async throws {
         let four = (0..<4).map {
-            SSHTerminalProfile(host: "127.0.0.1", port: UInt16(1 + $0), username: "chen", authentication: .deviceKey)
+            SSHTerminalProfile(host: "127.0.0.1", port: UInt16(1 + $0), username: "alex", authentication: .deviceKey)
         }
         // Remembered as having no Rex: the page makes no follower for any of them, so only
         // the pull can start one.
@@ -1307,7 +1307,7 @@ struct SSHTerminalRexSectionTests {
     /// A host that would ask is not dialed by the tab, and the tap is what runs
     /// the connect.
     @Test func aRexHostThatNeedsAPromptShowsTapToConnectAndNeverDialsOnItsOwn() async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let rig = try mountDialingTab([host], silent: Silent(false))
         defer { rig.tearDown() }
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.actionCells(in: rig).isEmpty })
@@ -1335,7 +1335,7 @@ struct SSHTerminalRexSectionTests {
     /// shows the trust decision or the password sheet.
     @Test(arguments: Hit.allCases)
     func anAutomaticSignInThatHitsAPromptPresentsNothingUntilTheTap(_ hit: Hit) async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let silent = Silent(true)
         let rig = try mountDialingTab([host], silent: silent)
         defer { rig.tearDown() }
@@ -1382,7 +1382,7 @@ struct SSHTerminalRexSectionTests {
     /// pane terminal's Reconnect) runs on the same session and chrome with
     /// `listsRexSessions` off: its password prompt is the person's own action.
     @Test func aPanesPromptAfterAnAutomaticSignInIsPresented() async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let rig = try mountDialingTab([host], silent: Silent(true))
         defer { rig.tearDown() }
         let follower = try #require(rig.built.followers[host.id])
@@ -1405,7 +1405,7 @@ struct SSHTerminalRexSectionTests {
     /// A host saved with other credentials is a new host: the old one's
     /// trust failure must neither show nor be reopened by a tap.
     @Test func aHostSavedWithOtherCredentialsDropsWhatTheOldOneRanInto() async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let follower = SSHTerminalRexFollower(
             profile: host, promptsAutomatically: false,
             session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
@@ -1432,7 +1432,7 @@ struct SSHTerminalRexSectionTests {
     /// A host edited or deleted while the tab was covered is signed in, and
     /// saved, from the saved copy, never from the one the tab held before.
     @Test func aHostEditedWhileTheTabWasCoveredIsSignedInFromTheSavedCopy() async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let silent = Silent(false)
         let rig = try mountDialingTab([host], silent: silent)
         defer { rig.tearDown() }
@@ -1454,7 +1454,7 @@ struct SSHTerminalRexSectionTests {
     }
 
     @Test func aHostDeletedWhileTheTabWasCoveredIsNeitherSignedInNorSavedBack() async throws {
-        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "alex", authentication: .deviceKey, opensRexSessions: true)
         let silent = Silent(false)
         let rig = try mountDialingTab([host], silent: silent)
         defer { rig.tearDown() }
@@ -1515,7 +1515,7 @@ private final class RexBridgeConnection: SSHTerminalConnection {
 @MainActor
 struct SSHTerminalRexFindingBarContextTests {
     private let hosts = IsolatedHosts()
-    private let mini = SSHTerminalProfile(host: "mac-mini", username: "chen", authentication: .deviceKey, startupCommand: "herdr")
+    private let mini = SSHTerminalProfile(host: "mac-mini", username: "alex", authentication: .deviceKey, startupCommand: "herdr")
 
     @Test func aTerminalReadsTheMultiplexersItsBarHidesOnlyWhenTheReadIsUsed() {
         let herdr = SSHTerminalBarContext(isRexPane: false, command: "herdr")

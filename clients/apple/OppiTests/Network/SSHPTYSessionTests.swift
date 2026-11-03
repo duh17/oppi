@@ -580,13 +580,13 @@ struct SSHInstallTransportTests {
             let script = String(decoding: stdin, as: UTF8.self)
             if script == SSHPreflightProbe.script {
                 return FixtureExecReply(chunks: [data("""
-                user=chen
+                user=alex
                 kernel=Linux
                 release=6.8.0
                 arch=x86_64
-                node=/home/chen/.oppi/runtime/node/bin/node
+                node=/home/alex/.oppi/runtime/node/bin/node
                 node_version=v22.20.0
-                oppi=/home/chen/.oppi/bin/oppi
+                oppi=/home/alex/.oppi/bin/oppi
                 oppi_status=\(httpsStatus)
                 oppi_health=1
                 end=1

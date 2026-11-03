@@ -1974,7 +1974,7 @@ struct NonTextWikiLinkIconTests {
     /// it around `_` glyphs), web links keep it. Covers the icon (direct-append)
     /// and icon-free (range-based) paragraph renderers.
     @Test(arguments: [
-        "[[Da_Chen_Resume.pdf]] or [docs](https://example.com)",
+        "[[Alex_Doe_Resume.pdf]] or [docs](https://example.com)",
         "[[resume_notes.md]] or [docs](https://example.com)",
     ])
     func fileLinksSkipUnderlineWhileWebLinksKeepIt(source: String) throws {

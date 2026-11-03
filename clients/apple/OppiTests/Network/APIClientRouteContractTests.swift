@@ -412,13 +412,13 @@ extension APIClientEndpoint {
         APIClientEndpoint("listExtensions") { _ = try? await $0.listExtensions() },
         APIClientEndpoint("listDirectories") { _ = try? await $0.listDirectories() },
         APIClientEndpoint("getHostPathStatus") {
-            _ = try? await $0.getHostPathStatus(path: "/Users/duh/workspace")
+            _ = try? await $0.getHostPathStatus(path: "/Users/alex/workspace")
         },
         APIClientEndpoint("completeHostPath") {
-            _ = try? await $0.completeHostPath(prefix: "/Users/duh/wor")
+            _ = try? await $0.completeHostPath(prefix: "/Users/alex/wor")
         },
         APIClientEndpoint("createHostPath") {
-            _ = try? await $0.createHostPath(path: "/Users/duh/new-project")
+            _ = try? await $0.createHostPath(path: "/Users/alex/new-project")
         },
         APIClientEndpoint("getSkillDetail") {
             _ = try? await $0.getSkillDetail(name: Placeholder.name)
@@ -609,13 +609,13 @@ extension APIClientEndpoint {
             )
         },
         APIClientEndpoint("resolveHostFile") {
-            _ = try? await $0.resolveHostFile(path: "/Users/duh/notes.md")
+            _ = try? await $0.resolveHostFile(path: "/Users/alex/notes.md")
         },
         APIClientEndpoint("browseHostFile") {
-            _ = try? await $0.browseHostFile(path: "/Users/duh/notes.md")
+            _ = try? await $0.browseHostFile(path: "/Users/alex/notes.md")
         },
         APIClientEndpoint("browseHostFileContent") {
-            _ = try? await $0.browseHostFileContent(path: "/Users/duh/notes.md")
+            _ = try? await $0.browseHostFileContent(path: "/Users/alex/notes.md")
         },
         APIClientEndpoint("listCurrentFileSidecars") {
             _ = try? await $0.listCurrentFileSidecars(

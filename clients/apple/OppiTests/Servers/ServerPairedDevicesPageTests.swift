@@ -121,8 +121,8 @@ struct ServerPairedDevicesPageTests {
         let confirmation = ServerPairedDevicesViewController.revocation(for: other)
         let alert = confirmation.present(from: h.page, anchor: nil) {}
 
-        #expect(alert.title == "Revoke Chen's iPad?")
-        #expect(alert.message == "Chen's iPad will lose access immediately. Pair it again to restore access.")
+        #expect(alert.title == "Revoke Alex's iPad?")
+        #expect(alert.message == "Alex's iPad will lose access immediately. Pair it again to restore access.")
         #expect(alert.actions.map(\.title) == ["Revoke", "Cancel"])
         #expect(alert.actions.map(\.style) == [.destructive, .cancel])
     }
@@ -135,7 +135,7 @@ struct ServerPairedDevicesPageTests {
         h.page.confirmRevoke(try row("dev-1", in: h), from: nil)
 
         let sheet = try #require(h.page.presentedViewController as? UIAlertController)
-        #expect(sheet.title == "Revoke Chen's iPad?")
+        #expect(sheet.title == "Revoke Alex's iPad?")
         #expect(h.roster.revokes.isEmpty)
         // This device's row never asks.
         sheet.dismiss(animated: false)
@@ -275,7 +275,7 @@ private final class DeviceRosterAnswers: @unchecked Sendable {
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
             let rows = [
                 Row(id: "dev-me", name: "This phone", createdAt: now - 9_000, lastUsedAt: now, keyEnrolled: true),
-                Row(id: "dev-1", name: "Chen's iPad", createdAt: now - 30_000, lastUsedAt: now - 5_000, keyEnrolled: true),
+                Row(id: "dev-1", name: "Alex's iPad", createdAt: now - 30_000, lastUsedAt: now - 5_000, keyEnrolled: true),
                 Row(id: "dev-2", name: "oppi CLI", createdAt: now - 60_000, lastUsedAt: nil, keyEnrolled: false),
             ].filter { !gone.contains($0.id) }
             return try mockJSONResponse(encoding: Roster(devices: rows), for: request)

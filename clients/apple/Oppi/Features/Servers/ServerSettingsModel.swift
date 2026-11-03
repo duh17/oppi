@@ -375,7 +375,7 @@ extension ServerSettingsModel {
         model.pairedDevices = [
             AuthDevice(
                 id: currentDeviceId,
-                name: "Chen's iPhone",
+                name: "Alex's iPhone",
                 scope: "device",
                 createdAt: now - 9 * 86_400_000,
                 lastUsedAt: now,
@@ -386,14 +386,14 @@ extension ServerSettingsModel {
             ),
             AuthDevice(
                 id: "dev-ipad",
-                name: "Chen's iPad",
+                name: "Alex's iPad",
                 scope: "device",
                 createdAt: now - 30 * 86_400_000,
                 lastUsedAt: now - 3 * 3_600_000,
                 revokedAt: nil,
                 keyEnrolled: true,
                 pairingMethod: "tailscale",
-                pairingSource: "chen@github"
+                pairingSource: "alex@github"
             ),
             AuthDevice(
                 id: "dev-script",

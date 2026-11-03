@@ -2,7 +2,7 @@ import XCTest
 
 /// Portrait stack to landscape split and back, with a chat already open.
 ///
-/// Chen's device symptom is the open chat mounting, remounting about two
+/// The reported device symptom is the open chat mounting, remounting about two
 /// seconds later, then landing on the session list. This journey is the
 /// missing proof: the same chat and its composer must survive the shell swap,
 /// including while the keyboard is up.

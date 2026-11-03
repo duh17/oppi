@@ -661,7 +661,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         launch(page: "pairing-approval")
         let prompt = app.navigationBars["Approve New Device?"]
         XCTAssertTrue(prompt.waitUntilExists(timeout: 10), "The pending approval did not present")
-        XCTAssertEqual(app.staticTexts["pairing.approval.deviceName"].label, "Chen's iPad")
+        XCTAssertEqual(app.staticTexts["pairing.approval.deviceName"].label, "Alex's iPad")
         attachScreenshot("pairing-approval")
         dragToBottom(prompt)
         XCTAssertTrue(prompt.waitUntilGone(timeout: 10), "Swipe-down must close the approval")

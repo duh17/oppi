@@ -34,7 +34,7 @@ enum SSHTerminalPasswordFill {
         secureEntry && !inHistory && connected && profile?.hasPasswordToFill == true
     }
 
-    /// The system prompt's reason: `Fill the password for duh@mac-studio`.
+    /// The system prompt's reason: `Fill the password for alex@mac-studio`.
     static func reason(for profile: SSHTerminalProfile) -> String {
         "Fill the password for \(profile.endpointLabel)"
     }

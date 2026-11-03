@@ -1723,7 +1723,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         selectionOverlay.isHidden = true
     }
 
-    /// The keyboard bar's Fill Password key: shown for `host` (`duh@mac-studio`),
+    /// The keyboard bar's Fill Password key: shown for `host` (`alex@mac-studio`),
     /// hidden for nil. The screen decides when it is offered.
     func setPasswordFill(host: String?) {
         passwordFillHost = host
@@ -1904,7 +1904,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     /// Turns the keyboard's secure entry on while the live screen asks for a
-    /// secret (`Password:`, `[sudo] password for duh:`). The trait is read when
+    /// secret (`Password:`, `[sudo] password for alex:`). The trait is read when
     /// the keyboard is built, so a change reloads the input views once. The
     /// terminal is asked again only when its output or the cursor's row changed.
     /// The painted snapshot answers when it covers the newest output. When it

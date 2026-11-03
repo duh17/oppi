@@ -88,7 +88,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         try hideAndRevealNativePlay()
     }
 
-    /// Chen's device report: expanding a playing inline timeline video paused
+    /// A device report: expanding a playing inline timeline video paused
     /// it in full screen, and Back afterwards kept landing on the chat again
     /// instead of the session list. The existing test above pauses before
     /// expanding, so it never sees the handoff.
