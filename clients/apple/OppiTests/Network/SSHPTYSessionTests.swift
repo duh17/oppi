@@ -571,9 +571,8 @@ struct SSHInstallTransportTests {
     private static let inviteJSON = #"{"name":"box","pairingToken":"pt","fingerprint":"sha256:abc","host":"box.local","port":17749,"scheme":"https","inviteURL":"oppi://connect?host=box.local"}"#
 
     /// The installer, then the fresh check, status, and pair scripts, each
-    /// told apart by its stdin as on a real host. Every reply answers on its
-    /// first stdin bytes (each script fits in one message) so its exit status
-    /// can follow its EOF, which is what OpenSSH sends and what `mint` checks.
+    /// told apart by its whole stdin as on a real host, so each answers once
+    /// our EOF arrives and its exit status is what `mint` checks.
     private static func machine(installer: FixtureExecReply) -> @Sendable (String, Data) -> FixtureExecReply {
         { command, stdin in
             if command == SSHInstallScript.command { return installer }
@@ -591,13 +590,13 @@ struct SSHInstallTransportTests {
                 oppi_health=1
                 end=1
 
-                """)], answersOnFirstInput: true)
+                """)])
             }
             if script == SSHPairMint.statusScript {
-                return FixtureExecReply(chunks: [data("oppi_status=\(httpsStatus)\nend=1\n")], answersOnFirstInput: true)
+                return FixtureExecReply(chunks: [data("oppi_status=\(httpsStatus)\nend=1\n")])
             }
             if script == SSHPairMint.pairScript {
-                return FixtureExecReply(chunks: [data(inviteJSON + "\n")], answersOnFirstInput: true)
+                return FixtureExecReply(chunks: [data(inviteJSON + "\n")])
             }
             return FixtureExecReply(exitStatus: 127)
         }
@@ -609,8 +608,10 @@ struct SSHInstallTransportTests {
     }
 
     @Test func streamedStdoutArrivesInOrderAndAnExitStatusAfterEOFIsKept() async throws {
+        // The host answers on stdin larger than its 2 MiB receive window, so
+        // our EOF cannot reach it first: its EOF comes before its exit status.
         let chunks = Self.splitProgress
-        let fixture = try await SSHFixture.start(auth: .passwordOnly) { _, _ in
+        let fixture = try await SSHFixture.start(auth: .passwordOnly, maximumPacketSize: 32 * 1024) { _, _ in
             FixtureExecReply(chunks: chunks, stderr: Self.data("npm warn deprecated"), exitStatus: 0, answersOnFirstInput: true)
         }
         defer { fixture.close() }
@@ -620,8 +621,9 @@ struct SSHInstallTransportTests {
         )
         defer { connection.close() }
         let received = Mutex<[Data]>([])
+        let script = Data(repeating: UInt8(ascii: "#"), count: 3 * 1024 * 1024)
         let result = try await connection.run(
-            SSHInstallScript.command, input: Self.data("script"), maximumOutputBytes: 1 << 20, timeout: .seconds(10)
+            SSHInstallScript.command, input: script, maximumOutputBytes: 1 << 20, timeout: .seconds(10)
         ) { chunk in received.withLock { $0.append(chunk) } }
         #expect(received.withLock { $0.reduce(Data(), +) } == chunks.reduce(Data(), +))
         // Streaming keeps nothing: stdout went to the callback, stderr was counted and dropped.
@@ -631,7 +633,7 @@ struct SSHInstallTransportTests {
     @Test func installStreamsProgressThenChecksAgainAndMintsOnTheSameConnection() async throws {
         let fixture = try await SSHFixture.start(
             auth: .passwordOnly,
-            execReply: Self.machine(installer: FixtureExecReply(chunks: Self.splitProgress, exitStatus: 0, answersOnFirstInput: true))
+            execReply: Self.machine(installer: FixtureExecReply(chunks: Self.splitProgress, exitStatus: 0))
         )
         defer { fixture.close() }
         let log = await ProgressLog()
@@ -657,7 +659,7 @@ struct SSHInstallTransportTests {
         let installer = FixtureExecReply(chunks: [
             Self.data("oppi-install: step=oppi status=begin detail=npm install\noppi-install: step=oppi status=fail detail=ETIMEDOUT\n"),
             Self.data("oppi-install: error code=npm detail=ETIMEDOUT registry.npmjs.org\n"),
-        ], exitStatus: 0, answersOnFirstInput: true)
+        ], exitStatus: 0)
         let fixture = try await SSHFixture.start(auth: .passwordOnly, execReply: Self.machine(installer: installer))
         defer { fixture.close() }
         await #expect(throws: SSHPreflightFailure.installFailed(code: "npm", detail: "ETIMEDOUT registry.npmjs.org")) {
@@ -1038,15 +1040,21 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
     private var countingStdin: Int?
     /// A scripted exec (`execReply`): its command and the stdin read so far.
     private var scripted: (command: String, stdin: Data)?
+    /// The client's EOF reached this handler. NIOSSH hands it over with the
+    /// stdin read alongside it, before `channelReadComplete`.
+    private var stdinClosed = false
     private var answered = false
 
     init(state: SSHFixture.State) {
         self.state = state
     }
 
-    /// Writes `reply` once stdin has closed: each stdout chunk as its own
-    /// channel-data message, then stderr, then EOF, and only after EOF the
-    /// exit status, as OpenSSH may order them.
+    /// Writes `reply`: each stdout chunk as its own channel-data message, then
+    /// stderr, then EOF, and only after EOF the exit status, as OpenSSH may
+    /// order them. NIOSSH refuses to send an EOF once the peer's EOF arrived
+    /// ("Sent EOF out of sequence") and drops the channel without the exit
+    /// status, so a reply after the client's EOF sends its exit status and
+    /// closes without one.
     private func answer(_ reply: FixtureExecReply, on channel: Channel) {
         guard !reply.hold, !answered else { return }
         answered = true
@@ -1056,6 +1064,13 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
         guard !reply.staysOpen else { return }
         if !reply.stderr.isEmpty {
             channel.writeAndFlush(SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: reply.stderr))), promise: nil)
+        }
+        guard !stdinClosed else {
+            if let status = reply.exitStatus {
+                channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status), promise: nil)
+            }
+            channel.close(promise: nil)
+            return
         }
         let eof = channel.eventLoop.makePromise(of: Void.self)
         channel.close(mode: .output, promise: eof)
@@ -1112,6 +1127,7 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
                 context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
             }
         case ChannelEvent.inputClosed where scripted != nil:
+            stdinClosed = true
             if let scripted, let reply = state.execReply?(scripted.command, scripted.stdin) {
                 answer(reply, on: context.channel)
             }
@@ -1141,9 +1157,6 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
         guard message.type == .channel, case .byteBuffer(let buffer) = message.data else { return }
         if scripted != nil {
             buffer.withUnsafeReadableBytes { scripted?.stdin.append(contentsOf: $0) }
-            if let scripted, let reply = state.execReply?(scripted.command, scripted.stdin), reply.answersOnFirstInput {
-                answer(reply, on: context.channel)
-            }
             return
         }
         if let counted = countingStdin {
@@ -1158,6 +1171,16 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
             state.inputReceived.succeed(())
         }
     }
+
+    /// A first-input reply waits for the end of the read, by which point
+    /// `stdinClosed` reflects a client EOF that arrived with the stdin.
+    func channelReadComplete(context: ChannelHandlerContext) {
+        if let scripted, !scripted.stdin.isEmpty,
+           let reply = state.execReply?(scripted.command, scripted.stdin), reply.answersOnFirstInput {
+            answer(reply, on: context.channel)
+        }
+        context.fireChannelReadComplete()
+    }
 }
 
 /// What the fixture's scripted exec writes back.
@@ -1171,9 +1194,9 @@ private struct FixtureExecReply: Sendable {
     var hold = false
     /// Write the chunks and then nothing more: a command still running.
     var staysOpen = false
-    /// Answer on the first stdin bytes, before the client's EOF arrives. A
-    /// NIOSSH server cannot send a request once both sides sent EOF, so this
-    /// is how its exit status can follow its own EOF, as OpenSSH may send it.
+    /// Answer on the first stdin read instead of after the client's EOF. The
+    /// EOF-then-exit-status order needs the client's EOF still unsent, which
+    /// only stdin larger than the receive window guarantees.
     var answersOnFirstInput = false
 }
 
