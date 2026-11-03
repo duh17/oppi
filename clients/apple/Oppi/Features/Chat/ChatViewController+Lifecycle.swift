@@ -192,12 +192,14 @@ extension ChatViewController {
         // A sheet over the chat keeps it in the window; only leaving the
         // window (a push, a full-screen cover, a pop) is a disappearance.
         guard viewIfLoaded?.window == nil || isMovingFromParent || screen.isMovingFromParent else { return }
-        // AVKit full screen from one of this chat's inline videos also takes it
-        // out of the window, but the person is still in the chat. Leaving would
-        // drop the session stream; the reconnect on return reloads history, the
-        // reply's live item becomes its persisted one, and the reconfigured row
-        // tears down the player that just came back from full screen. The
-        // overlay begins before AVKit removes the chat, so it covers this call.
+        // AVKit full screen also takes the chat out of the window, but the
+        // person is still in it. The media overlay flag is app-wide: it covers
+        // any AVKit full screen in the app's single scene, here the inline video
+        // that opened over this chat. Leaving would drop the session stream; the
+        // reconnect on return reloads history, the reply's live item becomes its
+        // persisted one, and the reconfigured row tears down the player that just
+        // came back from full screen. The overlay begins before AVKit removes the
+        // chat, so it covers this call. Popping the chat still leaves.
         if appNavigation.isMediaOverlayActive, !isMovingFromParent, !screen.isMovingFromParent { return }
         handleDisappear()
     }

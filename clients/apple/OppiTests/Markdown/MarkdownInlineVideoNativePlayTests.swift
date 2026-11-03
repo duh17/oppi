@@ -192,6 +192,45 @@ struct MarkdownInlineVideoNativePlayTests {
         #expect(afterDismissAdvanced, "play() after fullscreen-ownership dismiss did not advance: \(playbackProbe(player))")
     }
 
+    /// Letting go of a pinch into full screen cancels AVKit's presentation after
+    /// `willBegin` already claimed it. Full screen never opened, so the player
+    /// returns to inline ownership and the app's navigation freeze lifts;
+    /// otherwise the freeze outlives it and the chat treats later pushes and
+    /// full-screen covers as still being on screen.
+    @MainActor
+    @Test("a cancelled full-screen begin hands the player and the app's navigation back")
+    func cancelledFullScreenBeginReleasesOwnership() async throws {
+        let body = try Data(contentsOf: try knownGoodH264URL())
+        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
+        defer { server.stop() }
+
+        let root = makeTestAppRoot()
+        let observer = WorkspaceMediaOverlayObserver(root: root)
+        defer { withExtendedLifetime(observer) {} }
+
+        let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
+        defer { host.window.isHidden = true }
+        let video = try await waitForInstalledVideo(in: host.video)
+        let controller = try #require(video.debugPlayerControllerForTesting)
+        let delegate = try #require(controller.delegate)
+
+        let begin = ScriptedTransitionCoordinator()
+        delegate.playerViewController?(controller, willBeginFullScreenPresentationWithAnimationCoordinator: begin)
+        #expect(await waitForMainActorCondition { root.navigation.isMediaOverlayActive })
+
+        begin.finish(cancelled: true)
+        #expect(
+            await waitForMainActorCondition { !root.navigation.isMediaOverlayActive },
+            "A cancelled full-screen begin left the navigation freeze on"
+        )
+        // Inline again, so the row leaving the screen is a real hide.
+        video.setPlaybackVisible(false)
+        #expect(
+            !video.debugIsPlaybackVisibleForTesting,
+            "A cancelled full-screen begin left the player owned by full screen"
+        )
+    }
+
     @MainActor
     @Test("timeline scroll builds no player before tap; one tap builds one playing player; each still loads once")
     func timelineScrollBuildsNoPlayerUntilTap() async throws {
@@ -368,6 +407,57 @@ struct MarkdownInlineVideoNativePlayTests {
         #expect(released, "closed chat stayed alive")
         #expect(model.player == nil, "closed chat's video still has a player: \(model.debugPlaybackProbeForTesting)")
     }
+}
+
+/// A transition UIKit hands the delegate, finished when the test says so.
+@MainActor
+private final class ScriptedTransitionCoordinator: NSObject, UIViewControllerTransitionCoordinator {
+    private var completions: [(any UIViewControllerTransitionCoordinatorContext) -> Void] = []
+    private(set) var isCancelled = false
+
+    func finish(cancelled: Bool) {
+        isCancelled = cancelled
+        let pending = completions
+        completions = []
+        for completion in pending {
+            completion(self)
+        }
+    }
+
+    var isAnimated: Bool { true }
+    var presentationStyle: UIModalPresentationStyle { .fullScreen }
+    var initiallyInteractive: Bool { true }
+    var isInterruptible: Bool { false }
+    var isInteractive: Bool { false }
+    var transitionDuration: TimeInterval { 0.3 }
+    var percentComplete: CGFloat { 0 }
+    var completionVelocity: CGFloat { 1 }
+    var completionCurve: UIView.AnimationCurve { .easeInOut }
+    let containerView = UIView()
+    var targetTransform: CGAffineTransform { .identity }
+
+    func viewController(forKey key: UITransitionContextViewControllerKey) -> UIViewController? { nil }
+    func view(forKey key: UITransitionContextViewKey) -> UIView? { nil }
+
+    func animate(
+        alongsideTransition animation: ((any UIViewControllerTransitionCoordinatorContext) -> Void)?,
+        completion: ((any UIViewControllerTransitionCoordinatorContext) -> Void)?
+    ) -> Bool {
+        animation?(self)
+        if let completion { completions.append(completion) }
+        return true
+    }
+
+    func animateAlongsideTransition(
+        in view: UIView?,
+        animation: ((any UIViewControllerTransitionCoordinatorContext) -> Void)?,
+        completion: ((any UIViewControllerTransitionCoordinatorContext) -> Void)?
+    ) -> Bool {
+        animate(alongsideTransition: animation, completion: completion)
+    }
+
+    func notifyWhenInteractionEnds(_ handler: @escaping (any UIViewControllerTransitionCoordinatorContext) -> Void) {}
+    func notifyWhenInteractionChanges(_ handler: @escaping (any UIViewControllerTransitionCoordinatorContext) -> Void) {}
 }
 
 @MainActor

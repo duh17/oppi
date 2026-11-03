@@ -286,6 +286,42 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    /// The full-screen flag keeps a covered chat on screen, but popping the
+    /// chat while it is set is still leaving: a flag that outlives its full
+    /// screen must not keep a closed chat's stream.
+    @Test func poppingTheChatDuringFullScreenReleasesFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let appNavigation = AppNavigation()
+        let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
+        let stack = UINavigationController(rootViewController: UIViewController())
+        stack.pushViewController(chat, animated: false)
+        let host = show(chat, in: stack)
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        appNavigation.beginMediaOverlay(activeServerId: connection.currentServerId)
+        stack.popViewController(animated: false)
+        stack.view.layoutIfNeeded()
+
+        let released = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(released, "A popped chat must end its session stream even while the full-screen flag is set")
+
+        // Alive until here, so the release came from leaving, not from the
+        // freed chat's session lease.
+        withExtendedLifetime(chat) {}
+        appNavigation.endMediaOverlay(currentServerId: connection.currentServerId)
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func destroyingCoveredChatViewDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let workspaceId = "w1"

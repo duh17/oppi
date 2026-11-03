@@ -1778,10 +1778,9 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
 
         InlineVideoPlayerConfiguration.apply(to: playerController)
         let playerDelegate = InlineVideoPlayerDelegate(
-            onFullScreenChange: { [weak self] fullScreen in
-                guard fullScreen, let self else { return }
-                self.model.setFullScreen(true)
-                WorkspaceMediaOverlayPost.begin()
+            onFullScreenChange: { [weak self] fullScreen in // false: a cancelled begin
+                self?.model.setFullScreen(fullScreen)
+                if fullScreen { WorkspaceMediaOverlayPost.begin() } else { WorkspaceMediaOverlayPost.end() }
             },
             onFullScreenWillEnd: { [weak self] in self?.model.handleWillEndFullScreen() },
             onFullScreenDidEnd: { [weak self] attached in

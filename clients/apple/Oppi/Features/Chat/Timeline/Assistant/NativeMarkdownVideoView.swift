@@ -332,10 +332,9 @@ final class NativeMarkdownVideoView: UIView {
         let host = AVPlayerViewController()
         InlineVideoPlayerConfiguration.apply(to: host)
         playerDelegate = InlineVideoPlayerDelegate(
-            onFullScreenChange: { [weak self] active in
-                guard active else { return }
-                self?.playbackModel.setFullScreen(true)
-                WorkspaceMediaOverlayPost.begin()
+            onFullScreenChange: { [weak self] active in // false: a cancelled begin
+                self?.playbackModel.setFullScreen(active)
+                if active { WorkspaceMediaOverlayPost.begin() } else { WorkspaceMediaOverlayPost.end() }
             },
             onFullScreenWillEnd: { [weak self] in self?.playbackModel.handleWillEndFullScreen() },
             onFullScreenDidEnd: { [weak self] attached in

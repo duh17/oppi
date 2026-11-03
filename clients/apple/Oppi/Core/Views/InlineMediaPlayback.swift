@@ -1557,6 +1557,17 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
                 playerViewController.player?.play()
             }
         }
+        // Letting go of a pinch cancels the presentation after this claimed it.
+        // Full screen never opened, so hand ownership and the navigation freeze
+        // back; AVKit sends no end callbacks for a begin that did not happen.
+        // Coordinator completions run on the main thread.
+        nonisolated(unsafe) let onFullScreenChange = onFullScreenChange
+        MainActor.assumeIsolated {
+            _ = coordinator.animate(alongsideTransition: nil) { context in
+                guard context.isCancelled else { return }
+                MainActor.assumeIsolated { onFullScreenChange?(false) }
+            }
+        }
 #if DEBUG
         MainActor.assumeIsolated {
             AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
