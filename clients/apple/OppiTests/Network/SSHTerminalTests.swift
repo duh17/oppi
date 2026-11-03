@@ -3249,6 +3249,12 @@ struct SSHTerminalTests {
             grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve,
             "the bar's rows go to the grid while the keyboard is up, in the same resize"
         )
+        // The only two geometries the transition may report: the grid with the bar's
+        // rows while the keyboard is up, and the grid it settles at. Anything else is a
+        // resize the hold should have kept back.
+        let upGeometry = try #require(grid.geometry(for: grid.bounds.size))
+        let settledGeometry = try #require(grid.geometry(for: gridBefore))
+        let resizesBeforeHold = resizes.sizes.count
 
         keyboard(top: window.bounds.maxY)
         #expect(try !hiddenFromVoiceOver("sshTerminal.back"), "Back is back with the keyboard down")
@@ -3285,14 +3291,25 @@ struct SSHTerminalTests {
             channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
             "the remote terminal is the grid above the bar"
         )
-        // The bar coalesces resizes for 80 ms and the fixture delivers each one on its own
-        // task, so a count read straight after a layout wait can miss a resize still owed:
-        // the settled count is the one that stops changing, not the next reading.
+        // A keyboard transition holds the grid's resize and releases it
+        // `max(duration, 0.25) + 0.15` s after the notification, sending the grid's
+        // real size if that hold's prediction missed; the channel then coalesces the
+        // send for another 80 ms. Neither number is a constant to reference: the hold is
+        // inline in SSHTerminalViewController's release and the coalesce inline in
+        // SSHTerminalChannel.resize, so raise `releaseAndCoalesce` if either grows. The
+        // count is settled once it has not moved for longer than all of that, not after
+        // the next reading: a reading taken sooner can still be short a resize the
+        // transition owes.
+        let releaseAndCoalesce = Duration.milliseconds(480)
+        let settleGap = releaseAndCoalesce + .milliseconds(120)
         func settledResizeCount() async -> Int {
-            var last = resizes.sizes.count
-            for _ in 0..<12 {
-                try? await Task.sleep(for: .milliseconds(120))
+            var last = -1
+            for _ in 0..<6 {
+                // Lay out before the wait, so a report this layout triggers reaches the
+                // channel's coalesce before the sleep, and every read is at least
+                // `settleGap` after the last layout the test caused.
                 nav.view.layoutIfNeeded()
+                try? await Task.sleep(for: settleGap)
                 let count = resizes.sizes.count
                 if count == last { return count }
                 last = count
@@ -3305,6 +3322,18 @@ struct SSHTerminalTests {
             nav.view.layoutIfNeeded()
             return resizes.sizes.count == settledResizes
         }, "settled: the bar adds no resize of its own")
+        // The count alone cannot see a bar resize the hold absorbed early in the
+        // transition, because it happens before the settle: read what the transition
+        // reported instead. That compares geometry, never when the reads landed.
+        let reportedInTransition = resizes.sizes.dropFirst(resizesBeforeHold)
+        #expect(
+            reportedInTransition.allSatisfy { $0 == upGeometry || $0 == settledGeometry },
+            "the transition reports the grid's two sizes, nothing between them: \(Array(reportedInTransition))"
+        )
+        #expect(
+            channel.engine.geometry == settledGeometry,
+            "the transition ends with the terminal at the grid's size, rows and columns"
+        )
         #expect(nav.isNavigationBarHidden)
 
         // Back's dot means a blocked program (or Herdr) wants you; a notification does not.
