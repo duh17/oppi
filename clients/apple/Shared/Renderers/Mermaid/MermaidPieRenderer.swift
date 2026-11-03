@@ -402,7 +402,7 @@ enum MermaidPieRenderer {
         diagram.slices.map { slice in
             let raw: String
             if diagram.showData {
-                raw = "\(slice.label) : \(formatDataValue(slice.value))"
+                raw = "\(slice.label) : \(MermaidTextUtils.formatDataValue(slice.value))"
             } else {
                 raw = slice.label
             }
@@ -496,24 +496,6 @@ enum MermaidPieRenderer {
     }
 
     // MARK: - Number formatting
-
-    /// Format a `showData` value without narrowing to `Int`, which traps
-    /// for finite Doubles above `Int.max` (e.g. 1e20).
-    nonisolated static func formatDataValue(_ value: Double) -> String {
-        guard value.isFinite else { return "0" }
-        let rounded = (value * 100).rounded() / 100
-        if rounded == rounded.rounded() {
-            return String(format: "%.0f", rounded)
-        }
-        var text = String(format: "%.2f", rounded)
-        while text.contains("."), text.last == "0" {
-            text.removeLast()
-        }
-        if text.last == "." {
-            text.removeLast()
-        }
-        return text
-    }
 
     private static func roundedPercentString(_ fraction: Double) -> String {
         let pct = (fraction * 100).rounded()

@@ -167,9 +167,9 @@ struct MermaidPieConformanceTests {
         #expect(diagram.slices[0].label == "Huge")
         #expect(diagram.slices[0].value.isFinite)
         #expect(diagram.slices[0].value > Double(Int.max))
-        #expect(MermaidPieRenderer.formatDataValue(diagram.slices[0].value) == raw)
-        #expect(MermaidPieRenderer.formatDataValue(12.5) == "12.5")
-        #expect(MermaidPieRenderer.formatDataValue(15) == "15")
+        #expect(MermaidTextUtils.formatDataValue(diagram.slices[0].value) == raw)
+        #expect(MermaidTextUtils.formatDataValue(12.5) == "12.5")
+        #expect(MermaidTextUtils.formatDataValue(15) == "15")
     }
 
     /// SPEC: pie values must be positive numbers greater than zero.

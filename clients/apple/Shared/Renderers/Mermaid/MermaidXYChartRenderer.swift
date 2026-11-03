@@ -1028,27 +1028,11 @@ enum MermaidXYChartRenderer {
         if absValue >= 10_000 {
             let thousands = value / 1_000
             if abs(thousands - thousands.rounded()) < 0.05 {
-                return "\(formatDataValue(thousands.rounded()))k"
+                return "\(MermaidTextUtils.formatDataValue(thousands.rounded()))k"
             }
-            return "\(formatDataValue(thousands))k"
+            return "\(MermaidTextUtils.formatDataValue(thousands))k"
         }
-        return formatDataValue(value)
-    }
-
-    nonisolated static func formatDataValue(_ value: Double) -> String {
-        guard value.isFinite else { return "0" }
-        let rounded = (value * 100).rounded() / 100
-        if rounded == rounded.rounded() {
-            return String(format: "%.0f", rounded)
-        }
-        var text = String(format: "%.2f", rounded)
-        while text.contains("."), text.last == "0" {
-            text.removeLast()
-        }
-        if text.last == "." {
-            text.removeLast()
-        }
-        return text
+        return MermaidTextUtils.formatDataValue(value)
     }
 
     /// One visible x-axis label after skip / clamp / ellipsis.

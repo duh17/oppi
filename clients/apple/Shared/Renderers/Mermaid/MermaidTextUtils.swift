@@ -4,8 +4,9 @@ import Foundation
 
 /// Shared text utilities for Mermaid diagram renderers.
 ///
-/// Handles HTML `<br>` tag normalization and multi-line CoreText
-/// measurement/drawing. All methods are `nonisolated static`.
+/// Handles HTML `<br>` tag normalization, label value formatting, and
+/// multi-line CoreText measurement/drawing. All methods are
+/// `nonisolated static`.
 enum MermaidTextUtils {
 
     static func hexagonPath(_ rect: CGRect) -> CGPath {
@@ -264,6 +265,26 @@ enum MermaidTextUtils {
         "nbsp": "\u{00A0}",
         "quot": "\"",
     ]
+
+    // MARK: - Label values
+
+    /// Format a data value for a label without narrowing to `Int`, which
+    /// traps for finite Doubles above `Int.max` (e.g. 1e20).
+    static func formatDataValue(_ value: Double) -> String {
+        guard value.isFinite else { return "0" }
+        let rounded = (value * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(format: "%.0f", rounded)
+        }
+        var text = String(format: "%.2f", rounded)
+        while text.contains("."), text.last == "0" {
+            text.removeLast()
+        }
+        if text.last == "." {
+            text.removeLast()
+        }
+        return text
+    }
 
     // MARK: - Text wrapping
 
