@@ -154,6 +154,7 @@
 		10FAE471D81D0CC088A778B9 /* ServerStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51F61A141BEB8DA25E77A836 /* ServerStoreTests.swift */; };
 		113CECCBF0B51A94748B6919 /* TelemetryContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1F6D9A0BE5DA9100827917 /* TelemetryContext.swift */; };
 		11622284BAC80178F23C633F /* SettingsAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349FE3953582DD25CE6AC89E /* SettingsAdapters.swift */; };
+		1175DF5A7849CDECC42BDF11 /* ServerExtensionDetailViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA38AE48BFF9EF2B7BB87C4E /* ServerExtensionDetailViewControllerTests.swift */; };
 		11AC812E77DD1347C02F708A /* SessionNotificationCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA7AA4D33F6DA04C84D675A0 /* SessionNotificationCategory.swift */; };
 		11AD4293C6C946FF213FED3C /* SettingsRootThemeRepaintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E67878423EA57B221572B15E /* SettingsRootThemeRepaintTests.swift */; };
 		11B466E465E2303C93E8705E /* TestLaunchContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D72FC77F5504EC7DA28625 /* TestLaunchContractTests.swift */; };
@@ -4561,6 +4562,7 @@
 		EA1880D688ECE853047D3181 /* ToolCallPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallPresentation.swift; sourceTree = "<group>"; };
 		EA2FCF1CC7D5A626A6BF4C5E /* AskSubmissionRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskSubmissionRecoveryTests.swift; sourceTree = "<group>"; };
 		EA30C639ED076263555275E4 /* ThemeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeStore.swift; sourceTree = "<group>"; };
+		EA38AE48BFF9EF2B7BB87C4E /* ServerExtensionDetailViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionDetailViewControllerTests.swift; sourceTree = "<group>"; };
 		EA3C4BE705997C695DFCCD81 /* MacAppKeybindingHelp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppKeybindingHelp.swift; sourceTree = "<group>"; };
 		EA50E491759482133E79E050 /* RouterRoutesScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterRoutesScreenshotPreview.swift; sourceTree = "<group>"; };
 		EA59F13EE26D25C3F47B47B3 /* WorkspaceToggleRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceToggleRows.swift; sourceTree = "<group>"; };
@@ -8080,6 +8082,7 @@
 			children = (
 				B6E7CBFCD36152655B36F6A2 /* AppRootModalsTests.swift */,
 				793EFBB66D0D22AC99C69A7E /* ExtensionTests.swift */,
+				EA38AE48BFF9EF2B7BB87C4E /* ServerExtensionDetailViewControllerTests.swift */,
 				BF0EE9336AA75DA9CF4EFBBE /* ServerExtensionListPresentationTests.swift */,
 				76B141DCB5540238B056BA56 /* ServerExtensionsViewControllerTests.swift */,
 			);
@@ -9957,6 +9960,7 @@
 				B0D5DAFC75471905BDBA8277 /* ServerConnectionTests.swift in Sources */,
 				3AFF1B16E99759C34404DA4C /* ServerConnectionTypesTests.swift in Sources */,
 				01CA0FA1EC469EAAAB7DD9AC /* ServerConnectionUsageMetricTests.swift in Sources */,
+				1175DF5A7849CDECC42BDF11 /* ServerExtensionDetailViewControllerTests.swift in Sources */,
 				0B31FBAF9989AE2C2E2B70DC /* ServerExtensionListPresentationTests.swift in Sources */,
 				58F368C008C5F01F3C5A89B7 /* ServerExtensionsViewControllerTests.swift in Sources */,
 				60A51F0B03FABCD956DF6055 /* ServerInfoGitStatusTests.swift in Sources */,

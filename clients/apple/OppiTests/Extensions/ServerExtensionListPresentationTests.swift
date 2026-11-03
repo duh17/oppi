@@ -179,15 +179,13 @@ struct ServerExtensionListPresentationTests {
             kept: false
         ))
 
-        // Empty groups are left out.
-        #expect(sections.map(\.title) == ["Tools", "Hooks", "Wraps", "Runtimes"])
-        #expect(sections[0].lines == ["web_search", "web_fetch"])
-        #expect(sections[1].lines == [
+        // Empty groups are left out; tools and runtimes have their own places.
+        #expect(sections.map(\.title) == ["Hooks", "Wraps"])
+        #expect(sections[0].lines == [
             "pi.generation: beforeRequest, beforeProviderRequest",
             "pi.tool: beforeTool",
         ])
-        #expect(sections[2].lines == ["Tool read", "Prompt section guide"])
-        #expect(sections[3].lines == ["host"])
+        #expect(sections[1].lines == ["Tool read", "Prompt section guide"])
     }
 
     @Test func searchMatchesCapabilityProvenanceKindAndState() {
@@ -273,7 +271,7 @@ struct ServerExtensionListPresentationTests {
         // The detail landed: the page lists what the extension contributes.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return page.sections().contains { $0.id == .tools }
+            return page.sections().contains { $0.id == .tools(.piExtension) }
         }, "the detail's contributions are listed")
 
         // Enable saves, and the detail request that follows it fails: the
@@ -289,7 +287,7 @@ struct ServerExtensionListPresentationTests {
         page.view.layoutIfNeeded()
         let summary = try #require(page.state?.summary)
         #expect(summary.isServerDefaultOn, "the catalog's saved answer survives the failed reload")
-        #expect(page.sections().contains { $0.id == .tools }, "a failed reload keeps the contents it found")
+        #expect(page.sections().contains { $0.id == .tools(.piExtension) }, "a failed reload keeps the contents it found")
         #expect(page.sections().contains { $0.id == .commands })
     }
 
@@ -345,7 +343,7 @@ struct ServerExtensionListPresentationTests {
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return page.sections().contains { $0.id == .tools }
+            return page.sections().contains { $0.id == .tools(.piExtension) }
         }, "the detail landed")
 
         let summary = try #require(page.state?.summary)
@@ -404,10 +402,8 @@ struct ServerExtensionListPresentationTests {
         })
         let sections = page.sections()
         #expect(sections.map(\.id).prefix(3) == [.summary, .status, .serverDefault], "status first")
-        #expect(sections.first { $0.id == .plugin("Tools") }?.items == [.pluginLine("Tools", "oppi_control")])
         #expect(sections.first { $0.id == .plugin("Hooks") }?.items == [.pluginLine("Hooks", "pi.tool: beforeTool")])
         #expect(sections.first { $0.id == .plugin("Prompt Sections") } != nil)
-        #expect(sections.first { $0.id == .source }?.items.contains(.detail("Source")) == true)
         let toggle = try #require(Self.switchWithIdentifier("server.extension.enabled", in: page.view))
         #expect(toggle.isOn)
         #expect(!toggle.isEnabled, "a required built-in cannot be turned off")
@@ -486,7 +482,7 @@ struct ServerExtensionListPresentationTests {
 /// Answers one extension's page: its catalog, its detail, and its Enable save.
 /// The detail request can be made to fail after a save, as a server that answers
 /// the catalog and then refuses the detail does. Counts the saves.
-private final class ExtensionDetailAnswers: @unchecked Sendable {
+final class ExtensionDetailAnswers: @unchecked Sendable {
     static let host = "extension-detail.test"
     static let serverId = "extension-detail-server"
 

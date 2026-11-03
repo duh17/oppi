@@ -2,10 +2,11 @@ import UIKit
 
 /// One Pi extension or plugin on one server (route `.serverResourceDetail`, kind
 /// `.extension`): its status and load errors first, its server default switch
-/// (fixed on for a runtime built-in, which the footer says), where it comes from, and what it
-/// contributes: a Pi extension's tools and commands, a plugin's tools, hooks by
-/// task, prompt sections, wraps, tasks and runtimes, all from the row's
-/// protocol fields. An extension with a
+/// (fixed on for a runtime built-in, which the footer says), an About card (its
+/// type, where it comes from, and a plugin's runtimes), and what it contributes:
+/// one Tools section (split by the sessions each reaches when it is both kinds),
+/// a Pi extension's commands, a plugin's hooks by task, prompt sections, wraps
+/// and tasks, all from the row's protocol fields. An extension with a
 /// user-editable host file also carries the compact Oppi bar, the shared guided
 /// composer on this screen's server, which starts a session for that file.
 ///
@@ -19,22 +20,31 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
     ServerExtensionDetailViewController.Section, ServerExtensionDetailViewController.Item
 > {
     enum Section: Hashable, Sendable {
-        case summary, serverDefault, source, status, loading, tools, commands
+        case summary, serverDefault, about, status, loading, commands
+        /// The tools of one origin.
+        case tools(ServerExtensionToolOrigin)
         /// One group of what a plugin contributes, by its title.
         case plugin(String)
+    }
+
+    /// A row of the About card.
+    enum AboutRow: String, Hashable, Sendable {
+        case type, from, runsIn
     }
 
     enum Item: Hashable, Sendable {
         case title
         case enabled
         case mutationError
-        case detail(String)
+        case about(AboutRow)
         case status
         case loadError(String)
         /// A failed plugin reload left its previous code running.
         case kept
         case warning(String)
-        case tool(String)
+        /// One tool by its origin and name: a plugin and its package's classic
+        /// extension may both have a tool of one name.
+        case tool(ServerExtensionToolOrigin, String)
         case command(String)
         /// One line of a plugin group: the group's title, then the line.
         case pluginLine(String, String)
@@ -95,42 +105,51 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     : "New sessions use this setting. Reload an active session to apply it now.",
                 items: state.mutationError == nil ? [.enabled] : [.enabled, .mutationError]
             ),
-            ListSection(.source, header: "Source", items: sourceItems),
+            ListSection(.about, header: "About", items: aboutItems),
         ]
-        if let plugin = state.summary.plugin {
-            for group in ServerExtensionListPresentation.pluginSections(for: plugin) {
-                sections.append(ListSection(
-                    .plugin(group.title),
-                    header: "Plugin \(group.title)",
-                    items: Self.unique(group.lines).map { Item.pluginLine(group.title, $0) }
-                ))
-            }
-        }
         // The contributions' place: the kit's compact loading row until the detail
         // arrives, and its one failed row with Retry when the request failed.
         if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure) {
             sections.append(ListSection(.loading, items: [], state: row))
         }
-        if let tools = state.detail?.contributedTools, !tools.isEmpty {
-            sections.append(ListSection(.tools, header: "Contributed Tools", items: Self.unique(tools).map(Item.tool)))
+        for group in toolGroups {
+            sections.append(ListSection(
+                .tools(group.origin),
+                header: group.title,
+                items: group.tools.map { Item.tool(group.origin, $0.name) }
+            ))
         }
         if let commands = state.detail?.contributedCommands, !commands.isEmpty {
             sections.append(ListSection(
-                .commands, header: "Contributed Commands", items: Self.unique(commands).map(Item.command)
+                .commands, header: "Commands", items: Self.unique(commands).map(Item.command)
             ))
+        }
+        if let plugin = state.summary.plugin {
+            for group in ServerExtensionListPresentation.pluginSections(for: plugin) {
+                sections.append(ListSection(
+                    .plugin(group.title),
+                    header: group.title,
+                    items: Self.unique(group.lines).map { Item.pluginLine(group.title, $0) }
+                ))
+            }
         }
         return sections
     }
 
-    private var sourceItems: [Item] {
-        var items = [Item]()
-        if state?.summary.packageName != nil { items.append(.detail("Package")) }
-        items += [.detail("Provenance"), .detail("Kind")]
-        if ServerExtensionListPresentation.sourceLabel(state?.summary.source) != nil { items.append(.detail("Source")) }
-        if state.flatMap({ ServerExtensionListPresentation.kindsLabel(for: $0.summary) }) != nil {
-            items.append(.detail("Type"))
-        }
-        return items + [.detail("Scope")]
+    /// Type and From always; Runs In only for a plugin with runtimes.
+    private var aboutItems: [Item] {
+        let runsIn = ServerExtensionListPresentation.runtimesLabel(for: state?.summary.plugin) != nil
+        return [.about(.type), .about(.from)] + (runsIn ? [.about(.runsIn)] : [])
+    }
+
+    private var toolGroups: [ServerExtensionToolGroup] {
+        guard let state else { return [] }
+        return ServerExtensionListPresentation.toolGroups(summary: state.summary, detail: state.detail)
+    }
+
+    /// A tool row's drawn row, found by its item when the row is configured.
+    private func toolRow(_ origin: ServerExtensionToolOrigin, _ name: String) -> ServerExtensionToolRow? {
+        toolGroups.first { $0.origin == origin }?.tools.first { $0.name == name }
     }
 
     /// What Pi makes of the extension — its state, why it could not load it, and
@@ -173,12 +192,14 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .mutationError: resourceRowInputs(.mutationError)
         case .status: resourceRowInputs(.status)
         case .loadError(let reason): AnyHashable(reason)
-        case .detail: AnyHashable([
+        case .about: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
-            AnyHashable(summary.source), AnyHashable(summary.kinds), AnyHashable(summary.plugin?.required),
+            AnyHashable(summary.source), AnyHashable(summary.kinds), AnyHashable(summary.path),
+            AnyHashable(summary.plugin?.runtimes),
         ])
         case .pluginLine(let group, let line): AnyHashable([group, line])
-        case .tool(let name), .command(let name):
+        case .tool(let origin, let name): AnyHashable([AnyHashable(name), AnyHashable(toolRow(origin, name)?.summary)])
+        case .command(let name):
             // A contribution name is selectable text: a pass that redrew the row
             // would drop a selection or the copy menu, so it is keyed by it.
             AnyHashable(name)
@@ -222,18 +243,21 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     color: palette.ui.orange
                 )
             }
-        case .detail(let title):
-            ListScreen.staticRow(cell, identifier: "server.extension.source.\(title.lowercased())")
-            let value = switch title {
-            case "Package": summary.packageName ?? ""
-            case "Provenance": summary.provenance.label
-            case "Kind": ServerExtensionListPresentation.kindLabel(for: summary.kind)
-            case "Source": ServerExtensionListPresentation.sourceLabel(summary.source) ?? ""
-            case "Type": ServerExtensionListPresentation.kindsLabel(for: summary) ?? ""
-            default: "Server default"
+        case .about(let row):
+            ListScreen.staticRow(cell, identifier: "server.extension.about.\(row.rawValue)")
+            let (title, value, path): (String, String, String?) = switch row {
+            case .type: ("Type", ServerExtensionListPresentation.typeLabel(for: summary), nil)
+            case .from: ("From", ServerExtensionListPresentation.fromLabel(for: summary), summary.path)
+            case .runsIn: ("Runs In", ServerExtensionListPresentation.runtimesLabel(for: summary.plugin) ?? "", nil)
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow(title, value, palette: palette, style: .body)
+                let valueRow = ControlRowViews.valueRow(title, value, palette: palette, style: .body)
+                guard let path, !path.isEmpty else { return valueRow }
+                // The path under the label: long, so it wraps the row's width.
+                let pathText = ControlRowViews.selectableText(path, style: .footnote, color: palette.ui.comment)
+                pathText.accessibilityLabel = String(localized: "Path")
+                pathText.accessibilityValue = path
+                return ControlRowViews.stack([valueRow, pathText], spacing: 4)
             }
         case .status:
             ListScreen.staticRow(cell, identifier: "server.extension.status")
@@ -270,7 +294,21 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     color: palette.ui.fg
                 )
             }
-        case .tool(let name), .command(let name), .pluginLine(_, let name):
+        case .tool(let origin, let name):
+            ListScreen.staticRow(cell, identifier: "server.extension.tool.\(origin.rawValue).\(name)")
+            let subtitle = toolRow(origin, name)?.summary
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
+                var views: [UIView] = [ControlRowViews.label(name, style: .body, color: palette.ui.fg)]
+                if let subtitle {
+                    views.append(ControlRowViews.label(subtitle, style: .footnote, color: palette.ui.comment, lines: 2))
+                }
+                return ControlRowViews.stack(views, spacing: 2)
+            }
+            // One element: the name, then its description's first line.
+            cell.isAccessibilityElement = true
+            cell.accessibilityLabel = name
+            cell.accessibilityValue = subtitle
+        case .command(let name), .pluginLine(_, let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
                 ControlRowViews.selectableText(name, style: .body, color: palette.ui.fg)

@@ -33,6 +33,28 @@ struct ServerPluginDetailSection: Sendable, Equatable {
     let lines: [String]
 }
 
+/// Which sessions a tool reaches: a plugin's run in durable sessions, a classic Pi
+/// extension's in Pi sessions.
+/// Its raw value keys the tool's row identifier.
+enum ServerExtensionToolOrigin: String, Hashable, Sendable {
+    case plugin, piExtension
+}
+
+/// One tool row on an extension's detail page: its name and the first line of
+/// its description.
+struct ServerExtensionToolRow: Sendable, Equatable {
+    let name: String
+    let summary: String?
+}
+
+/// The tools of one origin. A row that is a plugin and a Pi extension lists two
+/// groups, so each says which sessions it is for.
+struct ServerExtensionToolGroup: Sendable, Equatable {
+    let origin: ServerExtensionToolOrigin
+    let title: String
+    let tools: [ServerExtensionToolRow]
+}
+
 struct ServerExtensionListSection: Sendable, Equatable {
     let kind: ServerExtensionSectionKind
     let extensions: [ServerExtensionSummary]
@@ -156,8 +178,79 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         }
     }
 
-    /// What a plugin's extension contributes, one group each, empty groups left out. Hooks are
-    /// grouped by task, each handler once.
+    /// The About card's Type: the layer, what the row is, and the shape it is installed
+    /// in ("Built-in plugin", "Owner Pi extension · Package"). A built-in's layer already
+    /// says how it ships, so its kind adds nothing; a server that predates plugins says
+    /// Built-in only in `kind`.
+    static func typeLabel(for resource: ServerExtensionSummary) -> String {
+        let kinds = resource.kinds ?? []
+        var what = [
+            kinds.contains(.plugin) ? "plugin" : nil,
+            resource.isPiExtension ? "Pi extension" : nil,
+        ].compactMap { $0 }.joined(separator: " and ")
+        if what.isEmpty { what = "extension" }
+        let layer = sourceLabel(resource.source) ?? (resource.kind == .builtIn ? "Built-in" : nil)
+        let label = [layer, what].compactMap { $0 }.joined(separator: " ")
+        let shape: String? = switch resource.kind {
+        case .file, .directory, .package: kindLabel(for: resource.kind)
+        case .builtIn, .unknown: nil
+        }
+        let full = [label.prefix(1).uppercased() + label.dropFirst(), shape].compactMap { $0 }
+        return full.joined(separator: " · ")
+    }
+
+    /// The About card's From: the package, else where the server found it.
+    static func fromLabel(for resource: ServerExtensionSummary) -> String {
+        resource.packageName ?? resource.provenance.label
+    }
+
+    /// The About card's Runs In: a plugin's runtimes as one value ("Host and sandbox"),
+    /// or nil for a row with none (a classic extension, a plugin that never loaded).
+    static func runtimesLabel(for plugin: ServerPluginSummary?) -> String? {
+        guard let runtimes = plugin?.runtimes, !runtimes.isEmpty else { return nil }
+        let joined = ListFormatter.localizedString(byJoining: runtimes)
+        return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
+
+    /// A description's first line, the tool row's subtitle.
+    static func firstLine(of text: String?) -> String? {
+        let line = text?.split(whereSeparator: \.isNewline).first?.trimmingCharacters(in: .whitespaces)
+        return line?.isEmpty == false ? line : nil
+    }
+
+    /// The detail page's tools: a plugin's (from its summary) and a classic extension's
+    /// (from the detail), each name once per group. When both have tools, each group says
+    /// which sessions it is for.
+    static func toolGroups(
+        summary: ServerExtensionSummary,
+        detail: ServerExtensionDetail?
+    ) -> [ServerExtensionToolGroup] {
+        let descriptions = Dictionary(
+            (detail?.contributedToolDetails ?? []).map { ($0.name, $0.description) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let classic = detail?.contributedTools ?? detail?.contributedToolDetails?.map(\.name) ?? []
+        let groups: [(ServerExtensionToolOrigin, [ServerExtensionToolRow])] = [
+            (.plugin, uniqueNames(summary.plugin?.tools ?? []).map { ServerExtensionToolRow(name: $0, summary: nil) }),
+            (.piExtension, uniqueNames(classic).map {
+                ServerExtensionToolRow(name: $0, summary: firstLine(of: descriptions[$0] ?? nil))
+            }),
+        ].filter { !$0.1.isEmpty }
+        return groups.map { origin, tools in
+            let title = groups.count == 1 ? "Tools"
+                : origin == .plugin ? "Tools in Durable Sessions" : "Tools in Pi Sessions"
+            return ServerExtensionToolGroup(origin: origin, title: title, tools: tools)
+        }
+    }
+
+    private static func uniqueNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        return names.filter { seen.insert($0).inserted }
+    }
+
+    /// What a plugin's extension contributes besides its tools (the Tools section) and
+    /// runtimes (the About card), one group each, empty groups left out. Hooks are grouped
+    /// by task, each handler once.
     static func pluginSections(for plugin: ServerPluginSummary) -> [ServerPluginDetailSection] {
         var tasks: [String] = []
         var handlers: [String: [String]] = [:]
@@ -173,7 +266,6 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
             return nil
         }
         return [
-            ServerPluginDetailSection(title: "Tools", lines: plugin.tools),
             ServerPluginDetailSection(
                 title: "Hooks",
                 lines: tasks.map { "\($0): \((handlers[$0] ?? []).joined(separator: ", "))" }
@@ -181,7 +273,6 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
             ServerPluginDetailSection(title: "Prompt Sections", lines: plugin.sections),
             ServerPluginDetailSection(title: "Wraps", lines: wraps),
             ServerPluginDetailSection(title: "Tasks", lines: plugin.tasks),
-            ServerPluginDetailSection(title: "Runtimes", lines: plugin.runtimes),
         ].filter { !$0.lines.isEmpty }
     }
 
