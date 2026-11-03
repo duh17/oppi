@@ -47,18 +47,19 @@ function normalizeModelToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * Whether this row is the model Pi's settings default names. Pi needs both halves:
+ * a `defaultModel` without its `defaultProvider` is no default, and several providers
+ * can serve the same short id.
+ */
 function matchesDefaultModel(
   candidate: ModelResolutionCandidate,
   defaultModel?: DefaultModelRef,
 ): boolean {
   const modelId = defaultModel?.modelId?.trim();
-  if (!modelId) return false;
   const provider = defaultModel?.provider?.trim();
-  if (provider && provider !== candidate.provider) return false;
-  return (
-    candidate.modelId === modelId ||
-    candidate.canonicalId === `${provider ?? candidate.provider}/${modelId}`
-  );
+  if (!modelId || !provider || provider !== candidate.provider) return false;
+  return candidate.modelId === modelId || candidate.canonicalId === modelId;
 }
 
 function candidateToModelInfo(

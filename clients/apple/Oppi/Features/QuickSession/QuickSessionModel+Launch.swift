@@ -43,8 +43,8 @@ enum QuickSessionError: LocalizedError {
 /// closes and opens the new chat.
 extension QuickSessionModel {
     /// The model this launch names for AI sharing consent: the chosen one, else a saved
-    /// Agent's own. Nil leaves the server's default (`isDefault`), which names its provider
-    /// exactly; the pill's default label is only its id, which another provider can share.
+    /// Agent's own. Nil leaves the name to the server's catalog: its listed default
+    /// (`isDefault`), or the one company every offered model belongs to.
     private var aiSharingModelId: String? {
         if let chosen = effectiveModelId { return chosen }
         guard selectedAgentId != nil else { return nil }

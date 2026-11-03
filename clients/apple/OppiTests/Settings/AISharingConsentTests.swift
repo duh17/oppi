@@ -151,7 +151,35 @@ struct AISharingConsentTests {
         let recipient = AISharingConsent.Recipient.modelProvider(modelId: nil, catalog: catalog)
         #expect(recipient?.id == "github-copilot")
         #expect(recipient?.name == "GitHub Copilot")
-        #expect(provider(nil, [catalogModel("claude-sonnet-5", "anthropic")]) == nil, "no default listed")
+    }
+
+    @Test func withNoModelChosenOneProvidersCatalogNamesThatProvider() {
+        // The isolated E2E server: one provider's models, and no default saved yet. Whichever
+        // model answers, the content reaches that one company, so the sheet may name it.
+        let catalog = [
+            catalogModel("opencode-go/deepseek-v4.1-flash", "opencode-go"),
+            catalogModel("opencode-go/kimi-k3", "opencode-go"),
+        ]
+        #expect(provider(nil, catalog) == "opencode-go")
+        #expect(provider(nil, [catalogModel("claude-sonnet-5", "anthropic")]) == "anthropic")
+
+        let onTheServer = [
+            ModelInfo(id: "omlx/glm-5", name: "GLM", provider: "omlx", contextWindow: 1000, authKind: "local"),
+            ModelInfo(id: "omlx/qwen-3", name: "Qwen", provider: "omlx", contextWindow: 1000, authKind: "local"),
+        ]
+        let local = AISharingConsent.Recipient.modelProvider(modelId: nil, catalog: onTheServer)
+        #expect(local?.id == "omlx")
+        #expect(local?.isOnServerComputer == true, "a loopback provider is not a third party")
+    }
+
+    @Test func withNoModelChosenSeveralProvidersAndNoDefaultNamesNoProvider() {
+        // Nothing says whose models answer, and three companies could: ask for a model.
+        let catalog = [
+            catalogModel("anthropic/claude-sonnet-5", "anthropic"),
+            catalogModel("opencode-go/deepseek-v4.1-flash", "opencode-go"),
+        ]
+        #expect(provider(nil, catalog) == nil)
+        #expect(provider(nil, []) == nil)
     }
 
     @Test func aModelOnTheServersComputerIsNotCalledAThirdParty() throws {
@@ -253,6 +281,96 @@ struct AISharingConsentGateTests {
         #expect(await window.consentSheetCloses())
         #expect(model.text == "Plan the release")
         #expect(!model.isCreating)
+    }
+
+    @Test func quickSessionWithNoModelChosenNamesTheOnlyProvidersCatalog() async throws {
+        let serverId = "sha256:consent-quick-only-\(UUID().uuidString)"
+        defer { AISharingConsent.device.withdrawAll(serverId: serverId) }
+        // Nothing may reach the server before Allow: a route it did not plan fails the test.
+        let beforeAllow = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
+        let root = try await makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "consent-quick-only.test")
+        )
+        // The isolated E2E server: one provider's models, and no Pi default to star.
+        root.coordinator.activeConnection.chatState.cachedModels = [
+            ModelInfo(
+                id: "opencode-go/deepseek-v4.1-flash",
+                name: "DeepSeek V4.1 Flash",
+                provider: "opencode-go",
+                contextWindow: 200_000
+            ),
+        ]
+        let model = QuickSessionModel(root: root)
+        model.selectedWorkspace = makeTestWorkspace()
+        model.text = "Plan the release"
+        let window = ConsentWindow(UIViewController())
+        defer { window.close() }
+
+        model.handleSend()
+
+        let sheet = try #require(await window.consentSheet())
+        let onlyProvider = try #require(AISharingConsent.Recipient.modelProvider("opencode-go"))
+        #expect(
+            sheet.title == AISharingConsentSheetViewController.Copy.title(for: onlyProvider),
+            "every offered model is that one company's, so the sheet names it"
+        )
+        #expect(!model.isCreating, "nothing is created before Allow")
+        beforeAllow.end()
+
+        // Allow: the create goes out, so answer it rather than leave a route unplanned.
+        let afterAllow = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try mockJSONResponse(status: 500, json: #"{"error":"planned for this test"}"#, for: request)
+        })
+        defer { afterAllow.end() }
+        sheet.answer(.allow)
+        #expect(await window.consentSheetCloses())
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) { model.error != nil },
+            "Allow sends: the create reaches the server, which this test answers with an error"
+        )
+        _ = await afterAllow.settle()
+    }
+
+    @Test func quickSessionWithNoModelChosenRefusesWhenSeveralProvidersCouldAnswer() async throws {
+        let serverId = "sha256:consent-quick-ambiguous-\(UUID().uuidString)"
+        defer { AISharingConsent.device.withdrawAll(serverId: serverId) }
+        // The refusal reloads the catalog once before it decides, so answer that read.
+        let catalogJSON = #"{"models":[{"id":"anthropic/claude-sonnet-5","name":"Sonnet","provider":"anthropic","contextWindow":200000},{"id":"opencode-go/deepseek-v4.1-flash","name":"DeepSeek","provider":"opencode-go","contextWindow":200000}]}"#
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try mockJSONResponse(json: catalogJSON, for: request)
+        })
+        defer { routes.end() }
+        let root = try await makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: "consent-quick-ambiguous.test")
+        )
+        root.coordinator.activeConnection.chatState.cachedModels = [
+            ModelInfo(id: "anthropic/claude-sonnet-5", name: "Sonnet", provider: "anthropic", contextWindow: 200_000),
+            ModelInfo(
+                id: "opencode-go/deepseek-v4.1-flash",
+                name: "DeepSeek V4.1 Flash",
+                provider: "opencode-go",
+                contextWindow: 200_000
+            ),
+        ]
+        let model = QuickSessionModel(root: root)
+        model.selectedWorkspace = makeTestWorkspace()
+        model.text = "Plan the release"
+        let window = ConsentWindow(UIViewController())
+        defer { window.close() }
+
+        model.handleSend()
+
+        let alert = try #require(
+            await window.presented(UIAlertController.self),
+            "with nothing naming who answers, nothing is sent and the person is told why"
+        )
+        #expect(alert.title == "Not Sent")
+        #expect(window.presentedConsentSheet == nil, "there is no one to ask about")
+        #expect(!model.isCreating)
+        #expect(model.text == "Plan the release")
+        _ = await routes.settle()
     }
 
     @Test func anAnswerToAnExtensionQuestionWaitsForConsentAndNotNowKeepsIt() async throws {

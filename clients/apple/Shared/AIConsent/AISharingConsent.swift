@@ -51,7 +51,11 @@ struct AISharingConsent {
         }
 
         /// The model provider a send reaches: `modelId`'s (a `provider/id` string or a catalog
-        /// id), or with no model the server's default (`isDefault`) from its catalog.
+        /// id), or with no model the server's catalog.
+        ///
+        /// With no model chosen, a listed default (`isDefault`) names the answer. A server that
+        /// lists no default is still unambiguous when every model it offers is one company's:
+        /// whichever model answers, that company receives the content.
         ///
         /// Nil when that names no single provider. A short id that several providers serve
         /// (`claude-sonnet-5` from Anthropic and GitHub Copilot) could go to either, so it is
@@ -59,7 +63,8 @@ struct AISharingConsent {
         static func modelProvider(modelId: String?, catalog: [CatalogModel]) -> Recipient? {
             let requested = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !requested.isEmpty else {
-                return servingProvider(catalog.filter(\.isDefault)) ?? nil
+                let defaults = catalog.filter(\.isDefault)
+                return servingProvider(defaults.isEmpty ? catalog : defaults) ?? nil
             }
             // A full id names its provider. Only when none matches is it read as a short id,
             // which is how the server resolves it too.
@@ -208,10 +213,10 @@ struct AISharingConsent {
     // MARK: - The decision
 
     /// Whether content may go to every recipient now. A nil recipient is a model provider Oppi
-    /// could not name (no model chosen and no default listed, or an id several providers
-    /// serve), which is refused:
-    /// the person must know who gets it. `canAsk` is false where no sheet can show (Siri,
-    /// Shortcuts, the Share extension), which refuses instead of asking.
+    /// could not name (no model chosen and a catalog that lists several companies' models, or an
+    /// id several providers serve), which is refused: the person must know who gets it. `canAsk`
+    /// is false where no sheet can show (Siri, Shortcuts, the Share extension), which refuses
+    /// instead of asking.
     func decide(_ recipients: [Recipient?], serverId: String, canAsk: Bool) -> Decision {
         for recipient in recipients {
             guard let recipient else { return .refuse(Self.unknownProviderMessage) }

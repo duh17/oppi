@@ -92,6 +92,68 @@ describe("ModelCatalog", () => {
       expect(models[0].isDefault).toBeUndefined();
     });
 
+    it("marks the Pi default only when Pi names both halves", () => {
+      // Pi needs `defaultProvider` and `defaultModel`. A lone `defaultModel` matched every
+      // provider serving that short id, so several rows claimed to be the default and a
+      // client sending no model could not name one provider.
+      const shared = { ...GPT, id: "claude-sonnet-4-20250514", name: "Sonnet on Copilot" };
+      const withBoth = new ModelCatalog(
+        makeRegistry([SONNET, shared]),
+        makeStorage(),
+        undefined,
+        () => ({ provider: "openai", modelId: "claude-sonnet-4-20250514" }),
+      );
+
+      withBoth.refresh();
+
+      expect(
+        withBoth
+          .getAll()
+          .filter((model) => model.isDefault)
+          .map((model) => model.id),
+      ).toEqual(["openai/claude-sonnet-4-20250514"]);
+
+      const withoutProvider = new ModelCatalog(
+        makeRegistry([SONNET, shared]),
+        makeStorage(),
+        undefined,
+        () => ({ modelId: "claude-sonnet-4-20250514" }),
+      );
+
+      withoutProvider.refresh();
+
+      expect(withoutProvider.getAll().filter((model) => model.isDefault)).toEqual([]);
+    });
+
+    it("marks no row when Pi names no default", () => {
+      const catalog = new ModelCatalog(makeRegistry([SONNET, GPT]), makeStorage());
+
+      catalog.refresh();
+
+      expect(catalog.getAll().filter((model) => model.isDefault)).toEqual([]);
+    });
+
+    it("marks no row when the Pi default is not offered", () => {
+      const catalog = new ModelCatalog(
+        makeRegistry([SONNET, GPT]),
+        makeStorage(),
+        ["openai/*"],
+        () => ({ provider: "anthropic", modelId: "claude-sonnet-4-20250514" }),
+      );
+
+      catalog.refresh();
+
+      expect(catalog.getAll().filter((model) => model.isDefault)).toEqual([]);
+    });
+
+    it("returns no rows and no default when the registry offers nothing", () => {
+      const catalog = new ModelCatalog(makeRegistry([], []), makeStorage());
+
+      catalog.refresh();
+
+      expect(catalog.getAll()).toEqual([]);
+    });
+
     it("advertises supported thinking levels and the current default", () => {
       const sonnetWithThinking = {
         ...SONNET,
