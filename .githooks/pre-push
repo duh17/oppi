@@ -9,6 +9,21 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+# A real push runs the copy installed at <git common dir>/hooks/pre-push, a snapshot taken when it
+# was installed, while this file is the one edited. The snapshot's self-test reads this file (it
+# greps it and extracts its lane runner), so a snapshot older than the checkout runs its old
+# fixtures against new code and fails the harness lane on a push this file passes when run by hand.
+# Hand every push to this file, so an installed copy is a launcher that cannot drift from the
+# checkout. The comparison is by content, not by path: $0 and this file can spell one path two ways
+# (/var vs /private/var), and a path test would read a difference where the files are identical and
+# hand off forever. OPPI_PRE_PUSH_DELEGATED is the one-shot breaker for a hand-off that still
+# compares unequal (e.g. cmp is not on PATH): rather than loop, the copy runs as it is.
+CHECKOUT_HOOK="$REPO_ROOT/.githooks/pre-push"
+if [[ -z "${OPPI_PRE_PUSH_DELEGATED:-}" && -f "$0" && -f "$CHECKOUT_HOOK" ]] \
+  && command -v cmp >/dev/null && ! cmp -s "$0" "$CHECKOUT_HOOK"; then
+  export OPPI_PRE_PUSH_DELEGATED=1
+  exec bash "$CHECKOUT_HOOK" "$@"
+fi
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
 HEAVY="$REPO_ROOT/scripts/heavy.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
@@ -54,7 +69,9 @@ run_self_test() {
   # Nor may they take the Apple lane's slot signal or a slot an ancestor holds: each fixture's
   # apple_then_mac and heavy.sh calls set up their own. OPPI_HEAVY_PARENT_PID stays: a fixture's
   # queued heavy.sh job should give up when the hook is gone.
-  unset OPPI_PRE_PUSH_EVENTS APPLE_SLOT_SIGNAL OPPI_HEAVY_HELD
+  # OPPI_PRE_PUSH_DELEGATED too: the fixtures push into their own repositories, and a copy they
+  # install there must hand that push over, not read the breaker that got this hook here.
+  unset OPPI_PRE_PUSH_EVENTS APPLE_SLOT_SIGNAL OPPI_HEAVY_HELD OPPI_PRE_PUSH_DELEGATED
   if [[ "${1:-}" != "--lanes-only" ]]; then
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
@@ -108,10 +125,12 @@ run_self_test() {
   local lane_fixture lane_src lane_status
   lane_fixture="$(mktemp -d -t oppi-pre-push-lane.XXXXXX)"
   lane_src="$(awk '/^(lane_event|run_cached|with_apple_slot|wait_for_apple_slot|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
+  # Name every helper the fixtures rely on: a pattern that stops covering one of them leaves the
+  # eval'd runner calling an undefined function, which reads as a broken lane, not a broken extract.
   case "$lane_src" in
-    *'run_cached() {'*'apple_then_mac() {'*) ;;
+    *'lane_event() {'*'run_cached() {'*'with_apple_slot() {'*'wait_for_apple_slot() {'*'apple_then_mac() {'*) ;;
     *)
-      echo "pre-push self-test: could not extract the lane runner and apple_then_mac" >&2
+      echo "pre-push self-test: could not extract every lane-runner function the fixtures eval" >&2
       exit 1
       ;;
   esac
@@ -381,6 +400,62 @@ HOOK_SHAPE
     echo "pre-push self-test: sanitized Git-local environment should allow temp git add" >&2
     exit 1
   }
+
+  # Git runs the installed copy at <git common dir>/hooks/pre-push for a real push, and the fixtures
+  # above read this file: an installed snapshot older than the checkout eval'd this file's lane
+  # runner, so it failed the harness lane only inside a real push. The hook hands every push to the
+  # checkout's copy; a copy that diverges from it must never run.
+  local push_fixture push_status
+  push_fixture="$(mktemp -d -t oppi-pre-push-install.XXXXXX)"
+  set +e
+  run_without_git_local_env bash -c '
+    set -euo pipefail
+    # Global git config must not reach this fixture: gpgsign would fail its commit, and a global
+    # core.hooksPath would run a hook from there instead of the copy installed below, so the push
+    # would pass without testing anything. core.hooksPath=.git/hooks keeps the relative $0 that a
+    # main checkout gets.
+    git init --bare --quiet "$1/remote.git"
+    git init --quiet --initial-branch=main "$1/seed"
+    cd "$1/seed"
+    printf "fixture\n" > tracked.txt
+    git add tracked.txt
+    git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit --quiet -m fixture
+    # No hook is installed yet, so the seeding push runs only a global one, which it must not.
+    git -c core.hooksPath=.git/hooks push --quiet "$1/remote.git" main
+    mkdir -p .githooks .git/hooks
+    cp "$2/.githooks/pre-push" .githooks/pre-push
+    # The installed copy differs from the checkout copy in the one way git can see: a line just past
+    # the guard that hands the push to the checkout copy, so only an installed copy that does not
+    # hand it over reaches it. Appended lines cannot tell the copies apart: the gate exits early.
+    mark="touch $(printf "%q" "$1/installed-ran")"
+    guarded=""
+    placed=""
+    while IFS= read -r line; do
+      printf "%s\n" "$line"
+      if [[ -n "$guarded" && -z "$placed" && "$line" == "fi" ]]; then
+        printf "%s\n" "$mark"
+        placed=1
+      fi
+      if [[ "$line" == *CHECKOUT_HOOK=* ]]; then
+        guarded=1
+      fi
+    done < "$2/.githooks/pre-push" > .git/hooks/pre-push
+    [[ -n "$placed" ]] || {
+      echo "installed-copy fixture: the hook has no delegation guard to anchor the marker after"
+      exit 1
+    }
+    chmod +x .git/hooks/pre-push
+    # A delete row has no range, so the gate returns at once and only the hook git runs is under test.
+    git -c core.hooksPath=.git/hooks push --quiet "$1/remote.git" --delete main
+  ' bash "$push_fixture" "$REPO_ROOT" >"$push_fixture/push.log" 2>&1
+  push_status=$?
+  set -e
+  [[ "$push_status" -eq 0 && ! -e "$push_fixture/installed-ran" ]] || {
+    echo "pre-push self-test: a real push must run the checkout's hook, not the installed copy" >&2
+    sed 's/^/  /' "$push_fixture/push.log" >&2 || true
+    exit 1
+  }
+  rm -rf "$push_fixture"
 
   echo "pre-push self-test passed."
 }
