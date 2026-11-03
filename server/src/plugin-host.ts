@@ -161,10 +161,22 @@ export interface PluginDefinitions {
   readonly sections: ServerPromptSection[];
 }
 
-/** What `extension` tells the model (`extension-definitions.ts`). */
+/**
+ * Each loaded extension's definitions, read once: the trial renders run plugin code, so a detail
+ * opened again must not run it again. A load or reload installs a new extension value, which starts
+ * without an entry.
+ */
+const loadedDefinitions = new WeakMap<Extension, PluginDefinitions>();
+
+/** What `extension` tells the model (`extension-definitions.ts`), at most once per load. */
 function definitionsOf(extension: Extension | undefined): PluginDefinitions {
   if (!extension) return { tools: [], sections: [] };
-  return { tools: pluginToolDefinitions(extension), sections: promptSections(extension) };
+  let definitions = loadedDefinitions.get(extension);
+  if (!definitions) {
+    definitions = { tools: pluginToolDefinitions(extension), sections: promptSections(extension) };
+    loadedDefinitions.set(extension, definitions);
+  }
+  return definitions;
 }
 
 /** What `extension` contributes, read from the extension value itself. */

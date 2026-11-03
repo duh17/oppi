@@ -886,6 +886,35 @@ describe("plugins on the extension list", () => {
       expect(section).toEqual({ name: expect.any(String), perConversation: true });
   });
 
+  it("renders a plugin's sections once per load", async () => {
+    const counted = globalThis as { __oppiCountedRenders?: number };
+    counted.__oppiCountedRenders = 0;
+    writePlugin("counted", [
+      'import { defineExtension, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "counted",',
+      '  sections: [section("counted", () => {',
+      "    const counter = globalThis as { __oppiCountedRenders?: number };",
+      "    counter.__oppiCountedRenders = (counter.__oppiCountedRenders ?? 0) + 1;",
+      '    return "Counted.";',
+      "  })],",
+      "});",
+    ]);
+    const f = await fixture(callsTool("unused"));
+    const path = `/server/resources/extensions/${rowNamed(await f.rows(), "counted").id}`;
+
+    for (let open = 0; open < 2; open++)
+      expect((await f.route("GET", path)).body.promptSections).toEqual([
+        { name: "counted", text: "Counted.", perConversation: false },
+      ]);
+    expect(counted.__oppiCountedRenders).toBe(1);
+    // A reload installs new code, which renders once more.
+    await f.reload();
+    await f.route("GET", path);
+    expect(counted.__oppiCountedRenders).toBe(2);
+    delete counted.__oppiCountedRenders;
+  });
+
   it("flags a section that reads the conversation, and no section can break the detail", async () => {
     writePlugin("sections", [
       'import { defineExtension, section } from "oppi/v1";',
