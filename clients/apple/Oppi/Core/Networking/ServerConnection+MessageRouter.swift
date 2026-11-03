@@ -40,6 +40,9 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: true), sessionId: sessionId)
 
+        case .extensionUISurface, .extensionUIPatch:
+            applyComposableSurface(message, sessionId: sessionId)
+
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: MessageSender.turnSendRequiredStage)
 
@@ -66,7 +69,11 @@ extension ServerConnection {
         case .error:
             break
 
-        case .sessionEnded, .sessionDeleted, .stopConfirmed, .extensionUISettled:
+        case .extensionUISettled(let id, _):
+            extensionSurfaces.settle(requestId: id, sessionId: sessionId)
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
+
+        case .sessionEnded, .sessionDeleted, .stopConfirmed:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
         default:
@@ -86,7 +93,14 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
 
-        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted, .extensionUISettled:
+        case .extensionUISurface, .extensionUIPatch:
+            applyComposableSurface(message, sessionId: sessionId)
+
+        case .extensionUISettled(let id, _):
+            extensionSurfaces.settle(requestId: id, sessionId: sessionId)
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
+
+        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
 
         default:
@@ -113,6 +127,19 @@ extension ServerConnection {
                 sessionId: sessionId,
                 isActiveSession: effects.isFocusedSession
             )
+        }
+    }
+
+    /// A composable surface's frame belongs to the session it names: a surface published by a
+    /// tool call outlives the turn, and a background session keeps the one its strip would show.
+    func applyComposableSurface(_ message: ServerMessage, sessionId: String) {
+        switch message {
+        case .extensionUISurface(let surface, let routedSessionId):
+            extensionSurfaces.apply(surface, sessionId: routedSessionId ?? sessionId)
+        case .extensionUIPatch(let patch):
+            extensionSurfaces.apply(patch, sessionId: patch.sessionId ?? sessionId)
+        default:
+            break
         }
     }
 

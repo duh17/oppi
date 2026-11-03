@@ -1815,6 +1815,44 @@ final class ServerConnection {
 
     func send(_ message: ClientMessage) async throws { try await sender.send(message) }
 
+    /// Sends one action on a composable surface at the revision the client holds, and shows the
+    /// action's declared pending state until `extension_ui_settled` names the request or a frame
+    /// newer than that revision answers it.
+    func sendExtensionSurfaceAction(_ intent: ExtensionSurfaceActionIntent, sessionId: String) {
+        let surface = extensionSurfaces.surface(for: sessionId).state.composableSurfaces[intent.surfaceId]?.surface
+        let definition = surface?.actions[intent.actionId]
+        let requestId = UUID().uuidString
+        extensionSurfaces.beginAction(
+            ExtensionSurfacePendingAction(
+                requestId: requestId,
+                surfaceId: intent.surfaceId,
+                compositeId: intent.compositeId,
+                actionId: intent.actionId,
+                rowId: intent.rowId,
+                revision: intent.revision,
+                title: definition?.pending?.title,
+                disabledActionIds: Set(definition?.pending?.disabled ?? [])
+            ),
+            sessionId: sessionId
+        )
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await send(.extensionUIAction(
+                    surfaceId: intent.surfaceId,
+                    compositeId: intent.compositeId,
+                    actionId: intent.actionId,
+                    rowId: intent.rowId,
+                    revision: intent.revision,
+                    requestId: requestId
+                ))
+            } catch {
+                // Nothing reached the server, so nothing will settle it.
+                extensionSurfaces.settle(requestId: requestId, sessionId: sessionId)
+            }
+        }
+    }
+
     func requestState() async throws { try await sender.requestState() }
 
     func requestMessageQueue(timeout: Duration = MessageSender.commandRequestTimeoutDefault, sessionIdOverride: String? = nil) async throws {

@@ -298,6 +298,8 @@ private enum ExtensionSurfaceStripEntry: Equatable {
     case native(ExtensionNativeSurfaceState, statusText: String?)
     case widget(ExtensionWidgetState, statusText: String?, titleOverride: String?)
     case messageQueue(steeringCount: Int, followUpCount: Int, photoCount: Int, fileCount: Int)
+    /// A composable (v2) surface: the pill is its header, the drawer its cards.
+    case composable(ExtensionComposableSurfaceState)
 
     var id: String {
         switch self {
@@ -306,6 +308,7 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         case .native(let nativeSurface, _): "native:\(nativeSurface.key)"
         case .widget(let widget, _, _): "widget:\(widget.key)"
         case .messageQueue: "message-queue"
+        case .composable(let entry): "composable:\(entry.surface.id)"
         }
     }
 
@@ -321,6 +324,9 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         case .widget(let widget, let statusText, let titleOverride):
             let rawTitle = titleOverride?.trimmedNonEmpty ?? widget.key.trimmedNonEmpty ?? "Extension widget"
             return ExtensionSurfaceHeaderText(title: rawTitle, statusText: statusText).title
+        case .composable(let entry):
+            let header = entry.surface.header.title.trimmedNonEmpty
+            return header ?? entry.surface.title.trimmedNonEmpty ?? "Extension"
         case .messageQueue:
             return "Message Queue"
         }
@@ -345,12 +351,27 @@ private enum ExtensionSurfaceStripEntry: Equatable {
             return widget.lines
                 .map { ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty && $0 != header.title }
+        case .composable(let entry):
+            // A failure speaks in the pill: the card that failed supplies the words, so the strip
+            // carries the reason without promoting extension output into the timeline.
+            if let failure = Self.composableFailureText(entry.surface) { return failure }
+            return entry.surface.header.subtitle.trimmedNonEmpty
         case .messageQueue(let steeringCount, let followUpCount, _, _):
             return MessageQueueAttachmentPresentation.countSubtitle(
                 steeringCount: steeringCount,
                 followUpCount: followUpCount
             )
         }
+    }
+
+    private static func composableFailureText(_ surface: ExtensionUISurface) -> String? {
+        for section in surface.sections {
+            guard let base = section.base, base.state.kind == "failure" else { continue }
+            return base.state.message.trimmedNonEmpty
+                ?? base.state.title.trimmedNonEmpty
+                ?? base.header.title.trimmedNonEmpty
+        }
+        return nil
     }
 
     var mediaSubtitle: String? {
@@ -365,6 +386,7 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         case .native: "surface"
         case .widget: "widget"
         case .messageQueue: "queue"
+        case .composable: "surface"
         }
     }
 
@@ -375,12 +397,15 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         case .native(let nativeSurface, _): nativeSurface.surface.id.extensionAccessibilityIdentifierComponent
         case .widget(let widget, _, _): widget.key.extensionAccessibilityIdentifierComponent
         case .messageQueue: "message-queue"
+        case .composable(let entry):
+            "surface-\(ExtensionSurfaceIdentity.key(entry.surface.id))"
         }
     }
 
     var stateTone: ExtensionSurfaceStripTone {
         switch self {
         case .native(let nativeSurface, _): Self.nativeTone(nativeSurface.surface)
+        case .composable(let entry): Self.composableTone(entry.surface)
         case .widget, .status: .accent
         case .messageQueue(let steeringCount, let followUpCount, _, _):
             steeringCount + followUpCount > 0 ? .success : .neutral
@@ -397,7 +422,7 @@ private enum ExtensionSurfaceStripEntry: Equatable {
     var supportsFullScreen: Bool {
         switch self {
         case .native, .widget: true
-        case .title, .status, .messageQueue: false
+        case .title, .status, .messageQueue, .composable: false
         }
     }
 
@@ -437,6 +462,23 @@ private enum ExtensionSurfaceStripEntry: Equatable {
             }
         }
         return surface.fallbackDisplayLines.first?.trimmedNonEmpty
+    }
+
+    /// A failure is the danger tone whatever the cards declared; otherwise the first card's tone
+    /// carries the surface's urgency.
+    private static func composableTone(_ surface: ExtensionUISurface) -> ExtensionSurfaceStripTone {
+        if composableFailureText(surface) != nil { return .danger }
+        for section in surface.sections {
+            guard let base = section.base else { continue }
+            switch ExtensionSurfaceTone(raw: base.tone) {
+            case .danger: return .danger
+            case .warning: return .warning
+            case .success: return .success
+            case .accent: return .accent
+            case .neutral: continue
+            }
+        }
+        return .accent
     }
 
     private static func nativeTone(_ surface: ExtensionUINativeSurface) -> ExtensionSurfaceStripTone {
@@ -558,6 +600,9 @@ struct ExtensionSurfaceDrawerActions {
     /// The session's current snapshot of a native surface, by protocol id, so
     /// the reader follows updates the drawer would show.
     var liveSurface: ((String) -> ExtensionUINativeSurface?)?
+    /// Sends one action on a composable surface. The host mints the request id and
+    /// shows the action's declared pending state until the server settles it.
+    var sendAction: ((ExtensionSurfaceActionIntent) -> Void)?
 }
 
 /// The expanded body of one strip entry, under the strip: a header with the
@@ -573,6 +618,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
     private let collapseButton = UIButton(type: .custom)
     private var nativeViewport: ExtensionNativeBlockScrollView?
+    /// A composable surface's cards, in a viewport that hugs them up to the drawer's cap.
+    private var compositesViewport: ExtensionSurfaceCompositesView?
     /// The rounded well around a status or native body.
     private var inset: UIView?
     private var bodyLabel: UILabel?
@@ -661,6 +708,12 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             viewport.accessibilityHint = "Double tap to open full screen."
             nativeViewport = viewport
             stack.addArrangedSubview(viewport)
+        case .composable:
+            let composites = ExtensionSurfaceCompositesView()
+            compositesViewport = composites
+            stack.addArrangedSubview(
+                CappedScrollView(content: composites, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
+            )
         case .messageQueue:
             let queue = MessageQueueView(presentation: .drawer)
             queue.onOpenMessage = { [weak self] item in self?.openQueuedMessage(item) }
@@ -690,7 +743,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         _ entry: ExtensionSurfaceStripEntry,
         themeID: ThemeID,
         messageQueue configuration: MessageQueueSurfaceConfiguration?,
-        sessionLiveTails: [String: ConversationChildTail]
+        sessionLiveTails: [String: ConversationChildTail],
+        pendingAction: ExtensionSurfacePendingAction?
     ) {
         self.entry = entry
         let palette = themeID.palette
@@ -748,6 +802,13 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 messageQueue?.apply(configuration, themeID: themeID)
             }
             messageQueue?.isHidden = configuration == nil
+        case .composable(let composable):
+            compositesViewport?.apply(
+                surface: composable.surface,
+                pending: pendingAction.flatMap { $0.surfaceId == composable.surface.id ? $0 : nil },
+                themeID: themeID,
+                onAction: { [weak self] intent in self?.actions.sendAction?(intent) }
+            )
         case .title(let title):
             bodyLabel?.text = title
         case .status(_, let key, let text):
@@ -788,7 +849,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             actions.openReader(.document(
                 content: .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
             ))
-        case .title, .status, .messageQueue:
+        case .title, .status, .messageQueue, .composable:
             break
         }
     }
@@ -818,6 +879,8 @@ final class ExtensionSurfacePanelView: UIView {
         /// Busy child sessions' live tails by session id, shown under drawer rows that link
         /// to them. Empty while no drawer is expanded.
         var sessionLiveTails: [String: ConversationChildTail] = [:]
+        /// The composable surface action waiting on the server, if one is.
+        var pendingAction: ExtensionSurfacePendingAction?
     }
 
     let placement: ExtensionSurfacePlacementGroup
@@ -939,7 +1002,8 @@ final class ExtensionSurfacePanelView: UIView {
                 active,
                 themeID: content.themeID,
                 messageQueue: content.messageQueue,
-                sessionLiveTails: content.sessionLiveTails
+                sessionLiveTails: content.sessionLiveTails,
+                pendingAction: content.pendingAction
             )
         } else if let drawer {
             drawer.removeFromSuperview()
@@ -994,6 +1058,9 @@ final class ExtensionSurfacePanelView: UIView {
                     titleOverride: surface.displayTitle(for: widget)
                 )
             }
+        })
+        result.append(contentsOf: surface.composableSurfaceEntries(in: placement).map {
+            .composable($0)
         })
         if let messageQueue = content.messageQueue, messageQueue.hasVisibleEntry {
             let media = MessageQueueAttachmentPresentation.mediaCounts(in: messageQueue.queue)

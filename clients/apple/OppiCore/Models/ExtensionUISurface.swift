@@ -3,7 +3,7 @@ import Foundation
 /// A composable extension surface, version 2 (`protocol/surfaces/`). The extension supplies data,
 /// action ids, and the words for loading, empty, and failure; the host draws every region with
 /// views it already ships. No colour, font, padding, or size crosses the wire.
-struct ExtensionUISurface: Sendable, Equatable, Identifiable, Decodable {
+struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
     let version: Int
     let id: String
     let title: String
@@ -38,21 +38,21 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Decodable {
     }
 }
 
-struct ExtensionUISurfacePlacement: Sendable, Equatable, Decodable {
+struct ExtensionUISurfacePlacement: Sendable, Equatable, Codable {
     let kind: String
     let preferred: String?
 }
 
-struct ExtensionUISurfaceHeader: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceHeader: Sendable, Equatable, Codable {
     let title: String
     let subtitle: String?
 }
 
-struct ExtensionUISurfaceFallback: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceFallback: Sendable, Equatable, Codable {
     let text: String
 }
 
-struct ExtensionUISurfaceState: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceState: Sendable, Equatable, Codable {
     let kind: String
     let title: String?
     let message: String?
@@ -60,7 +60,7 @@ struct ExtensionUISurfaceState: Sendable, Equatable, Decodable {
     var isContent: Bool { kind == "content" }
 }
 
-struct ExtensionUISurfaceActionDefinition: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceActionDefinition: Sendable, Equatable, Codable {
     let title: String
     let role: String?
     let pending: ExtensionUISurfacePendingState?
@@ -72,13 +72,13 @@ struct ExtensionUISurfaceActionDefinition: Sendable, Equatable, Decodable {
 /// Optimistic state for the round trip only: what the pressed action shows while it waits. Every
 /// action that carries a request id ends with an `extension_ui_settled` for it, so that frame is
 /// where the wait ends, whatever the action had to draw.
-struct ExtensionUISurfacePendingState: Sendable, Equatable, Decodable {
+struct ExtensionUISurfacePendingState: Sendable, Equatable, Codable {
     let title: String?
     let disabled: [String]?
 }
 
 /// An atom fills a slot a composite exposes; atoms never sit at a surface's top level.
-enum ExtensionUISurfaceAtom: Sendable, Equatable, Decodable {
+enum ExtensionUISurfaceAtom: Sendable, Equatable, Codable {
     case text([ExtensionUITextSpan])
     case markdown(String)
     case progress(label: String?, value: Double?)
@@ -110,9 +110,30 @@ enum ExtensionUISurfaceAtom: Sendable, Equatable, Decodable {
             self = .spacer(nil)
         }
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let spans):
+            try c.encode("text", forKey: .type)
+            try c.encode(spans, forKey: .spans)
+        case .markdown(let markdown):
+            try c.encode("markdown", forKey: .type)
+            try c.encode(markdown, forKey: .markdown)
+        case .progress(let label, let value):
+            try c.encode("progress", forKey: .type)
+            try c.encodeIfPresent(label, forKey: .label)
+            try c.encodeIfPresent(value, forKey: .value)
+        case .divider:
+            try c.encode("divider", forKey: .type)
+        case .spacer(let size):
+            try c.encode("spacer", forKey: .type)
+            try c.encodeIfPresent(size, forKey: .size)
+        }
+    }
 }
 
-struct ExtensionUISurfaceStep: Sendable, Equatable, Decodable, Identifiable {
+struct ExtensionUISurfaceStep: Sendable, Equatable, Codable, Identifiable {
     let id: String
     let title: String
     let state: String
@@ -120,14 +141,14 @@ struct ExtensionUISurfaceStep: Sendable, Equatable, Decodable, Identifiable {
     let extra: [ExtensionUISurfaceAtom]?
 }
 
-struct ExtensionUISurfaceChecklistItem: Sendable, Equatable, Decodable, Identifiable {
+struct ExtensionUISurfaceChecklistItem: Sendable, Equatable, Codable, Identifiable {
     let id: String
     let title: String
     let state: String
     let detail: String?
 }
 
-struct ExtensionUISurfaceColumn: Sendable, Equatable, Decodable, Identifiable {
+struct ExtensionUISurfaceColumn: Sendable, Equatable, Codable, Identifiable {
     let id: String
     let title: String
     let kind: String?
@@ -136,7 +157,7 @@ struct ExtensionUISurfaceColumn: Sendable, Equatable, Decodable, Identifiable {
 }
 
 /// A table cell as the wire allows it: text, a number, or nothing.
-enum ExtensionUISurfaceCell: Sendable, Equatable, Decodable {
+enum ExtensionUISurfaceCell: Sendable, Equatable, Codable {
     case text(String)
     case number(Double)
     case empty
@@ -154,6 +175,15 @@ enum ExtensionUISurfaceCell: Sendable, Equatable, Decodable {
         self = .text((try? container.decode(String.self)) ?? "")
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .text(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .empty: try container.encodeNil()
+        }
+    }
+
     var displayText: String {
         switch self {
         case .empty: return ""
@@ -167,7 +197,7 @@ enum ExtensionUISurfaceCell: Sendable, Equatable, Decodable {
     }
 }
 
-struct ExtensionUISurfaceRow: Sendable, Equatable, Decodable, Identifiable {
+struct ExtensionUISurfaceRow: Sendable, Equatable, Codable, Identifiable {
     let id: String
     let cells: [String: ExtensionUISurfaceCell]
     let actions: [String]?
@@ -177,14 +207,14 @@ struct ExtensionUISurfaceRow: Sendable, Equatable, Decodable, Identifiable {
     }
 }
 
-struct ExtensionUISurfaceSort: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceSort: Sendable, Equatable, Codable {
     let columnId: String
     let descending: Bool?
 }
 
 /// The composites this slice draws. A composite it does not draw decodes to `unsupported` with
 /// its fallback text, never a thrown error.
-enum ExtensionUISurfaceSection: Sendable, Equatable, Decodable, Identifiable {
+enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
     case statusCard(ExtensionUISurfaceStatusCard)
     case checklist(ExtensionUISurfaceChecklist)
     case dataTable(ExtensionUISurfaceDataTable)
@@ -251,6 +281,16 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Decodable, Identifiable {
             try ExtensionUISurfaceUnsupportedComposite(from: decoder, composite: composite)
         )
     }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .statusCard(let value): try value.encode(to: encoder)
+        case .checklist(let value): try value.encode(to: encoder)
+        case .dataTable(let value): try value.encode(to: encoder)
+        case .actionBar(let value): try value.encode(to: encoder)
+        case .unsupported(let value): try value.encode(to: encoder)
+        }
+    }
 }
 
 struct ExtensionUISurfaceCompositeBase: Sendable, Equatable, Decodable {
@@ -262,13 +302,13 @@ struct ExtensionUISurfaceCompositeBase: Sendable, Equatable, Decodable {
     let tone: String?
 }
 
-struct ExtensionUISurfaceStatusCard: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceStatusCard: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceCompositeBase
     let phase: String
     let steps: [ExtensionUISurfaceStep]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, header, state, actions, fallback, tone, phase, steps
+        case composite, id, header, state, actions, fallback, tone, phase, steps
     }
 
     init(from decoder: Decoder) throws {
@@ -277,14 +317,33 @@ struct ExtensionUISurfaceStatusCard: Sendable, Equatable, Decodable {
         phase = (try? c.decode(String.self, forKey: .phase)) ?? "inactive"
         steps = try? c.decodeIfPresent([ExtensionUISurfaceStep].self, forKey: .steps)
     }
+
+    /// Every composite carries the shared header, state, actions, fallback, and tone at its own
+    /// top level, so encoding writes them flat rather than nested under `base`.
+    private func encodeBase(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        try c.encode(base.id, forKey: .id)
+        try c.encode(base.header, forKey: .header)
+        try c.encode(base.state, forKey: .state)
+        try c.encodeIfPresent(base.actions, forKey: .actions)
+        try c.encode(base.fallback, forKey: .fallback)
+        try c.encodeIfPresent(base.tone, forKey: .tone)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode("statusCard", forKey: .composite)
+        try encodeBase(into: &c)
+        try c.encode(phase, forKey: .phase)
+        try c.encodeIfPresent(steps, forKey: .steps)
+    }
 }
 
-struct ExtensionUISurfaceChecklist: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceChecklist: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceCompositeBase
     let items: [ExtensionUISurfaceChecklistItem]
 
     private enum CodingKeys: String, CodingKey {
-        case id, header, state, actions, fallback, tone, items
+        case composite, id, header, state, actions, fallback, tone, items
     }
 
     init(from decoder: Decoder) throws {
@@ -294,9 +353,27 @@ struct ExtensionUISurfaceChecklist: Sendable, Equatable, Decodable {
         // fallback text instead of an empty checklist.
         items = try c.decode([ExtensionUISurfaceChecklistItem].self, forKey: .items)
     }
+
+    /// Every composite carries the shared header, state, actions, fallback, and tone at its own
+    /// top level, so encoding writes them flat rather than nested under `base`.
+    private func encodeBase(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        try c.encode(base.id, forKey: .id)
+        try c.encode(base.header, forKey: .header)
+        try c.encode(base.state, forKey: .state)
+        try c.encodeIfPresent(base.actions, forKey: .actions)
+        try c.encode(base.fallback, forKey: .fallback)
+        try c.encodeIfPresent(base.tone, forKey: .tone)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode("checklist", forKey: .composite)
+        try encodeBase(into: &c)
+        try c.encode(items, forKey: .items)
+    }
 }
 
-struct ExtensionUISurfaceDataTable: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceDataTable: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceCompositeBase
     let columns: [ExtensionUISurfaceColumn]
     let rows: [ExtensionUISurfaceRow]
@@ -304,7 +381,7 @@ struct ExtensionUISurfaceDataTable: Sendable, Equatable, Decodable {
     let selectedRowId: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, header, state, actions, fallback, tone, columns, rows, sort, selectedRowId
+        case composite, id, header, state, actions, fallback, tone, columns, rows, sort, selectedRowId
     }
 
     init(from decoder: Decoder) throws {
@@ -317,13 +394,55 @@ struct ExtensionUISurfaceDataTable: Sendable, Equatable, Decodable {
         sort = try? c.decodeIfPresent(ExtensionUISurfaceSort.self, forKey: .sort)
         selectedRowId = try? c.decodeIfPresent(String.self, forKey: .selectedRowId)
     }
+
+    /// Every composite carries the shared header, state, actions, fallback, and tone at its own
+    /// top level, so encoding writes them flat rather than nested under `base`.
+    private func encodeBase(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        try c.encode(base.id, forKey: .id)
+        try c.encode(base.header, forKey: .header)
+        try c.encode(base.state, forKey: .state)
+        try c.encodeIfPresent(base.actions, forKey: .actions)
+        try c.encode(base.fallback, forKey: .fallback)
+        try c.encodeIfPresent(base.tone, forKey: .tone)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode("dataTable", forKey: .composite)
+        try encodeBase(into: &c)
+        try c.encode(columns, forKey: .columns)
+        try c.encode(rows, forKey: .rows)
+        try c.encodeIfPresent(sort, forKey: .sort)
+        try c.encodeIfPresent(selectedRowId, forKey: .selectedRowId)
+    }
 }
 
-struct ExtensionUISurfaceActionBar: Sendable, Equatable, Decodable {
+struct ExtensionUISurfaceActionBar: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceCompositeBase
+
+    private enum CodingKeys: String, CodingKey {
+        case composite, id, header, state, actions, fallback, tone
+    }
 
     init(from decoder: Decoder) throws {
         base = try ExtensionUISurfaceCompositeBase(from: decoder)
+    }
+
+    /// Every composite carries the shared header, state, actions, fallback, and tone at its own
+    /// top level, so encoding writes them flat rather than nested under `base`.
+    private func encodeBase(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        try c.encode(base.id, forKey: .id)
+        try c.encode(base.header, forKey: .header)
+        try c.encode(base.state, forKey: .state)
+        try c.encodeIfPresent(base.actions, forKey: .actions)
+        try c.encode(base.fallback, forKey: .fallback)
+        try c.encodeIfPresent(base.tone, forKey: .tone)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode("actionBar", forKey: .composite)
+        try encodeBase(into: &c)
     }
 }
 
@@ -342,7 +461,18 @@ struct ExtensionUISurfaceUnsupportedComposite: Sendable, Equatable {
     }
 
     private enum ExtensionUISurfaceUnsupportedKeys: String, CodingKey {
-        case id, fallback
+        case composite, id, fallback
+    }
+}
+
+extension ExtensionUISurfaceUnsupportedComposite: Encodable {
+    /// A section this build cannot draw keeps the name it arrived under, so the frame still
+    /// decodes to the same placeholder after a patch round trip.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: ExtensionUISurfaceUnsupportedKeys.self)
+        try c.encode(composite, forKey: .composite)
+        try c.encode(id, forKey: .id)
+        try c.encode(fallback, forKey: .fallback)
     }
 }
 
@@ -360,6 +490,20 @@ struct ExtensionUISurfacePatch: Sendable, Equatable, Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case surfaceId, revision, patch, removed, sessionId
+    }
+
+    init(
+        surfaceId: String,
+        revision: Int,
+        patch: [String: JSONValue]? = nil,
+        removed: Bool = false,
+        sessionId: String? = nil
+    ) {
+        self.surfaceId = surfaceId
+        self.revision = revision
+        self.patch = patch
+        self.removed = removed
+        self.sessionId = sessionId
     }
 
     init(from decoder: Decoder) throws {

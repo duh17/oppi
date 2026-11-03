@@ -29,6 +29,9 @@ private extension ChatViewController {
             openReader: { [weak self] in self?.openTimelineReader($0) },
             liveSurface: { [weak connection] id in
                 connection?.extensionSurfaces.surface(for: sessionId).layout.nativeSurfaces[id]?.surface
+            },
+            sendAction: { [weak connection] intent in
+                connection?.sendExtensionSurfaceAction(intent, sessionId: sessionId)
             }
         )
     }
@@ -192,7 +195,8 @@ final class ChatFooterAboveView: UIView {
                 messageQueue: showsMessageQueue ? chat.messageQueueSurfaceConfiguration : nil,
                 themeID: themeID,
                 collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
-                sessionLiveTails: chat.drawerSessionLiveTails
+                sessionLiveTails: chat.drawerSessionLiveTails,
+                pendingAction: chat.extensionSurface.pendingAction
             ))
         }
 
@@ -440,7 +444,8 @@ final class ChatFooterBelowView: UIView {
             messageQueue: nil,
             themeID: chat.chromeThemeID,
             collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
-            sessionLiveTails: chat.drawerSessionLiveTails
+            sessionLiveTails: chat.drawerSessionLiveTails,
+            pendingAction: chat.extensionSurface.pendingAction
         ))
     }
 }

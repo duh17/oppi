@@ -791,17 +791,29 @@ final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRenderi
     }
 
     func apply(rows: [ExtensionUIActivityRow], context: ExtensionNativeBlockContext) {
+        apply(rows: rows, context: context, accessibilityIdentifier: ExtensionNativeActivityRowView.defaultAccessibilityIdentifier)
+    }
+
+    /// `accessibilityIdentifier` names each row's control. The v1 block list names rows under
+    /// `extension.native.activity.row`; a composite that reuses the list names them under its own
+    /// surface and card.
+    func apply(
+        rows: [ExtensionUIActivityRow],
+        context: ExtensionNativeBlockContext,
+        accessibilityIdentifier: @escaping (ExtensionUIActivityRow) -> String
+    ) {
         var next: [String: ExtensionNativeActivityRowView] = [:]
         var ordered: [UIView] = []
         for row in rows where next[row.id] == nil {
             let view = rowViews[row.id] ?? ExtensionNativeActivityRowView()
+            view.accessibilityIdentifierForControl = accessibilityIdentifier
             view.apply(row: row, context: context)
             next[row.id] = view
             ordered.append(view)
         }
         rowViews = next
-        guard stack.arrangedSubviews != ordered else { return }
-        for view in stack.arrangedSubviews where !ordered.contains(view) {
+        guard !stack.arrangedSubviews.elementsEqual(ordered, by: ===) else { return }
+        for view in stack.arrangedSubviews where !ordered.contains(where: { $0 === view }) {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -817,6 +829,14 @@ final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRenderi
 /// built only while shown, and a link moves to its own trailing button. Expansion survives snapshots because list views
 /// reuse row views by row id.
 final class ExtensionNativeActivityRowView: UIView {
+    /// The identifier this row's control carries, from the list that owns it.
+    static let defaultAccessibilityIdentifier: (ExtensionUIActivityRow) -> String = {
+        "extension.native.activity.row.\($0.id)"
+    }
+
+    var accessibilityIdentifierForControl: (ExtensionUIActivityRow) -> String =
+        ExtensionNativeActivityRowView.defaultAccessibilityIdentifier
+
     private let control = UIControl()
     private let marker = UIImageView()
     private let titleLabel = ExtensionNativeBlockStyle.label(.caption1, weight: .semibold)
@@ -978,7 +998,7 @@ final class ExtensionNativeActivityRowView: UIView {
         control.isUserInteractionEnabled = isInteractive
 
         control.isAccessibilityElement = true
-        control.accessibilityIdentifier = "extension.native.activity.row.\(row.id)"
+        control.accessibilityIdentifier = accessibilityIdentifierForControl(row)
         control.accessibilityLabel = ExtensionNativeBlockPresentation.activityRowAccessibilityLabel(row)
         control.accessibilityValue = ([ExtensionNativeBlockPresentation.activityRowAccessibilityValue(row)]
             + (liveTail?.lines.map(\.text) ?? []))
@@ -1001,7 +1021,7 @@ final class ExtensionNativeActivityRowView: UIView {
                 .applying(UIImage.SymbolConfiguration(weight: .semibold))
         ), for: .normal)
         linkButton.tintColor = palette.ui.comment
-        linkButton.accessibilityIdentifier = "extension.native.activity.row.\(row.id).link"
+        linkButton.accessibilityIdentifier = accessibilityIdentifierForControl(row) + ".link"
         linkButton.accessibilityLabel = "Open \(row.title)"
         linkButton.accessibilityHint = separateLink.flatMap { url in
             context.linkOutcome(for: url).flatMap {

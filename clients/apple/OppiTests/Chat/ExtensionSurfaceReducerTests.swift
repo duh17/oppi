@@ -397,6 +397,35 @@ struct ExtensionSurfaceReducerTests {
         #expect(surface.standaloneStatusEntries().isEmpty)
         #expect(surface.attachedStatusText(for: "goal", extensionScopeId: nil) == "goal: Active 1/25")
     }
+
+    // MARK: - Composable (v2) surfaces
+
+    @Test func aComposableSurfaceAloneMakesTheStripVisible() throws {
+        var surface = ExtensionSurfaceState()
+        ExtensionSurfaceReducer.apply(try composableSurface("status-card.json"), to: &surface)
+
+        // The cards are the only content the session has: the strip pill and the drawer must
+        // still be reachable, or the surface is retained and never drawn.
+        #expect(surface.composableSurfaces["deploy"] != nil)
+        #expect(surface.widgetEntries(in: .aboveEditor).isEmpty)
+        #expect(surface.hasVisibleMetadata(in: .aboveEditor) == false)
+        #expect(surface.hasVisibleContent(in: .aboveEditor))
+        #expect(surface.hasVisibleContent)
+    }
+
+    @Test func belowComposerPlacementDrawsUnderTheComposer() throws {
+        var surface = ExtensionSurfaceState()
+        ExtensionSurfaceReducer.apply(
+            try composableSurface("status-card.json", composablePlacement: "belowComposer"),
+            to: &surface
+        )
+
+        // The v2 word for "under the composer" is `belowComposer`; `belowEditor` is the v1 word.
+        #expect(surface.composableSurfaceEntries(in: .belowEditor).map(\.id) == ["deploy"])
+        #expect(surface.composableSurfaceEntries(in: .aboveEditor).isEmpty)
+        #expect(surface.hasVisibleContent(in: .belowEditor))
+        #expect(!surface.hasVisibleContent(in: .aboveEditor))
+    }
 }
 
 private func widgetNotification(
@@ -417,6 +446,21 @@ private func widgetNotification(
         widgetLines: lines,
         widgetPlacement: placement,
         nativeSurface: nativeSurface
+    )
+}
+
+/// A shared protocol fixture, optionally placed in another strip group.
+private func composableSurface(_ name: String, composablePlacement: String? = nil) throws -> ExtensionUISurface {
+    let data = try ProtocolFixtures.data("surfaces/\(name)")
+    guard let composablePlacement else {
+        return try JSONDecoder().decode(ExtensionUISurface.self, from: data)
+    }
+    let object = try JSONSerialization.jsonObject(with: data)
+    var json = try testUnwrap(object as? [String: Any])
+    json["placement"] = ["kind": "strip", "preferred": composablePlacement]
+    return try JSONDecoder().decode(
+        ExtensionUISurface.self,
+        from: JSONSerialization.data(withJSONObject: json)
     )
 }
 

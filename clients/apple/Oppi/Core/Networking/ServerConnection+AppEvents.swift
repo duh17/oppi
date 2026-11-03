@@ -57,7 +57,8 @@ extension ServerConnection {
                 )
             }
 
-        case .extensionUISettled(_, let sessionId, let workspaceId, _):
+        case .extensionUISettled(let id, let sessionId, let workspaceId, _):
+            extensionSurfaces.settle(requestId: id, sessionId: sessionId)
             applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)

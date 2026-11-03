@@ -62,7 +62,7 @@ struct ExtensionUIAccessibility: Sendable, Equatable, Decodable {
     let hint: String?
 }
 
-struct ExtensionUITextSpan: Sendable, Equatable, Decodable {
+struct ExtensionUITextSpan: Sendable, Equatable, Codable {
     let text: String
     let role: String?
     let traits: [String]?

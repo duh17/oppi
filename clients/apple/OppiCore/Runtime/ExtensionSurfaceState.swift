@@ -45,11 +45,60 @@ struct ExtensionWorkingState: Equatable, Sendable {
     }
 }
 
+/// One dismissed composable surface's revision floor: the id, the revision the dismissal carried,
+/// and its place in the order the floors were recorded. A late frame at or below the floor stays
+/// out, so a surface the person dismissed cannot come back under the same id.
+struct ExtensionSurfaceDismissal: Equatable, Sendable {
+    let surfaceId: String
+    let revision: Int
+}
+
+/// One composable (v2) surface a session holds, in the order it first arrived.
+struct ExtensionComposableSurfaceState: Equatable, Sendable, Identifiable {
+    var surface: ExtensionUISurface
+    var order: Int
+
+    var id: String { surface.id }
+}
+
+/// One action on a composable surface, waiting for the server. The pressed action shows its
+/// declared `pending` words and disables the ids it names until `extension_ui_settled` names this
+/// request, or a frame newer than the revision it was sent at answers it.
+struct ExtensionSurfacePendingAction: Equatable, Sendable {
+    let requestId: String
+    let surfaceId: String
+    let compositeId: String
+    let actionId: String
+    let rowId: String?
+    /// The revision the action was sent at.
+    let revision: Int
+    let title: String?
+    let disabledActionIds: Set<String>
+}
+
+/// What a tap on a card's action asks the host to send: the card, the action, and the row when the
+/// action belongs to one. The host mints the request id and reads the revision to send at.
+struct ExtensionSurfaceActionIntent: Equatable, Sendable {
+    let surfaceId: String
+    let compositeId: String
+    let actionId: String
+    let rowId: String?
+    let revision: Int
+}
+
 struct ExtensionSurfaceState: Equatable, Sendable {
     var title: String?
     var statuses: [String: ExtensionStatusState]
     var widgets: [String: ExtensionWidgetState]
     var nativeSurfaces: [String: ExtensionNativeSurfaceState]
+    /// Composable (v2) surfaces by protocol id. A surface replaces by id and outlives the turn
+    /// that published it; `dismissedComposableSurfaces` keeps a late frame from bringing a
+    /// dismissed one back.
+    var composableSurfaces: [String: ExtensionComposableSurfaceState]
+    /// Dismissals, oldest first, bounded by `rememberedDismissalLimit` the way the server bounds
+    /// its revision floors: a session publishing thousands of short-lived surfaces must not
+    /// carry them all for its whole life.
+    var dismissedComposableSurfaces: [ExtensionSurfaceDismissal]
     var widgetOrderCursor: Int
     var working: ExtensionWorkingState?
     var hiddenThinkingLabel: String?
@@ -60,6 +109,8 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         statuses: [String: ExtensionStatusState] = [:],
         widgets: [String: ExtensionWidgetState] = [:],
         nativeSurfaces: [String: ExtensionNativeSurfaceState] = [:],
+        composableSurfaces: [String: ExtensionComposableSurfaceState] = [:],
+        dismissedComposableSurfaces: [ExtensionSurfaceDismissal] = [],
         widgetOrderCursor: Int = 0,
         working: ExtensionWorkingState? = nil,
         hiddenThinkingLabel: String? = nil,
@@ -69,6 +120,8 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         self.statuses = statuses
         self.widgets = widgets
         self.nativeSurfaces = nativeSurfaces
+        self.composableSurfaces = composableSurfaces
+        self.dismissedComposableSurfaces = dismissedComposableSurfaces
         self.widgetOrderCursor = widgetOrderCursor
         self.working = working
         self.hiddenThinkingLabel = hiddenThinkingLabel
@@ -80,7 +133,10 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         let hasStatuses = !statuses.isEmpty
         let hasWidgets = widgets.values.contains { !$0.lines.isEmpty }
         let hasNativeSurfaces = nativeSurfaces.values.contains { $0.hasVisibleContent }
-        return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces
+        // Only the placement this build draws (the strip) makes the panel visible; a surface for a
+        // presentation that arrives in a later slice stays in state without drawing anything.
+        let hasComposableSurfaces = composableSurfaces.values.contains { $0.surface.placement.kind == "strip" }
+        return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces || hasComposableSurfaces
     }
 
     var hasRetainedContent: Bool {
@@ -90,9 +146,46 @@ struct ExtensionSurfaceState: Equatable, Sendable {
             || toolsExpanded != nil
     }
 
+    /// Dismissals remembered per session, the same bound the server keeps for its revision floors
+    /// (`MAX_REMEMBERED_REVISIONS`).
+    static let rememberedDismissalLimit = 64
+
+    /// Record a dismissal, moving a reused id to the newest place and evicting the oldest floor
+    /// past the bound.
+    mutating func rememberDismissal(surfaceId: String, revision: Int) {
+        forgetDismissal(for: surfaceId)
+        dismissedComposableSurfaces.append(
+            ExtensionSurfaceDismissal(surfaceId: surfaceId, revision: revision)
+        )
+        if dismissedComposableSurfaces.count > Self.rememberedDismissalLimit {
+            dismissedComposableSurfaces.removeFirst()
+        }
+    }
+
+    func dismissalRevision(for surfaceId: String) -> Int? {
+        dismissedComposableSurfaces.first { $0.surfaceId == surfaceId }?.revision
+    }
+
+    mutating func forgetDismissal(for surfaceId: String) {
+        dismissedComposableSurfaces.removeAll { $0.surfaceId == surfaceId }
+    }
+
     mutating func nextWidgetOrder() -> Int {
         widgetOrderCursor += 1
         return widgetOrderCursor
+    }
+
+    /// The composable surfaces the strip draws in `placement`, oldest first.
+    func composableSurfaceEntries(in placement: ExtensionSurfacePlacementGroup) -> [ExtensionComposableSurfaceState] {
+        composableSurfaces.values
+            .filter { entry in
+                entry.surface.placement.kind == "strip"
+                    && placement.includes(composablePlacement: entry.surface.placement.preferred)
+            }
+            .sorted { lhs, rhs in
+                if lhs.order != rhs.order { return lhs.order < rhs.order }
+                return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+            }
     }
 }
 
@@ -104,12 +197,24 @@ enum ExtensionSurfacePlacementGroup: Equatable, Sendable {
         self == .aboveEditor
     }
 
+    /// A v1 widget names `belowEditor` or nothing.
     func includes(widgetPlacement: String?) -> Bool {
         switch self {
         case .aboveEditor:
             return widgetPlacement != "belowEditor"
         case .belowEditor:
             return widgetPlacement == "belowEditor"
+        }
+    }
+
+    /// A v2 surface names `aboveComposer` or `belowComposer`; the two vocabularies share these two
+    /// groups, never their words.
+    func includes(composablePlacement: String?) -> Bool {
+        switch self {
+        case .aboveEditor:
+            return composablePlacement != "belowComposer"
+        case .belowEditor:
+            return composablePlacement == "belowComposer"
         }
     }
 }
@@ -207,7 +312,9 @@ extension ExtensionSurfaceState {
     }
 
     func hasVisibleContent(in placement: ExtensionSurfacePlacementGroup) -> Bool {
-        hasVisibleMetadata(in: placement) || !widgetEntries(in: placement).isEmpty
+        hasVisibleMetadata(in: placement)
+            || !widgetEntries(in: placement).isEmpty
+            || !composableSurfaceEntries(in: placement).isEmpty
     }
 
     private func visibleSurfaceCount(in extensionScopeId: String?) -> Int {
@@ -361,6 +468,50 @@ enum ExtensionSurfaceReducer {
         surface.nativeSurfaces = surface.nativeSurfaces.filter { entry in
             entry.value.surface.id != canonicalSurfaceId && entry.value.key != widgetKey
         }
+    }
+
+    // MARK: - Composable (v2) surfaces
+
+    /// A published surface replaces the one the session holds under the same id. Revisions are
+    /// monotonic per id, so a frame at or below the stored revision is a late duplicate and is
+    /// dropped, and a frame at or below a dismissal's revision cannot bring a surface back.
+    static func apply(_ surface: ExtensionUISurface, to state: inout ExtensionSurfaceState) {
+        if let stored = state.composableSurfaces[surface.id], stored.surface.revision >= surface.revision {
+            return
+        }
+        if state.composableSurfaces[surface.id] == nil,
+           let dismissed = state.dismissalRevision(for: surface.id),
+           surface.revision <= dismissed {
+            return
+        }
+        let order = state.composableSurfaces[surface.id]?.order ?? state.nextWidgetOrder()
+        state.composableSurfaces[surface.id] = ExtensionComposableSurfaceState(surface: surface, order: order)
+        state.forgetDismissal(for: surface.id)
+    }
+
+    /// A patch merges into the surface the session holds. A patch for a surface this client does
+    /// not hold, one at or below the stored revision, or one that does not apply whole is dropped
+    /// without touching the surface.
+    static func apply(_ patch: ExtensionUISurfacePatch, to state: inout ExtensionSurfaceState) {
+        guard let stored = state.composableSurfaces[patch.surfaceId] else { return }
+        guard patch.revision > stored.surface.revision else { return }
+        if patch.removed {
+            state.composableSurfaces.removeValue(forKey: patch.surfaceId)
+            state.rememberDismissal(surfaceId: patch.surfaceId, revision: patch.revision)
+            return
+        }
+        guard let change = patch.patch,
+              let merged = ExtensionSurfacePatchApplier.apply(
+                  change,
+                  to: stored.surface,
+                  revision: patch.revision
+              ) else {
+            return
+        }
+        state.composableSurfaces[patch.surfaceId] = ExtensionComposableSurfaceState(
+            surface: merged,
+            order: stored.order
+        )
     }
 }
 
