@@ -573,18 +573,43 @@ final class ChatActionHandler {
         onAsyncFailure: (() -> Void)? = nil
     ) {
         Task { @MainActor in
-            do {
-                try await connection.reloadResources()
-                onSendSucceeded?()
-                try? await connection.requestState()
-                if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                    await connection.refreshSlashCommands(for: session, force: true)
-                }
-                connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
-            } catch {
-                onAsyncFailure?()
-                reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
+            _ = await performReload(
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                sessionId: sessionId,
+                onSendSucceeded: onSendSucceeded,
+                onAsyncFailure: onAsyncFailure
+            )
+        }
+    }
+
+    /// The one `/reload` sequence: reload the runtime, refresh state and slash
+    /// commands, announce it, and report a refusal on the timeline. The composer
+    /// wraps it in a task for its submission; the Context panel awaits it to reload
+    /// its own stats afterwards. Returns whether the runtime reloaded.
+    @discardableResult
+    func performReload(
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionStore: SessionStore,
+        sessionId: String,
+        onSendSucceeded: (() -> Void)? = nil,
+        onAsyncFailure: (() -> Void)? = nil
+    ) async -> Bool {
+        do {
+            try await connection.reloadResources()
+            onSendSucceeded?()
+            try? await connection.requestState()
+            if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                await connection.refreshSlashCommands(for: session, force: true)
             }
+            connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
+            return true
+        } catch {
+            onAsyncFailure?()
+            reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
+            return false
         }
     }
 

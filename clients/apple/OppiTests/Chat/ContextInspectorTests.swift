@@ -1,5 +1,7 @@
 import Foundation
+import Observation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Context inspector")
@@ -295,5 +297,161 @@ struct ContextInspectorTests {
         #expect(ContextInspectorViewController.displayPath("/home/me/x.ts") == "~/x.ts")
         #expect(ContextInspectorViewController.displayPath("/opt/tools/x.ts") == "/opt/tools/x.ts")
         #expect(ContextInspectorViewController.displayPath("builtin:mcp") == "builtin:mcp")
+    }
+}
+
+/// The panel's two refreshes over a real window: the bar button runs the session's
+/// `/reload` and then re-fetches the stats; a pull re-fetches the stats alone.
+@Suite("Context inspector reload", .serialized)
+@MainActor
+struct ContextInspectorReloadTests {
+    /// The session row the panel reads, observable so a status change re-runs its
+    /// property pass the way the live row does.
+    @Observable
+    final class LiveRow {
+        var session: Session = makeTestSession()
+    }
+
+    private final class Recorder {
+        var statsLoads = 0
+        var reloads = 0
+        var steps: [String] = []
+    }
+
+    /// Holds a reload open until the test lets it finish.
+    @MainActor
+    private final class Gate {
+        var isOpen = false
+    }
+
+    private struct Mounted {
+        let panel: ContextInspectorViewController
+        let window: UIWindow
+
+        var reloadItem: UIBarButtonItem? {
+            panel.navigationItem.rightBarButtonItem
+        }
+
+        var list: UICollectionView? {
+            panel.view.subviews.compactMap { $0 as? UICollectionView }.first
+        }
+    }
+
+    private func mount(row: LiveRow, recorder: Recorder, gate: Gate? = nil) -> Mounted {
+        let panel = ContextInspectorViewController(
+            session: { row.session },
+            workspace: { nil },
+            connection: ServerConnection(),
+            reviewCommentSelectionScope: nil,
+            loadSessionStats: {
+                recorder.statsLoads += 1
+                recorder.steps.append("stats")
+                return nil
+            },
+            reloadSession: {
+                recorder.reloads += 1
+                recorder.steps.append("reload")
+                while let gate, !gate.isOpen { try? await Task.sleep(for: .milliseconds(10)) }
+            },
+            onClose: {}
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = UINavigationController(rootViewController: panel)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        // A test window's display link does not tick: drive one property pass by
+        // hand so the panel's observation of the row is armed.
+        panel.setNeedsUpdateProperties()
+        panel.updatePropertiesIfNeeded()
+        return Mounted(panel: panel, window: window)
+    }
+
+    @Test func theBarButtonReloadsTheSessionThenTheStats() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+
+        let button = try #require(mounted.reloadItem)
+        #expect(button.image == UIImage(systemName: "arrow.clockwise"))
+        #expect(button.accessibilityLabel == "Reload")
+        #expect(button.accessibilityHint == "Reloads tools, extensions, skills, and prompts")
+        #expect(button.accessibilityIdentifier == "chat.context.refresh")
+        #expect(button.isEnabled, "an idle session can reload")
+
+        button.primaryAction?.performWithSender(button, target: nil)
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 2 },
+            "the panel re-read the stats after the reload"
+        )
+        #expect(recorder.steps == ["stats", "reload", "stats"], "the reload runs before the second stats load")
+    }
+
+    /// The server reloads an idle runtime only, so every other status is refused;
+    /// that refusal would land on the timeline behind this sheet. The button
+    /// therefore offers the reload only from `.ready`.
+    @Test(arguments: [SessionStatus.starting, .busy, .stopping, .stopped, .error])
+    func theBarButtonIsDisabledUnlessTheSessionIsReady(status: SessionStatus) async throws {
+        let row = LiveRow()
+        row.session.status = status
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        let button = try #require(mounted.reloadItem)
+
+        #expect(!button.isEnabled, "a \(status.rawValue) session cannot reload")
+        button.primaryAction?.performWithSender(button, target: nil)
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { recorder.reloads == 0 },
+            "a disabled button reloads nothing"
+        )
+
+        row.session.status = .ready
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            mounted.panel.updatePropertiesIfNeeded()
+            return button.isEnabled
+        }, "the button comes back when the session is ready")
+
+        button.primaryAction?.performWithSender(button, target: nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
+    }
+
+    @Test func theBarButtonWaitsForTheReloadToFinish() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let gate = Gate()
+        let mounted = mount(row: row, recorder: recorder, gate: gate)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+        let button = try #require(mounted.reloadItem)
+
+        button.primaryAction?.performWithSender(button, target: nil)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
+        #expect(!button.isEnabled, "a reload in flight cannot be started twice")
+
+        gate.isOpen = true
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            mounted.panel.updatePropertiesIfNeeded()
+            return recorder.statsLoads == 2 && button.isEnabled
+        }, "the button returns with the refreshed stats")
+        #expect(recorder.reloads == 1)
+    }
+
+    @Test func pullingDownOnlyReLoadsTheStats() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+        let control = try #require(mounted.list?.refreshControl)
+
+        control.sendActions(for: .valueChanged)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 2 })
+        #expect(recorder.reloads == 0, "a pull must not rebuild the runtime")
     }
 }

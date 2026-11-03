@@ -306,6 +306,15 @@ extension ChatViewController {
             connection: connection,
             reviewCommentSelectionScope: .activeSession(reviewCommentSelectionRouter),
             loadSessionStats: { try await connection.getSessionStats() },
+            reloadSession: { [weak self] in
+                guard let self else { return }
+                await actionHandler.performReload(
+                    connection: connection,
+                    reducer: reducer,
+                    sessionStore: sessionStore,
+                    sessionId: sessionId
+                )
+            },
             onClose: { [weak self] in self?.model.showContextInspector = false }
         )
     }

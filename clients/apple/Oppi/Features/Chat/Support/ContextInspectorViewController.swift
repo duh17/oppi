@@ -5,12 +5,16 @@ import UIKit
 /// MCP servers, extensions) and the session's usage and cost.
 ///
 /// The session row drives the window totals live; the breakdown comes from
-/// `get_session_stats`, loaded when the panel opens and on refresh.
+/// `get_session_stats`, loaded when the panel opens and on every refresh. The bar's
+/// Reload button runs the session's `/reload` and then re-fetches those stats, so the
+/// sections show the runtime the session has now; pulling down only re-fetches the
+/// stats, which is cheap and safe to do by accident.
 final class ContextInspectorViewController: UIViewController, UICollectionViewDelegate {
     private let readSession: () -> Session?
     private let readWorkspace: () -> Workspace?
     private let connection: ServerConnection
     private let loadSessionStats: @MainActor () async throws -> SessionStatsSnapshot?
+    private let reloadSession: @MainActor () async -> Void
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     private let onClose: () -> Void
 
@@ -22,6 +26,9 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private var statsError: String?
     private var loadTask: Task<Void, Never>?
     private var themeID: ThemeID?
+    private var reloadItem: UIBarButtonItem?
+    /// A `/reload` this panel started and has not seen finish.
+    private var isReloading = false
 
     /// Open groups, kept for the app run so the panel reopens the way it was left.
     @MainActor private static var expanded: Set<Item> = []
@@ -62,6 +69,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         connection: ServerConnection,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
         loadSessionStats: @escaping @MainActor () async throws -> SessionStatsSnapshot?,
+        reloadSession: @escaping @MainActor () async -> Void,
         onClose: @escaping () -> Void
     ) {
         readSession = session
@@ -69,6 +77,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         self.connection = connection
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
         self.loadSessionStats = loadSessionStats
+        self.reloadSession = reloadSession
         self.onClose = onClose
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: Self.layout())
         super.init(nibName: nil, bundle: nil)
@@ -98,13 +107,15 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         })
         close.accessibilityIdentifier = "chat.context.close"
         navigationItem.leftBarButtonItem = close
-        let refresh = UIBarButtonItem(
+        let reload = UIBarButtonItem(
             image: UIImage(systemName: "arrow.clockwise"),
-            primaryAction: UIAction { [weak self] _ in self?.reloadStats() }
+            primaryAction: UIAction { [weak self] _ in self?.reloadFromBarButton() }
         )
-        refresh.accessibilityLabel = "Refresh"
-        refresh.accessibilityIdentifier = "chat.context.refresh"
-        navigationItem.rightBarButtonItem = refresh
+        reload.accessibilityLabel = "Reload"
+        reload.accessibilityHint = "Reloads tools, extensions, skills, and prompts"
+        reload.accessibilityIdentifier = "chat.context.refresh"
+        navigationItem.rightBarButtonItem = reload
+        reloadItem = reload
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.delegate = self
@@ -120,6 +131,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         configureDataSource()
+        updateReloadButton()
         reloadStats()
     }
 
@@ -134,7 +146,39 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             view.backgroundColor = palette.ui.bg
             collectionView.backgroundColor = palette.ui.bg
         }
+        updateReloadButton()
         rebuild(session: readSession(), workspace: readWorkspace())
+    }
+
+    /// The bar button: the session's own `/reload`, then the stats that reload
+    /// changes. Pulling down stays a stats-only refresh.
+    private func reloadFromBarButton() {
+        guard !isReloading, sessionCanReload else { return }
+        isReloading = true
+        updateReloadButton()
+        // Read the closure before the task: a panel that closes mid-reload is not
+        // kept alive until the command returns, and a closed one fetches no stats.
+        let reload = reloadSession
+        Task { [weak self] in
+            await reload()
+            guard let self else { return }
+            isReloading = false
+            updateReloadButton()
+            // Whatever happened, the runtime may have changed: read the stats again.
+            reloadStats()
+        }
+    }
+
+    /// The server reloads only an idle runtime: it refuses whenever the session is
+    /// not `.ready`, which covers starting, streaming, stopping, stopped, and a
+    /// failed runtime. A refusal would land on the timeline behind this sheet, so
+    /// the button does not offer what the server would reject.
+    private var sessionCanReload: Bool {
+        readSession()?.status == .ready
+    }
+
+    private func updateReloadButton() {
+        reloadItem?.isEnabled = !isReloading && sessionCanReload
     }
 
     private func reloadStats() {

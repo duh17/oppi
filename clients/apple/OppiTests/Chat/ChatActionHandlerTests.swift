@@ -176,6 +176,97 @@ struct ChatActionHandlerTests {
         #expect(reducer.items.contains { if case .error = $0 { true } else { false } })
     }
 
+    /// Both surfaces run this one sequence: the composer's `/reload` and the Context
+    /// panel's button. Its order is the contract, so pin it: the send callback, then
+    /// the state request, then the slash-command refresh, then the notice. A refusal
+    /// calls `onAsyncFailure`, reports on the timeline, and returns false.
+    @Test func performReloadRefreshesTheRuntimeThenAnnouncesIt() async {
+        let handler = ChatActionHandler()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: "s1"))
+        var succeeded = 0
+        var failed = 0
+        var steps: [String] = []
+        var noticeWhenSent: [String?] = []
+
+        let connection = ServerConnection()
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .reload(let requestId?):
+                steps.append("reload")
+                _ = connection.commands.resolveCommandResult(
+                    command: "reload",
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                )
+            case .getState:
+                steps.append("state")
+                noticeWhenSent.append(connection.extensionToast)
+            case .getCommands:
+                steps.append("commands")
+                noticeWhenSent.append(connection.extensionToast)
+            default:
+                steps.append("unexpected")
+            }
+        }
+
+        let reloaded = await handler.performReload(
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionStore: sessionStore,
+            sessionId: "s1",
+            onSendSucceeded: {
+                steps.append("succeeded")
+                succeeded += 1
+            },
+            onAsyncFailure: { failed += 1 }
+        )
+
+        #expect(reloaded)
+        #expect(steps == ["reload", "succeeded", "state", "commands"])
+        #expect(succeeded == 1)
+        #expect(failed == 0)
+        #expect(noticeWhenSent == [nil, nil], "the notice is the last step, after the state and the commands")
+        #expect(connection.extensionToast == "Reloaded tools, extensions, skills, and prompts.")
+
+        var refusedSteps: [String] = []
+        let refusedReducer = TimelineReducer()
+        let refusedConnection = ServerConnection()
+        refusedConnection._sendMessageForTesting = { message in
+            guard case .reload(let requestId?) = message else {
+                refusedSteps.append("unexpected")
+                return
+            }
+            refusedSteps.append("reload")
+            _ = refusedConnection.commands.resolveCommandResult(
+                command: "reload",
+                requestId: requestId,
+                success: false,
+                data: nil,
+                error: "reload requires an idle session"
+            )
+        }
+
+        let refused = await handler.performReload(
+            connection: refusedConnection,
+            reducer: refusedReducer,
+            sessionStore: sessionStore,
+            sessionId: "s1",
+            onSendSucceeded: { refusedSteps.append("succeeded") },
+            onAsyncFailure: { refusedSteps.append("failed") }
+        )
+
+        #expect(!refused)
+        #expect(refusedSteps == ["reload", "failed"], "a refusal calls the failure callback, not the success one")
+        #expect(refusedConnection.extensionToast == nil, "a refusal announces nothing")
+        #expect(refusedReducer.items.contains { item in
+            guard case .error(_, let message) = item else { return false }
+            return message == "Reload failed: reload rejected: reload requires an idle session"
+        }, "the refusal reaches the timeline as the command reports it")
+    }
+
     // MARK: - Send Prompt Logic
 
     @Test func sendPromptReturnsEmptyOnWhitespaceOnly() {
