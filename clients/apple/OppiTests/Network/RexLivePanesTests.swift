@@ -695,12 +695,22 @@ struct RexLivePanesTests {
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { transition.phase != .settling },
                      "the slide ends first; Rex's answer comes after it (phase \(transition.phase))")
         #expect(transition.isPlaceholderShown && transition.isAwaitingCreation, "the card waits")
+        let before = Set(rig.model.latest.panes.map(\.blockID))
         let name = try await rig.model.newPane()
         // `newPane` returns Rex's answer; the sessions read that lists the pane follows it.
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            rig.model.latest.panes.contains { $0.name == name }
-        }, "the session's panes list never named the new pane")
-        let created = try #require(rig.model.latest.panes.first { $0.name == name }?.blockID)
+        // A pane's display name is its title, which Rex answers after that read, so the
+        // new pane is found here by its block: the name the card was given can change.
+        // One read of the list per poll, so the block this test uses is the block the poll
+        // saw; `latest` changes under the wait and a second lookup could see another one.
+        var listed: String?
+        let listedBy = ContinuousClock.now.advanced(by: .seconds(5))
+        while listed == nil, ContinuousClock.now < listedBy {
+            listed = rig.model.latest.panes.first { !before.contains($0.blockID) }?.blockID
+            if listed != nil { break }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let created = try #require(listed, "the session's panes list never listed the new pane")
         // Rex answered: the card takes the pane's name, the grid takes the pane
         // underneath it, and the card stays because that pane has no screen yet.
         transition.paneCreated(named: name)
