@@ -228,9 +228,10 @@ enum MermaidTimelineRenderer {
                 // exist, otherwise each period gets its own color.
                 let colorIndex = hasNamedSections ? sectionColor : periodIndex % accentCount
 
-                let wrappedLabel = wrapTruncated(
+                let wrappedLabel = MermaidTextUtils.wrapTruncated(
                     period.label, font: periodFont,
-                    maxWidth: labelWrapWidth, maxLines: maxPeriodLabelLines
+                    maxWidth: labelWrapWidth, maxLines: maxPeriodLabelLines,
+                    preservesHardBreaks: true, breaksOnWords: true
                 )
                 let labelSize = MermaidTextUtils.measureText(
                     wrappedLabel, font: periodFont, fontSize: fontSize * 0.9
@@ -241,9 +242,10 @@ enum MermaidTimelineRenderer {
                 var eventSizes: [CGSize] = []
                 var stackHeight: CGFloat = 0
                 for (i, event) in period.events.enumerated() {
-                    let text = wrapTruncated(
+                    let text = MermaidTextUtils.wrapTruncated(
                         event, font: eventFont,
-                        maxWidth: eventWrapWidth, maxLines: maxEventLines
+                        maxWidth: eventWrapWidth, maxLines: maxEventLines,
+                        preservesHardBreaks: true, breaksOnWords: true
                     )
                     let textSize = MermaidTextUtils.measureText(
                         text, font: eventFont, fontSize: fontSize * 0.85
@@ -294,9 +296,10 @@ enum MermaidTimelineRenderer {
         var wrappedTitle: String?
         var titleSize = CGSize.zero
         if let title = diagram.title {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTruncated(
                 title, font: titleFont,
-                maxWidth: titleWrapWidth, maxLines: maxTitleLines
+                maxWidth: titleWrapWidth, maxLines: maxTitleLines,
+                preservesHardBreaks: true, breaksOnWords: true
             )
             wrappedTitle = wrapped
             titleSize = MermaidTextUtils.measureText(
@@ -318,9 +321,10 @@ enum MermaidTimelineRenderer {
                 continue
             }
             let wrapWidth = max(sectionWidths[sectionIndex] - bandPadX * 2, 40)
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTruncated(
                 name, font: sectionFont,
-                maxWidth: wrapWidth, maxLines: maxSectionHeadingLines
+                maxWidth: wrapWidth, maxLines: maxSectionHeadingLines,
+                preservesHardBreaks: true, breaksOnWords: true
             )
             let size = MermaidTextUtils.measureText(
                 wrapped, font: sectionFont, fontSize: fontSize * 0.85
@@ -475,9 +479,10 @@ enum MermaidTimelineRenderer {
             var wrappedPeriods: [WrappedPeriod] = []
             for (periodIndex, period) in section.periods.enumerated() {
                 let colorIndex = hasNamedSections ? sectionColor : periodIndex % accentCount
-                let wrappedLabel = wrapTruncated(
+                let wrappedLabel = MermaidTextUtils.wrapTruncated(
                     period.label, font: periodFont,
-                    maxWidth: labelCol, maxLines: maxPeriodLabelLines
+                    maxWidth: labelCol, maxLines: maxPeriodLabelLines,
+                    preservesHardBreaks: true, breaksOnWords: true
                 )
                 let labelSize = MermaidTextUtils.measureText(
                     wrappedLabel, font: periodFont, fontSize: fontSize * 0.9
@@ -486,9 +491,10 @@ enum MermaidTimelineRenderer {
                 var eventSizes: [CGSize] = []
                 var stackHeight: CGFloat = 0
                 for (i, event) in period.events.enumerated() {
-                    let text = wrapTruncated(
+                    let text = MermaidTextUtils.wrapTruncated(
                         event, font: eventFont,
-                        maxWidth: eventWrapWidth, maxLines: maxEventLines
+                        maxWidth: eventWrapWidth, maxLines: maxEventLines,
+                        preservesHardBreaks: true, breaksOnWords: true
                     )
                     let textSize = MermaidTextUtils.measureText(
                         text, font: eventFont, fontSize: fontSize * 0.85
@@ -523,9 +529,10 @@ enum MermaidTimelineRenderer {
         var wrappedTitle: String?
         var titleSize = CGSize.zero
         if let title = diagram.title {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTruncated(
                 title, font: titleFont,
-                maxWidth: titleWrapWidth, maxLines: maxTitleLines
+                maxWidth: titleWrapWidth, maxLines: maxTitleLines,
+                preservesHardBreaks: true, breaksOnWords: true
             )
             wrappedTitle = wrapped
             titleSize = MermaidTextUtils.measureText(
@@ -549,9 +556,10 @@ enum MermaidTimelineRenderer {
             var wrappedName: String?
             var headingHeight: CGFloat = 0
             if let name = section.name {
-                let wrapped = wrapTruncated(
+                let wrapped = MermaidTextUtils.wrapTruncated(
                     name, font: sectionFont,
-                    maxWidth: headingWrapWidth, maxLines: maxSectionHeadingLines
+                    maxWidth: headingWrapWidth, maxLines: maxSectionHeadingLines,
+                    preservesHardBreaks: true, breaksOnWords: true
                 )
                 let size = MermaidTextUtils.measureText(
                     wrapped, font: sectionFont, fontSize: fontSize * 0.85
@@ -1031,89 +1039,5 @@ enum MermaidTimelineRenderer {
             theme.accentCyan,
             theme.accentRed,
         ]
-    }
-
-    // MARK: - Text wrapping
-
-    /// Wrap text to a width and cap the line count, truncating the last
-    /// kept line with an ellipsis when text is dropped.
-    ///
-    /// Existing newlines from `<br>` are kept as hard breaks, then each
-    /// paragraph is wrapped independently.
-    private static func wrapTruncated(
-        _ text: String,
-        font: CTFont,
-        maxWidth: CGFloat,
-        maxLines: Int
-    ) -> String {
-        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var lines: [String] = []
-        for paragraph in paragraphs {
-            if paragraph.isEmpty {
-                lines.append("")
-            } else {
-                lines.append(contentsOf: suggestLineBreaks(paragraph, font: font, maxWidth: maxWidth))
-            }
-        }
-        guard !lines.isEmpty else { return "" }
-
-        if lines.count > maxLines {
-            lines = Array(lines.prefix(maxLines))
-            var last = lines[maxLines - 1]
-            while !last.isEmpty, textWidth(last + "…", font: font) > maxWidth {
-                if let space = last.range(of: " ", options: .backwards) {
-                    last = String(last[..<space.lowerBound])
-                } else {
-                    last.removeLast()
-                }
-            }
-            lines[maxLines - 1] = last.isEmpty ? "…" : last + "…"
-        }
-
-        // Unbreakable tokens can still exceed the width after line breaking;
-        // clamp every line so boxes never overflow.
-        return lines
-            .map { fitLine($0, font: font, maxWidth: maxWidth) }
-            .joined(separator: "\n")
-    }
-
-    private static func fitLine(_ line: String, font: CTFont, maxWidth: CGFloat) -> String {
-        guard textWidth(line, font: font) > maxWidth else { return line }
-        var text = line
-        while !text.isEmpty, textWidth(text + "…", font: font) > maxWidth {
-            text.removeLast()
-        }
-        return text.isEmpty ? "…" : text + "…"
-    }
-
-    private static func suggestLineBreaks(
-        _ text: String,
-        font: CTFont,
-        maxWidth: CGFloat
-    ) -> [String] {
-        guard !text.isEmpty else { return [] }
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let typesetter = CTTypesetterCreateWithAttributedString(attributed)
-        let nsText = text as NSString
-        var lines: [String] = []
-        var location = 0
-        while location < nsText.length {
-            let suggested = CTTypesetterSuggestLineBreak(typesetter, location, Double(maxWidth))
-            let length = max(suggested, 1)
-            let clamped = min(length, nsText.length - location)
-            let piece = nsText
-                .substring(with: NSRange(location: location, length: clamped))
-                .trimmingCharacters(in: .whitespaces)
-            if !piece.isEmpty { lines.append(piece) }
-            location += length
-        }
-        return lines
-    }
-
-    private static func textWidth(_ text: String, font: CTFont) -> CGFloat {
-        guard !text.isEmpty else { return 0 }
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let line = CTLineCreateWithAttributedString(attributed)
-        return CTLineGetBoundsWithOptions(line, []).width
     }
 }

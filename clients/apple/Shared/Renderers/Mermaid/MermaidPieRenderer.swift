@@ -76,8 +76,13 @@ enum MermaidPieRenderer {
         var wrappedTitle: String?
         var titleSize = CGSize.zero
         if let title = resolvedTitle {
-            let wrapped = wrapTruncated(
-                title, font: titleFont, maxWidth: contentWidth, maxLines: titleMaxLines
+            let wrapped = MermaidTextUtils.wrapTruncated(
+                title,
+                font: titleFont,
+                maxWidth: contentWidth,
+                maxLines: titleMaxLines,
+                preservesHardBreaks: false,
+                breaksOnWords: true
             )
             wrappedTitle = wrapped
             titleSize = MermaidTextUtils.measureText(
@@ -244,7 +249,7 @@ enum MermaidPieRenderer {
                     let smallFont = CTFontCreateWithName(
                         "Helvetica" as CFString, fontSize * 0.9, nil
                     )
-                    let pctSize = lineSize(pctText, font: smallFont, fontSize: fontSize * 0.9)
+                    let pctSize = MermaidTextUtils.lineSize(pctText, font: smallFont)
                     let textOrigin = CGPoint(
                         x: ox + lx - pctSize.width / 2,
                         y: oy + ly - pctSize.height / 2
@@ -401,8 +406,13 @@ enum MermaidPieRenderer {
             } else {
                 raw = slice.label
             }
-            let wrapped = wrapTruncated(
-                raw, font: font, maxWidth: textWidth, maxLines: legendMaxLines
+            let wrapped = MermaidTextUtils.wrapTruncated(
+                raw,
+                font: font,
+                maxWidth: textWidth,
+                maxLines: legendMaxLines,
+                preservesHardBreaks: false,
+                breaksOnWords: true
             )
             let measured = MermaidTextUtils.measureText(
                 wrapped, font: font, fontSize: fontSize
@@ -508,84 +518,6 @@ enum MermaidPieRenderer {
     private static func roundedPercentString(_ fraction: Double) -> String {
         let pct = (fraction * 100).rounded()
         return String(format: "%.0f", pct)
-    }
-
-    // MARK: - Text wrapping
-
-    /// Wrap to `maxWidth` and cap the line count, truncating the last
-    /// kept line with an ellipsis when text is dropped.
-    private static func wrapTruncated(
-        _ text: String,
-        font: CTFont,
-        maxWidth: CGFloat,
-        maxLines: Int
-    ) -> String {
-        var lines = suggestLineBreaks(text, font: font, maxWidth: maxWidth)
-        guard !lines.isEmpty else { return "" }
-
-        if lines.count > maxLines {
-            lines = Array(lines.prefix(maxLines))
-            var last = lines[maxLines - 1]
-            while !last.isEmpty, textWidth(last + "…", font: font) > maxWidth {
-                if let space = last.range(of: " ", options: .backwards) {
-                    last = String(last[..<space.lowerBound])
-                } else {
-                    last.removeLast()
-                }
-            }
-            lines[maxLines - 1] = last.isEmpty ? "…" : last + "…"
-        }
-
-        return lines
-            .map { fitLine($0, font: font, maxWidth: maxWidth) }
-            .joined(separator: "\n")
-    }
-
-    private static func fitLine(_ line: String, font: CTFont, maxWidth: CGFloat) -> String {
-        guard textWidth(line, font: font) > maxWidth else { return line }
-        var text = line
-        while !text.isEmpty, textWidth(text + "…", font: font) > maxWidth {
-            text.removeLast()
-        }
-        return text.isEmpty ? "…" : text + "…"
-    }
-
-    private static func suggestLineBreaks(
-        _ text: String,
-        font: CTFont,
-        maxWidth: CGFloat
-    ) -> [String] {
-        guard !text.isEmpty else { return [] }
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let typesetter = CTTypesetterCreateWithAttributedString(attributed)
-        let nsText = text as NSString
-        var lines: [String] = []
-        var location = 0
-        while location < nsText.length {
-            let suggested = CTTypesetterSuggestLineBreak(typesetter, location, Double(maxWidth))
-            let length = max(suggested, 1)
-            let clamped = min(length, nsText.length - location)
-            let piece = nsText
-                .substring(with: NSRange(location: location, length: clamped))
-                .trimmingCharacters(in: .whitespaces)
-            if !piece.isEmpty { lines.append(piece) }
-            location += length
-        }
-        return lines
-    }
-
-    private static func textWidth(_ text: String, font: CTFont) -> CGFloat {
-        guard !text.isEmpty else { return 0 }
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let line = CTLineCreateWithAttributedString(attributed)
-        return CTLineGetBoundsWithOptions(line, []).width
-    }
-
-    private static func lineSize(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let line = CTLineCreateWithAttributedString(attributed)
-        let bounds = CTLineGetBoundsWithOptions(line, [])
-        return CGSize(width: bounds.width, height: max(bounds.height, fontSize))
     }
 }
 

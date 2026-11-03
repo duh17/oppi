@@ -345,6 +345,110 @@ enum MermaidTextUtils {
         return lines.isEmpty ? [token] : lines
     }
 
+    /// Wrap with CoreText-suggested breaks, keep at most `maxLines`, and
+    /// ellipsize what is dropped.
+    ///
+    /// - `preservesHardBreaks`: split on `\n` first, keeping blank lines, so
+    ///   a `<br>` (normalized to `\n` before layout) stays a hard break.
+    /// - `breaksOnWords`: back the truncated line off to its last space
+    ///   instead of dropping characters, and clamp every kept line: CoreText
+    ///   breaks a single unbreakable token into a line wider than `maxWidth`.
+    static func wrapTruncated(
+        _ text: String,
+        font: CTFont,
+        maxWidth: CGFloat,
+        maxLines: Int,
+        preservesHardBreaks: Bool,
+        breaksOnWords: Bool
+    ) -> String {
+        var lines: [String] = []
+        if preservesHardBreaks {
+            for paragraph in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                guard !paragraph.isEmpty else {
+                    lines.append("")
+                    continue
+                }
+                lines.append(contentsOf: suggestLineBreaks(String(paragraph), font: font, maxWidth: maxWidth))
+            }
+        } else {
+            lines = suggestLineBreaks(text, font: font, maxWidth: maxWidth)
+        }
+        return truncate(lines, font: font, maxWidth: maxWidth, maxLines: maxLines, breaksOnWords: breaksOnWords)
+    }
+
+    /// `wrapText` then keep at most `maxLines`, ellipsizing the dropped tail.
+    static func wrapTextTruncated(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        maxWidth: CGFloat,
+        maxLines: Int
+    ) -> String {
+        let wrapped = wrapText(text, maxWidth: maxWidth, font: font, fontSize: fontSize)
+        let lines = wrapped.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return truncate(lines, font: font, maxWidth: maxWidth, maxLines: maxLines, breaksOnWords: false)
+    }
+
+    /// Cap `lines` at `maxLines`, ellipsizing the last kept line.
+    private static func truncate(
+        _ lines: [String],
+        font: CTFont,
+        maxWidth: CGFloat,
+        maxLines: Int,
+        breaksOnWords: Bool
+    ) -> String {
+        var kept = lines
+        if kept.count > maxLines {
+            kept = Array(kept.prefix(maxLines))
+            var last = kept[maxLines - 1]
+            while !last.isEmpty, lineWidth(last + "…", font: font) > maxWidth {
+                if breaksOnWords, let space = last.range(of: " ", options: .backwards) {
+                    last = String(last[..<space.lowerBound])
+                } else {
+                    last.removeLast()
+                }
+            }
+            kept[maxLines - 1] = last.isEmpty ? "…" : last + "…"
+        }
+        guard breaksOnWords else { return kept.joined(separator: "\n") }
+        return kept
+            .map { fitLine($0, font: font, maxWidth: maxWidth) }
+            .joined(separator: "\n")
+    }
+
+    private static func fitLine(_ line: String, font: CTFont, maxWidth: CGFloat) -> String {
+        guard lineWidth(line, font: font) > maxWidth else { return line }
+        var text = line
+        while !text.isEmpty, lineWidth(text + "…", font: font) > maxWidth {
+            text.removeLast()
+        }
+        return text.isEmpty ? "…" : text + "…"
+    }
+
+    private static func suggestLineBreaks(
+        _ text: String,
+        font: CTFont,
+        maxWidth: CGFloat
+    ) -> [String] {
+        guard !text.isEmpty else { return [] }
+        let attributed = NSAttributedString(string: text, attributes: [.font: font])
+        let typesetter = CTTypesetterCreateWithAttributedString(attributed)
+        let nsText = text as NSString
+        var lines: [String] = []
+        var location = 0
+        while location < nsText.length {
+            let suggested = CTTypesetterSuggestLineBreak(typesetter, location, Double(maxWidth))
+            let length = max(suggested, 1)
+            let clamped = min(length, nsText.length - location)
+            let piece = nsText
+                .substring(with: NSRange(location: location, length: clamped))
+                .trimmingCharacters(in: .whitespaces)
+            if !piece.isEmpty { lines.append(piece) }
+            location += length
+        }
+        return lines
+    }
+
     // MARK: - Text measurement
 
     /// Typeset lines and their metrics, reused across wrap, layout, and draw.
@@ -468,6 +572,19 @@ enum MermaidTextUtils {
     /// `measureText` applies.
     static func lineWidth(_ text: String, font: CTFont, fontSize: CGFloat) -> CGFloat {
         lineMetrics(text, font: font, fontSize: fontSize, isMarkdown: false).boundsWidth
+    }
+
+    /// `lineWidth` for a caller that measures from a font alone; the metrics
+    /// cache is keyed by that font's own point size.
+    static func lineWidth(_ text: String, font: CTFont) -> CGFloat {
+        lineWidth(text, font: font, fontSize: CTFontGetSize(font))
+    }
+
+    /// Ink size of one line of text, without the padding `measureText` applies.
+    static func lineSize(_ text: String, font: CTFont) -> CGSize {
+        let fontSize = CTFontGetSize(font)
+        let metrics = lineMetrics(text, font: font, fontSize: fontSize, isMarkdown: false)
+        return CGSize(width: metrics.boundsWidth, height: max(metrics.boundsHeight, fontSize))
     }
 
     /// Measure a single line of text.

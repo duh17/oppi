@@ -23,6 +23,7 @@ import UIKit
 // [x] Mindmap node labels with <br> → multi-line
 // [x] Gantt task names with <br> → multi-line
 // [x] measureText: single-line vs multi-line height
+// [x] wrapTruncated: hard breaks kept or collapsed, word back-off vs character drop
 
 @Suite("Mermaid Line Break Handling")
 struct MermaidLineBreakTests {
@@ -327,5 +328,43 @@ struct MermaidLineBreakTests {
             abs(markdownSize.width - formattedSize.width) < abs(markdownSize.width - rawSize.width),
             "Markdown width \(markdownSize.width) should be closer to formatted \(formattedSize.width) than raw \(rawSize.width)"
         )
+    }
+
+    // MARK: - Shared wrap helper
+
+    /// The two label behaviours the renderers must keep apart: a `<br>`
+    /// newline is a hard break for the timeline but not for the pie legend,
+    /// and truncation backs off to a word boundary except in the XY legend.
+    @Test func wrapTruncatedHonoursHardBreaksAndWordBackoff() {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 12, nil)
+        let blankLine = "one\n\ntwo"
+        let hardBreaks = MermaidTextUtils.wrapTruncated(
+            blankLine, font: font, maxWidth: 400, maxLines: 3,
+            preservesHardBreaks: true, breaksOnWords: true
+        )
+        // Splitting first keeps the blank line as its own line; letting
+        // CoreText break keeps the `\n` inside the piece it returns.
+        let typesetterBreaks = MermaidTextUtils.wrapTruncated(
+            blankLine, font: font, maxWidth: 400, maxLines: 3,
+            preservesHardBreaks: false, breaksOnWords: true
+        )
+        #expect(hardBreaks == blankLine)
+        // The extra breaks are the pie legend's existing output, kept as-is:
+        // the typesetter reports blank lines of its own between the pieces.
+        #expect(typesetterBreaks == "one\n\n\n\ntwo")
+
+        let phrase = "alpha beta gamma"
+        let narrow = MermaidTextUtils.lineWidth("alpha beta", font: font) + 1
+        let wordBackoff = MermaidTextUtils.wrapTruncated(
+            phrase, font: font, maxWidth: narrow, maxLines: 1,
+            preservesHardBreaks: false, breaksOnWords: true
+        )
+        let characterDrop = MermaidTextUtils.wrapTruncated(
+            phrase, font: font, maxWidth: narrow, maxLines: 1,
+            preservesHardBreaks: false, breaksOnWords: false
+        )
+        #expect(wordBackoff == "alpha…")
+        #expect(characterDrop == "alpha b…")
+        #expect(characterDrop != wordBackoff)
     }
 }

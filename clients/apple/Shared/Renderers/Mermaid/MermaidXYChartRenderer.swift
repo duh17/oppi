@@ -91,7 +91,7 @@ enum MermaidXYChartRenderer {
         let resolvedTitle = (diagram.title?.isEmpty == false) ? diagram.title : nil
         var wrappedTitle: String?
         if let title = resolvedTitle {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
             )
             wrappedTitle = wrapped
@@ -106,7 +106,7 @@ enum MermaidXYChartRenderer {
         }
 
         if let yTitle = prepared.yTitle {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 yTitle,
                 font: axisTitleFont,
                 fontSize: fontSize * 0.85,
@@ -126,7 +126,7 @@ enum MermaidXYChartRenderer {
         let yTicks = niceTicks(min: prepared.yMin, max: prepared.yMax)
         let yTickLabels = yTicks.map { formatAxisNumber($0) }
         let yLabelWidth = yTickLabels.reduce(CGFloat(0)) { widest, label in
-            max(widest, textWidth(label, font: labelFont))
+            max(widest, MermaidTextUtils.lineWidth(label, font: labelFont))
         }
         let plotLeft = outerMargin + yLabelWidth + yLabelGap
         let plotWidth = max(maxWidth - plotLeft - outerMargin, 40)
@@ -142,7 +142,7 @@ enum MermaidXYChartRenderer {
         )
         let yTickHeight = fontSize * 0.75 * 1.4
         for (index, label) in yTickLabels.enumerated() {
-            let width = textWidth(label, font: labelFont)
+            let width = MermaidTextUtils.lineWidth(label, font: labelFont)
             let tickY = yPosition(
                 yTicks[index], min: prepared.yMin, max: prepared.yMax, plot: plotRect
             )
@@ -158,7 +158,7 @@ enum MermaidXYChartRenderer {
 
         let slotWidth = plotWidth / CGFloat(prepared.categories.count)
         let xLabelSizes = prepared.categories.map { label in
-            textWidth(label, font: labelFont)
+            MermaidTextUtils.lineWidth(label, font: labelFont)
         }
         let slotCenters = prepared.categories.indices.map { index in
             plotLeft + (CGFloat(index) + 0.5) * slotWidth
@@ -189,7 +189,7 @@ enum MermaidXYChartRenderer {
 
         if let xTitle = prepared.xTitle {
             y += axisTitleGap
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 xTitle,
                 font: axisTitleFont,
                 fontSize: fontSize * 0.85,
@@ -299,7 +299,7 @@ enum MermaidXYChartRenderer {
                 let labelSize = MermaidTextUtils.measureText(
                     label, font: labelFontLocal, fontSize: fontSize * 0.75
                 )
-                let labelWidth = textWidth(label, font: labelFontLocal)
+                let labelWidth = MermaidTextUtils.lineWidth(label, font: labelFontLocal)
                 MermaidTextUtils.drawText(
                     label,
                     at: CGPoint(
@@ -500,7 +500,7 @@ enum MermaidXYChartRenderer {
         let resolvedTitle = (diagram.title?.isEmpty == false) ? diagram.title : nil
         var wrappedTitle: String?
         if let title = resolvedTitle {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
             )
             wrappedTitle = wrapped
@@ -515,7 +515,7 @@ enum MermaidXYChartRenderer {
         }
 
         if let yTitle = prepared.yTitle {
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 yTitle,
                 font: axisTitleFont,
                 fontSize: fontSize * 0.85,
@@ -532,7 +532,7 @@ enum MermaidXYChartRenderer {
             y += size.height + axisTitleGap
         }
 
-        let rawCategoryWidths = prepared.categories.map { textWidth($0, font: labelFont) }
+        let rawCategoryWidths = prepared.categories.map { MermaidTextUtils.lineWidth($0, font: labelFont) }
         let categoryCol = min(
             max(rawCategoryWidths.max() ?? 20, 20),
             max(contentWidth * 0.36, 40)
@@ -545,7 +545,7 @@ enum MermaidXYChartRenderer {
         let yTickHeight = fontSize * 0.75 * 1.4
         let yTicks = niceTicks(min: prepared.yMin, max: prepared.yMax)
         let yTickLabels = yTicks.map { formatAxisNumber($0) }
-        let yTickWidths = yTickLabels.map { textWidth($0, font: labelFont) }
+        let yTickWidths = yTickLabels.map { MermaidTextUtils.lineWidth($0, font: labelFont) }
         let tickCenters = yTicks.map { tick in
             xPosition(tick, min: prepared.yMin, max: prepared.yMax, plot: CGRect(
                 x: plotLeft, y: 0, width: plotWidth, height: 1
@@ -584,7 +584,7 @@ enum MermaidXYChartRenderer {
         let xLabelHeight = fontSize * 0.75 * 1.4
         for (index, label) in prepared.categories.enumerated() {
             let text = truncateToWidth(label, maxWidth: categoryCol, font: labelFont)
-            let width = min(textWidth(text, font: labelFont), categoryCol)
+            let width = min(MermaidTextUtils.lineWidth(text, font: labelFont), categoryCol)
             nodeLabels["$x-\(index)"] = text
             nodePositions["x-\(index)"] = CGRect(
                 x: outerMargin + categoryCol - width,
@@ -601,7 +601,7 @@ enum MermaidXYChartRenderer {
 
         if let xTitle = prepared.xTitle {
             y += axisTitleGap
-            let wrapped = wrapTruncated(
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
                 xTitle,
                 font: axisTitleFont,
                 fontSize: fontSize * 0.85,
@@ -1081,7 +1081,7 @@ enum MermaidXYChartRenderer {
             }
         }
 
-        let minLabelWidth = font.map { textWidth("…", font: $0) } ?? 0
+        let minLabelWidth = font.map { MermaidTextUtils.lineWidth("…", font: $0) } ?? 0
 
         func fit(_ index: Int, _ minBound: CGFloat, _ maxBound: CGFloat) -> ShownXLabel? {
             let available = maxBound - minBound
@@ -1090,7 +1090,7 @@ enum MermaidXYChartRenderer {
             var width = min(widths[index], available)
             if let font {
                 text = truncateToWidth(labels[index], maxWidth: width, font: font)
-                width = min(textWidth(text, font: font), available)
+                width = min(MermaidTextUtils.lineWidth(text, font: font), available)
             }
             guard width <= available + 0.01, width > 0 || minLabelWidth == 0 else { return nil }
             var x = slotCenters[index] - width / 2
@@ -1137,10 +1137,10 @@ enum MermaidXYChartRenderer {
     }
 
     private static func truncateToWidth(_ text: String, maxWidth: CGFloat, font: CTFont) -> String {
-        if textWidth(text, font: font) <= maxWidth { return text }
-        if textWidth("…", font: font) > maxWidth { return "…" }
+        if MermaidTextUtils.lineWidth(text, font: font) <= maxWidth { return text }
+        if MermaidTextUtils.lineWidth("…", font: font) > maxWidth { return "…" }
         var stem = text
-        while !stem.isEmpty, textWidth(stem + "…", font: font) > maxWidth {
+        while !stem.isEmpty, MermaidTextUtils.lineWidth(stem + "…", font: font) > maxWidth {
             stem.removeLast()
         }
         return stem.isEmpty ? "…" : stem + "…"
@@ -1315,7 +1315,7 @@ enum MermaidXYChartRenderer {
         var rowHeight: CGFloat = swatchSize
 
         for (index, name) in items {
-            let text = wrapTruncated(
+            let text = MermaidTextUtils.wrapTextTruncated(
                 name, font: font, fontSize: fontSize, maxWidth: maxWidth, maxLines: legendMaxLines
             )
             let textSize = MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
@@ -1337,39 +1337,6 @@ enum MermaidXYChartRenderer {
             rows.append(LegendRow(items: current, height: rowHeight + legendRowSpacing))
         }
         return rows
-    }
-
-    // MARK: - Text
-
-    private static func wrapTruncated(
-        _ text: String,
-        font: CTFont,
-        fontSize: CGFloat,
-        maxWidth: CGFloat,
-        maxLines: Int
-    ) -> String {
-        let wrapped = MermaidTextUtils.wrapText(
-            text, maxWidth: maxWidth, font: font, fontSize: fontSize
-        )
-        var lines = wrapped.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard !lines.isEmpty else { return "" }
-        if lines.count > maxLines {
-            lines = Array(lines.prefix(maxLines))
-            var last = lines[maxLines - 1]
-            while !last.isEmpty,
-                  textWidth(last + "…", font: font) > maxWidth {
-                last.removeLast()
-            }
-            lines[maxLines - 1] = last.isEmpty ? "…" : last + "…"
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func textWidth(_ text: String, font: CTFont) -> CGFloat {
-        guard !text.isEmpty else { return 0 }
-        let attributed = NSAttributedString(string: text, attributes: [.font: font])
-        let line = CTLineCreateWithAttributedString(attributed)
-        return CTLineGetBoundsWithOptions(line, []).width
     }
 
     private static func emptyToNil(_ value: String?) -> String? {
