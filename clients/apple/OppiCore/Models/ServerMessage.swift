@@ -207,6 +207,11 @@ enum ServerMessage: Sendable, Equatable {
     case extensionUIRequest(ExtensionUIRequest)
     case extensionUINotification(ExtensionUINotification)
     case extensionUISettled(id: String, sessionId: String)
+    /// A composable surface: publish or replace by id. Present only for clients that advertise
+    /// `extension-native-ui:v2:composites`; everyone else gets the v1 widget projection.
+    case extensionUISurface(surface: ExtensionUISurface, sessionId: String?)
+    /// A change to a surface already held, keyed by its id; `removed` means the surface is gone.
+    case extensionUIPatch(patch: ExtensionUISurfacePatch)
 
     // Git status (workspace/worktree-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
@@ -401,6 +406,8 @@ extension ServerMessage: Decodable {
         case error, code, fatal
         // extension_ui_settled; extension UI requests and notifications decode through their own types
         case id, sessionId
+        // extension_ui_surface (a composable surface); extension_ui_patch decodes through its own type
+        case surface
         case message
         // command_result
         case command, requestId, success, data
@@ -668,6 +675,15 @@ extension ServerMessage: Decodable {
         case "extension_ui_notification":
             self = .extensionUINotification(try ExtensionUINotification(from: decoder))
 
+        case "extension_ui_surface":
+            self = .extensionUISurface(
+                surface: try c.decode(ExtensionUISurface.self, forKey: .surface),
+                sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId)
+            )
+
+        case "extension_ui_patch":
+            self = .extensionUIPatch(patch: try ExtensionUISurfacePatch(from: decoder))
+
         case "git_status":
             let workspaceId = try c.decode(String.self, forKey: .workspaceId)
             let worktreeId = try c.decodeIfPresent(String.self, forKey: .worktreeId)
@@ -889,6 +905,8 @@ extension ServerMessage {
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
         case .extensionUISettled: "extensionUISettled"
+        case .extensionUISurface: "extensionUISurface"
+        case .extensionUIPatch: "extensionUIPatch"
         case .gitStatus: "gitStatus"
         case .voiceCallState: "voiceCallState"
         case .voiceDelegationUpdate: "voiceDelegationUpdate"

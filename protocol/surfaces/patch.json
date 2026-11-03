@@ -1,0 +1,12 @@
+{
+  "type": "extension_ui_patch",
+  "surfaceId": "deploy",
+  "revision": 8,
+  "patch": {
+    "sections.0.state": {
+      "kind": "content"
+    },
+    "sections.0.phase": "queued"
+  },
+  "sessionId": "test-session-1"
+}

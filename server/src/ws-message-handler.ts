@@ -7,6 +7,7 @@ import {
   type AgentRuntimeEventTransport,
 } from "./agent-runtime-transport.js";
 import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
+import { buildExtensionUISettledMessage } from "./extension-ui-contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
@@ -166,6 +167,16 @@ export class WsMessageHandler {
           }
           send({ type: "error", error: `UI request not found: ${msg.id}` });
         }
+        return;
+      }
+
+      // ── Composable surface actions (extension-native-ui:v2:composites) ──
+      // The loop lives with the session that published the surface (`ExtensionSurfaceRuntime`);
+      // no session publishes one yet, so an action has no surface to reach. The error carries no
+      // request id of its own, so the tap's round trip ends with a settled for it.
+      case "extension_ui_action": {
+        send({ type: "error", error: `Unknown extension surface: ${msg.surfaceId}` });
+        if (msg.requestId) send(buildExtensionUISettledMessage(session.id, msg.requestId));
         return;
       }
 

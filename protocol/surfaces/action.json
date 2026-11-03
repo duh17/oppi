@@ -1,0 +1,11 @@
+{
+  "type": "extension_ui_action",
+  "surfaceId": "deploy",
+  "compositeId": "status",
+  "actionId": "retry",
+  "revision": 7,
+  "values": {
+    "env": "prod"
+  },
+  "requestId": "action-1"
+}

@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "id": "approval",
+  "title": "Approval",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "oneShot",
+  "header": {
+    "title": "Ship 4f2c1ab?",
+    "subtitle": "Expires in 5 minutes"
+  },
+  "actions": {
+    "approve": {
+      "title": "Approve",
+      "role": "primary",
+      "pending": {
+        "title": "Approving…",
+        "disabled": [
+          "approve",
+          "reject"
+        ]
+      }
+    },
+    "reject": {
+      "title": "Reject",
+      "role": "destructive"
+    }
+  },
+  "fallback": {
+    "text": "Approve shipping 4f2c1ab?"
+  },
+  "revision": 1,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "timeoutAt": 1739750700000,
+  "sections": [
+    {
+      "composite": "actionBar",
+      "id": "decide",
+      "header": {
+        "title": "Approve shipping 4f2c1ab?"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "approve",
+        "reject"
+      ],
+      "fallback": {
+        "text": "Approve or reject the deploy"
+      },
+      "tone": "accent"
+    }
+  ]
+}

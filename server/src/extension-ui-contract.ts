@@ -1,6 +1,7 @@
 import type {
   AskQuestion,
   ExtensionUINativeSurface,
+  ExtensionUISurface,
   ExtensionUITextSpan,
   ExtensionUINotifyType,
   ExtensionUIWidgetPlacement,
@@ -55,11 +56,14 @@ export const EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY = "extension-native-ui
 export const EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY =
   "extension-native-ui:v1:surface-native";
 export const EXTENSION_NATIVE_UI_OSC8_LINKS_CAPABILITY = "extension-native-ui:v1:osc8-links";
+/** v2 composites: the client draws `extension_ui_surface` and answers `extension_ui_action`. */
+export const EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY = "extension-native-ui:v2:composites";
 export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
   EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY,
   EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY,
   EXTENSION_NATIVE_UI_OSC8_LINKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
@@ -943,6 +947,29 @@ export function buildExtensionUISettledMessage(sessionId: string, id: string): S
   return {
     type: "extension_ui_settled",
     id,
+    sessionId,
+  };
+}
+
+export function buildExtensionUISurfaceMessage(
+  sessionId: string,
+  surface: ExtensionUISurface,
+): ServerMessage {
+  return { type: "extension_ui_surface", surface, sessionId };
+}
+
+export function buildExtensionUIPatchMessage(
+  sessionId: string,
+  surfaceId: string,
+  revision: number,
+  change: { patch?: Record<string, unknown>; removed?: boolean },
+): ServerMessage {
+  return {
+    type: "extension_ui_patch",
+    surfaceId,
+    revision,
+    ...(change.patch === undefined ? {} : { patch: change.patch }),
+    ...(change.removed ? { removed: true } : {}),
     sessionId,
   };
 }

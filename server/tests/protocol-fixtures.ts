@@ -1,6 +1,14 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AppEventMessage, ServerMessage, Session, SessionSummary } from "../src/types.js";
+import type {
+  AppEventMessage,
+  ExtensionUISurface,
+  ServerMessage,
+  Session,
+  SessionSummary,
+} from "../src/types.js";
+import { readExtensionUISurface } from "../src/extension-surface.js";
+import { buildSurfaceFixtures } from "./surface-fixtures.js";
 
 const FIXTURE_MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -14,6 +22,13 @@ export const APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION =
   "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update";
 
 // ── Canonical server-message examples ──
+
+/** A canonical surface fixture, normalized so the message carries exactly what the server sends. */
+function canonicalSurface(name: string): ExtensionUISurface {
+  const read = readExtensionUISurface(buildSurfaceFixtures()[name]);
+  if ("problem" in read) throw new Error(`Surface fixture ${name}: ${read.problem}`);
+  return read.surface;
+}
 
 const TEST_SESSION_LAUNCH: NonNullable<Session["launch"]> = {
   source: "agent",
@@ -632,6 +647,18 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     id: "ui-001",
     sessionId: "test-session-1",
   },
+  extension_ui_surface: {
+    type: "extension_ui_surface",
+    surface: canonicalSurface("status-card.json"),
+    sessionId: "test-session-1",
+  },
+  extension_ui_patch: {
+    type: "extension_ui_patch",
+    surfaceId: "deploy",
+    revision: 8,
+    patch: { "sections.0.phase": "queued" },
+    sessionId: "test-session-1",
+  },
   git_status: {
     type: "git_status",
     workspaceId: "ws-1",
@@ -902,6 +929,8 @@ const SERVER_MESSAGE_ORDER = [
   "extension_ui_request",
   "extension_ui_notification",
   "extension_ui_settled",
+  "extension_ui_surface",
+  "extension_ui_patch",
   "git_status",
   "voice_call_state",
   "voice_delegation_update",

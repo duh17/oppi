@@ -72,6 +72,18 @@ enum ClientMessage: Sendable {
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
+    /// One action on a composable surface's card, at the revision the client saw. The server
+    /// answers with a patch, a replacement surface, or a failure on that card.
+    case extensionUIAction(
+        surfaceId: String,
+        compositeId: String,
+        actionId: String,
+        rowId: String? = nil,
+        revision: Int,
+        values: [String: JSONValue]? = nil,
+        requestId: String? = nil
+    )
+
     // ── Continuous voice control (focused session stream) ──
     case voiceCallStart(clientCallId: String, requestId: String? = nil)
     case voiceCallAttach(callId: String, lastEventSeq: Int? = nil, requestId: String? = nil)
@@ -431,6 +443,17 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(cancelled, forKey: .cancelled)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        // ── Composable extension surfaces ──
+        case .extensionUIAction(let surfaceId, let compositeId, let actionId, let rowId, let revision, let values, let reqId):
+            try c.encode("extension_ui_action", forKey: .type)
+            try c.encode(surfaceId, forKey: .surfaceId)
+            try c.encode(compositeId, forKey: .compositeId)
+            try c.encode(actionId, forKey: .actionId)
+            try c.encodeIfPresent(rowId, forKey: .rowId)
+            try c.encode(revision, forKey: .revision)
+            try c.encodeIfPresent(values, forKey: .values)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── Continuous voice control ──
         case .voiceCallStart(let clientCallId, let reqId):
             try c.encode("voice_call_start", forKey: .type)
@@ -485,6 +508,7 @@ extension ClientMessage: Encodable {
         case targetId, summarize, replaceInstructions, label
         case itemId
         case clientCallId, callId, lastEventSeq, controllerLeaseEpoch
+        case surfaceId, compositeId, actionId, rowId, revision, values
     }
 }
 
@@ -527,6 +551,7 @@ extension ClientMessage {
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
         case .extensionUIResponse: return "extension_ui_response"
+        case .extensionUIAction: return "extension_ui_action"
         case .voiceCallStart: return "voice_call_start"
         case .voiceCallAttach: return "voice_call_attach"
         case .voiceCallDetach: return "voice_call_detach"

@@ -267,6 +267,12 @@ export type ClientMessage =
         cancelled?: boolean;
         requestId?: string;
       }
+    /**
+     * A composable surface's action. The server answers with `extension_ui_surface`,
+     * `extension_ui_patch`, or an error the card shows; idempotent per
+     * `(surfaceId, compositeId, actionId, revision)`.
+     */
+    | ({ type: "extension_ui_action" } & ExtensionUISurfaceActionMessage)
     // ── Continuous voice control (focused session stream) ──
     | {
         type: "voice_call_start";
@@ -425,6 +431,168 @@ export interface ExtensionUINativeSurface {
   blocks: ExtensionUINativeBlock[];
   fallback?: ExtensionUINativeFallback;
 }
+
+// ─── Composable extension surfaces (v2) ───
+//
+// An extension declares what a surface is; the host draws it. Four composites are the whole
+// closed set in v2 slice 1: `statusCard`, `checklist`, `dataTable`, `actionBar`. Each carries
+// the same four things — a header, a required `state` with the words for empty and failure, the
+// action ids it offers, and `fallback.text` — plus an optional `tone`. No colour, font, padding,
+// or size exists on the wire.
+
+export type ExtensionUISurfaceTone = "neutral" | "accent" | "success" | "warning" | "danger";
+
+/** `loading`, `empty`, `failure`, or `content`; the host paints each in its own idiom. */
+export type ExtensionUISurfaceStateKind = "loading" | "empty" | "failure" | "content";
+
+export interface ExtensionUISurfaceState {
+  kind: ExtensionUISurfaceStateKind;
+  /** Required for `empty` and `failure`: the host's heading for what it found. */
+  title?: string;
+  /** Required for `empty` and `failure`: the sentence the host shows under the heading. */
+  message?: string;
+}
+
+export interface ExtensionUISurfaceHeader {
+  title: string;
+  subtitle?: string;
+}
+
+export interface ExtensionUISurfaceFallback {
+  text: string;
+}
+
+/** What an action looks like wherever it is offered. */
+export interface ExtensionUISurfaceActionDefinition {
+  title: string;
+  role?: "primary" | "secondary" | "destructive";
+  /**
+   * Declared optimistic state, for the round trip only: the client may paint this on the pressed
+   * action until the answer arrives. Data never changes locally; the server stays authoritative.
+   */
+  pending?: { title?: string; disabled?: string[] };
+}
+
+/** An atom fills a slot a composite exposes; atoms never sit at a surface's top level. */
+export type ExtensionUISurfaceAtom =
+  | { type: "text"; spans: ExtensionUITextSpan[] }
+  | { type: "markdown"; markdown: string }
+  | { type: "progress"; label?: string; value?: number }
+  | { type: "divider" }
+  | { type: "spacer"; size?: "small" | "medium" | "large" };
+
+/** A row's own state, the vocabulary v1 activity rows already use. */
+export type ExtensionUISurfaceItemState =
+  "queued" | "running" | "success" | "warning" | "error" | "inactive";
+
+interface ExtensionUISurfaceCompositeBase {
+  /** Stable within the surface: patch paths and accessibility ids are built from it. */
+  id: string;
+  header: ExtensionUISurfaceHeader;
+  state: ExtensionUISurfaceState;
+  /** Action ids from the surface's action table, in the order the host draws them. */
+  actions?: string[];
+  fallback: ExtensionUISurfaceFallback;
+  tone?: ExtensionUISurfaceTone;
+}
+
+export interface ExtensionUIStatusCardComposite extends ExtensionUISurfaceCompositeBase {
+  composite: "statusCard";
+  phase: ExtensionUISurfaceItemState;
+  steps?: Array<{
+    id: string;
+    title: string;
+    state: ExtensionUISurfaceItemState;
+    detail?: string;
+    extra?: ExtensionUISurfaceAtom[];
+  }>;
+}
+
+export interface ExtensionUIChecklistComposite extends ExtensionUISurfaceCompositeBase {
+  composite: "checklist";
+  items: Array<{
+    id: string;
+    title: string;
+    state: ExtensionUISurfaceItemState;
+    detail?: string;
+  }>;
+}
+
+export interface ExtensionUIDataTableComposite extends ExtensionUISurfaceCompositeBase {
+  composite: "dataTable";
+  columns: Array<{ id: string; title: string; kind?: "text" | "number" }>;
+  rows: Array<{
+    id: string;
+    /** By column id; a missing cell is empty. */
+    cells: Record<string, string | number | null>;
+    /** Row actions, from the surface's action table. */
+    actions?: string[];
+  }>;
+  sort?: { columnId: string; descending?: boolean };
+  selectedRowId?: string;
+}
+
+export interface ExtensionUIActionBarComposite extends ExtensionUISurfaceCompositeBase {
+  composite: "actionBar";
+}
+
+export type ExtensionUISurfaceSection =
+  | ExtensionUIStatusCardComposite
+  | ExtensionUIChecklistComposite
+  | ExtensionUIDataTableComposite
+  | ExtensionUIActionBarComposite;
+
+export type ExtensionUISurfaceCompositeKind = ExtensionUISurfaceSection["composite"];
+
+export interface ExtensionUISurfacePlacement {
+  /** Slice 1 draws `strip` only: a pill that opens the drawer. */
+  kind: "strip";
+  preferred?: "aboveComposer" | "belowComposer";
+}
+
+/**
+ * A composable surface, version 2. `persistent` replaces by key and survives turns until cleared
+ * or the session ends; `oneShot` needs an absolute `timeoutAt` deadline and settles before it.
+ */
+export interface ExtensionUISurface {
+  version: 2;
+  id: string;
+  title: string;
+  placement: ExtensionUISurfacePlacement;
+  lifecycle: "persistent" | "oneShot";
+  /** `oneShot` only, required there: epoch milliseconds the surface settles by. */
+  timeoutAt?: number;
+  header: ExtensionUISurfaceHeader;
+  sections: ExtensionUISurfaceSection[];
+  /** Every action id any section offers, with the words and role the host draws. */
+  actions: Record<string, ExtensionUISurfaceActionDefinition>;
+  fallback: ExtensionUISurfaceFallback;
+  /** Server-owned: advances on every published change, and stays above a dismissed surface's. */
+  revision: number;
+  extensionScopeId?: string;
+  extensionDisplayName?: string;
+  publishedAt?: number;
+}
+
+/** A client's answer to a surface action; `values` are the values the card collected. */
+export interface ExtensionUISurfaceActionMessage {
+  surfaceId: string;
+  compositeId: string;
+  actionId: string;
+  rowId?: string | null;
+  revision: number;
+  values?: Record<string, string | number | boolean>;
+  requestId?: string;
+}
+
+/**
+ * An answer to an action, applied to its own card: a JSON merge by dotted path (validated like a
+ * full surface), a whole replacement surface, or an error the card shows.
+ */
+export type ExtensionUISurfaceActionAnswer =
+  | { patch: Record<string, unknown> }
+  | { surface: ExtensionUISurface }
+  | { error: { compositeId: string; message: string } };
 
 export type ExtensionUINotifyType = "info" | "warning" | "error";
 export type ExtensionUIWidgetPlacement = "aboveEditor" | "belowEditor";
@@ -786,6 +954,25 @@ export type ServerMessage =
     | {
         type: "extension_ui_settled";
         id: string;
+        sessionId: string;
+      }
+    // ── Composable extension surfaces (v2, capability `extension-native-ui:v2:composites`) ──
+    //
+    // A client without the capability never sees these frames: the publisher sends it the v1
+    // widget projection of the same surface instead (`projectExtensionUISurfaceToV1`).
+    | {
+        type: "extension_ui_surface";
+        surface: ExtensionUISurface;
+        sessionId: string;
+      }
+    | {
+        type: "extension_ui_patch";
+        surfaceId: string;
+        revision: number;
+        /** Dotted paths into the surface, merged; `null` removes the field. */
+        patch?: Record<string, unknown>;
+        /** The surface is gone: dismissed, settled, or replaced by nothing. */
+        removed?: boolean;
         sessionId: string;
       }
     // ── Git status (workspace/worktree-level, pushed after file-mutating tool calls) ──

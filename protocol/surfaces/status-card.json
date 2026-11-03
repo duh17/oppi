@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "id": "deploy",
+  "title": "Deploys",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "web → prod",
+    "subtitle": "Deploying 4f2c1ab"
+  },
+  "actions": {
+    "retry": {
+      "title": "Retry",
+      "role": "primary",
+      "pending": {
+        "title": "Retrying…",
+        "disabled": [
+          "retry"
+        ]
+      }
+    },
+    "openLog": {
+      "title": "Logs"
+    },
+    "copy": {
+      "title": "Copy",
+      "role": "secondary"
+    }
+  },
+  "fallback": {
+    "text": "Deploy web → prod: running"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sections": [
+    {
+      "composite": "statusCard",
+      "id": "status",
+      "header": {
+        "title": "Deploying 4f2c1ab",
+        "subtitle": "main → production"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "retry",
+        "openLog"
+      ],
+      "fallback": {
+        "text": "Deploying 4f2c1ab: gates running"
+      },
+      "tone": "warning",
+      "phase": "running",
+      "steps": [
+        {
+          "id": "build",
+          "title": "Build",
+          "state": "success",
+          "detail": "Took 42 s"
+        },
+        {
+          "id": "test",
+          "title": "Test",
+          "state": "running",
+          "extra": [
+            {
+              "type": "progress",
+              "label": "Tests",
+              "value": 0.4
+            },
+            {
+              "type": "divider"
+            },
+            {
+              "type": "text",
+              "spans": [
+                {
+                  "text": "214 passed",
+                  "role": "success"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ship",
+          "title": "Ship",
+          "state": "queued"
+        }
+      ]
+    }
+  ]
+}

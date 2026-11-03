@@ -1,0 +1,101 @@
+{
+  "version": 2,
+  "id": "query",
+  "title": "Query",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "sqlite_schema",
+    "subtitle": "12 rows"
+  },
+  "actions": {
+    "retry": {
+      "title": "Retry",
+      "role": "primary",
+      "pending": {
+        "title": "Retrying…",
+        "disabled": [
+          "retry"
+        ]
+      }
+    },
+    "openLog": {
+      "title": "Logs"
+    },
+    "copy": {
+      "title": "Copy",
+      "role": "secondary"
+    }
+  },
+  "fallback": {
+    "text": "12 rows"
+  },
+  "revision": 2,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sections": [
+    {
+      "composite": "dataTable",
+      "id": "rows",
+      "header": {
+        "title": "Tables",
+        "subtitle": "12 rows"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "copy"
+      ],
+      "fallback": {
+        "text": "Tables: sqlite_schema, sqlite_master"
+      },
+      "columns": [
+        {
+          "id": "name",
+          "title": "Name"
+        },
+        {
+          "id": "type",
+          "title": "Type"
+        },
+        {
+          "id": "rows",
+          "title": "Rows",
+          "kind": "number"
+        }
+      ],
+      "rows": [
+        {
+          "id": "table:sessions",
+          "cells": {
+            "name": "sessions",
+            "type": "table",
+            "rows": 12
+          },
+          "actions": [
+            "copy"
+          ]
+        },
+        {
+          "id": "table:events",
+          "cells": {
+            "name": "events",
+            "type": "table",
+            "rows": 4021
+          },
+          "actions": [
+            "copy"
+          ]
+        }
+      ],
+      "sort": {
+        "columnId": "name"
+      },
+      "selectedRowId": "table:sessions"
+    }
+  ]
+}

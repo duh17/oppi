@@ -1,0 +1,60 @@
+{
+  "version": 2,
+  "id": "release",
+  "title": "Release",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Release checklist"
+  },
+  "actions": {},
+  "fallback": {
+    "text": "Release checklist: 2 of 4 done"
+  },
+  "revision": 3,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sections": [
+    {
+      "composite": "checklist",
+      "id": "gates",
+      "header": {
+        "title": "Before you ship",
+        "subtitle": "2 of 4 done"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "2 of 4 gates done"
+      },
+      "tone": "accent",
+      "items": [
+        {
+          "id": "tests",
+          "title": "Unit tests",
+          "state": "success"
+        },
+        {
+          "id": "review",
+          "title": "Review approved",
+          "state": "success"
+        },
+        {
+          "id": "notes",
+          "title": "Release notes",
+          "state": "running",
+          "detail": "Drafting"
+        },
+        {
+          "id": "signoff",
+          "title": "Sign-off",
+          "state": "queued"
+        }
+      ]
+    }
+  ]
+}

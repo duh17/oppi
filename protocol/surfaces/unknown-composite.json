@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "id": "mixed",
+  "title": "Mixed",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Mixed sections"
+  },
+  "actions": {},
+  "fallback": {
+    "text": "Mixed sections"
+  },
+  "revision": 4,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sandboxPolicy": {
+    "allowNetwork": false
+  },
+  "sections": [
+    {
+      "composite": "statusCard",
+      "id": "status",
+      "header": {
+        "title": "Deploy"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "Deploy running"
+      },
+      "phase": "running"
+    },
+    {
+      "composite": "logStream",
+      "id": "log",
+      "header": {
+        "title": "Log"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "Build log: 42 lines"
+      },
+      "lines": [
+        {
+          "level": "info",
+          "text": "started"
+        }
+      ],
+      "follow": true
+    }
+  ]
+}
