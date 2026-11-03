@@ -271,6 +271,24 @@ extension E2ETestCase {
         }
     }
 
+    /// The stored session whose messages contain `marker`, from the lab server's search:
+    /// the fixture lanes' way to learn the id of the chat the app is showing, without
+    /// reading the diagnostics overlay's focused-session value.
+    func waitForSessionIdContaining(_ marker: String, timeout: TimeInterval = 20) throws -> String {
+        let encoded = marker.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? marker
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let response = try e2eLabAPIJSON(method: "GET", path: "/sessions/search?q=\(encoded)")
+            if let results = response["results"] as? [[String: Any]],
+               let sessionId = results.first?["sessionId"] as? String {
+                return sessionId
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail("No stored session contained \(marker) within \(Int(timeout))s")
+        return "missing-session-for-\(marker)"
+    }
+
     /// Sends a synthetic session message through the paired E2E UI harness.
     @discardableResult
     func sendE2EHarnessMessage(sessionId: String, _ message: [String: Any]) throws -> [String: Any] {

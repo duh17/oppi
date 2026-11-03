@@ -131,6 +131,22 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         createAndEnterSession()
         sendMessageAndWaitForResponse(localEchoPrompt("CONTEXT_TOOLBAR_LAYOUT_READY"))
 
+        // `/compact` refuses a session whose history fits the runtime's recent-messages
+        // budget ("Nothing to compact (session too small)"), so give the summarizer
+        // history to cut: two persisted assistant fixtures of about 15k estimated tokens
+        // each (a token per four characters), then one more real turn, whose user message
+        // is the cut point after them.
+        let sessionId = try waitForSessionIdContaining("CONTEXT_TOOLBAR_LAYOUT_READY")
+        for index in 0..<2 {
+            try sendE2EHarnessMessage(sessionId: sessionId, [
+                "type": "message_end",
+                "role": "assistant",
+                "content": String(repeating: "Seeded history for compaction \(index). ", count: 1875),
+                "persist": true,
+            ])
+        }
+        sendMessageAndWaitForResponse(localEchoPrompt("CONTEXT_TOOLBAR_HISTORY_READY"))
+
         let backButton = app.buttons["chat.toolbar.back"]
         let filesButton = app.buttons["chat.toolbar.files"]
         let outlineButton = app.buttons["chat.toolbar.outline"]
@@ -214,6 +230,12 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             waitForTimelineTextContaining("Compacting context", timeout: 5)
                 || waitForTimelineTextContaining("Context compacted", timeout: 5),
             "Exact /compact did not invoke the local compaction action"
+        )
+        // The row appears before the server answers; the summary itself is a model call, so
+        // completion gets its own ceiling and the seeded history gives it something to keep.
+        XCTAssertTrue(
+            waitForTimelineTextContaining("Context compacted", timeout: 60),
+            "The seeded history never reported a finished compaction"
         )
         XCTAssertFalse(
             waitForTimelineTextContaining("/compact", timeout: 2),
