@@ -243,12 +243,14 @@ targets:
           - MonaspaceNeon-SemiBold.otf
           - MonaspaceNeon-Bold.otf
           - SymbolsNerdFontMono-Regular.ttf
-        # YES: TailscaleKit's Go code implements standard encryption (WireGuard's
-        # ChaCha20-Poly1305 and Curve25519, Go TLS) in the app, not through the OS.
-        # Apple requires the French encryption declaration for that while France is
-        # in availability. When Apple approves it, add its code as
-        # ITSEncryptionExportComplianceCode here.
-        ITSAppUsesNonExemptEncryption: true
+        # NO while Oppi ships only through TestFlight. TailscaleKit's Go code
+        # implements standard encryption (WireGuard's ChaCha20-Poly1305 and
+        # Curve25519, Go TLS) outside the OS. Apple asks for documentation for
+        # that only when the app is on the App Store in France. Before an App
+        # Store release with France in availability, file the French encryption
+        # declaration, set this to true, and add Apple's code as
+        # ITSEncryptionExportComplianceCode.
+        ITSAppUsesNonExemptEncryption: false
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
         # Expanded by scripts/stamp-git-commit.sh via INFOPLIST_PREFIX_HEADER.
         OPPIGitCommit: OPPI_GIT_COMMIT_VALUE
