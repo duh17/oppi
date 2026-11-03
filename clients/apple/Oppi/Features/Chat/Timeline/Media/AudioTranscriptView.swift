@@ -537,7 +537,17 @@ final class AudioTranscriptCell: UICollectionViewCell {
 /// Inline stage-direction tag (`[laughs]` → a small tinted capsule) drawn as a text
 /// attachment, so it wraps with the line and sits on its text center.
 enum AudioDirectionTag {
-    nonisolated(unsafe) private static let cache = NSCache<NSString, UIImage>()
+    /// A capsule is a few KB of decoded text; 4 MB keeps every distinct
+    /// direction a long transcript shows and drops the rest by cost, not by
+    /// the process's luck.
+    private static let cacheTotalCostLimit = 4 * 1024 * 1024
+    private static let cacheCountLimit = 256
+    nonisolated(unsafe) private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = cacheTotalCostLimit
+        cache.countLimit = cacheCountLimit
+        return cache
+    }()
 
     @MainActor
     static func attachment(_ text: String, tint: UIColor, bodyFont: UIFont) -> NSAttributedString {
@@ -579,7 +589,16 @@ enum AudioDirectionTag {
             path.stroke()
             label.draw(at: CGPoint(x: capsule.minX + padding.width, y: padding.height))
         }
-        cache.setObject(image, forKey: key)
+        cache.setObject(image, forKey: key, cost: decodedByteCost(of: image))
         return image
+    }
+
+    /// The capsule's decoded pixels, the unit `NSCache` evicts by.
+    @MainActor
+    private static func decodedByteCost(of image: UIImage) -> Int {
+        guard let raster = image.cgImage else {
+            return max(1, Int(image.size.width * image.scale) * Int(image.size.height * image.scale) * 4)
+        }
+        return max(1, IconAssetCache.decodedByteCost(bytesPerRow: raster.bytesPerRow, height: raster.height))
     }
 }

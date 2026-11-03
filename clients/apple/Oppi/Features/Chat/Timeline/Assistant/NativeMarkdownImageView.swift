@@ -20,16 +20,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Mark
 /// - failed: muted placeholder label (alt text when available, otherwise `[image]`)
 @MainActor
 final class NativeMarkdownImageView: UIView {
-    private static let imageCache = NSCache<NSURL, UIImage>()
-    private static let svgDataCache = NSCache<NSURL, NSData>()
-    private static let animatedRasterDataCache = NSCache<NSURL, NSData>()
-
     #if DEBUG
     /// Drops every fetched image and image data (`HarnessLaunchReset`).
     static func resetCachesForTesting() {
-        imageCache.removeAllObjects()
-        svgDataCache.removeAllObjects()
-        animatedRasterDataCache.removeAllObjects()
+        _ = MarkdownMediaCaches.trim()
     }
     #endif
 
@@ -372,21 +366,21 @@ final class NativeMarkdownImageView: UIView {
 
         // Check synchronous cache first — works for markdown surfaces that do
         // not use the timeline's destination-size broker.
-        if let cachedAnimated = Self.animatedRasterDataCache.object(forKey: url as NSURL),
+        if let cachedAnimated = MarkdownMediaCaches.cachedImageData(.animatedRaster, for: url),
            let artifact = Self.preparedAnimatedRasterArtifact(
-               data: cachedAnimated as Data,
+               data: cachedAnimated,
                filePath: url.path
            ) {
             presentPreparedImage(artifact, url: url)
             return
         }
-        if let cached = Self.imageCache.object(forKey: url as NSURL) {
+        if let cached = MarkdownMediaCaches.cachedRaster(for: url) {
             showLoadedState(image: cached)
             return
         }
-        if let cachedSVGData = Self.svgDataCache.object(forKey: url as NSURL),
+        if let cachedSVGData = MarkdownMediaCaches.cachedImageData(.svg, for: url),
            let artifact = Self.preparedWebArtifact(
-               data: cachedSVGData as Data,
+               data: cachedSVGData,
                filePath: url.path
            ) {
             presentPreparedImage(artifact, url: url)
@@ -746,21 +740,21 @@ final class NativeMarkdownImageView: UIView {
     private func presentPreparedImage(_ artifact: PreparedImageArtifact, url: URL) {
         switch artifact {
         case .raster(let image, let pixelSize):
-            Self.imageCache.setObject(image, forKey: url as NSURL)
+            MarkdownMediaCaches.cacheRaster(image, for: url)
             applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
             #if DEBUG
             debugPixelReservedHeightForTesting = heightConstraint?.constant
             #endif
             showLoadedState(image: image)
         case .web(let data, let mimeType, let aspectRatio):
-            Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
+            MarkdownMediaCaches.cacheImageData(data, kind: .svg, for: url)
             showSVGLoadedState(
                 data: data,
                 mimeType: mimeType,
                 aspectRatio: aspectRatio
             )
         case .animatedRaster(let data, let mimeType, let aspectRatio):
-            Self.animatedRasterDataCache.setObject(data as NSData, forKey: url as NSURL)
+            MarkdownMediaCaches.cacheImageData(data, kind: .animatedRaster, for: url)
             showAnimatedRasterState(
                 data: data,
                 mimeType: mimeType,
@@ -1377,9 +1371,7 @@ extension NativeMarkdownImageView {
     }
 
     static func debugResetPreparedArtifactsForTesting() {
-        imageCache.removeAllObjects()
-        svgDataCache.removeAllObjects()
-        animatedRasterDataCache.removeAllObjects()
+        _ = MarkdownMediaCaches.trim()
         inFlightLoads.values.forEach { $0.task.cancel() }
         inFlightLoads.removeAll()
         debugPreparedOperationCount = 0

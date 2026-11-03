@@ -692,6 +692,92 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    /// Closing a chat for good empties the shared media caches it filled. They
+    /// outlive the screen and `NSCache` returns their memory only under a
+    /// warning, so a media-heavy chat kept the footprint it raised until relaunch.
+    @Test func closingAChatEmptiesTheSharedMediaCaches() async throws {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId
+            )
+        )
+        let media = try await fillChatMedia()
+        defer { media.restore() }
+
+        let (host, stack) = makeStackedHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+        #expect(MarkdownMediaCaches.cachedRaster(for: media.imageURL) != nil)
+
+        // The chat leaves the stack, as a pop or a dismiss removes it.
+        stack.setViewControllers([UIViewController()], animated: false)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { host.controller == nil },
+            "The closed chat must go away for this proof"
+        )
+        // The close body runs on the main actor as the chat deallocates, and a
+        // weak reference clears at that start, so wait for the caches instead
+        // of reading them one turn after the controller is gone.
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) {
+                MarkdownMediaCaches.cachedRaster(for: media.imageURL) == nil
+                    && InlineVideoStillFrameStore.shared.cachedImage(for: media.video, maxPixelSize: media.size) == nil
+            },
+            "Closing a chat must empty the shared media caches it filled"
+        )
+        connection.disconnectStream()
+    }
+
+    /// A reader pushed over the chat is a cover, not a close: the chat and the
+    /// media it decoded are still wanted when the reader pops.
+    @Test func aReaderPushedOverTheChatKeepsItsMedia() async throws {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId
+            )
+        )
+        let media = try await fillChatMedia()
+        defer { media.restore() }
+
+        let (host, stack) = makeStackedHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+
+        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        stack.pushViewController(UIViewController(), animated: false)
+        stack.view.layoutIfNeeded()
+        #expect(host.controller?.viewIfLoaded?.window == nil, "A covered chat must leave the window for this proof")
+
+        let kept = await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) {
+            host.controller != nil
+                && MarkdownMediaCaches.cachedRaster(for: media.imageURL) != nil
+                && InlineVideoStillFrameStore.shared.cachedImage(for: media.video, maxPixelSize: media.size) != nil
+        }
+        #expect(kept, "A reader over the chat must keep the media the chat filled")
+
+        host.teardown()
+        // Leaving for good runs the close body; wait for it before the store
+        // this test installed is swapped back.
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.controller == nil && MarkdownMediaCaches.cachedRaster(for: media.imageURL) == nil
+        }
+        connection.disconnectStream()
+    }
+
     private func makeHost(
         connection: ServerConnection,
         sessionId: String,
@@ -736,6 +822,58 @@ struct ChatViewLifecycleTests {
         appNavigation: AppNavigation
     ) -> ChatViewController {
         ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
+    }
+
+    /// What a chat's timeline has cached by the time it closes: one decoded
+    /// image and one inline video still frame.
+    private struct FilledChatMedia {
+        let imageURL: URL
+        let video: AuthenticatedMediaSource
+        let size: CGSize
+        let previousStillFrameStore: InlineVideoStillFrameStore
+
+        @MainActor
+        func restore() {
+            _ = MarkdownMediaCaches.trim()
+            InlineVideoStillFrameStore.installForTesting(previousStillFrameStore)
+        }
+    }
+
+    private func fillChatMedia() async throws -> FilledChatMedia {
+        _ = MarkdownMediaCaches.trim()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let imageSize = CGSize(width: 200, height: 100)
+        let image = UIGraphicsImageRenderer(size: imageSize, format: format).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(origin: .zero, size: imageSize))
+        }
+        let imageURL = URL(string: "https://example.com/media/chat-close.png")!
+        MarkdownMediaCaches.cacheRaster(image, for: imageURL)
+
+        let previousStore = InlineVideoStillFrameStore.shared
+        let store = InlineVideoStillFrameStore(generator: { _, _ in
+            UIGraphicsImageRenderer(size: CGSize(width: 64, height: 32)).image { context in
+                UIColor.systemTeal.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+            }
+        })
+        InlineVideoStillFrameStore.installForTesting(store)
+        let size = CGSize(width: 64, height: 32)
+        let video = AuthenticatedMediaSource(
+            url: URL(string: "https://example.com/clips/chat-close.mp4")!,
+            authorizationHeaderValue: "Bearer token",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "mp4"
+        )
+        _ = try await store.image(for: video, maxPixelSize: size)
+        return FilledChatMedia(
+            imageURL: imageURL,
+            video: video,
+            size: size,
+            previousStillFrameStore: previousStore
+        )
     }
 }
 

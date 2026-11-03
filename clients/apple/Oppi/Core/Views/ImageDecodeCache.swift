@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import os
 import UIKit
 
 /// Shared decoded-image cache for base64 blobs shown in chat/tool output.
@@ -7,17 +8,26 @@ import UIKit
 /// Avoids repeated base64 decode + image decode work when cells are reused
 /// during fast scrolling.
 enum ImageDecodeCache {
+    /// A thumbnail is a screen's worth of pixels at most; 128 MB and 96 entries
+    /// hold the attachment and tool images a chat shows while it scrolls.
+    static let countLimit = 96
+    static let totalCostLimit = 128 * 1024 * 1024
+
     private final class CacheBox: @unchecked Sendable {
         // SAFETY (`@unchecked Sendable`):
         // - `NSCache` is documented thread-safe for concurrent reads/writes.
-        // - `CacheBox` is immutable after init (`cache` is `let`) and has no additional mutable state.
+        // - `footprint` is an `OSAllocatedUnfairLock`, so the tally it guards is thread-safe too.
+        // - `CacheBox` is immutable after init (`cache` and `footprint` are `let`) and has no additional mutable state.
         // - Callers only interact through static helpers that perform deterministic keying + decode.
         let cache: NSCache<NSString, UIImage>
+        /// What the cache was given since it was last emptied. `NSCache` reports
+        /// neither its entries nor its costs, so `removeAll()` reports these.
+        let footprint = OSAllocatedUnfairLock(initialState: CacheFootprint())
 
         init() {
             let cache = NSCache<NSString, UIImage>()
-            cache.countLimit = 96
-            cache.totalCostLimit = 128 * 1024 * 1024
+            cache.countLimit = ImageDecodeCache.countLimit
+            cache.totalCostLimit = ImageDecodeCache.totalCostLimit
             self.cache = cache
         }
     }
@@ -26,7 +36,7 @@ enum ImageDecodeCache {
 
     #if DEBUG
     /// Drops every decoded image (`HarnessLaunchReset`).
-    static func resetForTesting() { cacheBox.cache.removeAllObjects() }
+    static func resetForTesting() { _ = removeAll() }
     #endif
 
     static func decode(base64: String, maxPixelSize: CGFloat = 1600) -> UIImage? {
@@ -42,13 +52,23 @@ enum ImageDecodeCache {
         let image = downsample(data: data, maxPixelSize: maxPixelSize) ?? UIImage(data: data)
         guard let image else { return nil }
 
-        cacheBox.cache.setObject(image, forKey: key, cost: pixelCost(of: image))
+        insert(image, forKey: key)
         return image
     }
 
+    /// Inserts one decoded image, charging the tally only for a cold insert: a
+    /// row that configures again stores the same image and holds no new memory.
+    private static func insert(_ image: UIImage, forKey key: NSString) {
+        let cost = pixelCost(of: image)
+        if cacheBox.cache.object(forKey: key) == nil {
+            cacheBox.footprint.withLock { $0.record(cost, limit: totalCostLimit) }
+        }
+        cacheBox.cache.setObject(image, forKey: key, cost: cost)
+    }
+
     /// A decoded thumbnail of a stored session attachment. Attachment ids are
-    /// content-addressed and never change, so the thumbnail stays valid for the process; the
-    /// row reuses it instead of downloading the image again when its cell is configured.
+    /// content-addressed and never change, so a row that configures again reuses the
+    /// thumbnail instead of downloading the image again; closing the chat drops it.
     static func storedAttachmentThumbnail(
         for attachmentID: String,
         sessionId: String?
@@ -61,16 +81,19 @@ enum ImageDecodeCache {
         for attachmentID: String,
         sessionId: String?
     ) {
-        cacheBox.cache.setObject(
-            image,
-            forKey: storedAttachmentKey(attachmentID, sessionId) as NSString,
-            cost: pixelCost(of: image)
-        )
+        insert(image, forKey: storedAttachmentKey(attachmentID, sessionId) as NSString)
     }
 
-    /// Drops every cached image (used by tests).
-    static func removeAll() {
+    /// Drops every cached image and reports what it was holding.
+    @discardableResult
+    static func removeAll() -> CacheFootprint {
+        let freed = cacheBox.footprint.withLock { footprint in
+            let held = footprint.capped(entries: countLimit, bytes: totalCostLimit)
+            footprint = CacheFootprint()
+            return held
+        }
         cacheBox.cache.removeAllObjects()
+        return freed
     }
 
     private static func storedAttachmentKey(_ attachmentID: String, _ sessionId: String?) -> String {

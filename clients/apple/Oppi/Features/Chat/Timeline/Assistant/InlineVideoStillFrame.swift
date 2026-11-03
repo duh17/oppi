@@ -61,6 +61,9 @@ final class InlineVideoStillFrameStore {
     private(set) static var shared = InlineVideoStillFrameStore()
 
     private let cache = NSCache<NSString, UIImage>()
+    /// What the cache was given since its last removal. `NSCache` reports
+    /// neither its entry count nor its cost, so `removeAll()` reports these.
+    private var footprint = CacheFootprint()
     private var inFlight: [String: Task<UIImage?, Never>] = [:]
     private var failedAt: [String: Date] = [:]
     /// Bumped by `removeAll()`. A generation that started before the bump never
@@ -136,15 +139,28 @@ final class InlineVideoStillFrameStore {
         }
         failedAt[key] = nil
         let cost = max(1, Int(image.size.width * image.scale) * Int(image.size.height * image.scale) * 4)
+        // `image(for:)` answers a cached frame before it generates, so a second
+        // insert of one key is not new memory: only a cold insert grows the tally.
+        if cache.object(forKey: key as NSString) == nil {
+            footprint.record(cost, limit: Self.totalCostLimit)
+        }
         cache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
-    func removeAll() {
+    /// Drops every frame and reports what the cache was holding.
+    @discardableResult
+    func removeAll() -> CacheFootprint {
+        let freed = footprint.capped(
+            entries: Self.countLimit,
+            bytes: Self.totalCostLimit
+        )
+        footprint = CacheFootprint()
         epoch += 1
         // In-flight generations keep running; the epoch guard discards their results.
         inFlight.removeAll()
         cache.removeAllObjects()
         failedAt.removeAll()
+        return freed
     }
 
     #if DEBUG

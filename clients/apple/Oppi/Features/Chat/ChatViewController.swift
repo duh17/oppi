@@ -238,6 +238,11 @@ final class ChatViewController: UIViewController {
         if let timelineView {
             timeline.dismantle(timelineView)
         }
+        // The shared media caches outlive this screen and `NSCache` returns
+        // their memory only under a warning, so a closed chat gives back what it
+        // decoded here. A reader pushed over the chat keeps it alive, and so
+        // keeps its images.
+        MarkdownMediaCaches.releaseAfterChatClose()
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
