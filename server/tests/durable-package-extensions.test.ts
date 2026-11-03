@@ -915,6 +915,26 @@ describe("plugins on the extension list", () => {
     delete counted.__oppiCountedRenders;
   });
 
+  it("never runs an async section's render", async () => {
+    const ran = globalThis as { __oppiAsyncRenderRan?: boolean };
+    delete ran.__oppiAsyncRenderRan;
+    writePlugin("async-section", [
+      'import { defineExtension, section } from "oppi/v1";',
+      "const extension = defineExtension({",
+      '  name: "async-section",',
+      // The body before its first await would run synchronously if it were called.
+      '  sections: [section("later", async () => { (globalThis as { __oppiAsyncRenderRan?: boolean }).__oppiAsyncRenderRan = true; return "later"; })],',
+      "});",
+    ]);
+    const f = await fixture(callsTool("unused"));
+    const row = rowNamed(await f.rows(), "async-section");
+
+    expect(
+      (await f.route("GET", `/server/resources/extensions/${row.id}`)).body.promptSections,
+    ).toEqual([{ name: "later", perConversation: true }]);
+    expect(ran.__oppiAsyncRenderRan).toBeUndefined();
+  });
+
   it("flags a section that reads the conversation, and no section can break the detail", async () => {
     writePlugin("sections", [
       'import { defineExtension, section } from "oppi/v1";',

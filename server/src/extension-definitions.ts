@@ -127,6 +127,9 @@ export function promptSections(extension: DurableExtension): ServerPromptSection
 function trialRender(
   section: NonNullable<DurableExtension["sections"]>[number],
 ): string | undefined {
+  // An `async` render is never called: its body runs up to its first `await` at once and the rest
+  // later, with nothing to stop it (a fetch on every open). It is per conversation unrun.
+  if (isAsyncFunction(section.render)) return undefined;
   let touched = false;
   const trap = conversationTrap(() => {
     touched = true;
@@ -135,7 +138,7 @@ function trialRender(
   try {
     result = section.render(trap as never, trap as never);
     if (isThenable(result)) {
-      // Async is per conversation. It still runs: its outcome goes nowhere.
+      // A plain function that returned a promise: per conversation, its outcome ignored.
       Promise.resolve(result).then(undefined, () => undefined);
       return undefined;
     }
@@ -145,6 +148,11 @@ function trialRender(
   // A render that caught the trap's throw still read the conversation.
   if (touched || typeof result !== "string" || result.length > MAX_SECTION_TEXT) return undefined;
   return boundText(result, MAX_SECTION_TEXT);
+}
+
+function isAsyncFunction(value: unknown): boolean {
+  const tag = Object.prototype.toString.call(value);
+  return tag === "[object AsyncFunction]" || tag === "[object AsyncGeneratorFunction]";
 }
 
 function isThenable(value: unknown): boolean {
