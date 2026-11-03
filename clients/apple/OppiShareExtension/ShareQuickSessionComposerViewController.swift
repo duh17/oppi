@@ -400,9 +400,7 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
     /// is refused too.
     private static func sharingRefusal(sender: ShareQuickSessionSender, server: ShareQuickSessionServer) async -> String? {
         let catalog = (try? await sender.fetchModelCatalog(server: server)) ?? []
-        let recipient = AISharingConsent.Recipient.modelProvider(
-            AISharingConsent.modelProviderKey(modelId: nil, catalog: catalog)
-        )
+        let recipient = AISharingConsent.Recipient.modelProvider(modelId: nil, catalog: catalog)
         if case .refuse(let message) = AISharingConsent.device.decide([recipient], serverId: server.id, canAsk: false) {
             return message
         }

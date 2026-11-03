@@ -38,7 +38,10 @@ extension ChatViewController {
 
     static func localSlashCommand(for text: String) -> LocalSlashCommand? {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.caseInsensitiveCompare("/compact") == .orderedSame ? .compact : nil
+        let commands: [(String, LocalSlashCommand)] = [
+            ("/compact", .compact), ("/reload", .reload), ("/share", .share), ("/review-comments", .reviewComments),
+        ]
+        return commands.first { normalized.caseInsensitiveCompare($0.0) == .orderedSame }?.1
     }
 
     static func availableSlashCommands(from serverCommands: [SlashCommand]) -> [SlashCommand] {
@@ -192,45 +195,56 @@ extension ChatViewController {
         if model.activeReviewCommentRequest != nil {
             sendActiveReviewComment()
         } else {
-            // The draft stays in the composer until the person allows the provider.
-            guard aiSharingAllowed(then: { [weak self] in
-                self?.sendComposerAction(draftClearance: draftClearance)
-            }) else { return }
+            // The draft stays in the composer until the person allows the provider. A command
+            // the composer runs itself and that sends nothing to a model needs no consent.
+            let command = Self.localSlashCommand(for: composerDraftController.text)
+            if command?.reachesModelProvider ?? true {
+                guard aiSharingAllowed(then: { [weak self] in
+                    self?.sendComposerAction(draftClearance: draftClearance)
+                }) else { return }
+            }
             sendPrompt(draftClearance: draftClearance)
         }
     }
 
-    /// The model provider this session's prompts reach: its model, or with none yet the
-    /// server's default.
-    private var modelSharingRecipient: AISharingConsent.Recipient? {
-        .modelProvider(modelId: session?.model, catalog: chatState.cachedModels)
-    }
-
     /// True when this device already allowed every AI service the next send reaches (and
     /// `liveVoice`'s backend for a call), so the send goes on now. Otherwise it asks, sends
-    /// nothing, keeps the draft, and runs `retry` only after Allow.
-    func aiSharingAllowed(liveVoice: Bool = false, then retry: @escaping @MainActor () -> Void) -> Bool {
-        guard let serverId = resolvedServerId else { return false }
-        let recipients: () -> [AISharingConsent.Recipient?] = { [weak self] in
-            guard let self else { return [nil] }
-            return liveVoice
-                ? [modelSharingRecipient, .voice(.liveVoice, backends: connection.voiceBackends)]
-                : [modelSharingRecipient]
+    /// nothing, keeps the draft, and runs `retry` only after Allow, or `declined` after Not Now.
+    func aiSharingAllowed(
+        liveVoice: Bool = false,
+        then retry: @escaping @MainActor () -> Void,
+        otherwise declined: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard let serverId = resolvedServerId else {
+            declined()
+            return false
         }
-        if AISharingConsent.device.decide(recipients(), serverId: serverId, canAsk: true) == .send {
+        let recipients = AISharingConsentPrompt.modelSharingRecipients(
+            modelId: session?.model, liveVoice: liveVoice, connection: connection
+        )
+        if AISharingConsent.device.decide(recipients, serverId: serverId, canAsk: true) == .send {
             return true
         }
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            // A session with no model yet needs the server's default to name its provider.
-            if modelSharingRecipient == nil, let api = connection.apiClient {
-                await chatState.refreshModelCache(api: api)
+            guard let self, await requestAISharing(liveVoice: liveVoice) else {
+                declined()
+                return
             }
-            if await AISharingConsentPrompt.request(recipients(), serverId: serverId, from: self) {
-                retry()
-            }
+            retry()
         }
         return false
+    }
+
+    /// Asks, when this device has not allowed it yet, for the AI services a send on this
+    /// session reaches: its model's provider (with no model yet, the server's default).
+    func requestAISharing(liveVoice: Bool = false) async -> Bool {
+        await AISharingConsentPrompt.requestModelSharing(
+            modelId: session?.model,
+            liveVoice: liveVoice,
+            serverId: resolvedServerId,
+            connection: connection,
+            from: self
+        )
     }
 
     func stopTurn() {
@@ -573,9 +587,20 @@ extension ChatViewController {
             completion(.retryableFailure)
             return
         }
+        // The answer (what the person typed or chose) reaches the session's model provider as
+        // a tool result. Not Now sends nothing and hands the card back with the answer still
+        // in it. A confirmation or a cancel carries only a yes or no, none of their content.
+        if payload.value != nil {
+            guard aiSharingAllowed(
+                then: { [weak self] in self?.deliverComposerAskResponse(ask, payload: payload, completion: completion) },
+                otherwise: { completion(.notSent) }
+            ) else { return }
+        }
         deliverComposerAskResponse(ask, payload: payload, completion: completion)
     }
 
+    /// Ignoring sends only a cancel, none of the person's content, so it needs no AI sharing
+    /// consent.
     func handleComposerAskIgnoreAll(
         _ ask: AskRequest,
         completion: @escaping AskResponseSubmission.Completion
@@ -735,7 +760,8 @@ extension ChatViewController {
         guard !composerIsSending else { return }
 
         let rawTrimmedInput = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if Self.localSlashCommand(for: rawTrimmedInput) == .compact {
+        switch Self.localSlashCommand(for: rawTrimmedInput) {
+        case .compact:
             guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
             model.composerTextBeforeRecording = nil
             actionHandler.compact(
@@ -751,9 +777,7 @@ extension ChatViewController {
                 }
             )
             return
-        }
-
-        if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
+        case .reload:
             guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
             model.composerTextBeforeRecording = nil
             actionHandler.reloadResources(
@@ -770,19 +794,17 @@ extension ChatViewController {
                 }
             )
             return
-        }
-
-        if rawTrimmedInput.caseInsensitiveCompare("/share") == .orderedSame {
+        case .share:
             sendShareSlashCommand(clearComposer: true, draftClearance: draftClearance)
             return
-        }
-
-        if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
+        case .reviewComments:
             composerDraftController.clearMessage()
             model.composerTextBeforeRecording = nil
             connection.extensionToast = "Review comments use compact inline selection now."
             dismissKeyboard()
             return
+        case nil:
+            break
         }
 
         let originalInputText = composerDraftController.text

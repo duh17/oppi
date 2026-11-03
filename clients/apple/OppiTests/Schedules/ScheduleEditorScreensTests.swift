@@ -241,6 +241,39 @@ struct ScheduleDetailPageTests {
         }, "the row draws the schedule's prompt, so a changed one redraws it")
     }
 
+    @Test("Run Now waits for AI sharing consent: Not Now runs nothing, Allow runs it")
+    func runNowWaitsForConsent() async throws {
+        let answers = ScheduleDetailAnswers(prompt: "Summarize the day.")
+        let serverId = "sha256:schedule-consent-\(UUID().uuidString)"
+        defer { AISharingConsent.device.withdrawAll(serverId: serverId) }
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            try answers.answer(for: request)
+        })
+        defer { routes.end() }
+        let root = try await makeTestAppRoot(
+            readyServerId: serverId,
+            apiClient: makeTestURLProtocolClient(host: ScheduleDetailAnswers.host)
+        )
+        // The schedule names no model or Agent, so its run goes to the server's default.
+        root.coordinator.activeConnection.chatState.cachedModels = [
+            ModelInfo(id: "anthropic/claude-sonnet-5", name: "Sonnet", provider: "anthropic", contextWindow: 200_000, isDefault: true),
+        ]
+        let screen = try DetailScreen(ScheduleDetailViewController(root: root, scheduleId: answers.scheduleId) { _ in })
+        defer { screen.hide() }
+
+        try #require(await screen.waitForButton("schedule.detail.run")).sendActions(for: .touchUpInside)
+        let consent = try #require(await ConsentSheet.find(in: screen.window))
+        #expect(consent.title == "Send to Anthropic?")
+        #expect(answers.runs == 0, "nothing runs before Allow")
+        consent.answer(.notNow)
+        #expect(await ConsentSheet.closes(in: screen.window))
+        #expect(await screen.staysTrue(for: .milliseconds(300)) { answers.runs == 0 })
+
+        try #require(await screen.waitForButton("schedule.detail.run")).sendActions(for: .touchUpInside)
+        try #require(await ConsentSheet.find(in: screen.window)).answer(.allow)
+        #expect(await screen.waitFor { answers.runs == 1 })
+    }
+
     private func makeScreen(
         answers: ScheduleDetailAnswers
     ) throws -> (screen: DetailScreen, routes: TestURLProtocol.RouteScope) {
@@ -322,10 +355,21 @@ private final class ScheduleDetailAnswers: @unchecked Sendable {
     }
 
     var requests: Int { lock.withLock { countedRequests } }
+    /// Run Now requests the server received.
+    var runs: Int { lock.withLock { countedRuns } }
+    private var countedRuns = 0
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
         lock.withLock { countedRequests += 1 }
         let path = request.url?.path ?? ""
+        if path.hasSuffix("/run"), request.httpMethod == "POST" {
+            lock.withLock { countedRuns += 1 }
+            return try mockJSONResponse(json: """
+            {"run":{"id":"run-1","scheduleId":"\(scheduleId)","kind":"manual","slotKey":"manual",
+            "idempotencyKey":"run-1","status":"pending","createdAt":3,"updatedAt":3,
+            "action":{"type":"new_session","workspaceId":"ws-1","promptChars":18}}}
+            """, for: request)
+        }
         if path.hasSuffix("/runs") {
             return try mockJSONResponse(json: #"{"runs":[]}"#, for: request)
         }

@@ -7,7 +7,12 @@ import UIKit
 @MainActor
 @Observable
 final class AskResponseSubmission {
-    enum Result { case completed, retryableFailure }
+    enum Result {
+        case completed, retryableFailure
+        /// Nothing left the device (the person chose Not Now on AI sharing consent): the
+        /// request is open again as it was, with no failure to report.
+        case notSent
+    }
     enum Phase: Equatable {
         case idle, inFlight(String), failed(String), completed(String)
     }
@@ -57,7 +62,11 @@ final class AskResponseSubmission {
         deliver { [self] result in
             guard attemptID == attempt else { return }
             attemptID = nil
-            phase = result == .completed ? .completed(requestID) : .failed(requestID)
+            phase = switch result {
+            case .completed: .completed(requestID)
+            case .retryableFailure: .failed(requestID)
+            case .notSent: .idle
+            }
             finishCallbacks(result)
         }
     }

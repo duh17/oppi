@@ -188,7 +188,8 @@ extension ComposerBarController {
             FeatureEducationTips.markPromptAnswered()
             self.applyChrome()
         }, completion: { result in
-            if result == .retryableFailure,
+            // A failed or unsent answer goes back in the field, unless newer typing replaced it.
+            if result != .completed,
                let submittedTextRevision,
                self.askClearing.textRevision == submittedTextRevision,
                self.host?.content.text.isEmpty == true,

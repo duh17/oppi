@@ -120,7 +120,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ## AI sharing consent
 
-`AISharingConsent` (`Shared/AIConsent`, also in the Share extension) is the one owner of this device's permission to send content through a server to an AI service (App Review 5.1.2(i)). Every send path asks `decide(_:serverId:canAsk:)` first, never a second store; Siri/Shortcuts and the Share extension pass `canAsk: false`, and removing a server drops its grants.
+`AISharingConsent` (`Shared/AIConsent`, also in the Share extension) is the one owner of this device's permission to send content through a server to an AI service (App Review 5.1.2(i)). Every send path asks `decide(_:serverId:canAsk:)` first, never a second store; Siri/Shortcuts and the Share extension pass `canAsk: false`, and removing a server drops its grants. In the app, a send on a server's connection asks through `AISharingConsentPrompt.requestModelSharing` (`Oppi/Core/Services/AISharingConsentRequests.swift`), which names the provider from that connection's catalog and shows the sheet.
 
 ## Document editing
 

@@ -324,14 +324,12 @@ final class GuidedControlComposerModel {
         let connection = connection
         Task { @MainActor [weak self] in
             guard let self, let serverId = connection.currentServerId else { return }
-            var recipient = AISharingConsent.Recipient.modelProvider(
-                modelId: effectiveModelId, catalog: connection.chatState.cachedModels
-            )
-            if recipient == nil, let api = connection.apiClient {
-                await connection.chatState.refreshModelCache(api: api)
-                recipient = .modelProvider(modelId: effectiveModelId, catalog: connection.chatState.cachedModels)
-            }
-            guard await AISharingConsentPrompt.request([recipient], serverId: serverId, from: nil) else { return }
+            guard await AISharingConsentPrompt.requestModelSharing(
+                modelId: effectiveModelId,
+                serverId: serverId,
+                connection: connection,
+                from: nil
+            ) else { return }
             await createControlSession()
         }
     }

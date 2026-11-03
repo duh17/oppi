@@ -2,12 +2,16 @@ import UIKit
 
 extension AISharingConsent.Recipient {
     /// The model provider a send would reach: `modelId`'s provider, or with no model the
-    /// server's default from its catalog. Nil when neither names one.
+    /// server's default from its catalog. Nil when that names no single provider.
     static func modelProvider(modelId: String?, catalog: [ModelInfo]) -> Self? {
-        modelProvider(AISharingConsent.modelProviderKey(
+        modelProvider(
             modelId: modelId,
-            catalog: catalog.map { .init(id: $0.id, provider: $0.provider, isDefault: $0.isDefault) }
-        ))
+            catalog: catalog.map {
+                AISharingConsent.CatalogModel(
+                    id: $0.id, provider: $0.provider, isDefault: $0.isDefault, isLocal: $0.authKind == "local"
+                )
+            }
+        )
     }
 
     /// A voice feature's backend, from the server's `voiceBackends`.
@@ -85,6 +89,12 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
             let name = recipient.name
             let settings = String(localized: "Oppi asks once for each service on each server. You can withdraw this in Settings > Privacy & Security.")
             switch recipient.kind {
+            case .modelProvider where recipient.isOnServerComputer:
+                return String(localized: """
+                Your server sends what you give this session to \(name) to get the model's replies. That includes your prompts, the conversation so far, files and photos you attach, and tool results.
+
+                \(name) runs on the same computer as your server, not at a third party.
+                """) + "\n\n" + settings
             case .modelProvider:
                 return String(localized: """
                 Your server sends what you give this session to \(name), a third-party AI model provider, to get the model's replies. That includes your prompts, the conversation so far, files and photos you attach, and tool results.

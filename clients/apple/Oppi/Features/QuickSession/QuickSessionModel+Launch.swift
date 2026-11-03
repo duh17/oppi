@@ -42,15 +42,13 @@ enum QuickSessionError: LocalizedError {
 /// message), a saved Agent launches and is prompted here, then Quick Session
 /// closes and opens the new chat.
 extension QuickSessionModel {
-    /// The AI services this launch reaches: the shown model's provider (the server's default
-    /// when none is chosen) and, for a call, the server's Live Voice backend.
-    private func aiSharingRecipients(startsLiveVoice: Bool) -> [AISharingConsent.Recipient?] {
-        let model = AISharingConsent.Recipient.modelProvider(
-            modelId: displayedModelId,
-            catalog: selectedChatState.cachedModels
-        )
-        guard startsLiveVoice else { return [model] }
-        return [model, .voice(.liveVoice, backends: selectedServerConnection()?.voiceBackends)]
+    /// The model this launch names for AI sharing consent: the chosen one, else a saved
+    /// Agent's own. Nil leaves the server's default (`isDefault`), which names its provider
+    /// exactly; the pill's default label is only its id, which another provider can share.
+    private var aiSharingModelId: String? {
+        if let chosen = effectiveModelId { return chosen }
+        guard selectedAgentId != nil else { return nil }
+        return NewSessionModelOverride(explicitlySelectedModelId: selectedAgent?.sessionDefaults?.model).requestModelId
     }
 
     func handleSend(startsLiveVoice: Bool = false) {
@@ -100,17 +98,19 @@ extension QuickSessionModel {
         // Nothing is created or sent until this device allows the model provider (and, for a
         // call, the voice backend). Not Now keeps the sheet and its draft.
         let consentServerId = selectedServerId ?? coordinator.activeServerId ?? "default"
-        let consentRecipients = aiSharingRecipients(startsLiveVoice: startsLiveVoice)
+        let consentConnection = selectedServerConnection() ?? coordinator.activeConnection
+        let consentRecipients = AISharingConsentPrompt.modelSharingRecipients(
+            modelId: aiSharingModelId,
+            liveVoice: startsLiveVoice,
+            connection: consentConnection
+        )
         guard AISharingConsent.device.decide(consentRecipients, serverId: consentServerId, canAsk: true) == .send else {
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                if consentRecipients.contains(where: { $0 == nil }),
-                   let api = selectedServerConnection()?.apiClient {
-                    await selectedChatState.refreshModelCache(api: api)
-                }
-                guard await AISharingConsentPrompt.request(
-                    aiSharingRecipients(startsLiveVoice: startsLiveVoice),
+                guard let self, await AISharingConsentPrompt.requestModelSharing(
+                    modelId: aiSharingModelId,
+                    liveVoice: startsLiveVoice,
                     serverId: consentServerId,
+                    connection: consentConnection,
                     from: nil
                 ) else { return }
                 handleSend(startsLiveVoice: startsLiveVoice)

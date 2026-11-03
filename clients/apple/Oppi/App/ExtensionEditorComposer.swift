@@ -136,25 +136,43 @@ enum ExtensionEditorComposer {
             )
         }
 
+        /// The text reaches the session's model provider as a tool result, so it waits for AI
+        /// sharing consent; Not Now leaves it in the editor.
         func submitCurrentValue() {
             submitResponsePayload(
                 ExtensionUIResponsePayload(value: inputValue),
-                failurePrefix: "Failed to respond"
+                failurePrefix: "Failed to respond",
+                sharesContent: true
             )
         }
 
+        /// A cancel carries none of the person's content.
         func cancelRequest() {
-            submitResponsePayload(.cancelled, failurePrefix: "Failed to cancel")
+            submitResponsePayload(.cancelled, failurePrefix: "Failed to cancel", sharesContent: false)
         }
 
         func submitResponsePayload(
             _ payload: ExtensionUIResponsePayload,
-            failurePrefix: String
+            failurePrefix: String,
+            sharesContent: Bool
         ) {
             guard !isSubmitting else { return }
             isSubmitting = true
             composer?.live.isSubmitInFlight = true
             Task { @MainActor in
+                if sharesContent {
+                    let allowed = await AISharingConsentPrompt.requestModelSharing(
+                        modelId: connection.sessionStore.session(id: request.sessionId)?.model,
+                        serverId: nil,
+                        connection: connection,
+                        from: composer
+                    )
+                    guard allowed else {
+                        isSubmitting = false
+                        composer?.live.isSubmitInFlight = false
+                        return
+                    }
+                }
                 do {
                     try await connection.respondToExtensionUI(
                         id: request.id,

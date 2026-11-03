@@ -334,10 +334,18 @@ struct AppRootModalsTests {
         #expect(composer.navigationItem.leftBarButtonItem?.accessibilityIdentifier == "extension.dialog.cancel")
     }
 
-    @Test("an editor's Submit sends the typed text as the request's answer and closes the editor")
+    @Test("an editor's Submit waits for AI sharing consent, keeps the text on Not Now, and sends it after Allow")
     func editorSubmitAnswersWithTheTypedText() async throws {
         let root = try makeRoot(servers: ["alpha"])
-        let connection = root.coordinator.activeConnection
+        // Consent is kept per server, so the connection must know its server.
+        let alpha = try #require(root.coordinator.serverStore.servers.first)
+        let connection = await root.coordinator.ensureTestConnectionReady(for: alpha)
+        #expect(connection === root.coordinator.activeConnection)
+        let serverId = try #require(connection.currentServerId)
+        defer { AISharingConsent.device.withdrawAll(serverId: serverId) }
+        connection.chatState.cachedModels = [
+            ModelInfo(id: "anthropic/claude-sonnet-5", name: "Sonnet", provider: "anthropic", contextWindow: 200_000, isDefault: true),
+        ]
         let answers = AnswerRecorder()
         connection._sendMessageForTesting = { message in answers.record(message) }
         _ = connection.focusedSessionStore.focus(sessionId: "s")
@@ -359,6 +367,19 @@ struct AppRootModalsTests {
         let submit = try #require(composer.navigationItem.rightBarButtonItem)
         #expect(submit.accessibilityIdentifier == "extension.dialog.submit")
         submit.primaryAction?.performWithSender(nil, target: nil)
+
+        // The answer goes to the session's model provider, which this device has not allowed.
+        let consent = try #require(await ConsentSheet.find(in: window))
+        #expect(consent.title == "Send to Anthropic?")
+        #expect(answers.values.isEmpty, "nothing leaves before Allow")
+        consent.answer(.notNow)
+        #expect(await ConsentSheet.closes(in: window))
+        #expect(answers.values.isEmpty)
+        #expect(host.presentedViewController === navigation, "Not Now leaves the editor open")
+        #expect(editor.text == "ship it")
+
+        submit.primaryAction?.performWithSender(nil, target: nil)
+        try #require(await ConsentSheet.find(in: window)).answer(.allow)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { host.presentedViewController == nil })
         #expect(answers.values.map(\.id) == ["editor-2"])
         #expect(answers.values.map(\.value) == ["ship it"])

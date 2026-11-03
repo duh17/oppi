@@ -61,6 +61,7 @@ final class ReleaseGateE2ETests: E2ETestCase {
         )
         typeIntoChatInput("gate ask answer")
         tap(app.buttons["chat.send"], named: "ask answer send button", timeout: 5)
+        allowAISharingIfAsked()
 
         let answer = try waitForE2EHarnessResponse(sessionId: sessionId, requestId: answerRequestId)
         XCTAssertEqual(answer["value"] as? String, "{\"answer\":\"gate ask answer\"}")

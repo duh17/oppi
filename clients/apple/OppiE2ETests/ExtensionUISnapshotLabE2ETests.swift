@@ -727,6 +727,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         waitForText(selectedValue, timeout: 10)
         assertExtensionSheetPresented(false, method: "select")
         tap(app.buttons[selectedValue].firstMatch, named: "select option")
+        allowAISharingIfAsked()
 
         let response = try waitForHarnessResponse(sessionId: sessionId, requestId: requestId)
         XCTAssertEqual(response["value"] as? String, selectedValue)
@@ -772,6 +773,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         chatInput.tap()
         chatInput.typeText(value)
         tap(app.buttons["chat.send"], named: "input submit button", timeout: 5)
+        allowAISharingIfAsked()
 
         let response = try waitForHarnessResponse(sessionId: sessionId, requestId: requestId)
         XCTAssertEqual(response["value"] as? String, value)
@@ -797,6 +799,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         editor.tap()
         editor.typeText(suffix)
         tap(app.buttons["extension.dialog.submit"], named: "editor submit button", timeout: 5)
+        allowAISharingIfAsked()
 
         let response = try waitForHarnessResponse(sessionId: sessionId, requestId: requestId)
         XCTAssertEqual(response["value"] as? String, prefill + suffix)

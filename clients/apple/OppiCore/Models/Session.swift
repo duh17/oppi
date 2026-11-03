@@ -851,6 +851,9 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     let contextWindow: Int
     let thinkingLevels: [ThinkingLevel]?
     let isDefault: Bool
+    /// How the server reaches the model: `subscription`, `apiKey`, or `local` for one on the
+    /// server's own machine (a loopback endpoint).
+    let authKind: String?
 
     init(
         id: String,
@@ -858,7 +861,8 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         provider: String,
         contextWindow: Int,
         thinkingLevels: [ThinkingLevel]? = nil,
-        isDefault: Bool = false
+        isDefault: Bool = false,
+        authKind: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -866,6 +870,7 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         self.contextWindow = contextWindow
         self.thinkingLevels = thinkingLevels
         self.isDefault = isDefault
+        self.authKind = authKind
     }
 
     init(from decoder: Decoder) throws {
@@ -880,9 +885,10 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
             thinkingLevels = nil
         }
         isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        authKind = try c.decodeIfPresent(String.self, forKey: .authKind)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, provider, contextWindow, thinkingLevels, isDefault
+        case id, name, provider, contextWindow, thinkingLevels, isDefault, authKind
     }
 }

@@ -92,8 +92,14 @@ final class ChatScreenModel {
 /// notification tap from another chat).
 @MainActor
 final class ChatViewController: UIViewController {
+    /// A command the composer runs itself instead of sending it as a prompt.
     enum LocalSlashCommand: Equatable {
-        case compact
+        case compact, reload, share, reviewComments
+
+        /// Only `/compact` reaches the session's model provider (the model summarizes the
+        /// conversation). Reloading resources, sharing a session, and the review-comments
+        /// note send nothing to a model, so they need no AI sharing consent.
+        var reachesModelProvider: Bool { self == .compact }
     }
 
     let sessionId: String

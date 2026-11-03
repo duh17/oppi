@@ -275,6 +275,7 @@ extension ChatViewController {
             },
             onFork: { [weak self] in self?.forkFromMessage($0) },
             onNavigateTreeNode: navigateTree,
+            allowsBranchSummary: { [weak self] in await self?.requestAISharing() ?? false },
             loadTree: loadTree,
             loadOutline: { [weak self] in
                 guard let self, let routeScope = self.focusedRouteScope else {

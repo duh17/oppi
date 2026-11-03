@@ -52,6 +52,7 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
         }
         XCTAssertTrue(waitForElementToExist(option, timeout: 20), "Background ask card did not open in the target chat")
         tap(option, named: "background ask option", timeout: 1)
+        allowAISharingIfAsked()
 
         let response = try waitForE2EHarnessResponse(sessionId: backgroundSession, requestId: requestId)
         XCTAssertEqual(response["value"] as? String, "{\"background\":\"background-approve\"}")
@@ -131,6 +132,7 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
             "Notification-style open must show a timeline row, not a blank thread"
         )
         tap(option, named: "notify-tap ask option", timeout: 1)
+        allowAISharingIfAsked()
 
         let response = try waitForE2EHarnessResponse(sessionId: backgroundSession, requestId: requestId)
         XCTAssertEqual(response["value"] as? String, "{\"notify-tap\":\"notify-tap-approve\"}")

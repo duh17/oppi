@@ -39,9 +39,43 @@ struct AISharingConsent {
         var isOnServerComputer: Bool = false
 
         /// The model provider `providerKey` names (`anthropic`, `openrouter`), or nil for none.
-        static func modelProvider(_ providerKey: String?) -> Recipient? {
+        /// `isOnServerComputer` marks one whose models run on the server's own machine.
+        static func modelProvider(_ providerKey: String?, isOnServerComputer: Bool = false) -> Recipient? {
             guard let key = normalizedProviderKey(providerKey) else { return nil }
-            return Recipient(kind: .modelProvider, id: key, name: providerDisplayLabel(key))
+            return Recipient(
+                kind: .modelProvider,
+                id: key,
+                name: providerDisplayLabel(key),
+                isOnServerComputer: isOnServerComputer
+            )
+        }
+
+        /// The model provider a send reaches: `modelId`'s (a `provider/id` string or a catalog
+        /// id), or with no model the server's default (`isDefault`) from its catalog.
+        ///
+        /// Nil when that names no single provider. A short id that several providers serve
+        /// (`claude-sonnet-5` from Anthropic and GitHub Copilot) could go to either, so it is
+        /// unknown rather than the first match: the sheet must name who really gets the content.
+        static func modelProvider(modelId: String?, catalog: [CatalogModel]) -> Recipient? {
+            let requested = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !requested.isEmpty else {
+                return servingProvider(catalog.filter(\.isDefault)) ?? nil
+            }
+            // A full id names its provider. Only when none matches is it read as a short id,
+            // which is how the server resolves it too.
+            for matches in [catalog.filter { $0.fullId == requested }, catalog.filter { $0.shortId == requested }] {
+                if let recipient = servingProvider(matches) { return recipient }
+            }
+            guard let slash = requested.firstIndex(of: "/"), slash != requested.startIndex else { return nil }
+            return modelProvider(String(requested[..<slash]))
+        }
+
+        /// The provider every model in `matches` belongs to: nil for no match (try another
+        /// way), `.some(nil)` when they belong to more than one (ambiguous, so unknown).
+        private static func servingProvider(_ matches: [CatalogModel]) -> Recipient?? {
+            guard let first = matches.first else { return nil }
+            guard matches.allSatisfy({ $0.provider == first.provider }) else { return .some(nil) }
+            return .some(modelProvider(first.provider, isOnServerComputer: matches.allSatisfy(\.isLocal)))
         }
 
         /// A voice feature's backend from `/server/info` `voiceBackends[].target`: `xAI` for
@@ -95,20 +129,35 @@ struct AISharingConsent {
         let id: String
         let provider: String
         var isDefault: Bool = false
+        /// The server reports the model runs on its own machine (`authKind: "local"`, a
+        /// loopback endpoint), not at a third party.
+        var isLocal: Bool = false
 
-        init(id: String, provider: String, isDefault: Bool = false) {
+        init(id: String, provider: String, isDefault: Bool = false, isLocal: Bool = false) {
             self.id = id
             self.provider = provider
             self.isDefault = isDefault
+            self.isLocal = isLocal
         }
 
-        private enum CodingKeys: String, CodingKey { case id, provider, isDefault }
+        private enum CodingKeys: String, CodingKey { case id, provider, isDefault, authKind }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = try c.decode(String.self, forKey: .id)
             provider = try c.decode(String.self, forKey: .provider)
             isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+            isLocal = try c.decodeIfPresent(String.self, forKey: .authKind) == "local"
+        }
+
+        /// `provider/id`. Current servers list ids that way already; older ones list the short id.
+        var fullId: String {
+            id.hasPrefix("\(provider)/") ? id : "\(provider)/\(id)"
+        }
+
+        /// The id within its provider, which another provider can share.
+        var shortId: String {
+            String(fullId.dropFirst(provider.count + 1))
         }
     }
 
@@ -159,7 +208,8 @@ struct AISharingConsent {
     // MARK: - The decision
 
     /// Whether content may go to every recipient now. A nil recipient is a model provider Oppi
-    /// could not name (no model chosen, and the server lists no default), which is refused:
+    /// could not name (no model chosen and no default listed, or an id several providers
+    /// serve), which is refused:
     /// the person must know who gets it. `canAsk` is false where no sheet can show (Siri,
     /// Shortcuts, the Share extension), which refuses instead of asking.
     func decide(_ recipients: [Recipient?], serverId: String, canAsk: Bool) -> Decision {
@@ -169,20 +219,6 @@ struct AISharingConsent {
             return canAsk ? .ask(recipient) : .refuse(Self.openAppMessage(for: recipient))
         }
         return .send
-    }
-
-    /// The provider of `modelId` (a `provider/id` string or a catalog id), or with no model the
-    /// server's default from its catalog. Nil when neither says.
-    static func modelProviderKey(modelId: String?, catalog: [CatalogModel]) -> String? {
-        let requested = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !requested.isEmpty else {
-            return catalog.first(where: \.isDefault)?.provider
-        }
-        if let match = catalog.first(where: { $0.id == requested || "\($0.provider)/\($0.id)" == requested }) {
-            return match.provider
-        }
-        guard let slash = requested.firstIndex(of: "/"), slash != requested.startIndex else { return nil }
-        return String(requested[..<slash])
     }
 
     static let unknownProviderMessage = String(

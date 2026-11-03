@@ -597,13 +597,24 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         }
     }
 
+    /// A run sends the schedule's prompt to its model provider, so it waits for AI sharing
+    /// consent; Not Now runs nothing.
     private func runNow() {
-        guard let apiClient = connection.apiClient else { return }
+        guard let apiClient = connection.apiClient, let action = schedule?.action else { return }
         isMutating = true
         let scheduleId = scheduleId
+        let connection = connection
         Task { [weak self] in
             defer { self?.isMutating = false }
             do {
+                let modelId = try await Self.runModelId(of: action, apiClient: apiClient, sessionStore: connection.sessionStore)
+                let allowed = await AISharingConsentPrompt.requestModelSharing(
+                    modelId: modelId,
+                    serverId: nil,
+                    connection: connection,
+                    from: self
+                )
+                guard allowed else { return }
                 let run = try await apiClient.runAgentSchedule(scheduleId)
                 guard let self else { return }
                 runs = scheduleRunsByInsertingNewest(run, into: runs, limit: 20)
@@ -614,6 +625,24 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             } catch {
                 self?.error = error.localizedDescription
             }
+        }
+    }
+
+    /// The model a run asks for, as the server picks it: a new session's own model, else its
+    /// Agent's; an existing session's model. Nil leaves the server's default.
+    private static func runModelId(
+        of action: AgentScheduleAction,
+        apiClient: APIClient,
+        sessionStore: SessionStore
+    ) async throws -> String? {
+        switch action {
+        case .newSession(_, _, let agentId, let model, _, _, _):
+            if let model { return model }
+            guard let agentId else { return nil }
+            return try await apiClient.getAgent(agentId).definition.sessionDefaults?.model
+        case .existingSession(_, let sessionId, _, _):
+            if let session = sessionStore.session(id: sessionId) { return session.model }
+            return try await apiClient.getSessionRecord(sessionId: sessionId).model
         }
     }
 

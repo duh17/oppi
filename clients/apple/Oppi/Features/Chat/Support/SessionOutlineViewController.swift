@@ -27,6 +27,10 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     let onSelect: (String) -> Void
     private let onFork: ((String) -> Void)?
     private let onNavigateTreeNode: ((SessionTreeNavigationRequest) async throws -> Void)?
+    /// A branch summary sends the branch to the session's model provider: this asks for AI
+    /// sharing consent first. False switches nothing and keeps the choice, and any typed
+    /// instructions, on screen.
+    private let allowsBranchSummary: (() async -> Bool)?
     private let initialTreeSnapshot: SessionTreeSnapshot?
     private let loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)?
     private let initialOutlineSnapshot: SessionOutlineSnapshot?
@@ -93,6 +97,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         onSelect: @escaping (String) -> Void,
         onFork: ((String) -> Void)? = nil,
         onNavigateTreeNode: ((SessionTreeNavigationRequest) async throws -> Void)? = nil,
+        allowsBranchSummary: (() async -> Bool)? = nil,
         initialTreeSnapshot: SessionTreeSnapshot? = nil,
         loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil,
         initialOutlineSnapshot: SessionOutlineSnapshot? = nil,
@@ -105,6 +110,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         self.onSelect = onSelect
         self.onFork = onFork
         self.onNavigateTreeNode = onNavigateTreeNode
+        self.allowsBranchSummary = allowsBranchSummary
         self.initialTreeSnapshot = initialTreeSnapshot
         self.loadTree = loadTree
         self.initialOutlineSnapshot = initialOutlineSnapshot
@@ -675,14 +681,23 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     }
 
     private func beginPendingTreeNavigation(summarize: Bool, customInstructions: String?) {
-        guard let targetId = pendingTreeNavigationTargetId else { return }
-        startTreeNavigation(.init(
+        guard let targetId = pendingTreeNavigationTargetId, navigatingTreeNodeId == nil else { return }
+        let request = SessionTreeNavigationRequest(
             targetId: targetId,
             summarize: summarize,
             customInstructions: customInstructions,
             replaceInstructions: customInstructions == nil ? nil : false,
             label: nil
-        ))
+        )
+        guard summarize, let allowsBranchSummary else {
+            startTreeNavigation(request)
+            return
+        }
+        Task { [weak self] in
+            // Not Now leaves the instructions sheet, if any, up with its text.
+            guard await allowsBranchSummary(), let self, pendingTreeNavigationTargetId == targetId else { return }
+            startTreeNavigation(request)
+        }
     }
 
     private func startTreeNavigation(_ request: SessionTreeNavigationRequest) {
