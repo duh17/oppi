@@ -576,11 +576,18 @@ describe("durable-native threads", () => {
         | undefined;
     const row = async () => (await pill())?.blocks[0]?.rows[0];
 
-    await until(async () => (await row())?.state === "running", "a working row");
-    expect((await pill())?.presentation).toMatchObject({
-      title: "1 subagent",
-      subtitle: "Working",
-    });
+    // A row's state, model and link and the presentation beside them are one write: take one
+    // snapshot per poll and wait on every field the assertions read, not on a state that landed
+    // first.
+    await until(async () => {
+      const view = await pill();
+      return (
+        view?.blocks[0]?.rows[0]?.state === "running" &&
+        view.blocks[0]?.rows[0]?.subtitle === "Working · faux-1" &&
+        view.presentation.title === "1 subagent" &&
+        view.presentation.subtitle === "Working"
+      );
+    }, "a working row with the child's model and the pill's presentation");
     expect(await row()).toMatchObject({
       id: child.id,
       title: "Scout",
@@ -600,9 +607,15 @@ describe("durable-native threads", () => {
     );
 
     childGate.open();
-    await until(async () => (await row())?.state === "success", "a done row");
-    expect((await pill())?.presentation).toMatchObject({ title: "1 subagent", subtitle: "Done" });
-    expect(await row()).toMatchObject({ subtitle: "Done · faux-1" });
+    await until(async () => {
+      const view = await pill();
+      return (
+        view?.blocks[0]?.rows[0]?.state === "success" &&
+        view.blocks[0]?.rows[0]?.subtitle === "Done · faux-1" &&
+        view.presentation.title === "1 subagent" &&
+        view.presentation.subtitle === "Done"
+      );
+    }, "a done row with the pill's presentation");
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
     // An idle store retires the watcher as a ticker (here: aborted directly); attaching the
@@ -613,9 +626,16 @@ describe("durable-native threads", () => {
     await harness.abortTask(retired!, context);
     await f.manager.stopSession(f.parent.id);
     await f.manager.startSession(f.parent.id, f.workspace);
-    await until(async () => (await widgetTask()) !== retired, "a new watcher");
-    // The child stopped once it answered; the phone opens it from its row and messages it.
-    expect(f.storage.getSession(child.id)?.status).toBe("stopped");
+    // A watcher, not merely none: an aborted task reads as no watcher for a moment before the
+    // attach replaces it.
+    await until(async () => {
+      const current = await widgetTask();
+      return current !== undefined && current !== retired;
+    }, "a new watcher");
+    // The child stopped once it answered; the phone opens it from its row and messages it. The
+    // row's Done follows the child's run, and its stop is a later event: a resume that overtakes
+    // the stop races the auto-stop that is still deciding, so wait for the stop itself.
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "the child to stop");
     await f.manager.startSession(child.id, f.workspace);
     await f.manager.sendPrompt(child.id, "Once more");
     await until(
