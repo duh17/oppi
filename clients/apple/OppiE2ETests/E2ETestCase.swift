@@ -758,6 +758,16 @@ class E2ETestCase: XCTestCase {
         if !workspaceDetailSurfaceExists(in: app), waitForChatSessionSurface(in: app, timeout: 1) {
             return
         }
+        // A class that launches on the workspace list (`e2eLaunchesWorkspaceHomeOnly`) has no
+        // session list to create a row in: open the workspace first, as a person would.
+        if !workspaceDetailSurfaceExists(in: app) {
+            do {
+                try ensureAtWorkspaceDetail()
+            } catch {
+                XCTFail("Could not open the E2E workspace to create a session: \(error)")
+                return
+            }
+        }
 
         do {
             let workspaceId = try e2eWorkspaceId()
