@@ -5,12 +5,10 @@ final class SessionHistoryE2ETests: E2ETestCase {
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
     private let searchMarker = "HISTORY_SEARCH_SENTINEL_7A91"
-    private let forkMarker = "HISTORY_FORK_SENTINEL_53F2"
     private let localImportTitle = "E2E Local Import 8C2D"
     private let localImportFirstMessage = "Local import first message 8C2D"
 
     private var seededSearchSessionId: String?
-    private var seededForkSessionId: String?
     private var localImportFixture: (path: String, piSessionId: String)?
 
     override func seedE2EFixtures() throws {
@@ -20,13 +18,6 @@ final class SessionHistoryE2ETests: E2ETestCase {
                 name: "E2E Search Fixture 7A91",
                 firstMessage: searchMarker,
                 userEntryId: "history-search-user"
-            )
-        } else if name.contains("testTraceOutlineForkCreatesOpenableSession") {
-            seededForkSessionId = try importLocalFixtureAsStoppedSession(
-                directoryName: "history-fork",
-                name: "E2E Fork Source 53F2",
-                firstMessage: forkMarker,
-                userEntryId: "a53f2c01"
             )
         } else if name.contains("testLocalPiSessionImportOpensImportedChat") {
             localImportFixture = try createLocalPiSessionFixture(
@@ -82,41 +73,150 @@ final class SessionHistoryE2ETests: E2ETestCase {
 
     @MainActor
     func testTraceOutlineForkCreatesOpenableSession() throws {
-        let sourceSessionId = try XCTUnwrap(seededForkSessionId, "Fork fixture session was not seeded")
         let workspaceId = try e2eWorkspaceId()
 
-        let outlineResponse = try e2eLabAPIJSON(
+        // Oppi forks in front of the chosen user message, so this needs a live
+        // session with two turns: a fork at the second keeps the first exchange
+        // and drops the fork-point turn, and a fork at the first opens empty.
+        // The stopped import fixture cannot show either half: its chat offers
+        // Resume instead of a composer.
+        let sourceIds = try createLabSessions(count: 1, workspaceId: workspaceId, stopAfterCreate: false)
+        let sourceSessionId = try XCTUnwrap(sourceIds.first, "Lab session create returned no id")
+        enterSession(id: sourceSessionId)
+        XCTAssertEqual(waitForFocusedSessionId(sourceSessionId, timeout: 20), sourceSessionId)
+
+        let firstTurn = "HISTORY_FORK_FIRST_TURN_53F2"
+        let forkPointTurn = "HISTORY_FORK_SECOND_TURN_53F2"
+        sendMessageAndWaitForResponse(localEchoPrompt(firstTurn), timeout: 180)
+        XCTAssertTrue(
+            waitForTimelineTextContaining(firstTurn, timeout: 20),
+            "First turn did not render in the source session"
+        )
+        sendMessageAndWaitForResponse(localEchoPrompt(forkPointTurn), timeout: 180)
+        XCTAssertTrue(
+            waitForTimelineTextContaining(forkPointTurn, timeout: 20),
+            "Fork-point turn did not render in the source session"
+        )
+
+        let outline = try traceOutline(workspaceId: workspaceId, sessionId: sourceSessionId)
+        let firstEntryId = try forkableEntryId(in: outline, containing: firstTurn)
+        let forkPointEntryId = try forkableEntryId(in: outline, containing: forkPointTurn)
+
+        let forkAfterFirstTurnId = try forkSession(
+            workspaceId: workspaceId,
+            sourceSessionId: sourceSessionId,
+            entryId: forkPointEntryId,
+            name: "E2E Fork At Second Turn 53F2"
+        )
+        openForkedSession(forkAfterFirstTurnId)
+        XCTAssertTrue(
+            waitForTimelineTextContaining(firstTurn, timeout: 20),
+            "Fork did not keep the turn before its fork point"
+        )
+        XCTAssertFalse(
+            timelineRowAppears(forkPointTurn, within: 3),
+            "Fork showed the turn it forked at instead of rewinding in front of it"
+        )
+
+        let emptyForkId = try forkSession(
+            workspaceId: workspaceId,
+            sourceSessionId: sourceSessionId,
+            entryId: firstEntryId,
+            name: "E2E Fork At First Turn 53F2"
+        )
+        openForkedSession(emptyForkId)
+        XCTAssertTrue(
+            waitForElementToExist(app.textViews["chat.input"], timeout: 20),
+            "Fork of the first turn did not open a chat"
+        )
+        XCTAssertFalse(timelineRowAppears(firstTurn, within: 2), "Fork of the first turn kept the message it forked at")
+        XCTAssertFalse(timelineRowAppears(forkPointTurn, within: 1), "Fork of the first turn showed a later turn")
+        // The composer is the empty chat's working part: it takes focus for a
+        // prompt, which is what the fork has to offer when it carries no turns.
+        XCTAssertTrue(
+            waitForSettledHittable(app.textViews["chat.input"], timeout: 10),
+            "Empty fork's composer never became usable"
+        )
+        focusChatInput()
+
+        // The app instance is shared across E2E classes, and a launch hint left
+        // here would suppress the next class's auto-created chat.
+        app.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_OPEN_SESSION_ID")
+    }
+
+    @MainActor
+    private func traceOutline(workspaceId: String, sessionId: String) throws -> [String: Any] {
+        let response = try e2eLabAPIJSON(
             method: "GET",
-            path: "/workspaces/\(workspaceId)/sessions/\(sourceSessionId)/trace-outline"
+            path: "/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-outline"
         )
-        let outline = try XCTUnwrap(outlineResponse["outline"] as? [String: Any], "Trace outline response missing outline")
+        return try XCTUnwrap(response["outline"] as? [String: Any], "Trace outline response missing outline")
+    }
+
+    /// The outline id a fork at `text` accepts: the user entry that carries it,
+    /// which is the part of the tree `navigate_tree` rewinds in front of.
+    private func forkableEntryId(in outline: [String: Any], containing text: String) throws -> String {
         let entries = try XCTUnwrap(outline["entries"] as? [[String: Any]], "Trace outline response missing entries")
-        let forkEntry = try XCTUnwrap(
+        let entry = try XCTUnwrap(
             entries.first { entry in
-                (entry["isForkable"] as? Bool) == true
-                    && ((entry["kind"] as? String) == "user" || (entry["summary"] as? String)?.contains(forkMarker) == true)
+                (entry["kind"] as? String) == "user"
+                    && (entry["isForkable"] as? Bool) == true
+                    && ((entry["summary"] as? String)?.contains(text) ?? false)
             },
-            "No forkable outline entry found"
+            "Trace outline had no forkable user entry showing \(text)"
         )
-        let entryId = try XCTUnwrap(forkEntry["id"] as? String, "Forkable outline entry missing id")
-        let forkName = "E2E Forked Session 53F2"
-        let forkResponse = try e2eLabAPIJSON(
+        return try XCTUnwrap(entry["id"] as? String, "Forkable outline entry missing id")
+    }
+
+    private func forkSession(
+        workspaceId: String,
+        sourceSessionId: String,
+        entryId: String,
+        name: String
+    ) throws -> String {
+        let response = try e2eLabAPIJSON(
             method: "POST",
             path: "/workspaces/\(workspaceId)/sessions/\(sourceSessionId)/fork",
             body: [
                 "entryId": entryId,
-                "name": forkName,
+                "name": name,
             ]
         )
-        let forkedSession = try XCTUnwrap(forkResponse["session"] as? [String: Any], "Fork response missing session")
-        let forkedSessionId = try XCTUnwrap(forkedSession["id"] as? String, "Fork response missing session id")
+        let session = try XCTUnwrap(response["session"] as? [String: Any], "Fork response missing session")
+        return try XCTUnwrap(session["id"] as? String, "Fork response missing session id")
+    }
 
-        app.launchEnvironment["OPPI_E2E_AUTO_OPEN_SESSION_ID"] = forkedSessionId
+    /// Relaunches the app into a fork, the way its row opens it: a fork is a
+    /// normal chat, not a stopped source waiting on Resume.
+    @MainActor
+    private func openForkedSession(_ sessionId: String) {
+        app.launchEnvironment["OPPI_E2E_AUTO_OPEN_SESSION_ID"] = sessionId
         app.terminate()
         app.launch()
-        XCTAssertEqual(waitForFocusedSessionId(forkedSessionId, timeout: 20), forkedSessionId)
-        XCTAssertTrue(waitForElementToExist(app.textViews["chat.input"], timeout: 20), "Forked session did not open")
-        XCTAssertTrue(waitForTimelineTextContaining(forkMarker, timeout: 20), "Forked session did not preserve source context")
+        XCTAssertEqual(
+            waitForFocusedSessionId(sessionId, timeout: 20),
+            sessionId,
+            "Forked session \(sessionId) was not the open chat after relaunch"
+        )
+    }
+
+    /// Whether the chat timeline grows a row showing `text` within `timeout`.
+    /// Scoped to the timeline so a marker in the composer, a bar, or a sheet
+    /// cannot answer for a row, and polled so a late row still counts before an
+    /// absence assertion trusts it.
+    @MainActor
+    private func timelineRowAppears(_ text: String, within timeout: TimeInterval) -> Bool {
+        let timeline = app.collectionViews["chat.timeline"]
+        let predicate = NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", text, text)
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if timeline.exists,
+               timeline.descendants(matching: .any).matching(predicate).firstMatch.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return false
     }
 
     private func importLocalFixtureAsStoppedSession(
