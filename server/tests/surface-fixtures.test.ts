@@ -1,7 +1,8 @@
 /**
- * Surface protocol fixtures — one surface per slice-1 composite, plus the action, patch, and
- * unknown-composite messages. Ordinary tests compare the deterministic canonical bytes with the
- * committed files and never rewrite them; `npm run protocol:fixtures:update` is the only writer.
+ * Surface protocol fixtures — one surface per slice-1 composite, plus the client's capabilities
+ * and action messages, the patch, and an unknown-composite surface. Ordinary tests compare the
+ * deterministic canonical bytes with the committed files and never rewrite them;
+ * `npm run protocol:fixtures:update` is the only writer.
  * The same bytes are decoded by the Apple Codable tests.
  */
 import { readFileSync } from "node:fs";
@@ -9,10 +10,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  projectExtensionUISurfaceToV1,
-  readExtensionUISurface,
-} from "../src/extension-surface.js";
+import { projectExtensionUISurfaceToV1, readExtensionUISurface } from "../src/extension-surface.js";
 import { normalizeExtensionUINativeSurface } from "../src/extension-ui-contract.js";
 import {
   buildSurfaceFixtures,

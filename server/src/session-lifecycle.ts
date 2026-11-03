@@ -1,5 +1,6 @@
 import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
 import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
+import type { SessionSurfaces } from "./session-surfaces.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { EventTags } from "./telemetry/catalog.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -15,6 +16,8 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
   sdkBackend: AgentBackend;
   pendingStop?: PendingStop;
   workspaceId: string;
+  /** Composable surfaces a plugin published here, if any. */
+  surfaces?: SessionSurfaces;
 }
 
 export interface SessionLifecycleCoordinatorDeps {
@@ -104,6 +107,15 @@ export class SessionLifecycleCoordinator {
       clearExtensionUIState(active);
     } catch (error) {
       recordFailure("extension_ui_cleanup", error);
+    }
+
+    // A surface is the Session's own state too: its deadlines and action work stop here, and the
+    // clients still watching are told each surface is gone. It stops even when the dialog cleanup
+    // above failed, so nothing keeps running past the Session.
+    try {
+      active.surfaces?.stop();
+    } catch (error) {
+      recordFailure("surface_cleanup", error);
     }
 
     if (!active.sdkBackend.isDisposed) {

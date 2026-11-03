@@ -72,6 +72,12 @@ enum ClientMessage: Sendable {
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
+    /// What this client draws, sent once on subscribe. A client that names
+    /// `extension-native-ui:v2:composites` is sent each composable surface itself; one that names
+    /// nothing is sent the v1 widget projection of the same surface, which is what every client
+    /// got before surfaces existed.
+    case clientCapabilities(capabilities: [String], requestId: String? = nil)
+
     /// One action on a composable surface's card, at the revision the client saw. The server
     /// answers with a patch, a replacement surface, or a failure on that card.
     case extensionUIAction(
@@ -443,6 +449,12 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(cancelled, forKey: .cancelled)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        // ── What this client draws ──
+        case .clientCapabilities(let capabilities, let reqId):
+            try c.encode("client_capabilities", forKey: .type)
+            try c.encode(capabilities, forKey: .capabilities)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── Composable extension surfaces ──
         case .extensionUIAction(let surfaceId, let compositeId, let actionId, let rowId, let revision, let values, let reqId):
             try c.encode("extension_ui_action", forKey: .type)
@@ -509,6 +521,7 @@ extension ClientMessage: Encodable {
         case itemId
         case clientCallId, callId, lastEventSeq, controllerLeaseEpoch
         case surfaceId, compositeId, actionId, rowId, revision, values
+        case capabilities
     }
 }
 
@@ -551,6 +564,7 @@ extension ClientMessage {
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
         case .extensionUIResponse: return "extension_ui_response"
+        case .clientCapabilities: return "client_capabilities"
         case .extensionUIAction: return "extension_ui_action"
         case .voiceCallStart: return "voice_call_start"
         case .voiceCallAttach: return "voice_call_attach"

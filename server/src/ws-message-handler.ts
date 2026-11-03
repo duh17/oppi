@@ -22,6 +22,7 @@ import type { VoiceCallMediaCoordinator } from "./continuous-voice-media.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
+  ExtensionUISurfaceActionMessage,
   ModelInfo,
   ServerMessage,
   Session,
@@ -43,8 +44,36 @@ export type WsSessionCommands = AgentRuntimeCommandTransport &
     supportsLiveVoice(sessionId: string): boolean;
   };
 
+/**
+ * The live Session's composable surfaces, as a socket reaches them: the tap it sends, and the
+ * shape it says it draws.
+ */
+export interface WsSurfaceCommands {
+  /**
+   * Whether a tap could reach a surface now. Answered synchronously, before any handler runs, so
+   * this socket does not wait on the panel's own work to take its next message.
+   */
+  canAct(sessionId: string): boolean;
+  /**
+   * Start one tap; false when the Session has no surface loop, so the tap reached nothing. The
+   * work outlives this answer: the runtime sends the reply and ends the round trip itself.
+   */
+  act(
+    sessionId: string,
+    message: ExtensionUISurfaceActionMessage,
+    clientId: string,
+  ): Promise<boolean>;
+  /**
+   * What this socket says it draws, on subscribe. The frames it answers with reconcile the
+   * socket: the live surfaces in that shape, and the projections it held cleared.
+   */
+  declare(sessionId: string, clientId: string, capabilities: readonly string[]): ServerMessage[];
+}
+
 export interface WsMessageHandlerDeps {
   sessions: WsSessionCommands;
+  /** Absent for a caller that has no sockets: surfaces arrive through the durable host. */
+  surfaces?: WsSurfaceCommands;
   ensureSessionContextWindow: (session: Session) => Session;
   /** Picker catalog (GET /models): enabled models whose provider has auth. */
   getModelCatalog: () => ModelInfo[];
@@ -171,12 +200,50 @@ export class WsMessageHandler {
       }
 
       // ── Composable surface actions (extension-native-ui:v2:composites) ──
-      // The loop lives with the session that published the surface (`ExtensionSurfaceRuntime`);
-      // no session publishes one yet, so an action has no surface to reach. The error carries no
-      // request id of its own, so the tap's round trip ends with a settled for it.
+      // The loop lives with the session that published the surface (`SessionSurfaces`), which
+      // runs the panel's handler, sends the answer, and settles the tap's request id itself. A
+      // tap that reaches no surface is answered here, on the same round trip. Reachability is
+      // decided before the handler runs and the work is not awaited: an action can take as long as
+      // the plugin's own work, and the socket's next message (a steer, or Stop) must not wait on it.
       case "extension_ui_action": {
+        const clientId = meta.connId;
+        if (clientId && this.deps.surfaces?.canAct(session.id)) {
+          void this.deps.surfaces.act(session.id, msg, clientId).catch((error: unknown) => {
+            log.error("ws.extension_surface_action.failed", {
+              sessionId: session.id,
+              surfaceId: msg.surfaceId,
+              error: safeErrorMessage(error),
+            });
+          });
+          return;
+        }
         send({ type: "error", error: `Unknown extension surface: ${msg.surfaceId}` });
         if (msg.requestId) send(buildExtensionUISettledMessage(session.id, msg.requestId));
+        return;
+      }
+
+      // ── What this client draws ──
+      // One declaration per socket, on subscribe: the Session answers with its live surfaces in
+      // that shape, and a socket that starts drawing composites is sent the v1 projections it
+      // held cleared, so neither shape ever sits beside the other. A client that asks for an
+      // answer gets one; the frames are the answer's payload, not its success.
+      case "client_capabilities": {
+        const clientId = meta.connId;
+        if (clientId && this.deps.surfaces) {
+          for (const frame of this.deps.surfaces.declare(session.id, clientId, msg.capabilities)) {
+            send(frame);
+          }
+        }
+        // A caller that asked for an answer gets one even with no socket to shape: the frames are
+        // the answer's payload, and their absence is still a successful declaration.
+        if (msg.requestId !== undefined) {
+          send({
+            type: "command_result",
+            command: "client_capabilities",
+            requestId: msg.requestId,
+            success: true,
+          });
+        }
         return;
       }
 

@@ -1,0 +1,7 @@
+{
+  "type": "client_capabilities",
+  "capabilities": [
+    "extension-native-ui:v2:composites"
+  ],
+  "requestId": "capabilities-1"
+}

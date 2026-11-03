@@ -1,4 +1,6 @@
 import { safeErrorMessage } from "./log-utils.js";
+import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
+import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import type { EventRing, SequencedMessage } from "./event-ring.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Session, ServerMessage } from "./types.js";
@@ -25,7 +27,7 @@ export interface SessionBroadcastEvent {
 }
 
 export interface BroadcastSessionState extends ProgramStatusHost {
-  subscribers: Set<(msg: ServerMessage) => void>;
+  subscribers: Set<SessionMessageSubscriber>;
   seq: number;
   runtimeEpoch: string;
   eventRing: EventRing;
@@ -84,7 +86,7 @@ export class SessionBroadcaster {
     private readonly saveDebounceMs = 1000,
   ) {}
 
-  subscribe(key: string, callback: (msg: ServerMessage) => void): () => void {
+  subscribe(key: string, callback: SessionMessageSubscriber): () => void {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       return () => {};
@@ -128,7 +130,12 @@ export class SessionBroadcaster {
     };
   }
 
-  broadcast(key: string, message: ServerMessage): number {
+  /**
+   * Fan one frame out to the session's clients. `audience` names the shape it was built for: a
+   * composable surface frame reaches only the clients that draw that shape, and the frame for the
+   * other shape reaches the rest.
+   */
+  broadcast(key: string, message: ServerMessage, audience?: ExtensionUISurfaceAudience): number {
     if (SessionBroadcaster.PROGRAM_STATUS_SYNC_TYPES.has(message.type)) {
       this.syncProgramStatus(key);
     }
@@ -136,7 +143,7 @@ export class SessionBroadcaster {
       return this.broadcastDurable(key, message);
     }
 
-    return this.broadcastEphemeral(key, message);
+    return this.broadcastEphemeral(key, message, audience);
   }
 
   markSessionDirty(key: string): void {
@@ -227,7 +234,11 @@ export class SessionBroadcaster {
     return active.subscribers.size;
   }
 
-  private broadcastEphemeral(key: string, message: ServerMessage): number {
+  private broadcastEphemeral(
+    key: string,
+    message: ServerMessage,
+    audience?: ExtensionUISurfaceAudience,
+  ): number {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       return 0;
@@ -252,7 +263,7 @@ export class SessionBroadcaster {
 
     for (const cb of active.subscribers) {
       try {
-        cb(message);
+        cb(message, audience);
       } catch (err) {
         log.error("session_broadcast.subscriber_callback.failed", {
           sessionId: active.session.id,

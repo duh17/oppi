@@ -83,20 +83,29 @@ type RuntimeOverride = {
   getPendingUIRequestMessages?: (id: string) => ServerMessage[];
 };
 
+type MockAudience = "v1-projection" | "composites";
+type MockSubscriber = (msg: ServerMessage, audience?: MockAudience) => void;
+
 function createMockContext(sessions: Session[]): {
   ctx: StreamContext;
   sessionMap: Map<string, Session>;
-  subscribers: Map<string, Set<(msg: ServerMessage) => void>>;
+  subscribers: Map<string, Set<MockSubscriber>>;
   runtimeOverrides: Map<string, RuntimeOverride>;
-  broadcastTo: (sessionId: string, msg: ServerMessage) => void;
+  /** Which shape each test socket draws, by connection id. */
+  surfaceAudiences: Map<string, MockAudience>;
+  /** The live surfaces a subscribe replays; the mux decides the shape per socket. */
+  surfaceReplay: ServerMessage[];
+  broadcastTo: (sessionId: string, msg: ServerMessage, audience?: MockAudience) => void;
 } {
   const sessionMap = new Map(sessions.map((s) => [s.id, s]));
-  const subscribers = new Map<string, Set<(msg: ServerMessage) => void>>();
+  const subscribers = new Map<string, Set<MockSubscriber>>();
+  const surfaceAudiences = new Map<string, MockAudience>();
+  const surfaceReplay: ServerMessage[] = [];
 
-  const broadcastTo = (sessionId: string, msg: ServerMessage): void => {
+  const broadcastTo = (sessionId: string, msg: ServerMessage, audience?: MockAudience): void => {
     const subs = subscribers.get(sessionId);
     if (subs) {
-      for (const cb of subs) cb(msg);
+      for (const cb of subs) cb(msg, audience);
     }
   };
 
@@ -177,6 +186,11 @@ function createMockContext(sessions: Session[]): {
         return session ? { events: [], currentSeq: 0, session, catchUpComplete: true } : null;
       },
       getPendingUIRequestMessages: () => [],
+      // Composable surfaces: a socket draws the v1 projection until a test says otherwise.
+      surfaceAudience: (_id: string, clientId: string) =>
+        surfaceAudiences.get(clientId) ?? "v1-projection",
+      getSurfaceMessages: () => [...surfaceReplay],
+      forgetSurfaceAudience: vi.fn(),
     } as unknown as StreamContext["sessions"],
     sessionRuntimes,
     ensureSessionContextWindow: (s: Session) => s,
@@ -188,7 +202,15 @@ function createMockContext(sessions: Session[]): {
     createDictationManager: undefined,
   };
 
-  return { ctx, sessionMap, subscribers, runtimeOverrides, broadcastTo };
+  return {
+    ctx,
+    sessionMap,
+    subscribers,
+    runtimeOverrides,
+    surfaceAudiences,
+    surfaceReplay,
+    broadcastTo,
+  };
 }
 
 interface RawFrame {
@@ -445,6 +467,55 @@ describe("BoundSessionStreamMux", () => {
       expect(rejected.closeCode).toBe(1008);
       expect(rejected.sent).toEqual([]);
     }
+  });
+
+  it("replays live surfaces at subscribe and sends each frame only to the shape it was built for", async () => {
+    const session = makeSession("sess-surfaces", "w1");
+    const { ctx, broadcastTo, surfaceAudiences, surfaceReplay } = createMockContext([session]);
+    const projection: ServerMessage = {
+      type: "extension_ui_notification",
+      method: "setWidget",
+      widgetKey: "surface:deploy",
+      widgetLines: ["Deploy running"],
+    };
+    surfaceReplay.push(projection);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket);
+    // A client that subscribes after a plugin published is handed the surface in the shape it
+    // draws: the v1 projection, until it declares composites.
+    // The socket's frames carry the session they belong to.
+    expect(ws.sentOfType("extension_ui_notification")).toEqual([
+      { ...projection, sessionId: session.id },
+    ]);
+    const connId = mux.connectionIdFor(ws as unknown as WebSocket);
+    expect(connId).toBeDefined();
+
+    const surface = {
+      type: "extension_ui_surface",
+      sessionId: session.id,
+      surface: { version: 2, id: "deploy" },
+    } as unknown as ServerMessage;
+    const cleared: ServerMessage = { ...projection, widgetLines: [], sessionId: session.id };
+    broadcastTo(session.id, surface, "composites");
+    broadcastTo(session.id, cleared, "v1-projection");
+    expect(ws.sentOfType("extension_ui_surface")).toEqual([]);
+    expect(ws.sentOfType("extension_ui_notification")).toEqual([
+      { ...projection, sessionId: session.id },
+      cleared,
+    ]);
+
+    // The same socket declares composites, and now gets the surface and not the projection.
+    surfaceAudiences.set(connId as string, "composites");
+    broadcastTo(session.id, surface, "composites");
+    broadcastTo(session.id, cleared, "v1-projection");
+    expect(ws.sentOfType("extension_ui_surface")).toEqual([surface]);
+    expect(ws.sentOfType("extension_ui_notification")).toEqual([
+      { ...projection, sessionId: session.id },
+      cleared,
+    ]);
+    ws.close();
   });
 
   it("closes workspace streams for a session in another workspace", async () => {

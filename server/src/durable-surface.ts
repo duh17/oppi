@@ -170,9 +170,34 @@ export interface SurfaceContext {
   readonly surfaces: SurfacePublisher;
 }
 
+/** One tap on a published surface, as the host hands it back to the panel that offered it. */
+export interface SurfaceTap {
+  readonly compositeId: string;
+  readonly actionId: string;
+  /** The row a row action belongs to; absent for a surface-level action. */
+  readonly rowId?: string;
+  /** The revision the client acted on. */
+  readonly revision: number;
+  readonly values?: Record<string, string | number | boolean>;
+  /** Aborted when the surface settles: dismissed, replaced by nothing, or past its deadline. */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * One action handler, bound to the panel and to the state it last published. Every publish hands
+ * the host one of these, so a tap runs the extension's own code long after the tool call that
+ * published the surface returned, and its answer reaches the card the tap came from.
+ */
+export type SurfaceDispatch = (
+  tap: SurfaceTap,
+) => ExtensionUISurfaceActionAnswer | Promise<ExtensionUISurfaceActionAnswer>;
+
 export interface SurfacePublisher {
-  /** Publish or replace by key; the host coalesces repeats of a persistent surface. */
-  publish(surface: ExtensionUISurface): unknown;
+  /**
+   * Publish or replace by key; the host coalesces repeats of a persistent surface. `dispatch` is
+   * how the host runs this panel's actions while the surface lives.
+   */
+  publish(surface: ExtensionUISurface, dispatch?: SurfaceDispatch): unknown;
   /** The surface is done: its actions are cancelled and the client clears it. */
   dismiss(surfaceId: string): unknown;
 }
@@ -226,6 +251,8 @@ export interface Surface<State> {
   emptyState(): ExtensionUISurfaceState;
   action(id: string, handler: SurfaceActionHandler<State>): Surface<State>;
   handlers(): ReadonlyMap<string, SurfaceActionHandler<State>>;
+  /** This panel's handler for one tap, over the state it last published. */
+  dispatch(ctx: SurfaceContext): SurfaceDispatch;
 }
 
 export interface SurfaceOptions<State> {
@@ -271,13 +298,13 @@ export function surface<State>(
       const wire = render(state);
       published = state;
       rendered = true;
-      ctx.surfaces.publish(wire);
+      ctx.surfaces.publish(wire, panel.dispatch(ctx));
       return wire;
     },
     refresh(ctx) {
       if (!rendered) throw new Error(`surface "${definition.id}": nothing has been published`);
       const wire = render(published as State);
-      ctx.surfaces.publish(wire);
+      ctx.surfaces.publish(wire, panel.dispatch(ctx));
       return wire;
     },
     current: () => published,
@@ -296,6 +323,28 @@ export function surface<State>(
       return panel;
     },
     handlers: () => handlers,
+    dispatch(ctx) {
+      return async (tap) => {
+        const handler = handlers.get(tap.actionId);
+        // The surface is gone from this panel, or the id was never offered: nothing ran, and the
+        // card that asked says so in the host's words rather than pretending it worked.
+        if (!handler || !rendered)
+          return {
+            error: { compositeId: tap.compositeId, message: "This action is not available." },
+          };
+        const state = published as State;
+        const answer = await handler(state, {
+          state,
+          compositeId: tap.compositeId,
+          actionId: tap.actionId,
+          ...(tap.rowId === undefined ? {} : { rowId: tap.rowId }),
+          ...(tap.values === undefined ? {} : { values: tap.values }),
+          signal: tap.signal,
+          ctx,
+        });
+        return surfaceActionAnswer(answer, tap.compositeId);
+      };
+    },
   };
   return panel;
 }

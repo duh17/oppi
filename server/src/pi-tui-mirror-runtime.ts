@@ -52,6 +52,7 @@ import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
+import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import { SessionEventProcessor } from "./session-events.js";
 import { syncProgramStatus } from "./program-status.js";
 import { SessionInputCoordinator } from "./session-input.js";
@@ -827,7 +828,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
-  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
+  subscribe(sessionId: string, callback: SessionMessageSubscriber): () => void {
     this.ensureActiveFromStorage(sessionId);
     const unsubscribe = this.broadcaster.subscribe(sessionId, callback);
     return () => {

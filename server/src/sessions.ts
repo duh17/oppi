@@ -19,6 +19,7 @@ import type {
   ConversationStreamAttach,
   ConversationStreamOlder,
   ConversationStreamServerMessage,
+  ExtensionUISurfaceActionMessage,
   MessageQueueState,
   Session,
   ServerMessage,
@@ -61,6 +62,9 @@ import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import { SessionSurfaces, type SessionMessageSubscriber } from "./session-surfaces.js";
+import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
+import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
 const log = createLogger({ base: { component: "sessions" } });
@@ -183,6 +187,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       runtime.bindSessions({
         sessionIdOf: (storeId, conversationId) =>
           storage.findSessionByDurableConversation(storeId, conversationId)?.id,
+        // What `oppiHost().surfaces(env)` hands a durable plugin: the surface loop of the Session
+        // bound to the conversation its tool call runs.
+        surfacesFor: (storeId, conversationId) => {
+          const sessionId = storage.findSessionByDurableConversation(storeId, conversationId)?.id;
+          return sessionId ? this.surfacePublisherFor(sessionId) : undefined;
+        },
       });
       // Read at each use: the server sets `sessionNaming` after constructing this manager.
       runtime.bindSessionNaming({
@@ -974,12 +984,80 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   // ─── Subscribe / Broadcast ───
 
-  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
+  subscribe(sessionId: string, callback: SessionMessageSubscriber): () => void {
     return this.broadcaster.subscribe(this.sessionKey(sessionId), callback);
   }
 
   broadcastSessionMessage(sessionId: string, message: ServerMessage): number {
     return this.broadcaster.broadcast(this.sessionKey(sessionId), message);
+  }
+
+  // ─── Composable surfaces ───
+
+  /**
+   * The surface loop of a live Session, created on first use. It is the Session's own state: a
+   * plugin publishes into it, a client taps into it, and it stops with the Session.
+   */
+  surfacesFor(sessionId: string): SessionSurfaces | undefined {
+    const key = this.sessionKey(sessionId);
+    const active = this.active.get(key);
+    if (!active) {
+      return undefined;
+    }
+    active.surfaces ??= new SessionSurfaces({
+      sessionId: active.session.id,
+      emit: (message, audience) => this.broadcaster.broadcast(key, message, audience),
+    });
+    return active.surfaces;
+  }
+
+  /** What `oppiHost().surfaces(env)` hands a plugin: publish into this Session's loop. */
+  surfacePublisherFor(sessionId: string): SurfacePublisher | undefined {
+    return this.surfacesFor(sessionId)?.publisher;
+  }
+
+  /** The live surfaces a client that has just subscribed draws, in the shape it draws. */
+  getSurfaceMessages(sessionId: string, clientId: string): ServerMessage[] {
+    return this.active.get(this.sessionKey(sessionId))?.surfaces?.messages(clientId) ?? [];
+  }
+
+  /**
+   * What a client says it draws, on subscribe, and the frames that reconcile it: the live surfaces
+   * in that shape, and the v1 widgets it held cleared when it starts drawing composites.
+   */
+  declareSurfaceCapabilities(
+    sessionId: string,
+    clientId: string,
+    capabilities: readonly string[],
+  ): ServerMessage[] {
+    return this.surfacesFor(sessionId)?.declare(clientId, capabilities) ?? [];
+  }
+
+  /** Whether a tap could reach one of this Session's surfaces now; false without a surface loop. */
+  canActOnSurface(sessionId: string): boolean {
+    return this.active.get(this.sessionKey(sessionId))?.surfaces?.canAct() ?? false;
+  }
+
+  /** One tap from one client; false when the Session has no live surface to act on. */
+  actOnSurface(
+    sessionId: string,
+    message: ExtensionUISurfaceActionMessage,
+    clientId: string,
+  ): Promise<boolean> {
+    const surfaces = this.active.get(this.sessionKey(sessionId))?.surfaces;
+    return surfaces ? surfaces.act(message, clientId) : Promise.resolve(false);
+  }
+
+  /** The shape this client draws for this Session's surfaces; the v1 projection until it says. */
+  surfaceAudience(sessionId: string, clientId: string): ExtensionUISurfaceAudience {
+    return (
+      this.active.get(this.sessionKey(sessionId))?.surfaces?.audience(clientId) ?? "v1-projection"
+    );
+  }
+
+  /** A socket that closed: nothing else reads the shape it said it draws. */
+  forgetSurfaceAudience(sessionId: string, clientId: string): void {
+    this.active.get(this.sessionKey(sessionId))?.surfaces?.forget(clientId);
   }
 
   /** Persist an assistant fixture on the active Pi branch for deterministic E2E replay. */

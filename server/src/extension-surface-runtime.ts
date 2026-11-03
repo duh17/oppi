@@ -63,6 +63,12 @@ export interface ExtensionSurfaceRuntimeOptions {
   emit: (message: ServerMessage, audience: ExtensionUISurfaceAudience) => void;
   /** The extension's action handler; required to accept actions. */
   runAction?: (request: ExtensionSurfaceActionRequest) => Promise<ExtensionUISurfaceActionAnswer>;
+  /**
+   * A surface settled here rather than by whoever published it: its deadline passed, or the
+   * session stopped. Whoever handed it an action handler drops that handler and binds a new one
+   * when the surface is published again.
+   */
+  onSettled?: (surfaceId: string) => void;
   now?: () => number;
   coalesceMs?: number;
   actionRateLimit?: number;
@@ -160,6 +166,7 @@ export class ExtensionSurfaceRuntime {
     this.cancelActions(surfaceId);
     this.surfaces.delete(surfaceId);
     this.forget(surfaceId);
+    this.options.onSettled?.(surfaceId);
     const revision = this.nextRevision(surfaceId, live);
     this.rememberRevision(surfaceId, revision);
     this.sendRemoved(surfaceId, revision);
@@ -174,6 +181,7 @@ export class ExtensionSurfaceRuntime {
     for (const surfaceId of this.deadlines.keys()) this.clearDeadline(surfaceId);
     for (const surface of [...this.surfaces.values()]) {
       this.cancelActions(surface.id);
+      this.options.onSettled?.(surface.id);
       this.sendRemoved(surface.id, this.nextRevision(surface.id, surface));
     }
     this.surfaces.clear();

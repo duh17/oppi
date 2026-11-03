@@ -186,6 +186,10 @@ function makeHarness(root: string) {
     subscribe: vi.fn(() => () => {}),
     subscribeStartupUI: vi.fn(() => () => {}),
     getPendingUIRequestMessages: vi.fn(() => []),
+    // Composable surfaces: none published, and every socket draws the v1 projection.
+    surfaceAudience: vi.fn(() => "v1-projection"),
+    getSurfaceMessages: vi.fn(() => []),
+    forgetSurfaceAudience: vi.fn(),
     isActive: vi.fn(() => false),
     isSessionConnected: vi.fn(() => false),
     getToolFullOutputPath: vi.fn(() => null),

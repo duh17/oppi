@@ -1,4 +1,5 @@
 import type { SessionCatchUpResponse } from "./session-broadcast.js";
+import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import { composeModelId } from "./session-state.js";
 import type { ExtensionUIResponse } from "./extension-ui-state.js";
 import type {
@@ -230,7 +231,7 @@ export interface AgentRuntimeCommandTransport {
 
 /** Live event stream surface for a runtime-owned session. */
 export interface AgentRuntimeEventTransport {
-  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
+  subscribe(sessionId: string, callback: SessionMessageSubscriber): () => void;
   getCurrentSeq(sessionId: string): number;
   getCatchUp(sessionId: string, sinceSeq: number): SessionCatchUpResponse | null;
   /** Replayable extension UI messages: persistent notifications plus pending dialogs and asks. */

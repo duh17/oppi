@@ -6,8 +6,9 @@ import type { CacheMissModelPriceSource, CacheMissTrackerState } from "./cache-m
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import type { ProgramRunTracker } from "./program-status.js";
 import type { PendingStop } from "./session-stop.js";
+import type { SessionMessageSubscriber, SessionSurfaces } from "./session-surfaces.js";
 import { TurnDedupeCache } from "./turn-cache.js";
-import type { MessageQueueState, ServerMessage, Session } from "./types.js";
+import type { MessageQueueState, Session } from "./types.js";
 
 export interface RuntimeSessionStateScaffold<
   TQueue extends MessageQueueState = MessageQueueState,
@@ -15,7 +16,9 @@ export interface RuntimeSessionStateScaffold<
   session: Session;
   /** Event-folded run state behind `session.programStatus`; created on first sync. */
   programRun?: ProgramRunTracker;
-  subscribers: Set<(msg: ServerMessage) => void>;
+  /** Composable surfaces a plugin published here; created on first publish, stopped at teardown. */
+  surfaces?: SessionSurfaces;
+  subscribers: Set<SessionMessageSubscriber>;
   seq: number;
   runtimeEpoch: string;
   eventRing: EventRing;

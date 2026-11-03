@@ -660,6 +660,15 @@ export class Server {
     liveVoice.connect(this.voiceCallController, this.voiceMediaCoordinator);
     this.wsMessageHandler = new WsMessageHandler({
       sessions: this.sessionRuntimes,
+      // Composable surfaces: the live Session's own loop, reached by a client's tap and by the
+      // shape it says it draws.
+      surfaces: {
+        canAct: (sessionId) => this.sessions.canActOnSurface(sessionId),
+        act: (sessionId, message, clientId) =>
+          this.sessions.actOnSurface(sessionId, message, clientId),
+        declare: (sessionId, clientId, capabilities) =>
+          this.sessions.declareSurfaceCapabilities(sessionId, clientId, capabilities),
+      },
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
       getModelCatalog: () => this.models.getAll(),

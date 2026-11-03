@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+
 const FIXTURE_MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 // Resolved here rather than through `protocol-fixtures.ts`: that module builds the canonical
@@ -9,9 +11,10 @@ const FIXTURE_MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 export const SURFACE_FIXTURES_DIR = resolve(FIXTURE_MODULE_DIR, "../../protocol/surfaces");
 
 /**
- * One fixture surface per composite, plus the action and patch messages, and one surface carrying
- * a composite this slice does not draw. Both suites decode these same files, so a field the
- * server writes and the phone cannot read fails a test rather than a build on someone's phone.
+ * One fixture surface per composite, plus the client's two messages and the patch, and one
+ * surface carrying a composite this slice does not draw. Both suites decode these same files, so
+ * a field the server writes and the phone cannot read fails a test rather than a build on
+ * someone's phone.
  */
 export function buildSurfaceFixtures(): Record<string, unknown> {
   return {
@@ -20,6 +23,7 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "data-table.json": dataTableSurface(),
     "action-bar.json": actionBarSurface(),
     "action.json": actionMessage(),
+    "client-capabilities.json": clientCapabilitiesMessage(),
     "patch.json": patchMessage(),
     "unknown-composite.json": unknownCompositeSurface(),
   };
@@ -31,6 +35,18 @@ export function serializeSurfaceFixture(value: unknown): string {
 
 export function readSurfaceFixture(name: string): unknown {
   return JSON.parse(readFileSync(resolve(SURFACE_FIXTURES_DIR, name), "utf8"));
+}
+
+/**
+ * What a client says it draws, once on subscribe: the one capability that makes the server send
+ * it each composable surface instead of that surface's v1 widget projection.
+ */
+function clientCapabilitiesMessage(): Record<string, unknown> {
+  return {
+    type: "client_capabilities",
+    capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY],
+    requestId: "capabilities-1",
+  };
 }
 
 function baseSurface(overrides: Record<string, unknown>): Record<string, unknown> {

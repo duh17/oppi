@@ -42,10 +42,11 @@ import { recordStartedQueueItem } from "./session-queue-utils.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } from "./trace.js";
+import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
-  subscribers: Set<(msg: ServerMessage) => void>;
+  subscribers: Set<SessionMessageSubscriber>;
   sdkBackend?: AgentBackend;
   toolFullOutputPaths: Map<string, string>;
   cacheMissTracker: CacheMissTrackerState;

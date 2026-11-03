@@ -273,6 +273,13 @@ export type ClientMessage =
      * `(surfaceId, compositeId, actionId, revision)`.
      */
     | ({ type: "extension_ui_action" } & ExtensionUISurfaceActionMessage)
+    /**
+     * What this client draws, sent once on subscribe. A client that sends none is sent the v1
+     * widget projection of each composable surface; one that names
+     * `extension-native-ui:v2:composites` is sent the surface itself, and the projections it
+     * was handed cleared.
+     */
+    | { type: "client_capabilities"; capabilities: string[]; requestId?: string }
     // ── Continuous voice control (focused session stream) ──
     | {
         type: "voice_call_start";

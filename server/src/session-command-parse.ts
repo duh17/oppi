@@ -116,6 +116,29 @@ function readRequiredNumber(value: unknown, fieldName: string): number {
   return value;
 }
 
+/** A client's capability list: short protocol tokens, bounded so one message cannot flood a socket. */
+const MAX_CLIENT_CAPABILITIES = 32;
+const MAX_CLIENT_CAPABILITY_CHARS = 128;
+
+function readCapabilities(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid payload: expected capabilities");
+  }
+  if (value.length > MAX_CLIENT_CAPABILITIES) {
+    throw new Error(`Invalid payload: capabilities exceeds ${MAX_CLIENT_CAPABILITIES} entries`);
+  }
+  for (const capability of value) {
+    if (
+      typeof capability !== "string" ||
+      capability.length === 0 ||
+      capability.length > MAX_CLIENT_CAPABILITY_CHARS
+    ) {
+      throw new Error("Invalid payload: expected capability names");
+    }
+  }
+  return value as string[];
+}
+
 function validateKnownCommand(type: string, command: Record<string, unknown>): void {
   switch (type) {
     case "prompt":
@@ -152,6 +175,15 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
       return;
     case "extension_ui_response":
       readRequiredString(command.id, "id");
+      return;
+    case "extension_ui_action":
+      readRequiredString(command.surfaceId, "surfaceId");
+      readRequiredString(command.compositeId, "compositeId");
+      readRequiredString(command.actionId, "actionId");
+      readRequiredNumber(command.revision, "revision");
+      return;
+    case "client_capabilities":
+      readCapabilities(command.capabilities);
       return;
     case "voice_call_start":
       readRequiredString(command.clientCallId, "clientCallId");

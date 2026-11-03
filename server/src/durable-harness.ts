@@ -72,6 +72,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
@@ -276,11 +277,12 @@ const NOTIFY_EXTENSION = "oppi.notify";
 const NEVER_DEFAULT = new Set([CONTROL_EXTENSION, LIVE_VOICE_EXTENSION]);
 
 /**
- * The Session bound to a store's conversation. Both answers that depend on it ask here: the
- * caller identity a conversation's host bash gets, and which Session `notify` sends for.
+ * The Session bound to a store's conversation: which Session a conversation's host bash reports,
+ * which Session `notify` sends for, and what `oppiHost().surfaces` publishes into.
  */
 export interface DurableSessionBinding {
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
+  surfacesFor(storeId: string, conversationId: ConversationId): SurfacePublisher | undefined;
 }
 
 /** What `oppiHost().sessionName` reads and writes: the name of an Oppi Session. */
@@ -313,6 +315,10 @@ const durableHost: OppiDurableHost = {
     const port = runtime.boundNotify;
     const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
     return port && sessionId ? (input) => port.notify(sessionId, input) : undefined;
+  },
+  surfaces: (env) => {
+    const caller = conversationOfEnv(env);
+    return caller?.host.runtime.surfacesFor(caller.host.storeId, caller.conversationId);
   },
   liveVoice: (env) => {
     const caller = conversationOfEnv(env);
@@ -1708,6 +1714,10 @@ export class DurableHarness {
    */
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined {
     return this.sessionBinding?.sessionIdOf(storeId, conversationId);
+  }
+  /** What `oppiHost().surfaces(env)` publishes into: the loop of the Session bound to a conversation. */
+  surfacesFor(storeId: string, conversationId: ConversationId): SurfacePublisher | undefined {
+    return this.sessionBinding?.surfacesFor(storeId, conversationId);
   }
   get boundNotify(): SessionNotifyPort | undefined {
     return this.notifyBinding;

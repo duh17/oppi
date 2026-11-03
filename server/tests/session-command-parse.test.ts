@@ -149,6 +149,38 @@ describe("parseClientCommand", () => {
       requestId: "req-ui",
     },
     {
+      // What a client draws, sent on subscribe: a socket that names a broken list is refused
+      // rather than having its shape guessed.
+      name: "client_capabilities without a list",
+      body: { type: "client_capabilities", capabilities: "composites", requestId: "req-caps" },
+      code: "invalid_field",
+      error: "Invalid payload: expected capabilities",
+      command: "client_capabilities",
+      requestId: "req-caps",
+    },
+    {
+      name: "client_capabilities with a non-name entry",
+      body: { type: "client_capabilities", capabilities: [7], requestId: "req-caps" },
+      code: "invalid_field",
+      error: "Invalid payload: expected capability names",
+      command: "client_capabilities",
+      requestId: "req-caps",
+    },
+    {
+      name: "extension_ui_action missing revision",
+      body: {
+        type: "extension_ui_action",
+        surfaceId: "deploy",
+        compositeId: "status",
+        actionId: "retry",
+        requestId: "req-action",
+      },
+      code: "invalid_field",
+      error: "Invalid payload: expected revision",
+      command: "extension_ui_action",
+      requestId: "req-action",
+    },
+    {
       name: "voice_call_start missing clientCallId",
       body: { type: "voice_call_start", requestId: "req-voice" },
       code: "invalid_field",

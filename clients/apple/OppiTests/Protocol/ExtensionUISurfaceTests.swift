@@ -172,6 +172,22 @@ struct ExtensionUISurfaceTests {
         #expect(unknownChecklist.fallback.text == "2 of 4 gates done")
     }
 
+    @Test func encodesTheCapabilitiesAClientDraws() throws {
+        let message = ClientMessage.clientCapabilities(
+            capabilities: ["extension-native-ui:v2:composites"],
+            requestId: "capabilities-1"
+        )
+        let encoded = try JSONDecoder().decode(
+            [String: JSONValue].self,
+            from: JSONEncoder().encode(message)
+        )
+        let expected = try JSONDecoder().decode(
+            [String: JSONValue].self,
+            from: ProtocolFixtures.data("surfaces/client-capabilities.json")
+        )
+        #expect(encoded == expected)
+    }
+
     @Test func encodesASurfaceActionAndDecodesItsPatch() throws {
         let message = ClientMessage.extensionUIAction(
             surfaceId: "deploy",

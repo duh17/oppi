@@ -521,6 +521,31 @@ describe("lifecycle", () => {
     expect(h.runtime.snapshot()).toHaveLength(0);
   });
 
+  it("reports each surface it settles on its own, so its action handler can go with it", () => {
+    const settled: string[] = [];
+    const runtime = new ExtensionSurfaceRuntime({
+      sessionId: SESSION,
+      emit: () => {},
+      onSettled: (surfaceId) => settled.push(surfaceId),
+    });
+    const approval = surfaceValue("action-bar.json");
+    approval.timeoutAt = Date.now() + 1_000;
+    runtime.publish(approval);
+    // Outside the coalesce window, so the second surface is live rather than queued.
+    vi.advanceTimersByTime(300);
+    runtime.publish(surfaceValue("checklist.json"));
+    expect(settled).toEqual([]);
+
+    // A deadline the runtime owns, a dismissal the publisher asked for, and teardown.
+    vi.advanceTimersByTime(700);
+    expect(settled).toEqual(["approval"]);
+    runtime.dismiss("release");
+    expect(settled).toEqual(["approval", "release"]);
+    runtime.publish(surfaceValue());
+    runtime.stop();
+    expect(settled).toEqual(["approval", "release", "deploy"]);
+  });
+
   it("leaves no timer behind when a surface is dismissed or the session ends", () => {
     const h = harness();
     const approval = surfaceValue("action-bar.json");

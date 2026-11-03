@@ -1,0 +1,435 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type FauxResponseStep,
+} from "@earendil-works/pi-ai/providers/faux";
+import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
+import { SessionManager } from "../src/sessions.js";
+import { Storage } from "../src/storage.js";
+import { WsMessageHandler } from "../src/ws-message-handler.js";
+import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
+
+const managers: SessionManager[] = [];
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+let agentDir: string;
+
+beforeEach(() => {
+  agentDir = makeTempDir("oppi-durable-surface-agent-");
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+});
+afterEach(async () => {
+  await Promise.all(managers.splice(0).map((manager) => manager.close()));
+  vi.restoreAllMocks();
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+});
+
+/**
+ * A durable plugin in the owner's plugin root: one tool that publishes a status card through
+ * `oppiHost().surfaces(env)`, and the two actions its card offers. Test data, never shipped.
+ */
+const SURFACE_PLUGIN = [
+  'import { obj } from "oppi/v1/schema";',
+  "import {",
+  "  Extensions,",
+  "  defineExtension,",
+  "  defineFacet,",
+  "  defineTool,",
+  "  oppiHost,",
+  "  statusCard,",
+  "  surface,",
+  '} from "oppi/v1";',
+  "const panel = surface({",
+  '  id: "deploy",',
+  '  title: "Deploys",',
+  '  actions: { retry: { title: "Retry", role: "primary" }, drop: { title: "Drop" } },',
+  "  view: (state) => ({",
+  '    header: { title: "web → prod" },',
+  "    sections: [",
+  "      statusCard({",
+  '        id: "status",',
+  "        header: { title: `Deploy ${state.phase}` },",
+  "        phase: state.phase,",
+  '        actions: ["retry", "drop"],',
+  "        fallback: `Deploy ${state.phase}`,",
+  "      }),",
+  "    ],",
+  "  }),",
+  "});",
+  'panel.action("retry", () => ({ patch: { "sections.0.phase": "success" } }));',
+  'panel.action("drop", (_state, invocation) => {',
+  "  panel.end(invocation.ctx);",
+  "  return { patch: {} };",
+  "});",
+  "const extension = defineExtension({",
+  '  name: "surface-probe",',
+  '  runtimes: ["host"],',
+  "  tools: [",
+  "    defineTool({",
+  '      name: "surface_probe",',
+  '      description: "Publish a deploy panel.",',
+  "      parameters: obj({}),",
+  "      async execute(_args, api) {",
+  "        const surfaces = oppiHost().surfaces(api.env);",
+  '        if (!surfaces) return { output: [{ type: "text", text: "no surface loop" }] };',
+  '        panel.publish({ surfaces }, { phase: "running" });',
+  '        return { output: [{ type: "text", text: "published" }] };',
+  "      },",
+  "    }),",
+  "  ],",
+  "});",
+  "export default defineFacet((_host, self) => self.contribute(Extensions, extension));",
+  "",
+].join("\n");
+
+function writeSurfacePlugin(): void {
+  const root = join(agentDir, "plugins", "surface-probe");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "surface-probe" }));
+  writeFileSync(join(root, "server.ts"), SURFACE_PLUGIN);
+}
+
+function createDurableSession(storage: Storage, name: string): Session {
+  const session = storage.createSession(name, "faux/faux-1");
+  session.serverDurable = { storeId: session.id };
+  storage.saveSession(session);
+  return session;
+}
+
+async function fixture(responses: FauxResponseStep[]) {
+  writeSurfacePlugin();
+  const dir = makeTempDir("oppi-durable-surface-");
+  const models = await ModelRuntime.create({
+    authPath: join(dir, "auth.json"),
+    modelsPath: null,
+    modelsStorePath: join(dir, "models-cache.json"),
+    refreshOnCreate: false,
+  });
+  const faux = fauxProvider();
+  faux.setResponses(responses);
+  models.registerNativeProvider(faux.provider);
+  await models.setRuntimeApiKey("faux", "test-only-faux-credential");
+  await models.refresh({ allowNetwork: false });
+  vi.spyOn(ModelRuntime, "create").mockResolvedValue(models);
+  vi.spyOn(SettingsManager, "create").mockImplementation(() =>
+    SettingsManager.inMemory({
+      defaultProvider: "faux",
+      defaultModel: "faux-1",
+      defaultThinkingLevel: "off",
+      compaction: { enabled: false },
+    }),
+  );
+  const storage = new Storage(dir);
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
+  const workspace = storage.createWorkspace({ name: "Surface proof", hostMount: dir });
+  const session = createDurableSession(storage, "Surface proof");
+  session.workspaceId = workspace.id;
+  storage.saveSession(session);
+  const manager = new SessionManager(storage);
+  managers.push(manager);
+  await manager.resumeDurableSessions();
+  return { dir, models, faux, storage, workspace, session, manager };
+}
+
+/** One frame of the session stream, with the shape it was built for. */
+interface ObservedFrame {
+  message: ServerMessage;
+  audience?: ExtensionUISurfaceAudience;
+}
+
+function observe(manager: SessionManager, sessionId: string) {
+  const frames: ObservedFrame[] = [];
+  const pending = new Set<{
+    predicate: (frame: ObservedFrame) => boolean;
+    resolve: (frame: ObservedFrame) => void;
+  }>();
+  const unsubscribe = manager.subscribe(sessionId, (message, audience) => {
+    const frame = { message, audience };
+    frames.push(frame);
+    for (const waiter of pending) {
+      if (waiter.predicate(frame)) {
+        pending.delete(waiter);
+        waiter.resolve(frame);
+      }
+    }
+  });
+  return {
+    frames,
+    unsubscribe,
+    messages: (type: ServerMessage["type"]) =>
+      frames.filter((frame) => frame.message.type === type).map((frame) => frame.message),
+    next(predicate: (frame: ObservedFrame) => boolean): Promise<ObservedFrame> {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(waiter);
+          reject(
+            new Error(
+              `Expected a session frame; observed ${frames
+                .map((frame) => `${frame.message.type}@${frame.audience ?? "-"}`)
+                .join(",")}`,
+            ),
+          );
+        }, 10_000);
+        const waiter = {
+          predicate,
+          resolve: (frame: ObservedFrame) => {
+            clearTimeout(timer);
+            resolve(frame);
+          },
+        };
+        pending.add(waiter);
+      });
+    },
+  };
+}
+
+/** The handler a session stream's socket uses: the server's own surface wiring, without a socket. */
+function socketHandler(
+  manager: SessionManager,
+  session: Session,
+): (message: ClientMessage, connId: string) => Promise<ServerMessage[]> {
+  const handler = new WsMessageHandler({
+    sessions: manager,
+    ensureSessionContextWindow: (target) => target,
+    getModelCatalog: () => [],
+    surfaces: {
+      canAct: (sessionId) => manager.canActOnSurface(sessionId),
+      act: (sessionId, message, clientId) => manager.actOnSurface(sessionId, message, clientId),
+      declare: (sessionId, clientId, capabilities) =>
+        manager.declareSurfaceCapabilities(sessionId, clientId, capabilities),
+    },
+  });
+  return async (message, connId) => {
+    const sent: ServerMessage[] = [];
+    await handler.handleClientMessage(session, message, (frame) => sent.push(frame), { connId });
+    return sent;
+  };
+}
+
+describe("durable plugin surfaces on the session stream", () => {
+  it("carries a plugin's surface to clients, answers its actions, and clears it at the end", async () => {
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall("surface_probe", {})], { stopReason: "toolUse" }),
+      fauxAssistantMessage("PANEL_PUBLISHED"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+
+    // The port `oppiHost().surfaces(env)` returns for this session's conversation.
+    expect(f.manager.surfacePublisherFor(f.session.id)).toBeDefined();
+
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    const ran = observed.next((frame) => frame.message.type === "tool_end");
+    await f.manager.sendPrompt(f.session.id, "Publish the deploy panel");
+    const surfaceFrame = (await published).message as Extract<
+      ServerMessage,
+      { type: "extension_ui_surface" }
+    >;
+    expect(surfaceFrame.surface.id).toBe("deploy");
+    expect(surfaceFrame.sessionId).toBe(f.session.id);
+    expect(surfaceFrame.surface.sections[0]).toMatchObject({ id: "status", phase: "running" });
+    // The clients without the capability are sent the widget projection of the same surface.
+    expect(
+      observed.frames
+        .filter((frame) => frame.audience === "v1-projection")
+        .map((frame) => frame.message)
+        .filter((message) => message.type === "extension_ui_notification"),
+    ).toEqual([expect.objectContaining({ widgetKey: "surface:deploy", method: "setWidget" })]);
+
+    // The tool's result is the plugin's own: it reached the loop.
+    await ran;
+    const history = (await f.manager.runCommand(f.session.id, {
+      type: "get_messages",
+    })) as Array<{ role: string; toolName?: string; content?: unknown }>;
+    expect(
+      history.filter((message) => message.role === "toolResult" || message.toolName),
+    ).toContainEqual(expect.objectContaining({ toolName: "surface_probe" }));
+    expect(JSON.stringify(history)).toContain("published");
+
+    const session = f.manager.getActiveSession(f.session.id)!;
+    const tap = socketHandler(f.manager, session);
+    // What a phone says when it connects: it draws composites, so it is sent the live surface
+    // and the projection it was handed at subscribe cleared.
+    const declared = await tap(
+      { type: "client_capabilities", capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY] },
+      "phone-1",
+    );
+    expect(declared.map((frame) => frame.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_surface",
+    ]);
+    // A declaration that asks for an answer gets one, after the frames it reconciled.
+    expect(
+      await tap(
+        {
+          type: "client_capabilities",
+          capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY],
+          requestId: "capabilities-1",
+        },
+        "phone-1",
+      ),
+    ).toEqual([
+      {
+        type: "command_result",
+        command: "client_capabilities",
+        requestId: "capabilities-1",
+        success: true,
+      },
+    ]);
+    expect(f.manager.surfaceAudience(f.session.id, "phone-1")).toBe("composites");
+    expect(f.manager.surfaceAudience(f.session.id, "phone-2")).toBe("v1-projection");
+    expect(session.id).toBe(f.session.id);
+
+    // A tap runs the panel's handler and patches the card.
+    const patch = observed.next(
+      (frame) => frame.message.type === "extension_ui_patch" && frame.audience === "composites",
+    );
+    const settledForTap = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_settled" &&
+        (frame.message as Extract<ServerMessage, { type: "extension_ui_settled" }>).id === "tap-1",
+    );
+    const answered = await tap(
+      {
+        type: "extension_ui_action",
+        surfaceId: "deploy",
+        compositeId: "status",
+        actionId: "retry",
+        revision: surfaceFrame.surface.revision,
+        requestId: "tap-1",
+      },
+      "phone-1",
+    );
+    // The runtime answers on the session stream, so the tap itself returns nothing to send: the
+    // socket takes its next message while the panel's work runs, and the round trip ends here.
+    expect(answered).toEqual([]);
+    const patchFrame = (await patch).message as Extract<
+      ServerMessage,
+      { type: "extension_ui_patch" }
+    >;
+    expect(patchFrame).toMatchObject({
+      surfaceId: "deploy",
+      patch: { "sections.0.phase": "success" },
+    });
+    expect((await settledForTap).message).toMatchObject({
+      type: "extension_ui_settled",
+      id: "tap-1",
+    });
+
+    // A client that only draws v1 cannot tap the card it never drew: the tap ends on its round
+    // trip and the card that offered the action is unchanged.
+    const patches = observed.messages("extension_ui_patch").length;
+    const settledForV1 = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_settled" &&
+        (frame.message as Extract<ServerMessage, { type: "extension_ui_settled" }>).id === "tap-v1",
+    );
+    await tap(
+      {
+        type: "extension_ui_action",
+        surfaceId: "deploy",
+        compositeId: "status",
+        actionId: "retry",
+        revision: patchFrame.revision,
+        requestId: "tap-v1",
+      },
+      "phone-2",
+    );
+    // The tap ends on its round trip, in the shape the client draws, and changes nothing.
+    expect((await settledForV1).audience).toBe("v1-projection");
+    expect(observed.messages("extension_ui_patch").length).toBe(patches);
+
+    // The panel's own `end` leaves the surface, and the last client draws nothing.
+    const removed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.removed === true &&
+        frame.audience === "composites",
+    );
+    await tap(
+      {
+        type: "extension_ui_action",
+        surfaceId: "deploy",
+        compositeId: "status",
+        actionId: "drop",
+        revision: patchFrame.revision,
+        requestId: "tap-2",
+      },
+      "phone-1",
+    );
+    expect((await removed).message).toMatchObject({ surfaceId: "deploy", removed: true });
+    expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
+  }, 30_000);
+
+  it("replays a live surface to a client that subscribes later, and clears it when the session ends", async () => {
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall("surface_probe", {})], { stopReason: "toolUse" }),
+      fauxAssistantMessage("PANEL_PUBLISHED"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+
+    // A session that never published has no loop: a tap is answered where it arrives, and a
+    // declaration has nothing to replay.
+    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
+    expect(
+      f.manager.declareSurfaceCapabilities(f.session.id, "phone-1", [
+        EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      ]),
+    ).toEqual([]);
+    const idle = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    expect(
+      await idle(
+        {
+          type: "extension_ui_action",
+          surfaceId: "deploy",
+          compositeId: "status",
+          actionId: "retry",
+          revision: 1,
+          requestId: "tap-early",
+        },
+        "phone-1",
+      ),
+    ).toEqual([
+      { type: "error", error: "Unknown extension surface: deploy" },
+      { type: "extension_ui_settled", id: "tap-early", sessionId: f.session.id },
+    ]);
+
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await f.manager.sendPrompt(f.session.id, "Publish the deploy panel");
+    await published;
+
+    // Subscribe happens again: this client draws v1, so it is handed the projection.
+    expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([
+      expect.objectContaining({ type: "extension_ui_notification", widgetKey: "surface:deploy" }),
+    ]);
+    // A socket says it draws composites and is handed the surface itself.
+    const frames = f.manager.declareSurfaceCapabilities(f.session.id, "late-phone-2", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+    ]);
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_surface",
+    ]);
+
+    // The session ends with the surface still up: the clients watching are told it is gone
+    // before the session's own end, so nothing keeps drawing a card no loop can answer.
+    const removed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.removed === true &&
+        frame.audience === "composites",
+    );
+    await f.manager.stopSession(f.session.id);
+    expect((await removed).message).toMatchObject({ surfaceId: "deploy", removed: true });
+    expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
+    expect(f.manager.surfacePublisherFor(f.session.id)).toBeUndefined();
+  });
+});

@@ -9,6 +9,7 @@ import type {
   Tx,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { SurfacePublisher } from "./durable-surface.js";
 import type { Job } from "../plugins/background-jobs/contract.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
@@ -61,8 +62,10 @@ export {
   type SurfaceCompositeFields,
   type SurfaceContext,
   type SurfaceDefinition,
+  type SurfaceDispatch,
   type SurfaceOptions,
   type SurfacePublisher,
+  type SurfaceTap,
   type SurfaceView,
 } from "./durable-surface.js";
 
@@ -91,6 +94,12 @@ export interface OppiDurableHost {
    * every other conversation.
    */
   control(env: ExecutionEnv | undefined): DurableControlHost | undefined;
+  /**
+   * `surface()`'s way in for the Session bound to the conversation running `env`: the panel
+   * publishes into it, and its actions answer from it. Undefined for an env the server did not
+   * make, a conversation without a Session, or a Session that is not live.
+   */
+  surfaces(env: ExecutionEnv | undefined): SurfacePublisher | undefined;
   /**
    * `notify`'s send for the Session bound to the conversation running `env`. Undefined for an
    * env the server did not make, or a conversation without a Session.

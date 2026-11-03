@@ -9,6 +9,8 @@ import { WebSocket, type RawData } from "ws";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
+import { extensionUISurfaceWidgetKey } from "./extension-surface.js";
+import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
 import type {
   ClientMessage,
   ConversationStreamAttach,
@@ -125,6 +127,23 @@ function restatedByConversationStream(message: ServerMessage): boolean {
 }
 
 // ─── Keepalive ───
+
+/** The v1 widget slot one surface id occupies, shared with `extensionUISurfaceProjectionRequest`. */
+const SURFACE_WIDGET_PREFIX = extensionUISurfaceWidgetKey("");
+
+/**
+ * The surface a frame establishes, whichever shape it was built for: a composable surface names
+ * its id, and a v1 projection names the widget it draws. A clear establishes nothing.
+ */
+function establishedSurfaceId(message: ServerMessage): string | undefined {
+  if (message.type === "extension_ui_surface") return message.surface.id;
+  if (message.type !== "extension_ui_notification" || message.nativeSurface === undefined) {
+    return undefined;
+  }
+  const key = message.widgetKey;
+  if (key === undefined || !key.startsWith(SURFACE_WIDGET_PREFIX)) return undefined;
+  return key.slice(SURFACE_WIDGET_PREFIX.length);
+}
 
 /** Default server-side ping interval (seconds). */
 const PING_INTERVAL_MS = 30_000;
@@ -594,8 +613,17 @@ export class BoundSessionStreamMux {
       for (const stream of conversationStreams.values()) if (stream.full) return true;
       return false;
     };
-    const broadcastForSession = (msg: ServerMessage): void => {
+    /** Whether this socket draws the shape a frame was built for; frames with no shape go to all. */
+    const drawsAudience = (audience?: ExtensionUISurfaceAudience): boolean =>
+      !audience || audience === this.ctx.sessions.surfaceAudience(sessionId, connId);
+    const broadcastForSession = (
+      msg: ServerMessage,
+      audience?: ExtensionUISurfaceAudience,
+    ): void => {
       if (this.ctx.isLiveVoiceCallConnection?.(connId)) return;
+      // A composable surface frame is built twice, once per shape: this socket gets only the
+      // shape it draws (`client_capabilities`), and the session stream never mixes them.
+      if (!drawsAudience(audience)) return;
       if (restatedByConversationStream(msg) && replicatesOwnConversation()) return;
       sendForSession(msg);
     };
@@ -620,6 +648,7 @@ export class BoundSessionStreamMux {
     }
     liveSockets.add(ws);
     liveConnectionCleanup.run = () => {
+      this.ctx.sessions.forgetSurfaceAudience(sessionId, connId);
       const connections = this.liveSessionConnections.get(sessionId);
       connections?.delete(broadcastForSession);
       if (connections?.size === 0) {
@@ -635,6 +664,8 @@ export class BoundSessionStreamMux {
     // Dialog responses must bypass startup's await (and queued prompts). Do not
     // admit any model turn until the runtime's trust decision and load finish.
     const startupMessages: Array<{ data: RawData; isBinary: boolean }> = [];
+    /** What this socket declared it draws while it was still opening, if it said anything. */
+    let startupCapabilities: string[] | undefined;
     startupRelay.messageHandler = (data, isBinary) => {
       const parsed = !isBinary ? parseIncomingSessionCommand(data) : undefined;
       if (
@@ -650,6 +681,28 @@ export class BoundSessionStreamMux {
           .catch((error: unknown) => {
             sendForSession({ type: "error", error: safeErrorMessage(error) });
           });
+        return;
+      }
+      // What this socket draws decides the shape the bootstrap below sends, so it is held for that
+      // rather than queued behind it: no frame has been built for this socket yet, so the replay
+      // is the only reconcile it needs. A declaration that asked for an answer gets one now,
+      // because the command queue is not reached until the replay has run.
+      if (
+        parsed?.ok &&
+        parsed.message.type === "client_capabilities" &&
+        (parsed.message.sessionId ?? sessionId) === sessionId
+      ) {
+        msgRecv += 1;
+        startupCapabilities = parsed.message.capabilities;
+        const { requestId } = parsed.message;
+        if (requestId !== undefined) {
+          sendForSession({
+            type: "command_result",
+            command: "client_capabilities",
+            requestId,
+            success: true,
+          });
+        }
         return;
       }
       if (startupMessages.length >= 100) {
@@ -678,8 +731,13 @@ export class BoundSessionStreamMux {
       const hydratedSession = openResult.session;
 
       let bootstrapping = true;
-      const bootstrapLiveQueue: ServerMessage[] = [];
-      const callback = (msg: ServerMessage): void => {
+      // Frames that arrive while the bootstrap runs, with the audience they were built for:
+      // a surface frame reaches only the sockets that draw that shape.
+      const bootstrapLiveQueue: Array<{
+        message: ServerMessage;
+        audience?: ExtensionUISurfaceAudience;
+      }> = [];
+      const callback = (msg: ServerMessage, audience?: ExtensionUISurfaceAudience): void => {
         const outbound =
           msg.type === "state"
             ? {
@@ -688,10 +746,10 @@ export class BoundSessionStreamMux {
               }
             : msg;
         if (bootstrapping) {
-          bootstrapLiveQueue.push(outbound);
+          bootstrapLiveQueue.push({ message: outbound, audience });
           return;
         }
-        broadcastForSession(outbound);
+        broadcastForSession(outbound, audience);
       };
       unsubscribeBoundSession = this.ctx.sessionRuntimes.subscribe(sessionId, callback);
       unsubscribed = false;
@@ -749,15 +807,27 @@ export class BoundSessionStreamMux {
         sendForSession(event);
       }
 
+      // The session is live now and this socket's declaration is known: record the shape before a
+      // frame is built for it, so the drain below and the replay are already in the shape it draws.
+      if (startupCapabilities) {
+        this.ctx.sessions.declareSurfaceCapabilities(sessionId, connId, startupCapabilities);
+        startupCapabilities = undefined;
+      }
+
       // Events emitted after subscribe may also be present in the ring snapshot. Drain
       // them only after replay and discard sequenced overlap to preserve exactly-once,
       // monotonically ordered delivery at the catch-up/live boundary. Keep buffering
       // until the queue is empty so reentrant callbacks cannot overtake queued events.
+      // A surface delivered here is not sent again by the subscribe replay below.
+      const surfacedDuringBootstrap = new Set<string>();
       for (let index = 0; index < bootstrapLiveQueue.length; index += 1) {
-        const event = bootstrapLiveQueue[index];
-        if (!event) continue;
+        const queued = bootstrapLiveQueue[index];
+        if (!queued) continue;
+        const event = queued.message;
         if (typeof event.seq === "number" && event.seq <= bootstrapCurrentSeq) continue;
-        sendForSession(event);
+        broadcastForSession(event, queued.audience);
+        const surfaceId = drawsAudience(queued.audience) ? establishedSurfaceId(event) : undefined;
+        if (surfaceId !== undefined) surfacedDuringBootstrap.add(surfaceId);
       }
       bootstrapping = false;
 
@@ -780,6 +850,14 @@ export class BoundSessionStreamMux {
       const pendingUIMsgs = this.ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         sendForSession(pendingUIMsg);
+      }
+      // A client that arrives after a plugin published a surface gets it now, in the shape it
+      // draws: v1 until it declares composites, which then clears the projections it was sent.
+      // One already sent above carries the same state, so it is not sent twice.
+      for (const surfaceMessage of this.ctx.sessions.getSurfaceMessages(sessionId, connId)) {
+        const surfaceId = establishedSurfaceId(surfaceMessage);
+        if (surfaceId !== undefined && surfacedDuringBootstrap.has(surfaceId)) continue;
+        broadcastForSession(surfaceMessage);
       }
       const pendingRebindNotice = takePendingWorktreeRebindNotice(sessionId);
       if (openResult.rebound || pendingRebindNotice) {
