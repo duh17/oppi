@@ -106,11 +106,13 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
         let remove = QAVerificationExecutor.Target.id("chat.messageQueue.remove.\(beforeItem.id)", role: .button)
 
         try executor.waitHittable(queuePill, timeout: 20, stepId: "wait-queue-pill")
+        // Confirmation is the declare-time postcondition matching the next step's own
+        // observation: wait-remove is a waitHittable, so the pill tap must declare hittable.
         try executor.tap(
             queuePill,
             timeout: 8,
             stepId: "tap-queue-pill",
-            confirming: .exists(remove)
+            confirming: .hittable(remove)
         )
         try executor.waitHittable(remove, timeout: 8, stepId: "wait-remove")
         try executor.tap(
