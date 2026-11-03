@@ -24,9 +24,9 @@ import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
  */
 
 /**
- * Oppi's extension UI: dialogs (`requestUI`), persistent notifications, and transcript cards,
- * kept in the conversation's `oppi.extension-ui` and `oppi.input-cards` documents and shown by
- * the server's generic projection.
+ * Oppi's extension UI: dialogs (`requestUI`), persistent notifications, transcript cards, and
+ * composable surfaces (`surface()`), kept in the conversation's `oppi.extension-ui` and
+ * `oppi.input-cards` documents and shown by the server's generic projection.
  */
 export {
   DurableInputCards,
@@ -37,6 +37,34 @@ export {
   type UIResponse,
   type UIState,
 } from "./durable-ui.js";
+
+/**
+ * Composable surfaces: the extension says what a surface is, and the host draws it. Authoring is
+ * typed and validated here (`surface()`, `statusCard`, `checklist`, `dataTable`, `actionBar`);
+ * actions answer with a patch, a replacement surface, or an error on their own card.
+ */
+export {
+  actionBar,
+  checklist,
+  dataTable,
+  statusCard,
+  surface,
+  surfaceActionAnswer,
+  type ActionBarFields,
+  type ChecklistFields,
+  type DataTableFields,
+  type StatusCardFields,
+  type Surface,
+  type SurfaceActionHandler,
+  type SurfaceActionInvocation,
+  type SurfaceActionReturn,
+  type SurfaceCompositeFields,
+  type SurfaceContext,
+  type SurfaceDefinition,
+  type SurfaceOptions,
+  type SurfacePublisher,
+  type SurfaceView,
+} from "./durable-surface.js";
 
 /** The Oppi Session a conversation belongs to: `snapshot(DurableSessionDoc, id)`, for a hook or task with no env. */
 export { DurableSessionDoc } from "./durable-session-doc.js";
