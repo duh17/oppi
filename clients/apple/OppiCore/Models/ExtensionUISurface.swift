@@ -69,7 +69,9 @@ struct ExtensionUISurfaceActionDefinition: Sendable, Equatable, Decodable {
     var isDestructive: Bool { role == "destructive" }
 }
 
-/// Optimistic state for the round trip only: what the pressed action shows while it waits.
+/// Optimistic state for the round trip only: what the pressed action shows while it waits. Every
+/// action that carries a request id ends with an `extension_ui_settled` for it, so that frame is
+/// where the wait ends, whatever the action had to draw.
 struct ExtensionUISurfacePendingState: Sendable, Equatable, Decodable {
     let title: String?
     let disabled: [String]?

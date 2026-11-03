@@ -468,7 +468,9 @@ export interface ExtensionUISurfaceActionDefinition {
   role?: "primary" | "secondary" | "destructive";
   /**
    * Declared optimistic state, for the round trip only: the client may paint this on the pressed
-   * action until the answer arrives. Data never changes locally; the server stays authoritative.
+   * action until an answer arrives. Data never changes locally; the server stays authoritative.
+   * Every action that carries a request id ends with `extension_ui_settled` for it, whatever it
+   * had to draw, so the client always has that frame to clear the pending state on.
    */
   pending?: { title?: string; disabled?: string[] };
 }
