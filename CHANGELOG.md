@@ -54,6 +54,8 @@ Example:
 ## [Unreleased]
 <!-- Written by the release lane from the delta at release time. Don't add entries in feature or fix work. -->
 
+## [0.54.0] - 2026-11-03
+
 Target: iOS `1.1.2` Build `57`, `oppi-server@0.54.0`, and `oppi-mirror@0.54.0` (pi-durable 1.5.0).
 
 The iPhone and iPad app is now fully native UIKit, so screens look and behave more like the rest of iOS. Durable sessions load plugins, and the Extensions page shows them.
