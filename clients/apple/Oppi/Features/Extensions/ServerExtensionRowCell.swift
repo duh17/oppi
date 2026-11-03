@@ -1,8 +1,9 @@
 import UIKit
 
-/// One extension in the Extensions list: its puzzle mark, name, description,
-/// package, provenance, its badges (Plugin, Pi extension, Built-in, Required),
-/// state, and first warning, with the system disclosure chevron. The
+/// One extension in the Extensions list: its puzzle mark (emptied and muted
+/// while off), name, description, package, provenance, its badges (Plugin,
+/// Pi extension, Built-in, Project), state, and first warning, with the system
+/// disclosure chevron. The
 /// whole row is one button (`extensions.row.<id>`), so a tap, a VoiceOver
 /// activation, and `app.buttons[id]` all open its detail.
 final class ServerExtensionRowCell: UICollectionViewListCell {
@@ -93,11 +94,12 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
     func configure(resource: ServerExtensionSummary, palette: ThemePalette, action: @escaping () -> Void) {
         let fg = palette.ui.fg
         let comment = palette.ui.comment
+        let icon = ServerExtensionListPresentation.icon(for: resource)
         iconView.image = UIImage(
-            systemName: resource.kind == .builtIn ? "puzzlepiece.extension.fill" : "puzzlepiece.extension",
+            systemName: icon.symbolName,
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .title3)
         )
-        iconView.tintColor = palette.ui.blue
+        iconView.tintColor = icon == .enabled ? palette.ui.blue : comment
         nameLabel.text = resource.name
         nameLabel.textColor = fg
         descriptionLabel.text = resource.description
@@ -139,7 +141,6 @@ final class ServerExtensionRowCell: UICollectionViewListCell {
             let color = switch badge.tone {
             case .kind: palette.ui.blue
             case .source: palette.ui.comment
-            case .required: palette.ui.purple
             }
             pill.text = badge.label
             pill.font = .scaled(.caption2, .semibold)

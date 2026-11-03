@@ -202,13 +202,18 @@ struct ServerExtensionsViewControllerTests {
             return control != nil
         })
         #expect(answers.listQueries.allSatisfy { $0 == "plugins=true" }, "the page asks for plugin rows")
-        // A row speaks its kinds, source, and state from its fields.
+        // A row speaks its kinds, source, and state from its fields; a runtime built-in says it
+        // is always on, and only an optional row is merely enabled.
         let controlLabel = control?.accessibilityLabel ?? ""
-        #expect(["Plugin", "Built-in", "Required", "Enabled"].allSatisfy(controlLabel.contains))
+        #expect(["Enabled", "always on"].allSatisfy(controlLabel.contains))
+        #expect(!controlLabel.contains("Required"))
         let bothLabel = Self.button(withIdentifier: "extensions.row.both", in: screen.view)?.accessibilityLabel ?? ""
         #expect(["Plugin", "Pi extension", "Enabled"].allSatisfy(bothLabel.contains))
-        #expect(!bothLabel.contains("Required"))
+        #expect(!bothLabel.contains("always on"))
         let sections = screen.sections()
+        let builtIn = sections.first { $0.id == .kind(.builtIn) }
+        #expect(builtIn?.items == [.row("control")])
+        #expect(builtIn?.footer != nil, "the built-in section says what its plugins are")
         #expect(sections.first { $0.id == .kind(.needsAttention) }?.items == [.row("broken")])
         #expect(sections.first { $0.id == .notice }?.items == [.pluginsUnavailable])
 

@@ -2,7 +2,7 @@ import UIKit
 
 /// One Pi extension or plugin on one server (route `.serverResourceDetail`, kind
 /// `.extension`): its status and load errors first, its server default switch
-/// (off limits for a required built-in), where it comes from, and what it
+/// (fixed on for a runtime built-in, which the footer says), where it comes from, and what it
 /// contributes: a Pi extension's tools and commands, a plugin's tools, hooks by
 /// task, prompt sections, wraps, tasks and runtimes, all from the row's
 /// protocol fields. An extension with a
@@ -91,7 +91,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 .serverDefault,
                 header: "Server Default",
                 footer: state.summary.plugin?.required == true
-                    ? "The server needs this built-in, so it stays on."
+                    ? String(localized: "Part of the durable session runtime, so it’s always on in durable sessions.")
                     : "New sessions use this setting. Reload an active session to apply it now.",
                 items: state.mutationError == nil ? [.enabled] : [.enabled, .mutationError]
             ),

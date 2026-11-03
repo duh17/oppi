@@ -1,7 +1,8 @@
 import Foundation
 
 enum ServerExtensionSectionKind: String, CaseIterable, Sendable {
-    case builtIn = "Built-in"
+    /// Oppi's own plugins: what durable sessions run on.
+    case builtIn = "Built into Durable Sessions"
     case needsAttention = "Needs Attention"
     /// Pi extensions and plugins alike: a package can be both, and its toggle is one.
     case enabled = "Enabled"
@@ -10,10 +11,20 @@ enum ServerExtensionSectionKind: String, CaseIterable, Sendable {
 
 /// A pill on an extension's row, from its protocol fields only.
 struct ServerExtensionBadge: Sendable, Equatable {
-    enum Tone: Sendable, Equatable { case kind, source, required }
+    enum Tone: Sendable, Equatable { case kind, source }
 
     let label: String
     let tone: Tone
+}
+
+/// A row's puzzle mark. Off is the same symbol emptied, in a muted tint, so a
+/// disabled row reads as off before its state line is read.
+enum ServerExtensionRowIcon: Sendable, Equatable {
+    case enabled, disabled
+
+    var symbolName: String {
+        self == .enabled ? "puzzlepiece.extension.fill" : "puzzlepiece.extension"
+    }
 }
 
 /// One group of what a plugin contributes, on its detail page.
@@ -43,9 +54,8 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         // Whatever failed to load needs attention, a built-in included; the rest are
         // built-ins or the owner's, on or off.
         let attention = Self.sorted(filtered.filter(Self.needsAttention))
-        let healthy = filtered.filter { !Self.needsAttention($0) }
-        let builtIn = Self.sorted(healthy.filter(\.isBuiltIn))
-        let normal = healthy.filter { !$0.isBuiltIn }
+        let builtIn = Self.sorted(filtered.filter(Self.isInBuiltInSection))
+        let normal = filtered.filter { !Self.needsAttention($0) && !$0.isBuiltIn }
         let enabled = Self.sorted(normal.filter { $0.state == .on })
         let disabled = Self.sorted(normal.filter { $0.state == .off })
 
@@ -59,6 +69,23 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
 
     private static func needsAttention(_ resource: ServerExtensionSummary) -> Bool {
         resource.state == .error || resource.state == .unknown
+    }
+
+    /// A healthy built-in: its section already says it ships with Oppi.
+    private static func isInBuiltInSection(_ resource: ServerExtensionSummary) -> Bool {
+        resource.isBuiltIn && !needsAttention(resource)
+    }
+
+    /// Part of the durable session runtime and running: its plugin cannot be turned off.
+    static func isAlwaysOn(_ resource: ServerExtensionSummary) -> Bool {
+        resource.state == .on && resource.plugin?.required == true
+    }
+
+    /// The section's one sentence, or nil for a section that needs none.
+    static func footer(for kind: ServerExtensionSectionKind) -> String? {
+        kind == .builtIn
+            ? String(localized: "These ship with Oppi and run in durable sessions; the ones you can’t turn off are part of the runtime.")
+            : nil
     }
 
     var visibleExtensions: [ServerExtensionSummary] {
@@ -82,29 +109,41 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         }
     }
 
-    /// The state, and for a plugin whose reload failed, that its previous code still runs.
+    /// The row's state line: "Always on" for a runtime plugin; otherwise the state, and for a
+    /// plugin whose reload failed, that its previous code still runs.
     static func statusLabel(for resource: ServerExtensionSummary) -> String {
+        if isAlwaysOn(resource) { return String(localized: "Always on") }
         let state = stateLabel(for: resource.state)
         return resource.plugin?.kept == true ? "\(state), previous code still running" : state
     }
 
-    /// Plugin, Pi extension, or both; then Built-in or Project (the owner's is the default);
-    /// then Required. Only the row's fields decide, never its name.
+    /// Filled while on (or failing, which the state line flags); emptied while off.
+    static func icon(for resource: ServerExtensionSummary) -> ServerExtensionRowIcon {
+        resource.state == .off ? .disabled : .enabled
+    }
+
+    /// Plugin, Pi extension, or both; then Built-in or Project (the owner's is the default).
+    /// In the built-in section the section names the source, and a plugin is what it holds,
+    /// so only a Pi extension there says so. Only the row's fields decide, never its name.
     static func badges(for resource: ServerExtensionSummary) -> [ServerExtensionBadge] {
         var badges: [ServerExtensionBadge] = []
         let kinds = resource.kinds ?? []
-        if kinds.contains(.plugin) { badges.append(.init(label: "Plugin", tone: .kind)) }
+        let inBuiltInSection = isInBuiltInSection(resource)
+        if kinds.contains(.plugin), !inBuiltInSection { badges.append(.init(label: "Plugin", tone: .kind)) }
         if kinds.contains(.piExtension) { badges.append(.init(label: "Pi extension", tone: .kind)) }
-        if let source = sourceLabel(resource.source), resource.source != .owner {
+        if let source = sourceLabel(resource.source), resource.source != .owner, !inBuiltInSection {
             badges.append(.init(label: source, tone: .source))
         }
-        if resource.plugin?.required == true { badges.append(.init(label: "Required", tone: .required)) }
         return badges
     }
 
     /// "Plugin", "Pi extension", or both; nil from a server that predates plugins.
     static func kindsLabel(for resource: ServerExtensionSummary) -> String? {
-        let labels = badges(for: resource).filter { $0.tone == .kind }.map(\.label)
+        let kinds = resource.kinds ?? []
+        let labels = [
+            kinds.contains(.plugin) ? "Plugin" : nil,
+            kinds.contains(.piExtension) ? "Pi extension" : nil,
+        ].compactMap { $0 }
         return labels.isEmpty ? nil : labels.joined(separator: " and ")
     }
 
@@ -179,7 +218,10 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         }
         components.append(resource.provenance.label)
         components += badges(for: resource).map(\.label)
-        components.append(statusLabel(for: resource))
+        // The state stays spoken; a runtime plugin adds that it cannot be turned off.
+        components.append(isAlwaysOn(resource)
+            ? "\(stateLabel(for: resource.state)), \(String(localized: "always on"))"
+            : statusLabel(for: resource))
         return components.joined(separator: ", ")
     }
 
@@ -192,7 +234,10 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
             resource.provenance.label,
             kindLabel(for: resource.kind),
             stateLabel(for: resource.state),
-        ] + badges(for: resource).map { Optional($0.label) })
+            statusLabel(for: resource),
+            kindsLabel(for: resource),
+            sourceLabel(resource.source),
+        ])
     }
 
     private static func sorted(_ resources: [ServerExtensionSummary]) -> [ServerExtensionSummary] {

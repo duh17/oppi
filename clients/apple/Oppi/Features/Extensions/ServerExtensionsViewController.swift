@@ -1,8 +1,8 @@
 import UIKit
 
 /// Extensions for the active server (route `.utility(.extensions)`): the
-/// selected-server row, then Pi extensions and plugins in sections (Built-in,
-/// Needs Attention, Enabled, Disabled), with search, pull to refresh, and its
+/// selected-server row, then Pi extensions and plugins in sections (Built into
+/// Durable Sessions, Needs Attention, Enabled, Disabled), with search, pull to refresh, and its
 /// loading, offline, empty, and failed states in the list. Reload (a bar
 /// button) reloads the server's plugins; its report is the Last Reload
 /// section, kept per server by the store, until the next one. A
@@ -72,7 +72,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: "Extensions", listIdentifier: "extensions.list", headers: true)
+        super.init(title: "Extensions", listIdentifier: "extensions.list", headers: true, footers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -204,6 +204,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
                 sections.append(ListSection(
                     .kind(section.kind),
                     header: section.kind.rawValue,
+                    footer: ServerExtensionListPresentation.footer(for: section.kind),
                     items: section.extensions.filter { shown.insert($0.id).inserted }.map { Item.row($0.id) }
                 ))
             }

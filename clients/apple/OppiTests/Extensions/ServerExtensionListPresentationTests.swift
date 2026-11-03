@@ -15,12 +15,14 @@ struct ServerExtensionListPresentationTests {
             // An owner plugin sits with the Pi extensions it can be turned on and off beside.
             extensionRow(id: "durable-only", name: "Durable", kind: .directory, state: .on, kinds: [.plugin], source: .owner),
             extensionRow(id: "working-words", name: "Words", kind: .builtIn, state: .on, kinds: [.plugin], source: .builtIn),
+            // A built-in that is turned off stays with the built-ins, not the owner's disabled ones.
+            extensionRow(id: "sql", name: "Explorer", kind: .builtIn, state: .off, kinds: [.plugin], source: .builtIn, plugin: plugin()),
         ]
 
         let presentation = ServerExtensionListPresentation(extensions: rows, query: "")
 
         #expect(presentation.sections.map(\.kind) == [.builtIn, .needsAttention, .enabled, .disabled])
-        #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in", "working-words"])
+        #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in", "sql", "working-words"])
         #expect(presentation.sections[1].extensions.map(\.id) == ["broken"])
         #expect(presentation.sections[2].extensions.map(\.id) == ["enabled", "durable-only"])
         #expect(presentation.sections[3].extensions.map(\.id) == ["disabled"])
@@ -30,10 +32,26 @@ struct ServerExtensionListPresentationTests {
         func badges(_ row: ServerExtensionSummary) -> [String] {
             ServerExtensionListPresentation.badges(for: row).map(\.label)
         }
+        // In the built-in section, the section says it is a built-in plugin; whether the server
+        // requires it is no badge.
         #expect(badges(extensionRow(
             id: "control", name: "anything", kind: .builtIn, state: .on,
             kinds: [.plugin], source: .builtIn, plugin: plugin(required: true)
-        )) == ["Plugin", "Built-in", "Required"])
+        )).isEmpty)
+        #expect(badges(extensionRow(
+            id: "sql", name: "anything", kind: .builtIn, state: .off,
+            kinds: [.plugin], source: .builtIn, plugin: plugin()
+        )).isEmpty)
+        // A built-in that is also a Pi extension says so, since the section does not.
+        #expect(badges(extensionRow(
+            id: "hybrid", name: "hybrid", kind: .builtIn, state: .on,
+            kinds: [.plugin, .piExtension], source: .builtIn, plugin: plugin()
+        )) == ["Pi extension"])
+        // A broken built-in sits among the owner's in Needs Attention, so it names what it is.
+        #expect(badges(extensionRow(
+            id: "words", name: "words", kind: .builtIn, state: .error, loadError: "Unexpected token",
+            kinds: [.plugin], source: .builtIn, plugin: plugin(required: true, loadError: "Unexpected token")
+        )) == ["Plugin", "Built-in"])
         #expect(badges(extensionRow(
             id: "both", name: "both", kind: .directory, state: .on,
             kinds: [.plugin, .piExtension], source: .owner, plugin: plugin()
@@ -72,8 +90,39 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation.statusLabel(for: broken).contains("previous code"))
         #expect(!ServerExtensionListPresentation.statusLabel(for: required).contains("previous code"))
         let label = ServerExtensionListPresentation.accessibilityLabel(for: broken)
-        #expect(["Plugin", "Required", "Error", "previous code"].allSatisfy(label.contains))
-        #expect(ServerExtensionListPresentation(extensions: [required], query: "required").visibleExtensions.map(\.id) == ["control"])
+        #expect(["Plugin", "Error", "previous code"].allSatisfy(label.contains))
+        #expect(!label.contains("always on"), "a broken runtime plugin is not running")
+        // A runtime plugin keeps its state and says it is always on; an optional built-in does not.
+        let requiredLabel = ServerExtensionListPresentation.accessibilityLabel(for: required)
+        #expect(requiredLabel.contains("Enabled") && requiredLabel.contains("always on"))
+        let optionalLabel = ServerExtensionListPresentation.accessibilityLabel(for: optional)
+        #expect(optionalLabel.contains("Enabled") && !optionalLabel.contains("always on"))
+        #expect(!requiredLabel.contains("Required"))
+        #expect(ServerExtensionListPresentation(extensions: [required, optional], query: "always on").visibleExtensions.map(\.id) == ["control"])
+        // The built-in section still finds by kind and source, though its rows show no such badge.
+        #expect(ServerExtensionListPresentation(extensions: [required, optional], query: "plugin").visibleExtensions.count == 2)
+    }
+
+    @Test func aDisabledRowsIconIsTheOutlineOfAnEnabledRowsInAMutedTint() {
+        let disabled = [
+            extensionRow(id: "owner", name: "owner", state: .off),
+            extensionRow(id: "sql", name: "sql", kind: .builtIn, state: .off, kinds: [.plugin], source: .builtIn, plugin: plugin()),
+            extensionRow(id: "project", name: "project", kind: .directory, state: .off, kinds: [.plugin], source: .project, plugin: plugin()),
+        ]
+        let enabled = [
+            extensionRow(id: "owner", name: "owner", state: .on),
+            extensionRow(id: "control", name: "control", kind: .builtIn, state: .on, kinds: [.plugin], source: .builtIn, plugin: plugin(required: true)),
+        ]
+        for row in disabled {
+            #expect(ServerExtensionListPresentation.icon(for: row) == .disabled, "\(row.id)")
+        }
+        for row in enabled {
+            #expect(ServerExtensionListPresentation.icon(for: row) == .enabled, "\(row.id)")
+        }
+        // The same mark, emptied: an off row reads as the on row switched off.
+        #expect(ServerExtensionRowIcon.enabled.symbolName == ServerExtensionRowIcon.disabled.symbolName + ".fill")
+        #expect(UIImage(systemName: ServerExtensionRowIcon.enabled.symbolName) != nil)
+        #expect(UIImage(systemName: ServerExtensionRowIcon.disabled.symbolName) != nil)
     }
 
     @Test func aKeptPluginsSwitchStaysOnAndCanBeTurnedOffUnlessRequired() {

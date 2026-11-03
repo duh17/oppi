@@ -9,6 +9,7 @@ import UIKit
 /// `experiments`, `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
+/// `extension-detail-builtin` (a built-in plugin the runtime needs),
 /// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
 /// `mcp-detail` (`mcp-detail-failed`: the scope request answers 404), `mcp-failed`,
 /// `model-providers` (the connected and available groups over fixture usage),
@@ -81,7 +82,23 @@ final class SettingsSweepPreviewController: PreviewRootController {
             kind: .file, provenance: .init(kind: .userSettings, label: "Pi user settings"), path: nil,
             state: .error, loadError: "Cannot find module './review'.", warnings: [], isRemovable: true
         ),
+        // Built-in plugins: one the runtime needs, and an optional one turned off.
+        builtInPlugin(id: "oppi-control", required: true, enabled: true, tools: ["oppi_control"]),
+        builtInPlugin(id: "oppi-sql-explorer", required: false, enabled: false, tools: ["sql_query"]),
     ]
+
+    private static func builtInPlugin(id: String, required: Bool, enabled: Bool, tools: [String]) -> ServerExtensionSummary {
+        ServerExtensionSummary(
+            id: id, name: id, description: nil, kind: .builtIn,
+            provenance: .init(kind: .builtIn, label: "Oppi"), path: nil,
+            state: enabled ? .on : .off, loadError: nil, warnings: [], isRemovable: false,
+            kinds: [.plugin], source: .builtIn,
+            plugin: ServerPluginSummary(
+                extensionName: id, required: required, enabled: enabled, runtimes: ["host"],
+                tools: tools, hooks: [], sections: [], wraps: [], tasks: [], loadError: nil, kept: false
+            )
+        )
+    }
 
     private static func catalogExtensions(page: String) -> [ServerExtensionSummary] {
         page == "extensions-builtin-only" ? extensions.filter { $0.kind == .builtIn } : extensions
@@ -465,10 +482,13 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 prepare: { _ = try? await client.serverInfo() },
                 content: { stack { PiAgentDetailViewController(root: root) } }
             )
-        case "extension-detail":
+        case "extension-detail", "extension-detail-builtin":
             return stack {
                 ServerExtensionDetailViewController(
-                    target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"),
+                    target: .init(
+                        serverId: server.id, kind: .extension,
+                        resourceId: page == "extension-detail" ? "workflow" : "oppi-control"
+                    ),
                     root: root,
                     connection: connection
                 )
@@ -677,6 +697,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 summary: extensions[1],
                 contributedTools: ["workflow_run", "workflow_status"],
                 contributedCommands: ["/workflow"]
+            )),
+            "/server/resources/extensions/oppi-control": json(ServerExtensionDetail(
+                summary: builtInPlugin(id: "oppi-control", required: true, enabled: true, tools: ["oppi_control"])
             )),
             "/agents": json(Agents(agents: [agentSummary])),
             "/schedules": json(Schedules(schedules: [scheduleSummary])),
