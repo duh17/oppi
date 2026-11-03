@@ -1014,6 +1014,34 @@ class E2ETestCase: XCTestCase {
         return !element.exists
     }
 
+    /// Waits until `element` takes touches at a frame that holds still.
+    ///
+    /// Entering a chat returns as soon as a chat surface exists
+    /// (`chatSessionSurfaceExists` accepts the toolbar alone), and the composer
+    /// bar lays out after that: the input can already hold a restored draft
+    /// while `isHittable` is still false, and a tap synthesized from that stale
+    /// frame lands on the bar control the composer is about to sit under.
+    /// Hittable alone can hold for one read mid-relayout, so require the same
+    /// non-empty frame on two reads a poll apart.
+    @MainActor
+    func waitForSettledHittable(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 10,
+        pollInterval: TimeInterval = 0.1
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previousFrame: CGRect?
+        repeat {
+            let frame = (element.exists && element.isHittable) ? element.frame : nil
+            if let frame, !frame.isEmpty, frame == previousFrame {
+                return true
+            }
+            previousFrame = frame
+            RunLoop.current.run(until: Date().addingTimeInterval(pollInterval))
+        } while Date() < deadline
+        return false
+    }
+
     // MARK: - E2E Diagnostics
 
     @MainActor

@@ -46,7 +46,22 @@ final class RecoveryE2ETests: E2ETestCase {
             "Draft did not restore after switching sessions"
         )
 
-        tap(app.buttons["chat.send"], named: "draft send button", timeout: 5)
+        // Entering the chat resolves as soon as its surface exists, and the
+        // composer bar keeps laying out after the draft is back in the input. A
+        // Send tap taken in that window lands on the Files control above it,
+        // which pushes a browser over the chat and takes the composer away.
+        // Wait for the composer and its Send control to take touches where they
+        // report themselves, then send.
+        let sendButton = app.buttons["chat.send"]
+        XCTAssertTrue(
+            waitForSettledHittable(restoredInput, timeout: 10),
+            "Composer never settled after entering the chat with the draft restored"
+        )
+        XCTAssertTrue(
+            waitForSettledHittable(sendButton, timeout: 5),
+            "Send control never settled after the draft restored"
+        )
+        tap(sendButton, named: "draft send button", timeout: 5)
         allowAISharingIfAsked()
         XCTAssertTrue(
             waitForTextValueToDiffer(restoredInput, from: draft, timeout: 10),
@@ -158,16 +173,31 @@ final class RecoveryE2ETests: E2ETestCase {
     /// already ran. Do not require observing "Sending" first; a fast local send
     /// can restore "Send" during the composer-clear wait. Optimistic append
     /// alone cannot both clear the composer and restore the Send label.
+    ///
+    /// Once the send returns, the started turn keeps the session busy, and
+    /// `ComposerPolicy.primaryActionKind` answers `stop` for a busy session with
+    /// an empty composer, so `chat.stop` in that slot proves the send left
+    /// in-flight as well. Waiting only for `chat.send` to come back would make
+    /// this depend on the whole agent turn: the prompt is free text, and the
+    /// agent may call tools for minutes. Neither control can exist while the
+    /// send is in flight, so seeing either keeps this claim exactly as it was.
     @MainActor
     private func waitForSendButtonToLeaveSending(timeout: TimeInterval) -> Bool {
         let sendButton = app.buttons["chat.send"]
+        let stopButton = app.buttons["chat.stop"]
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if sendButton.exists, sendButton.label != "Sending" {
+            if leftSending(sendButton: sendButton, stopButton: stopButton) {
                 return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
+        return leftSending(sendButton: sendButton, stopButton: stopButton)
+    }
+
+    @MainActor
+    private func leftSending(sendButton: XCUIElement, stopButton: XCUIElement) -> Bool {
+        if stopButton.exists { return true }
         return sendButton.exists && sendButton.label != "Sending"
     }
 
