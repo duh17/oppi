@@ -6,10 +6,10 @@ import UIKit
 ///
 /// The session row drives the window totals live; the breakdown comes from
 /// `get_session_stats`, loaded when the panel opens and on every refresh. The bar's
-/// Reload button runs the session's `/reload`, prints its outcome at the top of this
-/// list, and then re-fetches those stats, so the sections show the runtime the session
-/// has now; pulling down only re-fetches the stats, which is cheap and safe to do by
-/// accident.
+/// Reload button asks first, then runs the session's `/reload`, prints its outcome at
+/// the top of this list, and then re-fetches those stats, so the sections show the
+/// runtime the session has now; pulling down only re-fetches the stats, which is cheap
+/// and safe to do by accident.
 final class ContextInspectorViewController: UIViewController, UICollectionViewDelegate {
     private let readSession: () -> Session?
     private let readWorkspace: () -> Workspace?
@@ -30,6 +30,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private var reloadItem: UIBarButtonItem?
     /// A `/reload` this panel started and has not seen finish.
     private var isReloading = false
+    /// The question the bar button put up, held weakly so it is gone once it closes.
+    private weak var reloadConfirmation: UIAlertController?
     /// What the last reload reported: the panel's own notice, since the composer's
     /// toast is presented from the app root behind this sheet. Cleared by the next
     /// reload and by a pull.
@@ -157,10 +159,45 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         rebuild(session: readSession(), workspace: readWorkspace())
     }
 
-    /// The bar button: the session's own `/reload`, then the stats that reload
-    /// changes. Pulling down stays a stats-only refresh.
+    /// The bar button asks before it reloads. A `/reload` keeps the conversation but
+    /// rebuilds the system prompt and tool list from the files the host has now, so
+    /// when anything changed the next message sends that whole conversation again
+    /// without the provider's prompt cache: slower and dearer the longer the session
+    /// runs. Pulling down stays a stats-only refresh and needs no question.
     private func reloadFromBarButton() {
         guard !isReloading, sessionCanReload else { return }
+        // The button stays enabled over its own question; a second tap must not stack
+        // a second alert.
+        guard reloadConfirmation == nil else { return }
+        reloadConfirmation = Confirmation(
+            title: "Reload this session?",
+            message: reloadConfirmationMessage,
+            actionTitle: "Reload",
+            style: .alert,
+            isDestructive: false,
+            prefersAction: true,
+            actionIdentifier: "chat.context.reload.confirm"
+        ).present(from: self, anchor: nil) { [weak self] in
+            self?.reloadConfirmed()
+        }
+    }
+
+    /// The question's message, naming the conversation's size when the session
+    /// reports one: that is what the next message re-reads without a cache.
+    private var reloadConfirmationMessage: String {
+        guard let tokens = readSession()?.contextTokens else {
+            return String(
+                localized: "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation without the prompt cache, so it is slower and costs more."
+            )
+        }
+        return String(
+            localized: "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation (\(SessionFormatting.tokenCount(tokens)) tokens) without the prompt cache, so it is slower and costs more."
+        )
+    }
+
+    /// The reload the question confirmed: the session's own `/reload`, then the stats
+    /// that reload changes.
+    private func reloadConfirmed() {
         isReloading = true
         // The line belongs to the reload that finished; a new one retires it.
         reloadOutcome = nil

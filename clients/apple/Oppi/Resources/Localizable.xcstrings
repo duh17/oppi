@@ -2542,6 +2542,36 @@
         }
       }
     },
+    "Reload this session?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reload this session?"
+          }
+        }
+      }
+    },
+    "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation (%@ tokens) without the prompt cache, so it is slower and costs more." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation (%@ tokens) without the prompt cache, so it is slower and costs more."
+          }
+        }
+      }
+    },
+    "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation without the prompt cache, so it is slower and costs more." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation without the prompt cache, so it is slower and costs more."
+          }
+        }
+      }
+    },
     "Remove" : {
       "extractionState" : "stale",
       "localizations" : {

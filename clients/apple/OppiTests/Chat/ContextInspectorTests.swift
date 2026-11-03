@@ -300,8 +300,9 @@ struct ContextInspectorTests {
     }
 }
 
-/// The panel's two refreshes over a real window: the bar button runs the session's
-/// `/reload` and then re-fetches the stats; a pull re-fetches the stats alone.
+/// The panel's two refreshes over a real window: the bar button asks before it runs
+/// the session's `/reload` and then re-fetches the stats; a pull re-fetches the stats
+/// alone.
 @Suite("Context inspector reload", .serialized)
 @MainActor
 struct ContextInspectorReloadTests {
@@ -382,6 +383,44 @@ struct ContextInspectorReloadTests {
         return Mounted(panel: panel, window: window)
     }
 
+    /// The question's copy, word for word: one sentence, naming the size of the
+    /// conversation the next message re-reads only when the session reports it.
+    private static func questionMessage(tokens: Int? = nil) -> String {
+        let stem = "Reloads extensions, skills, instructions, and settings. The conversation stays. If any of them changed, your next message re-reads the whole conversation"
+        let tail = "without the prompt cache, so it is slower and costs more."
+        guard let tokens else { return "\(stem) \(tail)" }
+        return "\(stem) (\(SessionFormatting.tokenCount(tokens)) tokens) \(tail)"
+    }
+
+    /// The question over the window, once it has finished presenting.
+    private func question(in mounted: Mounted) async -> UIAlertController? {
+        var found: UIAlertController?
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) {
+            guard let alert = mounted.window.rootViewController?.presentedViewController as? UIAlertController,
+                  !alert.isBeingPresented else { return false }
+            found = alert
+            return true
+        }
+        return found
+    }
+
+    /// Taps a button the way UIKit does: the alert closes, then the handler runs.
+    private func tap(_ title: String, on alert: UIAlertController) async throws {
+        let action = try #require(alert.actions.first { $0.title == title })
+        typealias Handler = @convention(block) (UIAlertAction) -> Void
+        let block = unsafeBitCast(try #require(action.value(forKey: "handler") as AnyObject?), to: Handler.self)
+        alert.dismiss(animated: false)
+        block(action)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { alert.presentingViewController == nil })
+    }
+
+    /// Taps the bar button and answers its question, the way a person does.
+    private func reloadFromBarButton(_ mounted: Mounted) async throws {
+        let button = try #require(mounted.reloadItem)
+        button.primaryAction?.performWithSender(button, target: nil)
+        try await tap("Reload", on: try #require(await question(in: mounted)))
+    }
+
     @Test func theBarButtonReloadsTheSessionThenTheStats() async throws {
         let row = LiveRow()
         let recorder = Recorder()
@@ -396,13 +435,81 @@ struct ContextInspectorReloadTests {
         #expect(button.accessibilityIdentifier == "chat.context.refresh")
         #expect(button.isEnabled, "an idle session can reload")
 
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
 
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 2 },
             "the panel re-read the stats after the reload"
         )
         #expect(recorder.steps == ["stats", "reload", "stats"], "the reload runs before the second stats load")
+    }
+
+    /// Reload keeps the conversation but rebuilds the system prompt and tool list from
+    /// what the host has now; when anything changed, the next message re-sends the whole
+    /// conversation without the provider's prompt cache. So the button asks first, and
+    /// names the size of what that next message re-reads when the session knows it.
+    @Test(arguments: [nil, 12_345])
+    func theBarButtonAsksBeforeItReloads(contextTokens: Int?) async throws {
+        let row = LiveRow()
+        row.session.contextTokens = contextTokens
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+
+        let button = try #require(mounted.reloadItem)
+        button.primaryAction?.performWithSender(button, target: nil)
+
+        let alert = try #require(await question(in: mounted))
+        #expect(alert.preferredStyle == .alert)
+        #expect(alert.title == "Reload this session?")
+        #expect(alert.message == Self.questionMessage(tokens: contextTokens))
+        #expect(alert.actions.map(\.title) == ["Reload", "Cancel"])
+        #expect(alert.actions.map(\.style) == [.default, .cancel])
+        #expect(alert.preferredAction === alert.actions.first, "Reload is the bold answer")
+        #expect(alert.actions.first?.accessibilityIdentifier == "chat.context.reload.confirm")
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { recorder.reloads == 0 },
+            "the question reloads nothing on its own"
+        )
+        #expect(recorder.statsLoads == 1, "and re-reads no stats")
+        #expect(mounted.reloadStatusCell == nil, "and leaves the list as it was")
+    }
+
+    @Test func cancelAsksForNoReload() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+        let button = try #require(mounted.reloadItem)
+
+        button.primaryAction?.performWithSender(button, target: nil)
+        try await tap("Cancel", on: try #require(await question(in: mounted)))
+
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { recorder.reloads == 0 },
+            "Cancel reloads nothing"
+        )
+        #expect(recorder.statsLoads == 1, "and re-reads no stats")
+        #expect(mounted.reloadStatusCell == nil, "and leaves no line in the list")
+        #expect(button.isEnabled, "the button is ready for the next try")
+    }
+
+    @Test func confirmingSendsTheReloadOnce() async throws {
+        let row = LiveRow()
+        let recorder = Recorder()
+        let mounted = mount(row: row, recorder: recorder)
+        defer { hideTestWindow(mounted.window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
+
+        try await reloadFromBarButton(mounted)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { recorder.reloads == 1 },
+            "one question sends one reload"
+        )
     }
 
     /// The server reloads an idle runtime only, so every other status is refused;
@@ -423,6 +530,10 @@ struct ContextInspectorReloadTests {
             await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { recorder.reloads == 0 },
             "a disabled button reloads nothing"
         )
+        #expect(
+            mounted.window.rootViewController?.presentedViewController == nil,
+            "a disabled button asks nothing either"
+        )
 
         row.session.status = .ready
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -430,7 +541,7 @@ struct ContextInspectorReloadTests {
             return button.isEnabled
         }, "the button comes back when the session is ready")
 
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
     }
 
@@ -443,7 +554,7 @@ struct ContextInspectorReloadTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
         let button = try #require(mounted.reloadItem)
 
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
 
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
         #expect(!button.isEnabled, "a reload in flight cannot be started twice")
@@ -484,8 +595,7 @@ struct ContextInspectorReloadTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
         #expect(mounted.reloadStatusCell == nil, "nothing has reloaded yet")
 
-        let button = try #require(mounted.reloadItem)
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
 
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -509,8 +619,7 @@ struct ContextInspectorReloadTests {
         defer { hideTestWindow(mounted.window) }
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
 
-        let button = try #require(mounted.reloadItem)
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
 
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -527,8 +636,7 @@ struct ContextInspectorReloadTests {
         defer { hideTestWindow(mounted.window) }
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
 
-        let button = try #require(mounted.reloadItem)
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusText != nil })
 
         let control = try #require(mounted.list?.refreshControl)
@@ -552,14 +660,14 @@ struct ContextInspectorReloadTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
         let button = try #require(mounted.reloadItem)
 
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 1 })
         gate.isOpen = true
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusText != nil })
 
         gate.isOpen = false
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { button.isEnabled })
-        button.primaryAction?.performWithSender(button, target: nil)
+        try await reloadFromBarButton(mounted)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.reloads == 2 })
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusCell == nil },
