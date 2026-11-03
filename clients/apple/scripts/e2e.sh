@@ -492,6 +492,10 @@ EOF
 else
     # Start Docker server with the DeepSeek lane mounted as the container's Pi auth/settings
     echo "[e2e] Starting Docker server on port $E2E_PORT ..."
+    # Recreate from scratch, as server/e2e/harness.ts does: a hard-killed run leaves the
+    # Pi agent volume with its seed marker, so the next run would keep that run's settings
+    # instead of the model lane written above.
+    docker compose -f "$COMPOSE_FILE" down -v --timeout 10 2>/dev/null || true
     E2E_PORT="$E2E_PORT" OPPI_E2E_UI_HARNESS="$OPPI_E2E_UI_HARNESS" \
         E2E_PI_AUTH_JSON="$MODEL_LANE_DIR/auth.json" E2E_PI_SETTINGS_JSON="$MODEL_LANE_DIR/settings.json" \
         docker compose -f "$COMPOSE_FILE" up -d --build --wait --wait-timeout 120

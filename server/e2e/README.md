@@ -76,7 +76,7 @@ cd server && \
   npm run bench:tailscale-network
 ```
 
-On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts the generated model-lane `auth.json` and `settings.json` (see `model-lane.ts`), and stores server state in a named volume. Use native mode for normal local iteration.
+On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context and mounts the generated model-lane `auth.json` and `settings.json` (see `model-lane.ts`) read-only as a seed. The entrypoint copies that seed into a writable agent volume, so the server can update Pi settings, and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 

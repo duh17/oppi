@@ -20,8 +20,12 @@ services:
       OPPI_DATA_DIR: /data/oppi
       PI_CODING_AGENT_DIR: /data/pi-agent
       OPPI_LOCAL_SESSIONS_ROOT: /data/pi-agent/sessions
-      # No seed — ephemeral test server
-      PI_AGENT_SYNC_MODE: skip
+      # The agent dir is a writable named volume seeded from the read-only model
+      # lane below, as in server/docker-compose.yml: `oppi serve` rewrites
+      # settings.json (auto-name package), which fails with EROFS when Pi's
+      # settings file is a read-only bind.
+      PI_AGENT_SEED_DIR: /seed/pi-agent
+      PI_AGENT_SYNC_MODE: copy-once
       OPPI_PORT: ${E2E_PORT:-17760}
       OPPI_PAIR_HOST: ${E2E_PAIR_HOST:-host.docker.internal}
       OPPI_E2E_UI_HARNESS: ${OPPI_E2E_UI_HARNESS:-0}
@@ -33,10 +37,13 @@ services:
       # Keep server state durable across docker restart within one E2E run.
       # `docker compose down -v` still removes it at harness teardown.
       - oppi-e2e-data:/data/oppi
+      # Writable Pi agent dir: the entrypoint copies the seed below into it once,
+      # so settings the server writes survive a `docker restart` in the same run.
+      - oppi-e2e-pi-agent:/data/pi-agent
       # DeepSeek lane: an OpenCode Go API key and enabledModels (see e2e/model-lane.ts)
       # Read-only: containers never get writable host binds (scripts/check-compose-mounts.ts).
-      - ${E2E_PI_AUTH_JSON:-/dev/null}:/data/pi-agent/auth.json:ro
-      - ${E2E_PI_SETTINGS_JSON:-/dev/null}:/data/pi-agent/settings.json:ro
+      - ${E2E_PI_AUTH_JSON:-/dev/null}:/seed/pi-agent/auth.json:ro
+      - ${E2E_PI_SETTINGS_JSON:-/dev/null}:/seed/pi-agent/settings.json:ro
     tmpfs:
       # Host-path creation UI tests create ~/workspace/<name>.
       # Keep it ephemeral while ensuring the parent folder exists in Docker mode.
@@ -54,3 +61,4 @@ services:
 
 volumes:
   oppi-e2e-data:
+  oppi-e2e-pi-agent:

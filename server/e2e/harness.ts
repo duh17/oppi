@@ -253,7 +253,7 @@ async function startDockerServer(): Promise<void> {
 
   dockerPiAgentDir = mkdtempSync(join(tmpdir(), "oppi-e2e-pi-agent-"));
   // An API key needs no host path inside the container: the compose file mounts
-  // these two generated files read-only.
+  // these two generated files read-only as the seed for the writable agent volume.
   await writeE2EModelLane(dockerPiAgentDir);
 
   execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 300`, {
