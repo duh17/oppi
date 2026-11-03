@@ -134,6 +134,9 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     private var shownRoutes: [ShellRoute] = []
     private var routes: [ShellRoute] = []
     private var routeByScreen: [ObjectIdentifier: ShellRoute] = [:]
+    /// This stack's own push, pop, or interactive back swipe is in flight; its
+    /// `didShow` applies the routes set meanwhile, and nothing else may.
+    private var ownTransitionPending = false
 
     init(root: AppRootEnvironment, rootPlacement: ShellRoutePlacement) {
         self.root = root
@@ -160,9 +163,28 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     func setRoutes(_ routes: [ShellRoute]) {
         precondition(!routes.isEmpty, "A shell stack needs a root route")
         self.routes = routes
-        // A transition in flight (a push, the interactive back swipe) ends in
-        // `didShow`, which applies the routes then.
-        guard transitionCoordinator == nil else { return }
+        // A push, a pop, or the interactive back swipe of this stack ends in
+        // `didShow`, which applies the routes then; leave those to it so a
+        // pending pop is not raced.
+        guard let transition = transitionCoordinator else {
+            applyRoutes()
+            return
+        }
+        guard !ownTransitionPending else { return }
+        // A transition that is not this stack's own — a window-covering modal
+        // closing over it, whose dismissal never reports a `didShow` here —
+        // would strand the routes, so apply when it ends. A coordinator that
+        // cannot queue the completion returns false; apply now instead.
+        if !transition.animate(alongsideTransition: nil, completion: { [weak self] _ in
+            self?.applyPendingRoutes()
+        }) {
+            applyRoutes()
+        }
+    }
+
+    /// Applies the routes a transition deferred, if they are still owed.
+    private func applyPendingRoutes() {
+        guard routes != shownRoutes else { return }
         applyRoutes()
     }
 
@@ -243,6 +265,24 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     ) {
         // A skill or workspace file reader hid the bar, and the screen it
         // popped back to lost its Back button.
+        //
+        // This stack's own push, pop, or interactive back swipe starts here;
+        // its `didShow` applies the routes set meanwhile, and nothing else may.
+        // `didShow` reports only a screen that was *displayed*, so a cancelled
+        // back swipe never sends it: the transition's own completion ends the
+        // window whether it completes or cancels, and the flag is set only when
+        // that completion is queued. With no coordinator there is no transition
+        // to defer to, and `setRoutes` applies at once.
+        if let transition = navigationController.transitionCoordinator {
+            ownTransitionPending = true
+            // A coordinator that cannot queue the completion has already ended
+            // its transition, so the window is over and the flag must not stay.
+            if !transition.animate(alongsideTransition: nil, completion: { [weak self] _ in
+                self?.ownTransitionPending = false
+            }) {
+                ownTransitionPending = false
+            }
+        }
         applyNavigationBar(forIncoming: viewController, animated: animated)
     }
 
@@ -251,6 +291,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         didShow viewController: UIViewController,
         animated: Bool
     ) {
+        ownTransitionPending = false
         let remaining = routedScreens.map(\.route)
         forgetScreens(notIn: viewControllers)
         if remaining.count < shownRoutes.count, Array(shownRoutes.prefix(remaining.count)) == remaining {

@@ -923,6 +923,7 @@
 		5FF360E26969FA024CE7468C /* MacSessionPaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78B02D0BD7F4F507002C1B0 /* MacSessionPaneLayout.swift */; };
 		5FFB6391A3CAA6F5EDC08BA2 /* ServerExtensionToolViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16516D3681021FAB527D3CF /* ServerExtensionToolViewController.swift */; };
 		60041A966585E044BB0F6C18 /* OppiTestLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E0745E77AFF2885EAC526F /* OppiTestLaunch.swift */; };
+		6006CD913BDEF2F11437E991 /* AppRootLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA325CFF85CDD8C1FC8AE883 /* AppRootLaunchTests.swift */; };
 		600B97B02AB697A1A60FC43B /* MobileOutputGuideSettingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B4DD6B9235D0666446237CD /* MobileOutputGuideSettingTests.swift */; };
 		601D7262035FC92D20646668 /* MacAuthenticatedAVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE76BD002D360FBE84ADC5 /* MacAuthenticatedAVPlayerView.swift */; };
 		605CF1C783C02DA08BA0FE62 /* FeatureEducationTipPresentationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 052ED4EFFD20E33352F71034 /* FeatureEducationTipPresentationCoordinatorTests.swift */; };
@@ -4432,6 +4433,7 @@
 		DA12AF2ADD40D68F1ADB840A /* DocumentEditLabels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditLabels.swift; sourceTree = "<group>"; };
 		DA2C58C6FABA4782985C5013 /* MicButtonChromeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButtonChromeView.swift; sourceTree = "<group>"; };
 		DA2C988FD9D260178EEDF2FE /* ScopedLockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScopedLockTests.swift; sourceTree = "<group>"; };
+		DA325CFF85CDD8C1FC8AE883 /* AppRootLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootLaunchTests.swift; sourceTree = "<group>"; };
 		DA6B8D5B1CE933B1C98D0411 /* MermaidJourneyParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidJourneyParser.swift; sourceTree = "<group>"; };
 		DA83D5EAEAB81B0547804A94 /* TerminalInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalInspectionTests.swift; sourceTree = "<group>"; };
 		DA9656329489E097C2098A50 /* SessionRowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRowPresentation.swift; sourceTree = "<group>"; };
@@ -6467,6 +6469,7 @@
 		7DC2C0055EF0ED2A84314FD6 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				DA325CFF85CDD8C1FC8AE883 /* AppRootLaunchTests.swift */,
 				4F45DEC19977C9606C4DCE48 /* E2EAppAuthBootstrapTests.swift */,
 				5349C0C3596BB6C4B601F58F /* InviteBootstrapServiceTests.swift */,
 				EAB46CCB959126E31064677F /* NearbyPairingInviteCodecTests.swift */,
@@ -9584,6 +9587,7 @@
 				E1CDE64F5EF2555783627CC4 /* AppLockTests.swift in Sources */,
 				760DA416B18D3EC2B21751E9 /* AppNavigationTests.swift in Sources */,
 				E1AA1AAB955D27E07C7D4ECC /* AppOpenerTests.swift in Sources */,
+				6006CD913BDEF2F11437E991 /* AppRootLaunchTests.swift in Sources */,
 				AE4907A700895A8CFB603A47 /* AppRootModalsTests.swift in Sources */,
 				43252AE47030A783F89C8A00 /* AppSupportLinksTests.swift in Sources */,
 				A4D08F2593441DAD3F4E922F /* AppThemeFactoryTests.swift in Sources */,

@@ -419,6 +419,102 @@ struct RouterUIKitTests {
     }
 }
 
+/// A shell stack's routes: a route update that arrives during a transition the
+/// stack owns is left to that transition's `didShow`, and one that arrives during
+/// a transition it does not own is applied when that transition ends.
+@MainActor
+@Suite("Shell stack routes")
+struct ShellStackRoutesTests {
+    /// This path runs on every push and pop, so the stack's own transition must
+    /// keep applying nothing until `didShow`: an early apply would race the pop
+    /// already in flight.
+    @Test("a route update during the stack's own push waits for didShow and lands once")
+    func ownPushDefersToDidShow() async throws {
+        let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
+        stack.setRoutes([.inbox])
+        let inbox = try #require(stack.viewControllers.first)
+
+        let window = try makeShellWindow(root: stack)
+        defer { window.isHidden = true }
+        stack.view.layoutIfNeeded()
+
+        // An addition of the stack's own: the routes set its screens animated,
+        // so a transition of this stack's is in flight.
+        stack.setRoutes([.inbox, .sidebar])
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
+            "the stack's own transition never started"
+        )
+        #expect(stack.viewControllers.count == 2)
+
+        // The routes change back while that transition runs.
+        stack.setRoutes([.inbox])
+        #expect(stack.viewControllers.count == 2, "an own transition must not apply routes early")
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) {
+                stack.transitionCoordinator == nil && stack.viewControllers.count == 1
+            },
+            "the deferred routes never landed: \(stack.viewControllers.count) screens"
+        )
+        #expect(stack.viewControllers.first === inbox, "the inbox was replaced instead of kept")
+    }
+
+    /// `didShow` reports only a screen that was displayed, so a cancelled back
+    /// swipe never sends it. This is the shape of that risk: after the stack's
+    /// own transition, a transition it does not own must still apply its routes.
+    /// A cancelled swipe cannot be driven deterministically — UIKit's is an
+    /// internal edge-pan gesture — so the flag is also cleared by the
+    /// transition's own completion, which fires whether it completes or cancels.
+    @Test("an own transition does not stop a later transition from applying routes")
+    func ownTransitionDoesNotStrandALaterTransition() async throws {
+        let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
+        stack.setRoutes([.inbox])
+
+        let window = try makeShellWindow(root: stack)
+        defer { window.isHidden = true }
+        stack.view.layoutIfNeeded()
+
+        // An own transition, run to completion first.
+        stack.setRoutes([.inbox, .sidebar])
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            stack.transitionCoordinator == nil && stack.viewControllers.count == 2
+        })
+        stack.setRoutes([.inbox])
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            stack.transitionCoordinator == nil && stack.viewControllers.count == 1
+        })
+
+        // A modal closing over the stack: its dismissal is not this stack's
+        // transition and never reports a `didShow` here.
+        stack.present(UIViewController(), animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { stack.presentedViewController != nil })
+        stack.dismiss(animated: true)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
+            "the dismissal transition never started"
+        )
+        stack.setRoutes([.inbox, .sidebar])
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) { stack.viewControllers.count == 2 },
+            "the routes set during a foreign transition were stranded: \(stack.viewControllers.count) screens"
+        )
+    }
+
+    private func makeShellWindow(root: UIViewController) throws -> UIWindow {
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "the shell stack tests need the test host's window scene"
+        )
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        return window
+    }
+}
+
 /// What UIKit posts as `field` becomes first responder.
 @MainActor
 private func beginEditing(_ field: UITextField) {
