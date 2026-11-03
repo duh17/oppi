@@ -238,6 +238,54 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    /// AVKit full screen from an inline video is a full-screen modal over the
+    /// stack. Leaving the chat there dropped its stream; the reconnect on
+    /// return reloaded history and the reconfigured reply row tore down the
+    /// player that had just come back from full screen.
+    @Test func inlineVideoFullScreenRetainsFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let appNavigation = AppNavigation()
+        appNavigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(
+                serverId: connection.currentServerId ?? "server-1",
+                sessionId: sessionId
+            )
+        )
+        let (host, stack) = makeStackedHost(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        // The inline player's full-screen begin, then AVKit's modal.
+        appNavigation.beginMediaOverlay(activeServerId: connection.currentServerId)
+        let fullScreen = UIViewController()
+        fullScreen.modalPresentationStyle = .fullScreen
+        stack.present(fullScreen, animated: false)
+        let covered = await waitForMainActorCondition {
+            host.controller?.viewIfLoaded?.window == nil
+        }
+        #expect(covered, "Full-screen proof requires the chat to leave the window")
+
+        let retained = await waitForMainActorConditionToStayTrue(for: .milliseconds(120)) {
+            connection.focusedSessionId == sessionId
+        }
+        #expect(retained, "Inline video full screen must not end the chat's session stream")
+
+        stack.dismiss(animated: false)
+        appNavigation.endMediaOverlay(currentServerId: connection.currentServerId)
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func destroyingCoveredChatViewDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let workspaceId = "w1"
