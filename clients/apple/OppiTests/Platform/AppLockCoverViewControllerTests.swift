@@ -18,16 +18,29 @@ struct AppLockCoverViewControllerTests {
         }
     }
 
+    private final class Availability: @unchecked Sendable {
+        var status: DeviceOwnerAuthentication.Availability
+        init(_ status: DeviceOwnerAuthentication.Availability) { self.status = status }
+    }
+
     private func makeCover(
         timeout: AppLockTimeout,
-        outcomes: [DeviceOwnerAuthentication.Outcome] = []
-    ) throws -> (cover: AppLockCoverViewController, service: AppLockService, auth: Authenticator, window: UIWindow) {
+        outcomes: [DeviceOwnerAuthentication.Outcome] = [],
+        available: Bool = true
+    ) throws -> (
+        cover: AppLockCoverViewController,
+        service: AppLockService,
+        auth: Authenticator,
+        availability: Availability,
+        window: UIWindow
+    ) {
         let defaults = try #require(UserDefaults(suiteName: "AppLockCoverTests-\(UUID().uuidString)"))
         AppLockSettings.setTimeout(timeout, in: defaults)
         let auth = Authenticator(outcomes)
+        let availability = Availability(available ? .available : .noPasscode)
         let service = AppLockService(
             defaults: defaults,
-            availability: { .available },
+            availability: { availability.status },
             method: { .faceID },
             authenticator: { _ in auth.next() },
             isProtectedDataAvailable: { true }
@@ -37,7 +50,7 @@ struct AppLockCoverViewControllerTests {
         window.rootViewController = cover
         window.isHidden = false
         cover.view.layoutIfNeeded()
-        return (cover, service, auth, window)
+        return (cover, service, auth, availability, window)
     }
 
     private func find<T: UIView>(_ type: T.Type, id: String, in root: UIView) -> T? {
@@ -49,7 +62,7 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func lockedCoverOffersUnlockAndRunsIt() async throws {
-        let (cover, service, auth, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.success])
+        let (cover, service, auth, _, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.success])
         defer { hideTestWindow(window) }
         let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
@@ -68,7 +81,7 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func aFailedAttemptSaysSoAndKeepsUnlockAvailable() async throws {
-        let (cover, service, _, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.failed])
+        let (cover, service, _, _, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.failed])
         defer { hideTestWindow(window) }
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
 
@@ -82,7 +95,7 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func anObscuringCoverShowsOnlyTheAppIdentity() throws {
-        let (cover, service, _, window) = try makeCover(timeout: .off)
+        let (cover, service, _, _, window) = try makeCover(timeout: .off)
         defer { hideTestWindow(window) }
         let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
@@ -91,5 +104,41 @@ struct AppLockCoverViewControllerTests {
         #expect(button.isHidden)
         #expect(status.isHidden)
         #expect(cover.view.accessibilityIdentifier == "appLock.cover")
+    }
+
+    @Test func withoutADevicePasscodeTheCoverSaysToSetOneAndStaysLocked() async throws {
+        let (cover, service, auth, availability, window) = try makeCover(
+            timeout: .fiveMinutes,
+            outcomes: [.success],
+            available: false
+        )
+        defer { hideTestWindow(window) }
+        let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
+        let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
+
+        #expect(service.isLocked)
+        #expect(status.text == "Set a device passcode in iOS Settings to unlock Oppi.")
+        #expect(button.configuration?.title == "Unlock", "no Face ID promise without a passcode")
+        #expect(button.isEnabled)
+
+        // The button re-checks availability; nothing opens while there is no passcode.
+        button.sendActions(for: .primaryActionTriggered)
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+                auth.calls == 0 && service.isLocked
+            },
+            "no prompt while the device cannot authenticate"
+        )
+
+        // Once a passcode exists, the same button authenticates normally.
+        // Returning from iOS Settings makes the scene active, which re-checks.
+        availability.status = .available
+        service.refreshAvailability()
+        cover.updateProperties()
+        #expect(status.text == "Oppi is locked.")
+        button.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<50 where service.isLocked { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(auth.calls == 1)
+        #expect(!service.isLocked)
     }
 }

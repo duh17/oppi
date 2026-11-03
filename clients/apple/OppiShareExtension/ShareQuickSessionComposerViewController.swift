@@ -196,9 +196,12 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
                 reason: String(localized: "Unlock Oppi to share")
             )
             guard !Task.isCancelled, let self else { return }
-            // `.unavailable`: no device passcode, so App Lock does not apply.
-            guard outcome == .success || outcome == .unavailable else {
-                self.statusLabel.text = "Oppi is locked. Nothing was loaded or sent."
+            // Only a successful unlock loads workspaces. `.unavailable` (no
+            // device passcode) is still App Lock on, so nothing loads or
+            // sends and the person is told how to get out.
+            let gate = AppLockSettings.shareGate(for: outcome)
+            guard gate.allowsLoad else {
+                self.statusLabel.text = gate.message
                 self.setRetryAction(#selector(self.authenticateThenLoadWorkspaces))
                 self.retryButton.isHidden = false
                 UIAccessibility.post(notification: .announcement, argument: self.statusLabel.text)

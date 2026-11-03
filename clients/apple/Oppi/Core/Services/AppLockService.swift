@@ -20,14 +20,18 @@ enum AppLockClock {
 /// Tests pass their own values.
 ///
 /// Rules:
+/// - The stored timeout is what gates: App Lock is on whenever it is not
+///   `off`. A device with no passcode cannot authenticate, so Oppi starts
+///   locked and stays locked behind the cover until one is set.
 /// - Cold launch with App Lock on starts locked.
 /// - Only a full app background starts the timeout. `inactive` (Control
 ///   Center, the app switcher, the Face ID / passcode sheet itself) never does,
 ///   so the system auth sheet cannot cause a lock loop.
 /// - `Immediately` locks as the app backgrounds; timed values lock on return
 ///   when the background time reached the timeout (boundary inclusive).
-/// - The lock cover prompts by itself once per lock. After a cancel or
-///   failure it waits for the Unlock button.
+/// - The lock cover prompts by itself once per lock, and only when the device
+///   can authenticate. After a cancel or failure it waits for the Unlock
+///   button.
 /// - `scopedUnlockGeneration` advances whenever the app locks, and, with App
 ///   Lock off, whenever the app leaves the foreground.
 struct AppLockMachine: Equatable {
@@ -42,13 +46,17 @@ struct AppLockMachine: Equatable {
     init(timeout: AppLockTimeout, isAvailable: Bool) {
         self.timeout = timeout
         self.isAvailable = isAvailable
-        let locked = isAvailable && timeout.isEnabled
+        let locked = timeout.isEnabled
         isLocked = locked
-        shouldAutoPrompt = locked
+        // Without a passcode there is nothing to prompt for; the pending
+        // prompt runs once one is set.
+        shouldAutoPrompt = locked && isAvailable
     }
 
-    /// App Lock is configured and the device can authenticate.
-    var isEnabled: Bool { isAvailable && timeout.isEnabled }
+    /// App Lock is configured on. This alone gates: the cover, obscuring,
+    /// `requiresUnlock`, and protected actions all read it. `isAvailable` only
+    /// says whether the unlocking authentication can run.
+    var isEnabled: Bool { timeout.isEnabled }
 
     /// Whether the app would show its lock cover at `now`, including a lock
     /// that is due but not applied yet because the app has not foregrounded.
@@ -85,7 +93,7 @@ struct AppLockMachine: Equatable {
 
     /// Returns true once per lock; the cover starts unlock without a tap.
     mutating func takeAutoPrompt() -> Bool {
-        guard isLocked, shouldAutoPrompt, !isAuthenticating else { return false }
+        guard isLocked, shouldAutoPrompt, !isAuthenticating, isAvailable else { return false }
         shouldAutoPrompt = false
         return true
     }
@@ -104,7 +112,8 @@ struct AppLockMachine: Equatable {
         case .success:
             isLocked = false
         case .unavailable:
-            // The passcode was removed; App Lock cannot run on this device.
+            // The passcode was removed between the check and the prompt. The
+            // app stays locked; the cover says to set one.
             setAvailable(false)
         case .cancelled, .failed:
             break
@@ -128,9 +137,13 @@ struct AppLockMachine: Equatable {
     }
 
     mutating func setAvailable(_ available: Bool) {
+        let wasAvailable = isAvailable
         isAvailable = available
-        if !isEnabled {
-            isLocked = false
+        // Availability never unlocks: only turning App Lock off, or a
+        // successful unlock, does. A lock that could not prompt yet gets its
+        // one prompt once the device can authenticate.
+        if available, !wasAvailable, isLocked, !isAuthenticating {
+            shouldAutoPrompt = true
         }
     }
 
@@ -267,7 +280,10 @@ final class AppLockService {
     }
 
     var timeout: AppLockTimeout { machine.timeout }
+    /// Whether the device can authenticate. False means the unlock cannot run
+    /// (no passcode), not that App Lock is off.
     var isAvailable: Bool { machine.isAvailable }
+    /// App Lock is configured on: the stored timeout is not `off`.
     var isEnabled: Bool { machine.isEnabled }
     var isLocked: Bool { machine.isLocked }
     var isAuthenticating: Bool { machine.isAuthenticating || protectedAuthenticationsInFlight > 0 }
@@ -288,20 +304,40 @@ final class AppLockService {
     func setTimeout(_ timeout: AppLockTimeout) {
         timeoutMayBeUnread = false
         let wasEnabled = machine.isEnabled
+        let previous = machine.timeout
         AppLockSettings.setTimeout(timeout, in: defaults)
         update { $0.setTimeout(timeout) }
         PushRegistration.publishRedactionSnapshot(appLockEnabled: timeout.isEnabled)
+        if previous != timeout {
+            logTimeoutChange(from: previous, to: timeout)
+        }
         if !wasEnabled, machine.isEnabled {
             didTurnOn()
         }
     }
 
+    /// A timeout change is the App Lock event worth having in a report, and its
+    /// values are a fixed enum, so both go out public. Sent with client logs as
+    /// well, because the unified log never leaves the device
+    /// (`ClientLogUploadService` ships info lines only for listed categories).
+    private func logTimeoutChange(from previous: AppLockTimeout, to timeout: AppLockTimeout) {
+        logger.info(
+            "App Lock timeout changed: \(previous.rawValue, privacy: .public) -> \(timeout.rawValue, privacy: .public)"
+        )
+        ClientLog.info(
+            "AppLock",
+            "Timeout changed",
+            metadata: ["from": previous.rawValue, "to": timeout.rawValue]
+        )
+    }
+
     /// Re-check passcode and biometry state (the user may have changed them in
-    /// iOS Settings while Oppi was in the background).
+    /// iOS Settings while Oppi was in the background). Records whether the
+    /// unlock can run; it never unlocks the app.
     func refreshAvailability() {
         method = methodProvider()
-        // Only a missing passcode turns App Lock off; any other error keeps it
-        // locked so a LocalAuthentication glitch cannot unlock the app.
+        // Only a missing passcode clears availability; any other error keeps it
+        // set, so a LocalAuthentication glitch cannot be mistaken for one.
         let available = availability() != .noPasscode
         guard available != machine.isAvailable else { return }
         update { $0.setAvailable(available) }
@@ -337,14 +373,19 @@ final class AppLockService {
     // MARK: - Unlock
 
     /// Unlock the app. Concurrent callers (cover auto-prompt, Unlock button,
-    /// a foreground intent) share one authentication attempt.
+    /// a foreground intent) share one authentication attempt. Re-checks the
+    /// device first, so a passcode set in iOS Settings since the last check
+    /// unlocks normally; a device that still cannot authenticate keeps the app
+    /// locked rather than opening it.
     @discardableResult
     func unlock() async -> Bool {
         if let unlockTask {
             return await unlockTask.value
         }
+        refreshAvailability()
         update { $0.lockIfDue(at: now()) }
         guard machine.isLocked else { return true }
+        guard machine.isAvailable else { return false }
         var began = false
         update { began = $0.beginUnlock() }
         guard began else { return false }
@@ -368,8 +409,11 @@ final class AppLockService {
     }
 
     /// Gate for Remove Server, Revoke Device, Delete Workspace, and Set/Replace
-    /// API Key. With App Lock off it allows the action without a prompt.
+    /// API Key. With App Lock off it allows the action without a prompt. With
+    /// it on, every outcome but a success refuses the action: a device that
+    /// cannot authenticate authorizes nothing.
     func authorizeProtectedAction(reason: String) async -> Bool {
+        refreshStoredTimeoutAfterProtectedData()
         guard machine.isEnabled else { return true }
         protectedAuthenticationsInFlight += 1
         defer { protectedAuthenticationsInFlight -= 1 }
@@ -377,9 +421,10 @@ final class AppLockService {
         case .success:
             return true
         case .unavailable:
-            // The passcode was removed; App Lock no longer applies.
+            // No passcode: refuse, and record why the unlock cannot run. App
+            // Lock stays on, so the app stays locked.
             update { $0.setAvailable(false) }
-            return true
+            return false
         case .cancelled, .failed:
             return false
         }
@@ -387,8 +432,11 @@ final class AppLockService {
 
     /// Scoped (server, workspace, session) unlock. Unlike protected actions it
     /// asks even with App Lock off, because scoped locks work without it.
-    /// Never prompts behind the App Lock cover. A device without a passcode
-    /// cannot authenticate, so scoped locks do not apply there.
+    /// Never prompts behind the App Lock cover. With App Lock on it refuses
+    /// whenever the device cannot authenticate, locked or not: a device with
+    /// no passcode opens no scope. With App Lock off the documented
+    /// no-passcode behaviour is unchanged: an unavailable device opens the
+    /// scope.
     func authenticateScopedUnlock(reason: String) async -> Bool {
         guard !requiresUnlock() else { return false }
         protectedAuthenticationsInFlight += 1
@@ -398,7 +446,10 @@ final class AppLockService {
             return true
         case .unavailable:
             update { $0.setAvailable(false) }
-            return true
+            // App Lock off has nothing to unlock, so the scope opens as it
+            // always has. With App Lock on the stored timeout is still not
+            // `off`, so the scope stays locked until a passcode is set.
+            return !machine.isEnabled
         case .cancelled, .failed:
             return false
         }

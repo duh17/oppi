@@ -49,7 +49,14 @@ enum AppLockIntentGate {
         return await locks.authorize(target)
     }
 
-    static let scopeLockedDialog = "That workspace is locked in Oppi. Open Oppi and unlock it, then try again. Nothing was sent."
+    static let scopeLockedMessage = "That workspace is locked in Oppi. Open Oppi and unlock it, then try again. Nothing was sent."
+
+    /// The dialog for an intent a server, workspace, or session lock refused.
+    /// A device that cannot authenticate opens no scope, so retrying through
+    /// Oppi must fail; it gets the same directions a refused App Lock does.
+    static func scopeLockedDialog(service: AppLockService = .shared) -> String {
+        service.isAvailable ? scopeLockedMessage : noPasscodeDialog
+    }
 
     /// Face ID can only be shown once the scene is active.
     static func waitUntilAppIsActive() async {
@@ -59,4 +66,13 @@ enum AppLockIntentGate {
     }
 
     static let lockedDialog = "Oppi is still locked. Unlock Oppi, then try again. Nothing was sent."
+
+    /// A device with no passcode can never complete the unlock, so the intent
+    /// says how to get out instead of asking for a retry that must fail.
+    static let noPasscodeDialog = "Set a device passcode in iOS Settings to unlock Oppi. Nothing was sent."
+
+    /// The dialog for an intent that was refused above.
+    static func refusalDialog(service: AppLockService = .shared) -> String {
+        service.isAvailable ? lockedDialog : noPasscodeDialog
+    }
 }

@@ -43,6 +43,13 @@ enum AppLockTimeout: String, CaseIterable, Identifiable, Sendable {
 enum AppLockSettings {
     static let timeoutKey = "appLock.timeout"
 
+    /// The way out when the device cannot authenticate. App Lock stays on and
+    /// nothing opens until a passcode exists, so both covers and the Share
+    /// extension say what to change in iOS Settings instead of asking again.
+    static let noPasscodeGuidance = String(
+        localized: "Set a device passcode in iOS Settings to unlock Oppi."
+    )
+
     static func timeout(in defaults: UserDefaults = SharedConstants.sharedDefaults) -> AppLockTimeout {
         defaults.string(forKey: timeoutKey).flatMap(AppLockTimeout.init(rawValue:)) ?? .off
     }
@@ -56,6 +63,31 @@ enum AppLockSettings {
     static func shareRequiresAuthentication(in defaults: UserDefaults = SharedConstants.sharedDefaults) -> Bool {
         timeout(in: defaults).isEnabled
     }
+
+    /// What that authentication step settles: whether the share may list
+    /// workspaces and send, and what the sheet says while it may not. App Lock
+    /// is on, so only a successful unlock opens it; a device with no passcode
+    /// gets the directions that let the person out.
+    static func shareGate(for outcome: DeviceOwnerAuthentication.Outcome) -> ShareLockGate {
+        switch outcome {
+        case .success:
+            return ShareLockGate(allowsLoad: true, message: nil)
+        case .unavailable:
+            return ShareLockGate(allowsLoad: false, message: noPasscodeGuidance)
+        case .cancelled, .failed:
+            return ShareLockGate(
+                allowsLoad: false,
+                message: String(localized: "Oppi is locked. Nothing was loaded or sent.")
+            )
+        }
+    }
+}
+
+/// App Lock's answer to the Share extension's authentication step.
+struct ShareLockGate: Equatable {
+    let allowsLoad: Bool
+    /// Shown in the sheet while the share stays blocked; nil when it loads.
+    let message: String?
 }
 
 /// The one LocalAuthentication entry point for App Lock, protected actions,
@@ -68,7 +100,8 @@ enum DeviceOwnerAuthentication {
 
     enum Availability: Equatable, Sendable {
         case available
-        /// No device passcode: the only state that turns App Lock off.
+        /// No device passcode: Oppi cannot authenticate, so App Lock stays on
+        /// and the app stays locked behind the cover until one is set.
         case noPasscode
         /// Any other LocalAuthentication error. App Lock stays on and locked;
         /// the Unlock button tries again.
@@ -79,7 +112,8 @@ enum DeviceOwnerAuthentication {
         case success
         case cancelled
         case failed
-        /// The device can no longer authenticate (passcode removed).
+        /// The device can no longer authenticate (passcode removed). The app
+        /// stays locked.
         case unavailable
     }
 

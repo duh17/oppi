@@ -3,7 +3,9 @@ import UIKit
 /// The opaque stand-in for a locked server, workspace, or session: the screen
 /// shows this in place of its content while `target` is locked, and tears its
 /// content down, so nothing from a locked scope (streams, toolbars, titles)
-/// stays mounted behind it. Unlock authorizes `target`.
+/// stays mounted behind it. Unlock authorizes `target`; a device that cannot
+/// authenticate (App Lock on, no passcode) gets directions instead, because
+/// that unlock can never succeed.
 ///
 /// A cover that cannot unlock (a reader with content but no lock origin)
 /// closes instead: `init(title:closeTitle:onClose:)` replaces Unlock with that
@@ -22,6 +24,13 @@ final class ScopedLockCoverViewController: UIViewController {
 
     private let action: Action
     private let accessory: UIView?
+    /// Device authentication for the unlock action. Production passes the
+    /// shared service; a test can hand in one built on a stub authenticator.
+    private let locks: ScopedLockService
+    /// Set by an Unlock tap on a device that cannot authenticate. The label
+    /// then says how out rather than "Locked", which would read as a button
+    /// that does nothing.
+    private var needsDevicePasscode = false
     /// Reads the name each pass, so a rename shows while the cover is up.
     private let titleSource: (@MainActor () -> String)?
     private let symbol = UIImageView()
@@ -29,18 +38,30 @@ final class ScopedLockCoverViewController: UIViewController {
     private let lockedLabel = UILabel()
     private let unlockButton = UIButton(configuration: .borderedProminent())
 
-    init(target: ScopedLockTarget, title: String, accessory: UIView? = nil) {
+    init(
+        target: ScopedLockTarget,
+        title: String,
+        accessory: UIView? = nil,
+        locks: ScopedLockService = .shared
+    ) {
         action = .unlock(target)
         self.accessory = accessory
+        self.locks = locks
         titleSource = nil
         coverTitle = title
         super.init(nibName: nil, bundle: nil)
     }
 
     /// A cover whose name is read from observable state in `updateProperties()`.
-    init(target: ScopedLockTarget, titleSource: @escaping @MainActor () -> String, accessory: UIView? = nil) {
+    init(
+        target: ScopedLockTarget,
+        titleSource: @escaping @MainActor () -> String,
+        accessory: UIView? = nil,
+        locks: ScopedLockService = .shared
+    ) {
         action = .unlock(target)
         self.accessory = accessory
+        self.locks = locks
         self.titleSource = titleSource
         coverTitle = titleSource()
         super.init(nibName: nil, bundle: nil)
@@ -49,6 +70,7 @@ final class ScopedLockCoverViewController: UIViewController {
     init(title: String, closeTitle: String, onClose: @escaping @MainActor () -> Void) {
         action = .close(title: closeTitle, handler: onClose)
         accessory = nil
+        locks = .shared
         titleSource = nil
         coverTitle = title
         super.init(nibName: nil, bundle: nil)
@@ -68,6 +90,7 @@ final class ScopedLockCoverViewController: UIViewController {
         titleLabel.numberOfLines = 2
         titleLabel.textAlignment = .center
         lockedLabel.text = String(localized: "Locked")
+        lockedLabel.accessibilityIdentifier = "scopedLock.status"
         lockedLabel.font = .preferredFont(forTextStyle: .subheadline)
         for label in [titleLabel, lockedLabel] {
             label.adjustsFontForContentSizeCategory = true
@@ -77,7 +100,18 @@ final class ScopedLockCoverViewController: UIViewController {
             guard let self else { return }
             switch action {
             case .unlock(let target):
-                Task { _ = await ScopedLockService.shared.authorize(target) }
+                // A device that cannot authenticate opens no scope, so an
+                // Unlock tap would refuse without a word. Say how out instead.
+                needsDevicePasscode = !locks.canAuthenticate
+                setNeedsUpdateProperties()
+                guard !needsDevicePasscode else {
+                    UIAccessibility.post(
+                        notification: .announcement,
+                        argument: AppLockSettings.noPasscodeGuidance
+                    )
+                    return
+                }
+                Task { _ = await locks.authorize(target) }
             case .close(_, let handler):
                 handler()
             }
@@ -110,8 +144,11 @@ final class ScopedLockCoverViewController: UIViewController {
         titleLabel.text = titleSource?() ?? coverTitle
         titleLabel.textColor = palette.ui.fg
         lockedLabel.textColor = palette.ui.comment
+        lockedLabel.text = needsDevicePasscode
+            ? AppLockSettings.noPasscodeGuidance
+            : String(localized: "Locked")
 
-        let method = AppLockService.shared.method
+        let method = locks.authenticationMethod
         var configuration = unlockButton.configuration ?? .borderedProminent()
         switch action {
         case .unlock:
@@ -130,7 +167,7 @@ final class ScopedLockCoverViewController: UIViewController {
         unlockButton.configuration = configuration
         // Only Unlock waits for a prompt that is up; Close always leaves.
         switch action {
-        case .unlock: unlockButton.isEnabled = !ScopedLockService.shared.isAuthenticating
+        case .unlock: unlockButton.isEnabled = !locks.isAuthenticating
         case .close: unlockButton.isEnabled = true
         }
     }

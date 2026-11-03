@@ -108,16 +108,25 @@ final class AppLockCoverViewController: UIViewController {
         statusLabel.isHidden = !locked
         unlockButton.isHidden = !locked
         guard locked else { return }
-        statusLabel.text = service.unlockFailed
-            ? String(localized: "Couldn’t verify it’s you. Try again.")
-            : String(localized: "Oppi is locked.")
+        // No passcode: nothing can authenticate, so the cover says how to get
+        // out instead of promising Face ID. The Unlock button re-checks.
+        let canAuthenticate = service.isAvailable
+        if !canAuthenticate {
+            statusLabel.text = AppLockSettings.noPasscodeGuidance
+        } else {
+            statusLabel.text = service.unlockFailed
+                ? String(localized: "Couldn’t verify it’s you. Try again.")
+                : String(localized: "Oppi is locked.")
+        }
 
-        let method = service.method
+        let method: DeviceOwnerAuthentication.Method? = canAuthenticate ? service.method : nil
         var configuration = unlockButton.configuration ?? .borderedProminent()
-        configuration.title = method == .passcode
-            ? String(localized: "Unlock")
-            : String(localized: "Unlock with \(method.name)")
-        configuration.image = UIImage(systemName: method.systemImage)
+        if let method, method != .passcode {
+            configuration.title = String(localized: "Unlock with \(method.name)")
+        } else {
+            configuration.title = String(localized: "Unlock")
+        }
+        configuration.image = UIImage(systemName: method?.systemImage ?? "lock.open")
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .medium)
         configuration.imagePadding = 8
         configuration.buttonSize = .large

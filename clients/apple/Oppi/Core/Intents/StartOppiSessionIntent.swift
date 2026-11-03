@@ -40,7 +40,7 @@ struct StartOppiSessionIntent: AppIntent {
         guard await AppLockIntentGate.unlockIfNeeded(
             continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
         ) else {
-            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.lockedDialog))
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.refusalDialog()))
         }
 
         let rawPrompt = try await resolvedPrompt()
@@ -84,7 +84,7 @@ struct StartOppiSessionIntent: AppIntent {
             .workspace(serverId: target.serverId, workspaceId: target.workspaceId),
             continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
         ) else {
-            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.scopeLockedDialog))
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.scopeLockedDialog()))
         }
 
         // Before the confirmation: a send this device has not allowed is refused, not asked.

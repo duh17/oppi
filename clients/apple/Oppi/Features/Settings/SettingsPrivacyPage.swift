@@ -89,7 +89,7 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .appLock:
-            AnyHashable([AnyHashable(shownTimeout), AnyHashable(appLock.isAvailable), AnyHashable(appLock.isAuthenticating)])
+            AnyHashable([AnyHashable(appLock.timeout), AnyHashable(appLock.isAvailable), AnyHashable(appLock.isAuthenticating)])
         case .confirmNewServers:
             AnyHashable([AnyHashable(BiometricService.shared.isEnabled), AnyHashable(appLock.isAuthenticating)])
         case .diagnostics:
@@ -105,10 +105,12 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
-        let shown = shownTimeout
+        let shown = appLock.timeout
         cell.configure(
             title: String(localized: "App Lock"),
             identifier: "settings.appLock",
+            // A change needs a successful authentication, which a device
+            // without a passcode cannot give: the value shows but cannot open.
             isEnabled: appLock.isAvailable && !appLock.isAuthenticating,
             value: shown.title,
             menu: {
@@ -233,12 +235,10 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
 
     // MARK: - Changes
 
-    /// Shows Off while the device has no passcode, as App Lock cannot run there.
-    private var shownTimeout: AppLockTimeout { appLock.isAvailable ? appLock.timeout : .off }
-
-    /// Turning App Lock on is always allowed. Changing or turning off an active
-    /// one asks for device authentication first. Returns once the change is
-    /// made or refused.
+    /// Changing an active App Lock always asks for device authentication
+    /// first; turning it on from Off is direct, since nothing is protected yet.
+    /// A refused or impossible prompt leaves the stored timeout unchanged.
+    /// Returns once the change is made or refused.
     @discardableResult
     func changeAppLock(to timeout: AppLockTimeout) -> Task<Void, Never> {
         Task { [appLock] in
@@ -318,7 +318,10 @@ enum SettingsPrivacyCopy {
         deviceName: String
     ) -> String {
         guard isAvailable else {
-            return "Set a passcode on this \(deviceName) to use App Lock."
+            guard timeout.isEnabled else {
+                return "Set a passcode on this \(deviceName) to use App Lock."
+            }
+            return "App Lock is on, but this \(deviceName) has no passcode. Oppi stays locked until you set one in iOS Settings."
         }
         let scope = "It does not protect data on your servers or other paired devices."
         let when: String

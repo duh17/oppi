@@ -333,6 +333,19 @@ final class ScopedLockService {
 
     // MARK: - Gates
 
+    /// Whether a device authentication for a scope can run at all. App Lock on
+    /// with no passcode refuses every scope (`authenticateScopedUnlock`), so a
+    /// cover says what to change instead of offering an Unlock that must fail.
+    var canAuthenticate: Bool {
+        !appLock.isEnabled || appLock.isAvailable
+    }
+
+    /// What the device offers for that authentication, which the cover names
+    /// on its button ("Unlock with Face ID").
+    var authenticationMethod: DeviceOwnerAuthentication.Method {
+        appLock.method
+    }
+
     /// Device authentication for `target` unless it is already reachable.
     /// Success unlocks every gated scope in its chain for this generation.
     func authorize(_ target: ScopedLockTarget) async -> Bool {

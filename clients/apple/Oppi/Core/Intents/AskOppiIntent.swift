@@ -35,7 +35,7 @@ struct AskOppiIntent: AppIntent {
         guard await AppLockIntentGate.unlockIfNeeded(
             continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
         ) else {
-            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.lockedDialog))
+            return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.refusalDialog()))
         }
 
         let servers: [PairedServer]
@@ -93,7 +93,7 @@ struct AskOppiIntent: AppIntent {
             .workspace(serverId: serverId, workspaceId: targetWorkspaceId),
             continueInForeground: { try await continueInForeground(alwaysConfirm: false) }
         ) else {
-            return AppLockIntentGate.scopeLockedDialog
+            return AppLockIntentGate.scopeLockedDialog()
         }
 
         if let refusal = await IntentAISharingGate.refusal(api: api, serverId: serverId, modelId: model) {

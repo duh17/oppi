@@ -21,6 +21,7 @@ struct SettingsPrivacyPageTests {
         let appLock: AppLockService
         let prompts: Prompts
         let window: UIWindow
+        let defaults: UserDefaults
         let originalConfirm: Bool
     }
 
@@ -45,7 +46,14 @@ struct SettingsPrivacyPageTests {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
         window.rootViewController = page
         window.makeKeyAndVisible()
-        return Harness(page: page, appLock: appLock, prompts: prompts, window: window, originalConfirm: BiometricService.shared.isEnabled)
+        return Harness(
+            page: page,
+            appLock: appLock,
+            prompts: prompts,
+            window: window,
+            defaults: defaults,
+            originalConfirm: BiometricService.shared.isEnabled
+        )
     }
 
     private func finish(_ harness: Harness) {
@@ -106,7 +114,7 @@ struct SettingsPrivacyPageTests {
         #expect(!BiometricService.shared.isEnabled)
     }
 
-    @Test("Without a device passcode the App Lock row reads Off, cannot open, and says why")
+    @Test("Without a device passcode the App Lock row keeps its timeout, cannot open, and says why")
     func appLockIsUnavailableWithoutAPasscode() async throws {
         let h = try makeHarness(timeout: .fiveMinutes, available: false)
         defer { finish(h) }
@@ -114,10 +122,24 @@ struct SettingsPrivacyPageTests {
         let button = try #require(Self.appLockButton(in: h.page))
         #expect(button.accessibilityIdentifier == "settings.appLock")
         #expect(!button.isEnabled)
-        #expect(button.accessibilityValue == "Off")
+        #expect(button.accessibilityValue == AppLockTimeout.fiveMinutes.title, "App Lock is still on")
         #expect(SettingsPrivacyCopy.appLockFooter(
             timeout: .fiveMinutes, isAvailable: false, method: .faceID, deviceName: "iPhone"
-        ) == "Set a passcode on this iPhone to use App Lock.")
+        ) == "App Lock is on, but this iPhone has no passcode. Oppi stays locked until you set one in iOS Settings.")
+    }
+
+    @Test("Without a device passcode a change is refused and the stored timeout stays")
+    func changingAppLockWithoutAPasscodeKeepsTheTimeout() async throws {
+        let h = try makeHarness(timeout: .fiveMinutes, available: false)
+        defer { finish(h) }
+        h.prompts.outcome = .unavailable
+
+        await h.page.changeAppLock(to: .off).value
+
+        #expect(h.prompts.reasons == ["Change App Lock"], "turning App Lock off always asks")
+        #expect(h.appLock.timeout == .fiveMinutes)
+        #expect(AppLockSettings.timeout(in: h.defaults) == .fiveMinutes)
+        #expect(h.appLock.isLocked)
     }
 
     @Test("The footers name the method that unlocks, and say when diagnostics or confirmation are off")

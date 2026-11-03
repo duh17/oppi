@@ -11,12 +11,18 @@ import UserNotifications
 struct AppLockMachineTests {
     private let t0: TimeInterval = 10_000
 
-    @Test func coldLaunchIsLockedOnlyWhenAppLockIsOnAndUsable() {
+    @Test func coldLaunchLocksWheneverAppLockIsConfiguredOn() {
         #expect(AppLockMachine(timeout: .fiveMinutes, isAvailable: true).isLocked)
         #expect(AppLockMachine(timeout: .immediately, isAvailable: true).isLocked)
         #expect(!AppLockMachine(timeout: .off, isAvailable: true).isLocked)
-        // No device passcode: App Lock cannot run, so it must not lock the user out.
-        #expect(!AppLockMachine(timeout: .fiveMinutes, isAvailable: false).isLocked)
+        // No device passcode: App Lock is still on, so the app is still locked
+        // and the cover asks for a passcode to be set.
+        var noPasscode = AppLockMachine(timeout: .fiveMinutes, isAvailable: false)
+        #expect(noPasscode.isEnabled)
+        #expect(noPasscode.isLocked)
+        #expect(noPasscode.requiresUnlock(at: t0))
+        let prompt = noPasscode.takeAutoPrompt()
+        #expect(!prompt, "nothing can authenticate, so no Face ID prompt")
     }
 
     @Test(arguments: [
@@ -129,7 +135,7 @@ struct AppLockMachineTests {
         #expect(promptAfterRelock, "a new lock prompts again")
     }
 
-    @Test func turningOffOrLosingThePasscodeUnlocks() {
+    @Test func turningOffUnlocksAndLosingThePasscodeKeepsTheAppLocked() {
         var off = AppLockMachine(timeout: .fiveMinutes, isAvailable: true)
         off.setTimeout(.off)
         #expect(!off.isLocked)
@@ -138,8 +144,19 @@ struct AppLockMachineTests {
         let began = noPasscode.beginUnlock()
         #expect(began)
         noPasscode.finishUnlock(.unavailable)
-        #expect(!noPasscode.isLocked)
-        #expect(!noPasscode.isEnabled)
+        #expect(!noPasscode.isAvailable)
+        #expect(noPasscode.isLocked, "an unavailable attempt never opens the app")
+        #expect(noPasscode.isEnabled, "App Lock stays configured on")
+        #expect(noPasscode.requiresUnlock(at: t0))
+    }
+
+    @Test func settingAPasscodeLaterLetsTheWaitingPromptRun() {
+        var machine = AppLockMachine(timeout: .fiveMinutes, isAvailable: false)
+        machine.setAvailable(true)
+
+        let prompt = machine.takeAutoPrompt()
+        #expect(prompt, "the pending prompt runs once the device can authenticate")
+        #expect(machine.isLocked)
     }
 
     private func unlocked(_ timeout: AppLockTimeout) -> AppLockMachine {
@@ -172,7 +189,7 @@ struct AppLockServiceTests {
         #expect(harness.authenticator.calls == 3)
     }
 
-    @Test func onlyAMissingPasscodeTurnsAppLockOff() async {
+    @Test func aLocalAuthenticationGlitchKeepsTheAppLocked() async {
         // Any other LocalAuthentication error keeps the app locked.
         let glitch = Harness(timeout: .fiveMinutes, outcomes: [.failed], availability: .unavailable)
         #expect(glitch.service.isLocked)
@@ -180,10 +197,34 @@ struct AppLockServiceTests {
         #expect(await glitch.service.sceneDidBecomeActive()?.value == false)
         #expect(glitch.service.isLocked)
         #expect(await glitch.service.authorizeProtectedAction(reason: "Remove") == false)
+    }
 
-        let noPasscode = Harness(timeout: .fiveMinutes, outcomes: [], availability: .noPasscode)
-        #expect(!noPasscode.service.isLocked)
-        #expect(!noPasscode.service.isEnabled)
+    @Test func aMissingPasscodeStartsLockedAndRefusesEverything() async {
+        // App Lock is configured on, so it gates even though nothing on this
+        // device can unlock it yet: the cover asks for a passcode instead.
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.unavailable], availability: .noPasscode)
+
+        #expect(harness.service.isEnabled)
+        #expect(!harness.service.isAvailable)
+        #expect(harness.service.isLocked)
+        #expect(harness.service.requiresUnlock())
+        #expect(harness.service.sceneDidBecomeActive() == nil, "no Face ID prompt without a passcode")
+        #expect(await harness.service.unlock() == false)
+        #expect(harness.service.isLocked)
+        #expect(await harness.service.authorizeProtectedAction(reason: "Remove") == false)
+        #expect(harness.service.isLocked)
+    }
+
+    @Test func anUnavailableUnlockLeavesTheAppLocked() async {
+        // The passcode was removed while the locked app was in the background.
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.unavailable])
+
+        #expect(await harness.service.unlock() == false)
+
+        #expect(harness.service.isLocked)
+        #expect(!harness.service.isAvailable)
+        #expect(harness.service.isEnabled, "App Lock stays configured on")
+        #expect(harness.service.requiresUnlock())
     }
 
     @Test func coldLaunchAutoPromptsOnceAndCancelDoesNotLoop() async {
@@ -348,6 +389,19 @@ struct AppLockServiceTests {
         #expect(harness.service.isLocked)
     }
 
+    @Test func protectedActionsRefreshTheStoredTimeoutFirst() async {
+        // Stored App Lock was unreadable at launch and read as off. The first
+        // protected action after the data is available still prompts.
+        let harness = Harness(timeout: .off, outcomes: [.cancelled], protectedDataAvailable: false)
+        AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)
+        harness.protectedData.available = true
+
+        #expect(await harness.service.authorizeProtectedAction(reason: "Remove") == false)
+
+        #expect(harness.service.isEnabled)
+        #expect(harness.authenticator.calls == 1)
+    }
+
     @Test func startupRefreshMakesIsEnabledTrueBeforeAnyEntryPointRuns() {
         // Readers of isEnabled (local ask notifications, scoped locks) run
         // during startup, before any scene or intent calls the machine.
@@ -453,6 +507,47 @@ struct AppLockIntentGateTests {
         #expect(!allowed)
         #expect(harness.authenticator.calls == 0)
     }
+
+    @Test func aRefusalOnAPasscodeLessDeviceSaysToSetOne() async {
+        let noPasscode = Harness(timeout: .fiveMinutes, outcomes: [], availability: .noPasscode)
+        let allowed = await AppLockIntentGate.unlockIfNeeded(
+            service: noPasscode.service,
+            continueInForeground: {},
+            waitUntilActive: {}
+        )
+        #expect(!allowed, "no passcode: the unlock can never succeed")
+        #expect(
+            AppLockIntentGate.refusalDialog(service: noPasscode.service)
+                == String(localized: "Set a device passcode in iOS Settings to unlock Oppi. Nothing was sent.")
+        )
+
+        let cancelled = Harness(timeout: .fiveMinutes, outcomes: [.cancelled])
+        #expect(
+            await !AppLockIntentGate.unlockIfNeeded(
+                service: cancelled.service,
+                continueInForeground: {},
+                waitUntilActive: {}
+            )
+        )
+        #expect(AppLockIntentGate.refusalDialog(service: cancelled.service) == AppLockIntentGate.lockedDialog)
+    }
+
+    @Test func aRefusedScopeOnAPasscodeLessDeviceSaysToSetOne() {
+        // Opening Oppi cannot unlock the workspace without a passcode, so the
+        // intent says how out instead of sending the person on a dead trip.
+        let noPasscode = Harness(timeout: .fiveMinutes, outcomes: [.unavailable], availability: .noPasscode)
+        #expect(AppLockIntentGate.scopeLockedDialog(service: noPasscode.service) == AppLockIntentGate.noPasscodeDialog)
+        #expect(
+            AppLockIntentGate.scopeLockedDialog(service: noPasscode.service)
+                != AppLockIntentGate.scopeLockedMessage
+        )
+
+        let cancelled = Harness(timeout: .fiveMinutes, outcomes: [.cancelled])
+        #expect(
+            AppLockIntentGate.scopeLockedDialog(service: cancelled.service)
+                == "That workspace is locked in Oppi. Open Oppi and unlock it, then try again. Nothing was sent."
+        )
+    }
 }
 
 @Suite("App Lock share extension")
@@ -464,6 +559,23 @@ struct AppLockShareExtensionTests {
             AppLockSettings.setTimeout(timeout, in: defaults)
             #expect(AppLockSettings.shareRequiresAuthentication(in: defaults) == (timeout != .off))
         }
+    }
+
+    @Test func onlyASuccessfulUnlockLetsAShareLoadWorkspaces() {
+        #expect(AppLockSettings.shareGate(for: .success) == ShareLockGate(allowsLoad: true, message: nil))
+
+        let cancelled = AppLockSettings.shareGate(for: .cancelled)
+        #expect(!cancelled.allowsLoad)
+        #expect(cancelled.message == String(localized: "Oppi is locked. Nothing was loaded or sent."))
+
+        let failed = AppLockSettings.shareGate(for: .failed)
+        #expect(!failed.allowsLoad)
+        #expect(failed.message == cancelled.message)
+
+        // No device passcode: App Lock is still on, and the sheet says how out.
+        let unavailable = AppLockSettings.shareGate(for: .unavailable)
+        #expect(!unavailable.allowsLoad)
+        #expect(unavailable.message == String(localized: "Set a device passcode in iOS Settings to unlock Oppi."))
     }
 }
 

@@ -128,6 +128,8 @@ enum ClientLogUploadService {
     }
 
     private static let highValueInfoCategories: Set<String> = [
+        // App Lock timeout changes: the one App Lock event a report needs.
+        "AppLock",
         "Cache",
         "ChatSession",
         "Diagnostics",

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 import UserNotifications
 @testable import Oppi
 
@@ -141,6 +142,35 @@ struct ScopedLockServiceTests {
         #expect(await !harness.locks.authorize(session))
         #expect(harness.locks.isLocked(session))
         #expect(harness.prompts == 1)
+    }
+
+    @Test func anUnavailableDeviceStillOpensAScopeWithAppLockOff() async {
+        // App Lock off: there is nothing to unlock, so the documented
+        // no-passcode behaviour stands and the scope opens.
+        let harness = ScopedHarness(appLock: .off, outcomes: [.unavailable])
+        harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))
+
+        #expect(await harness.locks.authorize(session))
+        #expect(harness.locks.access(session) == .unlocked)
+        #expect(harness.prompts == 1)
+    }
+
+    @Test func withAppLockOnADeviceThatCannotAuthenticateOpensNoScopeEvenWhileOppiIsUnlocked() async {
+        // App Lock on and Oppi unlocked, then the passcode is removed in iOS
+        // Settings: the app itself is not awaiting unlock, but a scope still
+        // does not open without authentication.
+        let harness = ScopedHarness(appLock: .fiveMinutes, outcomes: [.success, .unavailable, .unavailable])
+        #expect(await harness.appLock.unlock())
+        #expect(!harness.appLock.isLocked)
+        harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))
+
+        #expect(await !harness.locks.authorize(session))
+        #expect(harness.locks.isLocked(session))
+        #expect(!harness.appLock.isAvailable)
+        // Turning the lock off asks the same gate, so it refuses too.
+        #expect(await !harness.locks.removeLock(.session(serverId: "srv", sessionId: "s1")))
+        #expect(harness.locks.isFlagged(.session(serverId: "srv", sessionId: "s1")))
+        #expect(harness.prompts == 3)
     }
 
     @Test func scopedLocksAskEvenWithAppLockOffAndLastUntilOppiLeavesTheForeground() async {
@@ -549,6 +579,71 @@ struct ScopedLockIntentGateTests {
     }
 }
 
+// MARK: - Cover
+
+@MainActor
+@Suite("Scoped lock cover")
+struct ScopedLockCoverTests {
+    private let session = ScopedLockTarget.session(serverId: "srv", workspaceId: "w1", sessionId: "s1", isIncognito: false)
+
+    private func find<T: UIView>(_ type: T.Type, id: String, in root: UIView) -> T? {
+        if let match = root as? T, match.accessibilityIdentifier == id { return match }
+        for subview in root.subviews {
+            if let match = find(type, id: id, in: subview) { return match }
+        }
+        return nil
+    }
+
+    @Test func unlockOnAPasscodeLessDeviceSaysHowOutInsteadOfDoingNothing() async throws {
+        let target = session
+        // App Lock on and Oppi unlocked, then the passcode is removed in iOS
+        // Settings: Unlock can never complete, so the cover says what to
+        // change instead of refusing without a word.
+        let harness = ScopedHarness(appLock: .fiveMinutes, outcomes: [.success, .success])
+        #expect(await harness.appLock.unlock())
+        #expect(!harness.appLock.isLocked)
+        harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))
+        // Coming back from Settings re-checks what the device can do.
+        harness.availability.status = .noPasscode
+        harness.appLock.refreshAvailability()
+        #expect(!harness.appLock.isAvailable)
+
+        let cover = ScopedLockCoverViewController(target: target, title: "Session", locks: harness.locks)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = cover
+        window.isHidden = false
+        cover.view.layoutIfNeeded()
+        defer { hideTestWindow(window) }
+        let status = try #require(find(UILabel.self, id: "scopedLock.status", in: cover.view))
+        let button = try #require(find(UIButton.self, id: "scopedLock.unlock", in: cover.view))
+        #expect(status.text == "Locked")
+
+        button.sendActions(for: .primaryActionTriggered)
+        cover.updateProperties()
+
+        #expect(status.text == "Set a device passcode in iOS Settings to unlock Oppi.")
+        #expect(
+            await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+                harness.prompts == 1 && harness.locks.isLocked(target)
+            },
+            "the tap neither prompts nor opens the scope"
+        )
+
+        // A passcode set in iOS Settings makes the same button unlock again,
+        // and the directions go with it.
+        harness.availability.status = .available
+        harness.appLock.refreshAvailability()
+        button.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<50 where harness.locks.isLocked(target) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(harness.prompts == 2)
+        #expect(!harness.locks.isLocked(target))
+        cover.updateProperties()
+        #expect(status.text == "Locked")
+    }
+}
+
 // MARK: - Test doubles
 
 /// Resumes a continuation once; later calls are ignored.
@@ -596,15 +691,29 @@ private final class ScopedAuthenticator {
 }
 
 @MainActor
+private final class ScopedAvailability {
+    var status: DeviceOwnerAuthentication.Availability
+
+    init(_ status: DeviceOwnerAuthentication.Availability) {
+        self.status = status
+    }
+}
+
+@MainActor
 private struct ScopedHarness {
     let defaults: UserDefaults
     let appLock: AppLockService
     let locks: ScopedLockService
     let authenticator: ScopedAuthenticator
+    let availability: ScopedAvailability
 
     var prompts: Int { authenticator.calls }
 
-    init(appLock timeout: AppLockTimeout, outcomes: [DeviceOwnerAuthentication.Outcome]) {
+    init(
+        appLock timeout: AppLockTimeout,
+        outcomes: [DeviceOwnerAuthentication.Outcome],
+        availability: DeviceOwnerAuthentication.Availability = .available
+    ) {
         guard let defaults = UserDefaults(suiteName: "ScopedLockTests-\(UUID().uuidString)") else {
             preconditionFailure("isolated UserDefaults suite")
         }
@@ -612,11 +721,13 @@ private struct ScopedHarness {
         self.defaults = defaults
         let authenticator = ScopedAuthenticator(outcomes: outcomes)
         self.authenticator = authenticator
+        let availability = ScopedAvailability(availability)
+        self.availability = availability
         let clock = ScopedClock()
         appLock = AppLockService(
             defaults: defaults,
             monotonicNow: { clock.now },
-            availability: { .available },
+            availability: { availability.status },
             method: { .faceID },
             authenticator: { _ in await authenticator.authenticate() },
             didTurnOn: {}
