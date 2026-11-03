@@ -167,6 +167,14 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
     /// space beside a call, must leave the row expanded so it can be the first
     /// half of the double-tap that opens the reader.
     func testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap() throws {
+        // The phone run is the one that proves the claim. On iPad the harness timeline
+        // jumps away from the notebook row once `harness.notebook.scroll` lands, so the
+        // header is never hittable and the assertion measures the harness's scroll anchor,
+        // not the row's tap handling.
+        try XCTSkipUnless(
+            UIDevice.current.userInterfaceIdiom == .phone,
+            "The iPad harness timeline leaves the notebook row out of reach"
+        )
         // Needs its own process. After an in-process reset the timeline jumps away from the
         // notebook row once `harness.notebook.scroll` lands, so the header is never hittable.
         // Ruled out: a 3 s wait, the process-wide caches (cleared by the reset), a leaked

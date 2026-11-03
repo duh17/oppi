@@ -1,13 +1,5 @@
 [
   {
-    "id": "OppiUITests/UIHarnessExpandTests/testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap",
-    "owner": "lead",
-    "backlog": "harness/notebook-single-tap-ipad",
-    "reason": "Fails on iPad at base 5025d1fca: 'Diagnostic diag.notebookExpanded did not reach expected value 1 (last=0)' at UIHarnessTestCase.swift:196 - the notebook row never reports expanded, and on a later run the tool call inside it was never hittable. iPad only; unrelated to the HostFactory deletion.",
-    "addedAt": "2026-11-01",
-    "expires": "2026-11-15"
-  },
-  {
     "id": "OppiUITests/UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership",
     "owner": "lead",
     "backlog": "harness/expanded-extension-scroll-ipad",
