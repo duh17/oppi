@@ -2,6 +2,13 @@ const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application
 
 export const MAX_BROWSE_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 export const MAX_BROWSE_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+// Illustrated books are far larger than a PDF of the same page count, and the
+// phone holds the whole archive in memory while it reads. The client keeps
+// everything it derives from that archive small: one chapter at a time, at most
+// 4 MiB of XHTML and 16 MiB of inflated text per entry, no images in this slice.
+// 100 MiB leaves ~130 MiB of peak client memory for a full-size illustrated
+// book, and the reader refuses anything larger than this before it downloads.
+export const MAX_BROWSE_BOOK_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 export const MAX_WORKSPACE_FILE_EDIT_BYTES = 1_048_576; // 1 MiB
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
@@ -30,6 +37,7 @@ const SPECIAL_CONTENT_TYPES: Record<string, string> = {
   ".csv": "text/csv; charset=utf-8",
   ".pdf": "application/pdf",
   ".usdz": "model/vnd.usdz+zip",
+  ".epub": "application/epub+zip",
 };
 
 const STREAMING_MEDIA_CONTENT_TYPES: Record<string, string> = {
@@ -269,8 +277,17 @@ export function isBrowseMediaContentType(contentType: string): boolean {
     normalized.startsWith("image/") ||
     normalized === "application/pdf" ||
     normalized === "model/vnd.usdz+zip" ||
+    normalized === "application/epub+zip" ||
     isStreamingMediaContentType(normalized)
   );
+}
+
+/**
+ * A whole book the phone downloads and opens itself. It has its own cap:
+ * book files are larger than images, and streaming media has none.
+ */
+export function isBookContentType(contentType: string): boolean {
+  return normalizeContentType(contentType) === "application/epub+zip";
 }
 
 export function getContentType(ext: string, filename: string): string {

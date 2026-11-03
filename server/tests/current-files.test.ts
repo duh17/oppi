@@ -7,6 +7,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -48,6 +49,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { sendFileBytes, statServableFile } from "../src/current-file.js";
+import {
+  getContentType,
+  MAX_BROWSE_BOOK_FILE_SIZE,
+  MAX_BROWSE_IMAGE_FILE_SIZE,
+} from "../src/file-serving-policy.js";
 import { listDirectoryEntries } from "../src/directory-listing.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createHostFileRoutes } from "../src/routes/host-files.js";
@@ -462,6 +468,47 @@ describe("GET/HEAD /files/current", () => {
     const unsatisfiable = await request(fixture, "GET", search, { range: "bytes=20-" });
     expect(unsatisfiable.statusCode).toBe(416);
     expect(unsatisfiable.headers["Content-Range"]).toBe("bytes */10");
+  });
+});
+
+describe("GET /files/current for books", () => {
+  it("serves EPUB as application/epub+zip under its own cap", async () => {
+    const fixture = seed();
+    expect(getContentType(".epub", "novel.epub")).toBe("application/epub+zip");
+
+    const book = join(fixture.outside, "novel.epub");
+    writeFileSync(book, "PK\u0003\u0004book bytes");
+    const search = `/files/current?${query({ origin: "host", path: book })}`;
+    const served = await request(fixture, "HEAD", search);
+    expect({ status: served.statusCode, type: served.headers["Content-Type"] }).toEqual({
+      status: 200,
+      type: "application/epub+zip",
+    });
+
+    // Above the old 50 MB browse-media cap, still a book.
+    const illustrated = join(fixture.outside, "illustrated.epub");
+    writeFileSync(illustrated, "");
+    truncateSync(illustrated, MAX_BROWSE_IMAGE_FILE_SIZE + 1);
+    const large = await request(
+      fixture,
+      "HEAD",
+      `/files/current?${query({ origin: "host", path: illustrated })}`,
+    );
+    expect(large.statusCode).toBe(200);
+
+    // One byte over the book cap is refused, and no bytes are sent.
+    const oversized = join(fixture.outside, "huge.epub");
+    writeFileSync(oversized, "");
+    truncateSync(oversized, MAX_BROWSE_BOOK_FILE_SIZE + 1);
+    const refused = await request(
+      fixture,
+      "GET",
+      `/files/current?${query({ origin: "host", path: oversized })}`,
+    );
+    expect({ status: refused.statusCode, body: JSON.parse(refused.text()) }).toEqual({
+      status: 413,
+      body: { error: "File too large (max 100MB)" },
+    });
   });
 });
 
