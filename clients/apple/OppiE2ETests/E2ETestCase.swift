@@ -163,7 +163,10 @@ class E2ETestCase: XCTestCase {
     /// for a rail item, and its sheets present full screen).
     private func resetDeviceOrientation() {
         XCUIDevice.shared.orientation = e2eOrientation
-        guard let application = Self._app else { return }
+        // A case that ended with `app.terminate()` leaves the shared app pointing at a
+        // process that is gone: its frame cannot be read, and the launch that follows
+        // reads the orientation it launched into.
+        guard let application = Self._app, application.state != .notRunning else { return }
         let wantsLandscape = e2eOrientation.isLandscape
         let deadline = Date().addingTimeInterval(5)
         while (application.frame.width > application.frame.height) != wantsLandscape, Date() < deadline {
