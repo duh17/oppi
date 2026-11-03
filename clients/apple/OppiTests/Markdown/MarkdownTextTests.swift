@@ -2279,11 +2279,35 @@ struct ResourceReferenceResolutionTests {
             sessionMatches: [session],
             fileLookup: .complete([file])
         ) == .resolution(.ambiguous([session, file])))
+    }
+
+    /// A file catalog that cannot answer (a truncated workspace listing, a timeout) says
+    /// nothing about a session this device already has: tapping the link opens the chat.
+    @Test func unanswerableFileLookupKeepsTheKnownSession() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac"
+        ))
+
         #expect(ResourceReferenceCandidateCollector.resolve(
             reference,
             sessionMatches: [session],
             fileLookup: .unavailable
+        ) == .resolution(.resolved(session)))
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: [],
+            fileLookup: .unavailable
         ) == .unavailable)
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: [session],
+            fileLookup: .authorizationFailed
+        ) == .authorizationFailed)
     }
 
     @Test func hostFileLookupDoesNotUseWorkspaceContents() {

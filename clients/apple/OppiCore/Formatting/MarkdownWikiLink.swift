@@ -467,6 +467,11 @@ enum ResourceReferenceCandidateCollector {
                 matches: sessionMatches + fileMatches
             ))
         case .unavailable:
+            // A file catalog that cannot answer says nothing about a session this device
+            // already has: a link naming a session opens that session. Only when the
+            // sessions alone name none, or several, does the tap report "right now".
+            let sessionsOnly = ResourceReferenceResolver.resolve(reference, matches: sessionMatches)
+            if case .resolved = sessionsOnly { return .resolution(sessionsOnly) }
             return .unavailable
         case .authorizationFailed:
             return .authorizationFailed
