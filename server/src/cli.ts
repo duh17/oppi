@@ -7,6 +7,7 @@
  */
 
 import * as c from "./ansi.js";
+import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
@@ -84,6 +85,8 @@ import {
 import type { ServerRestartMode } from "./types/server-update.js";
 import { parseDurationMs } from "./cli/commands/wait.js";
 import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "./cli/output.js";
+
+const cliLog = createLogger({ base: { component: "cli" } });
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
@@ -321,8 +324,10 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   });
 
   process.on("unhandledRejection", (reason) => {
+    // A stray rejection (e.g. a plugin timer) must not take the server down.
+    // Uncaught synchronous exceptions still shut down above.
     console.error(c.red("Unhandled rejection:"), safeErrorMessage(reason));
-    void shutdown(1);
+    cliLog.error("server.unhandled_rejection", { error: safeErrorMessage(reason) });
   });
 
   await server.start();
