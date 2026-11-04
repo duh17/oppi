@@ -101,6 +101,7 @@
 		0B1C67356DFF11838ADF31EC /* SSHKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6022930C329609998BECEDE /* SSHKeychain.swift */; };
 		0B2E01C6B871FF2FAFDC47FD /* MacDelimitedTablePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DBBCBCA6714A2DF9F500E64 /* MacDelimitedTablePreviewTests.swift */; };
 		0B31FBAF9989AE2C2E2B70DC /* ServerExtensionListPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0EE9336AA75DA9CF4EFBBE /* ServerExtensionListPresentationTests.swift */; };
+		0B63FD4D213213116DC12C1A /* ExtensionSurfaceBlocksViewsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A573F23B53D09E94FC67A0 /* ExtensionSurfaceBlocksViewsTests.swift */; };
 		0B6893CAA29D908E7F244663 /* MacMermaidDiagramView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A2A8C1E1523A990E79C136 /* MacMermaidDiagramView.swift */; };
 		0BC76C51D3F14F84DB606CC0 /* ReaderBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE73B02AAEBCF087359D89F2 /* ReaderBody.swift */; };
 		0BD6C976160C84E304FE1D57 /* ServerConnectionScenarioSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2A5B57A77DA0C589C8B6F2 /* ServerConnectionScenarioSupport.swift */; };
@@ -1492,6 +1493,7 @@
 		98331B4565015B971294CB4D /* AppEventMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16B008DE6991A30564DF7701 /* AppEventMessage.swift */; };
 		98371686B3AADA8FA76DCDC4 /* DeviceCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979FDD56F528B3731944F74D /* DeviceCredential.swift */; };
 		987390EAD06F700116EA3319 /* SessionRowPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9FF81A535EDDBF3077AB87 /* SessionRowPreferencesTests.swift */; };
+		98A63EFC0AF7E38671595BD2 /* ExtensionSurfaceBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162939AF3CDE6B1D1BFEC9A2 /* ExtensionSurfaceBlockRenderer.swift */; };
 		98B67465FCDEF46356BF0950 /* SettingsKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB387DC62501E285DE2B11AA /* SettingsKitTests.swift */; };
 		98D7F76AF466CA41AB00078E /* SessionTimelineNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B6A4C22712CBF1D80D589C /* SessionTimelineNavigationTests.swift */; };
 		98E6458E95AB87B44EDE7DA3 /* TerminalMirrorIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B65FEE66FAB328B15B0F651 /* TerminalMirrorIndicatorView.swift */; };
@@ -1564,6 +1566,7 @@
 		9ECC162A128B5C3B2E49B6C4 /* MacHTMLPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36DFBE68A24D3E10FB66AAA7 /* MacHTMLPreviewTests.swift */; };
 		9EDC6EC23000FD354492EA22 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6D04013F2C934D59995E860 /* KeychainService.swift */; };
 		9EF157DEBFCEC921D00D8098 /* SessionThreadStoppedFoldRowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24574575E1D7A7EB11CC1953 /* SessionThreadStoppedFoldRowTests.swift */; };
+		9EFDF53A264EB9C7A3718CCF /* ExtensionSurfaceBlockNodeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D183FE15B9F6C166CAAE1824 /* ExtensionSurfaceBlockNodeViews.swift */; };
 		9F0D7008C86AB54C3A0684FD /* SSHTerminalMultiplexerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D5C0EDA2E028C1E6C7E6F3 /* SSHTerminalMultiplexerTests.swift */; };
 		9F17BCE7C85EBFDBD5C6527A /* ConversationTraceProjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4EF38BC420D97372D8B8D0 /* ConversationTraceProjector.swift */; };
 		9F1B532850E3143EB66C615F /* MermaidTimelineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F2C7B35E4D10AD812AAEDC /* MermaidTimelineParser.swift */; };
@@ -2861,6 +2864,7 @@
 		159E7929FF43FD5A91FC3672 /* WorkspaceDetailViewController+Refresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceDetailViewController+Refresh.swift"; sourceTree = "<group>"; };
 		15DACAA2E1977138F840C552 /* OppiActivityExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		16035526422B5DD2586229EE /* AudioLongformListeningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioLongformListeningTests.swift; sourceTree = "<group>"; };
+		162939AF3CDE6B1D1BFEC9A2 /* ExtensionSurfaceBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceBlockRenderer.swift; sourceTree = "<group>"; };
 		16361B4D23A8B3C3E742ECE2 /* ExtensionNativeBlockViewsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNativeBlockViewsTests.swift; sourceTree = "<group>"; };
 		1641221B2836B1AA655BF0E0 /* MermaidGitGraphRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGitGraphRenderer.swift; sourceTree = "<group>"; };
 		1655388D3EB2ACAD4BD1535B /* JSONPrettyPrinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONPrettyPrinter.swift; sourceTree = "<group>"; };
@@ -3127,6 +3131,7 @@
 		369CC8375740648865129C00 /* MacReviewCommentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentTests.swift; sourceTree = "<group>"; };
 		36A3CDD9C63ABD1B3FC156EC /* AnchoredCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnchoredCollectionView.swift; sourceTree = "<group>"; };
 		36A3D874CE198C3D073E6DFC /* ShareQuickSessionSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareQuickSessionSender.swift; sourceTree = "<group>"; };
+		36A573F23B53D09E94FC67A0 /* ExtensionSurfaceBlocksViewsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceBlocksViewsTests.swift; sourceTree = "<group>"; };
 		36C6C7F83C7EDB091D93377C /* MermaidERConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidERConformanceTests.swift; sourceTree = "<group>"; };
 		36DFBE68A24D3E10FB66AAA7 /* MacHTMLPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacHTMLPreviewTests.swift; sourceTree = "<group>"; };
 		36E5A9ED5BCF871142B76F12 /* UsagePageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePageTests.swift; sourceTree = "<group>"; };
@@ -4427,6 +4432,7 @@
 		D0B5ACD1BF3B9A12AACDFF53 /* ScheduleListPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleListPageTests.swift; sourceTree = "<group>"; };
 		D14BC4A0F3C0076BBC12068B /* ThinkingTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingTimelineRowContent.swift; sourceTree = "<group>"; };
 		D170975DF573DB804847346D /* MarkdownStreamingPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStreamingPerf.swift; sourceTree = "<group>"; };
+		D183FE15B9F6C166CAAE1824 /* ExtensionSurfaceBlockNodeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceBlockNodeViews.swift; sourceTree = "<group>"; };
 		D18BC4725D213D3B146760D5 /* CompactionTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactionTimelineRowContent.swift; sourceTree = "<group>"; };
 		D18DA03AC1A47320141C5672 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		D1B9632BE494CBCA93E2F1EC /* FiraCode-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "FiraCode-SemiBold.ttf"; sourceTree = "<group>"; };
@@ -5455,6 +5461,8 @@
 				786AAAA93F40F0CA3DC844FF /* ExtensionNativeSurfaceDetailViewController.swift */,
 				778F9FC9C3C9902DC967CD47 /* ExtensionNotifyChip.swift */,
 				DB52EA0E3BE481F0231C03A0 /* ExtensionNotifyChipStore.swift */,
+				D183FE15B9F6C166CAAE1824 /* ExtensionSurfaceBlockNodeViews.swift */,
+				162939AF3CDE6B1D1BFEC9A2 /* ExtensionSurfaceBlockRenderer.swift */,
 				8B1361A68FA0968398AEE352 /* ExtensionSurfaceCompositeViews.swift */,
 				AD5700C2A43A69C0769C350A /* ExtensionSurfaceLinkRouting.swift */,
 				D8F477E5264D3B76FDE67B4E /* ExtensionSurfacePanel.swift */,
@@ -5537,6 +5545,7 @@
 				16361B4D23A8B3C3E742ECE2 /* ExtensionNativeBlockViewsTests.swift */,
 				5D8FFDA24E26C31C91C0D6B3 /* ExtensionNotifyChipStoreTests.swift */,
 				57BF9ACC8A8BF5C17349B147 /* ExtensionSurfaceActionTests.swift */,
+				36A573F23B53D09E94FC67A0 /* ExtensionSurfaceBlocksViewsTests.swift */,
 				EB1693594CB90E1DBF1E50A8 /* ExtensionSurfaceCompositeViewsTests.swift */,
 				9053FD2615A63B0FEF6742AC /* ExtensionSurfaceReducerTests.swift */,
 				226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */,
@@ -9829,6 +9838,7 @@
 				44C4047A997F5E3845BB8BF3 /* ExtensionNativeBlockViewsTests.swift in Sources */,
 				6809411BEDC305EEB97591A6 /* ExtensionNotifyChipStoreTests.swift in Sources */,
 				EFB54BCFE07FF6E42589F755 /* ExtensionSurfaceActionTests.swift in Sources */,
+				0B63FD4D213213116DC12C1A /* ExtensionSurfaceBlocksViewsTests.swift in Sources */,
 				440CFEB10DB862AC26731B39 /* ExtensionSurfaceCompositeViewsTests.swift in Sources */,
 				C140B81760C07173365D5D12 /* ExtensionSurfaceReducerTests.swift in Sources */,
 				7E845D44E2061F7DEA57B7F7 /* ExtensionSurfaceURLTests.swift in Sources */,
@@ -10618,6 +10628,8 @@
 				DD91AD986F1904B93EF0222B /* ExtensionNoticeViewController.swift in Sources */,
 				401E97E90C510112CAD8230E /* ExtensionNotifyChip.swift in Sources */,
 				1F78778F87E02A35FA24F4A2 /* ExtensionNotifyChipStore.swift in Sources */,
+				9EFDF53A264EB9C7A3718CCF /* ExtensionSurfaceBlockNodeViews.swift in Sources */,
+				98A63EFC0AF7E38671595BD2 /* ExtensionSurfaceBlockRenderer.swift in Sources */,
 				15943529543D4153E1BE88A2 /* ExtensionSurfaceCompositeViews.swift in Sources */,
 				538153797258A4EE49AE69C0 /* ExtensionSurfaceLinkRouting.swift in Sources */,
 				E4236BFDBA95943D45CE666D /* ExtensionSurfacePanel.swift in Sources */,

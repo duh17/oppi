@@ -141,7 +141,17 @@ enum MermaidXYChartRenderer {
             height: plotHeight
         )
         let yTickHeight = fontSize * 0.75 * 1.4
-        for (index, label) in yTickLabels.enumerated() {
+        // A tick whose label would land on the one above it is dropped, the way the x labels skip:
+        // a chart ending at 42 painted its own max on top of the 40 tick below it.
+        let shownY = shownYTickIndices(
+            yTicks,
+            min: prepared.yMin,
+            max: prepared.yMax,
+            plot: plotRect,
+            labelHeight: yTickHeight
+        )
+        for index in shownY {
+            let label = yTickLabels[index]
             let width = MermaidTextUtils.lineWidth(label, font: labelFont)
             let tickY = yPosition(
                 yTicks[index], min: prepared.yMin, max: prepared.yMax, plot: plotRect
@@ -244,6 +254,9 @@ enum MermaidXYChartRenderer {
         let capturedPrepared = prepared
         let capturedYTicks = yTicks
         let capturedYTickLabels = yTickLabels
+        let capturedShownYTicks = shownY
+        // The grid follows the labels it belongs to, so a dropped tick leaves no stray line.
+        let capturedGridTicks = shownY.map { yTicks[$0] }
         let capturedShownX = shownX
         let capturedSlotCenters = slotCenters
         let capturedSlotWidth = slotWidth
@@ -285,14 +298,16 @@ enum MermaidXYChartRenderer {
             drawGridAndAxes(
                 ctx: ctx,
                 plot: plot,
-                yTicks: capturedYTicks,
+                yTicks: capturedGridTicks,
                 yMin: capturedPrepared.yMin,
                 yMax: capturedPrepared.yMax,
                 theme: theme
             )
 
             let labelFontLocal = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.75, nil)
-            for (tick, label) in zip(capturedYTicks, capturedYTickLabels) {
+            for index in capturedShownYTicks {
+                let tick = capturedYTicks[index]
+                let label = capturedYTickLabels[index]
                 let tickY = yPosition(
                     tick, min: capturedPrepared.yMin, max: capturedPrepared.yMax, plot: plot
                 )
@@ -1018,6 +1033,36 @@ enum MermaidXYChartRenderer {
         }
         ticks.append(max)
         return ticks
+    }
+
+    /// The y ticks whose labels fit one column: walk down from the top tick — the range end, which a
+    /// reader looks for first — and keep a tick only when it clears the last kept label. The floor
+    /// tick is kept last, displacing a middle tick rather than losing the bottom of the axis.
+    nonisolated static func shownYTickIndices(
+        _ ticks: [Double],
+        min: Double,
+        max: Double,
+        plot: CGRect,
+        labelHeight: CGFloat
+    ) -> [Int] {
+        guard ticks.count > 1 else { return Array(ticks.indices) }
+        var kept: [Int] = [ticks.count - 1]
+        var lastY = yPosition(ticks[ticks.count - 1], min: min, max: max, plot: plot)
+        for index in stride(from: ticks.count - 2, through: 0, by: -1) {
+            let tickY = yPosition(ticks[index], min: min, max: max, plot: plot)
+            guard abs(tickY - lastY) >= labelHeight else { continue }
+            kept.append(index)
+            lastY = tickY
+        }
+        guard kept.last != 0 else { return kept.sorted() }
+        let floorY = yPosition(ticks[0], min: min, max: max, plot: plot)
+        if kept.count > 1, let nearest = kept.last {
+            let nearestY = yPosition(ticks[nearest], min: min, max: max, plot: plot)
+            // The floor's label is the axis's bottom edge: the colliding middle tick gives way.
+            if abs(floorY - nearestY) < labelHeight { kept.removeLast() }
+        }
+        kept.append(0)
+        return kept.sorted()
     }
 
     /// Compact axis numbers so 120000 stays short on a phone (`120k`).

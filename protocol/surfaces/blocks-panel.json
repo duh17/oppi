@@ -121,12 +121,6 @@
                 "text": "2 of 4",
                 "tone": "warning",
                 "icon": "clock"
-              },
-              {
-                "type": "icon",
-                "id": "hammer",
-                "name": "hammer",
-                "tone": "accent"
               }
             ]
           },
@@ -140,6 +134,7 @@
           {
             "type": "progress",
             "id": "waiting",
+            "label": "Retrying",
             "kind": "ring",
             "tone": "warning"
           },
@@ -235,67 +230,80 @@
             "size": "small"
           },
           {
-            "type": "stack",
-            "id": "controls",
+            "type": "row",
+            "id": "actions",
             "spacing": "tight",
             "children": [
               {
-                "type": "button",
-                "id": "retry",
-                "title": "Retry",
-                "role": "primary",
-                "icon": "arrow.clockwise",
-                "action": {
-                  "id": "retry",
-                  "pending": {
-                    "title": "Retrying…"
-                  }
-                }
+                "type": "icon",
+                "id": "hammer",
+                "name": "hammer",
+                "tone": "accent"
               },
               {
-                "type": "toggle",
-                "id": "notify",
-                "title": "Notify on failure",
-                "value": false,
-                "action": {
-                  "id": "notify"
-                }
-              },
-              {
-                "type": "menu",
-                "id": "overflow",
-                "title": "More",
-                "icon": "list.bullet",
-                "items": [
+                "type": "stack",
+                "id": "controls",
+                "spacing": "tight",
+                "children": [
                   {
-                    "title": "Logs",
+                    "type": "button",
+                    "id": "retry",
+                    "title": "Retry",
+                    "role": "primary",
+                    "icon": "arrow.clockwise",
+                    "action": {
+                      "id": "retry",
+                      "pending": {
+                        "title": "Retrying…"
+                      }
+                    }
+                  },
+                  {
+                    "type": "toggle",
+                    "id": "notify",
+                    "title": "Notify on failure",
+                    "value": false,
+                    "action": {
+                      "id": "notify"
+                    }
+                  },
+                  {
+                    "type": "menu",
+                    "id": "overflow",
+                    "title": "More",
+                    "icon": "list.bullet",
+                    "items": [
+                      {
+                        "title": "Logs",
+                        "action": {
+                          "id": "openLog"
+                        }
+                      },
+                      {
+                        "title": "Cancel",
+                        "role": "destructive",
+                        "action": {
+                          "id": "cancel"
+                        }
+                      },
+                      {
+                        "title": "Filters",
+                        "action": {
+                          "id": "filters"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "id": "logs-link",
+                    "text": "Open logs",
+                    "tone": "accent",
                     "action": {
                       "id": "openLog"
                     }
-                  },
-                  {
-                    "title": "Cancel",
-                    "role": "destructive",
-                    "action": {
-                      "id": "cancel"
-                    }
-                  },
-                  {
-                    "title": "Filters",
-                    "action": {
-                      "id": "filters"
-                    }
                   }
                 ]
-              },
-              {
-                "type": "text",
-                "id": "logs-link",
-                "text": "Open logs",
-                "tone": "accent",
-                "action": {
-                  "id": "openLog"
-                }
               }
             ]
           },

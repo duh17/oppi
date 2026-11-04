@@ -1335,7 +1335,13 @@ final class ExtensionNativeDividerView: UIView, ExtensionNativeBlockRendering {
     required init?(coder: NSCoder) { nil }
 
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
-        backgroundColor = .separator
+        apply(block, context: context, tint: nil)
+    }
+
+    /// A composite paints its rule from the theme it draws in; the v1 block declares no tone and
+    /// keeps the host's separator, so both callers share one view.
+    func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext, tint: UIColor?) {
+        backgroundColor = tint ?? .separator
     }
 }
 

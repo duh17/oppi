@@ -454,6 +454,59 @@ struct MermaidXYChartConformanceTests {
         #expect(ticks.count <= 7)
     }
 
+    @Test func yTickLabelsSkipRatherThanOverlap() {
+        // A range whose last nice tick sits a few points under the data max: 40 and 42 both used to
+        // be painted, one on top of the other.
+        let diagram = MermaidXYChartParser.parse(lines: [
+            "xychart",
+            "    title Gate duration",
+            "    x-axis [build, test]",
+            "    bar [42, 18]",
+        ])
+        let layout = layoutXY(diagram, maxWidth: 244)
+        let yFrames = numberedFrames(layout.graphResult.nodePositions, prefix: "y-")
+            .sorted { $0.frame.minY < $1.frame.minY }
+        #expect(yFrames.count >= 2, "expected y tick labels")
+        for (previous, next) in zip(yFrames, yFrames.dropFirst()) {
+            #expect(
+                next.frame.minY + 0.5 >= previous.frame.maxY,
+                "y labels \(previous.index) and \(next.index) overlap: \(previous.frame) \(next.frame)"
+            )
+        }
+        // The range end is the tick a reader looks for first, so the skip keeps it: the first frame
+        // in this order is the largest value.
+        if let top = yFrames.first {
+            #expect(layout.nodeLabels["$y-\(top.index)"] == "42", "the top label is not the range end")
+        }
+        #expect(draw(layout) != nil)
+    }
+
+    @Test func paintedYTickLabelsAreAsFewAsTheirFrames() {
+        // The frames are not the chart: labels are painted from the ticks the layout kept, so the
+        // picture has to show one line of text per frame rather than a merged pair.
+        let diagram = MermaidXYChartParser.parse(lines: [
+            "xychart",
+            "    title Gate duration",
+            "    x-axis [build, test]",
+            "    bar [42, 18]",
+        ])
+        let layout = layoutXY(diagram, maxWidth: 244)
+        guard let paint = draw(layout),
+              let plot = layout.graphResult.nodePositions["plot"],
+              let yAxis = layout.graphResult.nodePositions["yAxis"]
+        else {
+            Issue.record("Expected a drawn chart with a plot and a y axis")
+            return
+        }
+        let labels = numberedFrames(layout.graphResult.nodePositions, prefix: "y-")
+        let column = CGRect(x: yAxis.minX, y: plot.minY, width: yAxis.width, height: plot.height)
+        let bands = inkBands(in: paint, column: column)
+        #expect(
+            bands == labels.count,
+            "\(labels.count) tick frames paint as \(bands) lines of text"
+        )
+    }
+
     @Test func yTickLabelsSitAgainstPlotNotLeftPadded() {
         let diagram = MermaidXYChartParser.parse(lines: Self.fullLayout.components(separatedBy: "\n"))
         let layout = layoutXY(diagram, maxWidth: 360)
@@ -676,6 +729,28 @@ private func numberedFrames(
         return (index, rect)
     }
     .sorted { $0.0 < $1.0 }
+}
+
+/// The number of separate runs of ink down `column`: one per line of text that does not touch the
+/// next. The bitmap is transparent where nothing was painted, so any lit pixel is ink.
+private func inkBands(in paint: PaintedBitmap, column: CGRect) -> Int {
+    var bands = 0
+    var inBand = false
+    let minY = max(Int(floor(column.minY)), 0)
+    let maxY = max(Int(ceil(column.maxY)), 0)
+    for y in minY..<maxY {
+        var hasInk = false
+        for x in max(Int(floor(column.minX)), 0)..<max(Int(ceil(column.maxX)), 0) {
+            guard let px = paint.pixel(x, y) else { continue }
+            if max(px.r, px.g, px.b) > 0.03 {
+                hasInk = true
+                break
+            }
+        }
+        if hasInk, !inBand { bands += 1 }
+        inBand = hasInk
+    }
+    return bands
 }
 
 private func draw(_ layout: MermaidFlowchartRenderer.FlowchartLayout) -> PaintedBitmap? {

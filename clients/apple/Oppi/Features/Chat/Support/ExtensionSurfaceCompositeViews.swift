@@ -98,6 +98,19 @@ struct ExtensionSurfaceCompositeContext {
         )
     }
 
+    /// The intent a strip pill's own tap builds. A pill is its own composite id (`pill`) and has
+    /// no node: the surface declared that tapping the pill sends this action.
+    func pillIntent(_ action: ExtensionUISurfaceNodeAction) -> ExtensionSurfaceActionIntent {
+        ExtensionSurfaceActionIntent(
+            surfaceId: surface.id,
+            compositeId: ExtensionSurfacePillContent.compositeId,
+            actionId: action.id,
+            revision: surface.revision,
+            values: action.values,
+            pending: action.pending
+        )
+    }
+
     /// The intent a blocks node builds: the node it came from, and whatever the tap carries.
     func intent(
         compositeId: String,
@@ -237,9 +250,7 @@ final class ExtensionSurfaceCompositesView: UIView {
         case .actionBar(let value):
             ExtensionSurfaceActionBarView(surfaceId: surfaceId, compositeId: value.base.id)
         case .blocks(let value):
-            // The node renderer lands with the tree's own views; until then a tree keeps the words
-            // it shipped with rather than vanishing from the panel.
-            ExtensionSurfaceUnsupportedCardView(surfaceId: surfaceId, compositeId: value.id)
+            ExtensionSurfaceBlocksView(surfaceId: surfaceId, compositeId: value.id)
         case .unsupported(let value):
             ExtensionSurfaceUnsupportedCardView(surfaceId: surfaceId, compositeId: value.id)
         }
@@ -322,6 +333,15 @@ class ExtensionSurfaceCompositeCardView: UIView {
     /// What the card's header element says about the card's own state, when it has words for it.
     func accessibilityValue(for base: ExtensionUISurfaceCompositeBase) -> String? { nil }
 
+    /// The gap between the body's own children, and between the body and the card's action row. A
+    /// tree's levels read as groups, so it gives its top level more room than a nested stack does.
+    var bodySpacing: CGFloat { 8 }
+    var actionSpacing: CGFloat { 8 }
+
+    /// Whether the body already offers a primary action of its own: the card's action row is then
+    /// secondary, so one card never shows two primary buttons.
+    var bodyOffersPrimaryAction: Bool { false }
+
     /// Draw this card's content. Called only while the card's state is content.
     func applyBody(_ section: ExtensionUISurfaceSection, context: ExtensionSurfaceCompositeContext) {}
 
@@ -330,40 +350,64 @@ class ExtensionSurfaceCompositeCardView: UIView {
 
     func apply(_ section: ExtensionUISurfaceSection, context: ExtensionSurfaceCompositeContext) {
         guard let base = section.base else { return }
+        // A card's own header value is read from the section it was last given, so the section is
+        // recorded before the subclass answers for it.
+        appliedSection = section
+        apply(
+            section,
+            header: base.header,
+            state: base.state,
+            actionIds: actionIds(for: base),
+            tone: base.tone,
+            value: accessibilityValue(for: base),
+            context: context
+        )
+    }
+
+    /// Draw one card from the parts every composite shares. A tree supplies its own optional header
+    /// and its own action list, so it enters here rather than through a closed composite's base.
+    func apply(
+        _ section: ExtensionUISurfaceSection,
+        header cardHeader: ExtensionUISurfaceHeader?,
+        state rawState: ExtensionUISurfaceState,
+        actionIds: [String],
+        tone rawTone: String?,
+        value: String?,
+        context: ExtensionSurfaceCompositeContext
+    ) {
         self.context = context
         appliedSection = section
         let palette = context.palette
-        let state = ExtensionSurfaceCompositeState(base.state)
-        let tone = state == .failure ? ExtensionSurfaceTone.danger : ExtensionSurfaceTone(raw: base.tone)
+        let state = ExtensionSurfaceCompositeState(rawState)
+        let tone = state == .failure ? ExtensionSurfaceTone.danger : ExtensionSurfaceTone(raw: rawTone)
 
-        titleLabel.text = base.header.title
+        let title = Self.nonEmpty(cardHeader?.title)
+        let subtitle = Self.nonEmpty(cardHeader?.subtitle)
+        titleLabel.text = title
         titleLabel.textColor = palette.ui.fg
-        let subtitle = base.header.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        subtitleLabel.text = (subtitle?.isEmpty == false) ? subtitle : nil
+        subtitleLabel.text = subtitle
         subtitleLabel.textColor = palette.ui.comment
-        subtitleLabel.isHidden = subtitleLabel.text == nil
+        subtitleLabel.isHidden = subtitle == nil
+        // A tree's region may carry no header at all: the card then starts at its body.
+        header.isHidden = title == nil && subtitle == nil
 
         ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
         layer.borderWidth = tone == .neutral ? 0.5 : 1
         layer.borderColor = tone.color(palette).withAlphaComponent(tone == .neutral ? 0.08 : 0.4).cgColor
 
-        header.accessibilityLabel = [base.header.title, base.header.subtitle]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
-        header.accessibilityValue = state.isContent
-            ? accessibilityValue(for: base)
-            : Self.stateWords(state)
+        header.accessibilityLabel = [title, subtitle].compactMap(\.self).joined(separator: ", ")
+        header.accessibilityValue = state.isContent ? value : Self.stateWords(state)
 
         body.isHidden = !state.isContent
         stateView.isHidden = state.isContent
+        body.spacing = bodySpacing
+        column.setCustomSpacing(actionSpacing, after: body)
         if state.isContent {
             applyBody(section, context: context)
         } else {
-            applyState(base.state, state: state, palette: palette)
+            applyState(rawState, state: state, palette: palette)
         }
 
-        let actionIds = actionIds(for: base)
         let pending = context.pending(for: compositeId)
         actions.isHidden = actionIds.isEmpty
         if !actionIds.isEmpty {
@@ -373,6 +417,7 @@ class ExtensionSurfaceCompositeCardView: UIView {
                 pending: pending,
                 palette: palette,
                 identifierRoot: identifier,
+                primaryInBody: bodyOffersPrimaryAction,
                 onAction: { [weak self] actionId in
                     guard let self, let context = self.context else { return }
                     context.onAction?(context.intent(compositeId: self.compositeId, actionId: actionId))
@@ -628,8 +673,9 @@ final class ExtensionSurfaceDataTableView: ExtensionSurfaceCompositeCardView {
     }
 }
 
-/// The table's column titles, with the sorted column marked.
-private final class ExtensionSurfaceTableHeaderRow: UIView {
+/// The table's column titles, with the sorted column marked. A `blocks` table draws the same grid
+/// a `dataTable` does, so its column plan is shared rather than copied.
+final class ExtensionSurfaceTableHeaderRow: UIView {
     private let stack = UIStackView()
 
     override init(frame: CGRect) {
@@ -887,12 +933,63 @@ final class ExtensionSurfaceUnsupportedCardView: UIView {
 
 // MARK: - Actions
 
+/// The host's one native button for one action. A surface's action row and a `blocks` tree's own
+/// button read their role, their destructive tint, their icon, and their waiting words from here,
+/// so the two renderings cannot drift apart.
+@MainActor
+enum ExtensionSurfaceButtonFactory {
+    /// The words a button shows while its action waits on the server.
+    static func title(
+        _ fallback: String,
+        pending: ExtensionSurfacePendingAction?,
+        actionId: String
+    ) -> String {
+        guard let pending, pending.actionId == actionId, let waiting = pending.title else {
+            return fallback
+        }
+        return waiting
+    }
+
+    /// `role: primary` is the one emphasis in the vocabulary: only it fills with the accent. A
+    /// primary fills the column and may wrap; a secondary keeps its own width, so its title stays on
+    /// one line at an accessibility size instead of breaking inside a fixed capsule.
+    static func configuration(
+        title: String,
+        isPrimary: Bool,
+        isDestructive: Bool,
+        icon: String?,
+        palette: ThemePalette
+    ) -> UIButton.Configuration {
+        var configuration = isPrimary ? UIButton.Configuration.borderedProminent() : .bordered()
+        configuration.title = title
+        configuration.titleLineBreakMode = isPrimary ? .byWordWrapping : .byTruncatingTail
+        if let icon {
+            configuration.image = UIImage.scaledSymbol(icon, style: .body, weight: .semibold)
+            // The button resolves the glyph at the text style it is drawn at, so the symbol grows
+            // with the title beside it instead of staying at whatever size this pass baked.
+            configuration.preferredSymbolConfigurationForImage =
+                UIImage.SymbolConfiguration(textStyle: .body)
+                    .applying(UIImage.SymbolConfiguration(weight: .semibold))
+        }
+        if isPrimary {
+            configuration.baseForegroundColor = palette.ui.bg
+            configuration.baseBackgroundColor = isDestructive ? palette.ui.red : palette.ui.cyan
+        } else {
+            configuration.baseForegroundColor = isDestructive ? palette.ui.red : palette.ui.fg
+        }
+        return configuration
+    }
+}
+
 /// One card's actions: its primary action as a prominent button, and everything else in an
 /// overflow menu. While an action waits on the server, its declared pending title stands in and
-/// the ids it disables are disabled.
+/// the ids it disables are disabled. A card whose body already offers a primary action keeps its
+/// own row secondary, so one card never shows two primary buttons.
 final class ExtensionSurfaceActionRow: UIView {
     private let stack = UIStackView()
     private var onAction: ((String) -> Void)?
+    /// Whether this row shows no primary, so its buttons keep their own size side by side.
+    private var demoted = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -918,6 +1015,7 @@ final class ExtensionSurfaceActionRow: UIView {
         pending: ExtensionSurfacePendingAction?,
         palette: ThemePalette,
         identifierRoot: String,
+        primaryInBody: Bool = false,
         onAction: ((String) -> Void)?
     ) {
         self.onAction = onAction
@@ -925,10 +1023,15 @@ final class ExtensionSurfaceActionRow: UIView {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        let known = actionIds.filter { definitions[$0] != nil }
+        // The body's own primary owns the card's one emphasis; otherwise the declared primary — or
+        // the first action — carries it.
+        let primary = primaryInBody
+            ? nil
+            : known.first { definitions[$0]?.isPrimary == true } ?? known.first
+        demoted = primary == nil
         // A long title at an accessibility size takes the full width instead of being clipped.
         applyAxis()
-        let known = actionIds.filter { definitions[$0] != nil }
-        let primary = known.first { definitions[$0]?.isPrimary == true } ?? known.first
         let rest = known.filter { $0 != primary }
         if let primary, let definition = definitions[primary] {
             stack.addArrangedSubview(
@@ -964,12 +1067,20 @@ final class ExtensionSurfaceActionRow: UIView {
                 )
             )
         }
+        if demoted {
+            // The leftover width goes to a spacer, so a secondary action keeps its own size beside
+            // its siblings instead of stretching across the card.
+            let spacer = UIView()
+            spacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+            spacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+            stack.addArrangedSubview(spacer)
+        }
     }
 
     private func applyAxis() {
         let isAccessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         stack.axis = isAccessibility ? .vertical : .horizontal
-        stack.distribution = isAccessibility ? .fill : .fillProportionally
+        stack.distribution = isAccessibility || demoted ? .fill : .fillProportionally
     }
 
     private func button(
@@ -980,22 +1091,24 @@ final class ExtensionSurfaceActionRow: UIView {
         palette: ThemePalette,
         identifierRoot: String
     ) -> UIButton {
-        let isPending = pending?.actionId == actionId
-        var configuration = isPrimary ? UIButton.Configuration.borderedProminent() : UIButton.Configuration.bordered()
-        configuration.title = isPending ? (pending?.title ?? definition.title) : definition.title
-        configuration.titleLineBreakMode = .byWordWrapping
-        if isPrimary {
-            configuration.baseForegroundColor = palette.ui.bg
-            configuration.baseBackgroundColor = definition.isDestructive ? palette.ui.red : palette.ui.cyan
-        } else {
-            configuration.baseForegroundColor = definition.isDestructive ? palette.ui.red : palette.ui.fg
-        }
+        let configuration = ExtensionSurfaceButtonFactory.configuration(
+            title: ExtensionSurfaceButtonFactory.title(
+                definition.title,
+                pending: pending,
+                actionId: actionId
+            ),
+            isPrimary: isPrimary,
+            isDestructive: definition.isDestructive,
+            icon: nil,
+            palette: palette
+        )
         let button = UIButton(configuration: configuration)
         button.isEnabled = pending?.disabledActionIds.contains(actionId) != true
         button.accessibilityIdentifier = ExtensionSurfaceIdentity.element(root: identifierRoot, key: actionId)
         button.accessibilityLabel = configuration.title
         button.addAction(UIAction { [weak self] _ in self?.onAction?(actionId) }, for: .touchUpInside)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        button.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         return button
     }
 
@@ -1018,13 +1131,16 @@ final class ExtensionSurfaceActionRow: UIView {
         button.showsMenuAsPrimaryAction = true
         button.menu = UIMenu(children: actionIds.compactMap { actionId -> UIMenuElement? in
             guard let definition = definitions[actionId] else { return nil }
-            let isPending = pending?.actionId == actionId
             // The ids the pressed action disabled are disabled one item at a time, so the menu
             // still opens with the rest.
             var attributes: UIMenuElement.Attributes = definition.isDestructive ? .destructive : []
             if pending?.disabledActionIds.contains(actionId) == true { attributes.insert(.disabled) }
             return UIAction(
-                title: isPending ? (pending?.title ?? definition.title) : definition.title,
+                title: ExtensionSurfaceButtonFactory.title(
+                    definition.title,
+                    pending: pending,
+                    actionId: actionId
+                ),
                 attributes: attributes
             ) { [weak self] _ in self?.onAction?(actionId) }
         })

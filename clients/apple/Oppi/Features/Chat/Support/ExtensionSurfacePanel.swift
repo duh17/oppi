@@ -364,7 +364,7 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         }
     }
 
-    private static func composableFailureText(_ surface: ExtensionUISurface) -> String? {
+    static func composableFailureText(_ surface: ExtensionUISurface) -> String? {
         for section in surface.sections {
             guard let base = section.base, base.state.kind == "failure" else { continue }
             return base.state.message.trimmedNonEmpty
@@ -522,16 +522,24 @@ private extension ExtensionSurfacePlacementGroup {
 
 // MARK: - Strip pill
 
-/// One extension entry's pill: a tone dot (or the queue's icon), title,
-/// subtitle, media hint, and a disclosure chevron.
+/// One extension entry's pill: a tone dot (or the queue's icon), title, subtitle, media hint, and a
+/// disclosure chevron. A pill a surface composed draws that surface's own content row instead.
 private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private let marker = UIImageView()
     private let dot = UIView()
+    /// The facts the surface composed for its pill, drawn in place of the header-derived title.
+    private let content = ExtensionSurfacePillContentView()
     private let titleLabel = ExtensionChromeFont.label(.caption1, .semibold)
     private let subtitleLabel = ExtensionChromeFont.label(.caption2, .semibold)
     private let mediaLabel = ExtensionChromeFont.label(.caption2, .semibold)
     private let chevron = UIImageView()
+    /// The drawer's own tap target. While the pill's tap sends an action, this stays the only
+    /// control that opens the drawer, so the chevron's promise and the pill's tap agree.
+    private let drawerButton = UIButton(type: .custom)
     var onTap: (() -> Void)?
+    /// Set while the surface's pill sends its own action, where a tap would otherwise open the
+    /// drawer.
+    private var onPillAction: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -540,23 +548,38 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         titleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.lineBreakMode = .byTruncatingTail
         mediaLabel.accessibilityIdentifier = "chat.messageQueue.widget.media"
-        for view in [marker, dot, titleLabel, subtitleLabel, mediaLabel, chevron] {
+        content.isHidden = true
+        for view in [marker, dot, content, titleLabel, subtitleLabel, mediaLabel, chevron] {
             row.addArrangedSubview(view)
         }
+        drawerButton.translatesAutoresizingMaskIntoConstraints = false
+        drawerButton.backgroundColor = .clear
+        drawerButton.isUserInteractionEnabled = false
+        drawerButton.isAccessibilityElement = false
+        addSubview(drawerButton)
+        drawerButton.addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
         NSLayoutConstraint.activate([
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 180),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 150),
+            drawerButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            drawerButton.topAnchor.constraint(equalTo: topAnchor),
+            drawerButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            drawerButton.widthAnchor.constraint(equalToConstant: 40),
         ])
-        addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
+        addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if let onPillAction { onPillAction() } else { onTap?() }
+        }, for: .touchUpInside)
     }
 
     func apply(
         _ entry: ExtensionSurfaceStripEntry,
         isActive: Bool,
         placement: ExtensionSurfacePlacementGroup,
-        palette: ThemePalette
+        palette: ThemePalette,
+        pill: ExtensionSurfacePillContent?
     ) {
         let tone = entry.stateTone.color(palette)
         if let image = entry.leadingSystemImage {
@@ -568,23 +591,97 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
             dot.isHidden = false
             marker.isHidden = true
         }
+        applyPill(pill)
+        // A composed pill replaces the words the strip would have derived from the header: the
+        // surface said what its one line is.
+        let showsContent = pill != nil
+        // Two leading indicators would only disagree: a content row that starts with an icon
+        // already shows the state the strip's dot would repeat.
+        if showsContent, content.startsWithIcon { dot.isHidden = true }
         titleLabel.text = entry.title
         titleLabel.textColor = palette.ui.fg
+        titleLabel.isHidden = showsContent
         let subtitle = entry.subtitle?.trimmedNonEmpty
         subtitleLabel.text = subtitle
         subtitleLabel.textColor = palette.ui.comment
-        subtitleLabel.isHidden = subtitle == nil
+        subtitleLabel.isHidden = showsContent || subtitle == nil
         let media = entry.mediaSubtitle?.trimmedNonEmpty
         mediaLabel.text = media
         mediaLabel.textColor = palette.ui.fg
-        mediaLabel.isHidden = media == nil
+        mediaLabel.isHidden = showsContent || media == nil
         chevron.image = UIImage.scaledSymbol(isActive ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: palette.ui.comment)
         surface.apply(palette: palette, active: isActive ? tone : nil)
 
-        accessibilityIdentifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)"
-        accessibilityLabel = "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
-        let parts = [subtitle, media].compactMap(\.self)
-        accessibilityValue = parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
+        let identifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)"
+        accessibilityIdentifier = identifier
+        // The drawer and the body are separate controls while the pill's tap sends an action, so
+        // each carries its own scoped id: a person or a driver names them, never their words.
+        drawerButton.accessibilityIdentifier = "\(identifier).drawer"
+        content.accessibilityIdentifier = "\(identifier).body"
+        applyAccessibility(entry: entry, isActive: isActive, showsContent: showsContent, pill: pill, media: media)
+    }
+
+    /// Who says what. A pill whose tap opens the drawer is one element. A pill whose tap sends an
+    /// action is two: the body sends the action, and the chevron is the drawer's own control, the
+    /// only one that says "Expand".
+    private func applyAccessibility(
+        entry: ExtensionSurfaceStripEntry,
+        isActive: Bool,
+        showsContent: Bool,
+        pill: ExtensionSurfacePillContent?,
+        media: String?
+    ) {
+        let bodyWords = [content.words, entry.kindLabel].compactMap(\.self).joined(separator: ", ")
+        let drawerWords = "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
+        let parts = [showsContent ? content.words : entry.subtitle?.trimmedNonEmpty, media].compactMap(\.self)
+        let value = parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
+        let sendsAction = onPillAction != nil
+        isAccessibilityElement = !sendsAction
+        accessibilityLabel = sendsAction ? bodyWords : drawerWords
+        accessibilityValue = value
+        drawerButton.isUserInteractionEnabled = sendsAction
+        drawerButton.isAccessibilityElement = sendsAction
+        drawerButton.accessibilityLabel = drawerWords
+        drawerButton.accessibilityValue = isActive ? "Expanded" : "Collapsed"
+        drawerButton.accessibilityTraits = .button
+        content.isAccessibilityElement = sendsAction
+        content.onActivate = onPillAction
+        content.accessibilityLabel = bodyWords
+        content.accessibilityValue = nil
+        content.accessibilityTraits = .button
+        content.accessibilityHint = actionWords(pill).map {
+            String(format: String(localized: "Sends %@"), $0)
+        }
+    }
+
+    /// The declared words of the action the pill's own tap sends, when it sends one.
+    private func actionWords(_ pill: ExtensionSurfacePillContent?) -> String? {
+        guard let pill, case .action(let action) = pill.pill.tap else { return nil }
+        return pill.context.surface.actions[action.id]?.title
+    }
+
+    private func applyPill(_ pill: ExtensionSurfacePillContent?) {
+        guard let pill else {
+            content.isHidden = true
+            onPillAction = nil
+            return
+        }
+        content.isHidden = false
+        content.apply(
+            pill,
+            identifierRoot: ExtensionSurfaceIdentity.composite(
+                surfaceId: pill.context.surface.id,
+                compositeId: ExtensionSurfacePillContent.compositeId
+            )
+        )
+        switch pill.pill.tap {
+        case .drawer:
+            onPillAction = nil
+        case .action(let action):
+            // The pill is its own composite id: the tap names the pill, not a node or a card.
+            let context = pill.context
+            onPillAction = { context.onAction?(context.pillIntent(action)) }
+        }
     }
 }
 
@@ -970,7 +1067,13 @@ final class ExtensionSurfacePanelView: UIView {
         var keptPills: [String: ExtensionSurfaceStripPill] = [:]
         for entry in entries {
             let pill = pills[entry.id] ?? ExtensionSurfaceStripPill()
-            pill.apply(entry, isActive: entry.id == expandedEntryID, placement: placement, palette: palette)
+            pill.apply(
+                entry,
+                isActive: entry.id == expandedEntryID,
+                placement: placement,
+                palette: palette,
+                pill: pillContent(for: entry, content: content)
+            )
             let id = entry.id
             pill.onTap = { [weak self] in self?.toggle(id) }
             keptPills[entry.id] = pill
@@ -1013,6 +1116,31 @@ final class ExtensionSurfacePanelView: UIView {
 
     private func toggle(_ id: String) {
         setExpanded(expandedEntryID == id ? nil : id)
+    }
+
+    /// A surface's composed pill, unless a card failed: a failure's own words are what the strip
+    /// has to say, and its danger tone stays the strip's tone either way.
+    private func pillContent(
+        for entry: ExtensionSurfaceStripEntry,
+        content: Content
+    ) -> ExtensionSurfacePillContent? {
+        guard case .composable(let composable) = entry,
+              let pill = composable.surface.pill,
+              ExtensionSurfaceStripEntry.composableFailureText(composable.surface) == nil else {
+            return nil
+        }
+        let pending = content.pendingAction.flatMap {
+            $0.surfaceId == composable.surface.id ? $0 : nil
+        }
+        return ExtensionSurfacePillContent(
+            pill: pill,
+            context: ExtensionSurfaceCompositeContext(
+                themeID: content.themeID,
+                surface: composable.surface,
+                pending: pending,
+                onAction: actions.sendAction
+            )
+        )
     }
 
     private func setExpanded(_ id: String?) {
