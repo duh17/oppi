@@ -1,10 +1,10 @@
 /**
  * Workspace extension resolution.
  *
- * Resolves named extensions from pi host extension locations for workspace-related flows.
+ * Lists the host extensions Pi resolves for a workspace, with enabled state.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
@@ -17,23 +17,8 @@ import {
 import { PiSettingsOperationError } from "./settings/pi-resource-errors.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
-const HOST_EXTENSIONS_DIR = join(DEFAULT_AGENT_DIR, "extensions");
 
 const EXTENSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-
-export interface ResolvedExtension {
-  /** Normalized extension name (without file extension). */
-  name: string;
-  /** Absolute host path to extension entry (file or directory). */
-  path: string;
-  /** Entry kind for installation behavior. */
-  kind: "file" | "directory";
-}
-
-export interface ResolveWorkspaceExtensionsResult {
-  extensions: ResolvedExtension[];
-  warnings: string[];
-}
 
 export interface HostExtensionInfo {
   /** Extension name (without .ts/.js suffix). */
@@ -46,16 +31,6 @@ export interface HostExtensionInfo {
   enabled?: boolean;
   /** Pi resource metadata used by settings editors. */
   metadata?: ExtensionResourceMetadata;
-}
-
-export interface ListHostExtensionsOptions {
-  /**
-   * Workspace cwd/hostMount used to discover project-local `.pi/extensions`.
-   * When omitted, only global host extensions are returned.
-   */
-  cwd?: string;
-  /** Override global directory for tests. */
-  globalDir?: string;
 }
 
 export interface ListConfiguredHostExtensionsOptions {
@@ -184,63 +159,11 @@ export function extensionNameForAllowlist(
 }
 
 /**
- * List host extensions available for workspace selection.
- *
- * Scans the global host directory (`~/.pi/agent/extensions`) and, when `cwd`
- * is provided, the project-local directory (`<cwd>/.pi/extensions`). Oppi
- * entries with invalid extension names are excluded.
- *
- * The result is deduplicated by extension name. Project-local entries win over
- * global ones because pi loads local extensions first.
- */
-export function listHostExtensions(options: ListHostExtensionsOptions = {}): HostExtensionInfo[] {
-  const byName = new Map<string, HostExtensionInfo>();
-  const dirs = [
-    getProjectExtensionsDir(options.cwd),
-    options.globalDir ?? HOST_EXTENSIONS_DIR,
-  ].filter((dir): dir is string => Boolean(dir));
-
-  for (const dir of dirs) {
-    for (const extension of discoverExtensionsInDir(dir)) {
-      const existing = byName.get(extension.name);
-      if (!existing) {
-        byName.set(extension.name, extension);
-        continue;
-      }
-
-      // Prefer directory entries over files when both exist in the same scope.
-      if (existing.kind === "file" && extension.kind === "directory") {
-        byName.set(extension.name, extension);
-      }
-    }
-  }
-
-  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/**
- * List host extensions using pi's package/settings resolver.
- *
- * This includes:
- * - auto-discovered global/project extension entrypoints Pi would load
- * - settings-declared local extension paths
- * - package-provided extensions from `pi install` (git/npm/local package sources)
- *
- * Authoritative catalogs stay resolver-only so helper/test directories under
- * `.pi/extensions` never appear as fake extensions.
- */
-export async function listConfiguredHostExtensions(
-  options: ListConfiguredHostExtensionsOptions = {},
-): Promise<HostExtensionInfo[]> {
-  const resolved = await resolveConfiguredHostExtensionResources(options);
-  return listFromResolvedResources(resolved, { includeDisabled: false });
-}
-
-/**
  * List host extension resources with enabled state from Pi resolution.
  *
  * Used by workspace settings. Matches Pi TUI / SDK session loading — no raw
- * directory-scan merge that invents non-extension folders.
+ * directory-scan merge that invents non-extension folders, so helper/test
+ * directories under `.pi/extensions` never appear as fake extensions.
  */
 export async function listConfiguredHostExtensionResources(
   options: ListConfiguredHostExtensionsOptions = {},
@@ -279,56 +202,6 @@ function throwIfSettingsErrors(settingsManager: SettingsManager, operation: stri
     .map((entry) => `${entry.scope}: ${entry.error.message}`)
     .join("; ");
   throw new PiSettingsOperationError(operation, detail);
-}
-
-export function resolveWorkspaceExtensions(
-  extensionNames: string[] | undefined,
-): ResolveWorkspaceExtensionsResult {
-  const warnings: string[] = [];
-  const resolved: ResolvedExtension[] = [];
-  const seen = new Set<string>();
-
-  for (const raw of extensionNames ?? []) {
-    const requested = raw.trim();
-    if (requested.length === 0) {
-      continue;
-    }
-
-    if (!isValidExtensionName(requested)) {
-      warnings.push(`Ignoring invalid extension name: ${requested}`);
-      continue;
-    }
-
-    const normalized = normalizeName(requested);
-    const ext = resolveByName(normalized);
-    if (!ext) {
-      warnings.push(`Extension not found: ${requested}`);
-      continue;
-    }
-
-    if (seen.has(ext.path)) {
-      continue;
-    }
-
-    seen.add(ext.path);
-    resolved.push(ext);
-  }
-
-  return { extensions: resolved, warnings };
-}
-
-/** Compute destination filename/directory under agent/extensions/. */
-export function extensionInstallName(extension: ResolvedExtension): string {
-  if (extension.kind === "directory") {
-    return extension.name;
-  }
-
-  const suffix = extname(extension.path);
-  if (suffix.length > 0) {
-    return `${extension.name}${suffix}`;
-  }
-
-  return extension.name;
 }
 
 function listFromResolvedResources(
@@ -397,42 +270,6 @@ function toHostExtensionInfo(
   };
 }
 
-function discoverExtensionsInDir(dir: string): HostExtensionInfo[] {
-  if (!existsSync(dir)) {
-    return [];
-  }
-
-  const byName = new Map<string, HostExtensionInfo>();
-
-  for (const entry of readdirSync(dir)) {
-    if (entry.startsWith(".")) {
-      continue;
-    }
-
-    const absPath = join(dir, entry);
-    const extension = toHostExtensionInfo(absPath);
-    if (!extension) {
-      continue;
-    }
-
-    const existing = byName.get(extension.name);
-    if (!existing || (existing.kind === "file" && extension.kind === "directory")) {
-      byName.set(extension.name, extension);
-    }
-  }
-
-  return Array.from(byName.values());
-}
-
-function getProjectExtensionsDir(cwd: string | undefined): string | null {
-  const resolvedCwd = resolveWorkspaceCwd(cwd);
-  if (!resolvedCwd) {
-    return null;
-  }
-
-  return join(resolvedCwd, ".pi", "extensions");
-}
-
 function resolveWorkspaceCwd(cwd: string | undefined, fallback?: string): string | null {
   const raw = cwd?.trim();
   if (!raw) {
@@ -441,49 +278,6 @@ function resolveWorkspaceCwd(cwd: string | undefined, fallback?: string): string
 
   const expanded = raw === "~" || raw.startsWith("~/") ? raw.replace(/^~(?=\/|$)/, homedir()) : raw;
   return resolve(expanded);
-}
-
-function resolveByName(name: string): ResolvedExtension | null {
-  const normalized = normalizeName(name);
-  const candidates = uniqueCandidates([
-    join(HOST_EXTENSIONS_DIR, name),
-    join(HOST_EXTENSIONS_DIR, normalized),
-    join(HOST_EXTENSIONS_DIR, `${normalized}.ts`),
-    join(HOST_EXTENSIONS_DIR, `${normalized}.js`),
-  ]);
-
-  for (const candidate of candidates) {
-    const kind = detectKind(candidate);
-    if (kind) {
-      return {
-        name: normalized,
-        path: candidate,
-        kind,
-      };
-    }
-  }
-
-  return null;
-}
-
-function normalizeName(name: string): string {
-  if (name.endsWith(".ts") || name.endsWith(".js")) {
-    return name.slice(0, -3);
-  }
-  return name;
-}
-
-function uniqueCandidates(candidates: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-
-  for (const candidate of candidates) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    out.push(candidate);
-  }
-
-  return out;
 }
 
 function detectKind(absPath: string): "file" | "directory" | null {
