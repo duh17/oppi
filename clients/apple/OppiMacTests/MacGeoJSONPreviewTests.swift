@@ -49,7 +49,7 @@ struct MacGeoJSONPreviewTests {
     @Test func failureDoesNotLeaveAVisibleWorldMap() throws {
         let plan = GeoJSONViewerPlan.resolved(path: "broken.geojson", text: "{not json")
         let contents = GeoJSONMapModel.load(plan)
-        #expect(contents.failureReason == "Invalid JSON")
+        #expect(contents.failureReason == "Couldn't read this map")
         #expect(contents.annotations.isEmpty)
         #expect(contents.overlays.isEmpty)
         #expect(!contents.hasDrawableGeometry)

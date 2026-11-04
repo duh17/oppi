@@ -18,6 +18,18 @@
         }
       }
     },
+    "Couldn't read this map" : {
+
+    },
+    "No map to show" : {
+
+    },
+    "The GeoJSON is not valid." : {
+
+    },
+    "This GeoJSON has no coordinates to draw." : {
+
+    },
     "·" : {
 
     },

@@ -528,6 +528,7 @@
 		3471798EBC51B3B0B99318EA /* ProviderColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E3106B53C20450F229CB7 /* ProviderColor.swift */; };
 		34751F05C0637D7B1F59B09D /* BaselineSafeTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12BE5DFF81CA2C379EFC7E4F /* BaselineSafeTextView.swift */; };
 		34C03B136F4FED87101D029B /* MacComposerAutocompleteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18DB8DD1CB9BC1666D7FEE28 /* MacComposerAutocompleteTests.swift */; };
+		34C06DA73C0365AA915DB511 /* GeoJSONMapUnavailableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7C5B61D3267645383E0FB16 /* GeoJSONMapUnavailableTests.swift */; };
 		34C81F3E1DC7F7F352A8A0DF /* ProviderSetupPromptPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF514FE4F47DF5FF99FFEAE9 /* ProviderSetupPromptPolicyTests.swift */; };
 		34EC6A9A64F7943B9FA79239 /* MermaidQuadrantRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1AAD026AA75319F22E703B /* MermaidQuadrantRenderer.swift */; };
 		34F1E8AFBD4CB84CA6405CFF /* AgentIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC53712F3C9DE3B75FE6092D /* AgentIcon.swift */; };
@@ -4610,6 +4611,7 @@
 		E78C467EE80223936BAEF56D /* ModelCodableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCodableTests.swift; sourceTree = "<group>"; };
 		E7A6D9C0B48C643CA940DF7B /* SSHApprovalCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHApprovalCache.swift; sourceTree = "<group>"; };
 		E7BBED0C94134D50F4314FF5 /* SSHTerminalCustomKeyViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalCustomKeyViewController.swift; sourceTree = "<group>"; };
+		E7C5B61D3267645383E0FB16 /* GeoJSONMapUnavailableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONMapUnavailableTests.swift; sourceTree = "<group>"; };
 		E7D5C0EDA2E028C1E6C7E6F3 /* SSHTerminalMultiplexerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalMultiplexerTests.swift; sourceTree = "<group>"; };
 		E7F64B9CF3FE806D32974AFA /* VoiceStartupPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceStartupPerfBench.swift; sourceTree = "<group>"; };
 		E8014FC4D18656F2822209F7 /* ToolRowAutoFollowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowAutoFollowTests.swift; sourceTree = "<group>"; };
@@ -6248,6 +6250,7 @@
 				289020DB12617C97F6B318B1 /* FullScreenMarkdownStressCorpusTests.swift */,
 				0DA2A72F5344C56EF43CA152 /* FullScreenReaderStreamTests.swift */,
 				38285AC654972BFA4C7EF983 /* FullScreenReviewCommentSelectionTests.swift */,
+				E7C5B61D3267645383E0FB16 /* GeoJSONMapUnavailableTests.swift */,
 				56D8694E415A626D281587BC /* InLayoutInvalidationTests.swift */,
 				24A33FCBAAB3C64BB43B0A21 /* InteractiveMediaInspectionTests.swift */,
 				32FB3943A013F883DF00B81B /* JSONCodeBlockWrapTests.swift */,
@@ -9857,6 +9860,7 @@
 				1BE74E93485F1E5764F4A45A /* FuzzyMatchTests.swift in Sources */,
 				654AA40BE5EAAA72621472F5 /* GeneratedH264Fixture.swift in Sources */,
 				341458CFAF12DF1F84EC1B19 /* GeoJSONDocumentTests.swift in Sources */,
+				34C06DA73C0365AA915DB511 /* GeoJSONMapUnavailableTests.swift in Sources */,
 				4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */,
 				1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */,
 				88542CBD3DFB05D273DF9921 /* GuidedControlComposerModelTests.swift in Sources */,

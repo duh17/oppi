@@ -9,6 +9,7 @@ final class NativeGeoJSONBlockView: UIView {
     private let codeBlockView = NativeCodeBlockView()
     private var mapView: GeoJSONMapView?
     private var mapHeightConstraint: NSLayoutConstraint?
+    private var unavailableHeightConstraint: NSLayoutConstraint?
     private var currentCode: String?
     private var currentKind: GeoJSONViewerPlan.Kind = .geojson
     private var isShowingMap = false
@@ -16,6 +17,9 @@ final class NativeGeoJSONBlockView: UIView {
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
     private static let inlineHeight: CGFloat = 220
+    /// A block with no map has no map to look at: it says so at the height of a
+    /// sentence instead of holding the map's box open.
+    private static let unavailableHeight: CGFloat = 140
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -38,6 +42,7 @@ final class NativeGeoJSONBlockView: UIView {
         codeBlockView.isHidden = false
         mapView?.isHidden = true
         mapHeightConstraint?.isActive = false
+        unavailableHeightConstraint?.isActive = false
         isShowingMap = false
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
         isAccessibilityElement = false
@@ -93,6 +98,10 @@ final class NativeGeoJSONBlockView: UIView {
         height.isActive = false
         mapHeightConstraint = height
 
+        let unavailableHeight = heightAnchor.constraint(equalToConstant: Self.unavailableHeight)
+        unavailableHeight.isActive = false
+        unavailableHeightConstraint = unavailableHeight
+
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         addGestureRecognizer(tap)
     }
@@ -100,13 +109,24 @@ final class NativeGeoJSONBlockView: UIView {
     private func showMap(_ view: GeoJSONMapView) {
         codeBlockView.isHidden = true
         view.isHidden = false
-        mapHeightConstraint?.isActive = true
-        isShowingMap = true
-        isAccessibilityElement = true
-        accessibilityIdentifier = "geojson.diagram.open"
-        accessibilityLabel = currentKind.fileType.displayLabel
-        accessibilityHint = String(localized: "Opens map full screen")
-        accessibilityTraits = [.button]
+        let isUnavailable = view.isUnavailable
+        mapHeightConstraint?.isActive = !isUnavailable
+        unavailableHeightConstraint?.isActive = isUnavailable
+        // An unavailable block has nothing to open full screen, so it is not a
+        // control; the map's own load state reads the words to VoiceOver.
+        isShowingMap = !isUnavailable
+        isAccessibilityElement = false
+        accessibilityIdentifier = nil
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        if !isUnavailable {
+            isAccessibilityElement = true
+            accessibilityIdentifier = "geojson.diagram.open"
+            accessibilityLabel = currentKind.fileType.displayLabel
+            accessibilityHint = String(localized: "Opens map full screen")
+            accessibilityTraits = [.button]
+        }
         invalidateIntrinsicContentSize()
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }

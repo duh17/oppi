@@ -6,7 +6,9 @@ import UIKit
 final class GeoJSONMapView: UIView, MKMapViewDelegate, ReaderBody {
     private let plan: GeoJSONViewerPlan
     private let mapView = MKMapView(frame: .zero)
-    private let failureLabel = UILabel()
+    /// Shown instead of the map when nothing could be drawn: the same load
+    /// state every other document block uses, never a decoder message.
+    private let statusView = UIContentUnavailableView(loadState: .loading(nil))
     private let contents: GeoJSONMapModel.Contents
 
     init(plan: GeoJSONViewerPlan, allowsInteraction: Bool = true) {
@@ -24,6 +26,11 @@ final class GeoJSONMapView: UIView, MKMapViewDelegate, ReaderBody {
 
     func displays(_ other: GeoJSONViewerPlan) -> Bool {
         plan == other
+    }
+
+    /// Nothing could be drawn, so this shows the load state and no map.
+    var isUnavailable: Bool {
+        contents.failure != nil
     }
 
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
@@ -95,42 +102,52 @@ final class GeoJSONMapView: UIView, MKMapViewDelegate, ReaderBody {
         mapView.accessibilityIdentifier = "geojson.map"
         mapView.accessibilityLabel = plan.kind.fileType.displayLabel
 
-        failureLabel.translatesAutoresizingMaskIntoConstraints = false
-        failureLabel.font = .preferredFont(forTextStyle: .subheadline)
-        failureLabel.textColor = .secondaryLabel
-        failureLabel.numberOfLines = 0
-        failureLabel.textAlignment = .center
-        failureLabel.isHidden = true
+        statusView.translatesAutoresizingMaskIntoConstraints = false
+        statusView.isHidden = true
 
         addSubview(mapView)
-        addSubview(failureLabel)
+        addSubview(statusView)
         NSLayoutConstraint.activate([
             mapView.topAnchor.constraint(equalTo: topAnchor),
             mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
             mapView.trailingAnchor.constraint(equalTo: trailingAnchor),
             mapView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            failureLabel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 12),
-            failureLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            failureLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            statusView.topAnchor.constraint(equalTo: topAnchor),
+            statusView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            statusView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            statusView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
     private func applyContents() {
-        if let reason = contents.failureReason {
+        if let failure = contents.failure {
             mapView.isHidden = true
-            failureLabel.isHidden = false
-            failureLabel.text = reason
+            statusView.isHidden = false
+            statusView.configuration = UIContentUnavailableConfiguration.loadState(
+                loadState(failure),
+                palette: ThemeRuntimeState.currentPalette()
+            )
             accessibilityIdentifier = "geojson.map"
-            accessibilityLabel = reason
+            accessibilityLabel = "\(failure.title). \(failure.detail)"
             isAccessibilityElement = true
             return
         }
 
         mapView.isHidden = false
-        failureLabel.isHidden = true
+        statusView.isHidden = true
         mapView.addAnnotations(contents.annotations)
         mapView.addOverlays(contents.overlays, level: .aboveRoads)
         fitVisibleGeometry()
+    }
+
+    /// A map with no coordinates is empty; a map that did not decode failed.
+    private func loadState(_ failure: GeoJSONMapModel.Failure) -> LoadState {
+        switch failure {
+        case .noCoordinates:
+            return .empty(title: failure.title, systemImage: "map", message: failure.detail)
+        case .invalidDocument:
+            return .failed(title: failure.title, message: failure.detail, retry: nil)
+        }
     }
 
     private func fitVisibleGeometry() {

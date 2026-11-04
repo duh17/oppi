@@ -315,7 +315,7 @@ struct GeoJSONDocumentTests {
         )
         #expect(loaded.annotations.isEmpty)
         #expect(loaded.overlays.isEmpty)
-        #expect(loaded.failureReason == "No drawable geometry")
+        #expect(loaded.failureReason == "No map to show")
     }
 
     @Test func mapDecoderLoadsAPointAndRejectsEmptyGeometry() {
@@ -335,7 +335,7 @@ struct GeoJSONDocumentTests {
         )
         #expect(empty.annotations.isEmpty)
         #expect(empty.overlays.isEmpty)
-        #expect(empty.failureReason == "No drawable geometry")
+        #expect(empty.failureReason == "No map to show")
     }
 
     @Test func fullScreenContentRoutesMapFiles() {
