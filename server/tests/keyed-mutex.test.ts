@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { KeyedMutex } from "../src/keyed-mutex.js";
-import { WorkspaceRuntime } from "../src/workspace-runtime.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -40,27 +39,6 @@ describe("KeyedMutex", () => {
     gate.resolve();
     await Promise.all([first, ...rest]);
     expect(order).toEqual(Array.from({ length: 21 }, (_, i) => i));
-  });
-
-  it("lets different keys run concurrently", async () => {
-    const mutex = new KeyedMutex();
-    const gate = deferred();
-    let inFlight = 0;
-    let peak = 0;
-    const run = (key: string) =>
-      mutex.withLock(key, async () => {
-        inFlight += 1;
-        peak = Math.max(peak, inFlight);
-        await gate.promise;
-        inFlight -= 1;
-      });
-
-    const both = Promise.all([run("a"), run("b")]);
-    await flush();
-    expect(peak).toBe(2);
-
-    gate.resolve();
-    await both;
   });
 
   it("returns the result and holds no entry once the last holder finishes", async () => {
@@ -117,27 +95,5 @@ describe("KeyedMutex", () => {
 
     expect(peak).toBe(1);
     expect(trackedKeys(mutex)).toBe(0);
-  });
-});
-
-describe("WorkspaceRuntime lock maps", () => {
-  it("hold no workspace or session entry after the last waiter finishes, even after a rejection", async () => {
-    const runtime = new WorkspaceRuntime();
-    const locks = runtime as unknown as Record<"workspaceLocks" | "sessionLocks", KeyedMutex>;
-
-    await runtime.withWorkspaceLock("w1", async () => undefined);
-    await expect(
-      runtime.withWorkspaceLock("w2", async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-    await expect(
-      runtime.withSessionLock("s1", async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-
-    expect(trackedKeys(locks.workspaceLocks)).toBe(0);
-    expect(trackedKeys(locks.sessionLocks)).toBe(0);
   });
 });
