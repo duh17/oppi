@@ -15,63 +15,8 @@
  *    from ServerConfig.
  */
 
+import { KeyedMutex } from "./keyed-mutex.js";
 import type { ServerConfig } from "./types.js";
-
-// ─── Mutex ───
-
-/**
- * Simple async mutex. Serializes access to a critical section.
- *
- * Usage:
- *   const release = await mutex.acquire();
- *   try { ... } finally { release(); }
- *
- * Or:
- *   await mutex.withLock(async () => { ... });
- */
-export class Mutex {
-  private queue: Array<() => void> = [];
-  private locked = false;
-
-  async acquire(): Promise<() => void> {
-    if (!this.locked) {
-      this.locked = true;
-      return () => this.release();
-    }
-
-    return new Promise((resolve) => {
-      this.queue.push(() => {
-        resolve(() => this.release());
-      });
-    });
-  }
-
-  async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const release = await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
-  }
-
-  get isLocked(): boolean {
-    return this.locked;
-  }
-
-  get queueLength(): number {
-    return this.queue.length;
-  }
-
-  private release(): void {
-    const next = this.queue.shift();
-    if (next) {
-      next();
-    } else {
-      this.locked = false;
-    }
-  }
-}
 
 // ─── Runtime Limits ───
 
@@ -137,11 +82,8 @@ export class WorkspaceRuntimeError extends Error {
 export class WorkspaceRuntime {
   private limits: RuntimeLimits;
 
-  /** Per-workspace mutexes (keyed by workspaceId). */
-  private workspaceMutexes: Map<string, Mutex> = new Map();
-
-  /** Per-session mutexes (keyed by sessionId). */
-  private sessionMutexes: Map<string, Mutex> = new Map();
+  private readonly workspaceLocks = new KeyedMutex();
+  private readonly sessionLocks = new KeyedMutex();
 
   /**
    * Active (reserved + ready) session count per workspace.
@@ -166,24 +108,7 @@ export class WorkspaceRuntime {
    * Prevents concurrent start/stop/resume on the same session.
    */
   async withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    let mutex = this.sessionMutexes.get(sessionId);
-    if (!mutex) {
-      mutex = new Mutex();
-      this.sessionMutexes.set(sessionId, mutex);
-    }
-    try {
-      return await mutex.withLock(fn);
-    } finally {
-      // Drop the entry only when no one holds or waits for it. Deleting a held mutex would let the
-      // next caller lock a fresh one and run alongside the holder.
-      if (
-        !mutex.isLocked &&
-        mutex.queueLength === 0 &&
-        this.sessionMutexes.get(sessionId) === mutex
-      ) {
-        this.sessionMutexes.delete(sessionId);
-      }
-    }
+    return this.sessionLocks.withLock(sessionId, fn);
   }
 
   /**
@@ -191,13 +116,7 @@ export class WorkspaceRuntime {
    * Serializes workspace-level operations that should not race.
    */
   async withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
-    const key = workspaceId;
-    let mutex = this.workspaceMutexes.get(key);
-    if (!mutex) {
-      mutex = new Mutex();
-      this.workspaceMutexes.set(key, mutex);
-    }
-    return mutex.withLock(fn);
+    return this.workspaceLocks.withLock(workspaceId, fn);
   }
 
   // ─── Slot Tracking ───

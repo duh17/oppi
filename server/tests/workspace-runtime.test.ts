@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  Mutex,
   WorkspaceRuntime,
   WorkspaceRuntimeError,
   resolveRuntimeLimits,
@@ -31,70 +30,6 @@ async function flushMicrotasks(turns = 2): Promise<void> {
     await Promise.resolve();
   }
 }
-
-// ─── Mutex ───
-
-describe("Mutex", () => {
-  it("serializes access", async () => {
-    const mutex = new Mutex();
-    const order: number[] = [];
-
-    const release = await mutex.acquire();
-    expect(mutex.isLocked).toBe(true);
-
-    // Queue two waiters
-    const p1 = mutex.acquire().then((rel) => {
-      order.push(1);
-      rel();
-    });
-    const p2 = mutex.acquire().then((rel) => {
-      order.push(2);
-      rel();
-    });
-
-    expect(mutex.queueLength).toBe(2);
-
-    // Release — waiters execute in FIFO order
-    release();
-    await Promise.all([p1, p2]);
-
-    expect(order).toEqual([1, 2]);
-    expect(mutex.isLocked).toBe(false);
-  });
-
-  it("withLock releases on success", async () => {
-    const mutex = new Mutex();
-    const result = await mutex.withLock(async () => 42);
-    expect(result).toBe(42);
-    expect(mutex.isLocked).toBe(false);
-  });
-
-  it("withLock releases on error", async () => {
-    const mutex = new Mutex();
-    await expect(
-      mutex.withLock(async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-    expect(mutex.isLocked).toBe(false);
-  });
-
-  it("handles high contention", async () => {
-    const mutex = new Mutex();
-    const results: number[] = [];
-
-    await Promise.all(
-      Array.from({ length: 20 }, (_, i) =>
-        mutex.withLock(async () => {
-          results.push(i);
-        }),
-      ),
-    );
-
-    // All 20 ran, in order (FIFO queue)
-    expect(results).toEqual(Array.from({ length: 20 }, (_, i) => i));
-  });
-});
 
 // ─── resolveRuntimeLimits ───
 
