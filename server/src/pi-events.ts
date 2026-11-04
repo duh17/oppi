@@ -2,7 +2,6 @@ import type { MessageQueueItem, MessageQueueKind } from "./types.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
-import type { AudioStreamEvent } from "./tts-provider.js";
 import type { ExtensionUINotifyType, ExtensionUIWidgetPlacement } from "./types.js";
 
 export interface PiMessageUsage {
@@ -59,8 +58,24 @@ export interface PromptErrorEvent {
   error: string;
 }
 
-export interface ExtensionAudioStreamEvent extends AudioStreamEvent {
+/**
+ * One `ctx.ui.audioStream(...)` call from an extension, validated in
+ * `sdk-ui-bridge.ts`. Extension authors find this shape in `server/docs/tts.md`.
+ */
+export interface ExtensionAudioStreamEvent {
   type: "extension_audio_stream";
+  kind: "audio-stream";
+  id: string;
+  event: "metadata" | "chunk" | "done" | "error";
+  mimeType: "audio/pcm; codecs=s16le" | "audio/wav";
+  sampleRate?: number;
+  channels?: number;
+  chunkIndex?: number;
+  audioBase64?: string;
+  text?: string;
+  durationSeconds?: number;
+  metrics?: Record<string, unknown>;
+  playbackBehavior?: "tapToPlay" | "playNow";
 }
 
 export type SessionBackendEvent =

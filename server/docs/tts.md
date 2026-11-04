@@ -1,81 +1,105 @@
 # Voice replies / TTS
 
-Oppi defines only a **generic audio reply contract**. It does not require a specific TTS provider, voice catalog, or synthesis workflow.
+Oppi defines only a **generic audio reply contract**. It does not require a specific TTS provider, voice catalog, or synthesis workflow. An extension does its own synthesis, then hands Oppi plain JSON: a tool result `details` object for the voice card, and optional live audio events for low-latency playback. There is no helper module to import.
 
-This document covers:
+## Voice card: `audio_presentation` details
 
-1. the shared Oppi audio contract that any extension can target
-2. the sample `voice` extension in this repository, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
-
-For extension authors, the shared contract is in `server/src/tts-provider.ts`.
-
-## Shared Oppi audio contract
-
-A custom extension does not need a provider base class. It needs only to:
-
-1. emit optional in-flight tool details with `kind: "audio_presentation"`
-2. stream optional live audio with `createAudioStreamEmitter({ ui: ctx?.ui, streamId: toolCallId })`
-3. return final details with `createAudioPresentationDetails({ audio, text, playbackBehavior, ... })`
-
-Minimal shape:
+A tool returns this object as `details`, in its final result and, optionally, in `onUpdate` while it works:
 
 ```ts
-import { createAudioPresentationDetails, createAudioStreamEmitter } from "../src/tts-provider.js";
+type AudioPresentationDetails = {
+  kind: "audio_presentation";                 // marks the row as a voice message
+  text?: string;                              // transcript shown on the card
+  playbackBehavior?: "tapToPlay" | "playNow"; // other values count as missing
+  audio?: {
+    kind: "audio";
+    id?: string;              // stored attachment ID; the card plays from it
+    mimeType: string;         // clients play only "audio/wav"
+    base64?: string;          // server stores the bytes and replaces them with an id
+    path?: string;            // server stores the file only from a trusted root
+    fileName?: string;
+    sizeBytes?: number;
+    durationSeconds?: number;
+  };
+};
+```
 
+Other fields in `details` are not part of this contract; clients ignore them.
+
+| Field | Server and client behavior |
+| --- | --- |
+| `kind` | Must be `"audio_presentation"`. The server also promotes details that have `audio.kind: "audio"` and any other or missing `kind`, and takes `text` from the first non-empty `text`, `message`, or `transcript` string. |
+| `text` | The card transcript. If it is empty, the client uses the tool's `text` argument, then the tool's text output unless that output is exactly `Voice message`. When an update has no text content, the server streams `text` as the row's output. |
+| `playbackBehavior` | See [Audio playback behavior](#audio-playback-behavior). |
+| `audio` | In-flight updates usually omit it. Without `audio`, the card shows the transcript and the live stream for this row, if any. |
+| `audio.id` | When present, the server keeps the entry and removes `path`, `base64`, and `data` from it. |
+| `audio.base64` | Without an `id`, the server decodes the bytes (at most 50 MB), stores them in session storage, and replaces `audio` with the stored metadata. |
+| `audio.path` | Without an `id`, the server copies the file only when it is inside `~/Library/Application Support/Yuwp/Audio/pi-voice` and at most 50 MB. It tries `path` before `base64`. Otherwise it drops `path`. |
+| `audio.mimeType` | When the server stores bytes, a value that does not start with `audio/` becomes `audio/wav`. The client trims and lowercases it, and shows any type other than `audio/wav` as unavailable. |
+| `audio.fileName`, `audio.durationSeconds` | Copied into the stored attachment. `durationSeconds` labels the card before playback. |
+
+After storage, `audio` holds `kind`, `id`, `mimeType`, `fileName`, `sizeBytes`, and `storageKey`, plus `sha256` and `durationSeconds` when known. Clients fetch the bytes by session ID and attachment ID, not from `path` or `storageKey`.
+
+The simplest way to get an `id` is `ctx.attachments.addFile()`. It is an Oppi addition to the tool context, not a portable Pi API; see [Attachment rendering](../../docs/attachment-rendering.md#store-a-file).
+
+```ts
 onUpdate?.({
   content: [{ type: "text", text: spokenText }],
-  details: {
-    kind: "audio_presentation",
-    text: spokenText,
-    playbackBehavior: "playNow",
-    provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
-    status: "speaking",
-  },
+  details: { kind: "audio_presentation", text: spokenText, playbackBehavior: "playNow" },
 });
 
-const emitAudio = createAudioStreamEmitter({
-  ui: ctx?.ui,
-  streamId: toolCallId,
-});
+// ... synthesize to wavPath ...
 
-emitAudio?.({
-  kind: "audio-stream",
-  event: "metadata",
-  mimeType: "audio/pcm; codecs=s16le",
-  sampleRate: 24000,
-  channels: 1,
-  playbackBehavior: "playNow",
-});
-
-emitAudio?.({
-  kind: "audio-stream",
-  event: "chunk",
-  mimeType: "audio/pcm; codecs=s16le",
-  chunkIndex: 0,
-  audioBase64: pcmChunkBase64,
-  playbackBehavior: "playNow",
+const audio = await ctx.attachments.addFile({
+  path: wavPath,
+  kind: "audio",
+  mimeType: "audio/wav",
+  fileName: "reply.wav",
+  durationSeconds,
+  deleteSource: true,
 });
 
 return {
   content: [{ type: "text", text: spokenText }],
-  details: createAudioPresentationDetails({
-    text: spokenText,
-    playbackBehavior: "playNow",
-    audio: {
-      kind: "audio",
-      mimeType: "audio/wav",
-      path: outPath,
-      fileName: "reply.wav",
-      sizeBytes: bytes.length,
-    },
-    extra: {
-      provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
-    },
-  }),
+  details: { kind: "audio_presentation", text: spokenText, playbackBehavior: "playNow", audio },
 };
 ```
 
-Use `toolCallId` as the live audio stream ID. This correlation lets Oppi attach stream playback controls to the correct tool row.
+## Live audio: `ctx.ui.audioStream`
+
+To start playback before the file is complete, call `ctx.ui.audioStream(event)` from the tool. Oppi adds this function to `ctx.ui` in the sessions it hosts. Other Pi hosts do not have it, so check before you call it:
+
+```ts
+type AudioStreamEvent = {
+  kind: "audio-stream";
+  id: string;                                   // 1–128 characters; use toolCallId
+  event: "metadata" | "chunk" | "done" | "error";
+  mimeType: "audio/pcm; codecs=s16le" | "audio/wav";
+  sampleRate?: number;       // integer, 8000–48000 Hz; client default 24000
+  channels?: number;         // 1 or 2; client default 1
+  chunkIndex?: number;       // non-negative integer
+  audioBase64?: string;      // valid padded base64, at most 512 KB per event
+  text?: string;             // at most 2000 characters; logged with error events
+  durationSeconds?: number;  // finite, non-negative
+  metrics?: Record<string, unknown>;
+  playbackBehavior?: "tapToPlay" | "playNow";
+};
+
+const audioStream = (ctx.ui as { audioStream?: (event: AudioStreamEvent) => void }).audioStream;
+const base = { kind: "audio-stream", id: toolCallId, mimeType: "audio/pcm; codecs=s16le", playbackBehavior: "playNow" } as const;
+
+audioStream?.({ ...base, event: "metadata", sampleRate: 24000, channels: 1 });
+audioStream?.({ ...base, event: "chunk", chunkIndex: 0, audioBase64: pcmChunkBase64 });
+audioStream?.({ ...base, event: "done" });
+```
+
+`audioStream` throws when an event does not match this shape or breaks one of its limits. The server forwards valid events to clients as `audio_stream` messages.
+
+Use `toolCallId` as the stream `id`. This correlation lets Oppi attach stream playback controls to the correct tool row.
+
+Clients play a stream only when its `playbackBehavior` is `playNow` and the session's reply mode is **Agent decides**; they ignore every other stream. For `audio/pcm; codecs=s16le` (16-bit little-endian PCM), `metadata` starts playback with the given format (a first `chunk` without it uses the defaults), each `chunk` plays in arrival order, `done` ends playback after buffered audio drains, and `error` stops it. For `audio/wav`, a `chunk` or `done` event that carries a complete WAV file in `audioBase64` plays as one clip. Clients do not act on `chunkIndex`, `durationSeconds`, or `metrics`.
+
+Live audio does not replace the voice card. Return `audio_presentation` details with the stored file as well, so the reply can be replayed later.
 
 ## Audio playback behavior
 
@@ -90,108 +114,6 @@ Notes:
 - Manual mode suppresses autoplay even when a reply says `playNow`.
 - Keep the contract based on local files and session attachments, rather than arbitrary remote-URL playback.
 
-## Sample `voice` extension
-
-The repository contains a sample `voice` extension at `server/extensions/voice.ts`. It is neither the core protocol nor an installed Pi resource. It shows one way to implement voice creation, synthesis, and playback on Oppi's generic audio contract.
-
-### What the sample implementation adds
-
-When an embedding host registers it or it is packaged as a Pi resource, the extension exposes these tools:
-
-- `voice_create` — create or update a saved Yuwp voice from a VoiceDesign prompt.
-- `voice_speak` — generate a spoken reply and attach the audio to the timeline.
-- `voice_list` — list saved local voices.
-- `voice_preferences` — set or inspect the default saved voice.
-
-Slash commands:
-
-```text
-/voice list
-/voice default <voice-id>
-/voice speak <voice-id> hello from Oppi
-```
-
-### Build Yuwp TTS
-
-```bash
-git clone https://github.com/duh17/yuwp.git ~/workspace/yuwp
-cd ~/workspace/yuwp
-swift build -c release --product yuwp-tts
-bash scripts/build_mlx_metallib.sh release
-```
-
-You also need a local Qwen3-TTS model directory or a Hugging Face snapshot.
-
-### Option A: let Oppi start TTS
-
-On the first `voice_*` tool use, Oppi tries to start Yuwp TTS automatically.
-
-Default binary lookup:
-
-```text
-~/workspace/yuwp/.build/arm64-apple-macosx/release/yuwp-tts
-~/workspace/yuwp/.build/debug/yuwp-tts
-```
-
-Default model lookup checks Qwen3-TTS snapshots under:
-
-```text
-~/.cache/huggingface/hub
-```
-
-If your paths differ, save them in Oppi config:
-
-```bash
-oppi config set runtimeEnv.TTS_LOCAL_BIN /path/to/yuwp-tts
-oppi config set runtimeEnv.TTS_LOCAL_MODEL /path/to/qwen3-tts-model
-oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
-oppi config validate
-```
-
-Then restart the Oppi server.
-
-### Option B: run TTS yourself
-
-```bash
-cd ~/workspace/yuwp
-.build/arm64-apple-macosx/release/yuwp-tts serve \
-  --transport http \
-  --model <qwen3-tts-model-dir> \
-  --host 127.0.0.1 \
-  --port 7937
-```
-
-Check it:
-
-```bash
-curl -sf http://127.0.0.1:7937/v1/info | jq .
-```
-
-If you use a non-default URL, save it in the Oppi server config:
-
-```bash
-oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
-oppi config validate
-```
-
-Then restart the Oppi server.
-
-### Availability
-
-The current server does not register the sample factory, and Pi's resource loader does not auto-discover `server/extensions/voice.ts`. Therefore, it does not appear in the workspace editor's extension toggles or load in sessions by default. A separately packaged Pi extension can use this implementation and the generic audio contract above.
-
-After you install and enable such an extension, ask the agent to create or use a voice:
-
-```text
-Create a warm technical teammate voice and save it as my default.
-```
-
-or:
-
-```text
-Use voice_speak to reply as a voice message.
-```
-
 ## Client playback modes
 
 In **Settings → Voice → Voice Replies**:
@@ -199,11 +121,4 @@ In **Settings → Voice → Voice Replies**:
 - **Manual** — keep audio replies tap-to-play.
 - **Agent decides** — follow each reply's playback behavior.
 
-The agent can still change the current session's behavior with `voice_reply_mode`. For example, a user can say “keep this chat manual” or “for this session, let the agent decide.”
-
-## Sample extension notes
-
-- Oppi allows only local TTS URLs by default.
-- To use a remote TTS URL, deliberately set `TTS_ALLOW_REMOTE=1`.
-- Generated audio is saved under `~/Library/Application Support/Yuwp/Audio/pi-voice`.
-- The sample source becomes loadable only after a host packages or registers it.
+A tool named `voice_reply_mode` can change the current session's mode by returning `details: { kind: "voice_reply_mode", mode }`, where `mode` is `manual`, `autoplay`, or `default` (clear the session override). For example, a user can say “keep this chat manual” or “for this session, let the agent decide.” Oppi ships no such tool; an extension provides it.

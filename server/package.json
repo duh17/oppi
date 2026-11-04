@@ -160,12 +160,6 @@
     ],
     "ignoreUnresolved": [
       "src/cli.ts"
-    ],
-    "ignoreIssues": {
-      "src/tts-provider.ts": [
-        "exports",
-        "types"
-      ]
-    }
+    ]
   }
 }
