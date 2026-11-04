@@ -205,7 +205,6 @@ enum MarkdownReaderOffsetWriteReason: String, Equatable, Sendable {
 enum MarkdownReaderLayoutReplacementReason: String, Equatable, Sendable {
     case document
     case renderAhead
-    case willDisplayMiss
     case preparedGeometry
     case visibleReconciliation
     case interactionEnded

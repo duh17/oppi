@@ -38,6 +38,8 @@ final class BookReaderBody: UIView {
     private let nextButton = UIButton(type: .system)
     private let placeholder = UILabel()
     private let contentHost = UIView()
+    /// Breathing room between the last line and the reader's floating control.
+    private static let floatingControlGap: CGFloat = 8
 
     private(set) var chapterIndex: Int
     private var chapterSource: EPUBChapterSource
@@ -102,7 +104,22 @@ final class BookReaderBody: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
+        updateChapterContentInset()
         applyPendingRestore()
+    }
+
+    /// The chapter must stop above the reader's floating control, which is drawn
+    /// over this body. The reader pins the body to the page's edges, so the
+    /// control's top edge sits `safeAreaInsets.bottom` + the chrome's own
+    /// padding + its size above the page's bottom, and the footer already
+    /// covers the last `footer.bounds.height` of that distance.
+    private func updateChapterContentInset() {
+        let footerHeight = footer.bounds.height
+        guard footerHeight > 0 else { return }
+        let floatingTop = safeAreaInsets.bottom
+            + FullScreenFloatingControlChrome.bottomPadding
+            + FullScreenFloatingControlChrome.controlSize
+        chapterBody?.setBottomContentInset(floatingTop + Self.floatingControlGap - footerHeight)
     }
 
     // MARK: - Chrome
@@ -165,7 +182,11 @@ final class BookReaderBody: UIView {
         }
 
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: topAnchor),
+            // Body chrome starts below the reader's floating chrome: the reader
+            // pins this body to the top of its page, so only the safe area
+            // knows where the bar's close control ends. Same answer as the
+            // diff body's header.
+            header.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor),
             header.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -197,8 +218,11 @@ final class BookReaderBody: UIView {
 
             previousButton.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 12),
             previousButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // One row, one baseline: the trailing button takes its band from
+            // the leading one instead of floating at the footer's top edge.
             nextButton.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -12),
-            nextButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            nextButton.topAnchor.constraint(equalTo: previousButton.topAnchor),
+            nextButton.bottomAnchor.constraint(equalTo: previousButton.bottomAnchor),
             footer.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         updateChrome()

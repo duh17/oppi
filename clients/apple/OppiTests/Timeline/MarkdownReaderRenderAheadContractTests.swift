@@ -247,8 +247,8 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
-    @Test("a will-display miss replaces active layout before presentation")
-    func willDisplayMissReplacesActiveLayout() throws {
+    @Test("a will-display height miss replaces the layout after the display pass")
+    func willDisplayMissReplacesLayoutAfterTheDisplayPass() async throws {
         let content = (0..<30).map { index in
             "```swift\nlet value\(index) = \"\(String(repeating: "wide ", count: 30))\"\n```"
         }.joined(separator: "\n\n")
@@ -273,6 +273,19 @@ struct MarkdownReaderRenderAheadContractTests {
 
         scrollProduction(body: body, collection: collection, item: item)
         #expect(body.debugHasFinalGeometryForTesting(item))
+        #expect(body.debugWillDisplayRenderAheadMissCountForTesting > 0)
+        // The miss committed a height, but the swap belongs to a later turn:
+        // replacing the layout inside the pass that prepared these cells left
+        // them in the hierarchy with no index path, drawing at the old size.
+        #expect(
+            body.debugLayoutReplaceCountForTesting == replacementsBeforeMiss,
+            "the display pass replaced the layout it was still preparing cells for"
+        )
+        #expect(body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+
+        await drainMainQueue()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
         // The synchronous layout replacement can recycle the original cell;
         // center the now-final item once more before comparing live fitting.
         body.debugScrollItemIntoViewForTesting(item)
@@ -284,8 +297,53 @@ struct MarkdownReaderRenderAheadContractTests {
 
         #expect(abs(activeHeight - fittingHeight) < 1)
         #expect(body.debugLayoutReplaceCountForTesting > replacementsBeforeMiss)
-        #expect(body.debugLayoutReplacementReasonsForTesting.contains(.willDisplayMiss))
-        #expect(body.debugWillDisplayRenderAheadMissCountForTesting > 0)
+        #expect(body.debugLayoutReplacementReasonsForTesting.contains(.visibleReconciliation))
+    }
+
+    /// A text-size change re-flows the shared reader body in place. Any cell
+    /// that appears before its new height is settled must leave the pass that
+    /// displayed it with an index path, or it keeps drawing at the old size.
+    @MainActor
+    @Test("a text-size change strands no cell and overlaps no paragraph")
+    func textSizeChangeStrandsNoCell() async throws {
+        let content = (0..<40).map { index in
+            "Paragraph \(index) says the same calm thing a chapter says, long enough to wrap on a phone.\n\n---"
+        }.joined(separator: "\n\n")
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            readerPreferences: .init(textScale: FullScreenReaderPreferences.standardTextScale)
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        await settle(body: body, collection: collection)
+        let standard = drawnParagraphRows(in: body, window: window)
+        #expect(standard.count >= 4, "the body drew no paragraphs: \(standard.count)")
+        assertRowsAreOrderedAndDisjoint(standard, stage: "standard text size", collection: collection)
+
+        body.applyReaderPreferences(
+            .init(textScale: FullScreenReaderPreferences.maximumTextScale)
+        )
+        await settle(body: body, collection: collection)
+
+        let larger = drawnParagraphRows(in: body, window: window)
+        #expect(larger.count >= 4, "the body drew almost nothing after the change")
+        assertRowsAreOrderedAndDisjoint(
+            larger,
+            stage: "after the live text-size change",
+            collection: collection
+        )
+        #expect(
+            larger.map(\.frame) != standard.map(\.frame),
+            "the body did not re-flow, so this is not the live text-size path"
+        )
     }
 
     @MainActor
@@ -417,7 +475,13 @@ struct MarkdownReaderRenderAheadContractTests {
             let prefix = (0..<30).map { index in
                 "```text\nrunway block \(index) \(String(repeating: "word ", count: 12))\n```"
             }.joined(separator: "\n\n")
-            let content = prefix + "\n\n![cold](\(fixture.name))\n\n```text\nanchor after image\n```"
+            // A tail long enough that the viewport can sit past the image
+            // without being clamped to the document's end: growth above a
+            // viewport pinned at the end can only be absorbed by a jump.
+            let tail = (0..<12).map { index in
+                "```text\ntail block \(index) \(String(repeating: "word ", count: 12))\n```"
+            }.joined(separator: "\n\n")
+            let content = prefix + "\n\n![cold](\(fixture.name))\n\n" + tail
             let body = NativeFullScreenMarkdownBody(
                 content: content,
                 palette: ThemeID.dark.palette,
@@ -462,6 +526,14 @@ struct MarkdownReaderRenderAheadContractTests {
             )
             collection.contentOffset.y = min(imageFrame.maxY + 8, maximumY)
             collection.layoutIfNeeded()
+            // The display pass commits heights and leaves the replacement to the
+            // height flush, which also re-fits the cells it can see. Let that
+            // settle before measuring the baseline: this test is about what the
+            // image's own commit does to the viewport.
+            for _ in 0..<3 {
+                await drainMainQueue()
+                collection.layoutIfNeeded()
+            }
             let anchorBefore = try #require(body.debugVisibleAnchorForTesting())
             let commitsBefore = body.debugGeometryCommitCountForTesting
             let replacementsBefore = body.debugLayoutReplaceCountForTesting
@@ -930,6 +1002,82 @@ struct MarkdownReaderRenderAheadContractTests {
         #expect(abs(afterDrain.screenY - anchorAfterRedisplay.screenY) < 1)
         #expect(body.debugLayoutReplaceCountForTesting == replacementsBeforeEviction)
         #expect(body.debugGeometryCommitCountForTesting == commitsBeforeEviction)
+    }
+
+    /// Every paragraph the body draws right now, in the window's space. Parked
+    /// segment views live under a hidden host and are not drawn.
+    @MainActor
+    private func drawnParagraphRows(
+        in body: NativeFullScreenMarkdownBody,
+        window: UIWindow
+    ) -> [(text: String, frame: CGRect)] {
+        timelineAllTextViews(in: body).compactMap { textView in
+            guard textView.window === window, timelineViewIsVisible(textView) else { return nil }
+            let text = timelineRenderedText(of: textView)
+            guard !text.isEmpty else { return nil }
+            let frame = textView.convert(textView.bounds, to: window)
+            guard frame.height > 1 else { return nil }
+            return (text, frame)
+        }
+    }
+
+    /// The condition the reported ghost broke: one ordered stack of rows, none
+    /// drawn twice, and nothing drawn over the page that the collection view no
+    /// longer indexes. Cells just outside the viewport may live in the tree
+    /// without an index path while UIKit holds them; only a drawn one counts.
+    @MainActor
+    private func assertRowsAreOrderedAndDisjoint(
+        _ rows: [(text: String, frame: CGRect)],
+        stage: String,
+        collection: UICollectionView,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let ordered = rows.sorted { $0.frame.minY < $1.frame.minY }
+        let overlaps = zip(ordered, ordered.dropFirst()).compactMap { above, below -> String? in
+            guard above.frame.maxY > below.frame.minY + 0.5 else { return nil }
+            return "\"\(above.text.prefix(24))\" ends at \(above.frame.maxY), "
+                + "over \"\(below.text.prefix(24))\" starting at \(below.frame.minY)"
+        }
+        #expect(overlaps.isEmpty, "\(stage): \(overlaps)", sourceLocation: sourceLocation)
+        let page = CGRect(origin: collection.contentOffset, size: collection.bounds.size)
+        let stranded = collection.subviews
+            .compactMap { $0 as? UICollectionViewCell }
+            .filter { collection.indexPath(for: $0) == nil && $0.frame.intersects(page) }
+            .map { cell in
+                "\(cell.frame) "
+                    + timelineAllTextViews(in: cell).map { "'\(timelineRenderedText(of: $0).prefix(16))'" }.joined()
+            }
+        #expect(
+            stranded.isEmpty,
+            "\(stage): cells with no index path are still drawn on the page: \(stranded)",
+            sourceLocation: sourceLocation
+        )
+        let texts = ordered.map(\.text)
+        #expect(
+            Set(texts).count == texts.count,
+            "\(stage): a paragraph is drawn twice",
+            sourceLocation: sourceLocation
+        )
+    }
+
+    /// Runs the passes a reader runs: its own layout, the collection's, and the
+    /// main-queue work a re-flow defers.
+    @MainActor
+    private func settle(
+        body: NativeFullScreenMarkdownBody,
+        collection: UICollectionView,
+        turns: Int = 10
+    ) async {
+        for _ in 0..<turns {
+            body.layoutIfNeeded()
+            collection.layoutIfNeeded()
+            await drainMainQueue()
+        }
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+        // A cell UIKit removed lingers one run-loop turn; read the hierarchy
+        // after the removals it made in the last pass have drained.
+        await drainMainQueue()
+        await drainMainQueue()
     }
 
     @MainActor

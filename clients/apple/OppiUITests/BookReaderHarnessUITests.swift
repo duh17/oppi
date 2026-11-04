@@ -14,6 +14,57 @@ final class BookReaderHarnessUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// A text-size change made in Viewing Options re-flows the chapter in
+    /// place. The chapter has to come out as one ordered stack: a row from the
+    /// old size left drawn over the new layout is the bug this covers.
+    func testLiveTextSizeChangeLeavesOneOrderedChapter() throws {
+        launchHarness()
+        openBook()
+        XCTAssertTrue(chapterTitle.waitUntilExists(timeout: 10), "The reader did not open")
+        capture("epub-chapter")
+
+        // The table of contents stays readable over the chapter it lists.
+        let toc = app.buttons["fullScreen.book.toc"]
+        XCTAssertTrue(toc.waitUntilExists(timeout: 5), "The reader has no table of contents")
+        toc.tap()
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "label == %@", "Two")).firstMatch
+                .waitUntilExists(timeout: 5),
+            "The table of contents did not open"
+        )
+        capture("epub-toc")
+        // The open menu closes on the chapter it already shows.
+        let current = app.buttons.matching(NSPredicate(format: "label == %@", "One")).firstMatch
+        current.tap()
+        _ = waitUntil { !current.exists || !current.isHittable }
+
+        chooseChapter("Three")
+        XCTAssertTrue(
+            waitUntil { self.chapterTitle.label == "Three" },
+            "The third chapter did not open, title is \(chapterTitle.label)"
+        )
+        assertReaderChromeClearsThePage()
+
+        setTextSizeToMaximum()
+        // Captured straight after the live change, before any reopen: the path
+        // that left the old layout drawn on screen.
+        capture("epub-larger-text")
+        assertReaderChromeClearsThePage()
+
+        let paragraphs = visibleParagraphFrames()
+        XCTAssertGreaterThan(paragraphs.count, 3, "The chapter drew almost nothing after the change")
+        let ordered = paragraphs.sorted { $0.frame.minY < $1.frame.minY }
+        for (above, below) in zip(ordered, ordered.dropFirst()) {
+            XCTAssertLessThanOrEqual(
+                above.frame.maxY,
+                below.frame.minY + 0.5,
+                "\"\(above.label)\" runs into \"\(below.label)\" after the text-size change"
+            )
+        }
+        let labels = ordered.map(\.label)
+        XCTAssertEqual(Set(labels).count, labels.count, "A paragraph is drawn twice: \(labels)")
+    }
+
     func testTableOfContentsKeepsTheParagraphAcrossReopenAndTextSize() throws {
         launchHarness()
         openBook()
@@ -114,6 +165,87 @@ final class BookReaderHarnessUITests: XCTestCase {
         XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
     }
 
+    /// The largest text size, changed in place: the chapter re-flows while the
+    /// person watches, without a reopen.
+    private func setTextSizeToMaximum() {
+        let options = app.buttons["fullscreen.viewingOptions.button"]
+        XCTAssertTrue(options.waitUntilExists(timeout: 5), "The reader has no Viewing Options")
+        options.tap()
+
+        let slider = app.sliders["fullscreen.viewingOptions.textSize"]
+        XCTAssertTrue(slider.waitUntilExists(timeout: 5), "Viewing Options has no text size slider")
+        slider.adjust(toNormalizedSliderPosition: 1)
+
+        let sheet = app.otherElements["fullscreen.viewingOptions"]
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Viewing Options did not open")
+        sheet.swipeDown()
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
+    }
+
+    /// The reader's floating chrome and the body's own chrome do not overlap:
+    /// the chapter header sits below the close control and the footer's two
+    /// buttons share one row.
+    private func assertReaderChromeClearsThePage(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let close = app.buttons["fullScreen.code.close"]
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The reader has no close control", file: file, line: line)
+        XCTAssertFalse(
+            close.frame.intersects(chapterTitle.frame),
+            "The chapter header \(chapterTitle.frame) sits under the close control \(close.frame)",
+            file: file,
+            line: line
+        )
+
+        let previous = app.buttons["fullScreen.book.previous"]
+        let next = app.buttons["fullScreen.book.next"]
+        XCTAssertTrue(previous.waitUntilExists(timeout: 5), "The reader has no Previous", file: file, line: line)
+        XCTAssertTrue(next.waitUntilExists(timeout: 5), "The reader has no Next", file: file, line: line)
+        XCTAssertEqual(
+            previous.frame.minY,
+            next.frame.minY,
+            accuracy: 1,
+            "Previous and Next are not on one baseline",
+            file: file,
+            line: line
+        )
+    }
+
+    /// Writes the screen to `OPPI_BOOK_SHOTS` when that is set, and keeps it on
+    /// the test result either way. Under `xcodebuild` the variable reaches the
+    /// test runner through the `TEST_RUNNER_` prefix.
+    private func capture(_ name: String) {
+        waitUntilThePageIsStill()
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["TEST_RUNNER_OPPI_BOOK_SHOTS"]
+            ?? environment["OPPI_BOOK_SHOTS"],
+            !directory.isEmpty else { return }
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try? screenshot.pngRepresentation.write(
+            to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"),
+            options: .atomic
+        )
+    }
+
+    /// Lets the reader finish presenting or re-flowing: the chapter's frame has
+    /// stopped moving, so a capture sees the page at rest.
+    private func waitUntilThePageIsStill() {
+        var previous: CGRect = .null
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            let frame = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+            if frame == previous, !frame.isEmpty { return }
+            previous = frame
+            hold(for: 0.2)
+        } while Date() < deadline
+    }
+
     // MARK: - Reading position
 
     private var chapterTitle: XCUIElement {
@@ -173,5 +305,15 @@ final class BookReaderHarnessUITests: XCTestCase {
         return app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex.filter {
             $0.exists && $0.frame.height > 0 && $0.frame.minY > 120 && $0.frame.maxY < app.windows.firstMatch.frame.height - 60
         }
+    }
+
+    /// The chapter paragraphs the body is showing right now, in window space.
+    private func visibleParagraphFrames() -> [(label: String, frame: CGRect)] {
+        let area = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Chapter 3 paragraph"))
+            .allElementsBoundByIndex
+            .filter { $0.exists && $0.frame.height > 0 && $0.frame.minY >= area.minY && $0.frame.maxY <= area.maxY }
+            .map { ($0.label, $0.frame) }
     }
 }

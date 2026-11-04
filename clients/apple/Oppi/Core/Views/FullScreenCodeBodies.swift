@@ -353,6 +353,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private weak var pendingForcedItemRemeasureSourceView: UIView?
     private var pendingForcedItemRemeasureToken: MarkdownReaderHeightLedger.WorkToken?
     private var heightFlushGeneration = 0
+    /// A collected height change owes the collection a layout replacement, but
+    /// not during the pass that collected it: a swap from inside `willDisplay`
+    /// strands the cells that pass prepared. The height flush honours the flag.
     private var needsLayoutReplaceAfterInteraction = false
     private var needsVisibleHeightRefreshAfterInteraction = false
     private var pendingLayoutReplaceAfterInteractionRetry = false
@@ -360,9 +363,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     #if DEBUG
     private var debugIsCollectionUserInteractingOverride: Bool?
     #endif
-    /// After a snapshot rebuild, `reloadData` can land in a later layout pass.
-    /// Ignore parked views until that pass applies the new segments.
-    private var suppressParkedReinstall = false
     #if DEBUG
     private var debugAppliedItems: Set<Int> = []
     private var debugSegmentBuildNs: UInt64 = 0
@@ -624,7 +624,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        suppressParkedReinstall = false
         if needsDocumentLayoutPreparation
             || preparedCanonicalWidth.map({ abs($0 - canonicalContentWidth) > 0.5 }) == true {
             prepareLazyDocumentLayout(layoutReason: pendingDocumentLayoutReason)
@@ -1185,8 +1184,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         wirePreparedImageGeometry(on: cell, item: indexPath.item)
         isConfiguringCell = true
         defer { isConfiguringCell = false }
-        if !suppressParkedReinstall,
-           renderedSegmentIDs.indices.contains(indexPath.item),
+        if renderedSegmentIDs.indices.contains(indexPath.item),
            let parked = takeParkedSegmentViews(id: renderedSegmentIDs[indexPath.item]) {
             cell.installArrangedSegmentViews(parked)
             wirePreparedImageGeometry(on: cell, item: indexPath.item)
@@ -1257,14 +1255,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                     debugGeometryCommitCount += 1
                     #endif
                     itemHeights = heightLedger.heights()
-                    if isCollectionUserInteracting {
-                        needsLayoutReplaceAfterInteraction = true
-                    } else {
-                        replaceCollectionLayout(
-                            preserveViewport: true,
-                            reason: .willDisplayMiss
-                        )
-                    }
+                    // Swapping here would de-index the very cells this pass
+                    // prepared; they would keep drawing at their old size.
+                    needsLayoutReplaceAfterInteraction = true
+                    scheduleHeightFlush()
                 }
             }
             refreshGeometryPresentationForVisibleCells()
@@ -1302,7 +1296,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func parkSegmentViews(from cell: FullScreenMarkdownSegmentCell) {
-        guard !suppressParkedReinstall else { return }
         guard let id = cell.appliedSegmentID else { return }
         let views = cell.yieldArrangedSegmentViews()
         guard !views.isEmpty else { return }
@@ -1385,7 +1378,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         scheduledRenderAheadFirstVisibleItem = nil
         needsLayoutReplaceAfterInteraction = false
         needsVisibleHeightRefreshAfterInteraction = false
-        suppressParkedReinstall = false
         resetParkedSegmentViews()
         #if DEBUG
         debugAppliedItems.removeAll()
@@ -2101,6 +2093,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         guard !pendingHeightFlush else { return }
         pendingHeightFlush = true
         let generation = heightFlushGeneration
+        // What the person is looking at now. The flush restores this row rather
+        // than re-reading the viewport, which intermediate swaps have moved.
+        let queuedAnchor = captureViewportAnchor()
+        let queuedAnchorOffset = collectionView.contentOffset.y
         DispatchQueue.main.async { [weak self] in
             guard let self,
                   self.heightFlushGeneration == generation else { return }
@@ -2109,13 +2105,18 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 self.needsVisibleHeightRefreshAfterInteraction = true
                 return
             }
-            guard self.refreshVisibleReservedHeights() else {
+            // A height the display pass committed is already in the ledger, so the
+            // refresh can report no change; the flag still owes the swap.
+            let refreshedHeight = self.refreshVisibleReservedHeights()
+            let anchor = abs(self.collectionView.contentOffset.y - queuedAnchorOffset) <= 0.5 ? queuedAnchor : nil
+            guard self.needsLayoutReplaceAfterInteraction || refreshedHeight else {
                 self.refreshGeometryPresentationForVisibleCells()
                 return
             }
             self.replaceCollectionLayout(
                 preserveViewport: true,
-                reason: .visibleReconciliation
+                reason: .visibleReconciliation,
+                anchor: anchor
             )
         }
     }
@@ -2165,7 +2166,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private func replaceCollectionLayout(
         preserveViewport: Bool,
-        reason: MarkdownReaderLayoutReplacementReason
+        reason: MarkdownReaderLayoutReplacementReason,
+        anchor deferredAnchor: ViewportAnchor? = nil
     ) {
         if isCollectionUserInteracting {
             needsLayoutReplaceAfterInteraction = true
@@ -2183,7 +2185,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         debugLayoutReplacementReasons.append(reason)
         #endif
         let anchor = preserveViewport && !viewportOwner.followsTail
-            ? captureViewportAnchor()
+            ? (deferredAnchor ?? captureViewportAnchor())
             : nil
         activeLayoutItemHeights = itemHeights
         CATransaction.begin()
@@ -2427,6 +2429,14 @@ extension NativeFullScreenMarkdownBody: ReaderBody {
         pendingReconfigurationLayoutReason = .readerPreferences
         render(snapshot: latestSnapshot)
         setNeedsLayout()
+    }
+
+    /// Room below the last line for chrome that floats over the end of the
+    /// document, measured by the owner that draws that chrome.
+    func setBottomContentInset(_ inset: CGFloat) {
+        let inset = max(0, inset)
+        guard abs(collectionView.contentInset.bottom - inset) > 0.5 else { return }
+        collectionView.contentInset.bottom = inset
     }
 }
 

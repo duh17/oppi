@@ -1209,6 +1209,7 @@
 		7AEF594F0778F8D4D3BF39DD /* ScrollInvariantPropertyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */; };
 		7AF16537C4D7CC3183704FDB /* VoiceInputSystemAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4FC352387FBA40CACB7E522 /* VoiceInputSystemAccess.swift */; };
 		7B160589723C3628E0A8F730 /* TimelineReducerInvariantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51844A88F73A4E0B0B9BD90D /* TimelineReducerInvariantTests.swift */; };
+		7B22335713D41FA3B639644B /* BookReaderLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EF7E0E09904C1EBCE34D7C3 /* BookReaderLayoutTests.swift */; };
 		7B66D8D124850C96B011B12E /* MicEngineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E401690DB2EC5C60220844 /* MicEngineBadge.swift */; };
 		7B7131636B83A08A0B284643 /* SSHTerminalPasswordPromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C2107ABF7041EDF38F116C /* SSHTerminalPasswordPromptTests.swift */; };
 		7B89FD5C9C1DDB6AB023F630 /* ToolRowViewportCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC8CDD43FFE1DFF5F100E86 /* ToolRowViewportCalculator.swift */; };
@@ -2939,6 +2940,7 @@
 		1E9E361DB8ECF2B234779495 /* GuidedControlComposerController+Source.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuidedControlComposerController+Source.swift"; sourceTree = "<group>"; };
 		1ECA92A975C3051BF296D6ED /* ExtensionUIRequest+Presentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExtensionUIRequest+Presentation.swift"; sourceTree = "<group>"; };
 		1EE5A6835F1A6A3E59CC0C55 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		1EF7E0E09904C1EBCE34D7C3 /* BookReaderLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookReaderLayoutTests.swift; sourceTree = "<group>"; };
 		1F0D0745B45D19D8CFA40B1A /* ScopedLockService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScopedLockService.swift; sourceTree = "<group>"; };
 		1F1D9C8E95E2A29ABB4286A2 /* SettingsGeneralPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsGeneralPage.swift; sourceTree = "<group>"; };
 		1F334C298F2D21756256E5DD /* SSHTerminalTouch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalTouch.swift; sourceTree = "<group>"; };
@@ -5648,6 +5650,7 @@
 		3E7A31468041A5C208579F65 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				1EF7E0E09904C1EBCE34D7C3 /* BookReaderLayoutTests.swift */,
 				3E5DB2A30FA568F80E7A8545 /* DoubleTapZoomTests.swift */,
 				AF21AF7CFB10FE54F1465AF1 /* EntityIconTests.swift */,
 				BE601A2E5498AF615CB7768C /* ErrorAlertPresenterTests.swift */,
@@ -9749,6 +9752,7 @@
 				7BC2CF416A45D6BE510A9C6C /* BashEmbeddedLanguageDetectorTests.swift in Sources */,
 				05E91AA578210F3782F37870 /* BashToolRowViewTests.swift in Sources */,
 				3E40E8E4A5BD17F1B4BF14E0 /* BiometricServiceTests.swift in Sources */,
+				7B22335713D41FA3B639644B /* BookReaderLayoutTests.swift in Sources */,
 				E13FE62BA7E19B798CDDD78C /* BottomOverlapScrollGapTests.swift in Sources */,
 				8BDB30B5388351BBE6B58596 /* BrowserPreferencesTests.swift in Sources */,
 				87BD1AFEE07F08D7ABE13E49 /* BugBashTests.swift in Sources */,
