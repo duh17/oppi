@@ -132,7 +132,9 @@ struct BookReaderAppearanceReaderTests {
 
     // MARK: - The page
 
-    @Test("the chapter takes the chosen paper and serif type, and re-renders when the theme changes")
+    /// The page is set in the chosen paper and typeface, and a theme change
+    /// re-sets it without reopening the book.
+    @Test("the page takes the chosen paper and serif type, and re-sets when the theme changes")
     func chapterTakesTheAppearance() async throws {
         var appearance = BookReaderAppearance()
         appearance.theme = .sepia
@@ -141,32 +143,40 @@ struct BookReaderAppearanceReaderTests {
         try await fixture.settle()
 
         let sepia = try #require(BookReaderTheme.sepia.fixedColors)
-        let body = try #require(fixture.chapterBody)
-        #expect(sameColor(body.backgroundColor, sepia.paper), "chapter body paper \(String(describing: body.backgroundColor))")
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        #expect(sameColor(collection.backgroundColor, sepia.paper))
+        let body = try #require(fixture.body, "the reader installed no book body")
+        let paged = try #require(fixture.pagedView, "the reader drew no page view")
+        let text = paged.pages.text
+        try #require(text.length > 0, "the page holds no text")
+        #expect(sameColor(body.backgroundColor, sepia.paper), "body paper \(String(describing: body.backgroundColor))")
 
-        let paragraph = try #require(
-            timelineAllTextViews(in: body).first { !$0.text.isEmpty },
-            "the chapter drew no text"
-        )
-        let ink = paragraph.attributedText.length > 0
-            ? paragraph.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
-            : nil
-        #expect(sameColor(ink, sepia.ink), "chapter ink \(String(describing: ink))")
-        let font = try #require(
-            paragraph.attributedText.length > 0
-                ? paragraph.attributedText.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
-                : nil
-        )
+        let ink = text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(sameColor(ink, sepia.ink), "page ink \(String(describing: ink))")
+        let font = try #require(text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
         #expect(
             font.familyName != UIFont.systemFont(ofSize: font.pointSize).familyName,
-            "chapter text is still the system font: \(font.fontName)"
+            "page text is still the system font: \(font.fontName)"
         )
+        fixture.writeScreenshot("epub-books-sepia-page.png")
 
-        fixture.writeScreenshot("epub-theme-sepia.png")
+        // The same page with the chrome back: the header band takes the paper,
+        // not the app's dark chrome.
+        fixture.pagedView?.onChromeToggle?()
+        try await fixture.settle()
+        // The chrome fades in over 0.22 s; a capture has to see it at rest.
+        try await Task.sleep(for: .milliseconds(300))
+        fixture.window.layoutIfNeeded()
+        let band = try #require(
+            fixture.view("fullScreen.book.headerBand", in: fixture.reader.view),
+            "the reader has no header band"
+        )
+        #expect(sameColor(band.backgroundColor, sepia.paper), "header band \(String(describing: band.backgroundColor))")
+        let progress = try #require(fixture.view("fullScreen.book.progress", in: fixture.reader.view))
+        #expect(sameColor(progress.backgroundColor, sepia.paper), "progress band \(String(describing: progress.backgroundColor))")
+        let title = try #require(fixture.view("fullScreen.book.title", in: fixture.reader.view) as? UILabel)
+        #expect(sameColor(title.textColor, sepia.ink), "chapter title ink \(String(describing: title.textColor))")
+        fixture.writeScreenshot("epub-books-sepia-chrome.png")
 
-        // Same page, dark paper: the chapter re-renders in place.
+        // Dark paper: the page is set again, in the dark theme's ink.
         var dark = fixture.store.appearance
         dark.theme = .dark
         fixture.store.set(dark)
@@ -174,13 +184,45 @@ struct BookReaderAppearanceReaderTests {
 
         let darkColors = try #require(BookReaderTheme.dark.fixedColors)
         #expect(sameColor(body.backgroundColor, darkColors.paper))
-        let darkParagraph = try #require(timelineAllTextViews(in: body).first { !$0.text.isEmpty })
-        let darkInk = darkParagraph.attributedText.length > 0
-            ? darkParagraph.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
-            : nil
-        #expect(sameColor(darkInk, darkColors.ink), "chapter ink after the change \(String(describing: darkInk))")
+        let darkText = try #require(fixture.pagedView).pages.text
+        let darkInk = darkText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(sameColor(darkInk, darkColors.ink), "page ink after the change \(String(describing: darkInk))")
+        fixture.pagedView?.onChromeToggle?()
+        try await fixture.settle()
+        try await Task.sleep(for: .milliseconds(300))
+        fixture.window.layoutIfNeeded()
+        fixture.writeScreenshot("epub-books-dark-page.png")
+    }
 
-        fixture.writeScreenshot("epub-theme-dark.png")
+    /// The reader floats its own bar and pills over the page. On a light reading
+    /// paper they take that paper and ink, because light glyphs on cream cannot
+    /// be read; the theme's own ink holds 11.7:1 on sepia.
+    @Test("the reader's floating controls are inked for the page's paper")
+    func readerChromeTakesThePaper() async throws {
+        var appearance = BookReaderAppearance()
+        appearance.theme = .sepia
+        let fixture = try ReaderFixture(appearance: appearance)
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+
+        let sepia = try #require(BookReaderTheme.sepia.fixedColors)
+        let options = try #require(
+            fixture.view("fullscreen.viewingOptions.button", in: fixture.reader.view) as? UIButton,
+            "the reader drew no floating control"
+        )
+        let pill = try #require(options.configuration)
+        #expect(sameColor(pill.baseForegroundColor, sepia.ink), "the pill's glyph is still the app's")
+        #expect(
+            sameColor(pill.background.backgroundColor, sepia.paper.withAlphaComponent(0.94)),
+            "the pill's fill is \(String(describing: pill.background.backgroundColor))"
+        )
+
+        // The app's own paper: the chrome goes back to the theme's glass.
+        fixture.store.set(BookReaderAppearance())
+        try await fixture.settle()
+        let restored = try #require(options.configuration)
+        #expect(!sameColor(restored.baseForegroundColor, sepia.ink), "the pill stayed on the book's ink")
+        #expect(!sameColor(restored.background.backgroundColor, sepia.paper.withAlphaComponent(0.94)))
     }
 
     @Test("the Aa control sits beside the table of contents and opens the sheet")
@@ -196,7 +238,8 @@ struct BookReaderAppearanceReaderTests {
         #expect(appearanceButton.accessibilityLabel == String(localized: "Appearance"))
         let tocFrame = toc.convert(toc.bounds, to: fixture.window)
         let buttonFrame = appearanceButton.convert(appearanceButton.bounds, to: fixture.window)
-        #expect(buttonFrame.maxX <= tocFrame.minX)
+        // The book's own order: the chapter name, the table of contents, then Aa.
+        #expect(tocFrame.maxX <= buttonFrame.minX)
         #expect(buttonFrame.height >= 44)
         #expect(!tocFrame.intersects(buttonFrame))
 
@@ -341,8 +384,12 @@ private final class ReaderFixture {
         window.layoutIfNeeded()
     }
 
-    var chapterBody: UIView? {
-        view("fullScreen.book.body", in: reader.view)
+    var body: BookReaderBody? {
+        reader.installedBodyViewForTesting as? BookReaderBody
+    }
+
+    var pagedView: BookPagedView? {
+        view("fullScreen.book.pages", in: reader.view) as? BookPagedView
     }
 
     /// Taps the reader's Aa control and waits for its sheet to be on screen and

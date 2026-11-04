@@ -238,7 +238,7 @@ final class BookReaderHarnessUITests: XCTestCase {
         toc.tap()
         let sheet = app.descendants(matching: .any)["fullScreen.book.tocSheet"]
         XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "The table of contents sheet did not open")
-        if captureSheet { capture("epub-toc-sheet") }
+        if captureSheet { capture("epub-books-toc") }
         // A row is a list cell, and the chapter's own text can share its words,
         // so the search stays inside the sheet.
         let row = sheet.descendants(matching: .any)
@@ -247,6 +247,34 @@ final class BookReaderHarnessUITests: XCTestCase {
         XCTAssertTrue(row.waitUntilExists(timeout: 5), "No table of contents row for \(title)")
         row.tap()
         XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "The table of contents sheet did not close")
+    }
+
+    /// The two sheets the reading themes bring, over a page: the table of
+    /// contents, then the Aa sheet it sits beside.
+    func testAppearanceSheetAndTableOfContentsOverThePage() throws {
+        launchHarness()
+        openPagedBook()
+        XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open as pages")
+        showChrome()
+
+        let toc = app.buttons["fullScreen.book.toc"]
+        XCTAssertTrue(toc.waitUntilExists(timeout: 5), "The reader has no table of contents")
+        toc.tap()
+        let sheet = app.descendants(matching: .any)["fullScreen.book.tocSheet"]
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "The table of contents sheet did not open")
+        hold(for: 0.5)
+        capture("epub-books-toc")
+        app.buttons["fullScreen.book.tocSheet.done"].tap()
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "The table of contents sheet did not close")
+
+        let appearance = app.buttons["fullScreen.book.aa"]
+        XCTAssertTrue(appearance.waitUntilExists(timeout: 5), "The reader has no appearance control")
+        appearance.tap()
+        let sepia = app.buttons["Sepia"]
+        XCTAssertTrue(sepia.waitUntilExists(timeout: 5), "The Aa sheet did not open")
+        // The sheet's own detent settles, so the capture sees it at rest.
+        hold(for: 0.8)
+        capture("epub-books-aa")
     }
 
     private func chooseScrollingMode() {

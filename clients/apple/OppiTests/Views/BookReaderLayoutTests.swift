@@ -189,16 +189,19 @@ private final class BookReaderFixture {
     /// previous ones back.
     private let previousPreferences: FullScreenReaderPreferences
     /// This suite lays out the scrolling chapter body; the paged reader has its
-    /// own suite. The mode is a device preference, so it is put back too.
-    private let previousMode: BookReaderPageMode
+    /// own suite. The reading appearance is a device preference, so it is put
+    /// back too.
+    private let previousAppearance: BookReaderAppearance
 
     init(contentSizeCategory: UIContentSizeCategory = .large) throws {
         let store = FullScreenReaderPreferencesStore.shared
         previousPreferences = store.preferences(for: .markdown)
         store.resetPreferences(for: .markdown)
-        var modeStore = BookReaderPageModeStore()
-        previousMode = modeStore.mode
-        modeStore.mode = .scrolling
+        let appearanceStore = BookReaderAppearanceStore.shared
+        previousAppearance = appearanceStore.appearance
+        var scrolling = appearanceStore.appearance
+        scrolling.layout = .scrolling
+        appearanceStore.set(scrolling)
         let book = try EPUBBook.open(data: EPUBFixture.epub3(
             title: "A Quiet Book",
             chapterTitles: ["One", "Two", "Three"]
@@ -229,8 +232,7 @@ private final class BookReaderFixture {
         window.isHidden = true
         window.rootViewController = nil
         FullScreenReaderPreferencesStore.shared.setPreferences(previousPreferences, for: .markdown)
-        var modeStore = BookReaderPageModeStore()
-        modeStore.mode = previousMode
+        BookReaderAppearanceStore.shared.set(previousAppearance)
         EPUBReadingPositionStore().clear(positionKey)
     }
 

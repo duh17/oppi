@@ -39,6 +39,21 @@ protocol ReaderBody: UIView {
     /// it draws itself: the bar items and the floating pills. `true` means the
     /// body is reading mode and the reader's chrome should be out of the way.
     var onImmersiveChromeChange: ((Bool) -> Void)? { get set }
+
+    /// The paper a body draws its content on, when that paper is not the app's
+    /// reader background (a book's sepia page). The reader floats its own bar and
+    /// pills over the content, so it paints them in this paper and ink instead of
+    /// the app theme's — light glyphs on cream are not legible.
+    var contentSurface: ReaderContentSurface? { get }
+
+    /// The body's paper changed (the person picked another reading theme).
+    var onContentSurfaceChange: ((ReaderContentSurface?) -> Void)? { get set }
+}
+
+/// A page's own paper and the ink that holds on it.
+struct ReaderContentSurface: Equatable {
+    let paper: UIColor
+    let ink: UIColor
 }
 
 enum ReaderAnnotateAvailability: Equatable {
@@ -53,6 +68,13 @@ extension ReaderBody {
     var liveCopyText: String? { nil }
 
     var onImmersiveChromeChange: ((Bool) -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    var contentSurface: ReaderContentSurface? { nil }
+
+    var onContentSurfaceChange: ((ReaderContentSurface?) -> Void)? {
         get { nil }
         set {}
     }

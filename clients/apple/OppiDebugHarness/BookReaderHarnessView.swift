@@ -45,13 +45,12 @@ final class BookReaderHarnessViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = ThemeID.dark.palette.ui.bgDark
-        // Every launch starts a new book, read as pages: a mode another run
-        // chose is not this run's.
+        // Every launch starts a new book, read as pages in the default paper: a
+        // theme or a layout another run chose is not this run's.
         for path in [Self.quietBookPath, Self.longBookPath] {
             EPUBReadingPositionStore().clear(Self.positionKey(for: path))
         }
-        var modeStore = BookReaderPageModeStore()
-        modeStore.defaults.removeObject(forKey: BookReaderPageModeStore.preferenceKey)
+        BookReaderAppearanceStore.shared.reset()
 
         readyLabel.text = "harness.ready"
         readyLabel.accessibilityIdentifier = "harness.ready"

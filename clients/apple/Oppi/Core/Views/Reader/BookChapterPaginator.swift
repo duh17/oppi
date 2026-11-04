@@ -74,6 +74,7 @@ extension BookChapterPages {
 /// layout manager, with a container per page of the page's own size. The layout
 /// manager fills each container in turn, so a page range never splits a line and
 /// the ranges meet exactly.
+@MainActor
 enum BookChapterPaginator {
     /// A page count no real chapter reaches; a page size that fits no line would
     /// otherwise turn one page per character.

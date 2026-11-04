@@ -19,8 +19,7 @@ struct BookPaginationTests {
         // A chapter long enough to page: the default fixture fits one page.
         let book = try EPUBBook.open(data: EPUBFixture.epub3(paragraphsPerChapter: 40))
         let source = try book.source(forChapter: chapter)
-        let style = BookPageStyle.readerDefaults(palette: ThemeID.dark.palette)
-        let pages = BookChapterPaginator.layout(source: source, style: style, pageSize: size)
+        let pages = BookChapterPaginator.layout(source: source, style: Self.style(), pageSize: size)
         return (pages, source)
     }
 
@@ -60,12 +59,12 @@ struct BookPaginationTests {
     func rePaginationKeepsTheFirstVisibleCharacter() throws {
         let book = try EPUBBook.open(data: EPUBFixture.epub3(paragraphsPerChapter: 40))
         let source = try book.source(forChapter: 0)
-        let style = BookPageStyle.readerDefaults(palette: ThemeID.dark.palette)
+        let style = Self.style()
         let standard = BookChapterPaginator.layout(source: source, style: style, pageSize: Self.pageSize)
         let middle = standard.pageRanges.count / 2
         let character = standard.pageRanges[middle].location
 
-        let larger = BookPageStyle.readerDefaults(palette: ThemeID.dark.palette, textScale: 1.35)
+        let larger = Self.style(scale: 1.35)
         let repaginated = BookChapterPaginator.layout(source: source, style: larger, pageSize: Self.pageSize)
 
         let page = repaginated.pageIndex(containingCharacter: character)
@@ -163,7 +162,7 @@ struct BookPaginationTests {
     @Test("an empty chapter is one empty page")
     func emptyChapter() {
         let source = EPUBChapterSource(markdown: "", blocks: [], isRightToLeft: nil)
-        let style = BookPageStyle.readerDefaults(palette: ThemeID.dark.palette)
+        let style = Self.style()
         let pages = BookChapterPaginator.layout(source: source, style: style, pageSize: Self.pageSize)
         #expect(pages.pageCount == 1)
         #expect(pages.pageRanges == [NSRange(location: 0, length: 0)])
@@ -203,7 +202,7 @@ struct BookPaginationTests {
             EPUBChapterBlock(markdownStartLine: 15, kind: .thematicBreak),
         ]
         let source = EPUBChapterSource(markdown: markdown, blocks: blocks, isRightToLeft: false)
-        let style = BookPageStyle.readerDefaults(palette: ThemeID.dark.palette)
+        let style = Self.style()
         let pages = BookChapterPaginator.layout(source: source, style: style, pageSize: Self.pageSize)
         let text = pages.text.string
 
@@ -242,6 +241,17 @@ struct BookPaginationTests {
     }
 
     // MARK: - Helpers
+
+    /// The page's typography: the reading appearance's defaults on the app's dark
+    /// palette, which is what a book opens with.
+    private static func style(scale: CGFloat = 1) -> BookPageStyle {
+        BookPageStyle(
+            appearance: BookReaderAppearance(),
+            palette: ThemeID.dark.palette,
+            textScale: scale,
+            traits: nil
+        )
+    }
 
     /// The character offsets of every line start in `text` at `width`, from one
     /// container that holds the whole chapter.

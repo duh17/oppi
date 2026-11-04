@@ -416,6 +416,11 @@ final class FullScreenCodeViewController: UIViewController {
         bodyView.onImmersiveChromeChange = { [weak self] hidden in
             self?.setImmersiveChromeHidden(hidden, animated: true)
         }
+        // A body on its own paper paints the chrome over it, so a light page does
+        // not carry the app's dark chrome.
+        contentSurface = bodyView.contentSurface
+        bodyView.onContentSurfaceChange = { [weak self] surface in self?.setContentSurface(surface) }
+        applyContentSurface()
         // The new body draws its own chrome, so the reader's starts shown until
         // that body says otherwise.
         // Top pinned to view edge (not safe area) so content scrolls behind
@@ -522,6 +527,7 @@ final class FullScreenCodeViewController: UIViewController {
         // A control built after the body asked for the page to be alone is
         // still out of the way.
         setImmersiveChromeHidden(isImmersiveChromeHidden, animated: false)
+        applyContentSurface()
     }
 
     private func syncFloatingControlVisibility(on viewController: UIViewController) {
@@ -552,6 +558,9 @@ final class FullScreenCodeViewController: UIViewController {
             view.isUserInteractionEnabled = !next
             view.accessibilityElementsHidden = next
         }
+        // Controls are built and rebuilt as the reader changes; a body on its own
+        // paper inked them once already, so the newest ones are inked again.
+        applyContentSurface()
         guard changed, animated, !UIAccessibility.isReduceMotionEnabled else {
             for view in views { view.alpha = next ? 0 : 1 }
             return
@@ -559,6 +568,28 @@ final class FullScreenCodeViewController: UIViewController {
         UIView.animate(withDuration: 0.22) {
             for view in views { view.alpha = next ? 0 : 1 }
         }
+    }
+
+    /// The paper the installed body draws on, when it is not the app's reader
+    /// background; the reader paints the chrome it floats over it in that paper.
+    private var contentSurface: ReaderContentSurface?
+
+    private func setContentSurface(_ surface: ReaderContentSurface?) {
+        guard surface != contentSurface else { return }
+        contentSurface = surface
+        applyContentSurface()
+    }
+
+    private func applyContentSurface() {
+        let item = contentHostController?.navigationItem
+        ReaderChromeSurfacePainter.paint(
+            contentSurface,
+            palette: bodyThemeID.palette,
+            buttons: [floatingViewingOptionsButton, annotateButton, pickButton, commentButton, stashButton.button],
+            bar: contentHostController?.navigationController?.navigationBar,
+            items: (item?.leftBarButtonItems ?? []) + (item?.rightBarButtonItems ?? [])
+                + [item?.leftBarButtonItem, item?.rightBarButtonItem].compactMap { $0 }
+        )
     }
 
     /// What the reader draws over the content: the bar it installed and its
@@ -651,6 +682,9 @@ final class FullScreenCodeViewController: UIViewController {
 
         syncFloatingControlVisibility(on: viewController)
         viewController.navigationItem.rightBarButtonItems = rightItems
+        // New items carry the app palette's tints; a body on its own paper wants
+        // them in its ink.
+        applyContentSurface()
     }
 
     private func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {

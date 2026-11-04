@@ -171,6 +171,138 @@ struct BookPagedReaderTests {
         )
     }
 
+    /// The reading theme, the typeface and the text size all re-paginate from
+    /// the appearance store; the page the person is on keeps its first word.
+    @Test("a theme, typeface or size change re-paginates and keeps the page's first character")
+    func appearanceChangesKeepThePage() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        fixture.pagedView?.accessibilityScroll(.left)
+        fixture.pagedView?.accessibilityScroll(.left)
+        try await fixture.settle()
+        let anchor = try #require(fixture.firstVisibleCharacter())
+        let pagesBefore = try #require(fixture.pagedView?.pageCount)
+
+        var appearance = fixture.appearanceStore.appearance
+        appearance.theme = .sepia
+        fixture.appearanceStore.set(appearance)
+        try await fixture.settle()
+        try fixture.expectPageHolds(anchor, "after a theme change")
+
+        appearance.fontFamily = .georgia
+        appearance.sizeStep = 4
+        fixture.appearanceStore.set(appearance)
+        try await fixture.settle()
+        try fixture.expectPageHolds(anchor, "after a typeface and size change")
+        let pagesAfter = try #require(fixture.pagedView?.pageCount)
+        #expect(
+            pagesAfter > pagesBefore,
+            "larger type did not need more pages (\(pagesAfter) from \(pagesBefore))"
+        )
+        let font = try #require(
+            fixture.pagedView?.pages.text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        )
+        #expect(
+            font.familyName == UIFont(name: "Georgia", size: font.pointSize)?.familyName ?? font.familyName,
+            "the page is not set in Georgia: \(font.fontName)"
+        )
+    }
+
+    /// Switching Pages → Scrolling from the Aa sheet replaces the page with the
+    /// chapter's scroll view, and the words the person was on stay put.
+    @Test("the Aa sheet's Scrolling choice switches the body and keeps the position")
+    func layoutChoiceSwitchesTheBody() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        fixture.pagedView?.accessibilityScroll(.left)
+        fixture.pagedView?.accessibilityScroll(.left)
+        try await fixture.settle()
+        let anchor = try #require(fixture.firstVisibleCharacter())
+
+        fixture.pagedView?.onChromeToggle?()
+        try await fixture.settle()
+        let menu = try await fixture.presentAppearanceMenu()
+        let layout = try #require(
+            fixture.view("fullScreen.book.appearance.layout", in: menu.view) as? UISegmentedControl
+        )
+        layout.selectedSegmentIndex = BookReadingLayout.allCases.firstIndex(of: .scrolling) ?? 1
+        layout.sendActions(for: .valueChanged)
+        try await fixture.settle()
+
+        #expect(!fixture.body.isPaged, "the sheet's Scrolling choice did not leave the pages")
+        #expect(fixture.pagedView?.isShown(in: fixture.window) != true, "the page view is still on screen")
+        #expect(
+            fixture.view(identifier: "fullScreen.book.body")?.isShown(in: fixture.window) == true,
+            "the scrolling chapter did not appear"
+        )
+        #expect(
+            fixture.view(identifier: "fullScreen.book.previous")?.isShown(in: fixture.window) == true,
+            "the scrolling footer did not come back"
+        )
+        // The words the person was reading are on screen in the scrolling chapter.
+        let anchorWord = try #require(fixture.word(at: anchor), "the page has no word at \(anchor)")
+        #expect(
+            fixture.visibleChapterText().contains(anchorWord),
+            "the scrolling chapter opened elsewhere: \(anchorWord) is not on screen"
+        )
+
+        // And back: the sheet closes on the switch, so ask again.
+        let again = try await fixture.presentAppearanceMenu()
+        let pagesLayout = try #require(
+            fixture.view("fullScreen.book.appearance.layout", in: again.view) as? UISegmentedControl
+        )
+        pagesLayout.selectedSegmentIndex = BookReadingLayout.allCases.firstIndex(of: .pages) ?? 0
+        pagesLayout.sendActions(for: .valueChanged)
+        try await fixture.settle()
+        #expect(fixture.body.isPaged, "the sheet's Pages choice did not bring the pages back")
+        #expect(
+            fixture.pageText().contains(anchorWord),
+            "the page came back without \(anchorWord): \(fixture.pageText().prefix(120))"
+        )
+    }
+
+    /// With the chrome shown, the paper band behind the header covers the top of
+    /// the page: no line of the book shows through it.
+    @Test("the header band covers the page's text while the chrome is shown")
+    func headerBandCoversThePage() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        fixture.pagedView?.onChromeToggle?()
+        try await fixture.settle()
+
+        let band = try #require(
+            fixture.view(identifier: "fullScreen.book.headerBand"),
+            "the reader has no header band"
+        )
+        let bandFrame = band.convert(band.bounds, to: fixture.window)
+        #expect(bandFrame.height > 40, "the header band is \(bandFrame.height) tall")
+        let background = try #require(band.backgroundColor)
+        var alpha: CGFloat = 0
+        background.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+        #expect(alpha >= 0.99, "the header band is see-through (\(alpha))")
+
+        // The band is above the page in the body, and the page's text starts
+        // below it: nothing of the book is drawn under the paper.
+        let page = try #require(fixture.pagedView)
+        let pageFrame = page.convert(page.bounds, to: fixture.window)
+        #expect(bandFrame.intersects(pageFrame), "the header band is not over the page")
+        for text in timelineAllTextViews(in: page) where !text.text.isEmpty {
+            let frame = text.convert(text.bounds, to: fixture.window)
+            #expect(
+                !frame.intersects(bandFrame),
+                "page text \(frame) is under the header band \(bandFrame)"
+            )
+        }
+
+        // Hidden chrome takes the band with it.
+        fixture.pagedView?.onChromeToggle?()
+        try await fixture.settle()
+        #expect(band.isHidden || band.alpha < 0.01, "the header band stayed over the reading page")
+    }
+
     @Test("the table of contents sheet marks the chapter on screen")
     func tableOfContentsMarksTheChapter() async throws {
         let fixture = try PagedBookFixture(chapter: 2)
@@ -276,7 +408,7 @@ private final class PagedBookFixture {
     let reader: FullScreenCodeViewController
     let document: EPUBReaderDocument
     private let previousPreferences: FullScreenReaderPreferences
-    private let previousMode: BookReaderPageMode
+    private let previousAppearance: BookReaderAppearance
 
     static func document() throws -> EPUBReaderDocument {
         let book = try EPUBBook.open(data: EPUBFixture.epub3(paragraphsPerChapter: 40))
@@ -294,9 +426,9 @@ private final class PagedBookFixture {
         let store = FullScreenReaderPreferencesStore.shared
         previousPreferences = store.preferences(for: .markdown)
         store.resetPreferences(for: .markdown)
-        var modeStore = BookReaderPageModeStore()
-        previousMode = modeStore.mode
-        modeStore.mode = .pages
+        let appearanceStore = BookReaderAppearanceStore.shared
+        previousAppearance = appearanceStore.appearance
+        appearanceStore.set(BookReaderAppearance())
         if chapter > 0 {
             EPUBReadingPositionStore().save(
                 EPUBReadingPosition(
@@ -325,8 +457,7 @@ private final class PagedBookFixture {
         window.isHidden = true
         window.rootViewController = nil
         FullScreenReaderPreferencesStore.shared.setPreferences(previousPreferences, for: .markdown)
-        var modeStore = BookReaderPageModeStore()
-        modeStore.mode = previousMode
+        BookReaderAppearanceStore.shared.set(previousAppearance)
     }
 
     /// Runs the layout passes a real reader runs: the body's own layout, the
@@ -378,6 +509,89 @@ private final class PagedBookFixture {
         preferences.textScale = FullScreenReaderPreferences.clampedTextScale(scale)
         installedBody?.applyReaderPreferences(preferences)
         window.layoutIfNeeded()
+    }
+
+    let appearanceStore = BookReaderAppearanceStore.shared
+
+    /// The first character of the page on screen.
+    func firstVisibleCharacter() -> Int? {
+        guard let paged = pagedView,
+              paged.pages.pageRanges.indices.contains(paged.pageIndex) else { return nil }
+        return paged.pages.pageRanges[paged.pageIndex].location
+    }
+
+    /// The words around `character` on the page: what the person can read there.
+    func word(at character: Int) -> String? {
+        guard let pages = pagedView?.pages else { return nil }
+        let text = pages.text.string as NSString
+        guard character >= 0, character < text.length else { return nil }
+        let rest = text.substring(from: character)
+        let words = rest.split(whereSeparator: \.isWhitespace)
+        guard let first = words.first, first.count >= 4 else { return nil }
+        return String(first)
+    }
+
+    /// The chapter's text as the scrolling body is showing it: every text view
+    /// that sits inside the content area.
+    func visibleChapterText() -> String {
+        guard let chapterBody = view(identifier: "fullScreen.book.body") else { return "" }
+        let area = chapterBody.convert(chapterBody.bounds, to: window)
+        return timelineAllTextViews(in: chapterBody)
+            .filter { text in
+                let frame = text.convert(text.bounds, to: window)
+                return !text.text.isEmpty && frame.minY >= area.minY - 1 && frame.maxY <= area.maxY + 1
+            }
+            .map(\.text)
+            .joined(separator: "\n")
+    }
+
+    /// The text of the page on screen.
+    func pageText() -> String {
+        guard let paged = pagedView else { return "" }
+        return paged.text(forPage: paged.pageIndex).string
+    }
+
+    /// The page on screen holds `character`.
+    func expectPageHolds(_ character: Int, _ what: String) throws {
+        let paged = try #require(pagedView)
+        let page = paged.pageIndex
+        let range = try #require(
+            paged.pages.pageRanges.indices.contains(page) ? paged.pages.pageRanges[page] : nil
+        )
+        #expect(
+            range.location <= character && character < NSMaxRange(range),
+            "the first visible character \(character) is not on page \(page) (\(range)) \(what)"
+        )
+    }
+
+    /// Taps the Aa control and waits for its sheet to be on screen and at rest.
+    func presentAppearanceMenu() async throws -> BookReaderAppearanceMenuViewController {
+        let button = try #require(view(identifier: "fullScreen.book.aa") as? UIButton)
+        button.sendActions(for: .touchUpInside)
+        for _ in 0..<40 {
+            if let menu = reader.presentedViewController as? BookReaderAppearanceMenuViewController,
+               menu.view.window != nil,
+               menu.view.bounds.height > 0 {
+                try await Task.sleep(for: .milliseconds(700))
+                window.layoutIfNeeded()
+                return menu
+            }
+            try await Task.sleep(for: .milliseconds(25))
+            window.layoutIfNeeded()
+        }
+        throw AppearanceMenuError.neverPresented(
+            reader.presentedViewController.map { String(describing: type(of: $0)) }
+        )
+    }
+
+    enum AppearanceMenuError: Error {
+        case neverPresented(String?)
+    }
+
+    /// A view by identifier inside one view tree (a presented sheet has its own
+    /// window, so `view(identifier:)` cannot see into it).
+    func view(_ identifier: String, in root: UIView) -> UIView? {
+        timelineAllViews(in: root).first { $0.accessibilityIdentifier == identifier }
     }
 
     /// A view by identifier, wherever the reader put it: the body's own views

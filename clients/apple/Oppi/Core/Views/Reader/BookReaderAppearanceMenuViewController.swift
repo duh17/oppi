@@ -372,6 +372,10 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
     @objc private func layoutChanged() {
         appearance.layout = BookReadingLayout.allCases[layoutControl.selectedSegmentIndex]
         commit()
+        // The choice replaces the surface under the sheet — pages become one
+        // column — so the sheet steps aside and shows what it did. Every other
+        // control stays open, because it changes the page in place.
+        dismiss(animated: true)
     }
 
     @objc private func justifyChanged() {
