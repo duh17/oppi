@@ -36,6 +36,7 @@ import { dirname, isAbsolute, join, resolve, basename } from "node:path";
 
 import { isWorkspaceEditorTextPath, MAX_WORKSPACE_FILE_EDIT_BYTES } from "./file-serving-policy.js";
 import { isPathWithinRoot } from "./git-utils.js";
+import { KeyedMutex } from "./keyed-mutex.js";
 import type { Workspace, WorkspaceFileEditWriteResponse } from "./types.js";
 import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 
@@ -137,57 +138,7 @@ export type FileEditPrecondition =
   /** `If-None-Match: *`: the file must not exist; this write creates it. */
   | { kind: "create" };
 
-class Mutex {
-  private queue: Array<() => void> = [];
-  private locked = false;
-
-  async acquire(): Promise<() => void> {
-    if (!this.locked) {
-      this.locked = true;
-      return () => this.release();
-    }
-    return new Promise((resolve) => {
-      this.queue.push(() => {
-        resolve(() => this.release());
-      });
-    });
-  }
-
-  async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const release = await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
-  }
-
-  private release(): void {
-    const next = this.queue.shift();
-    if (next) {
-      next();
-      return;
-    }
-    this.locked = false;
-  }
-}
-
-const editorWriteLocks = new Map<string, { mutex: Mutex; refs: number }>();
-
-async function withEditorWriteLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  let entry = editorWriteLocks.get(key);
-  if (!entry) {
-    entry = { mutex: new Mutex(), refs: 0 };
-    editorWriteLocks.set(key, entry);
-  }
-  entry.refs += 1;
-  try {
-    return await entry.mutex.withLock(fn);
-  } finally {
-    entry.refs -= 1;
-    if (entry.refs === 0) editorWriteLocks.delete(key);
-  }
-}
+const editorWriteLocks = new KeyedMutex();
 
 function workspaceFileEtag(bytes: Buffer): string {
   return `"sha256-${createHash("sha256").update(bytes).digest("hex")}"`;
@@ -934,7 +885,7 @@ export async function putEditedFile(
       return { kind: "error", status: 404, message: "File not found" };
     }
     const creatable = first;
-    return withEditorWriteLock(creatable.createPath, async () => {
+    return editorWriteLocks.withLock(creatable.createPath, async () => {
       const recheck = await inspectFileForEdit(input);
       if (recheck.kind !== "creatable" || recheck.createPath !== creatable.createPath) {
         // The file appeared (412: this create can no longer apply) or its
@@ -959,7 +910,7 @@ export async function putEditedFile(
 
   // The canonical file is the lock: a Skill inside a workspace checkout is
   // one file whichever route edits it.
-  return withEditorWriteLock(first.realPath, async () => {
+  return editorWriteLocks.withLock(first.realPath, async () => {
     const inspection = await inspectFileForEdit(input);
     const error = inspectionError(inspection);
     if (error) return error;
