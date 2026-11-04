@@ -172,11 +172,13 @@ final class GuidedControlComposerModel {
         configuration.targetPath = path
     }
 
+    /// What the bar says it takes. With no client the page cannot start a session;
+    /// a rebuild brings the client back on its own, so the bar says it is
+    /// reconnecting instead of asking the person to connect.
     var placeholder: String {
-        guard connection.apiClient != nil else {
-            return "Connect to use guided \(configuration.domain.title.lowercased()) setup"
-        }
-        return configuration.placeholder
+        guard connection.apiClient == nil else { return configuration.placeholder }
+        if connection.availability == .reconnecting { return ConnectionAvailability.reconnecting.unavailableTitle }
+        return "Connect to use guided \(configuration.domain.title.lowercased()) setup"
     }
 
     // MARK: - Choices

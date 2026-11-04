@@ -144,6 +144,12 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     /// The visible server: it owns the providers and the usage.
     override func loadSubject() -> AnyHashable? { AnyHashable(server?.id) }
 
+    /// The visible server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? {
+        server.flatMap { coordinator.connection(for: $0.id) }
+    }
+
     /// Host-local state belongs to one server: a switch starts that server's
     /// rows from nothing and loads them again. A live sign-in stays: it is bound
     /// to its own server's client and keeps polling.
@@ -198,7 +204,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     override func load() async throws {
         guard let serverId = server?.id else { return }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
-            throw LoadFailure(String(localized: "Server is offline"))
+            throw noConnectionFailure()
         }
         async let fetchedQuotas = try? await client.fetchProviderQuotas()
         let loaded = try await client.listProviderAuthStatus()

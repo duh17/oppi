@@ -101,10 +101,12 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
     /// another device changes the list.
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+
     override func load() async throws {
-        guard let api = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let api = try requireAPIClient()
         let themes = try await api.listThemes()
         guard !Task.isCancelled else { return }
         remoteThemes = themes

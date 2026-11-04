@@ -125,13 +125,15 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
     /// Like the SwiftUI `.task` it replaces, a load each time it shows.
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+
     /// The active server's schedules: the base runs it on every appearance, on
     /// pull to refresh, after a Retry, and when the server or its client
     /// changes. Throws the reason the list's state row shows.
     override func load() async throws {
-        guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let apiClient = try requireAPIClient()
         let loaded = try await apiClient.listAgentSchedules()
         // A load the page cancelled (it left, or another one replaced it) never
         // replaces what this one shows.

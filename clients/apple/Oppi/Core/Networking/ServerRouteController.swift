@@ -159,6 +159,13 @@ final class ServerRouteController {
         transportFailureDisposition == .retryable && retryableFailureIsTransient
     }
 
+    /// A setup pass is outstanding now: the attempt it started has neither
+    /// committed nor given up, so a client can appear with no boundary and no
+    /// timer doing more (the first connect after launch, a rebuild).
+    var isConfiguringTransport: Bool {
+        !activeTransportConfigurationGenerations.isEmpty
+    }
+
     /// Promotion triggers are only Bonjour arrival (`setDiscoveredLANEndpoint`)
     /// and foreground (`retryLANAtForegroundBoundary`); both are gated by
     /// `hasActiveWork`. There is no idle-edge resume: work that ends leaves the

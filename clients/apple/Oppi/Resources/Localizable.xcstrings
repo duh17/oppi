@@ -2506,6 +2506,16 @@
     "Reconnect to a current server before creating a new exact selection." : {
 
     },
+    "Reconnecting to the server…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在重新连接服务器…"
+          }
+        }
+      }
+    },
     "Reconnecting…" : {
       "extractionState" : "stale",
       "localizations" : {

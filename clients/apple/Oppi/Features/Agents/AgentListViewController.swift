@@ -91,6 +91,10 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// Agents of another server never stay up while this server loads.
     override func subjectDidChange() { agents = [] }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+
     /// The sidebar toggle at the split detail root.
     private func sidebarItems() -> [UIBarButtonItem] {
         guard showsSidebarToggle else { return [] }
@@ -296,9 +300,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// on pull to refresh, after a Retry, and when the server or its client
     /// changes. Throws the reason the list's state row shows.
     override func load() async throws {
-        guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let apiClient = try requireAPIClient()
         let loaded = try await apiClient.listAgents()
         // A load the page cancelled (it left, or another subject's load replaced
         // it) never replaces what this one shows.

@@ -195,6 +195,10 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
 
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { connection }
+
     /// The summary and the actions carry no heading.
     override func showsHeader(for section: Section) -> Bool {
         section == .instructions || section == .runWith || section == .history
@@ -569,9 +573,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     /// The schedule, its runs, and the Agent names: the base runs it on every
     /// appearance, on pull to refresh, and after a Retry.
     override func load() async throws {
-        guard let apiClient = connection.apiClient else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let apiClient = try requireAPIClient()
         async let fetchedSchedule = apiClient.getAgentSchedule(scheduleId)
         async let fetchedRuns = apiClient.listAgentScheduleRuns(scheduleId: scheduleId, limit: 20)
         async let fetchedAgents = apiClient.listAgents(includeArchived: true)

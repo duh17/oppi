@@ -427,6 +427,23 @@ final class ServerConnection {
         credentials != nil && apiClient != nil && wsClient != nil && endpointSelection != nil
     }
 
+    /// What this connection is doing while it has no API client: whether a client
+    /// is on its way by itself, which is what a failed page may promise.
+    var availability: ConnectionAvailability {
+        // A terminal answer stops every automatic fallback: only configuring the
+        // route again brings its client back.
+        if route.hasFailedClosed { return .offline }
+        // An attempt really is outstanding or scheduled: a rebuild between its
+        // teardown and its commit, a setup pass running now, or a failure the
+        // timer retries. A pass that failed otherwise waits for a foreground or
+        // path boundary, and its page's own Retry cannot start one either, so the
+        // page says the server is offline instead of promising an attempt.
+        let attemptIsComing = route.isTransportDemoting
+            || route.isConfiguringTransport
+            || route.canRetryInitialTransportOnTimer
+        return attemptIsComing ? .reconnecting : .offline
+    }
+
     var isFocusedSessionStreamRecovering: Bool {
         focusedStreamBinder.isRecovering(focusedSessionId: focusedSessionId)
     }

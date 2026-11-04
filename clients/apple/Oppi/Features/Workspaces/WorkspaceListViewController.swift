@@ -90,6 +90,10 @@ final class WorkspaceListViewController: ListScreenController<
     /// add, rename, or delete one.
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The visible server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { connection }
+
     /// An ask — a pull, a Retry — reads the catalog even when the connection
     /// synced it moments ago; the page appearing takes the connection's own
     /// two-minute window.
@@ -99,7 +103,7 @@ final class WorkspaceListViewController: ListScreenController<
         let force = loadTrigger == .ask
         guard await root.coordinator.apiClientReady(for: server.id) != nil,
               let connection else {
-            throw LoadFailure(String(localized: "Server is offline"))
+            throw noConnectionFailure()
         }
         await connection.refreshWorkspaceCatalog(force: force)
         guard !Task.isCancelled else { return }

@@ -52,6 +52,11 @@ struct ListStateRow {
 struct LoadFailureReport: Equatable {
     var title: String
     var reason: String?
+    /// The load could not run because the page's connection has no API client.
+    /// The base keeps these words in step with the connection and reloads the
+    /// page by itself once a client is installed again; see
+    /// `ListScreenController.loadConnection()`.
+    var waitsForConnection = false
 }
 
 /// The cell a page draws its rows in. `.card` is the kit's theme-card row
@@ -90,13 +95,25 @@ enum LoadPolicy {
     case onceUntilSubjectChanges
 }
 
-/// Why a page's load could not run, in the words its failure row shows ("Server
+/// Why a page's load could not run, in the words its failure row shows ("Server is
 /// offline"). A page throws one from `load()` when its server is not there yet;
 /// anything else it throws is the request's own error.
 struct LoadFailure: LocalizedError, Equatable {
     var message: String
+    /// The page has no API client, not a request that failed: the base reloads it
+    /// when the connection has one again.
+    var waitsForConnection = false
 
     init(_ message: String) { self.message = message }
+
+    /// The page's connection has no client: a rebuild or a reconnect is under way,
+    /// or it has no route at all. `ListScreenController.requireAPIClient()` throws
+    /// this, and `ListScreenController` reloads the page when a client arrives.
+    static func noConnection(_ availability: ConnectionAvailability) -> Self {
+        var failure = Self(availability.unavailableTitle)
+        failure.waitsForConnection = true
+        return failure
+    }
 
     var errorDescription: String? { message }
 }
@@ -171,6 +188,13 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 /// - `trailingSwipeActions(for:)`, `decorate(header:section:)`,
 ///   `decorate(footer:section:)`: swipe actions, and an icon or tone on a
 ///   section heading.
+/// - `loadConnection()`: the connection the page loads through. Its load takes
+///   the client with `requireAPIClient()`, which throws `noConnectionFailure()`
+///   when the connection has none: a route rebuild says it is reconnecting, a
+///   connection that gave up says the server is offline, and either way the base
+///   reloads the page by itself — once, on the pass that can act on a client
+///   arriving — so a page caught mid-rebuild heals without a pull or a Retry. A
+///   page covered while that happens loads when it appears again instead.
 ///
 /// A page keeps its own data, except for the settings it declares in
 /// `SettingsCatalog`: those are read and written through its `settings` store
@@ -228,6 +252,14 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private(set) var loadFailure: LoadFailureReport? {
         didSet { if loadFailure != oldValue { setNeedsUpdateProperties() } }
     }
+    /// The connection's readiness as the last pass read it: a page reloads on the
+    /// pass that sees a client arrive, not on every one after it.
+    private var hadLoadAPIClient: Bool?
+    /// A client arrived on a pass that could not reload the page (a load was in
+    /// flight, the page was covered). Held until a pass acts on it, so a pass that
+    /// skips cannot spend the recovery: a load in flight is the page's own answer
+    /// to it, and a covered page answers it when it appears.
+    private var pendingConnectionRecovery = false
     /// The list's pull to refresh, for a page that loads. Only the base touches
     /// it: it starts the page's load and ends when that load settles.
     private lazy var pullToRefreshControl = UIRefreshControl()
@@ -331,6 +363,28 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Compared on every pass; a change cancels the running load, runs
     /// `subjectDidChange()`, and starts one for the new subject.
     func loadSubject() -> AnyHashable? { nil }
+
+    /// The connection the page's load reads through, when it loads from a server:
+    /// read on every pass, so a connection that installs an API client reloads a
+    /// page that failed for lack of one, and `requireAPIClient()` guards on it.
+    /// nil for a page that loads nothing from a server (or that has no server at
+    /// all).
+    func loadConnection() -> ServerConnection? { nil }
+
+    /// The page's API client, or the failure its row shows while the connection
+    /// has none. A page that throws `noConnectionFailure()` is reloaded by the
+    /// base when the connection installs a client again; a request's own error is
+    /// the page's to retry.
+    func requireAPIClient() throws -> APIClient {
+        guard let client = loadConnection()?.apiClient else { throw noConnectionFailure() }
+        return client
+    }
+
+    /// Why a load cannot run now: a rebuild or a reconnect says it is reconnecting,
+    /// a connection that gave up (or has no server at all) says it is offline.
+    func noConnectionFailure() -> LoadFailure {
+        .noConnection(loadConnection()?.availability ?? .offline)
+    }
 
     /// The page's subject changed: drop what the old one showed.
     func subjectDidChange() {}
@@ -489,7 +543,9 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Why `error` failed the page's load: the page's own words when it threw a
     /// `LoadFailure`, else the request's reason under the page's `failureTitle()`.
     private func failureReport(for error: any Error) -> LoadFailureReport {
-        if let words = error as? LoadFailure { return LoadFailureReport(title: words.message, reason: nil) }
+        if let words = error as? LoadFailure {
+            return LoadFailureReport(title: words.message, reason: nil, waitsForConnection: words.waitsForConnection)
+        }
         return LoadFailureReport(
             title: failureTitle() ?? String(localized: "Couldn't Load"),
             reason: error.localizedDescription
@@ -701,9 +757,40 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// drew an Agent's fallback symbol redraws once its Genmoji is decoded.
     @objc private func redrawRows() { setNeedsUpdateProperties() }
 
+    /// Whether the page's last load failed because it had no API client, and why
+    /// it has none: the pass keeps the row's words in step with the connection and
+    /// reloads the page once the client is back.
+    private func updateConnectionRecovery() {
+        let connection = loadConnection()
+        let hasClient = connection?.apiClient != nil
+        // A page that failed for lack of a client says what the connection is
+        // doing now: an attempt on its way is reconnecting, nothing pending is
+        // offline.
+        if !hasClient, let failure = loadFailure, failure.waitsForConnection,
+           let words = connection?.availability.unavailableTitle, failure.title != words {
+            loadFailure = LoadFailureReport(title: words, waitsForConnection: true)
+        }
+        // A client arriving is the recovery, whatever this pass can do with it.
+        if hasClient, hadLoadAPIClient == false { pendingConnectionRecovery = true }
+        hadLoadAPIClient = hasClient
+        guard pendingConnectionRecovery else { return }
+        // Nothing left to recover: the page loaded, or its failure moved on.
+        guard hasClient, loadFailure?.waitsForConnection == true else {
+            pendingConnectionRecovery = false
+            return
+        }
+        // Only the pass that reloads spends it: a load already running is the
+        // page's answer to the client arriving, and a covered page loads when it
+        // appears again.
+        guard isShowing, !isLoading else { return }
+        pendingConnectionRecovery = false
+        setNeedsLoad()
+    }
+
     override func updateProperties() {
         super.updateProperties()
         updateLoadSubject()
+        updateConnectionRecovery()
         pass &+= 1
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {

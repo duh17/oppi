@@ -74,6 +74,10 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         ])
     }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
@@ -300,9 +304,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     /// The Pi configuration: the base loads it once when the page appears (see
     /// `loadPolicy`), and again on pull to refresh or after a Retry.
     override func load() async throws {
-        guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let apiClient = try requireAPIClient()
         async let fetchedPrompt = apiClient.getPiSystemPrompt()
         async let fetchedTools = apiClient.getPiDefaultTools()
         // Only the tool catalogs: no plugin rows, so the page also loads from an older server.

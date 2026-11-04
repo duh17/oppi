@@ -90,3 +90,82 @@ struct GuidedControlComposerModelTests {
         #expect(!prompt.contains("Canonical workspace"))
     }
 }
+
+@Suite("Guided control composer connection words", .serialized)
+@MainActor
+struct GuidedControlComposerConnectionWordsTests {    private func placeholder(connection: ServerConnection) -> String {
+        GuidedControlComposerModel(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .themes,
+                intent: .create,
+                placeholder: "Describe a new theme…"
+            ),
+            connection: { connection },
+            navigation: AppNavigation()
+        ).placeholder
+    }
+
+    @Test func aRebuildingRouteSaysItIsReconnectingNotConnectToUseSetup() async {
+        let connection = ServerConnection()
+        _ = await configureTestConnection(connection)
+        // A rebuild holds between its teardown and its commit: the client is gone
+        // while a replacement is on its way.
+        let gate = RebuildGate()
+        let rebuild = Task { [credentials = makeTestCredentials()] in
+            await connection.route.reconfigureForExplicitRetry(
+                credentials: credentials,
+                apiClientFactory: { _, _ in makeTestURLProtocolClient(host: credentials.host) },
+                serverInfoBootstrap: { _, _ in
+                    await gate.wait()
+                    return makeTestServerInfo()
+                }
+            )
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            connection.apiClient == nil && connection.route.isTransportDemoting
+        })
+        #expect(connection.availability == .reconnecting)
+        #expect(placeholder(connection: connection) == "Reconnecting to the server…")
+        gate.open()
+        _ = await rebuild.value
+    }
+
+    @Test func aRebuildThatFailedWithNothingPendingAsksThePersonToConnect() async {
+        let connection = ServerConnection()
+        _ = await configureTestConnection(connection)
+        // A rebuild that ends on an answer waiting does not clear: nothing retries
+        // it but the next foreground or path boundary, so the bar promises no
+        // attempt of its own.
+        let credentials = makeTestCredentials()
+        _ = await connection.route.configureForUse(
+            credentials: credentials,
+            apiClientFactory: { _, _ in makeTestURLProtocolClient(host: credentials.host) },
+            serverInfoBootstrap: { _, _ in throw APIError.server(status: 401, message: "refused") }
+        )
+        await connection.route.reevaluateNetworkEndpointAtBoundary()
+        #expect(connection.apiClient == nil)
+        #expect(connection.availability == .offline)
+        #expect(placeholder(connection: connection) == "Connect to use guided theme setup")
+    }
+
+    @Test func aConnectionWithNoServerAsksThePersonToConnect() {
+        let connection = ServerConnection()
+        #expect(connection.availability == .offline)
+        #expect(placeholder(connection: connection) == "Connect to use guided theme setup")
+    }
+}
+
+/// A rebuild's bootstrap, held open until the test lets it answer.
+@MainActor
+private final class RebuildGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        continuation?.resume()
+        continuation = nil
+    }
+}

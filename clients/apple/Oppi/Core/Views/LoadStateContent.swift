@@ -56,6 +56,17 @@ extension LoadState {
     }
 }
 
+extension ConnectionAvailability {
+    /// The words a page shows while its connection has no client: an attempt on
+    /// its way is reconnecting, anything else is a server that is not there.
+    var unavailableTitle: String {
+        switch self {
+        case .reconnecting: String(localized: "Reconnecting to the server…")
+        case .offline: String(localized: "Server is offline")
+        }
+    }
+}
+
 /// What the Retry button does: one `@MainActor` closure the state's view runs
 /// when the person presses it.
 struct RetryAction {

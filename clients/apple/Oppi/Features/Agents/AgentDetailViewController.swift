@@ -225,6 +225,10 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The active server's connection: the base reloads the page by itself when it
+    /// installs an API client again after a rebuild.
+    override func loadConnection() -> ServerConnection? { connection }
+
     /// The definition, resources, and run carry headings; the state row, which
     /// has none of its own, gets no empty header above it.
     override func showsHeader(for section: Section) -> Bool { section != .status }
@@ -657,9 +661,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     /// on pull to refresh, and after a Retry. A failed catalog load leaves the
     /// store's own sync state to its rows.
     override func load() async throws {
-        guard let apiClient = connection.apiClient, let serverId = connection.currentServerId else {
-            throw LoadFailure(String(localized: "Server is offline"))
-        }
+        let apiClient = try requireAPIClient()
+        guard let serverId = connection.currentServerId else { throw noConnectionFailure() }
         agent = try await apiClient.getAgent(agentId)
         guard !Task.isCancelled else { return }
         // A page that just loaded says nothing of a change that failed before.
