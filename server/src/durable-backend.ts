@@ -282,7 +282,6 @@ export class DurableBackend implements AgentBackend {
   readonly cancelsExtensionUIOnAbort = true;
   readonly isQueueReconciliationRequired = false;
   readonly persistsWithoutSessionFile = true;
-  readonly showCacheMissNotices = false;
   readonly retainsIdleQueueUntilAdmission = true;
   private queueVersion = 0;
   private queueFingerprint = "";
@@ -308,6 +307,8 @@ export class DurableBackend implements AgentBackend {
     private readonly dataDir: string,
     /** Reads a presented Skill file: the VM for a sandbox, the host otherwise. */
     private readonly readSkillFile: (path: string) => Promise<string>,
+    /** The session's effective Pi settings, the same manager its Pi Tools setting came from. */
+    private readonly piSettings: SettingsManager,
   ) {
     this.registry = new ModelRegistry(models);
   }
@@ -329,10 +330,12 @@ export class DurableBackend implements AgentBackend {
     const projectTrusted =
       sandbox || (!control && (await resolveProjectTrust(hostCwd, agentDir, options)));
     // The Pi Tools setting, as a classic session reads it. A sandbox reads only the global one:
-    // the project's `.pi/settings.json` is in the guest-writable workspace.
-    const piTools = piDefaultTools(
-      SettingsManager.create(hostCwd, agentDir, { projectTrusted: projectTrusted && !sandbox }),
-    );
+    // the project's `.pi/settings.json` is in the guest-writable workspace. The attach holds this
+    // manager for its other settings too, which are read live where they apply.
+    const piSettings = SettingsManager.create(hostCwd, agentDir, {
+      projectTrusted: projectTrusted && !sandbox,
+    });
+    const piTools = piDefaultTools(piSettings);
     const launched = control
       ? undefined
       : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox, piTools });
@@ -413,6 +416,7 @@ export class DurableBackend implements AgentBackend {
         cwd,
         mcp,
         piTools,
+        piSettings,
         launched,
         sandboxEnv,
         resources,
@@ -477,6 +481,8 @@ export class DurableBackend implements AgentBackend {
       cwd: string;
       mcp: DurableMcp | undefined;
       piTools: ReadonlySet<string>;
+      /** The session's effective Pi settings, as its Pi Tools setting is read. */
+      piSettings: SettingsManager;
       launched: LaunchedAs | undefined;
       sandboxEnv: GondolinExecutionEnv | undefined;
       resources: PresentedResources;
@@ -677,6 +683,7 @@ export class DurableBackend implements AgentBackend {
         target.loadResources,
         options.dataDir,
         readInView,
+        target.piSettings,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       // Last, so nothing after it can fail with the toggle registered. The attach's `{ add }`
@@ -917,6 +924,10 @@ export class DurableBackend implements AgentBackend {
   }
   get cacheMissModelPriceSource(): ModelRegistry {
     return this.registry;
+  }
+  /** Read per event, as an SDK session reads its runtime's settings, not pinned at attach. */
+  get showCacheMissNotices(): boolean {
+    return this.piSettings.getShowCacheMissNotices();
   }
 
   private assertOpen(): void {
@@ -1331,6 +1342,9 @@ export class DurableBackend implements AgentBackend {
   async reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }> {
     this.assertOpen();
     reloadRuntimeConfig?.();
+    // As an SDK session's `/reload` rebuilds its runtime: Pi's settings are read again, so a
+    // change to one (the cache miss notice) applies to this session without restarting it.
+    await this.piSettings.reload();
     const resources = await this.loadResources();
     this.assertOpen();
     await syncProjectContext(this.conversation, resources);

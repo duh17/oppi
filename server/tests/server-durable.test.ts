@@ -1596,6 +1596,142 @@ describe("server durable managed runtime", () => {
     observed.unsubscribe();
   });
 
+  it.each([true, false])(
+    "shows Pi's cache miss notice on a durable answer only when the setting is on (on=%s)",
+    async (noticesShown) => {
+      const f = await fixture([], { settings: { showCacheMissNotices: noticesShown } });
+      const opening = vi.spyOn(SessionHost.prototype, "open");
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      const { harness } = await opening.mock.results[0]!.value;
+      const conversation = (await harness.conversation(
+        f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+        context,
+      ))!;
+      // An answer billed from a 100k-token cache read, then one that re-billed 100k tokens 7m later.
+      const appendAnswer = async (
+        text: string,
+        timestamp: number,
+        usage: { input: number; cacheRead: number; costInput: number },
+      ) => {
+        const ended = observed.next(
+          (message) =>
+            message.type === "message_end" &&
+            message.role === "assistant" &&
+            message.content === text,
+        );
+        await conversation.commit(async (tx) => {
+          await tx.appendEntry(AssistantEntry, conversation.id, {
+            model: [
+              {
+                ...fauxAssistantMessage(text),
+                timestamp,
+                usage: {
+                  input: usage.input,
+                  output: 0,
+                  cacheRead: usage.cacheRead,
+                  cacheWrite: 0,
+                  totalTokens: usage.input + usage.cacheRead,
+                  cost: {
+                    input: usage.costInput,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: usage.costInput,
+                  },
+                },
+              },
+            ],
+          });
+        }, context);
+        await ended;
+      };
+      const cacheMisses = () =>
+        observed.messages.filter((message) => message.type === "cache_miss");
+
+      await appendAnswer("first", 1_000, { input: 0, cacheRead: 100_000, costInput: 0 });
+      expect(cacheMisses()).toEqual([]);
+      await appendAnswer("second", 1_000 + 7 * 60_000, {
+        input: 100_000,
+        cacheRead: 0,
+        costInput: 1,
+      });
+      expect(cacheMisses()).toEqual(
+        noticesShown
+          ? [
+              expect.objectContaining({
+                message: "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)",
+              }),
+            ]
+          : [],
+      );
+      observed.unsubscribe();
+    },
+    20_000,
+  );
+
+  it("reports no cache miss for the history a durable re-attach replays", async () => {
+    const f = await fixture([], { settings: { showCacheMissNotices: true } });
+    const opening = vi.spyOn(SessionHost.prototype, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    // Two answered turns an idle gap apart, as a session that went idle and came back leaves them.
+    await conversation.commit(async (tx) => {
+      for (const [text, timestamp, input, cacheRead] of [
+        ["old", 1_000, 0, 100_000],
+        ["older idle", 1_000 + 7 * 60_000, 100_000, 0],
+      ] as const)
+        await tx.appendEntry(AssistantEntry, conversation.id, {
+          model: [
+            {
+              ...fauxAssistantMessage(text),
+              timestamp,
+              usage: {
+                input,
+                output: 0,
+                cacheRead,
+                cacheWrite: 0,
+                totalTokens: input + cacheRead,
+                cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+              },
+            },
+          ],
+        });
+    }, context);
+    await f.manager.stopSession(f.session.id);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    // The first answer after the attach only starts tracking: nothing to compare it to yet.
+    const ended = observed.next(
+      (message) => message.type === "message_end" && message.content === "after attach",
+    );
+    await conversation.commit(async (tx) => {
+      await tx.appendEntry(AssistantEntry, conversation.id, {
+        model: [
+          {
+            ...fauxAssistantMessage("after attach"),
+            timestamp: 1_000 + 20 * 60_000,
+            usage: {
+              input: 100_000,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 100_000,
+              cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+            },
+          },
+        ],
+      });
+    }, context);
+    await ended;
+    expect(observed.messages.filter((message) => message.type === "cache_miss")).toEqual([]);
+    observed.unsubscribe();
+  });
+
   it("suppresses recoverable overflow errors and projects compact-and-retry", async () => {
     const flush = vi.spyOn(
       SessionMessageQueueCoordinator.prototype,

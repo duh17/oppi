@@ -180,6 +180,11 @@
       "owner": "server CLI",
       "reason": "The help table is also the flag allow-list, so one file stays the source of truth; the plan keeps it whole."
     },
+    "server/src/durable-backend.ts": {
+      "budget": 1600,
+      "owner": "server durable session host",
+      "reason": "Launch resolution, the classic-event facade, and the MCP/UI attachment of one backend; the cache miss notice reads the attach's Pi settings beside the Pi Tools setting in the same file."
+    },
     "server/src/durable-harness.ts": {
       "budget": 2100,
       "owner": "SV2 durable session host and extension registry",
