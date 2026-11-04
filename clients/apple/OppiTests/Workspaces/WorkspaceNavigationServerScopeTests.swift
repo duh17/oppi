@@ -10,13 +10,15 @@ struct WorkspaceNavigationServerScopeTests {
         SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
         KeychainService.deleteAllServers()
-        defer { TestURLProtocol.handler = nil }
 
+        // The real shell over two paired servers: every route it asks for while the test
+        // holds this scope is answered here, and the scope is what ends the handler.
         let requestLog = RequestLog()
-        TestURLProtocol.handler = { request in
+        let routes = TestURLProtocol.routeScope { request in
             requestLog.append(request)
             return try Self.response(for: request)
         }
+        defer { routes.end() }
 
         let serverStore = ServerStore()
         serverStore.load()
@@ -76,6 +78,18 @@ struct WorkspaceNavigationServerScopeTests {
             requestLog.contains(host: "server-b.test", pathPrefix: "/workspaces/ws-b/sessions"),
             "The workspace screen should refresh through the target server connection"
         )
+
+        // The screen's git status load follows the worktrees it reads first, so it can
+        // still be on its way when the refresh this test watches has answered. Wait for it
+        // to be served here: a request that reaches URLSession after the scope ends asks a
+        // handler nobody holds, and the double records an issue no test can be blamed for.
+        #expect(
+            await waitForTestCondition(timeoutMs: 5_000) {
+                requestLog.contains(host: "server-b.test", pathPrefix: "/workspaces/ws-b/git/status")
+            },
+            "The target server connection should answer the workspace's git status load"
+        )
+        #expect(await routes.settle(), "a request outlived the test that answered it")
     }
 
     private static func bootstrapServerInfo() -> ServerInfo {
