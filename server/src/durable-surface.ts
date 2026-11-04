@@ -1,5 +1,6 @@
 import { readExtensionUISurface } from "./extension-surface.js";
 import type {
+  ExtensionUIBlocksComposite,
   ExtensionUIChecklistComposite,
   ExtensionUIDataTableComposite,
   ExtensionUISurface,
@@ -8,6 +9,13 @@ import type {
   ExtensionUISurfaceAtom,
   ExtensionUISurfaceHeader,
   ExtensionUISurfaceItemState,
+  ExtensionUISurfaceNode,
+  ExtensionUISurfaceNodeAction,
+  ExtensionUISurfaceNodeAlign,
+  ExtensionUISurfaceNodeSpacing,
+  ExtensionUISurfacePill,
+  ExtensionUISurfacePillNode,
+  ExtensionUISurfaceTextStyle,
   ExtensionUISurfaceSection,
   ExtensionUISurfaceState,
   ExtensionUISurfaceStateKind,
@@ -95,6 +103,94 @@ export interface DataTableFields extends SurfaceCompositeFields {
 
 export type ActionBarFields = SurfaceCompositeFields;
 
+/**
+ * A tree of primitives: the open composite. The host still owns layout, type, colour, and
+ * accessibility; a node names a `tone`, a `style`, and a spacing step, and nothing else. Unlike
+ * the closed composites the header is optional, so a tree can be the whole region.
+ */
+export interface BlocksFields extends Omit<SurfaceCompositeFields, "header"> {
+  header?: ExtensionUISurfaceHeader;
+  body: ExtensionUISurfaceNode;
+}
+
+/** A node's own tap: an action id from the surface's table, plus the values it sends. */
+export interface NodeActionFields {
+  id: string;
+  values?: Record<string, string | number | boolean>;
+  pending?: { title?: string; disabled?: string[] };
+}
+
+export interface TextNodeFields {
+  id?: string;
+  text: string;
+  style?: ExtensionUISurfaceTextStyle;
+  tone?: ExtensionUISurfaceTone;
+  action?: NodeActionFields;
+}
+
+export interface BadgeNodeFields {
+  id?: string;
+  text: string;
+  tone?: ExtensionUISurfaceTone;
+  action?: NodeActionFields;
+}
+
+export interface RowNodeFields {
+  id?: string;
+  children: ExtensionUISurfaceNode[];
+  spacing?: ExtensionUISurfaceNodeSpacing;
+  align?: ExtensionUISurfaceNodeAlign;
+  action?: NodeActionFields;
+}
+
+export interface StackNodeFields {
+  id?: string;
+  children: ExtensionUISurfaceNode[];
+  spacing?: ExtensionUISurfaceNodeSpacing;
+  action?: NodeActionFields;
+}
+
+export interface TableNodeFields {
+  id?: string;
+  columns: string[];
+  rows: Array<{ id?: string; cells: Array<string | number | null>; actions?: NodeActionFields[] }>;
+  truncated?: boolean;
+}
+
+export interface ButtonNodeFields {
+  id: string;
+  title: string;
+  role?: "primary" | "secondary" | "destructive";
+  icon?: string;
+  action: NodeActionFields;
+}
+
+export interface ToggleNodeFields {
+  id: string;
+  title: string;
+  value: boolean;
+  action: NodeActionFields;
+}
+
+export interface MenuNodeFields {
+  id: string;
+  title?: string;
+  icon?: string;
+  items: Array<{
+    id?: string;
+    title: string;
+    role?: "primary" | "secondary" | "destructive";
+    action: NodeActionFields;
+  }>;
+}
+
+/** What a pill shows: one line of inline facts, in the order it lists them. */
+export interface PillFields {
+  content: ExtensionUISurfacePillNode[];
+  /** `drawer` (the default) opens the panel; an action sends that action instead. */
+  tap?: "drawer" | NodeActionFields;
+}
+
 function wireState(state: SurfaceCompositeFields["state"]): ExtensionUISurfaceState {
   if (state === undefined) return { kind: "content" };
   if (typeof state === "string") return { kind: state };
@@ -157,8 +253,184 @@ export function actionBar(fields: ActionBarFields): ExtensionUIActionBarComposit
   return { composite: "actionBar", ...shared(fields) };
 }
 
+/** A tree of primitives, for a design the closed composites do not cover. */
+export function blocks(fields: BlocksFields): ExtensionUIBlocksComposite {
+  const { header, body, ...rest } = fields;
+  const base = shared({ ...rest, ...(header ? { header } : {}) } as SurfaceCompositeFields);
+  return {
+    composite: "blocks",
+    ...(header ? { header: base.header } : {}),
+    id: base.id,
+    state: base.state,
+    ...(base.actions ? { actions: base.actions } : {}),
+    fallback: base.fallback,
+    ...(base.tone ? { tone: base.tone } : {}),
+    body,
+  };
+}
+
+function wireNodeAction(action: NodeActionFields): ExtensionUISurfaceNodeAction {
+  return {
+    id: action.id,
+    ...(action.values ? { values: action.values } : {}),
+    ...(action.pending ? { pending: action.pending } : {}),
+  };
+}
+
+/** Children side by side: facts in one line, or a row of controls. */
+export function row(fields: RowNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "row",
+    ...(fields.id ? { id: fields.id } : {}),
+    children: fields.children,
+    ...(fields.spacing ? { spacing: fields.spacing } : {}),
+    ...(fields.align ? { align: fields.align } : {}),
+    ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** Children one above another, at a spacing step the host owns. */
+export function stack(fields: StackNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "stack",
+    ...(fields.id ? { id: fields.id } : {}),
+    children: fields.children,
+    ...(fields.spacing ? { spacing: fields.spacing } : {}),
+    ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** Body copy, a headline, a caption, or monospace. */
+export function text(fields: TextNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "text",
+    ...(fields.id ? { id: fields.id } : {}),
+    text: fields.text,
+    ...(fields.style ? { style: fields.style } : {}),
+    ...(fields.tone ? { tone: fields.tone } : {}),
+    ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** A short status word: "running", "2 of 4". */
+export function badge(fields: BadgeNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "badge",
+    ...(fields.id ? { id: fields.id } : {}),
+    text: fields.text,
+    ...(fields.tone ? { tone: fields.tone } : {}),
+    ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** An SF Symbol from the host's allow-list. */
+export function icon(fields: {
+  id?: string;
+  name: string;
+  tone?: ExtensionUISurfaceTone;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "icon",
+    ...(fields.id ? { id: fields.id } : {}),
+    name: fields.name,
+    ...(fields.tone ? { tone: fields.tone } : {}),
+  };
+}
+
+/** A bar or a ring; no value is an indeterminate spinner's worth of meaning. */
+export function progress(fields: {
+  id?: string;
+  value?: number;
+  kind?: "bar" | "ring";
+  label?: string;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "progress",
+    ...(fields.id ? { id: fields.id } : {}),
+    ...(fields.value === undefined ? {} : { value: fields.value }),
+    ...(fields.kind ? { kind: fields.kind } : {}),
+    ...(fields.label ? { label: fields.label } : {}),
+  };
+}
+
+/** Fixed pairs: a summary block, not a control. */
+export function keyValue(fields: {
+  id?: string;
+  pairs: Array<{ key: string; value: string; tone?: ExtensionUISurfaceTone }>;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "keyValue",
+    ...(fields.id ? { id: fields.id } : {}),
+    pairs: fields.pairs,
+  };
+}
+
+/** A grid the host draws and clamps, with an optional action per row. */
+export function table(fields: TableNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "table",
+    ...(fields.id ? { id: fields.id } : {}),
+    columns: fields.columns,
+    rows: fields.rows.map((entry) => ({
+      ...(entry.id ? { id: entry.id } : {}),
+      cells: entry.cells,
+      ...(entry.actions ? { actions: entry.actions.map(wireNodeAction) } : {}),
+    })),
+    ...(fields.truncated === undefined ? {} : { truncated: fields.truncated }),
+  };
+}
+
+/** The one verb a region offers, drawn the way the host draws buttons. */
+export function button(fields: ButtonNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "button",
+    id: fields.id,
+    title: fields.title,
+    ...(fields.role ? { role: fields.role } : {}),
+    ...(fields.icon ? { icon: fields.icon } : {}),
+    action: wireNodeAction(fields.action),
+  };
+}
+
+/** A switch: its tap sends `values: { value: boolean }` with its action. */
+export function toggle(fields: ToggleNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "toggle",
+    id: fields.id,
+    title: fields.title,
+    value: fields.value,
+    action: wireNodeAction(fields.action),
+  };
+}
+
+/** Overflow verbs behind one control. */
+export function menu(fields: MenuNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "menu",
+    id: fields.id,
+    ...(fields.title ? { title: fields.title } : {}),
+    ...(fields.icon ? { icon: fields.icon } : {}),
+    items: fields.items.map((item) => ({
+      ...(item.id ? { id: item.id } : {}),
+      title: item.title,
+      ...(item.role ? { role: item.role } : {}),
+      action: wireNodeAction(item.action),
+    })),
+  };
+}
+
+/** The strip's own one-line summary; without one the host derives it from the header. */
+export function pill(fields: PillFields): ExtensionUISurfacePill {
+  return {
+    content: { type: "row", children: fields.content },
+    tap: fields.tap === undefined || fields.tap === "drawer" ? "drawer" : { action: fields.tap },
+  };
+}
+
 export interface SurfaceView {
   header: ExtensionUISurfaceHeader;
+  /** The strip's one-line summary; without one the host derives it from the header. */
+  pill?: ExtensionUISurfacePill;
   sections: ExtensionUISurfaceSection[];
 }
 
@@ -176,6 +448,8 @@ export interface SurfaceTap {
   readonly actionId: string;
   /** The row a row action belongs to; absent for a surface-level action. */
   readonly rowId?: string;
+  /** The blocks node that offered the action; absent for a section-level action. */
+  readonly nodeId?: string;
   /** The revision the client acted on. */
   readonly revision: number;
   readonly values?: Record<string, string | number | boolean>;
@@ -230,6 +504,7 @@ export interface SurfaceActionInvocation<State> {
   readonly compositeId: string;
   readonly actionId: string;
   readonly rowId?: string;
+  readonly nodeId?: string;
   readonly values?: Record<string, string | number | boolean>;
   readonly signal: AbortSignal;
   readonly ctx: SurfaceContext;
@@ -286,6 +561,7 @@ export function surface<State>(
       lifecycle: definition.lifecycle ?? "persistent",
       ...(timeoutAt === undefined ? {} : { timeoutAt }),
       header: view.header,
+      ...(view.pill ? { pill: view.pill } : {}),
       sections: view.sections,
       actions: definition.actions ?? {},
       fallback: { text: fallback },
@@ -345,6 +621,7 @@ export function surface<State>(
           compositeId: tap.compositeId,
           actionId: tap.actionId,
           ...(tap.rowId === undefined ? {} : { rowId: tap.rowId }),
+          ...(tap.nodeId === undefined ? {} : { nodeId: tap.nodeId }),
           ...(tap.values === undefined ? {} : { values: tap.values }),
           signal: tap.signal,
           ctx,

@@ -41,20 +41,45 @@ export {
 
 /**
  * Composable surfaces: the extension says what a surface is, and the host draws it. Authoring is
- * typed and validated here (`surface()`, `statusCard`, `checklist`, `dataTable`, `actionBar`);
- * actions answer with a patch, a replacement surface, or an error on their own card.
+ * typed and validated here (`surface()`, `statusCard`, `checklist`, `dataTable`, `actionBar`, and
+ * the `blocks` primitives); actions answer with a patch, a replacement surface, or an error on
+ * their own card.
  */
 export {
   actionBar,
+  badge,
+  blocks,
+  button,
   checklist,
   dataTable,
+  icon,
+  keyValue,
+  menu,
+  pill,
+  progress,
+  row,
+  stack,
   statusCard,
   surface,
   surfaceActionAnswer,
+  table,
+  text,
+  toggle,
   type ActionBarFields,
+  type BadgeNodeFields,
+  type BlocksFields,
+  type ButtonNodeFields,
   type ChecklistFields,
   type DataTableFields,
+  type MenuNodeFields,
+  type NodeActionFields,
+  type PillFields,
+  type RowNodeFields,
+  type StackNodeFields,
   type StatusCardFields,
+  type TableNodeFields,
+  type TextNodeFields,
+  type ToggleNodeFields,
   type Surface,
   type SurfaceActionHandler,
   type SurfaceActionInvocation,

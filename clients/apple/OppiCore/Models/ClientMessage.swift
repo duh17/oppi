@@ -85,6 +85,8 @@ enum ClientMessage: Sendable {
         compositeId: String,
         actionId: String,
         rowId: String? = nil,
+        /// The blocks node that offered the action; absent for a section-level action.
+        nodeId: String? = nil,
         revision: Int,
         values: [String: JSONValue]? = nil,
         requestId: String? = nil
@@ -456,12 +458,13 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Composable extension surfaces ──
-        case .extensionUIAction(let surfaceId, let compositeId, let actionId, let rowId, let revision, let values, let reqId):
+        case .extensionUIAction(let surfaceId, let compositeId, let actionId, let rowId, let nodeId, let revision, let values, let reqId):
             try c.encode("extension_ui_action", forKey: .type)
             try c.encode(surfaceId, forKey: .surfaceId)
             try c.encode(compositeId, forKey: .compositeId)
             try c.encode(actionId, forKey: .actionId)
             try c.encodeIfPresent(rowId, forKey: .rowId)
+            try c.encodeIfPresent(nodeId, forKey: .nodeId)
             try c.encode(revision, forKey: .revision)
             try c.encodeIfPresent(values, forKey: .values)
             try c.encodeIfPresent(reqId, forKey: .requestId)
@@ -520,7 +523,7 @@ extension ClientMessage: Encodable {
         case targetId, summarize, replaceInstructions, label
         case itemId
         case clientCallId, callId, lastEventSeq, controllerLeaseEpoch
-        case surfaceId, compositeId, actionId, rowId, revision, values
+        case surfaceId, compositeId, actionId, rowId, nodeId, revision, values
         case capabilities
     }
 }

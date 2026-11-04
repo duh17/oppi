@@ -22,6 +22,11 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "checklist.json": checklistSurface(),
     "data-table.json": dataTableSurface(),
     "action-bar.json": actionBarSurface(),
+    "blocks-panel.json": blocksPanelSurface(),
+    "blocks-status.json": blocksStatusSurface(),
+    "blocks-action.json": blocksActionMessage(),
+    "blocks-patch.json": blocksPatchMessage(),
+    "blocks-unknown-node.json": blocksUnknownNodeSurface(),
     "action.json": actionMessage(),
     "client-capabilities.json": clientCapabilitiesMessage(),
     "patch.json": patchMessage(),
@@ -202,6 +207,253 @@ function actionBarSurface(): unknown {
         actions: ["approve", "reject"],
         fallback: { text: "Approve or reject the deploy" },
         tone: "accent",
+      },
+    ],
+  });
+}
+
+/**
+ * One of every primitive, plus the composed pill, a toggle, a menu, and a table with row actions.
+ * This is the shape a client must draw node for node; the Apple suite decodes these same bytes.
+ */
+function blocksPanelSurface(): unknown {
+  return baseSurface({
+    id: "blocks-panel",
+    title: "Deploy panel",
+    header: { title: "web → prod", subtitle: "4f2c1ab" },
+    actions: {
+      refresh: { title: "Refresh" },
+      openLog: { title: "Logs" },
+      retry: {
+        title: "Retry",
+        role: "primary",
+        pending: { title: "Retrying…", disabled: ["retry"] },
+      },
+      notify: { title: "Notify on failure" },
+      copyRow: { title: "Copy" },
+      openRow: { title: "Open" },
+      cancel: { title: "Cancel", role: "destructive" },
+      filters: { title: "Filters" },
+    },
+    fallback: { text: "Deploy web → prod: 2 of 4 gates" },
+    pill: {
+      content: {
+        type: "row",
+        spacing: "tight",
+        children: [
+          { type: "icon", name: "hammer", tone: "accent" },
+          { type: "text", text: "web → prod", style: "caption" },
+          { type: "badge", text: "running", tone: "warning" },
+          { type: "progress", value: 0.4, kind: "ring" },
+        ],
+      },
+      tap: "drawer",
+    },
+    sections: [
+      {
+        composite: "blocks",
+        id: "panel",
+        header: { title: "Gates", subtitle: "2 of 4" },
+        state: { kind: "content" },
+        actions: ["refresh"],
+        fallback: { text: "Deploy web → prod: 2 of 4 gates" },
+        tone: "accent",
+        body: {
+          type: "stack",
+          id: "body",
+          spacing: "normal",
+          children: [
+            {
+              type: "row",
+              id: "headline",
+              align: "spread",
+              spacing: "tight",
+              children: [
+                { type: "text", id: "phase", text: "Deploying 4f2c1ab", style: "headline" },
+                { type: "badge", id: "state", text: "2 of 4", tone: "warning" },
+              ],
+            },
+            { type: "progress", id: "progress", label: "Tests", value: 0.4, kind: "bar" },
+            { type: "progress", id: "waiting", kind: "ring" },
+            {
+              type: "keyValue",
+              id: "facts",
+              pairs: [
+                { key: "Env", value: "prod" },
+                { key: "Commit", value: "4f2c1ab", tone: "accent" },
+              ],
+            },
+            { type: "markdown", id: "notes", markdown: "Two gates remain; the test gate retries once." },
+            {
+              type: "table",
+              id: "gates",
+              columns: ["Gate", "State"],
+              rows: [
+                {
+                  id: "build",
+                  cells: ["Build", "passed"],
+                  actions: [{ id: "copyRow" }, { id: "openRow" }],
+                },
+                { id: "test", cells: ["Test", "running"], actions: [{ id: "copyRow" }] },
+              ],
+            },
+            {
+              type: "chart",
+              id: "durations",
+              kind: "bar",
+              title: "Gate duration",
+              labels: ["build", "test"],
+              series: [{ name: "seconds", values: [42, 18] }],
+            },
+            { type: "code", id: "tail", language: "bash", text: "make test" },
+            { type: "divider", id: "rule" },
+            { type: "spacer", id: "gap", size: "small" },
+            { type: "icon", id: "hammer", name: "hammer", tone: "accent" },
+            {
+              type: "stack",
+              id: "controls",
+              spacing: "tight",
+              children: [
+                {
+                  type: "button",
+                  id: "retry",
+                  title: "Retry",
+                  role: "primary",
+                  icon: "arrow.clockwise",
+                  action: { id: "retry", pending: { title: "Retrying…" } },
+                },
+                {
+                  type: "toggle",
+                  id: "notify",
+                  title: "Notify on failure",
+                  value: false,
+                  action: { id: "notify" },
+                },
+                {
+                  type: "menu",
+                  id: "overflow",
+                  title: "More",
+                  icon: "list.bullet",
+                  items: [
+                    { title: "Logs", action: { id: "openLog" } },
+                    { title: "Cancel", role: "destructive", action: { id: "cancel" } },
+                    { title: "Filters", action: { id: "filters" } },
+                  ],
+                },
+                {
+                  type: "text",
+                  id: "logs-link",
+                  text: "Open logs",
+                  tone: "accent",
+                  action: { id: "openLog" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/** A composed pill whose tap is its own action, and a body a small surface actually needs. */
+function blocksStatusSurface(): unknown {
+  return baseSurface({
+    id: "blocks-status",
+    title: "Waiting",
+    header: { title: "Waiting on you" },
+    actions: { refresh: { title: "Refresh" }, approve: { title: "Approve", role: "primary" } },
+    fallback: { text: "Waiting on you: approve to continue" },
+    pill: {
+      content: {
+        type: "row",
+        spacing: "tight",
+        children: [
+          { type: "icon", name: "exclamationmark.triangle", tone: "danger" },
+          { type: "text", text: "Waiting on you", style: "caption" },
+        ],
+      },
+      tap: { action: { id: "refresh" } },
+    },
+    sections: [
+      {
+        composite: "blocks",
+        id: "ask",
+        state: { kind: "content" },
+        fallback: { text: "Waiting on you: approve to continue" },
+        body: {
+          type: "stack",
+          spacing: "normal",
+          children: [
+            { type: "text", id: "headline", text: "Approve shipping 4f2c1ab?", style: "headline" },
+            { type: "text", id: "detail", text: "Two gates passed.", style: "caption" },
+            {
+              type: "button",
+              id: "approve",
+              title: "Approve",
+              role: "primary",
+              action: { id: "approve" },
+            },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/** A toggle's tap: the node it came from, the switch's new value, and the revision it saw. */
+function blocksActionMessage(): unknown {
+  return {
+    type: "extension_ui_action",
+    surfaceId: "blocks-panel",
+    compositeId: "panel",
+    actionId: "notify",
+    nodeId: "notify",
+    revision: 7,
+    values: { value: true },
+    requestId: "blocks-action-1",
+  };
+}
+
+/** A patch into a body: by child index, and by node id where the tree has one. */
+function blocksPatchMessage(): unknown {
+  return {
+    type: "extension_ui_patch",
+    surfaceId: "blocks-panel",
+    revision: 8,
+    sessionId: "test-session-1",
+    patch: {
+      "sections.0.body.children.1.value": 0.7,
+      "sections.0.body.children.0.children.#state.text": "3 of 4",
+      "sections.0.body.children.#gates.rows.0.cells.1": "running",
+    },
+  };
+}
+
+/**
+ * A tree a newer server may publish and this build cannot draw: the surface is refused by the
+ * server's validator, and a client keeps the section's words instead of failing the frame.
+ */
+function blocksUnknownNodeSurface(): unknown {
+  return baseSurface({
+    id: "blocks-future",
+    title: "Future",
+    header: { title: "Future primitives" },
+    actions: {},
+    fallback: { text: "Future primitives" },
+    sections: [
+      {
+        composite: "blocks",
+        id: "future",
+        state: { kind: "content" },
+        fallback: { text: "A panel this build cannot draw" },
+        body: {
+          type: "stack",
+          children: [
+            { type: "text", id: "known", text: "This part is known" },
+            { type: "webview", id: "canvas", url: "https://example.com" },
+          ],
+        },
       },
     ],
   });

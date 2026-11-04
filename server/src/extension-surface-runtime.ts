@@ -8,11 +8,15 @@ import {
   applyExtensionUISurfacePatch,
   extensionUISurfaceProjectionClearRequest,
   extensionUISurfaceProjectionRequest,
+  extensionUISurfaceUsesBlocks,
+  findExtensionUISurfaceNode,
   readExtensionUISurface,
   EXTENSION_UI_SURFACE_ACTION_RATE_LIMIT,
   EXTENSION_UI_SURFACE_ACTION_RATE_WINDOW_MS,
+  EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID,
 } from "./extension-surface.js";
 import type {
+  ExtensionUIBlocksComposite,
   ExtensionUIDataTableComposite,
   ExtensionUISurface,
   ExtensionUISurfaceActionAnswer,
@@ -33,8 +37,12 @@ import type {
  * call that published the surface (a persistent surface outlives it) and aborted at its deadline.
  */
 
-/** Does a client draw v2 composites, or the v1 projection of them? */
-export type ExtensionUISurfaceAudience = "composites" | "v1-projection";
+/**
+ * What a client draws. `blocks` draws the closed composites and a tree of primitives; `composites`
+ * draws only the closed set, so it gets the v1 projection of a surface that uses a tree; and a
+ * client that has said nothing draws v1 widgets, as every client did before surfaces existed.
+ */
+export type ExtensionUISurfaceAudience = "blocks" | "composites" | "v1-projection";
 
 export const EXTENSION_UI_SURFACE_COALESCE_MS = 250;
 
@@ -43,6 +51,8 @@ export interface ExtensionSurfaceActionRequest {
   compositeId: string;
   actionId: string;
   rowId?: string;
+  /** The blocks node that offered the action, when a tree's node did. */
+  nodeId?: string;
   /** The revision the client acted on. */
   revision: number;
   values?: Record<string, string | number | boolean>;
@@ -169,7 +179,7 @@ export class ExtensionSurfaceRuntime {
     this.options.onSettled?.(surfaceId);
     const revision = this.nextRevision(surfaceId, live);
     this.rememberRevision(surfaceId, revision);
-    this.sendRemoved(surfaceId, revision);
+    this.sendRemoved(surfaceId, revision, live);
     return true;
   }
 
@@ -182,7 +192,7 @@ export class ExtensionSurfaceRuntime {
     for (const surface of [...this.surfaces.values()]) {
       this.cancelActions(surface.id);
       this.options.onSettled?.(surface.id);
-      this.sendRemoved(surface.id, this.nextRevision(surface.id, surface));
+      this.sendRemoved(surface.id, this.nextRevision(surface.id, surface), surface);
     }
     this.surfaces.clear();
     this.answered.clear();
@@ -230,15 +240,20 @@ export class ExtensionSurfaceRuntime {
     const surface = this.surfaces.get(message.surfaceId);
     if (this.stopped || !surface)
       return this.refuse(undefined, message, { message: "This surface is gone." });
+    // A client that draws only the closed composites was sent the projection of a tree, never the
+    // card, so a tap from it cannot be one this surface offered.
+    if (audience === "composites" && extensionUISurfaceUsesBlocks(surface))
+      return {
+        error: {
+          compositeId: message.compositeId,
+          message: "This client cannot act on a surface.",
+        },
+      };
 
-    const composite = surface.sections.find((section) => section.id === message.compositeId);
-    if (!composite) return this.refuse(undefined, message, { message: "This card is gone." });
+    if (!this.hasComposite(surface, message.compositeId))
+      return this.refuse(undefined, message, { message: "This card is gone." });
 
-    const offered = message.rowId
-      ? composite.composite === "dataTable"
-        ? this.rowActionIds(composite, message.rowId)
-        : undefined
-      : composite.actions;
+    const offered = this.offeredActionIds(surface, message);
     if (!offered?.includes(message.actionId))
       return this.refuse(surface, message, {
         message: "This action is not available.",
@@ -297,6 +312,7 @@ export class ExtensionSurfaceRuntime {
             compositeId: message.compositeId,
             actionId: message.actionId,
             ...(message.rowId ? { rowId: message.rowId } : {}),
+            ...(message.nodeId ? { nodeId: message.nodeId } : {}),
             revision: message.revision,
             ...(message.values ? { values: message.values } : {}),
             clientId,
@@ -414,7 +430,7 @@ export class ExtensionSurfaceRuntime {
       this.emitSurface(surface);
       return;
     }
-    this.sendPatch(surface.id, revision, { patch });
+    this.sendPatch(surface.id, revision, { patch }, previous);
   }
 
   // ── frames ──
@@ -436,44 +452,77 @@ export class ExtensionSurfaceRuntime {
   }
 
   private emitSurface(surface: ExtensionUISurface): void {
-    this.send(buildExtensionUISurfaceMessage(this.options.sessionId, surface));
+    const message = buildExtensionUISurfaceMessage(this.options.sessionId, surface);
+    for (const audience of this.v2Audiences(surface)) this.options.emit(message, audience);
+    this.emitProjection(surface);
   }
 
+  /**
+   * One patch, or a removal, to every audience that holds the surface. A surface can change shape
+   * (a patch that swaps a tree in), so the client that drew it as a card and can no longer draw it
+   * is told the card is gone as well as handed the projection.
+   */
   private sendPatch(
     surfaceId: string,
     revision: number,
     change: { patch?: Record<string, unknown>; removed?: boolean },
+    previous?: ExtensionUISurface,
   ): void {
-    this.send(buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, change));
-  }
-
-  private sendRemoved(surfaceId: string, revision: number): void {
-    this.sendPatch(surfaceId, revision, { removed: true });
-  }
-
-  /**
-   * Every frame goes out once per audience in the shape that audience draws: the v2 frame to the
-   * clients that draw composites, and the v1 widget projection of the same change to the rest.
-   */
-  private send(message: ServerMessage): void {
-    this.options.emit(message, "composites");
-    if (message.type === "extension_ui_surface") {
-      this.options.emit(
-        buildExtensionUINotificationMessage(extensionUISurfaceProjectionRequest(message.surface)),
-        "v1-projection",
+    const next = change.removed ? undefined : this.surfaces.get(surfaceId);
+    const message = buildExtensionUIPatchMessage(
+      this.options.sessionId,
+      surfaceId,
+      revision,
+      change,
+    );
+    if (!next) {
+      // Removed: whichever shape a client drew is cleared, and its widget slot is emptied.
+      this.options.emit(message, "blocks");
+      this.options.emit(message, "composites");
+      const clear = buildExtensionUINotificationMessage(
+        extensionUISurfaceProjectionClearRequest(surfaceId),
       );
+      this.options.emit(clear, "v1-projection");
+      // A composites-only client only ever held a widget for a surface that used a tree.
+      if (previous && extensionUISurfaceUsesBlocks(previous))
+        this.options.emit(clear, "composites");
       return;
     }
-    if (message.type !== "extension_ui_patch") return;
-    const surface = this.surfaces.get(message.surfaceId);
-    this.options.emit(
-      buildExtensionUINotificationMessage(
-        surface && !message.removed
-          ? extensionUISurfaceProjectionRequest(surface)
-          : extensionUISurfaceProjectionClearRequest(message.surfaceId),
-      ),
-      "v1-projection",
+    for (const audience of this.v2Audiences(next)) this.options.emit(message, audience);
+    if (previous && !extensionUISurfaceUsesBlocks(previous) && extensionUISurfaceUsesBlocks(next)) {
+      // The card this client holds cannot show a tree: clear it, the projection below replaces it.
+      this.options.emit(
+        buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, {
+          removed: true,
+        }),
+        "composites",
+      );
+    }
+    this.emitProjection(next);
+  }
+
+  private sendRemoved(surfaceId: string, revision: number, previous?: ExtensionUISurface): void {
+    this.sendPatch(surfaceId, revision, { removed: true }, previous);
+  }
+
+  /** The v1 widget a client that cannot draw this surface holds instead of it. */
+  private emitProjection(surface: ExtensionUISurface): void {
+    const message = buildExtensionUINotificationMessage(
+      extensionUISurfaceProjectionRequest(surface),
     );
+    for (const audience of this.projectedAudiences(surface)) this.options.emit(message, audience);
+  }
+
+  /** The v2 audiences that can draw this surface whole. */
+  private v2Audiences(surface: ExtensionUISurface): ExtensionUISurfaceAudience[] {
+    return extensionUISurfaceUsesBlocks(surface) ? ["blocks"] : ["blocks", "composites"];
+  }
+
+  /** The audiences that can only draw this surface's v1 projection. */
+  private projectedAudiences(surface: ExtensionUISurface): ExtensionUISurfaceAudience[] {
+    return extensionUISurfaceUsesBlocks(surface)
+      ? ["v1-projection", "composites"]
+      : ["v1-projection"];
   }
 
   // ── revisions ──
@@ -545,14 +594,62 @@ export class ExtensionSurfaceRuntime {
   // ── policy ──
 
   private actionKey(message: ExtensionUISurfaceActionMessage): string {
-    // A row action is per row: two rows' taps are not replays of one another.
+    // A row action is per row and a node action is per node: two rows' or two nodes' taps are
+    // not replays of one another.
     return [
       message.surfaceId,
       message.compositeId,
       message.actionId,
       message.rowId ?? "",
+      message.nodeId ?? "",
       String(message.revision),
     ].join("\u0000");
+  }
+
+  /** The action ids one tap could have offered: the region, its row, or the node it names. */
+  private offeredActionIds(
+    surface: ExtensionUISurface,
+    message: ExtensionUISurfaceActionMessage,
+  ): string[] | undefined {
+    if (message.compositeId === EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID) {
+      const tap = surface.pill?.tap;
+      return typeof tap === "object" ? [tap.action.id] : undefined;
+    }
+    const composite = surface.sections.find((section) => section.id === message.compositeId);
+    if (!composite) return undefined;
+    if (composite.composite === "blocks")
+      return this.blocksActionIds(composite, message.nodeId, message.rowId);
+    if (message.rowId)
+      return composite.composite === "dataTable"
+        ? this.rowActionIds(composite, message.rowId)
+        : undefined;
+    return composite.actions;
+  }
+
+  /**
+   * A tree's tap names the node that offered it. A control offers its own action, a menu offers
+   * its items' actions, and a table row offers the actions on that row; a tap with no node is the
+   * region's own action list.
+   */
+  private blocksActionIds(
+    composite: ExtensionUIBlocksComposite,
+    nodeId: string | null | undefined,
+    rowId: string | null | undefined,
+  ): string[] | undefined {
+    if (!nodeId) return composite.actions;
+    const node = findExtensionUISurfaceNode(composite.body, nodeId);
+    if (!node) return undefined;
+    if (node.type === "table" && rowId)
+      return node.rows.find((row) => row.id === rowId)?.actions?.map((action) => action.id);
+    if (node.type === "menu") return node.items.map((item) => item.action.id);
+    if (node.type === "button" || node.type === "toggle") return [node.action.id];
+    if ("action" in node && node.action) return [node.action.id];
+    return undefined;
+  }
+
+  private hasComposite(surface: ExtensionUISurface, compositeId: string): boolean {
+    if (compositeId === EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID) return surface.pill !== undefined;
+    return surface.sections.some((section) => section.id === compositeId);
   }
 
   private rowActionIds(

@@ -75,6 +75,7 @@ struct ExtensionComposableSurfaceStateTests {
             compositeId: "status",
             actionId: "retry",
             rowId: nil,
+            nodeId: nil,
             revision: revision,
             title: "Retrying…",
             disabledActionIds: ["retry"]

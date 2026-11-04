@@ -93,7 +93,7 @@ enum ExtensionSurfacePatchApplier {
             return true
 
         case .array(var items):
-            guard let index = arrayIndex(segment, count: items.count) else { return false }
+            guard let index = arrayIndex(segment, in: items) else { return false }
             guard !rest.isEmpty else {
                 // A list entry can be replaced but never removed: the host draws the list it was
                 // given, and a hole in it would be a card the publisher never wrote.
@@ -113,9 +113,20 @@ enum ExtensionSurfacePatchApplier {
         }
     }
 
-    private static func arrayIndex(_ segment: String, count: Int) -> Int? {
+    /// A list entry by index, or by its `id` with `#id`: a body node keeps its address when a
+    /// sibling is inserted. A path never invents an entry.
+    private static func arrayIndex(_ segment: String, in items: [JSONValue]) -> Int? {
+        if segment.hasPrefix("#") {
+            let id = String(segment.dropFirst())
+            guard !id.isEmpty else { return nil }
+            return items.firstIndex { entry in
+                guard case .object(let fields) = entry, case .string(let entryId)? = fields["id"]
+                else { return false }
+                return entryId == id
+            }
+        }
         guard !segment.isEmpty, segment.allSatisfy(\.isNumber), let index = Int(segment),
-              index < count else {
+              index < items.count else {
             return nil
         }
         return index

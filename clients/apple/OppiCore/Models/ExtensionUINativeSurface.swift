@@ -56,7 +56,7 @@ struct ExtensionUINativeFallback: Sendable, Equatable, Decodable {
     let lines: [String]?
 }
 
-struct ExtensionUIAccessibility: Sendable, Equatable, Decodable {
+struct ExtensionUIAccessibility: Sendable, Equatable, Codable {
     let label: String?
     let value: String?
     let hint: String?

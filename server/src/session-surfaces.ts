@@ -1,11 +1,13 @@
 import {
   buildExtensionUINotificationMessage,
   buildExtensionUISurfaceMessage,
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
 } from "./extension-ui-contract.js";
 import {
   extensionUISurfaceProjectionClearRequest,
   extensionUISurfaceProjectionRequest,
+  extensionUISurfaceUsesBlocks,
 } from "./extension-surface.js";
 import {
   ExtensionSurfaceRuntime,
@@ -19,6 +21,20 @@ import type {
   ExtensionUISurfaceActionMessage,
   ServerMessage,
 } from "./types.js";
+
+/** What a capability list says this client draws: the strongest shape it names. */
+function declaredAudience(capabilities: readonly string[]): ExtensionUISurfaceAudience {
+  if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY)) return "blocks";
+  if (capabilities.includes(EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY)) return "composites";
+  return "v1-projection";
+}
+
+/** A declaration upgrades or repeats; it never downgrades the shape a client already draws. */
+const AUDIENCE_RANK: Record<ExtensionUISurfaceAudience, number> = {
+  "v1-projection": 0,
+  composites: 1,
+  blocks: 2,
+};
 
 /**
  * One client's frame handler. `audience` names the shape a frame was built for, when it has one:
@@ -89,13 +105,13 @@ export class SessionSurfaces {
    */
   declare(clientId: string, capabilities: readonly string[]): ServerMessage[] {
     const before = this.audience(clientId);
-    const after = capabilities.includes(EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY)
-      ? "composites"
-      : "v1-projection";
-    if (before === "composites" && after === "v1-projection") return [];
+    const after = declaredAudience(capabilities);
+    // A declaration never takes a shape back: the client that drew it is still drawing it, and a
+    // list without the capability says nothing about that screen.
+    if (AUDIENCE_RANK[after] < AUDIENCE_RANK[before]) return [];
     this.audiences.set(clientId, after);
     if (after === before) return [];
-    const frames = after === "composites" ? this.projectionClears() : [];
+    const frames = after === "v1-projection" ? [] : this.projectionClears();
     frames.push(...this.messages(clientId));
     return frames;
   }
@@ -108,11 +124,12 @@ export class SessionSurfaces {
   /** Every live surface, in the shape this client draws, for a client that has just subscribed. */
   messages(clientId: string): ServerMessage[] {
     if (!this.runtime) return [];
-    const composites = this.audience(clientId) === "composites";
+    const audience = this.audience(clientId);
     return this.runtime
       .snapshot()
       .map((surface) =>
-        composites
+        audience !== "v1-projection" &&
+        (audience === "blocks" || !extensionUISurfaceUsesBlocks(surface))
           ? buildExtensionUISurfaceMessage(this.options.sessionId, surface)
           : buildExtensionUINotificationMessage(extensionUISurfaceProjectionRequest(surface)),
       );
@@ -189,6 +206,7 @@ export class SessionSurfaces {
         compositeId: request.compositeId,
         actionId: request.actionId,
         ...(request.rowId === undefined ? {} : { rowId: request.rowId }),
+        ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }),
         revision: request.revision,
         ...(request.values === undefined ? {} : { values: request.values }),
         signal: request.signal,

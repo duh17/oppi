@@ -97,6 +97,29 @@ struct ExtensionSurfaceCompositeContext {
             revision: surface.revision
         )
     }
+
+    /// The intent a blocks node builds: the node it came from, and whatever the tap carries.
+    func intent(
+        compositeId: String,
+        nodeId: String,
+        action: ExtensionUISurfaceNodeAction,
+        rowId: String? = nil,
+        values: [String: JSONValue]? = nil
+    ) -> ExtensionSurfaceActionIntent {
+        let declared = action.values ?? [:]
+        let collected = values ?? [:]
+        let merged = declared.merging(collected) { _, collected in collected }
+        return ExtensionSurfaceActionIntent(
+            surfaceId: surface.id,
+            compositeId: compositeId,
+            actionId: action.id,
+            rowId: rowId,
+            nodeId: nodeId,
+            revision: surface.revision,
+            values: merged.isEmpty ? nil : merged,
+            pending: action.pending
+        )
+    }
 }
 
 /// A composite's `state` as the card reads it: a kind this build does not know is content, never a
@@ -198,6 +221,7 @@ final class ExtensionSurfaceCompositesView: UIView {
         case .checklist: "checklist"
         case .dataTable: "dataTable"
         case .actionBar: "actionBar"
+        case .blocks: "blocks"
         case .unsupported(let value): "unsupported:\(value.composite)"
         }
     }
@@ -212,6 +236,10 @@ final class ExtensionSurfaceCompositesView: UIView {
             ExtensionSurfaceDataTableView(surfaceId: surfaceId, compositeId: value.base.id)
         case .actionBar(let value):
             ExtensionSurfaceActionBarView(surfaceId: surfaceId, compositeId: value.base.id)
+        case .blocks(let value):
+            // The node renderer lands with the tree's own views; until then a tree keeps the words
+            // it shipped with rather than vanishing from the panel.
+            ExtensionSurfaceUnsupportedCardView(surfaceId: surfaceId, compositeId: value.id)
         case .unsupported(let value):
             ExtensionSurfaceUnsupportedCardView(surfaceId: surfaceId, compositeId: value.id)
         }
@@ -833,12 +861,22 @@ final class ExtensionSurfaceUnsupportedCardView: UIView {
     required init?(coder: NSCoder) { nil }
 
     func apply(_ section: ExtensionUISurfaceSection, context: ExtensionSurfaceCompositeContext) {
-        guard case .unsupported(let value) = section else { return }
         let palette = context.palette
         ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
-        titleLabel.text = String(format: String(localized: "Unsupported card: %@"), value.composite)
+        let fallback: String
+        switch section {
+        case .unsupported(let value):
+            titleLabel.text = String(format: String(localized: "Unsupported card: %@"), value.composite)
+            fallback = value.fallback.text
+        case .blocks(let value):
+            // A tree this build cannot draw keeps the words the server shipped with it.
+            titleLabel.text = value.header?.title
+            fallback = value.fallback.text
+        default:
+            return
+        }
         titleLabel.textColor = palette.ui.comment
-        let text = value.fallback.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
         textLabel.text = text
         textLabel.textColor = palette.ui.fg
         textLabel.isHidden = text.isEmpty

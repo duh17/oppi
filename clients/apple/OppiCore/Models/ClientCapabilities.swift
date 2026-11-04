@@ -17,4 +17,9 @@ enum ClientCapability {
     /// advertise it is never sent the command. The Mac app does not send it and keeps the v1
     /// projection.
     static let extensionNativeUIComposites = "extension-native-ui:v2:composites"
+
+    /// `extension-native-ui:v2:blocks`: this build also draws a `blocks` section's tree of
+    /// primitives and a composed pill. A client that names only `composites` is sent the v1
+    /// projection of any surface that uses a tree, because one frame cannot mix the two shapes.
+    static let extensionNativeUIBlocks = "extension-native-ui:v2:blocks"
 }

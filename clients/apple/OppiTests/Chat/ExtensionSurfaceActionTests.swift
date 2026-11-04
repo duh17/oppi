@@ -64,6 +64,7 @@ struct ExtensionSurfaceActionTests {
             let compositeId,
             let actionId,
             let rowId,
+            let nodeId,
             let revision,
             let values,
             let requestId
@@ -75,6 +76,7 @@ struct ExtensionSurfaceActionTests {
         #expect(compositeId == "status")
         #expect(actionId == "retry")
         #expect(rowId == nil)
+        #expect(nodeId == nil)
         #expect(revision == 7)
         #expect(values == nil)
         let mintedRequestId = try testUnwrap(requestId)
@@ -104,7 +106,7 @@ struct ExtensionSurfaceActionTests {
         }
 
         let actions = await waitFor(2, in: frames).compactMap { message -> (rowId: String?, requestId: String?)? in
-            guard case .extensionUIAction(_, _, _, let rowId, _, _, let requestId) = message else {
+            guard case .extensionUIAction(_, _, _, let rowId, _, _, _, let requestId) = message else {
                 return nil
             }
             return (rowId, requestId)

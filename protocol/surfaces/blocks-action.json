@@ -1,0 +1,12 @@
+{
+  "type": "extension_ui_action",
+  "surfaceId": "blocks-panel",
+  "compositeId": "panel",
+  "actionId": "notify",
+  "nodeId": "notify",
+  "revision": 7,
+  "values": {
+    "value": true
+  },
+  "requestId": "blocks-action-1"
+}

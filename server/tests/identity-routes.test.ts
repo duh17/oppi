@@ -522,6 +522,7 @@ describe("identity module", () => {
         "extension-native-ui:v1:surface-native",
         "extension-native-ui:v1:osc8-links",
         "extension-native-ui:v2:composites",
+        "extension-native-ui:v2:blocks",
       ],
     });
     expect(body.capabilities.workspaceFileEditing).toEqual({

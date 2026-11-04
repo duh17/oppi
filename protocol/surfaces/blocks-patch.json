@@ -1,0 +1,11 @@
+{
+  "type": "extension_ui_patch",
+  "surfaceId": "blocks-panel",
+  "revision": 8,
+  "sessionId": "test-session-1",
+  "patch": {
+    "sections.0.body.children.1.value": 0.7,
+    "sections.0.body.children.0.children.#state.text": "3 of 4",
+    "sections.0.body.children.#gates.rows.0.cells.1": "running"
+  }
+}

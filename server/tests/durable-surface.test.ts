@@ -2,11 +2,24 @@ import { describe, expect, it } from "vitest";
 
 import {
   actionBar,
+  badge,
+  blocks,
+  button,
   checklist,
   dataTable,
+  icon,
+  keyValue,
+  menu,
+  pill,
+  progress,
+  row,
+  stack,
   statusCard,
   surface,
   surfaceActionAnswer,
+  table,
+  text,
+  toggle,
   type SurfaceContext,
 } from "../src/durable-surface.js";
 import { ExtensionSurfaceRuntime } from "../src/extension-surface-runtime.js";
@@ -261,5 +274,110 @@ describe("authoring a surface", () => {
       title: "No deploys yet",
       message: "Run deploy to start one.",
     });
+  });
+});
+
+describe("authoring a tree of primitives", () => {
+  function treePanel() {
+    return surface<{ running: boolean }>(
+      {
+        id: "tree",
+        title: "Tree",
+        actions: {
+          retry: { title: "Retry", role: "primary" },
+          notify: { title: "Notify" },
+          open: { title: "Open" },
+        },
+        view: (current) => ({
+          header: { title: "web → prod" },
+          pill: pill({
+            content: [
+              icon({ name: "hammer", tone: "accent" }),
+              text({ text: "web → prod", style: "caption" }),
+              badge({ text: "running", tone: "warning" }),
+            ],
+          }),
+          sections: [
+            blocks({
+              id: "panel",
+              header: { title: "Gates" },
+              fallback: "Deploy running",
+              tone: "accent",
+              actions: ["retry"],
+              body: stack({
+                children: [
+                  row({
+                    align: "spread",
+                    children: [
+                      text({ text: "Deploying", style: "headline" }),
+                      badge({ text: "2 of 4", tone: "warning" }),
+                    ],
+                  }),
+                  progress({ label: "Tests", value: 0.4 }),
+                  keyValue({ pairs: [{ key: "Env", value: "prod" }] }),
+                  table({
+                    id: "gates",
+                    columns: ["Gate", "State"],
+                    rows: [
+                      {
+                        id: "build",
+                        cells: ["Build", "passed"],
+                        actions: [{ id: "open" }],
+                      },
+                    ],
+                  }),
+                  button({
+                    id: "retry",
+                    title: "Retry",
+                    role: "primary",
+                    action: { id: "retry", pending: { title: "Retrying…" } },
+                  }),
+                  toggle({
+                    id: "notify",
+                    title: "Notify on failure",
+                    value: current.running,
+                    action: { id: "notify" },
+                  }),
+                  menu({
+                    id: "overflow",
+                    icon: "list.bullet",
+                    items: [{ title: "Open", action: { id: "open" } }],
+                  }),
+                ],
+              }),
+            }),
+          ],
+        }),
+      },
+    );
+  }
+
+  it("renders a tree the host accepts, pill included", () => {
+    const wire = treePanel().render({ running: true });
+    expect(wire.sections.map((section) => section.composite)).toEqual(["blocks"]);
+    expect(wire.pill?.tap).toBe("drawer");
+    const section = wire.sections[0];
+    if (section.composite !== "blocks") throw new Error("expected a blocks section");
+    expect(section.body.type).toBe("stack");
+    expect(section.tone).toBe("accent");
+  });
+
+  it("names the rule a broken tree breaks instead of publishing it", () => {
+    const broken = surface<null>({
+      id: "broken-tree",
+      title: "Broken",
+      actions: { retry: { title: "Retry" } },
+      view: () => ({
+        header: { title: "Broken" },
+        sections: [
+          blocks({
+            id: "panel",
+            fallback: "Broken",
+            body: button({ id: "retry", title: "Retry", action: { id: "not-declared" } }),
+          }),
+        ],
+      }),
+    });
+    expect(() => broken.render(null)).toThrow(/not in the surface's action table/);
   });
 });

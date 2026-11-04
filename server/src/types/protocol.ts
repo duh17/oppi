@@ -441,11 +441,11 @@ export interface ExtensionUINativeSurface {
 
 // ─── Composable extension surfaces (v2) ───
 //
-// An extension declares what a surface is; the host draws it. Four composites are the whole
-// closed set in v2 slice 1: `statusCard`, `checklist`, `dataTable`, `actionBar`. Each carries
-// the same four things — a header, a required `state` with the words for empty and failure, the
-// action ids it offers, and `fallback.text` — plus an optional `tone`. No colour, font, padding,
-// or size exists on the wire.
+// An extension declares what a surface is; the host draws it. `statusCard`, `checklist`,
+// `dataTable`, and `actionBar` are the closed set of composites; `blocks` is the open one, a tree
+// of primitives the same way. Every section carries the same four things — a header, a required
+// `state` with the words for empty and failure, the action ids it offers, and `fallback.text` —
+// plus an optional `tone`. No colour, font, padding, or size exists on the wire.
 
 export type ExtensionUISurfaceTone = "neutral" | "accent" | "success" | "warning" | "danger";
 
@@ -545,11 +545,183 @@ export interface ExtensionUIActionBarComposite extends ExtensionUISurfaceComposi
   composite: "actionBar";
 }
 
+/**
+ * A tree of tappable primitives: the composite that lets a surface ship a new design from the
+ * server with no app build. It reuses the shared state, fallback, tone, and action fields so
+ * loading, empty, and failure work exactly as they do for the closed composites.
+ */
+export interface ExtensionUIBlocksComposite {
+  composite: "blocks";
+  id: string;
+  /** The host's drawer heading for this region; a bare tree may have none. */
+  header?: ExtensionUISurfaceHeader;
+  state: ExtensionUISurfaceState;
+  /** Action ids from the surface's action table, drawn after the body. */
+  actions?: string[];
+  fallback: ExtensionUISurfaceFallback;
+  tone?: ExtensionUISurfaceTone;
+  body: ExtensionUISurfaceNode;
+}
+
 export type ExtensionUISurfaceSection =
   | ExtensionUIStatusCardComposite
   | ExtensionUIChecklistComposite
   | ExtensionUIDataTableComposite
-  | ExtensionUIActionBarComposite;
+  | ExtensionUIActionBarComposite
+  | ExtensionUIBlocksComposite;
+
+/** One tap a node offers: an action id from the surface's table, plus the values it sends. */
+export interface ExtensionUISurfaceNodeAction {
+  id: string;
+  /** Collected values the tap carries; the action round trip takes scalars only. */
+  values?: Record<string, string | number | boolean>;
+  /** Declared optimistic state for the round trip only, as an action's own `pending` is. */
+  pending?: { title?: string; disabled?: string[] };
+}
+
+export type ExtensionUISurfaceNodeSpacing = "tight" | "normal";
+export type ExtensionUISurfaceNodeAlign = "leading" | "center" | "trailing" | "spread";
+/** The whole type ramp: a node never names a font, a size, or a colour. */
+export type ExtensionUISurfaceTextStyle = "body" | "headline" | "caption" | "mono";
+export type ExtensionUISurfaceNodeRole = "primary" | "secondary" | "destructive";
+
+interface ExtensionUISurfaceNodeBase {
+  /** Stable within the surface. Required wherever the node offers an action. */
+  id?: string;
+  accessibility?: ExtensionUIAccessibility;
+}
+
+/** A blocks node: a primitive the host draws with views it already ships. */
+export type ExtensionUISurfaceNode =
+  | (ExtensionUISurfaceNodeBase & {
+      type: "row";
+      children: ExtensionUISurfaceNode[];
+      spacing?: ExtensionUISurfaceNodeSpacing;
+      align?: ExtensionUISurfaceNodeAlign;
+      action?: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "stack";
+      children: ExtensionUISurfaceNode[];
+      spacing?: ExtensionUISurfaceNodeSpacing;
+      action?: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "text";
+      text: string;
+      style?: ExtensionUISurfaceTextStyle;
+      tone?: ExtensionUISurfaceTone;
+      action?: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & { type: "markdown"; markdown: string })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "badge";
+      text: string;
+      tone?: ExtensionUISurfaceTone;
+      action?: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "icon";
+      /** An SF Symbol name from the server's allow-list. */
+      name: string;
+      tone?: ExtensionUISurfaceTone;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "progress";
+      /** 0–1; absent means indeterminate. */
+      value?: number;
+      kind?: "bar" | "ring";
+      label?: string;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "keyValue";
+      pairs: Array<{ key: string; value: string; tone?: ExtensionUISurfaceTone }>;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "table";
+      columns: string[];
+      rows: Array<{
+        /** Required when the row offers actions: a tap names the row it belongs to. */
+        id?: string;
+        cells: Array<string | number | null>;
+        actions?: ExtensionUISurfaceNodeAction[];
+      }>;
+      truncated?: boolean;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "chart";
+      kind: "bar" | "line" | "pie";
+      title?: string;
+      labels: string[];
+      series: Array<{ name?: string; values: number[] }>;
+      truncated?: boolean;
+    })
+  | (ExtensionUISurfaceNodeBase & { type: "code"; language?: string; text: string })
+  | (ExtensionUISurfaceNodeBase & { type: "divider" })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "spacer";
+      size?: "small" | "medium" | "large";
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "button";
+      id: string;
+      title: string;
+      role?: ExtensionUISurfaceNodeRole;
+      /** An SF Symbol name from the server's allow-list. */
+      icon?: string;
+      action: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "toggle";
+      id: string;
+      title: string;
+      value: boolean;
+      action: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "menu";
+      id: string;
+      title?: string;
+      icon?: string;
+      items: Array<{
+        id?: string;
+        title: string;
+        role?: ExtensionUISurfaceNodeRole;
+        action: ExtensionUISurfaceNodeAction;
+      }>;
+    });
+
+/** What a pill may hold: inline facts, never a control and never its own tap target. */
+export type ExtensionUISurfacePillNode =
+  | (ExtensionUISurfaceNodeBase & {
+      type: "text";
+      text: string;
+      style?: ExtensionUISurfaceTextStyle;
+      tone?: ExtensionUISurfaceTone;
+    })
+  | (ExtensionUISurfaceNodeBase & { type: "badge"; text: string; tone?: ExtensionUISurfaceTone })
+  | (ExtensionUISurfaceNodeBase & { type: "icon"; name: string; tone?: ExtensionUISurfaceTone })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "progress";
+      value?: number;
+      kind?: "bar" | "ring";
+      label?: string;
+    });
+
+/**
+ * The strip pill's own content: a row of inline nodes, so a surface can say what it is at a
+ * glance. Without one the client derives the pill from the header. `pill` is a reserved composite
+ * id: a pill tap names it.
+ */
+export interface ExtensionUISurfacePill {
+  content: ExtensionUISurfaceNodeBase & {
+    type: "row";
+    children: ExtensionUISurfacePillNode[];
+    spacing?: ExtensionUISurfaceNodeSpacing;
+    align?: ExtensionUISurfaceNodeAlign;
+  };
+  tap: "drawer" | { action: ExtensionUISurfaceNodeAction };
+}
 
 export type ExtensionUISurfaceCompositeKind = ExtensionUISurfaceSection["composite"];
 
@@ -572,6 +744,8 @@ export interface ExtensionUISurface {
   /** `oneShot` only, required there: epoch milliseconds the surface settles by. */
   timeoutAt?: number;
   header: ExtensionUISurfaceHeader;
+  /** The strip's pill content; without one the client derives the pill from the header. */
+  pill?: ExtensionUISurfacePill;
   sections: ExtensionUISurfaceSection[];
   /** Every action id any section offers, with the words and role the host draws. */
   actions: Record<string, ExtensionUISurfaceActionDefinition>;
@@ -588,7 +762,10 @@ export interface ExtensionUISurfaceActionMessage {
   surfaceId: string;
   compositeId: string;
   actionId: string;
+  /** The table row or activity row the action belongs to, for a row action. */
   rowId?: string | null;
+  /** The blocks node that offered the action; absent for a section-level action. */
+  nodeId?: string | null;
   revision: number;
   values?: Record<string, string | number | boolean>;
   requestId?: string;

@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "id": "blocks-future",
+  "title": "Future",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Future primitives"
+  },
+  "actions": {},
+  "fallback": {
+    "text": "Future primitives"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "future",
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "A panel this build cannot draw"
+      },
+      "body": {
+        "type": "stack",
+        "children": [
+          {
+            "type": "text",
+            "id": "known",
+            "text": "This part is known"
+          },
+          {
+            "type": "webview",
+            "id": "canvas",
+            "url": "https://example.com"
+          }
+        ]
+      }
+    }
+  ]
+}

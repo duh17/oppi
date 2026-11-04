@@ -43,12 +43,12 @@ interface Harness {
     clientId?: string,
     audience?: ExtensionUISurfaceAudience,
   ): Promise<ExtensionUISurfaceActionAnswer>;
-  surfaces(audience?: ExtensionUISurfaceAudience): Array<
-    Extract<ServerMessage, { type: "extension_ui_surface" }>
-  >;
-  patches(audience?: ExtensionUISurfaceAudience): Array<
-    Extract<ServerMessage, { type: "extension_ui_patch" }>
-  >;
+  surfaces(
+    audience?: ExtensionUISurfaceAudience,
+  ): Array<Extract<ServerMessage, { type: "extension_ui_surface" }>>;
+  patches(
+    audience?: ExtensionUISurfaceAudience,
+  ): Array<Extract<ServerMessage, { type: "extension_ui_patch" }>>;
   notifications(): Array<Extract<ServerMessage, { type: "extension_ui_notification" }>>;
   settled(): Array<Extract<ServerMessage, { type: "extension_ui_settled" }>>;
 }
@@ -70,9 +70,7 @@ function harness(
     sessionId: SESSION,
     emit: (message, audience) => frames.push({ message, audience }),
     runAction: options.runAction,
-    ...(options.actionRateLimit === undefined
-      ? {}
-      : { actionRateLimit: options.actionRateLimit }),
+    ...(options.actionRateLimit === undefined ? {} : { actionRateLimit: options.actionRateLimit }),
   });
   const forAudience = (audience: ExtensionUISurfaceAudience) =>
     frames.filter((frame) => frame.audience === audience).map((frame) => frame.message);
@@ -90,7 +88,9 @@ function harness(
         .map((frame) => frame.message)
         .filter((message) => message.type === "extension_ui_notification"),
     settled: () =>
-      frames.map((frame) => frame.message).filter((message) => message.type === "extension_ui_settled"),
+      frames
+        .map((frame) => frame.message)
+        .filter((message) => message.type === "extension_ui_settled"),
   };
 }
 
@@ -481,10 +481,7 @@ describe("lifecycle", () => {
     const approval = surfaceValue("action-bar.json");
     approval.timeoutAt = Date.now() + 1_000;
     h.runtime.publish(approval);
-    void h.act(
-      action("approve", { surfaceId: "approval", compositeId: "decide" }),
-      "p1",
-    );
+    void h.act(action("approve", { surfaceId: "approval", compositeId: "decide" }), "p1");
     await vi.advanceTimersByTimeAsync(10);
     expect(signals[0]?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -628,5 +625,177 @@ describe("the shape each client draws", () => {
     expect(h.patches()).toHaveLength(0);
     // A refusal is still an answer: a tap that sent a request id learns its round trip is over.
     expect(h.settled().map((message) => message.id)).toEqual(["action-1"]);
+  });
+});
+
+describe("a blocks surface's actions", () => {
+  /** A tap on one node of the panel's tree, at the revision the client was sent. */
+  function nodeTap(
+    nodeId: string | undefined,
+    actionId: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      surfaceId: "blocks-panel",
+      compositeId: "panel",
+      actionId,
+      ...(nodeId === undefined ? {} : { nodeId }),
+      revision: 1,
+      ...overrides,
+    };
+  }
+
+  function published(
+    runAction?: (request: {
+      nodeId?: string;
+      values?: unknown;
+    }) => Promise<ExtensionUISurfaceActionAnswer>,
+  ): Harness {
+    const h = harness(runAction ? { runAction: runAction as never } : {});
+    h.runtime.publish(surfaceValue("blocks-panel.json"));
+    return h;
+  }
+
+  it("routes a node's action with the node it came from", async () => {
+    const seen: Array<{ nodeId?: string; actionId: string }> = [];
+    const h = published(async (request) => {
+      seen.push({ nodeId: request.nodeId, actionId: "retry" });
+      return { patch: { "sections.0.body.children.0.children.1.text": "3 of 4" } };
+    });
+    const answer = await h.act(
+      nodeTap("retry", "retry", { requestId: "node-1" }),
+      "phone-1",
+      "blocks",
+    );
+    expect(answer).toMatchObject({
+      patch: { "sections.0.body.children.0.children.1.text": "3 of 4" },
+    });
+    expect(seen).toEqual([{ nodeId: "retry", actionId: "retry" }]);
+    expect(h.patches("blocks")).toHaveLength(1);
+    expect(h.settled().map((message) => message.id)).toEqual(["node-1"]);
+  });
+
+  it("routes a toggle's new value and a menu item's action", async () => {
+    const values: unknown[] = [];
+    const actions: string[] = [];
+    const h = published(async (request) => {
+      actions.push(request.actionId as string);
+      values.push(request.values);
+      return { patch: {} };
+    });
+    await h.act(
+      nodeTap("notify", "notify", { values: { value: true }, requestId: "toggle-1" }),
+      "phone-1",
+      "blocks",
+    );
+    await h.act(nodeTap("overflow", "cancel", { requestId: "menu-1" }), "phone-1", "blocks");
+    expect(actions).toEqual(["notify", "cancel"]);
+    expect(values[0]).toEqual({ value: true });
+  });
+
+  it("routes a table row action only to the actions that row offers", async () => {
+    const h = published(async () => ({ patch: {} }));
+    const accepted = await h.act(
+      nodeTap("gates", "copyRow", { rowId: "build", requestId: "row-1" }),
+      "phone-1",
+      "blocks",
+    );
+    expect("error" in accepted).toBe(false);
+    const refused = await h.act(
+      nodeTap("gates", "openRow", { rowId: "test", requestId: "row-2" }),
+      "phone-1",
+      "blocks",
+    );
+    expect(refused).toMatchObject({ error: { message: "This action is not available." } });
+  });
+
+  it("routes the pill's own action, and refuses one it does not offer", async () => {
+    const h = harness({ runAction: async () => ({ patch: {} }) });
+    h.runtime.publish(surfaceValue("blocks-status.json"));
+    const accepted = await h.act(
+      { surfaceId: "blocks-status", compositeId: "pill", actionId: "refresh", revision: 1 },
+      "phone-1",
+      "blocks",
+    );
+    expect("error" in accepted).toBe(false);
+    const refused = await h.act(
+      { surfaceId: "blocks-status", compositeId: "pill", actionId: "approve", revision: 1 },
+      "phone-1",
+      "blocks",
+    );
+    expect(refused).toMatchObject({ error: { message: "This action is not available." } });
+  });
+
+  it("treats two nodes offering one action id as two taps, not a replay", async () => {
+    // The menu's Logs item and the tappable text below it both offer `openLog`: one action id,
+    // two nodes, so the second tap is its own work rather than a replay of the first.
+    let calls = 0;
+    const h = published(async () => {
+      calls += 1;
+      return { patch: {} };
+    });
+    await h.act(nodeTap("overflow", "openLog"), "phone-1", "blocks");
+    await h.act(nodeTap("logs-link", "openLog"), "phone-1", "blocks");
+    expect(calls).toBe(2);
+    // The same node again is the same tap: the first answer is the answer.
+    await h.act(nodeTap("overflow", "openLog"), "phone-1", "blocks");
+    expect(calls).toBe(2);
+  });
+
+  it("joins two taps on one node as one round trip", async () => {
+    let calls = 0;
+    const h = published(async () => {
+      calls += 1;
+      return { patch: {} };
+    });
+    const tap = nodeTap("notify", "notify", { values: { value: true }, requestId: "toggle-1" });
+    await Promise.all([
+      h.act(tap, "phone-1", "blocks"),
+      h.act({ ...tap, requestId: "toggle-2" }, "phone-1", "blocks"),
+    ]);
+    await h.act(tap, "phone-1", "blocks");
+    expect(calls).toBe(1);
+  });
+});
+
+describe("who can draw a blocks surface", () => {
+  it("sends a tree only to clients that draw primitives, and its projection to the rest", () => {
+    const h = harness();
+    h.runtime.publish(surfaceValue("blocks-panel.json"));
+    expect(h.surfaces("blocks")).toHaveLength(1);
+    expect(h.surfaces("composites")).toHaveLength(0);
+    expect(h.surfaces("v1-projection")).toHaveLength(0);
+    // A client that draws only the closed composites gets the widget projection instead.
+    expect(h.notifications().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("still sends a surface without a tree to both v2 shapes", () => {
+    const h = harness();
+    h.runtime.publish(surfaceValue());
+    expect(h.surfaces("blocks")).toHaveLength(1);
+    expect(h.surfaces("composites")).toHaveLength(1);
+  });
+
+  it("refuses a composites-only client's tap on a tree it never drew", async () => {
+    let calls = 0;
+    const h = harness({
+      runAction: async () => {
+        calls += 1;
+        return { patch: {} };
+      },
+    });
+    h.runtime.publish(surfaceValue("blocks-panel.json"));
+    const answer = await h.act(
+      {
+        surfaceId: "blocks-panel",
+        compositeId: "panel",
+        actionId: "refresh",
+        revision: 1,
+      },
+      "old-phone",
+      "composites",
+    );
+    expect(answer).toMatchObject({ error: { message: "This client cannot act on a surface." } });
+    expect(calls).toBe(0);
   });
 });

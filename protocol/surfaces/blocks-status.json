@@ -1,0 +1,90 @@
+{
+  "version": 2,
+  "id": "blocks-status",
+  "title": "Waiting",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Waiting on you"
+  },
+  "actions": {
+    "refresh": {
+      "title": "Refresh"
+    },
+    "approve": {
+      "title": "Approve",
+      "role": "primary"
+    }
+  },
+  "fallback": {
+    "text": "Waiting on you: approve to continue"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "pill": {
+    "content": {
+      "type": "row",
+      "spacing": "tight",
+      "children": [
+        {
+          "type": "icon",
+          "name": "exclamationmark.triangle",
+          "tone": "danger"
+        },
+        {
+          "type": "text",
+          "text": "Waiting on you",
+          "style": "caption"
+        }
+      ]
+    },
+    "tap": {
+      "action": {
+        "id": "refresh"
+      }
+    }
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "ask",
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "Waiting on you: approve to continue"
+      },
+      "body": {
+        "type": "stack",
+        "spacing": "normal",
+        "children": [
+          {
+            "type": "text",
+            "id": "headline",
+            "text": "Approve shipping 4f2c1ab?",
+            "style": "headline"
+          },
+          {
+            "type": "text",
+            "id": "detail",
+            "text": "Two gates passed.",
+            "style": "caption"
+          },
+          {
+            "type": "button",
+            "id": "approve",
+            "title": "Approve",
+            "role": "primary",
+            "action": {
+              "id": "approve"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

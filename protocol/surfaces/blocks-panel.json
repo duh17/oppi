@@ -1,0 +1,304 @@
+{
+  "version": 2,
+  "id": "blocks-panel",
+  "title": "Deploy panel",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "web → prod",
+    "subtitle": "4f2c1ab"
+  },
+  "actions": {
+    "refresh": {
+      "title": "Refresh"
+    },
+    "openLog": {
+      "title": "Logs"
+    },
+    "retry": {
+      "title": "Retry",
+      "role": "primary",
+      "pending": {
+        "title": "Retrying…",
+        "disabled": [
+          "retry"
+        ]
+      }
+    },
+    "notify": {
+      "title": "Notify on failure"
+    },
+    "copyRow": {
+      "title": "Copy"
+    },
+    "openRow": {
+      "title": "Open"
+    },
+    "cancel": {
+      "title": "Cancel",
+      "role": "destructive"
+    },
+    "filters": {
+      "title": "Filters"
+    }
+  },
+  "fallback": {
+    "text": "Deploy web → prod: 2 of 4 gates"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "pill": {
+    "content": {
+      "type": "row",
+      "spacing": "tight",
+      "children": [
+        {
+          "type": "icon",
+          "name": "hammer",
+          "tone": "accent"
+        },
+        {
+          "type": "text",
+          "text": "web → prod",
+          "style": "caption"
+        },
+        {
+          "type": "badge",
+          "text": "running",
+          "tone": "warning"
+        },
+        {
+          "type": "progress",
+          "value": 0.4,
+          "kind": "ring"
+        }
+      ]
+    },
+    "tap": "drawer"
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "panel",
+      "header": {
+        "title": "Gates",
+        "subtitle": "2 of 4"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "refresh"
+      ],
+      "fallback": {
+        "text": "Deploy web → prod: 2 of 4 gates"
+      },
+      "tone": "accent",
+      "body": {
+        "type": "stack",
+        "id": "body",
+        "spacing": "normal",
+        "children": [
+          {
+            "type": "row",
+            "id": "headline",
+            "align": "spread",
+            "spacing": "tight",
+            "children": [
+              {
+                "type": "text",
+                "id": "phase",
+                "text": "Deploying 4f2c1ab",
+                "style": "headline"
+              },
+              {
+                "type": "badge",
+                "id": "state",
+                "text": "2 of 4",
+                "tone": "warning"
+              }
+            ]
+          },
+          {
+            "type": "progress",
+            "id": "progress",
+            "label": "Tests",
+            "value": 0.4,
+            "kind": "bar"
+          },
+          {
+            "type": "progress",
+            "id": "waiting",
+            "kind": "ring"
+          },
+          {
+            "type": "keyValue",
+            "id": "facts",
+            "pairs": [
+              {
+                "key": "Env",
+                "value": "prod"
+              },
+              {
+                "key": "Commit",
+                "value": "4f2c1ab",
+                "tone": "accent"
+              }
+            ]
+          },
+          {
+            "type": "markdown",
+            "id": "notes",
+            "markdown": "Two gates remain; the test gate retries once."
+          },
+          {
+            "type": "table",
+            "id": "gates",
+            "columns": [
+              "Gate",
+              "State"
+            ],
+            "rows": [
+              {
+                "id": "build",
+                "cells": [
+                  "Build",
+                  "passed"
+                ],
+                "actions": [
+                  {
+                    "id": "copyRow"
+                  },
+                  {
+                    "id": "openRow"
+                  }
+                ]
+              },
+              {
+                "id": "test",
+                "cells": [
+                  "Test",
+                  "running"
+                ],
+                "actions": [
+                  {
+                    "id": "copyRow"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "chart",
+            "id": "durations",
+            "kind": "bar",
+            "title": "Gate duration",
+            "labels": [
+              "build",
+              "test"
+            ],
+            "series": [
+              {
+                "name": "seconds",
+                "values": [
+                  42,
+                  18
+                ]
+              }
+            ]
+          },
+          {
+            "type": "code",
+            "id": "tail",
+            "language": "bash",
+            "text": "make test"
+          },
+          {
+            "type": "divider",
+            "id": "rule"
+          },
+          {
+            "type": "spacer",
+            "id": "gap",
+            "size": "small"
+          },
+          {
+            "type": "icon",
+            "id": "hammer",
+            "name": "hammer",
+            "tone": "accent"
+          },
+          {
+            "type": "stack",
+            "id": "controls",
+            "spacing": "tight",
+            "children": [
+              {
+                "type": "button",
+                "id": "retry",
+                "title": "Retry",
+                "role": "primary",
+                "icon": "arrow.clockwise",
+                "action": {
+                  "id": "retry",
+                  "pending": {
+                    "title": "Retrying…"
+                  }
+                }
+              },
+              {
+                "type": "toggle",
+                "id": "notify",
+                "title": "Notify on failure",
+                "value": false,
+                "action": {
+                  "id": "notify"
+                }
+              },
+              {
+                "type": "menu",
+                "id": "overflow",
+                "title": "More",
+                "icon": "list.bullet",
+                "items": [
+                  {
+                    "title": "Logs",
+                    "action": {
+                      "id": "openLog"
+                    }
+                  },
+                  {
+                    "title": "Cancel",
+                    "role": "destructive",
+                    "action": {
+                      "id": "cancel"
+                    }
+                  },
+                  {
+                    "title": "Filters",
+                    "action": {
+                      "id": "filters"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "id": "logs-link",
+                "text": "Open logs",
+                "tone": "accent",
+                "action": {
+                  "id": "openLog"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

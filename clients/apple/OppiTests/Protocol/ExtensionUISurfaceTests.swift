@@ -172,6 +172,207 @@ struct ExtensionUISurfaceTests {
         #expect(unknownChecklist.fallback.text == "2 of 4 gates done")
     }
 
+    // MARK: - Blocks
+
+    private func blocksSection(_ name: String) throws -> ExtensionUISurfaceBlocks {
+        let surface = try surface(name)
+        guard case .blocks(let blocks) = try #require(surface.sections.first) else {
+            throw SurfaceFixtureError.notBlocks
+        }
+        return blocks
+    }
+
+    private enum SurfaceFixtureError: Error {
+        case notBlocks
+    }
+
+    /// Every node the panel's tree draws, flattened so each kind is asserted where it belongs.
+    private func nodes(in node: ExtensionUISurfaceNode) -> [ExtensionUISurfaceNode] {
+        [node] + node.children.flatMap { nodes(in: $0) }
+    }
+
+    @Test func decodesAComposedPillAndEveryNodeKind() throws {
+        let surface = try surface("blocks-panel.json")
+        let pill = try #require(surface.pill)
+        #expect(pill.tap == .drawer)
+        #expect(pill.content.kind == "row")
+        #expect(pill.children.map(\.kind) == ["icon", "text", "badge", "progress"])
+
+        let blocks = try blocksSection("blocks-panel.json")
+        #expect(blocks.id == "panel")
+        #expect(blocks.header?.title == "Gates")
+        #expect(blocks.tone == "accent")
+        #expect(blocks.actions == ["refresh"])
+        #expect(blocks.state.isContent)
+        #expect(blocks.body.kind == "stack")
+
+        let all = nodes(in: blocks.body)
+        let kinds = Set(all.flatMap { [$0.kind] + ($0.actionIds.isEmpty ? [] : ["action"]) })
+        for kind in [
+            "row", "stack", "text", "markdown", "badge", "icon", "progress", "keyValue",
+            "table", "chart", "code", "divider", "spacer", "button", "toggle", "menu",
+        ] {
+            #expect(kinds.contains(kind), "missing node kind \(kind)")
+        }
+
+        // A control keeps its own id, role, icon, and declared pending words.
+        let retry = try #require(all.first { $0.id == "retry" })
+        guard case .button(let button) = retry else {
+            Issue.record("Expected the retry button")
+            return
+        }
+        #expect(button.title == "Retry")
+        #expect(button.isPrimary)
+        #expect(button.icon == "arrow.clockwise")
+        #expect(button.action?.id == "retry")
+        #expect(button.action?.pending?.title == "Retrying…")
+
+        // A toggle carries its own value; its tap sends the new one.
+        let notify = try #require(all.first { $0.id == "notify" })
+        guard case .toggle(let toggle) = notify else {
+            Issue.record("Expected the notify toggle")
+            return
+        }
+        #expect(toggle.value == false)
+        #expect(toggle.action?.id == "notify")
+
+        // A table row names the actions it offers, and the surface offers them all.
+        let table = try #require(all.first { $0.id == "gates" })
+        guard case .table(let grid) = table else {
+            Issue.record("Expected the gates table")
+            return
+        }
+        #expect(grid.columns == ["Gate", "State"])
+        #expect(grid.rows.first?.id == "build")
+        #expect(grid.rows.first?.cells == [.text("Build"), .text("passed")])
+        #expect(grid.rows.first?.actions?.map(\.id) == ["copyRow", "openRow"])
+        #expect(surface.offeredActionIds.isSuperset(of: ["retry", "notify", "copyRow", "openRow"]))
+
+        // A menu offers its items' actions, with the role each item names.
+        let overflow = try #require(all.first { $0.id == "overflow" })
+        guard case .menu(let menu) = overflow else {
+            Issue.record("Expected the overflow menu")
+            return
+        }
+        #expect(menu.title == "More")
+        #expect(menu.items.map(\.title) == ["Logs", "Cancel", "Filters"])
+        #expect(menu.items[1].role == "destructive")
+        #expect(menu.items.map(\.action.id) == ["openLog", "cancel", "filters"])
+
+        // A progress node without a value is indeterminate, and a ring says so.
+        let waiting = try #require(all.first { $0.id == "waiting" })
+        guard case .progress(let progress) = waiting else {
+            Issue.record("Expected the waiting progress")
+            return
+        }
+        #expect(progress.value == nil)
+        #expect(progress.isRing)
+    }
+
+    @Test func decodesAPillWhoseTapIsAnAction() throws {
+        let surface = try surface("blocks-status.json")
+        let pill = try #require(surface.pill)
+        guard case .action(let action) = pill.tap else {
+            Issue.record("Expected a pill action")
+            return
+        }
+        #expect(action.id == "refresh")
+        let blocks = try blocksSection("blocks-status.json")
+        #expect(blocks.header == nil)
+        #expect(blocks.body.kind == "stack")
+        #expect(blocks.body.children.map(\.kind) == ["text", "text", "button"])
+    }
+
+    @Test func keepsANodeKindThisBuildCannotDrawWithItsWords() throws {
+        let surface = try surface("blocks-unknown-node.json")
+        guard case .blocks(let blocks) = try #require(surface.sections.first) else {
+            Issue.record("Expected a blocks section")
+            return
+        }
+        let all = nodes(in: blocks.body)
+        #expect(all.map(\.kind).contains("webview"))
+        guard case .unsupported(let unknown) = try #require(all.first(where: { $0.id == "canvas" }))
+        else {
+            Issue.record("Expected an unsupported node")
+            return
+        }
+        #expect(unknown.type == "webview")
+        // The frame still decodes whole: a newer server never costs this build the section.
+        #expect(blocks.fallback.text == "A panel this build cannot draw")
+    }
+
+    @Test func roundTripsATreeThroughEncoding() throws {
+        // The patch applier re-encodes a surface and decodes it again, so encoding has to be
+        // as complete as decoding: a field the wire carries must survive the round trip.
+        let surface = try surface("blocks-panel.json")
+        let encoded = try JSONEncoder().encode(surface)
+        let decoded = try JSONDecoder().decode(ExtensionUISurface.self, from: encoded)
+        #expect(decoded == surface)
+    }
+
+    @Test func encodesANodeActionAndAppliesAPatchIntoABody() throws {
+        let action = ClientMessage.extensionUIAction(
+            surfaceId: "blocks-panel",
+            compositeId: "panel",
+            actionId: "notify",
+            nodeId: "notify",
+            revision: 7,
+            values: ["value": .bool(true)],
+            requestId: "blocks-action-1"
+        )
+        let encodedAction = try JSONDecoder().decode(
+            [String: JSONValue].self,
+            from: JSONEncoder().encode(action)
+        )
+        let expectedAction = try JSONDecoder().decode(
+            [String: JSONValue].self,
+            from: ProtocolFixtures.data("surfaces/blocks-action.json")
+        )
+        #expect(encodedAction == expectedAction)
+
+        // A patch into a body lands by child index and by node id, the way the server merged it.
+        let patch = try JSONDecoder().decode(
+            ExtensionUISurfacePatch.self,
+            from: ProtocolFixtures.data("surfaces/blocks-patch.json")
+        )
+        let surface = try surface("blocks-panel.json")
+        let patchBody = try #require(patch.patch)
+        let merged = try #require(
+            ExtensionSurfacePatchApplier.apply(patchBody, to: surface, revision: patch.revision)
+        )
+        guard case .blocks(let blocks) = try #require(merged.sections.first) else {
+            Issue.record("Expected a blocks section")
+            return
+        }
+        let all = nodes(in: blocks.body)
+        guard case .progress(let progress) = try #require(all.first { $0.id == "progress" }) else {
+            Issue.record("Expected the progress node")
+            return
+        }
+        #expect(progress.value == 0.7)
+        guard case .badge(let state) = try #require(all.first { $0.id == "state" }) else {
+            Issue.record("Expected the state badge")
+            return
+        }
+        #expect(state.text == "3 of 4")
+        guard case .table(let grid) = try #require(all.first { $0.id == "gates" }) else {
+            Issue.record("Expected the gates table")
+            return
+        }
+        #expect(grid.rows.first?.cells == [.text("Build"), .text("running")])
+        #expect(merged.revision == patch.revision)
+    }
+
+    @Test func refusesABodyPatchThatNamesNoNode() throws {
+        let surface = try surface("blocks-panel.json")
+        let merged = ExtensionSurfacePatchApplier.apply(
+            ["sections.0.body.children.#ghost.text": .string("x")],
+            to: surface,
+            revision: 8
+        )
+        #expect(merged == nil)
+    }
+
     @Test func encodesTheCapabilitiesAClientDraws() throws {
         let message = ClientMessage.clientCapabilities(
             capabilities: ["extension-native-ui:v2:composites"],

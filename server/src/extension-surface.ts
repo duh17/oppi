@@ -1,15 +1,26 @@
 import { normalizeExtensionUINativeSurface } from "./extension-ui-contract.js";
 import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
+import {
+  EXTENSION_UI_NATIVE_CHART_MAX_LABELS,
+  EXTENSION_UI_NATIVE_CHART_MAX_SERIES,
+} from "./extension-ui-contract.js";
+import { isExtensionUISurfaceIconName } from "./extension-surface-icons.js";
+import { projectNodeToV1, v1PillSubtitle, v1TextBlock } from "./extension-surface-projection.js";
 import type {
-  ExtensionUINativeSurface,
+  ExtensionUIAccessibility,
+  ExtensionUIBlocksComposite,
   ExtensionUISurface,
   ExtensionUISurfaceActionDefinition,
   ExtensionUISurfaceAtom,
   ExtensionUISurfaceCompositeKind,
+  ExtensionUISurfaceNode,
+  ExtensionUISurfaceNodeAction,
+  ExtensionUISurfacePill,
   ExtensionUISurfaceSection,
   ExtensionUISurfaceState,
   ExtensionUISurfaceStateKind,
   ExtensionUISurfaceTone,
+  ExtensionUINativeSurface,
   ExtensionUITextSpan,
 } from "./types.js";
 
@@ -30,8 +41,20 @@ export const EXTENSION_UI_SURFACE_MAX_ITEMS = 200;
 export const EXTENSION_UI_SURFACE_MAX_COLUMNS = 32;
 export const EXTENSION_UI_SURFACE_MAX_CELL_CHARS = 200;
 // Depth: a surface holds sections, a section holds atoms in the slots its composite names, and
-// an atom holds nothing. Two containers is the whole shape, so the schema is the cap.
-export const EXTENSION_UI_SURFACE_MAX_ACTIONS = 32;
+// an atom holds nothing. Two containers is the whole shape, so the schema is the cap. A blocks
+// body is the exception and carries its own depth, node, and fan-out caps below.
+export const EXTENSION_UI_SURFACE_MAX_ACTIONS = 40;
+/** A blocks body's deepest node; the body root is depth 1. */
+export const EXTENSION_UI_SURFACE_MAX_NODE_DEPTH = 5;
+/** Every node any blocks section or the pill carries, across the surface. */
+export const EXTENSION_UI_SURFACE_MAX_NODES = 300;
+export const EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN = 12;
+/** A node's words: longer than a title, shorter than the surface's fallback text. */
+export const EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS = 500;
+export const EXTENSION_UI_SURFACE_MAX_KEY_VALUES = 24;
+export const EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES = 32;
+/** The pill is a surface-level region, and `pill` is not a section id anywhere: reserved. */
+export const EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID = "pill";
 /** Actions a surface accepts per client per minute; beyond it the card shows an error. */
 export const EXTENSION_UI_SURFACE_ACTION_RATE_LIMIT = 60;
 export const EXTENSION_UI_SURFACE_ACTION_RATE_WINDOW_MS = 60_000;
@@ -39,12 +62,13 @@ export const EXTENSION_UI_SURFACE_MAX_TITLE_CHARS = 200;
 export const EXTENSION_UI_SURFACE_MAX_FALLBACK_CHARS = 2_000;
 export const EXTENSION_UI_SURFACE_MAX_ATOMS = 8;
 export const EXTENSION_UI_SURFACE_MAX_SPANS = 320;
-export const EXTENSION_UI_SURFACE_COMPOSITES: readonly ExtensionUISurfaceCompositeKind[] = [
+/** The composites that share one base: header, state, actions, fallback, tone. */
+const CLOSED_COMPOSITES = [
   "statusCard",
   "checklist",
   "dataTable",
   "actionBar",
-];
+] as const satisfies readonly ExtensionUISurfaceCompositeKind[];
 const TONES: readonly ExtensionUISurfaceTone[] = [
   "neutral",
   "accent",
@@ -55,6 +79,30 @@ const TONES: readonly ExtensionUISurfaceTone[] = [
 const STATES: readonly ExtensionUISurfaceStateKind[] = ["loading", "empty", "failure", "content"];
 const ITEM_STATES = ["queued", "running", "success", "warning", "error", "inactive"] as const;
 const ATOM_TYPES = ["text", "markdown", "progress", "divider", "spacer"] as const;
+const NODE_TYPES = [
+  "row",
+  "stack",
+  "text",
+  "markdown",
+  "badge",
+  "icon",
+  "progress",
+  "keyValue",
+  "table",
+  "chart",
+  "code",
+  "divider",
+  "spacer",
+  "button",
+  "toggle",
+  "menu",
+] as const;
+const NODE_SPACING = ["tight", "normal"] as const;
+const NODE_ALIGNS = ["leading", "center", "trailing", "spread"] as const;
+const TEXT_STYLES = ["body", "headline", "caption", "mono"] as const;
+const NODE_ROLES = ["primary", "secondary", "destructive"] as const;
+/** What a pill may hold: one line of inline facts, never a control. */
+const PILL_NODE_TYPES = ["icon", "text", "badge", "progress"] as const;
 /** Stable ids become accessibility identifiers on the device: no spaces, no separators we own. */
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -103,6 +151,8 @@ class SurfaceShapeError extends Error {}
 
 interface SurfaceLimitState {
   spans: number;
+  nodes: number;
+  nodeIds: Set<string>;
 }
 
 function atom(value: unknown, state: SurfaceLimitState): ExtensionUISurfaceAtom {
@@ -196,6 +246,399 @@ function state(value: unknown): ExtensionUISurfaceState {
   return { kind, ...(title ? { title } : {}), ...(message ? { message } : {}) };
 }
 
+function actionRef(value: unknown, actions: Record<string, unknown>): string {
+  const actionId = stableId(value);
+  if (!Object.hasOwn(actions, actionId))
+    throw new SurfaceShapeError(`action "${actionId}" is not in the surface's action table`);
+  return actionId;
+}
+
+/** A tap a node offers: the action id, the values it sends, and its declared pending state. */
+function nodeAction(
+  value: unknown,
+  actions: Record<string, unknown>,
+): ExtensionUISurfaceNodeAction {
+  if (!isRecord(value)) throw new SurfaceShapeError("a node action is not an object");
+  let values: Record<string, string | number | boolean> | undefined;
+  if (value.values !== undefined) {
+    if (!isRecord(value.values)) throw new SurfaceShapeError("action values are not an object");
+    const entries = Object.entries(value.values);
+    if (entries.length > EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES)
+      throw new SurfaceShapeError(
+        `action values exceed ${EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES} entries`,
+      );
+    values = {};
+    for (const [key, entry] of entries) {
+      if (typeof entry === "string") {
+        text(entry, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS);
+        values[key] = entry;
+        continue;
+      }
+      if (typeof entry === "boolean") {
+        values[key] = entry;
+        continue;
+      }
+      if (typeof entry === "number" && Number.isFinite(entry)) {
+        values[key] = entry;
+        continue;
+      }
+      throw new SurfaceShapeError("an action value is not a string, number, or boolean");
+    }
+  }
+  let pending: ExtensionUISurfaceNodeAction["pending"];
+  if (value.pending !== undefined) {
+    if (!isRecord(value.pending))
+      throw new SurfaceShapeError("a node action's pending state is not an object");
+    const disabled =
+      value.pending.disabled === undefined
+        ? undefined
+        : list(value.pending.disabled, EXTENSION_UI_SURFACE_MAX_ACTIONS, "pending.disabled").map(
+            (entry) => actionRef(entry, actions),
+          );
+    pending = {
+      ...(value.pending.title === undefined
+        ? {}
+        : { title: text(value.pending.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+      ...(disabled ? { disabled } : {}),
+    };
+  }
+  return {
+    id: actionRef(value.id, actions),
+    ...(values ? { values } : {}),
+    ...(pending ? { pending } : {}),
+  };
+}
+
+function accessibility(value: unknown): { label?: string; value?: string; hint?: string } {
+  if (!isRecord(value)) throw new SurfaceShapeError("accessibility is not an object");
+  return {
+    ...(value.label === undefined
+      ? {}
+      : { label: text(value.label, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+    ...(value.value === undefined
+      ? {}
+      : { value: text(value.value, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+    ...(value.hint === undefined
+      ? {}
+      : { hint: text(value.hint, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+  };
+}
+
+function iconName(value: unknown): string {
+  if (typeof value !== "string" || !isExtensionUISurfaceIconName(value))
+    throw new SurfaceShapeError(`"${String(value)}" is not an allowed icon name`);
+  return value;
+}
+
+function nodeText(value: unknown): string {
+  return text(value, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true);
+}
+
+interface NodeBaseFields {
+  id?: string;
+  accessibility?: ExtensionUIAccessibility;
+}
+
+function nodeBase(value: Record<string, unknown>, state: SurfaceLimitState): NodeBaseFields {
+  let id: string | undefined;
+  if (value.id !== undefined) {
+    id = stableId(value.id);
+    if (state.nodeIds.has(id)) throw new SurfaceShapeError(`duplicate node id "${id}"`);
+    state.nodeIds.add(id);
+  }
+  return {
+    ...(id === undefined ? {} : { id }),
+    ...(value.accessibility === undefined
+      ? {}
+      : { accessibility: accessibility(value.accessibility) }),
+  };
+}
+
+function children(
+  value: unknown,
+  state: SurfaceLimitState,
+  actions: Record<string, unknown>,
+  depth: number,
+): ExtensionUISurfaceNode[] {
+  const entries = list(value, EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN, "node children");
+  if (entries.length === 0) throw new SurfaceShapeError("a layout node has no children");
+  return entries.map((entry) => node(entry, state, actions, depth + 1));
+}
+
+/**
+ * One node of a blocks tree. A node is a primitive the host draws — no font, colour, size, or
+ * offset exists — and it counts against the surface's depth, node, fan-out, and action caps.
+ */
+function node(
+  value: unknown,
+  state: SurfaceLimitState,
+  actions: Record<string, unknown>,
+  depth: number,
+): ExtensionUISurfaceNode {
+  if (!isRecord(value)) throw new SurfaceShapeError("a node is not an object");
+  if (depth > EXTENSION_UI_SURFACE_MAX_NODE_DEPTH)
+    throw new SurfaceShapeError(
+      `a blocks body is deeper than ${EXTENSION_UI_SURFACE_MAX_NODE_DEPTH} nodes`,
+    );
+  state.nodes += 1;
+  if (state.nodes > EXTENSION_UI_SURFACE_MAX_NODES)
+    throw new SurfaceShapeError(`the surface exceeds ${EXTENSION_UI_SURFACE_MAX_NODES} nodes`);
+  const type = oneOf(NODE_TYPES, value.type);
+  const base = nodeBase(value, state);
+  // Only these four primitives are tappable regions; every other tap is a control of its own.
+  const tappable = value.action === undefined ? {} : { action: nodeAction(value.action, actions) };
+  const tone = value.tone === undefined ? {} : { tone: oneOf(TONES, value.tone) };
+  switch (type) {
+    case "row":
+      return {
+        ...base,
+        type,
+        children: children(value.children, state, actions, depth),
+        ...(value.spacing === undefined ? {} : { spacing: oneOf(NODE_SPACING, value.spacing) }),
+        ...(value.align === undefined ? {} : { align: oneOf(NODE_ALIGNS, value.align) }),
+        ...tappable,
+      };
+    case "stack":
+      return {
+        ...base,
+        type,
+        children: children(value.children, state, actions, depth),
+        ...(value.spacing === undefined ? {} : { spacing: oneOf(NODE_SPACING, value.spacing) }),
+        ...tappable,
+      };
+    case "text":
+      return {
+        ...base,
+        type,
+        text: nodeText(value.text),
+        ...(value.style === undefined ? {} : { style: oneOf(TEXT_STYLES, value.style) }),
+        ...tone,
+        ...tappable,
+      };
+    case "markdown":
+      return {
+        ...base,
+        type,
+        markdown: text(value.markdown, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
+      };
+    case "badge":
+      return { ...base, type, text: nodeText(value.text), ...tone, ...tappable };
+    case "icon":
+      return { ...base, type, name: iconName(value.name), ...tone };
+    case "progress": {
+      let progressValue: number | undefined;
+      if (value.value !== undefined) {
+        if (typeof value.value !== "number" || !Number.isFinite(value.value))
+          throw new SurfaceShapeError("a progress value is not a finite number");
+        if (value.value < 0 || value.value > 1)
+          throw new SurfaceShapeError("a progress value is outside 0–1");
+        progressValue = value.value;
+      }
+      return {
+        ...base,
+        type,
+        ...(progressValue === undefined ? {} : { value: progressValue }),
+        ...(value.kind === undefined ? {} : { kind: oneOf(["bar", "ring"] as const, value.kind) }),
+        ...(value.label === undefined
+          ? {}
+          : { label: text(value.label, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+      };
+    }
+    case "keyValue": {
+      const pairs = list(value.pairs, EXTENSION_UI_SURFACE_MAX_KEY_VALUES, "key/value pairs").map(
+        (pair) => {
+          if (!isRecord(pair)) throw new SurfaceShapeError("a key/value pair is not an object");
+          return {
+            key: text(pair.key, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
+            value: text(pair.value, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
+            ...(pair.tone === undefined ? {} : { tone: oneOf(TONES, pair.tone) }),
+          };
+        },
+      );
+      if (pairs.length === 0) throw new SurfaceShapeError("a key/value node has no pairs");
+      return { ...base, type, pairs };
+    }
+    case "table": {
+      const columns = list(value.columns, EXTENSION_UI_SURFACE_MAX_COLUMNS, "table columns").map(
+        (column) => text(column, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
+      );
+      if (columns.length === 0) throw new SurfaceShapeError("a table has no columns");
+      const rows = list(value.rows, EXTENSION_UI_SURFACE_MAX_ITEMS, "table rows").map((row) => {
+        if (!isRecord(row)) throw new SurfaceShapeError("a table row is not an object");
+        const cells = list(row.cells, columns.length, "table cells").map((cell) => {
+          if (cell === null) return null;
+          if (typeof cell === "number") {
+            if (!Number.isFinite(cell)) throw new SurfaceShapeError("a numeric cell is not finite");
+            return cell;
+          }
+          if (typeof cell !== "string")
+            throw new SurfaceShapeError("a cell is not a string, number, or null");
+          return text(cell, EXTENSION_UI_SURFACE_MAX_CELL_CHARS, true);
+        });
+        const rowActions =
+          row.actions === undefined
+            ? undefined
+            : list(row.actions, EXTENSION_UI_SURFACE_MAX_ACTIONS, "row actions").map((entry) =>
+                nodeAction(entry, actions),
+              );
+        // A tap names the node and the row: a row with actions has to be nameable.
+        if (rowActions && row.id === undefined)
+          throw new SurfaceShapeError("a table row with actions has no id");
+        if (rowActions && base.id === undefined)
+          throw new SurfaceShapeError("a table with row actions has no id");
+        return {
+          ...(row.id === undefined ? {} : { id: stableId(row.id) }),
+          cells,
+          ...(rowActions ? { actions: rowActions } : {}),
+        };
+      });
+      uniqueIds(
+        rows.flatMap((row) => (row.id === undefined ? [] : [{ id: row.id }])),
+        "table row",
+      );
+      return {
+        ...base,
+        type,
+        columns,
+        rows,
+        ...(value.truncated === undefined
+          ? {}
+          : { truncated: boolean(value.truncated, "truncated") }),
+      };
+    }
+    case "chart": {
+      const labels = list(value.labels, EXTENSION_UI_NATIVE_CHART_MAX_LABELS, "chart labels").map(
+        (label) => text(label, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
+      );
+      const series = list(value.series, EXTENSION_UI_NATIVE_CHART_MAX_SERIES, "chart series").map(
+        (entry) => {
+          if (!isRecord(entry)) throw new SurfaceShapeError("a chart series is not an object");
+          const values = list(entry.values, labels.length, "chart values").map((point) => {
+            if (typeof point !== "number" || !Number.isFinite(point))
+              throw new SurfaceShapeError("a chart point is not a finite number");
+            return point;
+          });
+          return {
+            ...(entry.name === undefined
+              ? {}
+              : { name: text(entry.name, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+            values,
+          };
+        },
+      );
+      if (labels.length === 0) throw new SurfaceShapeError("a chart has no labels");
+      if (series.length === 0) throw new SurfaceShapeError("a chart has no series");
+      return {
+        ...base,
+        type,
+        kind: oneOf(["bar", "line", "pie"] as const, value.kind),
+        ...(value.title === undefined
+          ? {}
+          : { title: text(value.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+        labels,
+        series,
+        ...(value.truncated === undefined
+          ? {}
+          : { truncated: boolean(value.truncated, "truncated") }),
+      };
+    }
+    case "code":
+      return {
+        ...base,
+        type,
+        ...(value.language === undefined
+          ? {}
+          : { language: text(value.language, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+        text: text(value.text, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
+      };
+    case "divider":
+      return { ...base, type };
+    case "spacer":
+      return {
+        ...base,
+        type,
+        ...(value.size === undefined
+          ? {}
+          : { size: oneOf(["small", "medium", "large"] as const, value.size) }),
+      };
+    case "button":
+      return {
+        ...base,
+        type,
+        id: requiredNodeId(base),
+        title: nodeText(value.title),
+        ...(value.role === undefined ? {} : { role: oneOf(NODE_ROLES, value.role) }),
+        ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+        action: nodeAction(value.action, actions),
+      };
+    case "toggle":
+      return {
+        ...base,
+        type,
+        id: requiredNodeId(base),
+        title: nodeText(value.title),
+        value: boolean(value.value, "a toggle's value"),
+        action: nodeAction(value.action, actions),
+      };
+    case "menu": {
+      const items = list(value.items, EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN, "menu items").map(
+        (item) => {
+          if (!isRecord(item)) throw new SurfaceShapeError("a menu item is not an object");
+          return {
+            ...(item.id === undefined ? {} : { id: stableId(item.id) }),
+            title: nodeText(item.title),
+            ...(item.role === undefined ? {} : { role: oneOf(NODE_ROLES, item.role) }),
+            action: nodeAction(item.action, actions),
+          };
+        },
+      );
+      if (items.length === 0) throw new SurfaceShapeError("a menu has no items");
+      return {
+        ...base,
+        type,
+        id: requiredNodeId(base),
+        ...(value.title === undefined
+          ? {}
+          : { title: text(value.title, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+        ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+        items,
+      };
+    }
+  }
+}
+
+/** A control is a tap target on its own: it cannot be tapped through a shared id. */
+function requiredNodeId(base: NodeBaseFields): string {
+  if (base.id === undefined) throw new SurfaceShapeError("an interactive node has no id");
+  return base.id;
+}
+
+function pillOf(
+  value: unknown,
+  state: SurfaceLimitState,
+  actions: Record<string, unknown>,
+): ExtensionUISurfacePill {
+  if (!isRecord(value)) throw new SurfaceShapeError("a pill is not an object");
+  if (!isRecord(value.content)) throw new SurfaceShapeError("a pill content is not an object");
+  if (value.content.type !== "row")
+    throw new SurfaceShapeError("a pill content is a row of inline nodes");
+  const content = node(value.content, state, actions, 1);
+  if (content.type !== "row")
+    throw new SurfaceShapeError("a pill content is a row of inline nodes");
+  for (const child of content.children) {
+    if (!(PILL_NODE_TYPES as readonly string[]).includes(child.type))
+      throw new SurfaceShapeError(`a pill cannot hold a "${child.type}" node`);
+    // A pill decides its own tap: a child that offers its own would be two taps in one target.
+    if ("action" in child && child.action !== undefined)
+      throw new SurfaceShapeError("a pill cannot hold a node with its own action");
+  }
+  const tap = value.tap;
+  const pillContent = content as unknown as ExtensionUISurfacePill["content"];
+  if (tap === "drawer") return { content: pillContent, tap };
+  if (!isRecord(tap)) throw new SurfaceShapeError('a pill tap is "drawer" or an action');
+  return { content: pillContent, tap: { action: nodeAction(tap.action, actions) } };
+}
+
 function actionIds(value: unknown, actions: Record<string, unknown>): string[] | undefined {
   if (value === undefined || value === null) return undefined;
   return list(value, EXTENSION_UI_SURFACE_MAX_ACTIONS, "composite actions").map((id) => {
@@ -246,13 +689,47 @@ function uniqueIds(values: readonly { id: string }[], what: string): void {
   }
 }
 
+/** A tree of primitives: the same shared fields, with an optional header and a body. */
+function blocksSection(
+  value: Record<string, unknown>,
+  actions: Record<string, unknown>,
+  limits: SurfaceLimitState,
+): ExtensionUIBlocksComposite {
+  if (!isRecord(value.fallback))
+    throw new SurfaceShapeError("a composite fallback is not an object");
+  if (value.state !== undefined && !isRecord(value.state))
+    throw new SurfaceShapeError("a composite state is not an object");
+  const ids = actionIds(value.actions, actions);
+  let header: { title: string; subtitle?: string } | undefined;
+  if (value.header !== undefined) {
+    if (!isRecord(value.header)) throw new SurfaceShapeError("a composite header is not an object");
+    header = {
+      title: text(value.header.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
+      ...(value.header.subtitle === undefined
+        ? {}
+        : { subtitle: text(value.header.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+    };
+  }
+  return {
+    composite: "blocks",
+    id: stableId(value.id),
+    ...(header ? { header } : {}),
+    state: value.state === undefined ? { kind: "content" } : state(value.state),
+    ...(ids ? { actions: ids } : {}),
+    fallback: { text: text(value.fallback.text, EXTENSION_UI_SURFACE_MAX_FALLBACK_CHARS, true) },
+    ...(value.tone === undefined ? {} : { tone: oneOf(TONES, value.tone) }),
+    body: node(value.body, limits, actions, 1),
+  };
+}
+
 function section(
   value: unknown,
   actions: Record<string, unknown>,
   limits: SurfaceLimitState,
 ): ExtensionUISurfaceSection {
   if (!isRecord(value)) throw new SurfaceShapeError("a section is not an object");
-  const composite = oneOf(EXTENSION_UI_SURFACE_COMPOSITES, value.composite);
+  if (value.composite === "blocks") return blocksSection(value, actions, limits);
+  const composite = oneOf(CLOSED_COMPOSITES, value.composite);
   const base = compositeBase(value, actions);
   switch (composite) {
     case "statusCard": {
@@ -463,11 +940,17 @@ function validateSurface(value: unknown): ExtensionUISurface {
   if (lifecycle === "oneShot" && timeoutAt === undefined)
     throw new SurfaceShapeError("a oneShot surface needs a timeoutAt deadline");
 
-  const limits: SurfaceLimitState = { spans: 0 };
+  const limits: SurfaceLimitState = { spans: 0, nodes: 0, nodeIds: new Set() };
   const sections = list(value.sections, EXTENSION_UI_SURFACE_MAX_SECTIONS, "surface sections").map(
     (entry) => section(entry, actions, limits),
   );
   uniqueIds(sections, "composite");
+  for (const entry of sections) {
+    if (entry.id === EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID)
+      throw new SurfaceShapeError(`"${EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID}" is a reserved id`);
+  }
+  // The pill is the surface's own one-line summary; its nodes count against the same caps.
+  const pill = value.pill === undefined ? undefined : pillOf(value.pill, limits, actions);
 
   const result: ExtensionUISurface = {
     version: EXTENSION_UI_SURFACE_VERSION,
@@ -492,6 +975,7 @@ function validateSurface(value: unknown): ExtensionUISurface {
         ? {}
         : { subtitle: text(value.header.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
     },
+    ...(pill ? { pill } : {}),
     sections,
     actions,
     fallback: {
@@ -603,8 +1087,18 @@ function writePath(target: Record<string, unknown>, segments: string[], value: u
   else node[last] = value;
 }
 
-/** A patch path addresses an existing array entry by index; it never invents one. */
+/**
+ * A patch path addresses an existing array entry by index, or by node id with `#id` — ids are
+ * stable inside a surface, so a body node keeps its address when a sibling is inserted. It never
+ * invents an entry.
+ */
 function arrayIndex(node: readonly unknown[], segment: string): number {
+  if (segment.startsWith("#")) {
+    const id = segment.slice(1);
+    const index = node.findIndex((entry) => isRecord(entry) && entry.id === id);
+    if (index < 0) throw new SurfaceShapeError(`no entry with id "${id}" in the list`);
+    return index;
+  }
   if (!/^\d+$/.test(segment)) throw new SurfaceShapeError(`"${segment}" is not an array index`);
   const index = Number(segment);
   if (index >= node.length)
@@ -680,6 +1174,21 @@ export function projectExtensionUISurfaceToV1(
 ): ExtensionUINativeSurface {
   const blocks: unknown[] = [];
   for (const section of surface.sections) {
+    if (section.composite === "blocks") {
+      // A tree projects node by node; a region that is not showing its content stays its words.
+      if (section.state.kind !== "content") {
+        blocks.push(v1TextBlock(section.id, section.fallback.text));
+        continue;
+      }
+      const controls: string[] = [];
+      let projected = projectNodeToV1(section.body, controls);
+      // A control a v1 client cannot draw is named, so the surface never silently loses a verb.
+      if (controls.length > 0)
+        projected = [...projected, v1TextBlock(undefined, `Actions: ${controls.join(", ")}`)];
+      if (projected.length === 0) projected = [v1TextBlock(section.id, section.fallback.text)];
+      blocks.push(...projected);
+      continue;
+    }
     if (section.composite === "dataTable" && section.state.kind === "content") {
       blocks.push({
         type: "table",
@@ -705,7 +1214,8 @@ export function projectExtensionUISurfaceToV1(
       presentation: {
         style: "surfacePanel",
         title: surface.title,
-        ...(surface.header.subtitle === undefined ? {} : { subtitle: surface.header.subtitle }),
+        // A composed pill is the surface's one-line summary: the v1 panel keeps that line.
+        ...(v1PillSubtitle(surface) === undefined ? {} : { subtitle: v1PillSubtitle(surface) }),
       },
       blocks,
       fallback: { text: surface.fallback.text },
@@ -718,4 +1228,28 @@ export function projectExtensionUISurfaceToV1(
       fallback: { text: surface.fallback.text },
     }
   );
+}
+
+/**
+ * Does this surface use the blocks capability? A tree section or a composed pill is a shape only
+ * a client that draws primitives can draw; every other client gets the v1 projection instead.
+ */
+export function extensionUISurfaceUsesBlocks(surface: ExtensionUISurface): boolean {
+  return (
+    surface.pill !== undefined || surface.sections.some((entry) => entry.composite === "blocks")
+  );
+}
+
+/** One node of a body by id, the way a patch and a tap address it. */
+export function findExtensionUISurfaceNode(
+  root: ExtensionUISurfaceNode,
+  id: string,
+): ExtensionUISurfaceNode | undefined {
+  if (root.id === id) return root;
+  if (root.type !== "row" && root.type !== "stack") return undefined;
+  for (const child of root.children) {
+    const found = findExtensionUISurfaceNode(child, id);
+    if (found) return found;
+  }
+  return undefined;
 }

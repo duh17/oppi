@@ -82,6 +82,7 @@ struct ExtensionSurfaceCompositeViewsTests {
             compositeId: compositeId,
             actionId: actionId,
             rowId: nil,
+            nodeId: nil,
             revision: revision,
             title: title,
             disabledActionIds: Set(disabled)

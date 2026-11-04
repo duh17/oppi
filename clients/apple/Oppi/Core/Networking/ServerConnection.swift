@@ -1838,7 +1838,10 @@ final class ServerConnection {
     /// newer than that revision answers it.
     func sendExtensionSurfaceAction(_ intent: ExtensionSurfaceActionIntent, sessionId: String) {
         let surface = extensionSurfaces.surface(for: sessionId).state.composableSurfaces[intent.surfaceId]?.surface
+        // A closed composite's pending state is declared in the action table; a node's is on the
+        // node that offered it, and the intent carries that one.
         let definition = surface?.actions[intent.actionId]
+        let pending = intent.pending ?? definition?.pending
         let requestId = UUID().uuidString
         extensionSurfaces.beginAction(
             ExtensionSurfacePendingAction(
@@ -1847,9 +1850,10 @@ final class ServerConnection {
                 compositeId: intent.compositeId,
                 actionId: intent.actionId,
                 rowId: intent.rowId,
+                nodeId: intent.nodeId,
                 revision: intent.revision,
-                title: definition?.pending?.title,
-                disabledActionIds: Set(definition?.pending?.disabled ?? [])
+                title: pending?.title,
+                disabledActionIds: Set(pending?.disabled ?? [])
             ),
             sessionId: sessionId
         )
@@ -1861,7 +1865,9 @@ final class ServerConnection {
                     compositeId: intent.compositeId,
                     actionId: intent.actionId,
                     rowId: intent.rowId,
+                    nodeId: intent.nodeId,
                     revision: intent.revision,
+                    values: intent.values,
                     requestId: requestId
                 ))
             } catch {

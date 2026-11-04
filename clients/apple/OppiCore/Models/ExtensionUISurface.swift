@@ -12,6 +12,8 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
     /// `oneShot` only: epoch milliseconds by which the surface settles.
     let timeoutAt: Double?
     let header: ExtensionUISurfaceHeader
+    /// The strip's one-line summary; without one the client derives it from the header.
+    let pill: ExtensionUISurfacePill?
     let sections: [ExtensionUISurfaceSection]
     let actions: [String: ExtensionUISurfaceActionDefinition]
     let fallback: ExtensionUISurfaceFallback
@@ -32,6 +34,11 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
                 for row in table.rows {
                     if let actions = row.actions { ids.formUnion(actions) }
                 }
+            }
+            if case .blocks(let blocks) = section {
+                // Every node a tree draws may offer an action, so the region's own list is not
+                // the whole of what it can send.
+                ids.formUnion(blocks.body.actionIds)
             }
         }
         return ids
@@ -219,6 +226,8 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
     case checklist(ExtensionUISurfaceChecklist)
     case dataTable(ExtensionUISurfaceDataTable)
     case actionBar(ExtensionUISurfaceActionBar)
+    /// A tree of primitives, the one composite whose internal design the server composes.
+    case blocks(ExtensionUISurfaceBlocks)
     case unsupported(ExtensionUISurfaceUnsupportedComposite)
 
     var id: String {
@@ -227,6 +236,7 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
         case .checklist(let value): return value.base.id
         case .dataTable(let value): return value.base.id
         case .actionBar(let value): return value.base.id
+        case .blocks(let value): return value.id
         case .unsupported(let value): return value.id
         }
     }
@@ -238,11 +248,17 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
         case .checklist(let value): return value.base
         case .dataTable(let value): return value.base
         case .actionBar(let value): return value.base
-        case .unsupported: return nil
+        // A tree's header is optional, so it keeps its own fields rather than the shared base.
+        case .blocks, .unsupported: return nil
         }
     }
 
-    var actions: [String]? { base?.actions }
+    var actions: [String]? {
+        switch self {
+        case .blocks(let value): return value.actions
+        default: return base?.actions
+        }
+    }
 
     private enum CodingKeys: String, CodingKey {
         case composite, id
@@ -272,6 +288,11 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
                 self = .actionBar(value)
                 return
             }
+        case "blocks":
+            if let value = try? ExtensionUISurfaceBlocks(from: decoder) {
+                self = .blocks(value)
+                return
+            }
         default:
             break
         }
@@ -288,6 +309,7 @@ enum ExtensionUISurfaceSection: Sendable, Equatable, Codable, Identifiable {
         case .checklist(let value): try value.encode(to: encoder)
         case .dataTable(let value): try value.encode(to: encoder)
         case .actionBar(let value): try value.encode(to: encoder)
+        case .blocks(let value): try value.encode(to: encoder)
         case .unsupported(let value): try value.encode(to: encoder)
         }
     }
@@ -443,6 +465,48 @@ struct ExtensionUISurfaceActionBar: Sendable, Equatable, Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode("actionBar", forKey: .composite)
         try encodeBase(into: &c)
+    }
+}
+
+/// A tree of primitives. Its header is optional: a region may be nothing but its body.
+struct ExtensionUISurfaceBlocks: Sendable, Equatable, Codable {
+    let id: String
+    let header: ExtensionUISurfaceHeader?
+    let state: ExtensionUISurfaceState
+    /// Action ids the region offers below its body, in drawing order.
+    let actions: [String]?
+    let fallback: ExtensionUISurfaceFallback
+    let tone: String?
+    let body: ExtensionUISurfaceNode
+
+    private enum CodingKeys: String, CodingKey {
+        case composite, id, header, state, actions, fallback, tone, body
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        header = try? c.decodeIfPresent(ExtensionUISurfaceHeader.self, forKey: .header)
+        state = (try? c.decode(ExtensionUISurfaceState.self, forKey: .state))
+            ?? ExtensionUISurfaceState(kind: "content", title: nil, message: nil)
+        actions = try? c.decodeIfPresent([String].self, forKey: .actions)
+        fallback = (try? c.decode(ExtensionUISurfaceFallback.self, forKey: .fallback))
+            ?? ExtensionUISurfaceFallback(text: "")
+        tone = try? c.decodeIfPresent(String.self, forKey: .tone)
+        // The body is the region: a tree this build cannot read shows its fallback text.
+        body = try c.decode(ExtensionUISurfaceNode.self, forKey: .body)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode("blocks", forKey: .composite)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(header, forKey: .header)
+        try c.encode(state, forKey: .state)
+        try c.encodeIfPresent(actions, forKey: .actions)
+        try c.encode(fallback, forKey: .fallback)
+        try c.encodeIfPresent(tone, forKey: .tone)
+        try c.encode(body, forKey: .body)
     }
 }
 

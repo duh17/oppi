@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+import {
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+} from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
 import { SessionSurfaces } from "../src/session-surfaces.js";
@@ -178,7 +181,46 @@ describe("SessionSurfaces", () => {
     expect(h.surfaces.canAct()).toBe(false);
   });
 
-  it("keeps composites when a later declaration drops the capability", () => {
+  it("hands a tree only to a client that draws primitives", () => {
+    const h = harness();
+    const panel = readExtensionUISurface(fixtures["blocks-panel.json"]);
+    if ("problem" in panel) throw new Error(panel.problem);
+    h.surfaces.publisher.publish(panel.surface, undefined);
+
+    // The tree goes to the blocks audience alone; a composites-only client is handed the
+    // projection, because one frame cannot mix the two shapes.
+    expect(h.of("extension_ui_surface", "blocks")).toHaveLength(1);
+    expect(h.of("extension_ui_surface", "composites")).toHaveLength(0);
+    expect(h.of("extension_ui_notification", "composites")[0]?.widgetKey).toBe(
+      "surface:blocks-panel",
+    );
+
+    const forBlocks = h.surfaces.declare("new-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+    ]);
+    expect(forBlocks.map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_surface",
+    ]);
+    expect(h.surfaces.audience("new-phone")).toBe("blocks");
+
+    const forComposites = h.surfaces.declare("old-phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY]);
+    // The widget slot it was handed at subscribe is cleared, then the projection is handed over.
+    expect(forComposites.map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_notification",
+    ]);
+    expect(h.surfaces.audience("old-phone")).toBe("composites");
+    // A client that only draws composites still gets a surface that has no tree.
+    h.surfaces.publisher.publish(surfaceOf(), undefined);
+    expect(h.surfaces.messages("old-phone").map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_surface",
+    ]);
+  });
+
+  it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);
     expect(
@@ -236,15 +278,23 @@ describe("SessionSurfaces", () => {
     );
     const before = h.frames.length;
     h.surfaces.stop();
-    const removals = h.of("extension_ui_patch", "composites");
-    expect(removals).toEqual([expect.objectContaining({ removed: true })]);
+    // Every shape a client could hold is cleared: both v2 audiences and the v1 widget slot.
+    for (const audience of ["blocks", "composites"] as const) {
+      expect(h.of("extension_ui_patch", audience)).toEqual([
+        expect.objectContaining({ removed: true }),
+      ]);
+    }
+    expect(h.of("extension_ui_notification", "v1-projection").at(-1)).toMatchObject({
+      widgetKey: "surface:deploy",
+      widgetLines: [],
+    });
 
     // Nothing is left to fire: the deadline took its timer with it.
     vi.advanceTimersByTime(60_000);
-    expect(h.frames).toHaveLength(before + 2);
+    expect(h.frames).toHaveLength(before + 3);
     expect(h.surfaces.messages("phone")).toEqual([]);
     h.surfaces.publisher.publish(surfaceOf(), undefined);
-    expect(h.frames).toHaveLength(before + 2);
+    expect(h.frames).toHaveLength(before + 3);
     expect(h.surfaces.audience("phone")).toBe("v1-projection");
   });
 

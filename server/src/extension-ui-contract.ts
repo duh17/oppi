@@ -58,12 +58,19 @@ export const EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY =
 export const EXTENSION_NATIVE_UI_OSC8_LINKS_CAPABILITY = "extension-native-ui:v1:osc8-links";
 /** v2 composites: the client draws `extension_ui_surface` and answers `extension_ui_action`. */
 export const EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY = "extension-native-ui:v2:composites";
+/**
+ * v2 blocks: the client draws a `blocks` section's tree and the composed pill, not just the four
+ * closed composites. A client that names only `composites` gets the v1 projection of a surface
+ * that uses a tree, because one frame cannot mix the two shapes.
+ */
+export const EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY = "extension-native-ui:v2:blocks";
 export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
   EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY,
   EXTENSION_NATIVE_UI_SURFACE_NATIVE_CAPABILITY,
   EXTENSION_NATIVE_UI_OSC8_LINKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,

@@ -746,6 +746,7 @@
 		4B5EF0C312A4C1013451E779 /* SSHTerminalAgentDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */; };
 		4B672D60F75440B57BB4EB5B /* ComposerBarController+Pickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD8D9BB170ED821E97579968 /* ComposerBarController+Pickers.swift */; };
 		4B77E0FA00D76795E09EF51C /* PencilKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AAD7BF77A3054DFE0C02EBB6 /* PencilKit.framework */; };
+		4B79D82AF3FEEA9E863ED20A /* ExtensionUISurfaceBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D973ED288FFC293B6718A6B4 /* ExtensionUISurfaceBlocks.swift */; };
 		4B8A87A73669125E056CE852 /* UsageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A9B1A4E74ECBDD0EA605DF /* UsageModel.swift */; };
 		4B99D80B20729EB480A24E44 /* SSHTerminalHostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436E6B3957684C7E42DE77A2 /* SSHTerminalHostPresentation.swift */; };
 		4BA67D2253A34FF17AD83C92 /* OnboardingStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 224165BF117754E9EF33CBD0 /* OnboardingStateTests.swift */; };
@@ -2497,6 +2498,7 @@
 		F8CE4718CA1E5D73B867A4EE /* SessionStatusKindStyleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7518D0907D7E90C564FF6EA /* SessionStatusKindStyleTests.swift */; };
 		F8D5096C426DC91C1276D712 /* CommonMarkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AEAF8EB201B5B465E75581 /* CommonMarkParser.swift */; };
 		F8E15EDC4E0CC362ACC6C81B /* ExtensionNativeBlockPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30075AEF4C744F45211CF2E3 /* ExtensionNativeBlockPresentation.swift */; };
+		F8E27D3A8376A5B544E7E119 /* ExtensionUISurfaceBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D973ED288FFC293B6718A6B4 /* ExtensionUISurfaceBlocks.swift */; };
 		F907E40AB026E2CC0B0C036C /* AppIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62B65456465F2E93C3070661 /* AppIdentifiers.swift */; };
 		F9096B2F1C1C31D7BC79A858 /* MacExtensionInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B818EE594819D34B9CD7A4E /* MacExtensionInteractionTests.swift */; };
 		F923DAABFD0B375E0BB882D3 /* SSHTerminalGhosttyThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 775563D045CC49C43732B34D /* SSHTerminalGhosttyThemeTests.swift */; };
@@ -4489,6 +4491,7 @@
 		D911B675C77B789C0DAEC322 /* ChatTimelineOwnedClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineOwnedClock.swift; sourceTree = "<group>"; };
 		D93E76EF6BD2F8ACD5D108D7 /* OrbGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbGeometry.swift; sourceTree = "<group>"; };
 		D95733290B7FEE53723B95E0 /* TimelineReducerUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerUtilities.swift; sourceTree = "<group>"; };
+		D973ED288FFC293B6718A6B4 /* ExtensionUISurfaceBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionUISurfaceBlocks.swift; sourceTree = "<group>"; };
 		D98D76EFEA5DED7E308198D9 /* ServerInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerInfo.swift; sourceTree = "<group>"; };
 		D9ADC6C6B9062E402A307F35 /* TestFactories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFactories.swift; sourceTree = "<group>"; };
 		D9AEAF8EB201B5B465E75581 /* CommonMarkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonMarkParser.swift; sourceTree = "<group>"; };
@@ -6145,6 +6148,7 @@
 				74343B20957C6BCACDE5A263 /* ExtensionUINativeSurface.swift */,
 				1ECA92A975C3051BF296D6ED /* ExtensionUIRequest+Presentation.swift */,
 				452D96D9B3E6A941B92E147D /* ExtensionUISurface.swift */,
+				D973ED288FFC293B6718A6B4 /* ExtensionUISurfaceBlocks.swift */,
 				C06F312FB9AB528776C77D7F /* ExtensionUIWireDecoding.swift */,
 				FC8A7B115F8D17307A9E34D1 /* FileSuggestion.swift */,
 				E78947BAE4054B19D59B2E0C /* FileSuggestionRanking.swift */,
@@ -9120,6 +9124,7 @@
 				C1152DECFC64632ABA6EAEF1 /* ExtensionUINativeSurface.swift in Sources */,
 				28F081F62B904CF266DCA1FF /* ExtensionUIRequest+Presentation.swift in Sources */,
 				4FFC97F5E1C0C3EBA1EBBA9A /* ExtensionUISurface.swift in Sources */,
+				4B79D82AF3FEEA9E863ED20A /* ExtensionUISurfaceBlocks.swift in Sources */,
 				08B507FC7E52C507B6A5C83B /* ExtensionUIWireDecoding.swift in Sources */,
 				8ED90B2DC0381AEA969BF4A3 /* FileIndexStore.swift in Sources */,
 				CF3897A28F182815E47B2E25 /* FileSuggestion.swift in Sources */,
@@ -10622,6 +10627,7 @@
 				BE9410F2AC20682C3B6DCCAA /* ExtensionUINativeSurface.swift in Sources */,
 				712F90360FAD98A3BBDCF5F3 /* ExtensionUIRequest+Presentation.swift in Sources */,
 				9D6DF133DDF25A76BD722C7E /* ExtensionUISurface.swift in Sources */,
+				F8E27D3A8376A5B544E7E119 /* ExtensionUISurfaceBlocks.swift in Sources */,
 				37C9471280D59B9367C60B34 /* ExtensionUIWireDecoding.swift in Sources */,
 				8876D8AF310A6ADE66230B5E /* FeatureEducationTipBanner.swift in Sources */,
 				E206AA35699BD737AF29BD37 /* FeatureEducationTips.swift in Sources */,

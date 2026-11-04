@@ -70,6 +70,8 @@ struct ExtensionSurfacePendingAction: Equatable, Sendable {
     let compositeId: String
     let actionId: String
     let rowId: String?
+    /// The blocks node that offered the action, when a tree's node did.
+    let nodeId: String?
     /// The revision the action was sent at.
     let revision: Int
     let title: String?
@@ -83,7 +85,33 @@ struct ExtensionSurfaceActionIntent: Equatable, Sendable {
     let compositeId: String
     let actionId: String
     let rowId: String?
+    /// The blocks node that offered the action, when a tree's node did.
+    let nodeId: String?
     let revision: Int
+    /// Values the tap carries: a toggle's new value, or the ones a node action declares.
+    let values: [String: JSONValue]?
+    /// A node action's declared optimistic state; a closed composite's comes from the table.
+    let pending: ExtensionUISurfacePendingState?
+
+    init(
+        surfaceId: String,
+        compositeId: String,
+        actionId: String,
+        rowId: String? = nil,
+        nodeId: String? = nil,
+        revision: Int,
+        values: [String: JSONValue]? = nil,
+        pending: ExtensionUISurfacePendingState? = nil
+    ) {
+        self.surfaceId = surfaceId
+        self.compositeId = compositeId
+        self.actionId = actionId
+        self.rowId = rowId
+        self.nodeId = nodeId
+        self.revision = revision
+        self.values = values
+        self.pending = pending
+    }
 }
 
 struct ExtensionSurfaceState: Equatable, Sendable {
