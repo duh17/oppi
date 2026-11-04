@@ -417,8 +417,7 @@ final class FullScreenCodeViewController: UIViewController {
         bodyView.onImmersiveChromeChange = { [weak self] hidden in
             self?.setImmersiveChromeHidden(hidden, animated: true)
         }
-        // A body on its own paper paints the chrome over it, so a light page does
-        // not carry the app's dark chrome.
+        // A body on its own paper paints the chrome over it in that paper.
         contentSurface = bodyView.contentSurface
         bodyView.onContentSurfaceChange = { [weak self] surface in self?.setContentSurface(surface) }
         applyContentSurface()
@@ -525,8 +524,7 @@ final class FullScreenCodeViewController: UIViewController {
         }
         lastNavigationPresentation = navigationPresentation
         installRightBarItems(on: viewController, palette: palette)
-        // A control built after the body asked for the page to be alone is
-        // still out of the way.
+        // A control built after the body asked for the page alone stays out of the way.
         setImmersiveChromeHidden(isImmersiveChromeHidden, animated: false)
         applyContentSurface()
     }
@@ -562,8 +560,7 @@ final class FullScreenCodeViewController: UIViewController {
             view.isUserInteractionEnabled = !next
             view.accessibilityElementsHidden = next
         }
-        // Controls are built and rebuilt as the reader changes; a body on its own
-        // paper inked them once already, so the newest ones are inked again.
+        // Controls are rebuilt as the reader changes, so the newest are inked again.
         applyContentSurface()
         guard changed, animated, !UIAccessibility.isReduceMotionEnabled else {
             for view in views { view.alpha = next ? 0 : 1 }
@@ -584,7 +581,12 @@ final class FullScreenCodeViewController: UIViewController {
         applyContentSurface()
     }
 
+    /// A body with no paper of its own leaves the app theme's chrome as installed.
+    private var chromeCarriesContentSurface = false
+
     private func applyContentSurface() {
+        guard contentSurface != nil || chromeCarriesContentSurface else { return }
+        chromeCarriesContentSurface = contentSurface != nil
         let item = contentHostController?.navigationItem
         ReaderChromeSurfacePainter.paint(
             contentSurface,
@@ -686,8 +688,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         syncFloatingControlVisibility(on: viewController)
         viewController.navigationItem.rightBarButtonItems = rightItems
-        // New items carry the app palette's tints; a body on its own paper wants
-        // them in its ink.
+        // New items carry the app palette's tints; a body on paper wants its ink.
         applyContentSurface()
     }
 
