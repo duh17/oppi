@@ -52,6 +52,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
         "oppi.sessions",
       ],
@@ -63,6 +64,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
         "oppi.sessions",
       ],
@@ -75,6 +77,7 @@ const PINNED = {
         "background_job",
         "sqlite_schema",
         "sqlite_query",
+        "crew_board",
         "subagent",
       ],
       sections: [
@@ -109,6 +112,7 @@ const PINNED = {
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
       ],
       tools: [
@@ -120,6 +124,7 @@ const PINNED = {
         "background_job",
         "sqlite_schema",
         "sqlite_query",
+        "crew_board",
         "subagent",
       ],
       sections: [
@@ -199,6 +204,7 @@ const PINNED = {
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
       ],
       tools: [
@@ -232,6 +238,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
       ],
       extensions: [
@@ -242,6 +249,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
       ],
       tools: [
@@ -253,6 +261,7 @@ const PINNED = {
         "background_job",
         "sqlite_schema",
         "sqlite_query",
+        "crew_board",
       ],
       sections: [
         "ask-guidelines",
@@ -283,6 +292,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.crew-board",
         "codemode",
       ],
       tools: [
@@ -294,6 +304,7 @@ const PINNED = {
         "background_job",
         "sqlite_schema",
         "sqlite_query",
+        "crew_board",
       ],
       sections: [
         "ask-guidelines",

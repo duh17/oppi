@@ -11,6 +11,7 @@
       "./subagents",
       "./project-context",
       "./sql-explorer",
+      "./crew-board",
       "./notify",
       "./live-voice",
       "./control"

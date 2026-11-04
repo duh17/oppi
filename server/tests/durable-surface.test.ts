@@ -131,6 +131,31 @@ describe("authoring a surface", () => {
     expect(wire.actions.retry).toMatchObject({ title: "Retry", role: "primary" });
   });
 
+  it("falls back to the author's words for the state, or the header's title", () => {
+    const perState = surface<DeployState>({
+      id: "deploy",
+      title: "Deploys",
+      fallback: (current) => `Deploy ${current.phase}: ${current.summary}`,
+      view: (current) => ({ header: { title: `web → ${current.env}` }, sections: [] }),
+    });
+    expect(perState.render(state).fallback.text).toBe("Deploy error: Deploy failed");
+
+    const plain = surface<DeployState>({
+      id: "deploy",
+      title: "Deploys",
+      fallback: "Deploys for this workspace",
+      view: (current) => ({ header: { title: `web → ${current.env}` }, sections: [] }),
+    });
+    expect(plain.render(state).fallback.text).toBe("Deploys for this workspace");
+
+    const header = surface<DeployState>({
+      id: "deploy",
+      title: "Deploys",
+      view: (current) => ({ header: { title: `web → ${current.env}` }, sections: [] }),
+    });
+    expect(header.render(state).fallback.text).toBe("web → prod");
+  });
+
   it("names the rule a broken view breaks instead of publishing it", () => {
     const panel = surface<DeployState>({
       id: "deploy",

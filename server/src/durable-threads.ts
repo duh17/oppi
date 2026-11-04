@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type {
   Activated,
+  DurableChildSession,
   DurableSessionsHost,
   ResolvedSubagent,
   SessionSender,
@@ -33,7 +34,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import type { SubagentWorktree } from "../plugins/subagents/contract.js";
+import { Subagents, type SubagentWorktree } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import type { Session, Workspace } from "./types.js";
 import {
@@ -87,6 +88,15 @@ const MAX_THREAD_DEPTH = 64;
 
 /** A `"new"` branch a spawn planned but never provisioned is free again after this. */
 const HELD_BRANCH_MAX_AGE_MS = 10 * 60_000;
+
+/** Longest one-line preview a child row carries; the Session row keeps 100 characters already. */
+const PREVIEW_MAX_CHARS = 120;
+
+/** A Session row's message preview as one line of bounded length. */
+function previewLine(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > PREVIEW_MAX_CHARS ? `${line.slice(0, PREVIEW_MAX_CHARS - 1)}…` : line;
+}
 
 export class DurableThreads {
   /** Concurrent materializations of one child (tool rerun, reporter) share one result. */
@@ -143,7 +153,62 @@ export class DurableThreads {
       planWorktree: (request, name, call) => this.planWorktree(request, name, call, host, caller),
       provisionWorktree: (plan, options) => this.provisionWorktree(plan, options, host, caller),
       worktreeState: (worktree) => this.worktreeState(worktree),
+      children: () => this.childrenOf(host, caller),
+      stop: async (sessionId) => {
+        const refused = await refuse(sessionId);
+        if (refused !== undefined) throw new Error(refused);
+        const conversationId =
+          this.deps.storage.getSession(sessionId)?.serverDurable?.conversationId;
+        // Never attached: the child has no conversation, so no work of its own to abort.
+        if (conversationId === undefined) return;
+        // The host's own Stop, not a bare conversation abort: it is what joins the child's
+        // foreground background jobs and clears its pending UI requests, so the child's `bash`
+        // does not outlive the row saying it stopped.
+        await host.abortConversation(conversationId as ConversationId);
+      },
     };
+  }
+
+  /**
+   * The Sessions `caller` launched, oldest first: the launch edge on each Session record is the
+   * record the app's session tree lists, and the store's conversations pair each with the
+   * conversation that carries its work. Listing is not authority: `stop` is authorized by the
+   * Harness owner edge (see `forCaller`), which every spawn writes beside the launch edge, so a
+   * row listed here and not owned answers with the host's refusal rather than stopping anything.
+   * The branch is the one its spawn bound, when it runs in a checkout of its own; the rest is the
+   * Session row the app's session list shows.
+   */
+  private async childrenOf(
+    host: SessionHost,
+    caller: ConversationId,
+  ): Promise<DurableChildSession[]> {
+    const parent = this.sessionOf(host.storeId, caller);
+    if (!parent) return [];
+    const { harness } = await host.open();
+    const subagents = await harness.snapshot(Subagents, caller, BACKGROUND_CONTEXT);
+    const branches = new Map<ConversationId, string>();
+    for (const child of Object.values(subagents?.children ?? {})) {
+      const branch = child.worktree?.branch;
+      if (branch) branches.set(child.conversationId, branch);
+    }
+    const children: DurableChildSession[] = [];
+    for (const { sessionId, conversationId } of this.deps.storage.listDurableStoreConversations(
+      host.storeId,
+    )) {
+      const session = this.deps.storage.getSession(sessionId);
+      if (!session || session.launch?.parentSessionId !== parent.sessionId) continue;
+      const branch = branches.get(conversationId as ConversationId);
+      children.push({
+        sessionId,
+        conversationId: conversationId as ConversationId,
+        ...(session.name ? { name: session.name } : {}),
+        status: session.status,
+        lastActivity: session.lastActivity,
+        ...(session.lastMessage ? { latest: previewLine(session.lastMessage) } : {}),
+        ...(branch ? { worktree: branch } : {}),
+      });
+    }
+    return children;
   }
 
   /**

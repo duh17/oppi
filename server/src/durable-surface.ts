@@ -212,8 +212,12 @@ export interface SurfaceDefinition<State> {
   empty?: { title: string; message: string };
   /** Every action id any section offers. */
   actions?: Record<string, ExtensionUISurfaceActionDefinition>;
-  /** What an older client shows for the whole surface; default: the view's header title. */
-  fallback?: string;
+  /**
+   * What an older client shows for the whole surface: the words for this state, or a fixed line.
+   * Default: the view's header title. A per-state line is the author's own, since only the author
+   * knows how to sum up its rows.
+   */
+  fallback?: string | ((state: State) => string);
   view: (state: State) => SurfaceView;
 }
 
@@ -271,6 +275,9 @@ export function surface<State>(
   function render(state: State): ExtensionUISurface {
     const view = definition.view(state);
     const timeoutAt = definition.lifecycle === "oneShot" ? options.deadline?.(state) : undefined;
+    const declared = definition.fallback;
+    const fallback =
+      typeof declared === "function" ? declared(state) : (declared ?? view.header.title);
     const candidate = {
       version: 2,
       id: definition.id,
@@ -281,7 +288,7 @@ export function surface<State>(
       header: view.header,
       sections: view.sections,
       actions: definition.actions ?? {},
-      fallback: { text: definition.fallback ?? view.header.title },
+      fallback: { text: fallback },
       // The wire requires a revision, and the host stamps the real one when it publishes.
       revision: 1,
     };
