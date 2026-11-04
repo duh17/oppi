@@ -4,7 +4,11 @@ import {
   parseRequestedEngine,
   requiredModelLaunchFailureMessage,
 } from "../agent-launch-service.js";
-import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
+import {
+  SessionLifecycleError,
+  SessionLifecycleService,
+  type CreateWorkspaceSessionResult,
+} from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
   type ServerMessage,
@@ -305,39 +309,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         autoStop: body.autoStop,
         engine: requestedEngine.engine,
       });
-      const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
-      if (requiredModelFailure) {
-        if (result.launchKind !== "existing") {
-          ctx.appEvents?.emitSessionCreated(result.session);
-        }
-        helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
-        return;
-      }
-      if (result.launchKind !== "existing") {
-        ctx.appEvents?.emitSessionCreated(result.createdSession);
-      }
-      if (result.summarySession) {
-        ctx.appEvents?.emitSessionSummary(result.summarySession);
-      }
-      helpers.json(
-        res,
-        {
-          session: result.session,
-          ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
-          ...(result.launchKind === "existing" ? { launch: { existing: true } } : {}),
-        },
-        result.launchKind === "existing" ? 200 : 201,
-      );
+      respondToLaunch(res, result);
     } catch (error: unknown) {
-      if (error instanceof SessionLifecycleError) {
-        if (error.message === "launch_in_progress") {
-          helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
-          return;
-        }
-        helpers.error(res, error.statusCode, error.message);
-        return;
-      }
-      helpers.error(res, 500, safeErrorMessage(error));
+      respondToLaunchFailure(res, error);
     }
   }
 
@@ -385,40 +359,49 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
             ? body.launchIdempotencyKey.trim()
             : undefined,
       });
-      const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
-      if (requiredModelFailure) {
-        if (result.launchKind !== "existing") {
-          ctx.appEvents?.emitSessionCreated(result.session);
-        }
-        helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
-        return;
-      }
-      if (result.launchKind !== "existing") {
-        ctx.appEvents?.emitSessionCreated(result.createdSession);
-      }
-      if (result.summarySession) {
-        ctx.appEvents?.emitSessionSummary(result.summarySession);
-      }
-      helpers.json(
-        res,
-        {
-          session: result.session,
-          ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
-          ...(result.launchKind === "existing" ? { launch: { existing: true } } : {}),
-        },
-        result.launchKind === "existing" ? 200 : 201,
-      );
+      respondToLaunch(res, result);
     } catch (error: unknown) {
-      if (error instanceof SessionLifecycleError) {
-        if (error.message === "launch_in_progress") {
-          helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
-          return;
-        }
-        helpers.error(res, error.statusCode, error.message);
+      respondToLaunchFailure(res, error);
+    }
+  }
+
+  /** Answer a workspace or control session launch: 409 when the required model failed, else 200/201. */
+  function respondToLaunch(res: ServerResponse, result: CreateWorkspaceSessionResult): void {
+    const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
+    if (requiredModelFailure) {
+      if (result.launchKind !== "existing") {
+        ctx.appEvents?.emitSessionCreated(result.session);
+      }
+      helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
+      return;
+    }
+    if (result.launchKind !== "existing") {
+      ctx.appEvents?.emitSessionCreated(result.createdSession);
+    }
+    if (result.summarySession) {
+      ctx.appEvents?.emitSessionSummary(result.summarySession);
+    }
+    helpers.json(
+      res,
+      {
+        session: result.session,
+        ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
+        ...(result.launchKind === "existing" ? { launch: { existing: true } } : {}),
+      },
+      result.launchKind === "existing" ? 200 : 201,
+    );
+  }
+
+  function respondToLaunchFailure(res: ServerResponse, error: unknown): void {
+    if (error instanceof SessionLifecycleError) {
+      if (error.message === "launch_in_progress") {
+        helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
         return;
       }
-      helpers.error(res, 500, safeErrorMessage(error));
+      helpers.error(res, error.statusCode, error.message);
+      return;
     }
+    helpers.error(res, 500, safeErrorMessage(error));
   }
 
   function requireSession(sessionId: string, res: ServerResponse): Session | null {
