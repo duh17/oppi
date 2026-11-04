@@ -111,30 +111,6 @@ export interface ExtensionProviderDiscoveryOptions {
   agentDir: string;
 }
 
-export type ExtensionProviderDiscoveryResult = AppliedProviderRegistrations;
-
-/**
- * Load global/user extensions and register the providers they declare onto the
- * given model runtime, then refresh availability. The refresh passes
- * `allowNetwork: false`; this is advisory (pi forwards it to a provider's
- * `refreshModels` but does not enforce it), matching pi's own session startup.
- *
- * Compatibility wrapper around `ExtensionProviderCatalog.sync()` so one-shot
- * callers and fixture tests use the same no-install reconcile path as the server.
- */
-export async function discoverExtensionProviders(
-  modelRuntime: ExtensionProviderCatalogRuntime,
-  options: ExtensionProviderDiscoveryOptions,
-): Promise<ExtensionProviderDiscoveryResult> {
-  const catalog = new ExtensionProviderCatalog(modelRuntime, options);
-  // One-shot: nothing outlives this call, so the discovery root goes with it.
-  const result = await catalog.sync({ force: true }).finally(() => catalog.dispose());
-  return {
-    registeredProviderIds: result.registeredProviderIds,
-    diagnostics: result.diagnostics,
-  };
-}
-
 function fileStamp(path: string): string {
   try {
     const stat = statSync(path);

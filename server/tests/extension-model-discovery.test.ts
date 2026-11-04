@@ -22,7 +22,6 @@ import type { Provider } from "@earendil-works/pi-ai";
 import { fetchProviderQuotas, quotaAdaptersForProviders } from "../src/provider-quota.js";
 import {
   applyPendingProviderRegistrations,
-  discoverExtensionProviders,
   ExtensionProviderCatalog,
   extensionDiscoveryFingerprint,
   type ProviderRegistrationTarget,
@@ -120,9 +119,18 @@ describe("applyPendingProviderRegistrations", () => {
   });
 });
 
-// ─── discoverExtensionProviders (integration with a real fixture extension) ───
+/** One-shot catalog sync: nothing outlives the call, so the discovery root goes with it. */
+async function discoverExtensionProviders(
+  runtime: ConstructorParameters<typeof ExtensionProviderCatalog>[0],
+  options: ConstructorParameters<typeof ExtensionProviderCatalog>[1],
+) {
+  const catalog = new ExtensionProviderCatalog(runtime, options);
+  return await catalog.sync({ force: true }).finally(() => catalog.dispose());
+}
 
-describe("discoverExtensionProviders", () => {
+// ─── ExtensionProviderCatalog one-shot sync (integration with a real fixture extension) ───
+
+describe("ExtensionProviderCatalog one-shot sync", () => {
   const tempDirs: string[] = [];
 
   function makeTempDir(prefix: string): string {

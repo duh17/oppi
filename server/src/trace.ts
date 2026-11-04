@@ -527,30 +527,6 @@ function buildEntryPath(entries: SessionEntry[], leafId?: string | null): Sessio
   return path;
 }
 
-export function findLatestForkableUserEntryId(entries: SessionEntry[]): string | undefined {
-  const path = buildEntryPath(entries);
-  for (let i = path.length - 1; i >= 0; i--) {
-    const entry = path[i];
-    if (entry.type === "message" && entry.id && entry.message?.role === "user") {
-      return entry.id;
-    }
-  }
-  return undefined;
-}
-
-export function findLatestForkableUserEntryIdFromContent(content: string): string | undefined {
-  return findLatestForkableUserEntryId(parseEntries(content));
-}
-
-export function findLatestForkableUserEntryIdFromFile(filePath: string): string | undefined {
-  if (!existsSync(filePath)) return undefined;
-  try {
-    return findLatestForkableUserEntryIdFromContent(readFileSync(filePath, "utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
 interface VisibleSessionContext {
   view: TraceViewMode;
   path: SessionEntry[];

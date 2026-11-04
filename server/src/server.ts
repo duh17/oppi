@@ -90,7 +90,7 @@ import type {
   ApiError,
   ServerConfig,
 } from "./types.js";
-import { ts, safeErrorMessage } from "./log-utils.js";
+import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { registerE2EFauxProvider } from "./e2e-faux-provider.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
@@ -216,24 +216,6 @@ function writeUpgradeErrorResponse(
   const lines = [statusLine, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`), "", ""];
   socket.write(lines.join("\r\n"));
   socket.destroy();
-}
-
-export function formatUnauthorizedAuthLog(opts: {
-  transport: "http" | "ws";
-  path: string;
-  method?: string;
-  authorization: string | string[] | undefined;
-  reason?: string;
-}): string {
-  const authPresent = hasAuthHeader(opts.authorization);
-  const reason = opts.reason ? ` reason=${opts.reason}` : "";
-
-  if (opts.transport === "ws") {
-    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}${reason}`;
-  }
-
-  const method = opts.method || "GET";
-  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}${reason}`;
 }
 
 const EXPECTED_UNKNOWN_TOKEN_WS_PATHS = new Set(["/app/events/stream", "/dictation/stream"]);

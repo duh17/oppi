@@ -49,42 +49,6 @@ export function buildFallbackAnswers(questions: AskQuestion[]): Record<string, A
   return fallback;
 }
 
-export function mapDeferredSelectResults(
-  questions: AskQuestion[],
-  results: Array<string | undefined>,
-): Record<string, AskAnswer> {
-  const answers: Record<string, AskAnswer> = {};
-
-  for (let i = 0; i < questions.length; i++) {
-    const question = questions[i];
-    const selected = results[i];
-    if (selected === undefined) {
-      continue;
-    }
-
-    if (question.multiSelect) {
-      let labels: string[];
-      try {
-        const parsed = JSON.parse(selected);
-        labels = Array.isArray(parsed) ? parsed : [selected];
-      } catch {
-        labels = [selected];
-      }
-
-      answers[question.id] = labels.map((label) => {
-        const matched = question.options.find((option) => option.label === label);
-        return matched?.value ?? label;
-      });
-      continue;
-    }
-
-    const matched = question.options.find((option) => option.label === selected);
-    answers[question.id] = matched?.value ?? selected;
-  }
-
-  return answers;
-}
-
 export function buildAskToolResult(
   questions: AskQuestion[],
   answers: Record<string, AskAnswer>,
