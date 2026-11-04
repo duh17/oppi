@@ -81,6 +81,11 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
     replacement: REDACTED,
   },
   {
+    // Anthropic (`sk-ant-api03-…`) and OpenAI project (`sk-proj-…`) keys.
+    pattern: /\bsk-(?:ant|proj)-[A-Za-z0-9_-]{8,}/g,
+    replacement: REDACTED,
+  },
+  {
     pattern: /\bgh[opusr]_[A-Za-z0-9]{20,}\b/g,
     replacement: REDACTED,
   },

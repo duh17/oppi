@@ -129,6 +129,14 @@ describe("log-redact", () => {
     expect(redacted).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 
+  it("redacts Anthropic and OpenAI project keys in free-form text", () => {
+    const anthropic = "sk-ant-api03-AbCdEf0123456789_xYz-0123";
+    const openai = "sk-proj-AbCdEf0123456789_xYz-456789";
+
+    const redacted = redactLogString(`upstream said key=${anthropic} and ${openai} rejected`, 4_096);
+    expect(redacted).toBe("upstream said key=[REDACTED] and [REDACTED] rejected");
+  });
+
   it("redacts encoded oppi://connect invites", () => {
     const input = "invite oppi://connect?v=3&invite=abc.def.ghi host=mac-studio.ts.net";
     const redacted = redactLogString(input, 4_096);
