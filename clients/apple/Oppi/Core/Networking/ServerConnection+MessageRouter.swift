@@ -439,15 +439,20 @@ extension ServerConnection {
     ///
     /// Only a server advertising the same capability is told. A build predating the v2 stack does
     /// not know this command and answers it with an error frame on the session stream.
+    ///
+    /// Every capability this build can draw is declared, but only the ones the server lists: a
+    /// server that does not name `blocks` would answer a surface in that shape with the v1
+    /// projection anyway, and naming it would only invite a frame this build reads as unreadable.
     func declareStreamSurfaceCapabilities() {
         guard let sessionId = focusedStreamBinder.boundSessionId,
               let advertised = serverCapabilities?.extensionNativeUI?.capabilities,
               advertised.contains(ClientCapability.extensionNativeUIComposites) else { return }
+        let capabilities = Self.surfaceCapabilities(advertisedBy: advertised)
         Task { [weak self] in
             guard let self else { return }
             do {
                 try await sender.dispatchSend(
-                    .clientCapabilities(capabilities: [ClientCapability.extensionNativeUIComposites]),
+                    .clientCapabilities(capabilities: capabilities),
                     sessionIdOverride: sessionId
                 )
             } catch {
@@ -456,5 +461,15 @@ extension ServerConnection {
                 ClientLog.warning("Stream", "Surface capability declaration failed", metadata: metadata)
             }
         }
+    }
+
+    /// What this build draws, in the order the server wants it named: the closed composites on
+    /// every v2 socket, and the block trees beside them when the server lists that capability too.
+    static func surfaceCapabilities(advertisedBy advertised: [String]) -> [String] {
+        var capabilities = [ClientCapability.extensionNativeUIComposites]
+        if advertised.contains(ClientCapability.extensionNativeUIBlocks) {
+            capabilities.append(ClientCapability.extensionNativeUIBlocks)
+        }
+        return capabilities
     }
 }

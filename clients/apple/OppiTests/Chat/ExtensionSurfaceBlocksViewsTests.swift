@@ -63,6 +63,22 @@ struct ExtensionSurfaceBlocksViewsTests {
         }
     }
 
+    /// The panel with its filters group published folded, which is what a reader first gets.
+    private func panelWithFoldedGroup() throws -> ExtensionUISurface {
+        try surface("blocks-panel.json") { object in
+            var sections = testUnwrap(object["sections"] as? [[String: Any]])
+            var body = testUnwrap(sections[0]["body"] as? [String: Any])
+            var children = testUnwrap(body["children"] as? [[String: Any]])
+            let index = try #require(children.firstIndex { $0["id"] as? String == "filters" })
+            var group = try #require(children[index] as? [String: Any])
+            group["collapsed"] = true
+            children[index] = group
+            body["children"] = children
+            sections[0]["body"] = body
+            object["sections"] = sections
+        }
+    }
+
     /// The identifier a node's own id earns under its section.
     private func node(_ surfaceId: String, _ sectionId: String, _ id: String) -> String {
         ExtensionSurfaceIdentity.element(
@@ -516,10 +532,11 @@ struct ExtensionSurfaceBlocksViewsTests {
         let gap = progress.convert(progress.bounds, to: view).minY - headline.convert(headline.bounds, to: view).maxY
         #expect(abs(gap - 12) <= 0.5, "the body's top level is \(gap) pt apart")
 
-        // The action row stands off the body a little further than the body's own children.
-        let actions = try testUnwrap(control(node("blocks-panel", "panel", "actions"), in: view))
+        // The action row stands off the body a little further than the body's own children. The
+        // group is the body's last child, so the card's own row follows it.
+        let last = try testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
         let refresh = try testUnwrap(cardAction("refresh", in: view))
-        let actionGap = refresh.convert(refresh.bounds, to: view).minY - actions.convert(actions.bounds, to: view).maxY
+        let actionGap = refresh.convert(refresh.bounds, to: view).minY - last.convert(last.bounds, to: view).maxY
         #expect(actionGap >= 12 && actionGap <= 16, "the action row is \(actionGap) pt under the body")
     }
 
@@ -552,6 +569,198 @@ struct ExtensionSurfaceBlocksViewsTests {
             }
             _ = headline
         }
+    }
+
+    // MARK: - Selected and disabled
+
+    @Test func aSelectedNodePaintsTheHostsSelectionAndSaysSo() throws {
+        let view = composites(try surface("blocks-filters.json"))
+        let palette = themeID.palette
+
+        // A selected row: the fill and hairline the host gives the item a person picked, and the
+        // trait VoiceOver reads instead of "button".
+        let row = try testUnwrap(control(node("blocks-filters", "filters", "active-row"), in: view))
+        #expect(row.accessibilityTraits.contains(.selected), "the row is not marked selected")
+        #expect(row.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16), "the row is not filled")
+        #expect(row.layer.borderWidth == 1, "the row has no hairline")
+
+        // A button keeps its own role and takes the same mark.
+        let button = try testUnwrap(
+            control(node("blocks-filters", "filters", "seg-all"), in: view) as? UIButton
+        )
+        #expect(button.accessibilityTraits.contains(.selected))
+        #expect(button.configuration?.background.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
+
+        // A badge is already a capsule; a selection paints over the tone it arrived with.
+        let badge = try testUnwrap(control(node("blocks-filters", "filters", "badge-selected"), in: view))
+        #expect(badge.accessibilityTraits.contains(.selected), "the badge is not marked selected")
+        #expect(badge.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
+        #expect(badge.layer.borderWidth == 1)
+
+        // The item that is not the one picked says nothing of the sort.
+        let other = try testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view))
+        #expect(!other.accessibilityTraits.contains(.selected))
+        #expect(other.backgroundColor == nil || other.backgroundColor == .clear)
+    }
+
+    @Test func aSelectedTextPaintsACapsuleAroundItsWords() throws {
+        // The panel's filters group: a chip row of one selected and one plain item.
+        let view = composites(try surface("blocks-panel.json"))
+        let palette = themeID.palette
+        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        let plain = try testUnwrap(control(node("blocks-panel", "panel", "filter-running"), in: view))
+
+        #expect(chip.accessibilityTraits.contains(.selected), "the chip is not marked selected")
+        #expect(chip.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
+        #expect(chip.layer.borderWidth == 1)
+        #expect(chip.layer.cornerRadius > 0, "the selected words are not a capsule")
+        // The words keep their own air inside the capsule, so the fill reads as one chip.
+        let chipLabel = try testUnwrap(allLabels(in: chip).first)
+        #expect(chipLabel.frame.minX >= 4, "the words sit on the capsule's edge")
+        // The capsule is the words plus their air each side, not a width the words overflow.
+        #expect(abs(chip.bounds.width - (chipLabel.intrinsicContentSize.width + 24)) <= 1,
+                "the capsule is \(chip.bounds.width) for \(chipLabel.intrinsicContentSize.width) of words")
+        // And the next chip starts after this one, so no two chips draw over each other.
+        #expect(chip.convert(chip.bounds, to: view).maxX <= plain.convert(plain.bounds, to: view).minX + 0.5,
+                "the selected chip is drawn over its sibling")
+
+        // A chip hugs its words: it sits beside its siblings rather than stretching over them.
+        let row = try testUnwrap(control(node("blocks-panel", "panel", "filter-set"), in: view))
+        #expect(chip.bounds.width < row.bounds.width - 40,
+                "the chip stretched across the row: \(chip.bounds.width) of \(row.bounds.width)")
+
+        #expect(!plain.accessibilityTraits.contains(.selected))
+        #expect(plain.backgroundColor == .clear)
+    }
+
+    @Test func aDisabledNodeSendsNothingAndSaysItIsUnusable() throws {
+        var intents: [ExtensionSurfaceActionIntent] = []
+        let view = composites(try surface("blocks-filters.json"), onAction: { intents.append($0) })
+
+        // Every kind that can be published disabled: a control, and a region a tap would reach.
+        let row = try testUnwrap(control(node("blocks-filters", "filters", "archived-row"), in: view) as? UIControl)
+        #expect(!row.isEnabled)
+        #expect(row.accessibilityTraits.contains(.notEnabled))
+        #expect(!row.accessibilityActivate(), "assistive activation sent the action")
+        row.sendActions(for: .touchUpInside)
+
+        let stack = try testUnwrap(control(node("blocks-filters", "filters", "locked"), in: view) as? UIControl)
+        #expect(!stack.isEnabled)
+        stack.sendActions(for: .touchUpInside)
+
+        let text = try testUnwrap(control(node("blocks-filters", "filters", "locked-text"), in: view))
+        #expect(text.accessibilityTraits.contains(.notEnabled))
+        #expect(!text.accessibilityActivate())
+
+        let badge = try testUnwrap(control(node("blocks-filters", "filters", "badge-disabled"), in: view))
+        #expect(badge.accessibilityTraits.contains(.notEnabled))
+        #expect(badge.alpha < 1, "a disabled region does not look like a usable one")
+
+        let button = try testUnwrap(control(node("blocks-filters", "filters", "seg-failed"), in: view) as? UIButton)
+        #expect(!button.isEnabled)
+        #expect(button.accessibilityTraits.contains(.notEnabled))
+        button.sendActions(for: .touchUpInside)
+
+        let toggle = try testUnwrap(control(node("blocks-filters", "filters", "notify-toggle"), in: view) as? UISwitch)
+        #expect(!toggle.isEnabled)
+
+        let menu = try testUnwrap(control(node("blocks-filters", "filters", "groupby"), in: view) as? UIButton)
+        #expect(!menu.isEnabled)
+
+        #expect(intents.isEmpty, "a disabled node sent \(intents.map(\.actionId))")
+
+        // The sibling nobody disabled still answers: one node's state is not the whole tree's.
+        let running = try testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view) as? UIButton)
+        #expect(running.isEnabled)
+        running.sendActions(for: .touchUpInside)
+        #expect(intents.map(\.actionId) == ["apply"])
+    }
+
+    // MARK: - Tone, icon, and group
+
+    @Test func aProgressBarAndRingPaintTheToneTheyDeclare() throws {
+        let view = composites(try surface("blocks-panel.json"))
+        let palette = themeID.palette
+
+        // A ring's arc carries the node's tone; its track is the same colour, paler.
+        let ring = try testUnwrap(control(node("blocks-panel", "panel", "waiting"), in: view))
+        let strokes = ringStrokes(in: ring)
+        #expect(strokes.contains(palette.ui.orange), "the ring's arc is not its warning tone: \(strokes)")
+
+        // The bar's fill carries its own tone instead of the host's default foreground.
+        let bar = try testUnwrap(control(node("blocks-panel", "panel", "progress"), in: view))
+        let fills = subviews(of: UIView.self, in: bar).compactMap(\.backgroundColor)
+        #expect(fills.contains(palette.ui.green.withAlphaComponent(0.82)),
+                "the bar's fill is not its success tone: \(fills)")
+    }
+
+    @Test func aBadgeDrawsItsIconBeforeItsWords() throws {
+        let view = composites(try surface("blocks-panel.json"))
+        let badge = try testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
+        let icon = try #require(
+            subviews(of: UIImageView.self, in: badge).first { !$0.isHidden && $0.image != nil },
+            "the badge drew no icon"
+        )
+        let words = try #require(allLabels(in: badge).first { $0.text == "2 of 4" })
+        let iconFrame = icon.convert(icon.bounds, to: badge)
+        let wordsFrame = words.convert(words.bounds, to: badge)
+        #expect(iconFrame.width > 0, "the icon has no width")
+        #expect(iconFrame.maxX <= wordsFrame.minX + 0.5,
+                "the icon sits after the words: \(iconFrame) vs \(wordsFrame)")
+        // And the glyph is inside the capsule, not outside it.
+        #expect(iconFrame.minX >= 0 && iconFrame.maxX <= badge.bounds.width,
+                "the icon escaped the capsule: \(iconFrame) of \(badge.bounds)")
+    }
+
+    @Test func aGroupStartsWithItsPublishedStateAndTogglesLocally() throws {
+        var intents: [ExtensionSurfaceActionIntent] = []
+        let surface = try surface("blocks-panel.json")
+        let view = composites(surface, onAction: { intents.append($0) })
+
+        let group = try testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
+        #expect(!group.isAccessibilityElement, "the region is a container, not a control")
+        let disclosure = try testUnwrap(
+            control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
+        )
+        #expect(disclosure.accessibilityTraits.contains(.button))
+        #expect(disclosure.accessibilityLabel == "Filters")
+
+        // Published open: the children are on screen and the control says so.
+        #expect(disclosure.accessibilityValue == "Expanded")
+        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        #expect(!isHiddenFromReader(chip, in: view), "the open group hid its children")
+
+        // Folding is the reader's own business: it changes what is on screen and sends nothing.
+        disclosure.sendActions(for: .touchUpInside)
+        #expect(disclosure.accessibilityValue == "Collapsed")
+        #expect(isHiddenFromReader(chip, in: view), "the collapsed group still shows its children")
+        #expect(intents.isEmpty, "folding sent \(intents.map(\.actionId))")
+
+        // A repaint that publishes the same state leaves the reader where they left themselves.
+        view.apply(surface: surface, pending: nil, themeID: themeID, onAction: nil)
+        view.layoutIfNeeded()
+        let repainted = try testUnwrap(
+            control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
+        )
+        #expect(repainted.accessibilityValue == "Collapsed", "a repaint opened the region again")
+        // The children are the same renderer's: they keep their own identifiers and state.
+        let repaintedChip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        #expect(repaintedChip.accessibilityTraits.contains(.selected))
+        #expect(isHiddenFromReader(repaintedChip, in: view))
+    }
+
+    @Test func aGroupPublishedFoldedStartsFoldedAndOpensOnTap() throws {
+        let view = composites(try panelWithFoldedGroup())
+        let disclosure = try testUnwrap(
+            control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
+        )
+        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        #expect(disclosure.accessibilityValue == "Collapsed")
+        #expect(isHiddenFromReader(chip, in: view))
+
+        disclosure.sendActions(for: .touchUpInside)
+        #expect(disclosure.accessibilityValue == "Expanded")
+        #expect(!isHiddenFromReader(chip, in: view), "the opened group kept its children off screen")
     }
 
     // MARK: - Pill
@@ -693,10 +902,11 @@ struct ExtensionSurfaceBlocksViewsTests {
             #expect(bottom <= view.bounds.height + 0.5, "\(name) cuts its last card at \(bottom) of \(view.bounds.height)")
         }
 
-        // A composed pill, at its own size: the strip draws these facts instead of a title.
-        let panel = makePanel(try surface("blocks-status.json"))
+        // A composed pill, at its own size: the strip draws these facts instead of a title. This
+        // one names a badge with its icon and a caption, the two things a pill can hold.
+        let panel = makePanel(try surface("blocks-filters.json"))
         let pill = try testUnwrap(
-            control("extension-strip-aboveEditor-pill-surface-blocks_2dstatus", in: panel) as? UIControl
+            control("extension-strip-aboveEditor-pill-surface-blocks_2dfilters", in: panel) as? UIControl
         )
         try write(png: pill, named: "blocks-pill.png")
         #expect(pill.bounds.width > 0 && pill.bounds.height > 0)
@@ -855,6 +1065,27 @@ struct ExtensionSurfaceBlocksViewsTests {
                 && constraint.firstAttribute == .width
                 && constraint.relation == .equal
                 && constraint.constant > 0
+        }
+    }
+
+    /// Whether VoiceOver would reach `view`: nothing between it and the tree it was drawn in is
+    /// hidden. A collapsed region keeps its children built and takes them off screen.
+    private func isHiddenFromReader(_ view: UIView, in root: UIView) -> Bool {
+        var current: UIView? = view
+        while let node = current {
+            if node.isHidden { return true }
+            if node === root { return false }
+            current = node.superview
+        }
+        return true
+    }
+
+    /// Every stroke colour a ring's glyph paints with, in draw order: the track first, the arc last.
+    private func ringStrokes(in ring: UIView) -> [UIColor] {
+        subviews(of: UIView.self, in: ring).flatMap { view in
+            (view.layer.sublayers ?? []).compactMap { layer in
+                (layer as? CAShapeLayer)?.strokeColor.flatMap { UIColor(cgColor: $0) }
+            }
         }
     }
 

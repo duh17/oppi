@@ -169,6 +169,31 @@ enum ExtensionSurfaceBlockMetrics {
 
     /// A text node's own width cap inside a pill, which has one line to give.
     static let inlineTextMaxWidth: CGFloat = 180
+
+    /// The host's selected item: a tinted capsule with a hairline, the way a list marks the item a
+    /// person picked. One look for every kind that can carry a selection, so a selected row, chip,
+    /// button, and badge read as the same state.
+    static func selectionFill(_ palette: ThemePalette) -> UIColor {
+        palette.ui.cyan.withAlphaComponent(0.16)
+    }
+
+    static func selectionBorder(_ palette: ThemePalette) -> UIColor {
+        palette.ui.cyan.withAlphaComponent(0.45)
+    }
+
+    /// Paint, or clear, the selected look on a region. The capsule keeps its own radius: a region
+    /// that grows into a column at an accessibility size stays a rounded block, not a lozenge.
+    static func paintSelection(_ selected: Bool, on view: UIView, palette: ThemePalette) {
+        view.backgroundColor = selected ? selectionFill(palette) : .clear
+        view.layer.cornerCurve = .continuous
+        view.layer.borderWidth = selected ? 1 : 0
+        view.layer.borderColor = selectionBorder(palette).cgColor
+    }
+
+    /// The radius a selected region's capsule takes at the height it is drawn.
+    static func selectionRadius(_ bounds: CGRect) -> CGFloat {
+        min(bounds.height / 2, 14)
+    }
 }
 
 /// A node view that takes a column's whole width when its tree stacks, so text wraps instead of
@@ -218,6 +243,8 @@ final class BlocksRenderer {
                 align: layout.align,
                 isRow: true,
                 inline: environment.inline,
+                selected: layout.selected == true,
+                disabled: layout.disabled == true,
                 environment: environment
             )
             return view
@@ -232,6 +259,18 @@ final class BlocksRenderer {
                 align: nil,
                 isRow: false,
                 inline: environment.inline,
+                selected: false,
+                disabled: layout.disabled == true,
+                environment: environment
+            )
+            return view
+        case .group(let group):
+            let view: BlocksGroupView = cached(key, BlocksGroupView())
+            view.apply(
+                title: group.title,
+                collapsed: group.collapsed,
+                children: children(group.children, path: path, environment: environment),
+                node: node,
                 environment: environment
             )
             return view
@@ -261,7 +300,10 @@ final class BlocksRenderer {
                     value: progress.value,
                     indeterminate: progress.value == nil
                 ),
-                context: environment.nativeContext
+                context: environment.nativeContext,
+                tint: ExtensionSurfaceTone(raw: progress.tone) == .neutral
+                    ? nil
+                    : ExtensionSurfaceBlockMetrics.color(progress.tone, environment.palette)
             )
             view.accessibilityIdentifier = environment.identifier(for: node)
             return view
@@ -404,7 +446,7 @@ enum ExtensionSurfaceBlockWords {
             case .markdown(let value): parts.append(value.markdown)
             case .code(let value): parts.append(value.text)
             case .unsupported(let value): parts.append(value.text)
-            case .icon, .row, .stack, .chart, .divider, .spacer:
+            case .icon, .row, .stack, .group, .chart, .divider, .spacer:
                 node.children.forEach(walk)
             }
         }
@@ -445,7 +487,7 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
     ) {
         let action = node.action
         isPrimary = node.isPrimary
-        let configuration = ExtensionSurfaceButtonFactory.configuration(
+        var configuration = ExtensionSurfaceButtonFactory.configuration(
             title: action.map {
                 environment.pendingTitle(for: $0, nodeId: surfaceNode.id, fallback: node.title)
             } ?? node.title,
@@ -454,10 +496,20 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
             icon: node.icon,
             palette: environment.palette
         )
+        // The active item of a set of buttons: the host's selection, under the button's own role.
+        let selected = node.selected == true
+        if selected {
+            let palette = environment.palette
+            configuration.background.backgroundColor = ExtensionSurfaceBlockMetrics.selectionFill(palette)
+            configuration.background.strokeColor = ExtensionSurfaceBlockMetrics.selectionBorder(palette)
+            configuration.background.strokeWidth = 1
+        }
         self.configuration = configuration
+        isSelected = selected
         showsMenuAsPrimaryAction = false
         menu = nil
-        isEnabled = action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? false
+        isEnabled = node.disabled != true
+            && (action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? false)
         onSelect = nil
         onTap = action.flatMap { environment.tap(for: surfaceNode, action: $0) }
         removeTarget(self, action: #selector(runTap), for: .touchUpInside)
@@ -466,7 +518,7 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
         accessibilityLabel = configuration.title
         accessibilityHint = node.base.accessibility?.hint
         accessibilityValue = node.base.accessibility?.value
-        accessibilityTraits = .button
+        accessibilityTraits = Self.traits(enabled: isEnabled, selected: selected)
     }
 
     func apply(
@@ -475,6 +527,7 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         isPrimary = false
+        isSelected = false
         let configuration = ExtensionSurfaceButtonFactory.configuration(
             title: node.title ?? String(localized: "More Actions"),
             isPrimary: false,
@@ -505,15 +558,25 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
             guard let item = node.items.first(where: { $0.action.id == actionId }) else { return }
             environment.tap(for: surfaceNode, action: item.action)?()
         }
-        isEnabled = node.items.contains { !environment.isDisabled($0.action, nodeId: surfaceNode.id) }
+        isEnabled = node.disabled != true
+            && node.items.contains { !environment.isDisabled($0.action, nodeId: surfaceNode.id) }
         accessibilityIdentifier = environment.identifier(for: surfaceNode)
         accessibilityLabel = configuration.title
         accessibilityHint = node.base.accessibility?.hint
         accessibilityValue = node.base.accessibility?.value
-        accessibilityTraits = .button
+        accessibilityTraits = Self.traits(enabled: isEnabled, selected: false)
+    }
+
+    /// A control that cannot be used says so, and one that is the active item of a set does too.
+    private static func traits(enabled: Bool, selected: Bool) -> UIAccessibilityTraits {
+        var traits: UIAccessibilityTraits = .button
+        if !enabled { traits.insert(.notEnabled) }
+        if selected { traits.insert(.selected) }
+        return traits
     }
 
     @objc private func runTap() {
+        guard isEnabled else { return }
         onTap?()
     }
 }
@@ -570,8 +633,10 @@ final class BlocksToggleView: UIView, BlocksColumnFillable {
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         let palette = environment.palette
+        let disabled = node.disabled == true
         label.text = node.title
-        label.textColor = palette.ui.fg
+        // A control nobody may use reads as unusable, words and track alike.
+        label.textColor = palette.ui.fg.withAlphaComponent(disabled ? 0.55 : 1)
         toggle.onTintColor = palette.ui.cyan
         track.backgroundColor = palette.ui.fg.withAlphaComponent(0.06)
         track.layer.borderWidth = 0.5
@@ -579,9 +644,10 @@ final class BlocksToggleView: UIView, BlocksColumnFillable {
         let wait = node.action.flatMap { environment.wait(for: $0, nodeId: surfaceNode.id) }
         // In flight: the person's position is the truth until the server answers.
         if wait == nil { toggle.setOn(node.value, animated: false) }
-        toggle.isEnabled = node.action.map {
+        toggle.isEnabled = !disabled && (node.action.map {
             !environment.isDisabled($0, nodeId: surfaceNode.id) && wait == nil
-        } ?? false
+        } ?? false)
+        alpha = disabled ? 0.55 : 1
         toggle.accessibilityIdentifier = environment.identifier(for: surfaceNode)
         toggle.accessibilityLabel = node.base.accessibility?.label ?? node.title
         toggle.accessibilityHint = node.base.accessibility?.hint
@@ -674,7 +740,7 @@ final class ExtensionSurfaceBlocksView: ExtensionSurfaceCompositeCardView {
         switch node {
         case .button(let button):
             return button.isPrimary
-        case .row, .stack:
+        case .row, .stack, .group:
             return node.children.contains(where: offersPrimary)
         default:
             return false

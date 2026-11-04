@@ -380,7 +380,9 @@ struct ExtensionUISurfaceTests {
         #expect(group.title == "Filters")
         #expect(group.collapsed == false)
         #expect(group.children.count == 1)
-        #expect(nodes(in: group.children[0]).map(\.id) == ["filter-set", "filter-all", "filter-running"])
+        #expect(nodes(in: group.children[0]).map(\.id) == [
+            "filter-set", "filter-all", "filter-running", "filter-archived",
+        ])
         guard case .text(let selectedFilter) = try #require(
             nodes(in: group.children[0]).first(where: { $0.id == "filter-all" })
         ) else {

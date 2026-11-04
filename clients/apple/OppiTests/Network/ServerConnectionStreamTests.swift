@@ -1352,6 +1352,42 @@ struct ServerConnectionStreamTests {
                 "Fire-and-forget: no requestId, so nothing waits on an answer")
     }
 
+    @Test func aServerAdvertisingBlocksIsToldThisBuildDrawsThem() async {
+        let (conn, sent) = await makeDeclaringConnection(
+            advertised: [
+                ClientCapability.extensionNativeUIComposites,
+                ClientCapability.extensionNativeUIBlocks,
+            ]
+        )
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 1
+        })
+        #expect(sent.capabilityDeclarations == [[
+            ClientCapability.extensionNativeUIComposites,
+            ClientCapability.extensionNativeUIBlocks,
+        ]], "Both shapes in one declaration; the server ranks the stronger")
+    }
+
+    @Test func aServerThatListsOnlyCompositesIsNotToldAboutBlocks() async {
+        let (conn, sent) = await makeDeclaringConnection(
+            advertised: [ClientCapability.extensionNativeUIComposites]
+        )
+        defer { conn.disconnectStream() }
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.routeStreamMessage(streamConnectedFrame())
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            sent.capabilityDeclarations.count == 1
+        })
+        #expect(sent.capabilityDeclarations == [[ClientCapability.extensionNativeUIComposites]])
+    }
+
     @Test func reconnectingDeclaresComposableSurfacesAgain() async {
         let (conn, sent) = await makeDeclaringConnection()
         defer { conn.disconnectStream() }

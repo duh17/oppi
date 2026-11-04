@@ -22,28 +22,38 @@ class BlocksTapControl: UIControl {
     required init?(coder: NSCoder) { nil }
 
     /// Make this region a button, or a plain container when `tap` is nil. A region whose action is
-    /// waiting is disabled and says so, so one action cannot be sent twice by touch or by
-    /// assistive activation.
+    /// waiting, or whose node is published disabled, sends nothing and says so — by touch and by
+    /// assistive activation alike — and dims, because a control nobody may use looks that way.
     func applyTap(
         _ tap: (() -> Void)?,
         label: String?,
         identifier: String?,
         hint: String?,
-        enabled: Bool = true
+        enabled: Bool = true,
+        selected: Bool = false
     ) {
         onTap = tap
         isEnabled = enabled
+        alpha = enabled ? 1 : 0.55
         accessibilityIdentifier = identifier
         isAccessibilityElement = tap != nil
+        // A control's own state is what UIKit reads its traits from; the trait alone would be
+        // dropped, because a `UIControl` that is not selected is not selected.
+        self.isSelected = selected
         guard tap != nil else {
             accessibilityLabel = nil
             accessibilityHint = nil
-            accessibilityTraits = .none
+            // A region nobody can tap is still — or is not — the active item of a set, and that
+            // state is the surface's, not the tap's.
+            accessibilityTraits = selected ? .selected : .none
             return
         }
         accessibilityLabel = label
         accessibilityHint = hint
-        accessibilityTraits = enabled ? .button : [.button, .notEnabled]
+        var traits: UIAccessibilityTraits = .button
+        if !enabled { traits.insert(.notEnabled) }
+        if selected { traits.insert(.selected) }
+        accessibilityTraits = traits
     }
 
     @objc private func dimForPress() {
@@ -52,7 +62,7 @@ class BlocksTapControl: UIControl {
     }
 
     @objc private func resetPress() {
-        alpha = 1
+        alpha = isEnabled ? 1 : 0.55
     }
 
     @objc func handleTap() {
@@ -81,6 +91,12 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     private var stackLeading: NSLayoutConstraint?
     private var stackTrailing: NSLayoutConstraint?
     private var stackCenter: NSLayoutConstraint?
+    private var stackTop: NSLayoutConstraint?
+    private var stackBottom: NSLayoutConstraint?
+    /// The inset a selected region gives its children, so the capsule has air around the words it
+    /// marks instead of hugging them.
+    private static let selectionInset = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+    private var paintsSelection = false
     private var columnFill: [(UIView, NSLayoutConstraint)] = []
     private var childWidths: [(UIView, NSLayoutConstraint)] = []
     private var align: String?
@@ -111,12 +127,16 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         let leading = stack.leadingAnchor.constraint(equalTo: leadingAnchor)
         let trailing = stack.trailingAnchor.constraint(equalTo: trailingAnchor)
         let center = stack.centerXAnchor.constraint(equalTo: centerXAnchor)
+        let top = stack.topAnchor.constraint(equalTo: topAnchor)
+        let bottom = stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         stackLeading = leading
         stackTrailing = trailing
         stackCenter = center
+        stackTop = top
+        stackBottom = bottom
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            top,
+            bottom,
             leading,
             center,
             stack.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor),
@@ -135,12 +155,21 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         align: String?,
         isRow: Bool,
         inline: Bool,
+        selected: Bool,
+        disabled: Bool,
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         self.isRow = isRow
         self.inline = inline
         self.align = align
         stack.spacing = spacing
+        self.paintsSelection = selected
+        ExtensionSurfaceBlockMetrics.paintSelection(paintsSelection, on: self, palette: environment.palette)
+        let inset = selected ? Self.selectionInset : .zero
+        stackTop?.constant = inset.top
+        stackBottom?.constant = -inset.bottom
+        stackLeading?.constant = inset.left
+        stackTrailing?.constant = -inset.right
         for view in stack.arrangedSubviews where !children.contains(where: { $0 === view }) {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -169,7 +198,8 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
             label: node.base?.accessibility?.label ?? ExtensionSurfaceBlockWords.words(of: node),
             identifier: environment.identifier(for: node),
             hint: node.base?.accessibility?.hint,
-            enabled: action.map { !environment.isDisabled($0, nodeId: node.id) } ?? true
+            enabled: !disabled && (action.map { !environment.isDisabled($0, nodeId: node.id) } ?? true),
+            selected: paintsSelection
         )
         for entry in childWidths { entry.1.isActive = true }
     }
@@ -234,6 +264,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
             measuredWidth = bounds.width
         }
         applyLayout()
+        if paintsSelection { layer.cornerRadius = ExtensionSurfaceBlockMetrics.selectionRadius(bounds) }
         for case let block as any ExtensionNativeBlockRendering in stack.arrangedSubviews {
             block.adoptLayoutWidth(stack.bounds.width)
         }
@@ -245,17 +276,32 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
 /// A text node: the host's type ramp, a palette tone, and — when it offers one — the node's tap.
 final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
     private let label = UILabel()
+    private var insets = [(NSLayoutConstraint, CGFloat)]()
+    private var paintsSelection = false
+    /// The air a chip gives its words: enough beside a capsule's own round ends that the words do
+    /// not look like they spill into them.
+    private static let chipHorizontalInset: CGFloat = 12
+    private static let chipVerticalInset: CGFloat = 5
+
+    /// A sentence takes the column, so its words wrap. A selected chip is the active item of a set:
+    /// it keeps its own width and sits beside its siblings instead of over them.
+    var fillsColumn: Bool { !paintsSelection }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        let top = label.topAnchor.constraint(equalTo: topAnchor)
+        let bottom = label.bottomAnchor.constraint(equalTo: bottomAnchor)
+        let leading = label.leadingAnchor.constraint(equalTo: leadingAnchor)
+        let trailing = label.trailingAnchor.constraint(equalTo: trailingAnchor)
+        insets = [
+            (top, Self.chipVerticalInset),
+            (bottom, Self.chipVerticalInset),
+            (leading, Self.chipHorizontalInset),
+            (trailing, Self.chipHorizontalInset),
+        ]
+        NSLayoutConstraint.activate([top, bottom, leading, trailing])
         addTarget(self, action: #selector(handleTap), for: .touchUpInside)
     }
 
@@ -275,22 +321,49 @@ final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
         // A pill gives one line; a card body never truncates the extension's words.
         label.numberOfLines = environment.inline ? 1 : 0
         label.lineBreakMode = environment.inline ? .byTruncatingTail : .byWordWrapping
+        paintsSelection = node.selected == true
+        // A chip is its own capsule: the row may not squeeze it under its words, whatever the
+        // sentence beside it wants. Plain text gives way instead, so the words wrap.
+        setContentHuggingPriority(paintsSelection ? .required : .defaultLow, for: .horizontal)
         setContentCompressionResistancePriority(
-            environment.inline ? .defaultLow : .defaultHigh,
+            paintsSelection ? .required : (environment.inline ? .defaultLow : .defaultHigh),
             for: .horizontal
         )
+        ExtensionSurfaceBlockMetrics.paintSelection(paintsSelection, on: self, palette: environment.palette)
+        for (constraint, constant) in insets {
+            constraint.constant = paintsSelection ? constant : 0
+        }
         applyTap(
             action.flatMap { environment.tap(for: surfaceNode, action: $0) },
             label: node.base.accessibility?.label ?? node.text,
             identifier: environment.identifier(for: surfaceNode),
             hint: node.base.accessibility?.hint,
-            enabled: action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? true
+            enabled: node.disabled != true
+                && (action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? true),
+            selected: paintsSelection
         )
         invalidateIntrinsicContentSize()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if paintsSelection { layer.cornerRadius = ExtensionSurfaceBlockMetrics.selectionRadius(bounds) }
+    }
+
     /// In a pill the text takes whatever the pill leaves, up to one line's own width.
+    ///
+    /// A selected chip is the one text node with a width of its own: its words plus the capsule's
+    /// air. Without one the row would give a plain view whatever space it had, and the fill would
+    /// run under the chip beside it. A sentence keeps no width, so it wraps in the column instead.
     override var intrinsicContentSize: CGSize {
+        if paintsSelection, let text = label.text, !text.isEmpty {
+            let width = ExtensionSurfaceBlockMetrics.inlineTextMaxWidth
+            let needed = label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            return CGSize(
+                width: min(ceil(needed.width), width) + Self.chipHorizontalInset * 2,
+                height: needed.height + Self.chipVerticalInset * 2
+            )
+        }
         guard label.numberOfLines == 1, let text = label.text, !text.isEmpty else {
             return super.intrinsicContentSize
         }
@@ -304,18 +377,31 @@ final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
 /// rather than run past the card, so a long badge at an accessibility size grows taller instead.
 final class BlocksBadgeView: BlocksTapControl {
     private let label = UILabel()
+    private let icon = UIImageView()
+    private let content = UIStackView()
+    private var paintsSelection = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        label.translatesAutoresizingMaskIntoConstraints = false
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 0
-        addSubview(label)
+        icon.contentMode = .scaleAspectFit
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The server's symbol sits before the words, so both share the capsule's one line.
+        content.axis = .horizontal
+        content.alignment = .center
+        content.spacing = 3
+        content.addArrangedSubview(icon)
+        content.addArrangedSubview(label)
+        content.isUserInteractionEnabled = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
@@ -331,20 +417,36 @@ final class BlocksBadgeView: BlocksTapControl {
         action: ExtensionUISurfaceNodeAction?,
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
+        let palette = environment.palette
         let tone = ExtensionSurfaceTone(raw: node.tone)
-        let color = tone.color(environment.palette)
+        let color = tone.color(palette)
+        let words = tone == .neutral ? palette.ui.fg : color
         label.text = node.text
         label.font = ExtensionNativeBlockStyle.font(.caption2, weight: .semibold)
-        label.textColor = tone == .neutral ? environment.palette.ui.fg : color
-        backgroundColor = color.withAlphaComponent(tone == .neutral ? 0.10 : 0.16)
+        label.textColor = words
+        icon.image = node.icon.flatMap { name in
+            UIImage.scaledSymbol(name, style: .caption2, weight: .semibold, color: words)
+        }
+        icon.isHidden = icon.image == nil
+        paintsSelection = node.selected == true
+        // A selection is the host's own mark, so it paints over the tone the badge arrived with.
+        if paintsSelection {
+            ExtensionSurfaceBlockMetrics.paintSelection(paintsSelection, on: self, palette: palette)
+        } else {
+            backgroundColor = color.withAlphaComponent(tone == .neutral ? 0.10 : 0.16)
+            layer.borderWidth = 0
+        }
         layer.cornerCurve = .continuous
         applyTap(
             action.flatMap { environment.tap(for: surfaceNode, action: $0) },
             label: node.base.accessibility?.label ?? node.text,
             identifier: environment.identifier(for: surfaceNode),
             hint: node.base.accessibility?.hint,
-            enabled: action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? true
+            enabled: node.disabled != true
+                && (action.map { !environment.isDisabled($0, nodeId: surfaceNode.id) } ?? true),
+            selected: paintsSelection
         )
+        invalidateIntrinsicContentSize()
     }
 
     override func layoutSubviews() {
@@ -403,6 +505,108 @@ final class BlocksIconView: UIView {
     }
 }
 
+// MARK: - Group
+
+/// A titled region the tree folds away. The host owns the disclosure control: the published
+/// `collapsed` decides what a reader first sees, and after that the person's own choice stands
+/// until the surface publishes a different one. Nothing here sends an action — folding a region is
+/// the reader's business, not the extension's.
+final class BlocksGroupView: UIView, BlocksColumnFillable {
+    private let disclosure = UIButton(type: .system)
+    private let content = UIStackView()
+    private var publishedCollapsed: Bool?
+    /// What the reader last saw: the chevron follows it, and so does what VoiceOver reads.
+    private var isExpanded = true
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        disclosure.translatesAutoresizingMaskIntoConstraints = false
+        disclosure.contentHorizontalAlignment = .leading
+        disclosure.addTarget(self, action: #selector(toggleCollapsed), for: .touchUpInside)
+        content.axis = .vertical
+        content.alignment = .fill
+        content.spacing = 8
+        let column = UIStackView(arrangedSubviews: [disclosure, content])
+        column.axis = .vertical
+        column.alignment = .fill
+        column.spacing = 6
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: topAnchor),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(
+        title: String,
+        collapsed: Bool?,
+        children: [UIView],
+        node: ExtensionUISurfaceNode,
+        environment: ExtensionSurfaceBlocksEnvironment
+    ) {
+        let palette = environment.palette
+        let identifier = environment.identifier(for: node)
+        accessibilityIdentifier = identifier
+        // A region the extension publishes a new state for follows it; the same state again leaves
+        // the reader where they left themselves.
+        if publishedCollapsed != collapsed {
+            publishedCollapsed = collapsed
+            isExpanded = !(collapsed ?? false)
+        }
+        disclosure.setTitle(title, for: .normal)
+        disclosure.setTitleColor(palette.ui.comment, for: .normal)
+        disclosure.titleLabel?.font = ExtensionNativeBlockStyle.font(.caption1, weight: .semibold)
+        disclosure.titleLabel?.adjustsFontForContentSizeCategory = true
+        disclosure.tintColor = palette.ui.comment
+        disclosure.semanticContentAttribute = .forceLeftToRight
+        disclosure.imageEdgeInsets = UIEdgeInsets(top: 0, left: -2, bottom: 0, right: 2)
+        disclosure.accessibilityIdentifier = identifier.map { "\($0).disclosure" }
+        disclosure.accessibilityLabel = title
+        disclosure.accessibilityValue = isExpanded
+            ? String(localized: "Expanded")
+            : String(localized: "Collapsed")
+        disclosure.accessibilityTraits = .button
+
+        for view in content.arrangedSubviews where !children.contains(where: { $0 === view }) {
+            content.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, view) in children.enumerated() {
+            if content.arrangedSubviews.indices.contains(index), content.arrangedSubviews[index] === view {
+                continue
+            }
+            content.insertArrangedSubview(view, at: index)
+        }
+        // A collapsed region keeps its children built — a patch may change them — but takes them
+        // off screen and out of the accessibility tree.
+        content.isHidden = !isExpanded
+        disclosure.setImage(chevron(), for: .normal)
+    }
+
+    @objc private func toggleCollapsed() {
+        isExpanded.toggle()
+        content.isHidden = !isExpanded
+        disclosure.setImage(chevron(), for: .normal)
+        disclosure.accessibilityValue = isExpanded
+            ? String(localized: "Expanded")
+            : String(localized: "Collapsed")
+    }
+
+    private func chevron() -> UIImage? {
+        UIImage(
+            systemName: isExpanded ? "chevron.down" : "chevron.right",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        )
+    }
+}
+
 // MARK: - Progress
 
 /// A progress ring: the one shape the host's bar cannot answer, for a value kept at the end of a
@@ -448,12 +652,16 @@ final class BlocksProgressRingView: UIView {
         node surfaceNode: ExtensionUISurfaceNode,
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
-        // A progress node declares no tone: it is the host's accent, like the bar's fill.
+        // A ring with a tone paints it; with none it is the host's accent, like the bar's fill.
         let palette = environment.palette
+        let tone = ExtensionSurfaceTone(raw: node.tone)
+        let arc = tone == .neutral ? palette.ui.cyan : tone.color(palette)
         let normalized = ExtensionNativeBlockPresentation.normalizedProgress(node.value)
         glyph.apply(
-            track: palette.ui.fg.withAlphaComponent(0.14),
-            arc: palette.ui.cyan,
+            track: tone == .neutral
+                ? palette.ui.fg.withAlphaComponent(0.14)
+                : arc.withAlphaComponent(0.18),
+            arc: arc,
             fraction: normalized
         )
         let words = node.label?.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -274,7 +274,7 @@ function blocksPanelSurface(): unknown {
                 { type: "badge", id: "state", text: "2 of 4", tone: "warning", icon: "clock" },
               ],
             },
-            { type: "progress", id: "progress", label: "Tests", value: 0.4, kind: "bar" },
+            { type: "progress", id: "progress", label: "Tests", value: 0.4, kind: "bar", tone: "success" },
             { type: "progress", id: "waiting", label: "Retrying", kind: "ring", tone: "warning" },
             {
               type: "keyValue",
@@ -380,6 +380,13 @@ function blocksPanelSurface(): unknown {
                       id: "filter-running",
                       text: "Running",
                       action: { id: "filters", values: { filter: "running" } },
+                    },
+                    {
+                      type: "text",
+                      id: "filter-archived",
+                      text: "Archived",
+                      disabled: true,
+                      action: { id: "filters", values: { filter: "archived" } },
                     },
                   ],
                 },

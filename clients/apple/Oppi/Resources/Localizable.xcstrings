@@ -770,6 +770,9 @@
     "Code blocks, diffs, terminals, and tool output." : {
 
     },
+    "Collapsed" : {
+
+    },
     "Compact" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1458,6 +1461,9 @@
 
     },
     "Existing selections are preserved. Retry before choosing new Skills." : {
+
+    },
+    "Expanded" : {
 
     },
     "Experiments" : {

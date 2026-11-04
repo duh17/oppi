@@ -689,10 +689,11 @@ final class ExtensionNativeProgressBar: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(fraction: Double, palette: ThemePalette) {
+    /// Paint the bar in its own colours, or in `tint` when the node declaring it carried a tone.
+    func apply(fraction: Double, palette: ThemePalette, tint: UIColor? = nil) {
         self.fraction = CGFloat(fraction)
-        backgroundColor = palette.ui.fg.withAlphaComponent(0.12)
-        fill.backgroundColor = palette.ui.fg.withAlphaComponent(0.82)
+        backgroundColor = tint?.withAlphaComponent(0.18) ?? palette.ui.fg.withAlphaComponent(0.12)
+        fill.backgroundColor = (tint ?? palette.ui.fg).withAlphaComponent(0.82)
         setNeedsLayout()
     }
 
@@ -739,6 +740,12 @@ final class ExtensionNativeProgressBlockView: UIView, ExtensionNativeBlockRender
     required init?(coder: NSCoder) { nil }
 
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
+        apply(block, context: context, tint: nil)
+    }
+
+    /// A composite may declare a tone for its bar. The v1 block has none, and keeps the host's own
+    /// foreground, so both callers share one view.
+    func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext, tint: UIColor?) {
         guard case .progress(let base, let rawLabel, let value, let indeterminate) = block else { return }
         let palette = context.palette
         let trimmedLabel = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -749,12 +756,12 @@ final class ExtensionNativeProgressBlockView: UIView, ExtensionNativeBlockRender
         label.text = labelText
         label.textColor = palette.ui.fg
         label.isHidden = labelText == nil
-        spinner.color = palette.ui.blue
+        spinner.color = tint ?? palette.ui.blue
         spinner.isHidden = !isIndeterminate
         if isIndeterminate { spinner.startAnimating() } else { spinner.stopAnimating() }
         row.isHidden = !isIndeterminate && labelText == nil
         bar.isHidden = isIndeterminate
-        if let fraction { bar.apply(fraction: fraction, palette: palette) }
+        if let fraction { bar.apply(fraction: fraction, palette: palette, tint: tint) }
 
         accessibilityLabel = base.accessibility?.label ?? labelText ?? "Progress"
         accessibilityValue = base.accessibility?.value
