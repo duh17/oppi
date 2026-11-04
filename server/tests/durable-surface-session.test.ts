@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -9,6 +10,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+import { EXTENSION_UI_SURFACE_MAX_BYTES } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -432,4 +434,648 @@ describe("durable plugin surfaces on the session stream", () => {
     expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
     expect(f.manager.surfacePublisherFor(f.session.id)).toBeUndefined();
   });
+});
+
+/**
+ * The built-in sql-explorer, on the same session stream: it is one of the extensions a workspace
+ * session selects, so its tools publish into the session's own surface loop.
+ */
+describe("sql-explorer on its results surface", () => {
+  type SurfaceFrame = Extract<ServerMessage, { type: "extension_ui_surface" }>;
+  type NotificationFrame = Extract<ServerMessage, { type: "extension_ui_notification" }>;
+  type WidgetFrame = Extract<ServerMessage, { type: "extension_ui_request" }>;
+  type RowsSection = Extract<
+    SurfaceFrame["surface"]["sections"][number],
+    { composite: "dataTable" }
+  >;
+
+  function surfaceOf(frame: ObservedFrame): SurfaceFrame["surface"] {
+    return (frame.message as SurfaceFrame).surface;
+  }
+
+  /** The rows section of a published panel: the file's rows, or the words that replaced them. */
+  function rowsOf(surface: SurfaceFrame["surface"]): RowsSection {
+    return surface.sections[0] as RowsSection;
+  }
+
+  /** A surface is drawn on the wire, so its own JSON bytes are what the host caps. */
+  function surfaceBytes(surface: SurfaceFrame["surface"]): number {
+    return Buffer.byteLength(JSON.stringify(surface), "utf8");
+  }
+
+  function nextSurface(observed: ReturnType<typeof observe>, after: number) {
+    return observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_surface" &&
+        (frame.message as SurfaceFrame).surface.revision > after,
+    );
+  }
+
+  function seed(path: string, extraRows = 0): void {
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TABLE sales (name TEXT, amount INTEGER);
+      INSERT INTO sales VALUES ('apples', 12), ('bananas', 9), ('cherries', 4);
+    `);
+    if (extraRows > 0) {
+      db.exec("BEGIN");
+      for (let index = 0; index < extraRows; index += 1) {
+        db.exec(`INSERT INTO sales VALUES ('row-${index}', ${index})`);
+      }
+      db.exec("COMMIT");
+    }
+    db.close();
+  }
+
+  /** Wide numeric rows: the surface's own column cap, at a width whose JSON bytes add up. */
+  function seedWide(path: string, count: number, columns: number): void {
+    const db = new DatabaseSync(path);
+    const names = Array.from({ length: columns }, (_, index) => `c${index}`);
+    db.exec(`CREATE TABLE wide (${names.map((name) => `${name} INTEGER`).join(", ")})`);
+    const insert = db.prepare(`INSERT INTO wide VALUES (${names.map(() => "?").join(", ")})`);
+    db.exec("BEGIN");
+    for (let row = 0; row < count; row += 1) {
+      insert.run(...names.map((_, column) => 1_000_000 + row * 100 + column));
+    }
+    db.exec("COMMIT");
+    db.close();
+  }
+
+  /** Two text columns at the widget's cell cap: enough characters to fill a card on their own. */
+  function seedDocs(path: string, count: number, chars: number): void {
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE docs (a TEXT, b TEXT)");
+    const insert = db.prepare("INSERT INTO docs VALUES (?, ?)");
+    db.exec("BEGIN");
+    for (let row = 0; row < count; row += 1) insert.run("a".repeat(chars), "b".repeat(chars));
+    db.exec("COMMIT");
+    db.close();
+  }
+
+  async function sqlFixture(responses: FauxResponseStep[]) {
+    const f = await fixture(responses);
+    await f.manager.startSession(f.session.id, f.workspace);
+    return f;
+  }
+
+  /** One prompt, run to the end of its turn: the next one needs an idle session. */
+  async function prompt(
+    f: Awaited<ReturnType<typeof sqlFixture>>,
+    observed: ReturnType<typeof observe>,
+    text: string,
+  ): Promise<void> {
+    const settled = observed.next((frame) => frame.message.type === "agent_settled");
+    await f.manager.sendPrompt(f.session.id, text);
+    await settled;
+  }
+
+  async function tap(
+    f: Awaited<ReturnType<typeof sqlFixture>>,
+    action: {
+      compositeId: string;
+      actionId: string;
+      revision: number;
+      rowId?: string;
+      requestId: string;
+    },
+  ): Promise<void> {
+    const handler = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    await handler(
+      {
+        type: "extension_ui_action",
+        surfaceId: "sql-explorer",
+        compositeId: action.compositeId,
+        actionId: action.actionId,
+        revision: action.revision,
+        requestId: action.requestId,
+        ...(action.rowId === undefined ? {} : { rowId: action.rowId }),
+      },
+      "phone-1",
+    );
+  }
+
+  /** A phone that draws composites: the audience a tap comes from. */
+  async function declareComposites(
+    f: Awaited<ReturnType<typeof sqlFixture>>,
+  ): Promise<void> {
+    const handler = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    await handler(
+      { type: "client_capabilities", capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY] },
+      "phone-1",
+    );
+  }
+
+  /** Every tool result the model received, in order. */
+  async function toolResults(f: Awaited<ReturnType<typeof sqlFixture>>) {
+    const history = (await f.manager.runCommand(f.session.id, {
+      type: "get_messages",
+    })) as Array<{ role: string; isError?: boolean; content?: unknown }>;
+    return history.filter((message) => message.role === "toolResult");
+  }
+
+  it("publishes rows, pages them, and runs the query again without a model turn", async () => {
+    const db = join(makeTempDir("oppi-sql-surface-"), "sales.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("sqlite_query", {
+            path: db,
+            sql: "SELECT name, amount FROM sales",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("QUERIED"),
+    ]);
+    seed(db, 250);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    const projected = observed.next(
+      (frame) =>
+        frame.audience === "v1-projection" &&
+        (frame.message as NotificationFrame).widgetKey === "surface:sql-explorer",
+    );
+    const cleared = observed.next(
+      (frame) =>
+        (frame.message as WidgetFrame).method === "setWidget" &&
+        (frame.message as WidgetFrame).widgetKey === "data",
+    );
+    await prompt(f, observed, "Query the database");
+
+    // A client that draws composites gets the surface: the file, its rows, and what it can do.
+    const first = surfaceOf(await published);
+    expect(first).toMatchObject({
+      version: 2,
+      id: "sql-explorer",
+      title: "sales.db",
+      lifecycle: "persistent",
+      placement: { kind: "strip" },
+    });
+    expect(first.header).toEqual({
+      title: "sales.db",
+      subtitle: expect.stringMatching(/^200 rows · \d+ms$/),
+    });
+    expect(first.sections[0]).toMatchObject({
+      composite: "dataTable",
+      id: "rows",
+      state: { kind: "content" },
+      columns: [
+        { id: "c0", title: "name" },
+        { id: "c1", title: "amount", kind: "number" },
+      ],
+    });
+    const rows = first.sections[0] as Extract<
+      SurfaceFrame["surface"]["sections"][number],
+      { composite: "dataTable" }
+    >;
+    expect(rows.rows).toHaveLength(200);
+    expect(rows.rows[0]).toEqual({ id: "r0", cells: { c0: "apples", c1: "12" } });
+    expect(first.sections[1]).toMatchObject({
+      composite: "actionBar",
+      id: "actions",
+      actions: ["runAgain", "next"],
+    });
+
+    // A client without the composites capability gets the grid, not a paragraph about it.
+    const projection = (await projected).message as NotificationFrame;
+    expect(projection.nativeSurface?.presentation).toEqual({
+      style: "surfacePanel",
+      title: "sales.db",
+      subtitle: expect.stringMatching(/^200 rows · \d+ms$/),
+    });
+    const blocks = (projection.nativeSurface?.blocks ?? []) as Array<{
+      type: string;
+      id?: string;
+      columns?: string[];
+      rows?: unknown[][];
+      spans?: Array<{ text: string }>;
+    }>;
+    expect(blocks[0]).toMatchObject({
+      type: "table",
+      id: "rows",
+      columns: ["name", "amount"],
+    });
+    expect(blocks[0]?.rows).toHaveLength(200);
+    expect(blocks[0]?.rows?.[0]).toEqual(["apples", "12"]);
+    expect(blocks[1]).toEqual({
+      type: "text",
+      id: "actions",
+      spans: [{ text: "Run again · Next 200 rows" }],
+    });
+    expect(projection.nativeSurface?.fallback?.text).toContain("apples");
+    expect(projection.nativeSurface?.fallback?.text).toContain("200 rows");
+
+    // The panel replaces the old table widget: its slot is emptied, never left beside the surface.
+    expect((await cleared).message).toMatchObject({
+      method: "setWidget",
+      widgetKey: "data",
+      widgetLines: [],
+    });
+
+    // The model still sees the preview it always did.
+    const history = JSON.stringify(
+      await f.manager.runCommand(f.session.id, { type: "get_messages" }),
+    );
+    expect(history).toContain("Result truncated.");
+
+    const handler = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    await handler(
+      { type: "client_capabilities", capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY] },
+      "phone-1",
+    );
+    const toolEnds = observed.messages("tool_end").length;
+
+    // "Next 200 rows" reads the next page of the same statement, in the handler.
+    const second = nextSurface(observed, first.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "next",
+      revision: first.revision,
+      requestId: "tap-next",
+    });
+    const page2 = surfaceOf(await second);
+    expect(page2.header.subtitle).toMatch(/^53 rows · \d+ms · from row 201$/);
+    expect(page2.sections[0]).toMatchObject({ id: "rows", state: { kind: "content" } });
+    expect(
+      (
+        page2.sections[0] as Extract<
+          SurfaceFrame["surface"]["sections"][number],
+          { composite: "dataTable" }
+        >
+      ).rows,
+    ).toHaveLength(53);
+    expect(page2.sections[1]).toMatchObject({ actions: ["runAgain", "previous"] });
+
+    // "Previous" comes back to the first page: the same rows, no offset in the header.
+    const third = nextSurface(observed, page2.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "previous",
+      revision: page2.revision,
+      requestId: "tap-previous",
+    });
+    const page1 = surfaceOf(await third);
+    expect(page1.header.subtitle).toMatch(/^200 rows · \d+ms$/);
+    expect(page1.sections[1]).toMatchObject({ actions: ["runAgain", "next"] });
+
+    // "Run again" is the same read again, and the model was never asked to do it.
+    const fourth = nextSurface(observed, page1.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "runAgain",
+      revision: page1.revision,
+      requestId: "tap-again",
+    });
+    const again = surfaceOf(await fourth);
+    expect(again.header.subtitle).toMatch(/^200 rows · \d+ms$/);
+    expect(again.revision).toBeGreaterThan(page1.revision);
+    expect(observed.messages("tool_end").length).toBe(toolEnds);
+  }, 60_000);
+
+  it("keeps a wide or text-heavy page inside the surface's byte budget", async () => {
+    const dir = makeTempDir("oppi-sql-surface-");
+    const docs = join(dir, "docs.db");
+    const wide = join(dir, "wide.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [fauxToolCall("sqlite_query", { path: docs, sql: "SELECT a, b FROM docs" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("DOCS"),
+      fauxAssistantMessage([fauxToolCall("sqlite_query", { path: wide, sql: "SELECT * FROM wide" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("WIDE"),
+    ]);
+    seedDocs(docs, 200, 200);
+    seedWide(wide, 200, 32);
+    const observed = observe(f.manager, f.session.id);
+
+    // Two text columns at the cell cap: 80 KiB of text before the panel shortens a cell.
+    const first = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Query the docs");
+    const docsSurface = surfaceOf(await first);
+    const docsRows = rowsOf(docsSurface);
+    expect(docsRows.rows).toHaveLength(200);
+    expect(docsRows.rows[0]?.cells.c0).toMatch(/^a{79}…$/);
+    expect(docsSurface.header.subtitle).toMatch(/^200 rows · \d+ms$/);
+    expect(docsRows.fallback?.text).toContain("Some values are shortened to fit the panel.");
+    expect(surfaceBytes(docsSurface)).toBeLessThanOrEqual(EXTENSION_UI_SURFACE_MAX_BYTES);
+
+    // 32 numeric columns: the rows themselves are what does not fit, so the page loses trailing
+    // rows and says how many it left out, while the tool call still returns everything.
+    const second = nextSurface(observed, docsSurface.revision);
+    await prompt(f, observed, "Query the wide table");
+    const wideSurface = surfaceOf(await second);
+    const wideRows = rowsOf(wideSurface);
+    expect(wideRows.columns).toHaveLength(32);
+    expect(wideRows.rows.length).toBeGreaterThan(0);
+    expect(wideRows.rows.length).toBeLessThan(200);
+    expect(wideSurface.header.subtitle).toMatch(
+      new RegExp(`^${wideRows.rows.length} of 200 rows · \\d+ms$`),
+    );
+    expect(wideRows.fallback?.text).toContain("did not fit the panel");
+    expect(surfaceBytes(wideSurface)).toBeLessThanOrEqual(EXTENSION_UI_SURFACE_MAX_BYTES);
+
+    // The query itself succeeded twice: the model has its rows, not a refused surface.
+    const results = await toolResults(f);
+    expect(results).toHaveLength(2);
+    for (const result of results) expect(result.isError).toBeFalsy();
+    expect(JSON.stringify(results)).not.toContain("exceeds 65536");
+    expect(JSON.stringify(results)).toContain("aaaaaaaaaa");
+
+    // Paging continues after the rows this page showed, so a shortened page skips nothing.
+    await declareComposites(f);
+    const third = nextSurface(observed, wideSurface.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "next",
+      revision: wideSurface.revision,
+      requestId: "tap-wide-next",
+    });
+    const wideNext = surfaceOf(await third);
+    expect(wideNext.header.subtitle).toContain(`from row ${wideRows.rows.length + 1}`);
+    expect(rowsOf(wideNext).rows[0]?.cells.c0).toBe(
+      String(1_000_000 + wideRows.rows.length * 100),
+    );
+  }, 90_000);
+
+  it("clips a database name to the title cap instead of dropping the card", async () => {
+    const name = `${"n".repeat(200)}.db`;
+    const db = join(makeTempDir("oppi-sql-surface-"), name);
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [fauxToolCall("sqlite_query", { path: db, sql: "SELECT name FROM sales" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("QUERIED"),
+    ]);
+    seed(db);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Query the database");
+
+    // A long file name is the card's title, and a title over the cap would refuse the surface.
+    const surface = surfaceOf(await published);
+    expect(surface.title).toHaveLength(200);
+    expect(surface.title).toMatch(/…$/);
+    expect(surface.header.title).toBe(surface.title);
+    expect((await toolResults(f))[0]?.isError).toBeFalsy();
+  }, 60_000);
+
+  it("pages a statement whose final semicolon is followed by a comment", async () => {
+    const db = join(makeTempDir("oppi-sql-surface-"), "sales.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("sqlite_query", {
+            path: db,
+            sql: "SELECT name, amount FROM sales; -- paid only",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("QUERIED"),
+    ]);
+    seed(db, 250);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Query the database");
+    const first = surfaceOf(await published);
+    expect(rowsOf(first).rows).toHaveLength(200);
+    expect(first.sections[1]).toMatchObject({ actions: ["runAgain", "next"] });
+
+    await declareComposites(f);
+    const second = nextSurface(observed, first.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "next",
+      revision: first.revision,
+      requestId: "tap-comment-next",
+    });
+    // The wrapper drops the `;` and the comment: sqlite3 reads a `;` inside its parentheses as
+    // the end of the inner query and refuses the rest.
+    const page2 = surfaceOf(await second);
+    expect(page2.header.subtitle).toMatch(/^53 rows · \d+ms · from row 201$/);
+    expect(rowsOf(page2).state).toEqual({ kind: "content" });
+    expect(rowsOf(page2).rows).toHaveLength(53);
+  }, 60_000);
+
+  it("words a page past the last row as no more rows", async () => {
+    const db = join(makeTempDir("oppi-sql-surface-"), "sales.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [fauxToolCall("sqlite_query", { path: db, sql: "SELECT name, amount FROM sales" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("QUERIED"),
+    ]);
+    seed(db, 250);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Query the database");
+    const first = surfaceOf(await published);
+    await declareComposites(f);
+
+    // The card is still up after the table empties under it: the next page is past the end, and
+    // that is not the same thing as a query that returned nothing.
+    const writer = new DatabaseSync(db);
+    try {
+      writer.exec("DELETE FROM sales");
+    } finally {
+      writer.close();
+    }
+    const second = nextSurface(observed, first.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "next",
+      revision: first.revision,
+      requestId: "tap-past-end",
+    });
+    const page2 = surfaceOf(await second);
+    expect(rowsOf(page2).state).toEqual({
+      kind: "empty",
+      title: "No more rows",
+      message: "No rows past this point.",
+    });
+  }, 60_000);
+
+  it("previews a schema object and returns to the schema without a second tool call", async () => {
+    const db = join(makeTempDir("oppi-sql-surface-"), "sales.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage([fauxToolCall("sqlite_schema", { path: db })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("SCHEMA"),
+    ]);
+    seed(db);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Inspect the schema");
+
+    const schema = surfaceOf(await published);
+    expect(schema.header).toEqual({
+      title: "sales.db",
+      subtitle: expect.stringMatching(/^\d+ rows? · \d+ms$/),
+    });
+    expect(schema.sections[0]).toMatchObject({
+      id: "rows",
+      header: { title: "Schema objects" },
+      columns: [
+        { id: "c0", title: "name" },
+        { id: "c1", title: "type" },
+        { id: "c2", title: "sql" },
+      ],
+    });
+    // The CREATE statement stays visible: the model is not the only reader of the schema.
+    expect(rowsOf(schema).rows[0]).toEqual({
+      id: "r0",
+      cells: { c0: "sales", c1: "table", c2: "CREATE TABLE sales (name TEXT, amount INTEGER)" },
+      actions: ["preview"],
+    });
+    expect(schema.sections[1]).toMatchObject({ actions: ["runAgain"] });
+
+    const handler = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    await handler(
+      { type: "client_capabilities", capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY] },
+      "phone-1",
+    );
+
+    const previewFrame = nextSurface(observed, schema.revision);
+    await tap(f, {
+      compositeId: "rows",
+      actionId: "preview",
+      rowId: "r0",
+      revision: schema.revision,
+      requestId: "tap-preview",
+    });
+    const preview = surfaceOf(await previewFrame);
+    expect(preview.header).toEqual({
+      title: "sales.db",
+      subtitle: expect.stringMatching(/^3 rows · \d+ms$/),
+    });
+    expect(preview.sections[0]).toMatchObject({
+      header: { title: "Results" },
+      columns: [
+        { id: "c0", title: "name" },
+        { id: "c1", title: "amount", kind: "number" },
+      ],
+    });
+    expect(preview.sections[1]).toMatchObject({ actions: ["back", "runAgain"] });
+
+    // "Back to schema" shows the schema the tap came from, with no second read.
+    const backFrame = nextSurface(observed, preview.revision);
+    await tap(f, {
+      compositeId: "actions",
+      actionId: "back",
+      revision: preview.revision,
+      requestId: "tap-back",
+    });
+    const back = surfaceOf(await backFrame);
+    expect(back.sections[0]).toMatchObject({
+      header: { title: "Schema objects" },
+      rows: [
+        {
+          id: "r0",
+          cells: {
+            c0: "sales",
+            c1: "table",
+            c2: "CREATE TABLE sales (name TEXT, amount INTEGER)",
+          },
+          actions: ["preview"],
+        },
+      ],
+    });
+    expect(back.sections[1]).toMatchObject({ actions: ["runAgain"] });
+  }, 60_000);
+
+  it("shows empty and failure states on the surface and keeps the chart a v1 widget", async () => {
+    const db = join(makeTempDir("oppi-sql-surface-"), "sales.db");
+    const f = await sqlFixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("sqlite_query", {
+            path: db,
+            sql: "SELECT name FROM sales WHERE 0",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("EMPTY"),
+      fauxAssistantMessage(
+        [fauxToolCall("sqlite_query", { path: db, sql: "SELECT * FROM missing_table" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("FAILED"),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("sqlite_query", {
+            path: db,
+            sql: "SELECT name, amount FROM sales",
+            chart: { kind: "bar" },
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("CHARTED"),
+    ]);
+    seed(db);
+    const observed = observe(f.manager, f.session.id);
+
+    const emptyFrame = observed.next((frame) => frame.message.type === "extension_ui_surface");
+    await prompt(f, observed, "Query nothing");
+    const empty = surfaceOf(await emptyFrame);
+    expect(empty.sections[0]).toMatchObject({
+      id: "rows",
+      state: { kind: "empty", title: "No rows", message: "The query returned no rows." },
+      rows: [],
+    });
+    expect(empty.sections[1]).toMatchObject({ actions: ["runAgain"] });
+
+    const failedFrame = nextSurface(observed, empty.revision);
+    await prompt(f, observed, "Query a missing table");
+    const failed = surfaceOf(await failedFrame);
+    expect(failed.header.subtitle).toBe("Query failed");
+    expect(failed.sections[0]).toMatchObject({
+      id: "rows",
+      state: {
+        kind: "failure",
+        title: "Query failed",
+        message: expect.stringContaining("no such table: missing_table"),
+      },
+    });
+    const history = JSON.stringify(
+      await f.manager.runCommand(f.session.id, { type: "get_messages" }),
+    );
+    expect(history).toContain("no such table: missing_table");
+
+    // The chart is still a v1 widget beside the surface: its own slot, no table block.
+    const charted = observed.next(
+      (frame) =>
+        (frame.message as WidgetFrame).method === "setWidget" &&
+        (frame.message as WidgetFrame).widgetKey === "data" &&
+        (frame.message as WidgetFrame).nativeSurface !== undefined,
+    );
+    const chartSurface = nextSurface(observed, failed.revision);
+    await prompt(f, observed, "Chart the sales");
+    const chartedWidget = (await charted).message as WidgetFrame;
+    expect(chartedWidget.nativeSurface?.blocks).toEqual([
+      {
+        type: "chart",
+        id: "chart",
+        kind: "bar",
+        labels: ["apples", "bananas", "cherries"],
+        series: [{ name: "amount", values: [12, 9, 4] }],
+      },
+    ]);
+    expect(chartedWidget.nativeSurface?.presentation).toEqual(
+      expect.objectContaining({ title: "sales.db" }),
+    );
+    // Nothing in the surface itself is a chart.
+    const chartedSurface = surfaceOf(await chartSurface);
+    expect(chartedSurface.sections.map((section) => section.composite)).toEqual([
+      "dataTable",
+      "actionBar",
+    ]);
+  }, 90_000);
 });

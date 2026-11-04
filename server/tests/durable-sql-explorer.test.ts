@@ -14,14 +14,39 @@ import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableUI } from "../src/durable-ui.js";
-import { DurableSqlExplorer, parseSqliteJson } from "../plugins/sql-explorer/server.js";
+import { DurableSqlExplorer, pagedSql, parseSqliteJson } from "../plugins/sql-explorer/server.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
+
+/**
+ * A host whose surface loop refuses every publish, the way it refuses a panel whose render threw.
+ * Off by default: `oppiHost()` answers as it really does in a bare Harness, which has no loop.
+ */
+const surfaceFault = vi.hoisted(() => ({ refused: false }));
+
+vi.mock("oppi/v1", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/oppi-v1.js")>();
+  return {
+    ...actual,
+    oppiHost: () => {
+      if (!surfaceFault.refused) return actual.oppiHost();
+      return {
+        surfaces: () => ({
+          publish: () => {
+            throw new Error('surface "sql-explorer": the surface exceeds 65536 bytes');
+          },
+          dismiss: () => undefined,
+        }),
+      };
+    },
+  };
+});
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
   await Promise.all([...harnesses].map((harness) => harness.close(context)));
   harnesses.clear();
+  surfaceFault.refused = false;
   vi.restoreAllMocks();
 });
 
@@ -618,6 +643,62 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     expect(
       (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
     ).toBeUndefined();
+  });
+
+  it("returns its rows when the host refuses the panel", async () => {
+    surfaceFault.refused = true;
+    const f = await fixture([
+      tool("sqlite_query", { path: "sales.db", sql: "SELECT name, amount FROM sales" }),
+      fauxAssistantMessage("DONE"),
+    ]);
+    seedSales(join(f.dir, "sales.db"));
+    await prompt(f.root);
+
+    // A surface the host would not take is a rendering problem, not a failed query.
+    const result = await lastToolResult(f.root);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result.content)).toContain("apples");
+    const widget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
+      "widget:data"
+    ];
+    expect(widget).toMatchObject({ method: "setWidget", widgetKey: "data" });
+    expect(widget?.nativeSurface?.blocks).toEqual([
+      {
+        type: "table",
+        id: "result",
+        columns: ["name", "amount"],
+        rows: [
+          ["apples", "12"],
+          ["bananas", "9"],
+          ["cherries", "4"],
+        ],
+      },
+    ]);
+  });
+});
+
+describe("pagedSql", () => {
+  const wrap = (body: string) => `SELECT * FROM (\n${body}\n) LIMIT 201 OFFSET 200`;
+
+  it("drops the final semicolon and any comment after it", () => {
+    expect(pagedSql("SELECT * FROM orders;", 200)).toBe(wrap("SELECT * FROM orders"));
+    expect(pagedSql("SELECT * FROM orders; -- paid only", 200)).toBe(wrap("SELECT * FROM orders"));
+    expect(pagedSql("SELECT * FROM orders ;; /* paid */\n", 200)).toBe(
+      wrap("SELECT * FROM orders"),
+    );
+    expect(pagedSql("SELECT * FROM orders\n;\n-- trailing\n", 200)).toBe(
+      wrap("SELECT * FROM orders"),
+    );
+  });
+
+  it("keeps the statement's own text, including a `;` a quote makes part of it", () => {
+    const cte = "WITH x AS (SELECT 1 AS a) SELECT a FROM x";
+    expect(pagedSql(`${cte};`, 200)).toBe(wrap(cte));
+    expect(pagedSql('SELECT * FROM "a;b";', 200)).toBe(wrap('SELECT * FROM "a;b"'));
+    expect(pagedSql("SELECT ';' AS semi;", 200)).toBe(wrap("SELECT ';' AS semi"));
+    expect(pagedSql("SELECT 1 /* ; */ + 2;", 200)).toBe(wrap("SELECT 1 /* ; */ + 2"));
+    // A comment after the last token belongs to nobody once the `;` is gone.
+    expect(pagedSql("SELECT 1 /* ; */;", 200)).toBe(wrap("SELECT 1"));
   });
 });
 
