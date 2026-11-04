@@ -107,6 +107,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// The active server's catalog: another server is another catalog.
     override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
 
+    override func loadConnection() -> ServerConnection? {
+        coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
+    }
+
     /// A switched server starts its own search: the old one's query would filter
     /// the new server's catalog for an extension it never had.
     override func subjectDidChange() {
@@ -425,10 +429,14 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// appearance, on pull to refresh, and when the active server changes. The
     /// catalog's own state (loading, syncing, failed) is the store's, so the
     /// state row stays the store's too.
+    ///
+    /// A load that cannot run fails waiting for a client, which is what makes the
+    /// base reload the page when one is installed; nothing about it reaches the
+    /// rows.
     override func load() async throws {
         guard let serverId = coordinator.activeServerId else { return }
-        guard let connection = coordinator.connection(for: serverId),
-              let api = connection.apiClient else { return }
+        guard let connection = loadConnection() else { throw noConnectionFailure() }
+        let api = try requireAPIClient()
         connection.serverResourceStore.switchServer(to: serverId)
         await connection.serverResourceStore.load(serverId: serverId, api: api)
     }

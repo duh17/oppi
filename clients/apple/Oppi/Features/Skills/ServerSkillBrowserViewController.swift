@@ -104,6 +104,8 @@ final class ServerSkillBrowserViewController: ListScreenController<
 
     override func loadSubject() -> AnyHashable? { AnyHashable(target) }
 
+    override func loadConnection() -> ServerConnection? { connection }
+
     /// Another Skill or another server is another tree, closed.
     override func subjectDidChange() {
         fetchedDetail = nil
@@ -122,9 +124,9 @@ final class ServerSkillBrowserViewController: ListScreenController<
             guard await root.coordinator.switchToServerReady(target.serverId), !Task.isCancelled else { return }
             connection = root.coordinator.connection(for: target.serverId)
         }
-        guard let connection else { throw LoadFailure(String(localized: "Server offline")) }
+        guard let connection else { throw noConnectionFailure() }
         if !forced, detail(in: connection) != nil { return }
-        guard let apiClient = connection.apiClient else { throw LoadFailure(String(localized: "Not connected")) }
+        let apiClient = try requireAPIClient()
         let fetched = try await apiClient.getServerSkill(id: target.resourceId)
         guard !Task.isCancelled else { return }
         // The Skill's own page and file reader read the same copy.

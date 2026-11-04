@@ -175,6 +175,8 @@ class ServerResourceDetailScreenController<
     /// another page's rows.
     override func loadSubject() -> AnyHashable? { AnyHashable(target) }
 
+    override func loadConnection() -> ServerConnection? { connection }
+
     override func subjectDidChange() {
         detail = nil
         usesDetailSummary = false
@@ -192,9 +194,7 @@ class ServerResourceDetailScreenController<
             connection = root.coordinator.connection(for: target.serverId)
         }
         guard let connection else { return }
-        guard let apiClient = connection.apiClient else {
-            throw ServerResourceDetailLoadError.notConnected(serverName)
-        }
+        let apiClient = try requireAPIClient()
         let fetched = try await page.fetch(apiClient, connection.serverResourceStore)
         guard !Task.isCancelled else { return }
         detail = fetched
@@ -354,17 +354,6 @@ class ServerResourceDetailScreenController<
             // that follows it succeeds.
             usesDetailSummary = false
             setNeedsLoad()
-        }
-    }
-}
-
-enum ServerResourceDetailLoadError: LocalizedError {
-    case notConnected(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notConnected(let serverName):
-            "Not connected to \(serverName)."
         }
     }
 }
