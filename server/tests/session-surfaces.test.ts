@@ -205,12 +205,12 @@ describe("SessionSurfaces", () => {
     ]);
     expect(h.surfaces.audience("new-phone")).toBe("blocks");
 
-    const forComposites = h.surfaces.declare("old-phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY]);
-    // The widget slot it was handed at subscribe is cleared, then the projection is handed over.
-    expect(forComposites.map((message) => message.type)).toEqual([
-      "extension_ui_notification",
-      "extension_ui_notification",
+    const forComposites = h.surfaces.declare("old-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
     ]);
+    // A tree is handed to this client as a projection, so nothing is cleared first: the widget it
+    // already holds is the projection it is about to be handed again.
+    expect(forComposites.map((message) => message.type)).toEqual(["extension_ui_notification"]);
     expect(h.surfaces.audience("old-phone")).toBe("composites");
     // A client that only draws composites still gets a surface that has no tree.
     h.surfaces.publisher.publish(surfaceOf(), undefined);

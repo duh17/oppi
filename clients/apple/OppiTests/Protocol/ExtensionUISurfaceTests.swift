@@ -277,10 +277,119 @@ struct ExtensionUISurfaceTests {
             return
         }
         #expect(action.id == "refresh")
+        // The pill's own tap is one of the action ids the surface offers.
+        #expect(surface.offeredActionIds.contains("refresh"))
         let blocks = try blocksSection("blocks-status.json")
         #expect(blocks.header == nil)
         #expect(blocks.body.kind == "stack")
         #expect(blocks.body.children.map(\.kind) == ["text", "text", "button"])
+    }
+
+    @Test func readsAPillWhoseTapKindIsNewerThanThisBuild() throws {
+        var raw = try json("blocks-panel.json")
+        var pill = try #require(raw["pill"] as? [String: Any])
+        pill["tap"] = ["sheet": ["id": "openSheet"]]
+        raw["pill"] = pill
+        let surface = try JSONDecoder().decode(
+            ExtensionUISurface.self,
+            from: try JSONSerialization.data(withJSONObject: raw)
+        )
+        // A tap kind this build has never heard of opens the drawer, and the frame stands.
+        #expect(surface.pill?.tap == .drawer)
+        #expect(surface.sections.count == 1)
+
+        // Content the build cannot read costs the pill, never the surface.
+        var broken = try json("blocks-panel.json")
+        var brokenPill = try #require(broken["pill"] as? [String: Any])
+        brokenPill["content"] = "not a row"
+        broken["pill"] = brokenPill
+        let withoutPill = try JSONDecoder().decode(
+            ExtensionUISurface.self,
+            from: try JSONSerialization.data(withJSONObject: broken)
+        )
+        #expect(withoutPill.pill == nil)
+        #expect(withoutPill.sections.count == 1)
+    }
+
+    @Test func decodesSelectionDisabledAndAGroup() throws {
+        let surface = try surface("blocks-filters.json")
+        let blocks = try blocksSection("blocks-filters.json")
+        let all = nodes(in: blocks.body)
+        let node = { (id: String) throws -> ExtensionUISurfaceNode in
+            try #require(all.first { $0.id == id })
+        }
+
+        guard case .row(let active) = try node("active-row") else {
+            Issue.record("Expected the active row")
+            return
+        }
+        #expect(active.selected == true)
+        #expect(active.action?.id == "clear")
+        guard case .row(let archived) = try node("archived-row") else {
+            Issue.record("Expected the archived row")
+            return
+        }
+        #expect(archived.disabled == true)
+        guard case .button(let allSegment) = try node("seg-all") else {
+            Issue.record("Expected the All segment")
+            return
+        }
+        #expect(allSegment.selected == true)
+        guard case .button(let failedSegment) = try node("seg-failed") else {
+            Issue.record("Expected the Failed segment")
+            return
+        }
+        #expect(failedSegment.disabled == true)
+        guard case .badge(let selectedBadge) = try node("badge-selected") else {
+            Issue.record("Expected the selected badge")
+            return
+        }
+        #expect(selectedBadge.selected == true)
+        #expect(selectedBadge.icon == "cloud")
+        guard case .badge(let disabledBadge) = try node("badge-disabled") else {
+            Issue.record("Expected the disabled badge")
+            return
+        }
+        #expect(disabledBadge.disabled == true)
+        guard case .stack(let locked) = try node("locked") else {
+            Issue.record("Expected the locked stack")
+            return
+        }
+        #expect(locked.disabled == true)
+        guard case .toggle(let toggle) = try node("notify-toggle") else {
+            Issue.record("Expected the disabled toggle")
+            return
+        }
+        #expect(toggle.disabled == true)
+        guard case .menu(let menu) = try node("groupby") else {
+            Issue.record("Expected the disabled menu")
+            return
+        }
+        #expect(menu.disabled == true)
+        // A disabled node still names the verbs it would offer.
+        #expect(surface.offeredActionIds.isSuperset(of: ["apply", "clear", "group"]))
+
+        // A group is a titled region with its own children, folded or not.
+        let panel = try blocksSection("blocks-panel.json")
+        guard case .group(let group) = try #require(
+            nodes(in: panel.body).first(where: { $0.kind == "group" })
+        ) else {
+            Issue.record("Expected the filters group")
+            return
+        }
+        #expect(group.title == "Filters")
+        #expect(group.collapsed == false)
+        #expect(group.children.count == 1)
+        #expect(nodes(in: group.children[0]).map(\.id) == ["filter-set", "filter-all", "filter-running"])
+        guard case .text(let selectedFilter) = try #require(
+            nodes(in: group.children[0]).first(where: { $0.id == "filter-all" })
+        ) else {
+            Issue.record("Expected the selected filter")
+            return
+        }
+        // `false` and `true` are both states: neither may be lost on the way in.
+        #expect(selectedFilter.selected == true)
+        #expect(selectedFilter.disabled == nil)
     }
 
     @Test func keepsANodeKindThisBuildCannotDrawWithItsWords() throws {
@@ -304,10 +413,12 @@ struct ExtensionUISurfaceTests {
     @Test func roundTripsATreeThroughEncoding() throws {
         // The patch applier re-encodes a surface and decodes it again, so encoding has to be
         // as complete as decoding: a field the wire carries must survive the round trip.
-        let surface = try surface("blocks-panel.json")
-        let encoded = try JSONEncoder().encode(surface)
-        let decoded = try JSONDecoder().decode(ExtensionUISurface.self, from: encoded)
-        #expect(decoded == surface)
+        for name in ["blocks-panel.json", "blocks-filters.json"] {
+            let surface = try surface(name)
+            let encoded = try JSONEncoder().encode(surface)
+            let decoded = try JSONDecoder().decode(ExtensionUISurface.self, from: encoded)
+            #expect(decoded == surface, "\(name)")
+        }
     }
 
     @Test func encodesANodeActionAndAppliesAPatchIntoABody() throws {

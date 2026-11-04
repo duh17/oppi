@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ExtensionSurfaceRuntime,
-  EXTENSION_UI_SURFACE_MAX_ACTION_VALUES,
   EXTENSION_UI_SURFACE_MAX_REMEMBERED_ANSWERS,
   type ExtensionUISurfaceAudience,
 } from "../src/extension-surface-runtime.js";
-import { readExtensionUISurface } from "../src/extension-surface.js";
+import {
+  readExtensionUISurface,
+  EXTENSION_UI_SURFACE_MAX_ACTION_VALUES,
+} from "../src/extension-surface.js";
 import type {
   ExtensionUISurfaceActionAnswer,
   ExtensionUISurfaceActionMessage,
@@ -756,6 +758,56 @@ describe("a blocks surface's actions", () => {
     await h.act(tap, "phone-1", "blocks");
     expect(calls).toBe(1);
   });
+
+  it("treats a toggle's other value at one revision as a second tap", async () => {
+    // On, then off before the patch arrives: the same node and revision, two different taps.
+    const values: unknown[] = [];
+    const h = published(async (request) => {
+      values.push(request.values);
+      return { patch: {} };
+    });
+    await h.act(
+      nodeTap("notify", "notify", { values: { value: true }, requestId: "toggle-1" }),
+      "phone-1",
+      "blocks",
+    );
+    await h.act(
+      nodeTap("notify", "notify", { values: { value: false }, requestId: "toggle-2" }),
+      "phone-1",
+      "blocks",
+    );
+    await h.act(
+      nodeTap("notify", "notify", { values: { value: true }, requestId: "toggle-3" }),
+      "phone-1",
+      "blocks",
+    );
+    expect(values).toEqual([{ value: true }, { value: false }]);
+  });
+
+  it("refuses a tap on a node the surface published as disabled", async () => {
+    let calls = 0;
+    const h = harness({
+      runAction: async () => {
+        calls += 1;
+        return { patch: {} };
+      },
+    });
+    h.runtime.publish(surfaceValue("blocks-filters.json"));
+    const tap = (nodeId: string) => ({
+      surfaceId: "blocks-filters",
+      compositeId: "filters",
+      actionId: "apply",
+      nodeId,
+      revision: 1,
+    });
+    const refused = await h.act(tap("seg-failed"), "phone-1", "blocks");
+    expect(refused).toMatchObject({ error: { message: "This action is not available." } });
+    expect(calls).toBe(0);
+    // Its enabled sibling in the same row still reaches the panel.
+    const accepted = await h.act(tap("seg-running"), "phone-1", "blocks");
+    expect("error" in accepted).toBe(false);
+    expect(calls).toBe(1);
+  });
 });
 
 describe("who can draw a blocks surface", () => {
@@ -797,5 +849,52 @@ describe("who can draw a blocks surface", () => {
     );
     expect(answer).toMatchObject({ error: { message: "This client cannot act on a surface." } });
     expect(calls).toBe(0);
+  });
+
+  it("hands the whole card to a composites client when a surface stops using a tree", async () => {
+    const h = harness({
+      runAction: async () => ({
+        patch: {
+          pill: null,
+          "sections.0": {
+            composite: "statusCard",
+            id: "panel",
+            header: { title: "Gates" },
+            state: { kind: "content" },
+            fallback: { text: "Deploy web → prod: 2 of 4 gates" },
+            phase: "running",
+          },
+        },
+      }),
+    });
+    h.runtime.publish(surfaceValue("blocks-panel.json"));
+    // That client holds only the projection so far, so it has no card a patch could land on.
+    expect(h.surfaces("composites")).toHaveLength(0);
+    const before = h.frames.filter((frame) => frame.audience === "composites").length;
+
+    await h.act(
+      { surfaceId: "blocks-panel", compositeId: "panel", actionId: "refresh", revision: 1 },
+      "phone-1",
+      "blocks",
+    );
+
+    const after = h.frames
+      .filter((frame) => frame.audience === "composites")
+      .slice(before)
+      .map((frame) => frame.message);
+    // Its widget clears, and the card it can now draw arrives whole rather than as a patch.
+    expect(after.map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_surface",
+    ]);
+    expect(after[0]).toMatchObject({
+      method: "setWidget",
+      widgetKey: "surface:blocks-panel",
+      widgetLines: [],
+    });
+    expect(after[1]).toMatchObject({ surface: { sections: [{ composite: "statusCard" }] } });
+    // The client that drew the tree is patched, as before.
+    expect(h.patches("blocks")).toHaveLength(1);
+    expect(h.notifications().at(-1)).toMatchObject({ widgetKey: "surface:blocks-panel" });
   });
 });

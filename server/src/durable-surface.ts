@@ -125,6 +125,9 @@ export interface TextNodeFields {
   text: string;
   style?: ExtensionUISurfaceTextStyle;
   tone?: ExtensionUISurfaceTone;
+  /** The active item of a segmented set of tappable text. */
+  selected?: boolean;
+  disabled?: boolean;
   action?: NodeActionFields;
 }
 
@@ -132,6 +135,10 @@ export interface BadgeNodeFields {
   id?: string;
   text: string;
   tone?: ExtensionUISurfaceTone;
+  /** An SF Symbol from the host's allow-list, drawn before the text. */
+  icon?: string;
+  selected?: boolean;
+  disabled?: boolean;
   action?: NodeActionFields;
 }
 
@@ -140,6 +147,8 @@ export interface RowNodeFields {
   children: ExtensionUISurfaceNode[];
   spacing?: ExtensionUISurfaceNodeSpacing;
   align?: ExtensionUISurfaceNodeAlign;
+  selected?: boolean;
+  disabled?: boolean;
   action?: NodeActionFields;
 }
 
@@ -147,7 +156,16 @@ export interface StackNodeFields {
   id?: string;
   children: ExtensionUISurfaceNode[];
   spacing?: ExtensionUISurfaceNodeSpacing;
+  disabled?: boolean;
   action?: NodeActionFields;
+}
+
+/** A titled region that folds away; the host owns the disclosure control. */
+export interface GroupNodeFields {
+  id?: string;
+  title: string;
+  collapsed?: boolean;
+  children: ExtensionUISurfaceNode[];
 }
 
 export interface TableNodeFields {
@@ -162,6 +180,8 @@ export interface ButtonNodeFields {
   title: string;
   role?: "primary" | "secondary" | "destructive";
   icon?: string;
+  selected?: boolean;
+  disabled?: boolean;
   action: NodeActionFields;
 }
 
@@ -169,6 +189,7 @@ export interface ToggleNodeFields {
   id: string;
   title: string;
   value: boolean;
+  disabled?: boolean;
   action: NodeActionFields;
 }
 
@@ -176,6 +197,7 @@ export interface MenuNodeFields {
   id: string;
   title?: string;
   icon?: string;
+  disabled?: boolean;
   items: Array<{
     id?: string;
     title: string;
@@ -253,7 +275,11 @@ export function actionBar(fields: ActionBarFields): ExtensionUIActionBarComposit
   return { composite: "actionBar", ...shared(fields) };
 }
 
-/** A tree of primitives, for a design the closed composites do not cover. */
+/**
+ * A tree of primitives, for a design the closed composites do not cover. Node ids are unique
+ * across the whole surface — every tree and the pill share one namespace, because a tap names one
+ * id and the section it sits in is not part of that name.
+ */
 export function blocks(fields: BlocksFields): ExtensionUIBlocksComposite {
   const { header, body, ...rest } = fields;
   const base = shared({ ...rest, ...(header ? { header } : {}) } as SurfaceCompositeFields);
@@ -277,6 +303,20 @@ function wireNodeAction(action: NodeActionFields): ExtensionUISurfaceNodeAction 
   };
 }
 
+/**
+ * A node's own state flags, written only when the author named one: `false` is a state the host
+ * has to be told about, exactly as `true` is.
+ */
+function nodeFlags(fields: { selected?: boolean; disabled?: boolean }): {
+  selected?: boolean;
+  disabled?: boolean;
+} {
+  return {
+    ...(fields.selected === undefined ? {} : { selected: fields.selected }),
+    ...(fields.disabled === undefined ? {} : { disabled: fields.disabled }),
+  };
+}
+
 /** Children side by side: facts in one line, or a row of controls. */
 export function row(fields: RowNodeFields): ExtensionUISurfaceNode {
   return {
@@ -285,6 +325,7 @@ export function row(fields: RowNodeFields): ExtensionUISurfaceNode {
     children: fields.children,
     ...(fields.spacing ? { spacing: fields.spacing } : {}),
     ...(fields.align ? { align: fields.align } : {}),
+    ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
   };
 }
@@ -296,7 +337,19 @@ export function stack(fields: StackNodeFields): ExtensionUISurfaceNode {
     ...(fields.id ? { id: fields.id } : {}),
     children: fields.children,
     ...(fields.spacing ? { spacing: fields.spacing } : {}),
+    ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** A titled region the reader can fold away, for the part of a panel that is not the point. */
+export function group(fields: GroupNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "group",
+    ...(fields.id ? { id: fields.id } : {}),
+    title: fields.title,
+    ...(fields.collapsed === undefined ? {} : { collapsed: fields.collapsed }),
+    children: fields.children,
   };
 }
 
@@ -308,6 +361,7 @@ export function text(fields: TextNodeFields): ExtensionUISurfaceNode {
     text: fields.text,
     ...(fields.style ? { style: fields.style } : {}),
     ...(fields.tone ? { tone: fields.tone } : {}),
+    ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
   };
 }
@@ -319,7 +373,71 @@ export function badge(fields: BadgeNodeFields): ExtensionUISurfaceNode {
     ...(fields.id ? { id: fields.id } : {}),
     text: fields.text,
     ...(fields.tone ? { tone: fields.tone } : {}),
+    ...(fields.icon ? { icon: fields.icon } : {}),
+    ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+  };
+}
+
+/** Prose the host renders as Markdown, for the words a line of text is too small for. */
+export function markdown(fields: { id?: string; markdown: string }): ExtensionUISurfaceNode {
+  return {
+    type: "markdown",
+    ...(fields.id ? { id: fields.id } : {}),
+    markdown: fields.markdown,
+  };
+}
+
+/** A bar, line, or pie the host draws and clamps. */
+export function chart(fields: {
+  id?: string;
+  kind: "bar" | "line" | "pie";
+  title?: string;
+  labels: string[];
+  series: Array<{ name?: string; values: number[] }>;
+  truncated?: boolean;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "chart",
+    ...(fields.id ? { id: fields.id } : {}),
+    kind: fields.kind,
+    ...(fields.title ? { title: fields.title } : {}),
+    labels: fields.labels,
+    series: fields.series,
+    ...(fields.truncated === undefined ? {} : { truncated: fields.truncated }),
+  };
+}
+
+/** A fixed-width excerpt: a command, a log tail, a snippet. */
+export function code(fields: {
+  id?: string;
+  language?: string;
+  text: string;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "code",
+    ...(fields.id ? { id: fields.id } : {}),
+    ...(fields.language ? { language: fields.language } : {}),
+    text: fields.text,
+  };
+}
+
+/** A rule between two parts of a panel. */
+export function divider(fields: { id?: string } = {}): ExtensionUISurfaceNode {
+  return { type: "divider", ...(fields.id ? { id: fields.id } : {}) };
+}
+
+/** Intentional white space, at the host's one of three steps. */
+export function spacer(
+  fields: {
+    id?: string;
+    size?: "small" | "medium" | "large";
+  } = {},
+): ExtensionUISurfaceNode {
+  return {
+    type: "spacer",
+    ...(fields.id ? { id: fields.id } : {}),
+    ...(fields.size ? { size: fields.size } : {}),
   };
 }
 
@@ -343,6 +461,7 @@ export function progress(fields: {
   value?: number;
   kind?: "bar" | "ring";
   label?: string;
+  tone?: ExtensionUISurfaceTone;
 }): ExtensionUISurfaceNode {
   return {
     type: "progress",
@@ -350,6 +469,7 @@ export function progress(fields: {
     ...(fields.value === undefined ? {} : { value: fields.value }),
     ...(fields.kind ? { kind: fields.kind } : {}),
     ...(fields.label ? { label: fields.label } : {}),
+    ...(fields.tone ? { tone: fields.tone } : {}),
   };
 }
 
@@ -388,6 +508,7 @@ export function button(fields: ButtonNodeFields): ExtensionUISurfaceNode {
     title: fields.title,
     ...(fields.role ? { role: fields.role } : {}),
     ...(fields.icon ? { icon: fields.icon } : {}),
+    ...nodeFlags(fields),
     action: wireNodeAction(fields.action),
   };
 }
@@ -399,6 +520,7 @@ export function toggle(fields: ToggleNodeFields): ExtensionUISurfaceNode {
     id: fields.id,
     title: fields.title,
     value: fields.value,
+    ...nodeFlags(fields),
     action: wireNodeAction(fields.action),
   };
 }
@@ -410,6 +532,7 @@ export function menu(fields: MenuNodeFields): ExtensionUISurfaceNode {
     id: fields.id,
     ...(fields.title ? { title: fields.title } : {}),
     ...(fields.icon ? { icon: fields.icon } : {}),
+    ...nodeFlags(fields),
     items: fields.items.map((item) => ({
       ...(item.id ? { id: item.id } : {}),
       title: item.title,

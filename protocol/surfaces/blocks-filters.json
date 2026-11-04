@@ -1,0 +1,250 @@
+{
+  "version": 2,
+  "id": "blocks-filters",
+  "title": "Dashboard filters",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Dashboard",
+    "subtitle": "2 filters"
+  },
+  "actions": {
+    "apply": {
+      "title": "Apply"
+    },
+    "clear": {
+      "title": "Clear"
+    },
+    "group": {
+      "title": "Group by"
+    }
+  },
+  "fallback": {
+    "text": "Dashboard filters: 2 selected"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "pill": {
+    "content": {
+      "type": "row",
+      "spacing": "tight",
+      "children": [
+        {
+          "type": "badge",
+          "text": "2 filters",
+          "tone": "accent",
+          "icon": "tag"
+        },
+        {
+          "type": "text",
+          "text": "Dashboard",
+          "style": "caption"
+        }
+      ]
+    },
+    "tap": "drawer"
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "filters",
+      "header": {
+        "title": "Filters"
+      },
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "apply"
+      ],
+      "fallback": {
+        "text": "Dashboard filters: 2 selected"
+      },
+      "body": {
+        "type": "stack",
+        "id": "filter-body",
+        "spacing": "normal",
+        "children": [
+          {
+            "type": "row",
+            "id": "active-row",
+            "selected": true,
+            "action": {
+              "id": "clear",
+              "values": {
+                "scope": "row"
+              }
+            },
+            "children": [
+              {
+                "type": "text",
+                "id": "active-label",
+                "text": "Env: prod"
+              }
+            ]
+          },
+          {
+            "type": "row",
+            "id": "archived-row",
+            "disabled": true,
+            "action": {
+              "id": "clear",
+              "values": {
+                "scope": "archived"
+              }
+            },
+            "children": [
+              {
+                "type": "text",
+                "id": "archived-label",
+                "text": "Env: staging"
+              }
+            ]
+          },
+          {
+            "type": "row",
+            "id": "segment",
+            "spacing": "tight",
+            "children": [
+              {
+                "type": "button",
+                "id": "seg-all",
+                "title": "All",
+                "selected": true,
+                "action": {
+                  "id": "apply",
+                  "values": {
+                    "segment": "all"
+                  }
+                }
+              },
+              {
+                "type": "button",
+                "id": "seg-running",
+                "title": "Running",
+                "action": {
+                  "id": "apply",
+                  "values": {
+                    "segment": "running"
+                  }
+                }
+              },
+              {
+                "type": "button",
+                "id": "seg-failed",
+                "title": "Failed",
+                "disabled": true,
+                "action": {
+                  "id": "apply",
+                  "values": {
+                    "segment": "failed"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "row",
+            "id": "badge-row",
+            "spacing": "tight",
+            "children": [
+              {
+                "type": "badge",
+                "id": "badge-selected",
+                "text": "prod",
+                "tone": "accent",
+                "icon": "cloud",
+                "selected": true,
+                "action": {
+                  "id": "clear",
+                  "values": {
+                    "badge": "prod"
+                  }
+                }
+              },
+              {
+                "type": "badge",
+                "id": "badge-disabled",
+                "text": "staging",
+                "disabled": true,
+                "action": {
+                  "id": "clear",
+                  "values": {
+                    "badge": "staging"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "stack",
+            "id": "locked",
+            "disabled": true,
+            "action": {
+              "id": "group",
+              "values": {
+                "by": "env"
+              }
+            },
+            "children": [
+              {
+                "type": "text",
+                "id": "locked-text",
+                "text": "Grouping is locked while a deploy runs.",
+                "style": "caption",
+                "disabled": true,
+                "action": {
+                  "id": "group",
+                  "values": {
+                    "by": "owner"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "toggle",
+            "id": "notify-toggle",
+            "title": "Notify on failure",
+            "value": true,
+            "disabled": true,
+            "action": {
+              "id": "apply"
+            }
+          },
+          {
+            "type": "menu",
+            "id": "groupby",
+            "title": "Group by",
+            "icon": "list.bullet",
+            "disabled": true,
+            "items": [
+              {
+                "title": "Env",
+                "action": {
+                  "id": "group",
+                  "values": {
+                    "by": "env"
+                  }
+                }
+              },
+              {
+                "title": "Owner",
+                "action": {
+                  "id": "group",
+                  "values": {
+                    "by": "owner"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

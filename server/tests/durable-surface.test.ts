@@ -5,14 +5,20 @@ import {
   badge,
   blocks,
   button,
+  chart,
   checklist,
+  code,
   dataTable,
+  divider,
+  group,
   icon,
   keyValue,
+  markdown,
   menu,
   pill,
   progress,
   row,
+  spacer,
   stack,
   statusCard,
   surface,
@@ -360,6 +366,81 @@ describe("authoring a tree of primitives", () => {
     if (section.composite !== "blocks") throw new Error("expected a blocks section");
     expect(section.body.type).toBe("stack");
     expect(section.tone).toBe("accent");
+  });
+
+  it("builds every node kind the helpers cover, with the state each one takes", () => {
+    const panel = surface<null>({
+      id: "all-kinds",
+      title: "All kinds",
+      actions: { apply: { title: "Apply" }, clear: { title: "Clear" } },
+      view: () => ({
+        header: { title: "All kinds" },
+        sections: [
+          blocks({
+            id: "panel",
+            fallback: "Every kind",
+            body: stack({
+              children: [
+                markdown({ id: "prose", markdown: "**Two** gates remain." }),
+                chart({
+                  id: "durations",
+                  kind: "bar",
+                  labels: ["build"],
+                  series: [{ name: "seconds", values: [42] }],
+                }),
+                code({ id: "tail", language: "bash", text: "make test" }),
+                divider({ id: "rule" }),
+                spacer({ id: "gap", size: "small" }),
+                progress({ id: "budget", value: 0.8, tone: "danger" }),
+                badge({ id: "env", text: "prod", icon: "cloud", selected: true }),
+                button({
+                  id: "seg",
+                  title: "All",
+                  selected: true,
+                  action: { id: "apply", values: { segment: "all" } },
+                }),
+                toggle({
+                  id: "notify",
+                  title: "Notify",
+                  value: false,
+                  disabled: true,
+                  action: { id: "apply" },
+                }),
+                group({
+                  id: "more",
+                  title: "More",
+                  collapsed: true,
+                  children: [
+                    text({ id: "note", text: "Folded away", selected: false }),
+                    row({
+                      id: "clear-row",
+                      disabled: true,
+                      action: { id: "clear" },
+                      children: [badge({ id: "stale", text: "stale" })],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          }),
+        ],
+      }),
+    });
+    const wire = panel.render(null);
+    const section = wire.sections[0];
+    if (section.composite !== "blocks" || section.body.type !== "stack")
+      throw new Error("expected a stack body");
+    const byId = new Map(section.body.children.map((child) => [child.id, child]));
+    expect(byId.get("budget")).toMatchObject({ type: "progress", tone: "danger" });
+    expect(byId.get("env")).toMatchObject({ type: "badge", icon: "cloud", selected: true });
+    expect(byId.get("seg")).toMatchObject({ type: "button", selected: true });
+    expect(byId.get("notify")).toMatchObject({ type: "toggle", disabled: true });
+    expect(byId.get("more")).toMatchObject({ type: "group", collapsed: true });
+    // `false` is a state too: it has to reach the wire rather than be read as absent.
+    const more = byId.get("more");
+    if (more?.type !== "group") throw new Error("expected the group");
+    expect(more.children[0]).toMatchObject({ type: "text", selected: false });
+    expect(more.children[1]).toMatchObject({ type: "row", disabled: true });
   });
 
   it("names the rule a broken tree breaks instead of publishing it", () => {

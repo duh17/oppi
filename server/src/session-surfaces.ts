@@ -111,7 +111,7 @@ export class SessionSurfaces {
     if (AUDIENCE_RANK[after] < AUDIENCE_RANK[before]) return [];
     this.audiences.set(clientId, after);
     if (after === before) return [];
-    const frames = after === "v1-projection" ? [] : this.projectionClears();
+    const frames = after === "v1-projection" ? [] : this.projectionClears(after);
     frames.push(...this.messages(clientId));
     return frames;
   }
@@ -168,11 +168,17 @@ export class SessionSurfaces {
     this.runtime?.dismiss(surfaceId);
   }
 
-  /** The v1 widgets a client was handed at subscribe, cleared when it starts drawing composites. */
-  private projectionClears(): ServerMessage[] {
+  /**
+   * The v1 widgets a client was handed at subscribe and no longer needs, cleared as it starts
+   * drawing more than they can show. A composites client keeps receiving a tree as a projection,
+   * so that widget is not cleared: it is the same bytes, and clearing it is a flicker. A blocks
+   * client draws the tree whole, so every widget it held goes.
+   */
+  private projectionClears(audience: ExtensionUISurfaceAudience): ServerMessage[] {
     if (!this.runtime) return [];
     return this.runtime
       .snapshot()
+      .filter((surface) => audience === "blocks" || !extensionUISurfaceUsesBlocks(surface))
       .map((surface) =>
         buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surface.id)),
       );

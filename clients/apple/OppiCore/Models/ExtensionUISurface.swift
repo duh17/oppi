@@ -41,7 +41,39 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
                 ids.formUnion(blocks.body.actionIds)
             }
         }
+        // The pill is a tap target of its own, and it is not a section.
+        if case .action(let tap)? = pill?.tap { ids.insert(tap.id) }
         return ids
+    }
+
+    /// Decoded field by field, so one unreadable optional field costs that field and not the
+    /// frame: the pill today, and whatever the surface gains next.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        placement = try c.decode(ExtensionUISurfacePlacement.self, forKey: .placement)
+        lifecycle = (try? c.decode(String.self, forKey: .lifecycle)) ?? "persistent"
+        timeoutAt = (try? c.decodeIfPresent(Double.self, forKey: .timeoutAt)) ?? nil
+        header = try c.decode(ExtensionUISurfaceHeader.self, forKey: .header)
+        // No pill is a surface without a summary line, which the host already knows how to draw.
+        pill = (try? c.decodeIfPresent(ExtensionUISurfacePill.self, forKey: .pill)) ?? nil
+        sections = try c.decode([ExtensionUISurfaceSection].self, forKey: .sections)
+        actions =
+            (try? c.decode([String: ExtensionUISurfaceActionDefinition].self, forKey: .actions))
+            ?? [:]
+        fallback = try c.decode(ExtensionUISurfaceFallback.self, forKey: .fallback)
+        revision = try c.decode(Int.self, forKey: .revision)
+        extensionScopeId = (try? c.decodeIfPresent(String.self, forKey: .extensionScopeId)) ?? nil
+        extensionDisplayName =
+            (try? c.decodeIfPresent(String.self, forKey: .extensionDisplayName)) ?? nil
+        publishedAt = (try? c.decodeIfPresent(Double.self, forKey: .publishedAt)) ?? nil
+    }
+
+    private enum Keys: String, CodingKey {
+        case version, id, title, placement, lifecycle, timeoutAt, header, pill, sections, actions
+        case fallback, revision, extensionScopeId, extensionDisplayName, publishedAt
     }
 }
 

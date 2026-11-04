@@ -119,7 +119,14 @@
                 "type": "badge",
                 "id": "state",
                 "text": "2 of 4",
-                "tone": "warning"
+                "tone": "warning",
+                "icon": "clock"
+              },
+              {
+                "type": "icon",
+                "id": "hammer",
+                "name": "hammer",
+                "tone": "accent"
               }
             ]
           },
@@ -133,7 +140,8 @@
           {
             "type": "progress",
             "id": "waiting",
-            "kind": "ring"
+            "kind": "ring",
+            "tone": "warning"
           },
           {
             "type": "keyValue",
@@ -227,12 +235,6 @@
             "size": "small"
           },
           {
-            "type": "icon",
-            "id": "hammer",
-            "name": "hammer",
-            "tone": "accent"
-          },
-          {
             "type": "stack",
             "id": "controls",
             "spacing": "tight",
@@ -294,6 +296,44 @@
                 "action": {
                   "id": "openLog"
                 }
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "id": "filters",
+            "title": "Filters",
+            "collapsed": false,
+            "children": [
+              {
+                "type": "row",
+                "id": "filter-set",
+                "spacing": "tight",
+                "children": [
+                  {
+                    "type": "text",
+                    "id": "filter-all",
+                    "text": "All",
+                    "selected": true,
+                    "action": {
+                      "id": "filters",
+                      "values": {
+                        "filter": "all"
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "id": "filter-running",
+                    "text": "Running",
+                    "action": {
+                      "id": "filters",
+                      "values": {
+                        "filter": "running"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }

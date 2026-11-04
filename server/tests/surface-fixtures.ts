@@ -23,6 +23,7 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "data-table.json": dataTableSurface(),
     "action-bar.json": actionBarSurface(),
     "blocks-panel.json": blocksPanelSurface(),
+    "blocks-filters.json": blocksFiltersSurface(),
     "blocks-status.json": blocksStatusSurface(),
     "blocks-action.json": blocksActionMessage(),
     "blocks-patch.json": blocksPatchMessage(),
@@ -270,11 +271,12 @@ function blocksPanelSurface(): unknown {
               spacing: "tight",
               children: [
                 { type: "text", id: "phase", text: "Deploying 4f2c1ab", style: "headline" },
-                { type: "badge", id: "state", text: "2 of 4", tone: "warning" },
+                { type: "badge", id: "state", text: "2 of 4", tone: "warning", icon: "clock" },
+                { type: "icon", id: "hammer", name: "hammer", tone: "accent" },
               ],
             },
             { type: "progress", id: "progress", label: "Tests", value: 0.4, kind: "bar" },
-            { type: "progress", id: "waiting", kind: "ring" },
+            { type: "progress", id: "waiting", kind: "ring", tone: "warning" },
             {
               type: "keyValue",
               id: "facts",
@@ -308,7 +310,6 @@ function blocksPanelSurface(): unknown {
             { type: "code", id: "tail", language: "bash", text: "make test" },
             { type: "divider", id: "rule" },
             { type: "spacer", id: "gap", size: "small" },
-            { type: "icon", id: "hammer", name: "hammer", tone: "accent" },
             {
               type: "stack",
               id: "controls",
@@ -347,6 +348,180 @@ function blocksPanelSurface(): unknown {
                   tone: "accent",
                   action: { id: "openLog" },
                 },
+              ],
+            },
+            {
+              type: "group",
+              id: "filters",
+              title: "Filters",
+              collapsed: false,
+              children: [
+                {
+                  type: "row",
+                  id: "filter-set",
+                  spacing: "tight",
+                  children: [
+                    {
+                      type: "text",
+                      id: "filter-all",
+                      text: "All",
+                      selected: true,
+                      action: { id: "filters", values: { filter: "all" } },
+                    },
+                    {
+                      type: "text",
+                      id: "filter-running",
+                      text: "Running",
+                      action: { id: "filters", values: { filter: "running" } },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * The states a node can be drawn in: the active item of a set, and a control nobody may use. One
+ * instance of every kind that carries them, so the same bytes hold the server's validator and the
+ * phone's decoder to the same shape.
+ */
+function blocksFiltersSurface(): unknown {
+  return baseSurface({
+    id: "blocks-filters",
+    title: "Dashboard filters",
+    header: { title: "Dashboard", subtitle: "2 filters" },
+    actions: {
+      apply: { title: "Apply" },
+      clear: { title: "Clear" },
+      group: { title: "Group by" },
+    },
+    fallback: { text: "Dashboard filters: 2 selected" },
+    pill: {
+      content: {
+        type: "row",
+        spacing: "tight",
+        children: [
+          { type: "badge", text: "2 filters", tone: "accent", icon: "tag" },
+          { type: "text", text: "Dashboard", style: "caption" },
+        ],
+      },
+      tap: "drawer",
+    },
+    sections: [
+      {
+        composite: "blocks",
+        id: "filters",
+        header: { title: "Filters" },
+        state: { kind: "content" },
+        actions: ["apply"],
+        fallback: { text: "Dashboard filters: 2 selected" },
+        body: {
+          type: "stack",
+          id: "filter-body",
+          spacing: "normal",
+          children: [
+            {
+              type: "row",
+              id: "active-row",
+              selected: true,
+              action: { id: "clear", values: { scope: "row" } },
+              children: [{ type: "text", id: "active-label", text: "Env: prod" }],
+            },
+            {
+              type: "row",
+              id: "archived-row",
+              disabled: true,
+              action: { id: "clear", values: { scope: "archived" } },
+              children: [{ type: "text", id: "archived-label", text: "Env: staging" }],
+            },
+            {
+              type: "row",
+              id: "segment",
+              spacing: "tight",
+              children: [
+                {
+                  type: "button",
+                  id: "seg-all",
+                  title: "All",
+                  selected: true,
+                  action: { id: "apply", values: { segment: "all" } },
+                },
+                {
+                  type: "button",
+                  id: "seg-running",
+                  title: "Running",
+                  action: { id: "apply", values: { segment: "running" } },
+                },
+                {
+                  type: "button",
+                  id: "seg-failed",
+                  title: "Failed",
+                  disabled: true,
+                  action: { id: "apply", values: { segment: "failed" } },
+                },
+              ],
+            },
+            {
+              type: "row",
+              id: "badge-row",
+              spacing: "tight",
+              children: [
+                {
+                  type: "badge",
+                  id: "badge-selected",
+                  text: "prod",
+                  tone: "accent",
+                  icon: "cloud",
+                  selected: true,
+                  action: { id: "clear", values: { badge: "prod" } },
+                },
+                {
+                  type: "badge",
+                  id: "badge-disabled",
+                  text: "staging",
+                  disabled: true,
+                  action: { id: "clear", values: { badge: "staging" } },
+                },
+              ],
+            },
+            {
+              type: "stack",
+              id: "locked",
+              disabled: true,
+              action: { id: "group", values: { by: "env" } },
+              children: [
+                {
+                  type: "text",
+                  id: "locked-text",
+                  text: "Grouping is locked while a deploy runs.",
+                  style: "caption",
+                  disabled: true,
+                  action: { id: "group", values: { by: "owner" } },
+                },
+              ],
+            },
+            {
+              type: "toggle",
+              id: "notify-toggle",
+              title: "Notify on failure",
+              value: true,
+              disabled: true,
+              action: { id: "apply" },
+            },
+            {
+              type: "menu",
+              id: "groupby",
+              title: "Group by",
+              icon: "list.bullet",
+              disabled: true,
+              items: [
+                { title: "Env", action: { id: "group", values: { by: "env" } } },
+                { title: "Owner", action: { id: "group", values: { by: "owner" } } },
               ],
             },
           ],

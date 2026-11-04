@@ -69,6 +69,8 @@ struct ExtensionUISurfaceMenuItem: Sendable, Equatable, Codable, Identifiable {
 enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     case row(ExtensionUISurfaceLayoutNode)
     case stack(ExtensionUISurfaceLayoutNode)
+    /// A titled region the reader can fold away.
+    case group(ExtensionUISurfaceGroupNode)
     case text(ExtensionUISurfaceTextNode)
     case markdown(ExtensionUISurfaceMarkdownNode)
     case badge(ExtensionUISurfaceBadgeNode)
@@ -91,6 +93,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         switch self {
         case .row: return "row"
         case .stack: return "stack"
+        case .group: return "group"
         case .text: return "text"
         case .markdown: return "markdown"
         case .badge: return "badge"
@@ -112,6 +115,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     var base: ExtensionUISurfaceNodeBase? {
         switch self {
         case .row(let value), .stack(let value): return value.base
+        case .group(let value): return value.base
         case .text(let value): return value.base
         case .markdown(let value): return value.base
         case .badge(let value): return value.base
@@ -139,6 +143,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     var children: [ExtensionUISurfaceNode] {
         switch self {
         case .row(let value), .stack(let value): return value.children
+        case .group(let value): return value.children
         default: return []
         }
     }
@@ -158,6 +163,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         switch self {
         case .row(let value), .stack(let value):
             return value.children.flatMap(\.actionIds) + (value.action.map { [$0.id] } ?? [])
+        case .group(let value):
+            return value.children.flatMap(\.actionIds)
         case .text(let value):
             return value.action.map { [$0.id] } ?? []
         case .badge(let value):
@@ -176,7 +183,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: NodeCodingKeys.self)
+        let c = try decoder.container(keyedBy: ExtensionUISurfaceNodeCodingKeys.self)
         let type = (try? c.decode(String.self, forKey: .type)) ?? ""
         let base = (try? ExtensionUISurfaceNodeBase(from: decoder))
             ?? ExtensionUISurfaceNodeBase(id: nil, accessibility: nil)
@@ -189,9 +196,20 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                 children: (try? c.decode([ExtensionUISurfaceNode].self, forKey: .children)) ?? [],
                 spacing: try? c.decodeIfPresent(String.self, forKey: .spacing),
                 align: try? c.decodeIfPresent(String.self, forKey: .align),
+                selected: try? c.decodeIfPresent(Bool.self, forKey: .selected),
+                disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                 action: action
             )
             self = type == "row" ? .row(layout) : .stack(layout)
+        case "group":
+            self = .group(
+                ExtensionUISurfaceGroupNode(
+                    base: base,
+                    title: (try? c.decode(String.self, forKey: .title)) ?? "",
+                    collapsed: try? c.decodeIfPresent(Bool.self, forKey: .collapsed),
+                    children: (try? c.decode([ExtensionUISurfaceNode].self, forKey: .children)) ?? []
+                )
+            )
         case "text":
             self = .text(
                 ExtensionUISurfaceTextNode(
@@ -199,6 +217,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     text: (try? c.decode(String.self, forKey: .text)) ?? "",
                     style: try? c.decodeIfPresent(String.self, forKey: .style),
                     tone: try? c.decodeIfPresent(String.self, forKey: .tone),
+                    selected: try? c.decodeIfPresent(Bool.self, forKey: .selected),
+                    disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                     action: action
                 )
             )
@@ -215,6 +235,9 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     base: base,
                     text: (try? c.decode(String.self, forKey: .text)) ?? "",
                     tone: try? c.decodeIfPresent(String.self, forKey: .tone),
+                    icon: try? c.decodeIfPresent(String.self, forKey: .icon),
+                    selected: try? c.decodeIfPresent(Bool.self, forKey: .selected),
+                    disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                     action: action
                 )
             )
@@ -232,7 +255,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     base: base,
                     label: try? c.decodeIfPresent(String.self, forKey: .label),
                     value: try? c.decodeIfPresent(Double.self, forKey: .value),
-                    kind: try? c.decodeIfPresent(String.self, forKey: .kind)
+                    kind: try? c.decodeIfPresent(String.self, forKey: .kind),
+                    tone: try? c.decodeIfPresent(String.self, forKey: .tone)
                 )
             )
         case "keyValue":
@@ -295,6 +319,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     title: (try? c.decode(String.self, forKey: .title)) ?? "",
                     role: try? c.decodeIfPresent(String.self, forKey: .role),
                     icon: try? c.decodeIfPresent(String.self, forKey: .icon),
+                    selected: try? c.decodeIfPresent(Bool.self, forKey: .selected),
+                    disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                     action: action
                 )
             )
@@ -304,6 +330,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     base: base,
                     title: (try? c.decode(String.self, forKey: .title)) ?? "",
                     value: (try? c.decode(Bool.self, forKey: .value)) ?? false,
+                    disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                     action: action
                 )
             )
@@ -313,6 +340,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     base: base,
                     title: try? c.decodeIfPresent(String.self, forKey: .title),
                     icon: try? c.decodeIfPresent(String.self, forKey: .icon),
+                    disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
                     items: (try? c.decode([ExtensionUISurfaceMenuItem].self, forKey: .items)) ?? []
                 )
             )
@@ -324,7 +352,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     }
 
     func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: NodeCodingKeys.self)
+        var c = encoder.container(keyedBy: ExtensionUISurfaceNodeCodingKeys.self)
         try c.encode(kind, forKey: .type)
         switch self {
         case .row(let value), .stack(let value):
@@ -332,12 +360,21 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try c.encode(value.children, forKey: .children)
             try c.encodeIfPresent(value.spacing, forKey: .spacing)
             try c.encodeIfPresent(value.align, forKey: .align)
+            try c.encodeIfPresent(value.selected, forKey: .selected)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
+        case .group(let value):
+            try encodeNodeBase(value.base, into: &c)
+            try c.encode(value.title, forKey: .title)
+            try c.encodeIfPresent(value.collapsed, forKey: .collapsed)
+            try c.encode(value.children, forKey: .children)
         case .text(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.text, forKey: .text)
             try c.encodeIfPresent(value.style, forKey: .style)
             try c.encodeIfPresent(value.tone, forKey: .tone)
+            try c.encodeIfPresent(value.selected, forKey: .selected)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
         case .markdown(let value):
             try encodeNodeBase(value.base, into: &c)
@@ -346,6 +383,9 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.text, forKey: .text)
             try c.encodeIfPresent(value.tone, forKey: .tone)
+            try c.encodeIfPresent(value.icon, forKey: .icon)
+            try c.encodeIfPresent(value.selected, forKey: .selected)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
         case .icon(let value):
             try encodeNodeBase(value.base, into: &c)
@@ -356,6 +396,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try c.encodeIfPresent(value.label, forKey: .label)
             try c.encodeIfPresent(value.value, forKey: .value)
             try c.encodeIfPresent(value.kind, forKey: .kind)
+            try c.encodeIfPresent(value.tone, forKey: .tone)
         case .keyValue(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.pairs, forKey: .pairs)
@@ -385,16 +426,20 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try c.encode(value.title, forKey: .title)
             try c.encodeIfPresent(value.role, forKey: .role)
             try c.encodeIfPresent(value.icon, forKey: .icon)
+            try c.encodeIfPresent(value.selected, forKey: .selected)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
         case .toggle(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.title, forKey: .title)
             try c.encode(value.value, forKey: .value)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
         case .menu(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encodeIfPresent(value.title, forKey: .title)
             try c.encodeIfPresent(value.icon, forKey: .icon)
+            try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encode(value.items, forKey: .items)
         case .unsupported(let value):
             try value.encodePlaceholder(into: &c)
@@ -403,18 +448,19 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
 }
 
 /// The key namespace every node encodes into.
-enum NodeCodingKeys: String, CodingKey {
+enum ExtensionUISurfaceNodeCodingKeys: String, CodingKey {
     case type, id, accessibility, children, spacing, align, action
     case text, style, tone, markdown, name, label, value, kind
     case pairs
     case columns, rows, truncated, title, series, labels
     case language
     case size, role, icon, items
+    case selected, disabled, collapsed
 }
 
 private func encodeNodeBase(
     _ base: ExtensionUISurfaceNodeBase,
-    into c: inout KeyedEncodingContainer<NodeCodingKeys>
+    into c: inout KeyedEncodingContainer<ExtensionUISurfaceNodeCodingKeys>
 ) throws {
     try c.encodeIfPresent(base.id, forKey: .id)
     try c.encodeIfPresent(base.accessibility, forKey: .accessibility)
@@ -425,7 +471,19 @@ struct ExtensionUISurfaceLayoutNode: Sendable, Equatable, Codable {
     let children: [ExtensionUISurfaceNode]
     let spacing: String?
     let align: String?
+    /// The active item of a set, drawn the way the host draws a selected row.
+    let selected: Bool?
+    /// A disabled region sends nothing; the host refuses a tap that names one.
+    let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
+}
+
+/// A titled region the reader can fold away; the host owns the disclosure control.
+struct ExtensionUISurfaceGroupNode: Sendable, Equatable, Codable {
+    let base: ExtensionUISurfaceNodeBase
+    let title: String
+    let collapsed: Bool?
+    let children: [ExtensionUISurfaceNode]
 }
 
 struct ExtensionUISurfaceTextNode: Sendable, Equatable, Codable {
@@ -433,6 +491,8 @@ struct ExtensionUISurfaceTextNode: Sendable, Equatable, Codable {
     let text: String
     let style: String?
     let tone: String?
+    let selected: Bool?
+    let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
 }
 
@@ -445,6 +505,10 @@ struct ExtensionUISurfaceBadgeNode: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceNodeBase
     let text: String
     let tone: String?
+    /// An SF Symbol name from the server's allow-list, drawn before the text.
+    let icon: String?
+    let selected: Bool?
+    let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
 }
 
@@ -460,6 +524,7 @@ struct ExtensionUISurfaceProgressNode: Sendable, Equatable, Codable {
     /// 0–1; nil means indeterminate.
     let value: Double?
     let kind: String?
+    let tone: String?
 
     var isRing: Bool { kind == "ring" }
 }
@@ -501,6 +566,10 @@ struct ExtensionUISurfaceButtonNode: Sendable, Equatable, Codable {
     let title: String
     let role: String?
     let icon: String?
+    /// The active item of a set of buttons, drawn the way the host draws a selection.
+    let selected: Bool?
+    /// A disabled control sends nothing; the host refuses a tap that names one.
+    let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
 
     var isPrimary: Bool { role == "primary" }
@@ -511,6 +580,7 @@ struct ExtensionUISurfaceToggleNode: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceNodeBase
     let title: String
     let value: Bool
+    let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
 }
 
@@ -518,6 +588,7 @@ struct ExtensionUISurfaceMenuNode: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceNodeBase
     let title: String?
     let icon: String?
+    let disabled: Bool?
     let items: [ExtensionUISurfaceMenuItem]
 }
 
@@ -561,7 +632,9 @@ extension ExtensionUISurfaceNodeUnsupported: Encodable {
         try c.encode(text, forKey: .text)
     }
 
-    func encodePlaceholder(into c: inout KeyedEncodingContainer<NodeCodingKeys>) throws {
+    func encodePlaceholder(
+        into c: inout KeyedEncodingContainer<ExtensionUISurfaceNodeCodingKeys>
+    ) throws {
         try c.encode(type, forKey: .type)
         try c.encodeIfPresent(id, forKey: .id)
         try c.encode(text, forKey: .text)
@@ -581,6 +654,25 @@ struct ExtensionUISurfacePill: Sendable, Equatable, Codable {
     let tap: ExtensionUISurfacePillTap
 
     var children: [ExtensionUISurfaceNode] { content.children }
+
+    /// Decoded with a forward-compat net: the pill is the strip's header line, so a tap kind this
+    /// build has never heard of opens the drawer as it always did, and content it cannot read
+    /// costs the surface its pill rather than the whole frame.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        tap = (try? c.decode(ExtensionUISurfacePillTap.self, forKey: .tap)) ?? .drawer
+        guard let content = try? c.decode(ExtensionUISurfaceNode.self, forKey: .content)
+        else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "A pill content row is unreadable")
+            )
+        }
+        self.content = content
+    }
+
+    private enum Keys: String, CodingKey {
+        case content, tap
+    }
 }
 
 enum ExtensionUISurfacePillTap: Sendable, Equatable, Codable {

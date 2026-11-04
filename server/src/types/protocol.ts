@@ -586,7 +586,12 @@ export type ExtensionUISurfaceTextStyle = "body" | "headline" | "caption" | "mon
 export type ExtensionUISurfaceNodeRole = "primary" | "secondary" | "destructive";
 
 interface ExtensionUISurfaceNodeBase {
-  /** Stable within the surface. Required wherever the node offers an action. */
+  /**
+   * Stable within the surface, and unique across all of it: two trees, or a tree and the pill,
+   * never share a node id. A patch path carries `sections.N` so per-section scoping would do,
+   * but a tap names only the node, and one namespace is the rule this validator enforces.
+   * Required wherever the node offers an action.
+   */
   id?: string;
   accessibility?: ExtensionUIAccessibility;
 }
@@ -598,19 +603,33 @@ export type ExtensionUISurfaceNode =
       children: ExtensionUISurfaceNode[];
       spacing?: ExtensionUISurfaceNodeSpacing;
       align?: ExtensionUISurfaceNodeAlign;
+      /** The active item of a set, drawn the way the host draws a selected row. */
+      selected?: boolean;
+      disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "stack";
       children: ExtensionUISurfaceNode[];
       spacing?: ExtensionUISurfaceNodeSpacing;
+      disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "group";
+      title: string;
+      /** Start folded; the host remembers the state it was last left in. */
+      collapsed?: boolean;
+      children: ExtensionUISurfaceNode[];
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "text";
       text: string;
       style?: ExtensionUISurfaceTextStyle;
       tone?: ExtensionUISurfaceTone;
+      /** The active item of a segmented filter set. */
+      selected?: boolean;
+      disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
     })
   | (ExtensionUISurfaceNodeBase & { type: "markdown"; markdown: string })
@@ -618,6 +637,10 @@ export type ExtensionUISurfaceNode =
       type: "badge";
       text: string;
       tone?: ExtensionUISurfaceTone;
+      /** An SF Symbol name from the server's allow-list, drawn before the text. */
+      icon?: string;
+      selected?: boolean;
+      disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
     })
   | (ExtensionUISurfaceNodeBase & {
@@ -632,6 +655,7 @@ export type ExtensionUISurfaceNode =
       value?: number;
       kind?: "bar" | "ring";
       label?: string;
+      tone?: ExtensionUISurfaceTone;
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "keyValue";
@@ -669,6 +693,10 @@ export type ExtensionUISurfaceNode =
       role?: ExtensionUISurfaceNodeRole;
       /** An SF Symbol name from the server's allow-list. */
       icon?: string;
+      /** The active item of a set of buttons, drawn the way the host draws a selection. */
+      selected?: boolean;
+      /** A disabled control sends nothing, and the host refuses a tap that names one. */
+      disabled?: boolean;
       action: ExtensionUISurfaceNodeAction;
     })
   | (ExtensionUISurfaceNodeBase & {
@@ -676,6 +704,7 @@ export type ExtensionUISurfaceNode =
       id: string;
       title: string;
       value: boolean;
+      disabled?: boolean;
       action: ExtensionUISurfaceNodeAction;
     })
   | (ExtensionUISurfaceNodeBase & {
@@ -683,6 +712,7 @@ export type ExtensionUISurfaceNode =
       id: string;
       title?: string;
       icon?: string;
+      disabled?: boolean;
       items: Array<{
         id?: string;
         title: string;

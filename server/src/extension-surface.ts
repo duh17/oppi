@@ -1,8 +1,8 @@
-import { normalizeExtensionUINativeSurface } from "./extension-ui-contract.js";
-import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
 import {
   EXTENSION_UI_NATIVE_CHART_MAX_LABELS,
   EXTENSION_UI_NATIVE_CHART_MAX_SERIES,
+  normalizeExtensionUINativeSurface,
+  type ExtensionUIProtocolRequest,
 } from "./extension-ui-contract.js";
 import { isExtensionUISurfaceIconName } from "./extension-surface-icons.js";
 import { projectNodeToV1, v1PillSubtitle, v1TextBlock } from "./extension-surface-projection.js";
@@ -52,7 +52,14 @@ export const EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN = 12;
 /** A node's words: longer than a title, shorter than the surface's fallback text. */
 export const EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS = 500;
 export const EXTENSION_UI_SURFACE_MAX_KEY_VALUES = 24;
-export const EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES = 32;
+/** The values one tap may carry, after the host merges what the node declared on top of them. */
+export const EXTENSION_UI_SURFACE_MAX_ACTION_VALUES = 32;
+/**
+ * One fewer than a tap may carry: the host merges a toggle's own `value` on top of what the node
+ * declared, so a node that declared the full cap could never send its tap.
+ */
+export const EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES =
+  EXTENSION_UI_SURFACE_MAX_ACTION_VALUES - 1;
 /** The pill is a surface-level region, and `pill` is not a section id anywhere: reserved. */
 export const EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID = "pill";
 /** Actions a surface accepts per client per minute; beyond it the card shows an error. */
@@ -82,6 +89,7 @@ const ATOM_TYPES = ["text", "markdown", "progress", "divider", "spacer"] as cons
 const NODE_TYPES = [
   "row",
   "stack",
+  "group",
   "text",
   "markdown",
   "badge",
@@ -97,6 +105,24 @@ const NODE_TYPES = [
   "toggle",
   "menu",
 ] as const;
+/** The primitives that are a control of their own: their tap is their required `action`. */
+const CONTROL_NODE_TYPES: ReadonlySet<string> = new Set(["button", "toggle", "menu"]);
+/** The primitives that are a tap target as a whole, through their own `action`. */
+const TAPPABLE_NODE_TYPES: ReadonlySet<string> = new Set(["row", "stack", "text", "badge"]);
+/** The primitives whose look carries a `tone`; every other kind has no colour of its own. */
+const TONED_NODE_TYPES: ReadonlySet<string> = new Set(["text", "badge", "icon", "progress"]);
+/** The primitives that can be drawn as unusable: a control, or a tappable region. */
+const DISABLEABLE_NODE_TYPES: ReadonlySet<string> = new Set([
+  "row",
+  "stack",
+  "text",
+  "badge",
+  "button",
+  "toggle",
+  "menu",
+]);
+/** The primitives that can carry a selection: the active item of a set. */
+const SELECTABLE_NODE_TYPES: ReadonlySet<string> = new Set(["row", "text", "badge", "button"]);
 const NODE_SPACING = ["tight", "normal"] as const;
 const NODE_ALIGNS = ["leading", "center", "trailing", "spread"] as const;
 const TEXT_STYLES = ["body", "headline", "caption", "mono"] as const;
@@ -385,9 +411,23 @@ function node(
     throw new SurfaceShapeError(`the surface exceeds ${EXTENSION_UI_SURFACE_MAX_NODES} nodes`);
   const type = oneOf(NODE_TYPES, value.type);
   const base = nodeBase(value, state);
-  // Only these four primitives are tappable regions; every other tap is a control of its own.
+  // An action is behaviour and a tone is the host's paint: a kind that cannot honour one is
+  // refused rather than published with the field quietly gone. A key the schema never names is
+  // still dropped, because an unknown key is a newer build's, not a mistake in this one.
+  if (value.action !== undefined && !TAPPABLE_NODE_TYPES.has(type) && !CONTROL_NODE_TYPES.has(type))
+    throw new SurfaceShapeError(`a "${type}" node cannot offer an action`);
+  if (value.tone !== undefined && !TONED_NODE_TYPES.has(type))
+    throw new SurfaceShapeError(`a "${type}" node does not take a tone`);
+  if (value.disabled !== undefined && !DISABLEABLE_NODE_TYPES.has(type))
+    throw new SurfaceShapeError(`a "${type}" node does not take a disabled state`);
+  if (value.selected !== undefined && !SELECTABLE_NODE_TYPES.has(type))
+    throw new SurfaceShapeError(`a "${type}" node does not take a selected state`);
   const tappable = value.action === undefined ? {} : { action: nodeAction(value.action, actions) };
   const tone = value.tone === undefined ? {} : { tone: oneOf(TONES, value.tone) };
+  const selected =
+    value.selected === undefined ? {} : { selected: boolean(value.selected, "selected") };
+  const disabled =
+    value.disabled === undefined ? {} : { disabled: boolean(value.disabled, "disabled") };
   switch (type) {
     case "row":
       return {
@@ -396,6 +436,8 @@ function node(
         children: children(value.children, state, actions, depth),
         ...(value.spacing === undefined ? {} : { spacing: oneOf(NODE_SPACING, value.spacing) }),
         ...(value.align === undefined ? {} : { align: oneOf(NODE_ALIGNS, value.align) }),
+        ...selected,
+        ...disabled,
         ...tappable,
       };
     case "stack":
@@ -404,7 +446,18 @@ function node(
         type,
         children: children(value.children, state, actions, depth),
         ...(value.spacing === undefined ? {} : { spacing: oneOf(NODE_SPACING, value.spacing) }),
+        ...disabled,
         ...tappable,
+      };
+    case "group":
+      return {
+        ...base,
+        type,
+        title: nodeText(value.title),
+        ...(value.collapsed === undefined
+          ? {}
+          : { collapsed: boolean(value.collapsed, "collapsed") }),
+        children: children(value.children, state, actions, depth),
       };
     case "text":
       return {
@@ -413,6 +466,8 @@ function node(
         text: nodeText(value.text),
         ...(value.style === undefined ? {} : { style: oneOf(TEXT_STYLES, value.style) }),
         ...tone,
+        ...selected,
+        ...disabled,
         ...tappable,
       };
     case "markdown":
@@ -422,7 +477,16 @@ function node(
         markdown: text(value.markdown, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
       };
     case "badge":
-      return { ...base, type, text: nodeText(value.text), ...tone, ...tappable };
+      return {
+        ...base,
+        type,
+        text: nodeText(value.text),
+        ...tone,
+        ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+        ...selected,
+        ...disabled,
+        ...tappable,
+      };
     case "icon":
       return { ...base, type, name: iconName(value.name), ...tone };
     case "progress": {
@@ -442,6 +506,7 @@ function node(
         ...(value.label === undefined
           ? {}
           : { label: text(value.label, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
+        ...tone,
       };
     }
     case "keyValue": {
@@ -569,6 +634,8 @@ function node(
         title: nodeText(value.title),
         ...(value.role === undefined ? {} : { role: oneOf(NODE_ROLES, value.role) }),
         ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+        ...selected,
+        ...disabled,
         action: nodeAction(value.action, actions),
       };
     case "toggle":
@@ -578,6 +645,7 @@ function node(
         id: requiredNodeId(base),
         title: nodeText(value.title),
         value: boolean(value.value, "a toggle's value"),
+        ...disabled,
         action: nodeAction(value.action, actions),
       };
     case "menu": {
@@ -601,6 +669,7 @@ function node(
           ? {}
           : { title: text(value.title, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS) }),
         ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+        ...disabled,
         items,
       };
     }
@@ -622,6 +691,9 @@ function pillOf(
   if (!isRecord(value.content)) throw new SurfaceShapeError("a pill content is not an object");
   if (value.content.type !== "row")
     throw new SurfaceShapeError("a pill content is a row of inline nodes");
+  // The row is the pill's tap target, so it cannot also be a tap target of its own.
+  if (value.content.action !== undefined)
+    throw new SurfaceShapeError("a pill cannot hold a row with its own action");
   const content = node(value.content, state, actions, 1);
   if (content.type !== "row")
     throw new SurfaceShapeError("a pill content is a row of inline nodes");
@@ -633,6 +705,7 @@ function pillOf(
       throw new SurfaceShapeError("a pill cannot hold a node with its own action");
   }
   const tap = value.tap;
+  // The row and every child are a clean inline line: nothing in it offers a tap of its own.
   const pillContent = content as unknown as ExtensionUISurfacePill["content"];
   if (tap === "drawer") return { content: pillContent, tap };
   if (!isRecord(tap)) throw new SurfaceShapeError('a pill tap is "drawer" or an action');
@@ -941,6 +1014,8 @@ function validateSurface(value: unknown): ExtensionUISurface {
     throw new SurfaceShapeError("a oneShot surface needs a timeoutAt deadline");
 
   const limits: SurfaceLimitState = { spans: 0, nodes: 0, nodeIds: new Set() };
+  // Node ids are unique across the whole surface, not per section: a tap names one node id and a
+  // patch path may address it without its section, so one id may name one node only.
   const sections = list(value.sections, EXTENSION_UI_SURFACE_MAX_SECTIONS, "surface sections").map(
     (entry) => section(entry, actions, limits),
   );
@@ -1117,10 +1192,19 @@ export function applyExtensionUISurfacePatch(
   if (!isRecord(patch)) return undefined;
   const entries = Object.entries(patch);
   if (entries.length === 0) return undefined;
+  // Deterministic order, and no path inside another: a client applies the frame's own keys, so
+  // `sections.0` beside `sections.0.body` would land differently on each side. One path naming
+  // another is malformed either way, and the same frame has to land the same way twice.
+  const paths = entries.map(([path]) => path).sort();
+  for (const [index, path] of paths.entries()) {
+    for (const other of paths.slice(index + 1)) {
+      if (other.startsWith(`${path}.`)) return undefined;
+    }
+  }
   let merged: Record<string, unknown>;
   try {
     merged = JSON.parse(JSON.stringify(surface)) as Record<string, unknown>;
-    for (const [path, value] of entries) writePath(merged, patchSegments(path), value);
+    for (const path of paths) writePath(merged, patchSegments(path), patch[path]);
   } catch {
     return undefined;
   }
@@ -1181,11 +1265,18 @@ export function projectExtensionUISurfaceToV1(
         continue;
       }
       const controls: string[] = [];
-      let projected = projectNodeToV1(section.body, controls);
-      // A control a v1 client cannot draw is named, so the surface never silently loses a verb.
-      if (controls.length > 0)
-        projected = [...projected, v1TextBlock(undefined, `Actions: ${controls.join(", ")}`)];
+      const titleOf = (id: string): string => surface.actions[id]?.title ?? id;
+      let projected = projectNodeToV1(section.body, controls, titleOf);
+      // The region's own verbs are drawn after the body, so they are named last.
+      for (const id of section.actions ?? []) controls.push(titleOf(id));
+      // A body of nothing but controls still owes the reader its words; emptiness is decided
+      // before the control line, which would otherwise hide it.
       if (projected.length === 0) projected = [v1TextBlock(section.id, section.fallback.text)];
+      // A verb v1 cannot draw is named, so the projection never silently loses one.
+      if (controls.length > 0) {
+        const named = [...new Set(controls)];
+        projected = [...projected, v1TextBlock(undefined, `Actions: ${named.join(", ")}`)];
+      }
       blocks.push(...projected);
       continue;
     }
@@ -1206,6 +1297,7 @@ export function projectExtensionUISurfaceToV1(
       spans: [{ text: section.fallback.text }],
     });
   }
+  const pillSubtitle = v1PillSubtitle(surface);
   return (
     normalizeExtensionUINativeSurface({
       version: 1,
@@ -1215,7 +1307,7 @@ export function projectExtensionUISurfaceToV1(
         style: "surfacePanel",
         title: surface.title,
         // A composed pill is the surface's one-line summary: the v1 panel keeps that line.
-        ...(v1PillSubtitle(surface) === undefined ? {} : { subtitle: v1PillSubtitle(surface) }),
+        ...(pillSubtitle === undefined ? {} : { subtitle: pillSubtitle }),
       },
       blocks,
       fallback: { text: surface.fallback.text },

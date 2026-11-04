@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   buildExtensionUINotificationMessage,
   buildExtensionUIPatchMessage,
@@ -13,6 +15,7 @@ import {
   readExtensionUISurface,
   EXTENSION_UI_SURFACE_ACTION_RATE_LIMIT,
   EXTENSION_UI_SURFACE_ACTION_RATE_WINDOW_MS,
+  EXTENSION_UI_SURFACE_MAX_ACTION_VALUES,
   EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID,
 } from "./extension-surface.js";
 import type {
@@ -21,6 +24,7 @@ import type {
   ExtensionUISurface,
   ExtensionUISurfaceActionAnswer,
   ExtensionUISurfaceActionMessage,
+  ExtensionUISurfaceNode,
   ServerMessage,
 } from "./types.js";
 
@@ -92,7 +96,6 @@ interface CoalescedPublish {
 }
 
 /** An action carries collected values, not a payload: a card's answer stays small. */
-export const EXTENSION_UI_SURFACE_MAX_ACTION_VALUES = 32;
 export const EXTENSION_UI_SURFACE_MAX_ACTION_VALUE_BYTES = 4 * 1024;
 
 /** A failing action is drawn by the card that offered it, in the host's own words. */
@@ -103,6 +106,26 @@ const ACTION_RATE_LIMIT_MESSAGE = "Try again in a minute.";
 export const EXTENSION_UI_SURFACE_MAX_REMEMBERED_ANSWERS = 512;
 /** Dismissed surface ids whose last revision a re-publish has to continue above. */
 const MAX_REMEMBERED_REVISIONS = 64;
+
+/**
+ * A tap's own values, folded into its replay key: a toggle's on→off at one revision is a second
+ * tap, not a replay of the first. Canonical (sorted keys) and hashed, so the key stays short.
+ */
+function valuesFingerprint(values: Record<string, string | number | boolean> | undefined): string {
+  if (!values) return "";
+  const entries = Object.keys(values)
+    .sort()
+    .map((key) => [key, values[key]]);
+  return createHash("sha256").update(JSON.stringify(entries)).digest("base64url").slice(0, 22);
+}
+
+/**
+ * A node the surface published as disabled offers no tap. The client sends nothing for it, and a
+ * frame that names it anyway is refused here rather than running the action it was told not to run.
+ */
+function nodeIsDisabled(node: ExtensionUISurfaceNode): boolean {
+  return "disabled" in node && node.disabled === true;
+}
 
 export class ExtensionSurfaceRuntime {
   private readonly surfaces = new Map<string, ExtensionUISurface>();
@@ -488,8 +511,22 @@ export class ExtensionSurfaceRuntime {
         this.options.emit(clear, "composites");
       return;
     }
-    for (const audience of this.v2Audiences(next)) this.options.emit(message, audience);
-    if (previous && !extensionUISurfaceUsesBlocks(previous) && extensionUISurfaceUsesBlocks(next)) {
+    // A surface can change shape between a tree and the closed composites, and a client that held
+    // one shape holds nothing the other one can patch.
+    const wasBlocks = previous !== undefined && extensionUISurfaceUsesBlocks(previous);
+    const usesBlocks = extensionUISurfaceUsesBlocks(next);
+    // Only a client that held the card is patched; one that held a projection gets the shape it
+    // can draw now: a whole surface, or a cleared widget while the tree is its projection.
+    for (const audience of wasBlocks ? ["blocks" as const] : this.v2Audiences(next))
+      this.options.emit(message, audience);
+    if (wasBlocks && !usesBlocks) {
+      this.options.emit(
+        buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surfaceId)),
+        "composites",
+      );
+      this.options.emit(buildExtensionUISurfaceMessage(this.options.sessionId, next), "composites");
+    }
+    if (!wasBlocks && usesBlocks) {
       // The card this client holds cannot show a tree: clear it, the projection below replaces it.
       this.options.emit(
         buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, {
@@ -595,7 +632,8 @@ export class ExtensionSurfaceRuntime {
 
   private actionKey(message: ExtensionUISurfaceActionMessage): string {
     // A row action is per row and a node action is per node: two rows' or two nodes' taps are
-    // not replays of one another.
+    // not replays of one another. The values are part of the tap too: a toggle tapped on and then
+    // off at one revision sent two different taps, and the second one has to run.
     return [
       message.surfaceId,
       message.compositeId,
@@ -603,6 +641,7 @@ export class ExtensionSurfaceRuntime {
       message.rowId ?? "",
       message.nodeId ?? "",
       String(message.revision),
+      valuesFingerprint(message.values),
     ].join("\u0000");
   }
 
@@ -639,6 +678,7 @@ export class ExtensionSurfaceRuntime {
     if (!nodeId) return composite.actions;
     const node = findExtensionUISurfaceNode(composite.body, nodeId);
     if (!node) return undefined;
+    if (nodeIsDisabled(node)) return undefined;
     if (node.type === "table" && rowId)
       return node.rows.find((row) => row.id === rowId)?.actions?.map((action) => action.id);
     if (node.type === "menu") return node.items.map((item) => item.action.id);

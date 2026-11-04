@@ -58,28 +58,56 @@ function v1InlineText(node: ExtensionUISurfaceNode): string | undefined {
 /**
  * One node as v1 blocks, collecting the controls v1 has no shape for. Layout becomes a group or,
  * when every child is an inline fact, one line; controls are named in the caller's text.
+ *
+ * `actionTitle` names an action id for that text: the caller holds the surface's action table, and
+ * a row action carries no title of its own.
  */
-export function projectNodeToV1(node: ExtensionUISurfaceNode, controls: string[]): unknown[] {
+export function projectNodeToV1(
+  node: ExtensionUISurfaceNode,
+  controls: string[],
+  actionTitle: (id: string) => string = (id) => id,
+): unknown[] {
   const id = node.id;
   switch (node.type) {
     case "row":
     case "stack": {
       const inline = node.children.every((child) => V1_INLINE_NODE_TYPES.has(child.type));
       if (inline) {
+        // An inline fact that offers a tap is still a verb v1 cannot draw, one line or not.
+        for (const child of node.children) {
+          if ("action" in child && child.action) controls.push(actionTitle(child.action.id));
+        }
         const line = node.children
           .map((child) => v1InlineText(child))
           .filter((part): part is string => Boolean(part))
           .join(" · ");
         return line.length > 0 ? [v1TextBlock(id, line)] : [];
       }
+      const projected = node.children.flatMap((child) =>
+        projectNodeToV1(child, controls, actionTitle),
+      );
+      // A layout of nothing but controls draws nothing: an empty group is not content either.
+      if (projected.length === 0) return [];
       return [
         {
           type: "section",
           ...(id === undefined ? {} : { id }),
-          blocks: node.children.flatMap((child) => projectNodeToV1(child, controls)),
+          blocks: projected,
         },
       ];
     }
+    case "group":
+      // v1 has no disclosure: a group is its heading and its contents, always unfolded.
+      return [
+        {
+          type: "section",
+          ...(id === undefined ? {} : { id }),
+          blocks: [
+            v1TextBlock(undefined, node.title),
+            ...node.children.flatMap((child) => projectNodeToV1(child, controls, actionTitle)),
+          ],
+        },
+      ];
     case "text":
       return [
         {
@@ -133,6 +161,10 @@ export function projectNodeToV1(node: ExtensionUISurfaceNode, controls: string[]
         },
       ];
     case "table":
+      // A row action is a verb v1 cannot draw either: its row's actions are named once each.
+      for (const row of node.rows) {
+        for (const action of row.actions ?? []) controls.push(actionTitle(action.id));
+      }
       return [
         {
           type: "table",

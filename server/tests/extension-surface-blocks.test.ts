@@ -4,8 +4,10 @@ import {
   applyExtensionUISurfacePatch,
   projectExtensionUISurfaceToV1,
   readExtensionUISurface,
+  EXTENSION_UI_SURFACE_MAX_ACTION_VALUES,
   EXTENSION_UI_SURFACE_MAX_ACTIONS,
   EXTENSION_UI_SURFACE_MAX_CELL_CHARS,
+  EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES,
   EXTENSION_UI_SURFACE_MAX_NODE_DEPTH,
   EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS,
   EXTENSION_UI_SURFACE_MAX_NODES,
@@ -48,11 +50,81 @@ function children(count: number): Array<Record<string, unknown>> {
 
 describe("blocks validation", () => {
   it("accepts the fixtures that use every node kind and both pill taps", () => {
-    for (const name of ["blocks-panel.json", "blocks-status.json"]) {
+    for (const name of ["blocks-panel.json", "blocks-status.json", "blocks-filters.json"]) {
       const surface = surfaceOf(fixtures[name]);
       expect(surface, name).toBeDefined();
       expect(surface?.version).toBe(2);
     }
+  });
+
+  it("keeps a node's selection, disabled state, icon, and progress tone", () => {
+    const surface = surfaceOf(fixtures["blocks-filters.json"]) as ExtensionUISurface;
+    const section = surface.sections[0];
+    if (section.composite !== "blocks") throw new Error("expected a blocks section");
+    const row = section.body;
+    if (row.type !== "stack") throw new Error("expected a stack body");
+    expect(row.children[0]).toMatchObject({ type: "row", id: "active-row", selected: true });
+    expect(row.children[1]).toMatchObject({ type: "row", id: "archived-row", disabled: true });
+    const segment = row.children[2];
+    if (segment.type !== "row") throw new Error("expected the segmented row");
+    expect(segment.children[0]).toMatchObject({ type: "button", selected: true });
+    expect(segment.children[2]).toMatchObject({ type: "button", disabled: true });
+    const badges = row.children[3];
+    if (badges.type !== "row") throw new Error("expected the badge row");
+    expect(badges.children[0]).toMatchObject({ type: "badge", icon: "cloud", selected: true });
+    expect(badges.children[1]).toMatchObject({ type: "badge", disabled: true });
+    expect(row.children[4]).toMatchObject({ type: "stack", disabled: true });
+    expect(row.children[5]).toMatchObject({ type: "toggle", disabled: true });
+    expect(row.children[6]).toMatchObject({ type: "menu", disabled: true });
+
+    const panel = surfaceOf(fixtures["blocks-panel.json"]) as ExtensionUISurface;
+    const body = panel.sections[0];
+    if (body.composite !== "blocks" || body.body.type !== "stack")
+      throw new Error("expected a stack body");
+    const group = body.body.children.at(-1);
+    expect(group).toMatchObject({ type: "group", title: "Filters", collapsed: false });
+    const waiting = body.body.children.find((child) => child.id === "waiting");
+    expect(waiting).toMatchObject({ type: "progress", tone: "warning" });
+  });
+
+  it("refuses a tone, a disabled state, or a selected state on a kind that has none", () => {
+    expect(problemOf(withBody({ type: "code", text: "ls", tone: "accent" }))).toContain(
+      "does not take a tone",
+    );
+    expect(problemOf(withBody({ type: "divider", disabled: true }))).toContain(
+      "does not take a disabled state",
+    );
+    expect(problemOf(withBody({ type: "icon", name: "hammer", selected: true }))).toContain(
+      "does not take a selected state",
+    );
+    // The keys a node does honour still validate, and an unknown one is still dropped.
+    expect(
+      surfaceOf(withBody({ type: "text", text: "hi", selected: false, color: "red" })),
+    ).toBeDefined();
+  });
+
+  it("refuses an action on a kind that cannot be tapped", () => {
+    expect(
+      problemOf(
+        withBody({ type: "keyValue", pairs: [{ key: "a", value: "b" }], action: { id: "retry" } }),
+      ),
+    ).toContain('a "keyValue" node cannot offer an action');
+    expect(
+      problemOf(withBody({ type: "markdown", markdown: "hi", action: { id: "retry" } })),
+    ).toContain("cannot offer an action");
+  });
+
+  it("refuses an action on the pill's content row itself", () => {
+    const value = panel();
+    value.pill = {
+      content: {
+        type: "row",
+        action: { id: "refresh" },
+        children: [{ type: "text", text: "web → prod" }],
+      },
+      tap: "drawer",
+    };
+    expect(problemOf(value)).toContain("a pill cannot hold a row with its own action");
   });
 
   it("defaults a tree section's state and leaves its header optional", () => {
@@ -136,6 +208,27 @@ describe("blocks validation", () => {
       "not an allowed icon name",
     );
     expect(surfaceOf(withBody({ type: "icon", name: "hammer" }))).toBeDefined();
+    expect(problemOf(withBody({ type: "badge", text: "running", icon: "not.a.symbol" }))).toContain(
+      "not an allowed icon name",
+    );
+  });
+
+  it("refuses a group with no children and keeps its title", () => {
+    expect(problemOf(withBody({ type: "group", title: "More", children: [] }))).toContain(
+      "no children",
+    );
+    const surface = surfaceOf(
+      withBody({
+        type: "group",
+        id: "more",
+        title: "More",
+        collapsed: true,
+        children: [{ type: "text", text: "inside" }],
+      }),
+    ) as ExtensionUISurface;
+    const section = surface.sections[0];
+    if (section.composite !== "blocks") throw new Error("expected a blocks section");
+    expect(section.body).toMatchObject({ type: "group", title: "More", collapsed: true });
   });
 
   it("refuses a node action the surface does not declare", () => {
@@ -212,6 +305,24 @@ describe("blocks validation", () => {
         }),
       ),
     ).toContain("characters");
+  });
+
+  it(`caps a node's declared values one below the ${EXTENSION_UI_SURFACE_MAX_ACTION_VALUES} a tap may carry`, () => {
+    const values = (count: number): Record<string, number> =>
+      Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, index]));
+    const tap = (count: number): Record<string, unknown> =>
+      withBody({
+        type: "toggle",
+        id: "notify",
+        title: "Notify",
+        value: false,
+        action: { id: "notify", values: values(count) },
+      });
+    // The host merges a toggle's own `value` on top, so the declared cap leaves room for it.
+    expect(surfaceOf(tap(EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES))).toBeDefined();
+    expect(problemOf(tap(EXTENSION_UI_SURFACE_MAX_NODE_ACTION_VALUES + 1))).toContain(
+      "action values exceed",
+    );
   });
 
   it(`refuses more than ${EXTENSION_UI_SURFACE_MAX_ACTIONS} actions in the action table`, () => {
@@ -293,6 +404,30 @@ describe("blocks patches", () => {
     expect(table.rows[0].cells).toEqual(["Build", "running"]);
   });
 
+  it("refuses a patch that names one path inside another, in either order", () => {
+    const surface = surfaceOf(panel()) as ExtensionUISurface;
+    // Whichever path comes first in the frame, one is inside the other and the frame is dropped.
+    expect(
+      applyExtensionUISurfacePatch(surface, {
+        "sections.0.body.children.1": { type: "progress", kind: "bar", value: 0.5 },
+        "sections.0.body.children.1.value": 0.9,
+      }),
+    ).toBeUndefined();
+    expect(
+      applyExtensionUISurfacePatch(surface, {
+        "sections.0.body.children.1.value": 0.9,
+        "sections.0.body.children.1": { type: "progress", kind: "bar", value: 0.5 },
+      }),
+    ).toBeUndefined();
+    // Siblings under one path are not nesting, and still merge.
+    expect(
+      applyExtensionUISurfacePatch(surface, {
+        "sections.0.body.children.1.value": 0.9,
+        "sections.0.body.children.2.tone": "danger",
+      }),
+    ).toBeDefined();
+  });
+
   it("refuses a body path that names no node, and one that crosses a value", () => {
     const surface = surfaceOf(panel()) as ExtensionUISurface;
     expect(
@@ -371,6 +506,39 @@ describe("blocks v1 projection", () => {
     expect(text).toContain("Retry");
     expect(text).toContain("Notify on failure (off)");
     expect(text).toContain("Logs");
+    // The region's own verbs, and a row's, are verbs v1 cannot draw either.
+    expect(text).toContain("Refresh");
+    expect(text).toContain("Copy");
+    expect(text).toContain("Open");
+    // An inline fact that offers a tap is a verb too, named once however many nodes share it.
+    expect(text.match(/Filters/g)?.length).toBe(2);
+  });
+
+  it("projects a group as a titled section, unfolded", () => {
+    const sections = flatten(projected().blocks).filter(
+      (block) =>
+        block.type === "section" &&
+        block.blocks?.some((child) => child.spans?.[0].text === "Filters"),
+    );
+    expect(sections).toHaveLength(1);
+    // v1 has no disclosure, so the filter row under the heading is drawn as its own line.
+    const line = flatten(sections[0].blocks ?? []).find((block) =>
+      block.spans?.[0].text.includes("All"),
+    );
+    expect(line?.spans?.[0].text).toContain("Running");
+  });
+
+  it("shows a control-only body's words as well as its verbs", () => {
+    const value = panel();
+    (value.sections as Array<Record<string, unknown>>)[0].body = {
+      type: "stack",
+      children: [{ type: "button", id: "retry", title: "Retry", action: { id: "retry" } }],
+    };
+    const surface = projectExtensionUISurfaceToV1(surfaceOf(value) as ExtensionUISurface);
+    const text = surface.blocks.map((block) => JSON.stringify(block)).join("");
+    // The Actions line used to be the body's whole projection, which hid the region's words.
+    expect(text).toContain("2 of 4 gates");
+    expect(text).toContain("Actions: Retry");
   });
 
   it("keeps a composed pill as the panel's own line", () => {
@@ -392,7 +560,7 @@ describe("blocks v1 projection", () => {
   });
 
   it("produces a surface the v1 normalizer accepts unchanged", () => {
-    for (const name of ["blocks-panel.json", "blocks-status.json"]) {
+    for (const name of ["blocks-panel.json", "blocks-status.json", "blocks-filters.json"]) {
       const surface = surfaceOf(fixtures[name]);
       expect(surface, name).toBeDefined();
       const projection = projectExtensionUISurfaceToV1(surface as ExtensionUISurface);
