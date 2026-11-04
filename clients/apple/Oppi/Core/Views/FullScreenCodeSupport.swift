@@ -1625,3 +1625,26 @@ final class TailFollowScrollCoordinator {
         return scrollView.contentSize.height - visibleBottom
     }
 }
+
+// MARK: - VoiceOver and the chrome
+
+extension FullScreenCodeViewController {
+    /// VoiceOver is read once when the chrome hides, and the status can change
+    /// afterwards. Watching it is what keeps the controls reachable: a screen
+    /// reader turned on beside a body that asked for the page alone gets the bar
+    /// and the pills back.
+    func observeVoiceOverStatusChanges() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(voiceOverStatusDidChange),
+            name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+    }
+
+    /// The body's request is kept and re-resolved against the new status, so a
+    /// reader left alone on a page can be got out of it.
+    @objc private func voiceOverStatusDidChange() {
+        setImmersiveChromeHidden(isImmersiveChromeHidden, animated: false)
+    }
+}

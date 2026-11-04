@@ -225,6 +225,50 @@ struct BookReaderAppearanceReaderTests {
         #expect(!sameColor(restored.background.backgroundColor, sepia.paper.withAlphaComponent(0.94)))
     }
 
+    /// The sheets a book opens belong to the page it is on: cream paper and the
+    /// page's link ink, not a slab of app chrome with a system-green switch.
+    @Test("the Aa sheet and the table of contents take the page's paper and ink")
+    func sheetsTakeThePageColors() async throws {
+        var appearance = BookReaderAppearance()
+        appearance.theme = .sepia
+        let fixture = try ReaderFixture(appearance: appearance)
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        try #require(fixture.pagedView, "the reader drew no page view").onChromeToggle?()
+        try await fixture.settle()
+
+        let sepia = try #require(BookReaderTheme.sepia.fixedColors)
+        let menu = try await fixture.presentAppearanceMenu()
+        #expect(
+            sameColor(menu.view.backgroundColor, sepia.paper),
+            "the Aa sheet is \(String(describing: menu.view.backgroundColor))"
+        )
+        #expect(menu.overrideUserInterfaceStyle == .light, "the sheet kept the app's dark cast")
+        let justify = try #require(
+            fixture.view("fullScreen.book.appearance.justify", in: menu.view) as? UISwitch
+        )
+        #expect(
+            sameColor(justify.onTintColor, sepia.link),
+            "the justify switch is \(String(describing: justify.onTintColor))"
+        )
+        menu.dismiss(animated: false)
+        try await fixture.settle()
+
+        let tocButton = try #require(
+            fixture.view("fullScreen.book.toc", in: fixture.reader.view) as? UIButton
+        )
+        tocButton.sendActions(for: .touchUpInside)
+        try await fixture.settle()
+        let sheet = try #require(
+            fixture.reader.presentedViewController as? BookTableOfContentsViewController,
+            "the table of contents sheet did not open"
+        )
+        #expect(
+            sameColor(sheet.view.backgroundColor, sepia.paper),
+            "the table of contents is \(String(describing: sheet.view.backgroundColor))"
+        )
+    }
+
     @Test("the Aa control sits beside the table of contents and opens the sheet")
     func appearanceControlOpensTheSheet() async throws {
         let fixture = try ReaderFixture(appearance: BookReaderAppearance())

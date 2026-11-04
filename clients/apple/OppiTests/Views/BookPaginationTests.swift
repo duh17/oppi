@@ -109,7 +109,8 @@ struct BookPaginationTests {
             #expect(
                 pages.characterOffset(
                     forBlockOrdinal: position.blockOrdinal,
-                    offsetPoints: position.offsetPoints
+                    offset: position.offset,
+                    unit: .characters
                 ) == start
             )
         }
@@ -119,7 +120,8 @@ struct BookPaginationTests {
             let position = pages.storedPosition(forCharacter: character)
             let back = pages.characterOffset(
                 forBlockOrdinal: position.blockOrdinal,
-                offsetPoints: position.offsetPoints
+                offset: position.offset,
+                unit: .characters
             )
             #expect(back == character, "character \(character) came back as \(back)")
         }
@@ -130,10 +132,16 @@ struct BookPaginationTests {
     @Test("a scroll position opens the page holding its block")
     func scrollingPositionOpensItsBlock() throws {
         let (pages, _) = try chapterPages()
-        let stored = EPUBReadingPosition(chapterHref: "text/chapter-01.xhtml", blockOrdinal: 5, offsetPoints: 120)
+        let stored = EPUBReadingPosition(
+            chapterHref: "text/chapter-01.xhtml",
+            blockOrdinal: 5,
+            offset: 120,
+            unit: .points
+        )
         let character = pages.characterOffset(
             forBlockOrdinal: stored.blockOrdinal,
-            offsetPoints: stored.offsetPoints
+            offset: stored.offset,
+            unit: stored.unit
         )
         let page = pages.pageIndex(containingCharacter: character)
         let range = pages.pageRanges[page]
@@ -145,8 +153,110 @@ struct BookPaginationTests {
             "the page opened after the block it was asked for"
         )
         #expect(
-            pages.characterOffset(forBlockOrdinal: written.blockOrdinal, offsetPoints: written.offsetPoints)
-                == range.location
+            pages.characterOffset(
+                forBlockOrdinal: written.blockOrdinal,
+                offset: written.offset,
+                unit: .characters
+            ) == range.location
+        )
+    }
+
+    /// A chapter of one long paragraph: every page break is mid-paragraph, and the
+    /// block the distance is measured in spans many lines.
+    private func oneParagraphPages(
+        repetitions: Int = 80
+    ) throws -> (pages: BookChapterPages, source: EPUBChapterSource) {
+        let markdown = String(
+            repeating: "The quiet morning says the same calm thing again and again. ",
+            count: repetitions
+        )
+        let source = EPUBChapterSource(
+            markdown: markdown,
+            blocks: [EPUBChapterBlock(markdownStartLine: 1, kind: .text)],
+            isRightToLeft: false
+        )
+        let pages = BookChapterPaginator.layout(source: source, style: Self.style(), pageSize: Self.pageSize)
+        return (pages, source)
+    }
+
+    /// The two units count the same block, and each converts into the other
+    /// through the block's own laid-out height: points are a distance down the
+    /// page's type, characters a count into the same text.
+    @Test("a distance in points and a count in characters name the same line")
+    func unitsConvertThroughTheBlock() throws {
+        let (pages, _) = try oneParagraphPages()
+        #expect(pages.pageCount > 3, "the paragraph is too short to page: \(pages.pageCount)")
+        let ordinal = 0
+        let range = pages.blockRange(at: ordinal)
+        // Most of the way down the paragraph: many lines below its first.
+        let target = range.start + (range.end - range.start) * 3 / 4
+        let points = pages.pointOffset(forBlockOrdinal: ordinal, character: target)
+        #expect(
+            points > 0,
+            "the block's last quarter measured at its top: block \(range.start)..\(range.end), target \(target)"
+        )
+
+        let byPoints = pages.characterOffset(
+            forBlockOrdinal: ordinal,
+            offset: points,
+            unit: .points
+        )
+        // The line that distance falls on, not a character count taken as points.
+        #expect(byPoints > range.start, "the distance opened at the block's start: \(byPoints)")
+        #expect(
+            byPoints <= target,
+            "the distance landed past the character it names: \(byPoints) for \(target)"
+        )
+        #expect(
+            target - byPoints < 160,
+            "the distance \(points) named character \(byPoints), \(target - byPoints) away from \(target)"
+        )
+        // The same number read as characters lands where a page would cut it.
+        #expect(
+            pages.characterOffset(forBlockOrdinal: ordinal, offset: points, unit: .characters)
+                == range.start + Int(points),
+            "the unit made no difference to where the position opened"
+        )
+    }
+
+    /// TextKit justifies a line only inside a paragraph, and never the last line
+    /// of a container. A page's last line is nearly always mid-paragraph, so the
+    /// cell lays the page's text out with the rest of that paragraph in a
+    /// container taller than the page and clips it: the line the person sees is
+    /// set like the ones above it, and the clipped lines carry nothing new to
+    /// read.
+    @Test("a page that breaks mid-paragraph justifies its last line")
+    func pageTextJustifiesItsLastLine() throws {
+        let (pages, _) = try oneParagraphPages()
+        #expect(pages.pageCount > 3, "the paragraph is too short to page: \(pages.pageCount)")
+
+        for index in 1..<(pages.pageCount - 1) {
+            let text = pages.pageText(at: index)
+            let label = pages.pageLabel(at: index)
+            #expect(text.length > label.count, "page \(index) was not continued past the page")
+            #expect(text.string.hasPrefix(label), "page \(index) does not start with its own words")
+
+            // The cell's text view: the page's area plus the slack it clips.
+            let lines = pageLines(
+                text,
+                size: CGSize(width: pages.pageSize.width, height: pages.pageSize.height + 120)
+            )
+            // The lines inside the page's own area that draw something: an empty
+            // fragment at the clip has no width and says nothing.
+            let visible = lines.filter { $0.maxY <= pages.pageSize.height && $0.width > 0 }
+            let last = try #require(visible.last, "page \(index) laid out no lines")
+            #expect(
+                last.width >= pages.pageSize.width - 1,
+                "page \(index)'s last line is \(last.width) wide of \(pages.pageSize.width): \(lines.map(\.width))"
+            )
+        }
+
+        // The chapter's own last page ends its paragraph: nothing to continue,
+        // and nothing to set like the lines above it.
+        let lastPage = pages.pageCount - 1
+        #expect(
+            pages.pageText(at: lastPage).string == pages.pageLabel(at: lastPage),
+            "the chapter's last page grew a continuation"
         )
     }
 
@@ -227,6 +337,50 @@ struct BookPaginationTests {
         #expect(pages.blockStarts == pages.blockStarts.sorted())
     }
 
+    /// `original` is the app's own reader paper, so a page set on it keeps the
+    /// app's heading and link ink: the scrolling chapter draws those runs in
+    /// them, and switching layouts must not repaint the heading.
+    @Test("a page on the app's own paper keeps the app's heading and link ink")
+    func originalThemeKeepsAppInk() throws {
+        let palette = ThemeID.dark.palette
+        let appearance = BookReaderAppearance()
+        let style = BookPageStyle(appearance: appearance, palette: palette, textScale: 1, traits: nil)
+        try #require(appearance.theme == .original, "the default paper is no longer the app's own")
+        #expect(style.color(for: .heading(level: 1)) == palette.ui.mdHeading)
+        #expect(style.color(for: .heading(level: 3)) == palette.ui.mdHeading)
+        #expect(style.color(for: .body) == appearance.textColor(in: palette))
+        #expect(style.linkColor == palette.ui.mdLink)
+
+        let markdown = """
+        # A Heading
+
+        A paragraph with a [link](https://example.com) inside it.
+        """
+        let blocks = [
+            EPUBChapterBlock(markdownStartLine: 1, kind: .text),
+            EPUBChapterBlock(markdownStartLine: 3, kind: .text),
+        ]
+        let source = EPUBChapterSource(markdown: markdown, blocks: blocks, isRightToLeft: false)
+        let text = BookChapterPaginator.attributedText(source: source, style: style).text
+        let heading = (text.string as NSString).range(of: "A Heading")
+        let headingInk = text.attribute(.foregroundColor, at: heading.location, effectiveRange: nil) as? UIColor
+        #expect(headingInk == palette.ui.mdHeading, "the heading is \(String(describing: headingInk))")
+        let link = (text.string as NSString).range(of: "link")
+        let linkInk = text.attribute(.foregroundColor, at: link.location, effectiveRange: nil) as? UIColor
+        #expect(linkInk == palette.ui.mdLink, "the link is \(String(describing: linkInk))")
+        let bodyRange = (text.string as NSString).range(of: "A paragraph")
+        let bodyInk = text.attribute(.foregroundColor, at: bodyRange.location, effectiveRange: nil) as? UIColor
+        #expect(bodyInk == appearance.textColor(in: palette))
+
+        // A fixed paper paints its own ink, heading or not.
+        var sepia = appearance
+        sepia.theme = .sepia
+        let sepiaStyle = BookPageStyle(appearance: sepia, palette: palette, textScale: 1, traits: nil)
+        let sepiaText = BookChapterPaginator.attributedText(source: source, style: sepiaStyle).text
+        let sepiaInk = sepiaText.attribute(.foregroundColor, at: heading.location, effectiveRange: nil) as? UIColor
+        #expect(sepiaInk == BookReaderTheme.sepia.fixedColors?.ink, "the sepia heading is \(String(describing: sepiaInk))")
+    }
+
     /// The trailing end of the page line: words left in the chapter at 250 a
     /// minute, which is what "min left" is built from.
     @Test("words left in the chapter count from the page's first character")
@@ -251,6 +405,32 @@ struct BookPaginationTests {
             textScale: scale,
             traits: nil
         )
+    }
+
+    /// The lines `text` lays out into in a container of `size`: each line's used
+    /// width and the band it occupies.
+    private func pageLines(
+        _ text: NSAttributedString,
+        size: CGSize
+    ) -> [(width: CGFloat, minY: CGFloat, maxY: CGFloat)] {
+        let storage = NSTextStorage(attributedString: text)
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: size)
+        container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = 0
+        container.lineBreakMode = .byWordWrapping
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+        var lines: [(width: CGFloat, minY: CGFloat, maxY: CGFloat)] = []
+        var glyph = 0
+        while glyph < layoutManager.numberOfGlyphs {
+            var lineGlyphs = NSRange(location: 0, length: 0)
+            let rect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: &lineGlyphs)
+            lines.append((rect.width, rect.minY, rect.maxY))
+            glyph = max(NSMaxRange(lineGlyphs), glyph + 1)
+        }
+        return lines
     }
 
     /// The character offsets of every line start in `text` at `width`, from one

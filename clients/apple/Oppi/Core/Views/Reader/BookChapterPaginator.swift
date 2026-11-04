@@ -13,12 +13,105 @@ struct BookChapterPages {
     let pageRanges: [NSRange]
     /// Where each top-level block starts, in `EPUBChapterSource.blocks` order.
     let blockStarts: [Int]
+    /// The text area each page was cut at. A distance saved in points is read
+    /// back through its block at this measure.
+    let pageSize: CGSize
+    /// How tall each page's own text is. A page rarely fills its area exactly,
+    /// and the cell clips here so the paragraph a page continues draws nothing
+    /// in the gap below its last line.
+    let pageHeights: [CGFloat]
+    /// True when the chapter runs past the page cap: the pages stop where the
+    /// cap stopped them, and the last one is not the chapter's end.
+    let continues: Bool
+
+    init(
+        text: NSAttributedString,
+        pageRanges: [NSRange],
+        blockStarts: [Int],
+        pageSize: CGSize,
+        pageHeights: [CGFloat] = [],
+        continues: Bool = false
+    ) {
+        self.text = text
+        self.pageRanges = pageRanges
+        self.blockStarts = blockStarts
+        self.pageSize = pageSize
+        self.pageHeights = pageHeights
+        self.continues = continues
+    }
 }
 
 extension BookChapterPages {
     var pageCount: Int { max(pageRanges.count, 1) }
 
     var isEmpty: Bool { text.length == 0 }
+
+    /// The text one page draws: the page's own characters, with the whitespace
+    /// the previous page ended on removed, and then the rest of the paragraph the
+    /// page breaks in.
+    ///
+    /// TextKit never justifies the last line of a container. A page's last line
+    /// is nearly always mid-paragraph, and it used to end the container, so every
+    /// page bottom came out ragged. The cell lays this text out in a container
+    /// taller than the page and clips the overflow, which puts the page's last
+    /// line inside the paragraph where it is justified like the lines above it.
+    /// Only the paragraph is continued, so a page that really does end a
+    /// paragraph is left alone.
+    func pageText(at index: Int) -> NSAttributedString {
+        let slice = NSMutableAttributedString(attributedString: pageSlice(at: index))
+        let range = pageRanges.indices.contains(index) ? pageRanges[index] : NSRange(location: 0, length: 0)
+        let end = NSMaxRange(range)
+        guard slice.length > 0, end > range.location, end < text.length else { return slice }
+        let string = text.string as NSString
+        // A page that ends a paragraph is left alone: there is nothing after its
+        // last line to set it apart. TextKit can stop the page either side of the
+        // paragraph's own line break, so both ends are checked.
+        guard string.substring(with: NSRange(location: end - 1, length: 1)) != "\n",
+              string.substring(with: NSRange(location: end, length: 1)) != "\n"
+        else { return slice }
+        var stop = end
+        while stop < text.length,
+              string.substring(with: NSRange(location: stop, length: 1)) != "\n",
+              stop - end < Self.pageContinuationLength {
+            stop += 1
+        }
+        guard stop > end else { return slice }
+        slice.append(text.attributedSubstring(from: NSRange(location: end, length: stop - end)))
+        return slice
+    }
+
+    /// The characters the page itself shows: what a screen reader reads, and what
+    /// the page's position is measured in.
+    func pageLabel(at index: Int) -> String {
+        pageSlice(at: index).string
+    }
+
+    /// How tall the page's own text is, when the pages were cut at it.
+    func contentHeight(at index: Int) -> CGFloat? {
+        guard pageHeights.indices.contains(index), pageHeights[index] > 0 else { return nil }
+        return pageHeights[index]
+    }
+
+    /// How much of the paragraph after a page is laid out behind the clip. A
+    /// phone's line is about 40 characters, so this fills several lines with room
+    /// to spare and costs one paragraph's layout per visible page.
+    private static let pageContinuationLength = 400
+
+    /// The page's own characters, without the whitespace the previous page ended
+    /// on.
+    private func pageSlice(at index: Int) -> NSAttributedString {
+        guard pageRanges.indices.contains(index) else { return NSAttributedString() }
+        let range = pageRanges[index]
+        guard range.length > 0, NSMaxRange(range) <= text.length else { return NSAttributedString() }
+        let slice = NSMutableAttributedString(attributedString: text.attributedSubstring(from: range))
+        let whitespace = CharacterSet(charactersIn: " \t\n")
+        while slice.length > 0 {
+            let first = (slice.string as NSString).substring(with: NSRange(location: 0, length: 1))
+            guard first.rangeOfCharacter(from: whitespace) != nil else { break }
+            slice.deleteCharacters(in: NSRange(location: 0, length: 1))
+        }
+        return slice
+    }
 
     /// The page showing `offset`, clamped into the chapter. The last page whose
     /// range starts at or before the character owns it.
@@ -36,7 +129,7 @@ extension BookChapterPages {
     /// character falls in, and how far into that block it sits, in characters.
     /// Characters are what a page can be cut at, and they survive a
     /// re-pagination, which a measured scroll offset does not.
-    func storedPosition(forCharacter offset: Int) -> (blockOrdinal: Int, offsetPoints: Double) {
+    func storedPosition(forCharacter offset: Int) -> (blockOrdinal: Int, offset: Double) {
         guard !blockStarts.isEmpty else { return (0, 0) }
         var ordinal = 0
         for (index, start) in blockStarts.enumerated() where start <= offset {
@@ -45,18 +138,48 @@ extension BookChapterPages {
         return (ordinal, Double(max(offset - blockStarts[ordinal], 0)))
     }
 
-    /// The character a stored position names. The distance into the block is
-    /// clamped to the block, so a position the scrolling body saved in points
-    /// opens inside the block it named rather than in the next one.
-    func characterOffset(forBlockOrdinal ordinal: Int, offsetPoints: Double = 0) -> Int {
+    /// The character a stored position names, in whichever unit it was saved.
+    /// A distance in points is the scrolling chapter's y inside the block, so it
+    /// is measured back through the block's own laid-out height: the position
+    /// lands on the line it was reading, not on a character count that happens
+    /// to be smaller than the block.
+    @MainActor
+    func characterOffset(
+        forBlockOrdinal ordinal: Int,
+        offset: Double = 0,
+        unit: EPUBReadingPosition.Unit = .characters
+    ) -> Int {
         guard !blockStarts.isEmpty else { return 0 }
+        let (start, end) = blockRange(at: ordinal)
+        switch unit {
+        case .characters:
+            let advance = max(0, Int(offset.rounded(.down)))
+            return min(start + advance, end)
+        case .points:
+            guard let block = BookBlockMeasure.measure(self, at: ordinal) else { return start }
+            return min(start + block.character(atPoint: CGFloat(offset)), end)
+        }
+    }
+
+    /// The point distance the scrolling chapter needs for a character inside a
+    /// block: the top of the line that character is on, measured in the block.
+    @MainActor
+    func pointOffset(forBlockOrdinal ordinal: Int, character: Int) -> Double {
+        let (start, end) = blockRange(at: ordinal)
+        guard let block = BookBlockMeasure.measure(self, at: ordinal) else { return 0 }
+        return Double(block.point(atCharacter: min(max(character, start), end) - start))
+    }
+
+    /// The characters a block spans: its start, and the exclusive end. A block
+    /// with no text of its own ends where it starts.
+    func blockRange(at ordinal: Int) -> (start: Int, end: Int) {
+        guard !blockStarts.isEmpty else { return (0, 0) }
         let clamped = min(max(ordinal, 0), blockStarts.count - 1)
         let start = min(max(blockStarts[clamped], 0), max(text.length - 1, 0))
         let end = clamped + 1 < blockStarts.count
             ? min(max(blockStarts[clamped + 1], start), max(text.length - 1, start))
             : max(text.length - 1, start)
-        let advance = max(0, Int(offsetPoints.rounded(.down)))
-        return min(start + advance, end)
+        return (start, end)
     }
 
     /// Words from `offset` to the end of the chapter: the reading-time estimate.
@@ -86,10 +209,33 @@ enum BookChapterPaginator {
         pageSize: CGSize
     ) -> BookChapterPages {
         let built = attributedText(source: source, style: style)
+        let cut = pageRanges(text: built.text, pageSize: pageSize)
         return BookChapterPages(
             text: built.text,
-            pageRanges: pageRanges(text: built.text, pageSize: pageSize),
-            blockStarts: built.blockStarts
+            pageRanges: cut.ranges,
+            blockStarts: built.blockStarts,
+            pageSize: pageSize,
+            pageHeights: cut.heights,
+            continues: cut.continues
+        )
+    }
+
+    /// A paper-only change re-inks the pages instead of re-cutting them: the type
+    /// did not move, so the ranges still stand and nothing is laid out twice.
+    static func reink(
+        _ pages: BookChapterPages,
+        source: EPUBChapterSource,
+        style: BookPageStyle
+    ) -> BookChapterPages {
+        let built = attributedText(source: source, style: style)
+        guard built.text.length == pages.text.length else { return pages }
+        return BookChapterPages(
+            text: built.text,
+            pageRanges: pages.pageRanges,
+            blockStarts: built.blockStarts,
+            pageSize: pages.pageSize,
+            pageHeights: pages.pageHeights,
+            continues: pages.continues
         )
     }
 
@@ -109,15 +255,45 @@ enum BookChapterPaginator {
         blockStarts.reserveCapacity(source.blocks.count)
         for (index, block) in source.blocks.enumerated() {
             blockStarts.append(text.length)
-            let start = max(block.markdownStartLine - 1, 0)
-            let end = index + 1 < source.blocks.count
-                ? min(max(source.blocks[index + 1].markdownStartLine - 1, start), lines.count)
-                : lines.count
-            guard start < end else { continue }
-            append(kind: block.kind, lines: Array(lines[start..<end]), style: style, to: text)
+            let blockLines = blockLines(at: index, of: source, lines: lines)
+            guard !blockLines.isEmpty else { continue }
+            append(kind: block.kind, lines: Array(blockLines), style: style, to: text)
         }
         trimTrailingBlankLines(text)
         return (text, blockStarts.map { min($0, text.length) })
+    }
+
+    /// One top-level block's text in the page's typography. A position saved in
+    /// characters converts into points through the block it names, and this is
+    /// the type that measurement is made in.
+    static func styledBlockText(
+        source: EPUBChapterSource,
+        ordinal: Int,
+        style: BookPageStyle
+    ) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        guard source.blocks.indices.contains(ordinal) else { return text }
+        let lines = blockLines(at: ordinal, of: source, lines: source.markdown.components(separatedBy: "\n"))
+        guard !lines.isEmpty else { return text }
+        append(kind: source.blocks[ordinal].kind, lines: Array(lines), style: style, to: text)
+        trimTrailingBlankLines(text)
+        return text
+    }
+
+    /// The Markdown lines one top-level block spans: its first line through the
+    /// line before the next block's.
+    private static func blockLines(
+        at index: Int,
+        of source: EPUBChapterSource,
+        lines: [String]
+    ) -> ArraySlice<String> {
+        guard source.blocks.indices.contains(index) else { return [] }
+        let start = max(source.blocks[index].markdownStartLine - 1, 0)
+        let end = index + 1 < source.blocks.count
+            ? min(max(source.blocks[index + 1].markdownStartLine - 1, start), lines.count)
+            : lines.count
+        guard start < end, start < lines.count else { return [] }
+        return lines[start..<end]
     }
 
     private static func append(
@@ -255,12 +431,20 @@ enum BookChapterPaginator {
         text.append(content)
         text.append(NSAttributedString(string: "\n"))
         let range = NSRange(location: start, length: text.length - start)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .paragraphStyle: style.paragraphStyle(for: role),
-            .font: style.font(for: role),
-            .foregroundColor: style.color(for: role),
-        ]
-        text.addAttributes(attributes, range: range)
+        text.addAttributes(
+            [
+                .paragraphStyle: style.paragraphStyle(for: role),
+                .font: style.font(for: role),
+            ],
+            range: range
+        )
+        // A run that named its own ink keeps it: a link on the page carries the
+        // paper's link colour instead of the paragraph's body ink.
+        let ink = style.color(for: role)
+        text.enumerateAttribute(.foregroundColor, in: range, options: []) { value, runRange, _ in
+            guard value == nil else { return }
+            text.addAttribute(.foregroundColor, value: ink, range: runRange)
+        }
     }
 
     private static func trimTrailingBlankLines(_ text: NSMutableAttributedString) {
@@ -325,7 +509,7 @@ enum BookChapterPaginator {
             var attributes: [NSAttributedString.Key: Any] = [
                 .font: inlineFont(font, bold: isBold, italic: isItalic, code: isCode, style: style),
             ]
-            if isLink { attributes[.foregroundColor] = style.secondaryTextColor }
+            if isLink { attributes[.foregroundColor] = style.linkColor }
             if isStrike { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             return attributes
         }
@@ -426,14 +610,23 @@ enum BookChapterPaginator {
     /// Slices `text` into page-sized containers. TextKit fills each container
     /// from where the last one stopped, so the ranges are contiguous and a break
     /// always falls between two lines.
-    static func pageRanges(text: NSAttributedString, pageSize: CGSize) -> [NSRange] {
-        guard text.length > 0 else { return [NSRange(location: 0, length: 0)] }
+    ///
+    /// A chapter that runs past `maximumPages` stops there. The rest is not
+    /// folded into the last page: a page holding megabytes of text is one cell
+    /// and one VoiceOver label, and the caller says the chapter continues.
+    static func pageRanges(
+        text: NSAttributedString,
+        pageSize: CGSize,
+        maximumPages: Int = maximumPages
+    ) -> (ranges: [NSRange], heights: [CGFloat], continues: Bool) {
+        guard text.length > 0 else { return ([NSRange(location: 0, length: 0)], [pageSize.height], false) }
         let size = CGSize(width: max(pageSize.width, 1), height: max(pageSize.height, 1))
         let storage = NSTextStorage(attributedString: text)
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
 
         var ranges: [NSRange] = []
+        var heights: [CGFloat] = []
         var location = 0
         while location < text.length, ranges.count < maximumPages {
             let container = NSTextContainer(size: size)
@@ -442,6 +635,10 @@ enum BookChapterPaginator {
             container.lineBreakMode = .byWordWrapping
             layoutManager.addTextContainer(container)
             layoutManager.ensureLayout(for: container)
+            // Where the page's own text ends: the cell clips here, so a page whose
+            // last line stops short of its area shows no gap.
+            let used = layoutManager.usedRect(for: container).height
+            heights.append(used > 0 ? min(used, size.height) : size.height)
             let glyphRange = layoutManager.glyphRange(for: container)
             let characters = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
             // A container narrower than one line reports nothing; one character
@@ -450,9 +647,82 @@ enum BookChapterPaginator {
             ranges.append(NSRange(location: location, length: end - location))
             location = end
         }
-        if location < text.length, let last = ranges.popLast() {
-            ranges.append(NSRange(location: last.location, length: text.length - last.location))
-        }
-        return ranges
+        return (ranges, heights, location < text.length)
+    }
+}
+
+/// One block laid out on its own at the pages' measure: the height a distance in
+/// points is measured against, and the line a character sits on. The scrolling
+/// chapter and the pages count the same block's distance in different units, and
+/// this is what turns one into the other.
+@MainActor
+struct BookBlockMeasure {
+    /// TextKit's layout manager does not keep its text storage alive: without
+    /// this the block's layout is thrown away with the storage and every glyph
+    /// index is invalid.
+    private let storage: NSTextStorage
+    private let layoutManager: NSLayoutManager
+    private let container: NSTextContainer
+    private let characterCount: Int
+    let height: CGFloat
+
+    /// One block of a chapter, at the width its pages were cut at.
+    static func measure(_ pages: BookChapterPages, at ordinal: Int) -> Self? {
+        let (start, end) = pages.blockRange(at: ordinal)
+        guard end > start else { return nil }
+        let slice = pages.text.attributedSubstring(from: NSRange(location: start, length: end - start))
+        return measure(slice, width: pages.pageSize.width)
+    }
+
+    static func measure(_ text: NSAttributedString, width: CGFloat) -> Self? {
+        guard text.length > 0 else { return nil }
+        let storage = NSTextStorage(attributedString: text)
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        // A finite, very tall container: TextKit's layout manager miscounts
+        // glyphs in a container whose height is unbounded.
+        let container = NSTextContainer(size: CGSize(width: max(width, 1), height: 100_000))
+        container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = 0
+        container.lineBreakMode = .byWordWrapping
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: text.length))
+        guard layoutManager.numberOfGlyphs > 0 else { return nil }
+        // The block's height is the bottom of its last line. A container this
+        // tall answers its own size for `usedRect(for:)`, which would put every
+        // distance past the end of the text.
+        var lastLine = NSRange(location: 0, length: 0)
+        let height = layoutManager.lineFragmentRect(
+            forGlyphAt: layoutManager.numberOfGlyphs - 1,
+            effectiveRange: &lastLine
+        ).maxY
+        guard height > 0 else { return nil }
+        return Self(
+            storage: storage,
+            layoutManager: layoutManager,
+            container: container,
+            characterCount: text.length,
+            height: height
+        )
+    }
+
+    /// The character at a distance down the block: the first character of the
+    /// line that distance falls in.
+    func character(atPoint y: CGFloat) -> Int {
+        let clamped = min(max(y, 0), max(height - 1, 0))
+        let glyph = layoutManager.glyphIndex(for: CGPoint(x: 0, y: clamped), in: container)
+        let safeGlyph = min(glyph, layoutManager.numberOfGlyphs - 1)
+        return layoutManager.characterIndexForGlyph(at: safeGlyph)
+    }
+
+    /// The top of the line a character is on, in points down the block.
+    func point(atCharacter character: Int) -> CGFloat {
+        let clamped = min(max(character, 0), max(characterCount - 1, 0))
+        let glyph = min(
+            layoutManager.glyphIndexForCharacter(at: clamped),
+            layoutManager.numberOfGlyphs - 1
+        )
+        return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
     }
 }

@@ -61,9 +61,19 @@ struct BookPageStyle {
         appearance.font(for: role.textRole, scale: textScale, traits: traits)
     }
 
+    /// A run's ink. On `original` the page is the app's own reader paper, and
+    /// the scrolling chapter keeps the app's heading colour there: a page that
+    /// set the heading in body ink would change colour when the person switched
+    /// layouts.
     func color(for role: Role) -> UIColor {
-        role.isSecondary ? secondaryTextColor : textColor
+        if case .heading = role, appearance.theme == .original {
+            return palette.ui.mdHeading
+        }
+        return role.isSecondary ? secondaryTextColor : textColor
     }
+
+    /// A link's ink: the paper's own, which `original` answers with the app's.
+    var linkColor: UIColor { appearance.linkColor(in: palette) }
 
     /// One role's text attributes: the appearance's font and paragraph metrics,
     /// with the page's own indents and ink.

@@ -883,6 +883,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
             bookAppearance: bookAppearance,
+            bookTraits: traitCollection,
             perfSurface: perfSurface,
             // Static reader document: LaTeX/Mermaid must finish before cell
             // self-sizing, or their async resize invalidates the collection

@@ -466,9 +466,15 @@ struct EPUBReadingPositionTests {
             path: "books/novel.epub"
         )
         #expect(store.position(for: key) == nil)
-        let position = EPUBReadingPosition(chapterHref: "OEBPS/text/chapter-03.xhtml", blockOrdinal: 7, offsetPoints: 12)
+        let position = EPUBReadingPosition(
+            chapterHref: "OEBPS/text/chapter-03.xhtml",
+            blockOrdinal: 7,
+            offset: 12,
+            unit: .characters
+        )
         store.save(position, for: key)
         #expect(store.position(for: key) == position)
+        #expect(store.position(for: key)?.unit == .characters, "the unit a page saved was not kept")
         store.clear(key)
         #expect(store.position(for: key) == nil)
     }
@@ -477,7 +483,7 @@ struct EPUBReadingPositionTests {
         let store = try store()
         for index in 0...EPUBReadingPositionStore.maximumEntries {
             store.save(
-                EPUBReadingPosition(chapterHref: "chapter-\(index).xhtml", blockOrdinal: index, offsetPoints: 0),
+                EPUBReadingPosition(chapterHref: "chapter-\(index).xhtml", blockOrdinal: index, offset: 0),
                 for: "book-\(index)",
                 now: Date(timeIntervalSince1970: Double(index))
             )

@@ -31,7 +31,8 @@ final class BookPagedView: UIView {
     private(set) var pages = BookChapterPages(
         text: NSAttributedString(),
         pageRanges: [NSRange(location: 0, length: 0)],
-        blockStarts: []
+        blockStarts: [],
+        pageSize: .zero
     )
     /// Where the page's own text sits inside the view. Pages are laid out at
     /// `textSize(in:insets:)`, so this must be the insets pagination used.
@@ -59,6 +60,12 @@ final class BookPagedView: UIView {
     var onUserPageTurn: ((Int) -> Void)?
     /// The person turned past the chapter's first or last page.
     var onChapterTurn: ((BookPageTurn) -> Void)?
+    /// The person asked the page — by VoiceOver activation, a switch, or a
+    /// keyboard — for the chrome it shows and hides.
+    func activateChromeToggle() {
+        onChromeToggle?()
+    }
+
     /// A tap in the middle third, which shows or hides the chrome.
     var onChromeToggle: (() -> Void)?
 
@@ -145,17 +152,7 @@ final class BookPagedView: UIView {
     /// The attributed text of one page, without the whitespace the previous page
     /// already ended on.
     func text(forPage index: Int) -> NSAttributedString {
-        guard pages.pageRanges.indices.contains(index) else { return NSAttributedString() }
-        let range = pages.pageRanges[index]
-        guard range.length > 0, NSMaxRange(range) <= pages.text.length else { return NSAttributedString() }
-        let slice = NSMutableAttributedString(attributedString: pages.text.attributedSubstring(from: range))
-        let whitespace = CharacterSet(charactersIn: " \t\n")
-        while slice.length > 0 {
-            let first = (slice.string as NSString).substring(with: NSRange(location: 0, length: 1))
-            guard first.rangeOfCharacter(from: whitespace) != nil else { break }
-            slice.deleteCharacters(in: NSRange(location: 0, length: 1))
-        }
-        return slice
+        pages.pageText(at: index)
     }
 
     // MARK: - Turns
@@ -248,7 +245,12 @@ extension BookPagedView: UICollectionViewDataSource, UICollectionViewDelegate, U
         )
         if let page = cell as? BookPagedCell {
             page.pages = self
-            page.show(text(forPage: indexPath.item), insets: contentInsets)
+            page.show(
+                text(forPage: indexPath.item),
+                label: pages.pageLabel(at: indexPath.item),
+                insets: contentInsets,
+                contentHeight: pages.contentHeight(at: indexPath.item)
+            )
         }
         return cell
     }
@@ -303,12 +305,24 @@ extension BookPagedView: UICollectionViewDataSource, UICollectionViewDelegate, U
 // MARK: - One page
 
 /// One page: the slice of the chapter that fits this page's text area, drawn by
-/// a text view whose container is the same size the page was paginated at.
+/// a text view that runs a few lines past the page and is clipped there, so the
+/// page's last line is justified like the ones above it.
 @MainActor
 private final class BookPagedCell: UICollectionViewCell {
     static let reuseIdentifier = "BookPagedCell"
+    /// How far the text runs past the page before the clip stops it: enough
+    /// lines that the page's last line is a mid-paragraph line, which is the only
+    /// kind TextKit justifies.
+    private static let pageSlack: CGFloat = 120
 
     private let textView = UITextView(usingTextLayoutManager: false)
+    /// The page's text area: the window the page's own lines are read through.
+    /// The text continues below it, laid out but clipped, so the last line the
+    /// person sees is set like the ones above it.
+    private let pageClip = UIView()
+    /// The clip's height: the page's own text, so the paragraph it continues
+    /// draws nothing in the gap under its last line.
+    private lazy var clipHeight = pageClip.heightAnchor.constraint(equalToConstant: 0)
     /// The page view that owns the pages, so a VoiceOver swipe on the page it is
     /// reading turns it there and not in the collection view's own scrolling.
     weak var pages: BookPagedView?
@@ -328,7 +342,11 @@ private final class BookPagedCell: UICollectionViewCell {
         textView.textContainer.lineBreakMode = .byWordWrapping
         textView.adjustsFontForContentSizeCategory = true
         textView.accessibilityElementsHidden = true
-        contentView.addSubview(textView)
+        pageClip.translatesAutoresizingMaskIntoConstraints = false
+        pageClip.clipsToBounds = true
+        pageClip.isUserInteractionEnabled = false
+        contentView.addSubview(pageClip)
+        pageClip.addSubview(textView)
     }
 
     @available(*, unavailable)
@@ -338,22 +356,50 @@ private final class BookPagedCell: UICollectionViewCell {
         pages?.accessibilityScroll(direction) ?? false
     }
 
-    func show(_ text: NSAttributedString, insets: UIEdgeInsets) {
+    /// The page the person is reading is one stop, and activating it does what a
+    /// tap in the middle of the page does: the chrome comes back, or goes away.
+    override func accessibilityActivate() -> Bool {
+        guard let pages else { return false }
+        pages.activateChromeToggle()
+        return true
+    }
+
+    func show(
+        _ text: NSAttributedString,
+        label: String,
+        insets: UIEdgeInsets,
+        contentHeight: CGFloat?
+    ) {
         textView.attributedText = text
         textView.textContainerInset = .zero
         textView.contentInset = .zero
-        let constraints = contentView.constraints.filter { $0.firstItem === textView || $0.secondItem === textView }
+        let constraints = contentView.constraints.filter {
+            $0.firstItem === pageClip || $0.secondItem === pageClip
+        }
         if constraints.isEmpty || appliedInsets != insets {
             NSLayoutConstraint.deactivate(constraints)
             NSLayoutConstraint.activate([
-                textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: insets.top),
-                textView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: insets.left),
-                textView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -insets.right),
-                textView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -insets.bottom),
+                pageClip.topAnchor.constraint(equalTo: contentView.topAnchor, constant: insets.top),
+                pageClip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: insets.left),
+                pageClip.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -insets.right),
+                clipHeight,
+                pageClip.bottomAnchor.constraint(
+                    lessThanOrEqualTo: contentView.bottomAnchor,
+                    constant: -insets.bottom
+                ),
+                textView.topAnchor.constraint(equalTo: pageClip.topAnchor),
+                textView.leadingAnchor.constraint(equalTo: pageClip.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: pageClip.trailingAnchor),
+                textView.bottomAnchor.constraint(equalTo: pageClip.bottomAnchor, constant: Self.pageSlack),
             ])
             appliedInsets = insets
         }
-        accessibilityLabel = text.string
+        let area = contentView.bounds.height - insets.top - insets.bottom
+        clipHeight.constant = max(min(contentHeight ?? area, area), 1)
+        // A page with nothing on it is not a stop: an element with no label says
+        // nothing and only stands between the reader and the next control.
+        accessibilityLabel = label.isEmpty ? nil : label
+        isAccessibilityElement = !label.isEmpty
     }
 
     private var appliedInsets: UIEdgeInsets?

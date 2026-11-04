@@ -647,6 +647,7 @@ final class AssistantMarkdownSegmentSource {
             segments = BookReaderTextAppearance.apply(
                 appearance,
                 scale: config.readerPreferences?.textScale ?? 1,
+                traits: config.bookTraits,
                 to: segments
             )
         }

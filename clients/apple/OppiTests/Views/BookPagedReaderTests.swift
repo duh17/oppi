@@ -263,14 +263,145 @@ struct BookPagedReaderTests {
         )
     }
 
-    /// With the chrome shown, the paper band behind the header covers the top of
-    /// the page: no line of the book shows through it.
-    @Test("the header band covers the page's text while the chrome is shown")
+    /// The page does not reserve the chrome's band. While the chrome is shown the
+    /// opaque header covers the first lines; the page itself starts at the top,
+    /// so with the chrome hidden the text is where the eye expects it.
+    @Test("with the chrome hidden the page's text starts at the top of the page")
+    func pageTextStartsAtTheTop() async throws {
+        for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+            let fixture = try PagedBookFixture(contentSizeCategory: category)
+            defer { fixture.tearDown() }
+            try await fixture.settle()
+            #expect(!fixture.chromeIsVisible, "the chrome is showing at \(category.rawValue)")
+
+            let page = try #require(fixture.pagedView)
+            let pageFrame = page.convert(page.bounds, to: fixture.window)
+            let firstLine = try #require(
+                fixture.firstPageTextFrame(),
+                "the page drew no text at \(category.rawValue)"
+            )
+            // The measure's own top inset, not a band's height: a phone would
+            // otherwise start its page a sixth of the way down.
+            #expect(
+                firstLine.minY - pageFrame.minY <= 24,
+                "the page's first line starts \(firstLine.minY - pageFrame.minY)pt below the page at \(category.rawValue)"
+            )
+        }
+    }
+
+    /// A landscape page is a short page: reserving the top chrome would take
+    /// nearly half of it, so the text area keeps the page it was given.
+    @Test("a landscape page keeps its text area")
+    func landscapePageKeepsItsTextArea() async throws {
+        let fixture = try PagedBookFixture(size: CGSize(width: 874, height: 402))
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+
+        let page = try #require(fixture.pagedView)
+        let pageFrame = page.convert(page.bounds, to: fixture.window)
+        let insets = page.contentInsets
+        let textHeight = pageFrame.height - insets.top - insets.bottom
+        #expect(
+            textHeight >= pageFrame.height * 0.7,
+            "the text area is \(textHeight) of a \(pageFrame.height)pt landscape page"
+        )
+        let firstLine = try #require(fixture.firstPageTextFrame(), "the landscape page drew no text")
+        #expect(
+            firstLine.minY - pageFrame.minY <= 24,
+            "the landscape page's first line starts \(firstLine.minY - pageFrame.minY)pt below the page"
+        )
+    }
+
+    /// The first pagination typesets with the body's own traits. It used to be
+    /// laid out with none, which resolves Dynamic Type against whatever context
+    /// the layout pass happened to be in.
+    @Test("the first page is typeset at the body's text size")
+    func firstPaginationUsesTheBodysTraits() async throws {
+        let fixture = try PagedBookFixture(contentSizeCategory: .accessibilityLarge)
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+
+        let pages = try #require(fixture.pagedView?.pages)
+        let secondPage = try #require(pages.pageRanges.indices.contains(1) ? pages.pageRanges[1].location : nil)
+        let font = try #require(
+            pages.text.attribute(.font, at: secondPage, effectiveRange: nil) as? UIFont,
+            "the page's text carries no font"
+        )
+        let scale = FullScreenReaderContentFamily.markdown.defaultPreferences.textScale
+        let expected = fixture.appearanceStore.appearance.bodyPointSize(
+            scale: scale,
+            traits: fixture.window.traitCollection
+        )
+        #expect(
+            abs(font.pointSize - expected) < 0.51,
+            "the page is set at \(font.pointSize)pt, not the body's \(expected)pt"
+        )
+        let standard = fixture.appearanceStore.appearance.bodyPointSize(
+            scale: scale,
+            traits: UITraitCollection(preferredContentSizeCategory: .large)
+        )
+        #expect(
+            expected > standard,
+            "the fixture's text size is not larger than standard, so this proves nothing"
+        )
+    }
+
+    /// A screen reader turned on beside a page needs the chrome the page hid.
+    /// Both owners listen for the status change; with VoiceOver off the same
+    /// resolution leaves a reading page alone.
+    @Test("a VoiceOver status change re-resolves the reader's chrome")
+    func voiceOverStatusChangeReResolvesChrome() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        #expect(!fixture.chromeIsVisible)
+
+        NotificationCenter.default.post(
+            name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+        try await fixture.settle()
+        #expect(!fixture.chromeIsVisible, "a reader with no screen reader lost its page")
+
+        // The chrome showing stays showing.
+        fixture.pagedView?.activateChromeToggle()
+        try await fixture.settle()
+        #expect(fixture.chromeIsVisible)
+        NotificationCenter.default.post(
+            name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+        try await fixture.settle()
+        #expect(fixture.chromeIsVisible, "the chrome went away beside a screen reader")
+    }
+
+    /// What a screen reader can do to a page is what a tap in its middle does.
+    @Test("activating the page toggles the chrome")
+    func activatingThePageTogglesTheChrome() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        #expect(!fixture.chromeIsVisible)
+
+        let cell = try #require(fixture.pageCell, "the reader drew no page to activate")
+        #expect(cell.accessibilityActivate(), "the page did not take the activation")
+        try await fixture.settle()
+        #expect(fixture.chromeIsVisible, "activating the page did not show the chrome")
+        #expect(fixture.readerChromeIsVisible, "the reader's own controls stayed away")
+
+        #expect(cell.accessibilityActivate())
+        try await fixture.settle()
+        #expect(!fixture.chromeIsVisible, "activating the page again did not hide the chrome")
+    }
+
+    /// The band is the paper the header sits on: while the chrome is shown the
+    /// first lines of the page are under it, not beside it.
+    @Test("the header band covers the top of the page while the chrome is shown")
     func headerBandCoversThePage() async throws {
         let fixture = try PagedBookFixture()
         defer { fixture.tearDown() }
         try await fixture.settle()
-        fixture.pagedView?.onChromeToggle?()
+        fixture.pagedView?.activateChromeToggle()
         try await fixture.settle()
 
         let band = try #require(
@@ -284,23 +415,135 @@ struct BookPagedReaderTests {
         background.getRed(nil, green: nil, blue: nil, alpha: &alpha)
         #expect(alpha >= 0.99, "the header band is see-through (\(alpha))")
 
-        // The band is above the page in the body, and the page's text starts
-        // below it: nothing of the book is drawn under the paper.
         let page = try #require(fixture.pagedView)
         let pageFrame = page.convert(page.bounds, to: fixture.window)
         #expect(bandFrame.intersects(pageFrame), "the header band is not over the page")
-        for text in timelineAllTextViews(in: page) where !text.text.isEmpty {
-            let frame = text.convert(text.bounds, to: fixture.window)
-            #expect(
-                !frame.intersects(bandFrame),
-                "page text \(frame) is under the header band \(bandFrame)"
-            )
-        }
+        let firstLine = try #require(fixture.firstPageTextFrame(), "the page drew no text")
+        #expect(
+            firstLine.minY < bandFrame.maxY,
+            "the page's text \(firstLine) is not under the header band \(bandFrame)"
+        )
 
-        // Hidden chrome takes the band with it.
-        fixture.pagedView?.onChromeToggle?()
+        // Hidden chrome takes the band with it, and the first line is readable.
+        fixture.pagedView?.activateChromeToggle()
         try await fixture.settle()
         #expect(band.isHidden || band.alpha < 0.01, "the header band stayed over the reading page")
+    }
+
+    /// The Aa sheet names the size the page is set in, and a size that makes the
+    /// content taller than the sheet's own stop can still be reached.
+    @Test("the Aa sheet matches the page's size and reaches every row")
+    func appearanceSheetMatchesThePage() async throws {
+        let fixture = try PagedBookFixture(contentSizeCategory: .accessibilityLarge)
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        fixture.pagedView?.activateChromeToggle()
+        try await fixture.settle()
+
+        let menu = try await fixture.presentAppearanceMenu()
+        let label = try #require(
+            fixture.view("fullScreen.book.appearance.sizeValue", in: menu.view) as? UILabel,
+            "the sheet has no size label"
+        )
+        let expected = fixture.appearanceStore.appearance.bodyPointSize(
+            scale: FullScreenReaderContentFamily.markdown.defaultPreferences.textScale,
+            traits: fixture.window.traitCollection
+        )
+        #expect(
+            label.text == "\(Int(expected.rounded())) pt",
+            "the sheet says \(label.text ?? "nil"), the page is set at \(expected)pt"
+        )
+
+        // The Justify row is at the bottom of the sheet's content; the sheet must
+        // offer a stop that shows it.
+        let justify = try #require(
+            fixture.view("fullScreen.book.appearance.justify", in: menu.view),
+            "the sheet has no justification row"
+        )
+        let sheet = try #require(menu.sheetPresentationController, "the sheet has no presentation")
+        #expect(sheet.detents.count >= 2, "the sheet has only its content-sized stop")
+        #expect(
+            sheet.detents.contains { $0.identifier == UISheetPresentationController.Detent.Identifier.large },
+            "the sheet cannot be raised to show its last row"
+        )
+        let scroll = try #require(
+            timelineFirstView(ofType: UIScrollView.self, in: menu.view),
+            "the sheet's content does not scroll"
+        )
+        let rowFrame = justify.convert(justify.bounds, to: scroll)
+        #expect(
+            rowFrame.maxY <= scroll.contentSize.height + 1,
+            "the justification row \(rowFrame.maxY) is outside the sheet's \(scroll.contentSize.height)pt of content"
+        )
+    }
+
+    /// Paper alone does not move the type: a theme change re-inks the pages
+    /// instead of cutting them again, and the person stays on their page.
+    @Test("a theme change re-inks the page without cutting it again")
+    func themeChangeReinksThePage() async throws {
+        let fixture = try PagedBookFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+        let before = try #require(fixture.pagedView?.pages)
+        let page = try #require(fixture.pagedView?.pageIndex)
+
+        var appearance = fixture.appearanceStore.appearance
+        appearance.theme = .sepia
+        fixture.appearanceStore.set(appearance)
+        try await fixture.settle()
+
+        let after = try #require(fixture.pagedView?.pages)
+        #expect(after.pageRanges == before.pageRanges, "the paper change cut the chapter again")
+        #expect(fixture.pagedView?.pageIndex == page, "the paper change moved the page")
+        let ink = after.text.attribute(
+            .foregroundColor,
+            at: after.pageRanges[page].location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(ink == BookReaderTheme.sepia.fixedColors?.ink, "the page is still inked \(String(describing: ink))")
+    }
+
+    /// A position written before the store kept a unit counts points. It still
+    /// opens the block it names rather than the chapter's first page.
+    @Test("a position saved before the unit opens its block")
+    func legacyPositionOpensItsBlock() async throws {
+        let document = try PagedBookFixture.document()
+        let defaults = UserDefaults.standard
+        let original = defaults.data(forKey: EPUBReadingPositionStore.preferenceKey)
+        defer {
+            if let original {
+                defaults.set(original, forKey: EPUBReadingPositionStore.preferenceKey)
+            } else {
+                defaults.removeObject(forKey: EPUBReadingPositionStore.preferenceKey)
+            }
+        }
+        var entries = original
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+        entries[document.positionKey] = [
+            "href": document.book.chapters[1].href,
+            "block": 5,
+            "offset": 30,
+            "at": 1_700_000_000,
+        ]
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: entries),
+            forKey: EPUBReadingPositionStore.preferenceKey
+        )
+        #expect(EPUBReadingPositionStore().position(for: document.positionKey)?.unit == .points)
+
+        let fixture = try PagedBookFixture(document: document)
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+
+        #expect(fixture.body.chapterIndex == 1, "the stored chapter did not open")
+        let pages = try #require(fixture.pagedView?.pages)
+        let index = try #require(fixture.pagedView?.pageIndex)
+        let range = try #require(pages.pageRanges.indices.contains(index) ? pages.pageRanges[index] : nil)
+        let blockStart = try #require(pages.blockStarts.indices.contains(5) ? pages.blockStarts[5] : nil)
+        #expect(
+            range.location <= blockStart && blockStart < NSMaxRange(range),
+            "the page \(range) does not hold block 5, which starts at \(blockStart)"
+        )
     }
 
     @Test("the table of contents sheet marks the chapter on screen")
@@ -420,7 +663,12 @@ private final class PagedBookFixture {
         )
     }
 
-    init(document: EPUBReaderDocument? = nil, chapter: Int = 0) throws {
+    init(
+        document: EPUBReaderDocument? = nil,
+        chapter: Int = 0,
+        size: CGSize = CGSize(width: 402, height: 874),
+        contentSizeCategory: UIContentSizeCategory = .large
+    ) throws {
         let document = try document ?? Self.document()
         self.document = document
         let store = FullScreenReaderPreferencesStore.shared
@@ -434,7 +682,8 @@ private final class PagedBookFixture {
                 EPUBReadingPosition(
                     chapterHref: document.book.chapters[chapter].href,
                     blockOrdinal: 0,
-                    offsetPoints: 0
+                    offset: 0,
+                    unit: .characters
                 ),
                 for: document.positionKey
             )
@@ -444,8 +693,9 @@ private final class PagedBookFixture {
             content: .book(document),
             reviewCommentSelectionContext: nil
         )
-        window = UIWindow(frame: CGRect(origin: .zero, size: CGSize(width: 402, height: 874)))
+        window = UIWindow(frame: CGRect(origin: .zero, size: size))
         window.rootViewController = reader
+        window.traitOverrides.preferredContentSizeCategory = contentSizeCategory
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
     }
@@ -486,6 +736,25 @@ private final class PagedBookFixture {
 
     var pagedView: BookPagedView? {
         view(identifier: "fullScreen.book.pages") as? BookPagedView
+    }
+
+    /// The page's drawn text, top first: the first line of the page on screen.
+    func firstPageTextFrame() -> CGRect? {
+        guard let paged = pagedView else { return nil }
+        return timelineAllTextViews(in: paged)
+            .filter { !$0.text.isEmpty && $0.isShown(in: window) }
+            .map { $0.convert($0.bounds, to: window) }
+            .filter { $0.height > 1 }
+            .min { $0.minY < $1.minY }
+    }
+
+    /// The page the person is reading, as the accessibility element VoiceOver
+    /// stops on.
+    var pageCell: UIView? {
+        guard let paged = pagedView else { return nil }
+        return timelineAllViews(in: paged).first {
+            $0.accessibilityIdentifier == "fullScreen.book.page" && $0.isShown(in: window)
+        }
     }
 
     var chapterTitle: String {
@@ -545,10 +814,11 @@ private final class PagedBookFixture {
             .joined(separator: "\n")
     }
 
-    /// The text of the page on screen.
+    /// The words the page on screen shows: what is inside its text area, not the
+    /// paragraph it continues past the clip.
     func pageText() -> String {
         guard let paged = pagedView else { return "" }
-        return paged.text(forPage: paged.pageIndex).string
+        return paged.pages.pageLabel(at: paged.pageIndex)
     }
 
     /// The page on screen holds `character`.
@@ -615,7 +885,9 @@ private final class PagedBookFixture {
 
 private extension BookPagedView {
     var pageCount: Int { pages.pageCount }
-    func pageText(_ index: Int) -> NSAttributedString { text(forPage: index) }
+    func pageText(_ index: Int) -> NSAttributedString {
+        NSAttributedString(string: pages.pageLabel(at: index))
+    }
 }
 
 private extension UIView {

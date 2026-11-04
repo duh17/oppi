@@ -5,13 +5,30 @@ import Foundation
 ///
 /// The block ordinal is a line in the chapter's Markdown, so it resolves to the
 /// same paragraph after the text size changes; a scroll offset alone would
-/// drift. The offset is where the block's top was, in points, and is clamped by
-/// the reader on restore.
+/// drift. The distance into the block counts in `unit`: the scrolling chapter
+/// measures points down the block, the pages count characters into it, and
+/// either converts the other's distance through the block it names.
 struct EPUBReadingPosition: Equatable, Sendable {
+    /// What `offset` counts inside the block.
+    enum Unit: String, Codable, Sendable {
+        /// Points down the block, as the scrolling chapter measures it.
+        case points
+        /// Characters into the block, as a page break can cut it.
+        case characters
+    }
+
     /// Archive path of the spine document (`chapters[i].href`).
     let chapterHref: String
     let blockOrdinal: Int
-    let offsetPoints: Double
+    let offset: Double
+    let unit: Unit
+
+    init(chapterHref: String, blockOrdinal: Int, offset: Double = 0, unit: Unit = .points) {
+        self.chapterHref = chapterHref
+        self.blockOrdinal = blockOrdinal
+        self.offset = offset
+        self.unit = unit
+    }
 }
 
 /// Reading positions, keyed by the book's identity, in the same shape as
@@ -34,17 +51,21 @@ struct EPUBReadingPositionStore {
         return EPUBReadingPosition(
             chapterHref: entry.href,
             blockOrdinal: entry.block,
-            offsetPoints: entry.offset
+            offset: entry.offset,
+            // An entry written before the unit was stored carries points: the
+            // scrolling chapter is what wrote them.
+            unit: entry.unit ?? .points
         )
     }
 
     func save(_ position: EPUBReadingPosition, for key: String, now: Date = Date()) {
-        guard position.blockOrdinal >= 0, position.offsetPoints.isFinite else { return }
+        guard position.blockOrdinal >= 0, position.offset.isFinite else { return }
         var all = entries()
         all[key] = Entry(
             href: position.chapterHref,
             block: position.blockOrdinal,
-            offset: position.offsetPoints,
+            offset: position.offset,
+            unit: position.unit,
             at: now.timeIntervalSince1970
         )
         if all.count > Self.maximumEntries {
@@ -66,6 +87,8 @@ struct EPUBReadingPositionStore {
         let href: String
         let block: Int
         let offset: Double
+        /// Absent from entries an older build wrote, which always meant points.
+        let unit: EPUBReadingPosition.Unit?
         let at: Double
     }
 

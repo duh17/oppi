@@ -17,6 +17,9 @@ final class BookTableOfContentsViewController: UIViewController {
     private let rows: [Row]
     private let currentChapter: Int
     private let palette: ThemePalette
+    /// The page's own paper, ink and link colour: the sheet is opened over a book
+    /// and belongs to it, not to the app's chrome.
+    private let appearance: BookReaderAppearance
     private let onSelect: (Int) -> Void
 
     private let titleLabel = UILabel()
@@ -28,12 +31,14 @@ final class BookTableOfContentsViewController: UIViewController {
         rows: [Row],
         currentChapter: Int,
         palette: ThemePalette,
+        appearance: BookReaderAppearance = BookReaderAppearance(),
         onSelect: @escaping (Int) -> Void
     ) {
         self.bookTitle = bookTitle
         self.rows = rows
         self.currentChapter = currentChapter
         self.palette = palette
+        self.appearance = appearance
         self.onSelect = onSelect
         super.init(nibName: nil, bundle: nil)
     }
@@ -43,26 +48,30 @@ final class BookTableOfContentsViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = palette.ui.bgDark
+        let paper = appearance.backgroundColor(in: palette)
+        view.backgroundColor = paper
+        // The sheet's own labels are system colours; on a light page they must be
+        // the light-appearance ones.
+        overrideUserInterfaceStyle = ReaderPaper.isLight(paper) ? .light : .dark
         view.accessibilityIdentifier = "fullScreen.book.tocSheet"
 
         titleLabel.text = bookTitle
         titleLabel.font = .scaled(.headline)
-        titleLabel.textColor = palette.ui.fg
+        titleLabel.textColor = appearance.textColor(in: palette)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 2
         titleLabel.accessibilityIdentifier = "fullScreen.book.tocSheet.title"
 
         doneButton.setTitle(String(localized: "Done"), for: .normal)
         doneButton.titleLabel?.font = .scaled(.body, .semibold)
-        doneButton.tintColor = palette.ui.blue
+        doneButton.tintColor = appearance.linkColor(in: palette)
         doneButton.addTarget(self, action: #selector(done), for: .touchUpInside)
         doneButton.accessibilityIdentifier = "fullScreen.book.tocSheet.done"
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.backgroundColor = palette.ui.bgDark
+        tableView.backgroundColor = paper
         tableView.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "toc")
         tableView.accessibilityIdentifier = "fullScreen.book.tocSheet.list"
@@ -114,13 +123,15 @@ extension BookTableOfContentsViewController: UITableViewDataSource, UITableViewD
         var content = UIListContentConfiguration.cell()
         content.text = row.title
         content.textProperties.font = .scaled(row.level == 0 ? .body : .subheadline)
-        content.textProperties.color = row.chapter == currentChapter ? palette.ui.blue : palette.ui.fg
+        content.textProperties.color = row.chapter == currentChapter
+            ? appearance.linkColor(in: palette)
+            : appearance.textColor(in: palette)
         content.textProperties.numberOfLines = 2
         content.directionalLayoutMargins.leading = 20 + CGFloat(min(row.level, 5)) * 16
         cell.contentConfiguration = content
         cell.backgroundColor = .clear
         cell.accessoryType = row.chapter == currentChapter ? .checkmark : .none
-        cell.tintColor = palette.ui.blue
+        cell.tintColor = appearance.linkColor(in: palette)
         cell.accessibilityIdentifier = "fullScreen.book.tocSheet.row"
         // One stop per row: the title, and whether it is the chapter on screen.
         cell.accessibilityLabel = row.chapter == currentChapter

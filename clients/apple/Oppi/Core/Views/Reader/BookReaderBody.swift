@@ -77,6 +77,12 @@ final class BookReaderBody: UIView {
     /// Breathing room between the chapter's last line and the reader's
     /// floating control, which is drawn over this body.
     private static let floatingControlGap: CGFloat = 8
+    /// Where the bottom of the "Page 3 of 12" line sits relative to the safe
+    /// area: at the very edge for a page, lifted clear of the reader's floating
+    /// control for the scrolling footer, which the control would otherwise cover.
+    private lazy var progressBottom = progressBar.bottomAnchor.constraint(
+        equalTo: safeAreaLayoutGuide.bottomAnchor
+    )
 
     private(set) var chapterIndex: Int
     private var chapterSource: EPUBChapterSource
@@ -171,6 +177,7 @@ final class BookReaderBody: UIView {
         installChapterContent()
         restoreStoredPosition(saved)
         observeBackgrounding()
+        observeVoiceOverStatus()
         observeAppearanceChanges()
     }
 
@@ -190,6 +197,23 @@ final class BookReaderBody: UIView {
 
     @objc private func persistOnBackgrounding() {
         persistPosition()
+    }
+
+    /// A screen reader turned on beside a page needs the chrome the page hid. The
+    /// current state is re-resolved against the new status, so the header comes
+    /// back rather than leaving the reader with no way out.
+    private func observeVoiceOverStatus() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(voiceOverStatusDidChange),
+            name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func voiceOverStatusDidChange() {
+        guard mode == .pages else { return }
+        setChromeVisible(isChromeVisible, animated: false)
     }
 
     override func didMoveToWindow() {
@@ -217,18 +241,19 @@ final class BookReaderBody: UIView {
         applyPendingRestore()
     }
 
-    /// The chapter must stop above the reader's floating control, which is drawn
-    /// over this body. The reader pins the body to the page's edges, so the
-    /// control's top edge sits `safeAreaInsets.bottom` + the chrome's own
-    /// padding + its size above the page's bottom, and the footer already
-    /// covers the last `footer.bounds.height` of that distance.
+    /// The chapter's last line keeps a breath above the footer. The footer itself
+    /// is lifted clear of the reader's floating control in scrolling, so the line
+    /// does not have to reserve that band as well.
     private func updateChapterContentInset() {
-        let footerHeight = footer.bounds.height
-        guard footerHeight > 0 else { return }
-        let floatingTop = safeAreaInsets.bottom
-            + FullScreenFloatingControlChrome.bottomPadding
+        chapterBody?.setBottomContentInset(Self.floatingControlGap)
+    }
+
+    /// The band the reader's floating control occupies at the foot of this body:
+    /// its padding, its size, and the gap the body keeps above it.
+    private static var floatingControlBand: CGFloat {
+        FullScreenFloatingControlChrome.bottomPadding
             + FullScreenFloatingControlChrome.controlSize
-        chapterBody?.setBottomContentInset(floatingTop + Self.floatingControlGap - footerHeight)
+            + floatingControlGap
     }
 
     // MARK: - Chrome
@@ -362,7 +387,7 @@ final class BookReaderBody: UIView {
 
             progressBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             progressBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            progressBar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor),
+            progressBottom,
             progressBar.heightAnchor.constraint(equalToConstant: Self.progressHeight),
 
             progressLeadingLabel.leadingAnchor.constraint(equalTo: progressBar.leadingAnchor, constant: 24),
@@ -409,6 +434,9 @@ final class BookReaderBody: UIView {
         // starts below that bar's items; the scrolling header is in the flow and
         // the safe area already accounts for them.
         headerTop.constant = paged ? Self.readerBarClearance : 0
+        // A page's progress line sits at the page's edge; the scrolling footer is
+        // in the flow over the reader's pill and is lifted clear of it.
+        progressBottom.constant = paged ? 0 : -Self.floatingControlBand
         footer.isHidden = paged
         pagedView.isHidden = paged ? !chapterSource.isAvailable : true
         setNeedsLayout()
@@ -461,13 +489,25 @@ final class BookReaderBody: UIView {
         // paper or a typeface change keeps the words on screen.
         let position = currentPosition() ?? lastKnownPosition
         let layoutChanged = next.layout != mode
+        // Paper alone does not move the type: those pages are re-inked, not cut
+        // again, so a theme change costs no layout.
+        var paperOnly = next
+        paperOnly.theme = appearance.theme
+        let isPaperOnly = paperOnly == appearance
         appearance = next
         applyTheme()
         rebuildStyle()
         if layoutChanged {
             setLayout(next.layout, keeping: position)
         } else if mode == .pages {
-            schedulePagination()
+            if isPaperOnly, let current = pages {
+                let reinked = BookChapterPaginator.reink(current, source: chapterSource, style: style)
+                pages = reinked
+                pagedView.show(pages: reinked, character: positionCharacter ?? currentPageStartCharacter)
+                updateProgress()
+            } else {
+                schedulePagination()
+            }
         } else {
             chapterBody?.applyBookAppearance(appearance)
             setNeedsLayout()
@@ -478,7 +518,12 @@ final class BookReaderBody: UIView {
     /// The reader's sheet is presented by whichever controller owns this body.
     @objc private func presentAppearanceMenu() {
         guard let owner = hostingViewController else { return }
-        let menu = BookReaderAppearanceMenuViewController(store: appearanceStore)
+        let menu = BookReaderAppearanceMenuViewController(
+            store: appearanceStore,
+            palette: palette,
+            textScale: readerPreferences.textScale,
+            traits: traitCollection
+        )
         let presenter = owner.presentedViewController ?? owner
         // A wide page gets a popover at the control that opened it; a phone
         // gets a sheet that hugs its content.
@@ -523,7 +568,10 @@ final class BookReaderBody: UIView {
     /// its own controls. VoiceOver always keeps them: a control that cannot be
     /// found is a reader that cannot be left.
     private func setChromeVisible(_ visible: Bool, animated: Bool) {
-        let hideForReading = !visible && mode == .pages && !UIAccessibility.isVoiceOverRunning
+        let hideForReading = ReaderChromeVisibility.isHidden(
+            wantsHidden: !visible && mode == .pages,
+            voiceOverRunning: UIAccessibility.isVoiceOverRunning
+        )
         isChromeVisible = !hideForReading
         let chrome: [UIView] = [header, headerBand]
         // A hidden header must not take the tap that would bring it back.
@@ -546,8 +594,15 @@ final class BookReaderBody: UIView {
         onImmersiveChromeChange?(hideForReading)
     }
 
+    /// The page's middle third is the page itself: it shows the chrome, or puts
+    /// it away. A screen reader never loses the controls, so its activation can
+    /// only bring them back.
     @objc private func toggleChrome() {
-        guard mode == .pages, !UIAccessibility.isVoiceOverRunning else { return }
+        guard mode == .pages else { return }
+        guard !UIAccessibility.isVoiceOverRunning else {
+            setChromeVisible(true, animated: false)
+            return
+        }
         setChromeVisible(!isChromeVisible, animated: true)
     }
 
@@ -571,7 +626,8 @@ final class BookReaderBody: UIView {
             bookTitle: document.book.title,
             rows: tableOfContentsRows,
             currentChapter: chapterIndex,
-            palette: palette
+            palette: palette,
+            appearance: appearance
         ) { [weak self] chapter in
             self?.showChapter(at: chapter, restoring: nil)
         }
@@ -738,22 +794,23 @@ extension BookReaderBody {
 // MARK: - Pages
 
 extension BookReaderBody {
-    /// Content margins inside one page: the appearance's measure, plus the paper
-    /// the header band takes at the top and the room the progress line needs at
-    /// the foot.
+    /// Content margins inside one page: the appearance's measure, plus the room
+    /// the progress line needs at the foot.
     ///
-    /// The band's height is reserved on every page, so showing the chrome never
-    /// pulls a line out from under the person or pushes one down: the page is
-    /// laid out once, around it.
+    /// The floating header and the reader's own bar are not reserved: while they
+    /// are on screen they sit on the opaque band, over the first lines of the
+    /// page, and when they fade the page is already where it belongs — a page
+    /// that starts at the top edge instead of a band-height below it. Reserving
+    /// the band would cost a phone a sixth of its page, and a landscape screen
+    /// nearly half.
     private var pageInsets: UIEdgeInsets {
         let measure = appearance.pageInsets(
             for: contentHost.bounds.width,
             scale: readerPreferences.textScale,
             traits: traitCollection
         )
-        let band = header.bounds.height > 0 ? Self.readerBarClearance + header.bounds.height : 0
         return UIEdgeInsets(
-            top: measure.top + band,
+            top: measure.top,
             left: measure.left,
             bottom: measure.bottom + Self.progressHeight,
             right: measure.right
@@ -784,19 +841,27 @@ extension BookReaderBody {
     /// on a re-pagination, on the page the person was reading.
     private func paginate() {
         guard mode == .pages, chapterSource.isAvailable, contentHost.bounds.width > 0 else { return }
+        // The font metrics come from the body's own traits, and this is the first
+        // layout that asks for them: the style built at init has no traits, and
+        // the text size a page is set at must be the one the page was measured in.
+        rebuildStyle()
         let insets = pageInsets
-        let size = pagedView.textSize(in: contentHost.bounds.size, insets: insets)
-        guard size.width > 1, size.height > 1 else { return }
+        let area = pagedView.textSize(in: contentHost.bounds.size, insets: insets)
+        guard area.width > 1, area.height > 1 else { return }
         // The page on screen before this layout, so a re-pagination lands on the
         // same words.
         let visibleStart = pages.map { _ in currentPageStartCharacter }
         let restore = pendingRestore
-        paginatedTextSize = size
+        paginatedTextSize = area
         pagedView.contentInsets = insets
-        let built = BookChapterPaginator.layout(source: chapterSource, style: style, pageSize: size)
+        let built = BookChapterPaginator.layout(source: chapterSource, style: style, pageSize: area)
         pages = built
         let character = restore.map {
-            built.characterOffset(forBlockOrdinal: $0.blockOrdinal, offsetPoints: $0.offsetPoints)
+            built.characterOffset(
+                forBlockOrdinal: $0.blockOrdinal,
+                offset: $0.offset,
+                unit: $0.unit
+            )
         }
             ?? positionCharacter
             ?? visibleStart
@@ -861,7 +926,12 @@ extension BookReaderBody {
             guard let pages, !pages.isEmpty else { return nil }
             let character = positionCharacter ?? currentPageStartCharacter
             let (ordinal, offset) = pages.storedPosition(forCharacter: character)
-            return EPUBReadingPosition(chapterHref: href, blockOrdinal: ordinal, offsetPoints: offset)
+            return EPUBReadingPosition(
+                chapterHref: href,
+                blockOrdinal: ordinal,
+                offset: offset,
+                unit: .characters
+            )
         }
         guard let body = chapterBody else { return nil }
         let blockCount = chapterSource.blocks.count
@@ -891,7 +961,8 @@ extension BookReaderBody {
         return EPUBReadingPosition(
             chapterHref: href,
             blockOrdinal: min(max(ordinal, 0), blockCount - 1),
-            offsetPoints: offset
+            offset: offset,
+            unit: .points
         )
     }
 
@@ -929,7 +1000,7 @@ extension BookReaderBody {
                 sourceStartLine: block.markdownStartLine,
                 occurrenceOrdinal: 0
             ),
-            offsetInItem: CGFloat(position.offsetPoints),
+            offsetInItem: offsetInItem(of: position),
             absoluteOffset: 0
         )
         body.restoreViewport(.detached(anchor))
@@ -953,6 +1024,25 @@ extension BookReaderBody {
 
     /// How many layout passes a freshly built chapter gets to open at its block.
     private static let maximumRestoreAttempts = 12
+
+    /// The scrolling chapter's distance into a stored block, in points. A
+    /// position the pages saved counts characters, which is a distance the
+    /// chapter cannot scroll to, so it is measured through the block itself: the
+    /// block's own type at the chapter's own width turns the character into the
+    /// line it is on. A block with no text of its own opens at its top.
+    private func offsetInItem(of position: EPUBReadingPosition) -> CGFloat {
+        guard position.unit == .characters else { return CGFloat(position.offset) }
+        let styled = BookChapterPaginator.styledBlockText(
+            source: chapterSource,
+            ordinal: position.blockOrdinal,
+            style: style
+        )
+        guard let measured = BookBlockMeasure.measure(styled, width: max(contentHost.bounds.width, 1)) else {
+            return 0
+        }
+        let character = min(max(Int(position.offset.rounded(.down)), 0), max(styled.length - 1, 0))
+        return measured.point(atCharacter: character)
+    }
 
     /// The block a viewport intent names, in this chapter's blocks.
     private func blockOrdinal(of intent: FullScreenMarkdownViewportIntent?) -> Int? {
@@ -992,9 +1082,16 @@ extension BookReaderBody {
         let leading = String(localized: "Page \(page) of \(pages.pageCount)")
         let words = pages.words(fromCharacter: pages.pageRanges[pagedView.pageIndex].location)
         let minutes = Int((Double(words) / Self.wordsPerMinute).rounded())
-        let trailing = minutes < 1
-            ? String(localized: "<1 min left in chapter")
-            : String(localized: "\(minutes) min left in chapter")
+        let atChapterCap = pages.continues && pagedView.pageIndex == pages.pageCount - 1
+        let trailing: String
+        if atChapterCap {
+            // The pages stopped at the cap; the chapter does not end here.
+            trailing = String(localized: "Chapter continues")
+        } else {
+            trailing = minutes < 1
+                ? String(localized: "<1 min left in chapter")
+                : String(localized: "\(minutes) min left in chapter")
+        }
         setProgress(leading: leading, trailing: trailing, spoken: "\(leading), \(trailing)")
     }
 

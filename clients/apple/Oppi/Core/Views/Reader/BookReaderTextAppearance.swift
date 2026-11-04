@@ -16,17 +16,19 @@ enum BookReaderTextAppearance {
     static func apply(
         _ appearance: BookReaderAppearance,
         scale: CGFloat,
+        traits: UITraitCollection? = nil,
         to segments: [FlatSegment]
     ) -> [FlatSegment] {
         segments.map { segment in
             guard case .text(let text) = segment else { return segment }
-            return .text(apply(appearance, scale: scale, to: text))
+            return .text(apply(appearance, scale: scale, traits: traits, to: text))
         }
     }
 
     static func apply(
         _ appearance: BookReaderAppearance,
         scale: CGFloat,
+        traits: UITraitCollection? = nil,
         to text: AttributedString
     ) -> AttributedString {
         let mutable = NSMutableAttributedString(text)
@@ -34,7 +36,9 @@ enum BookReaderTextAppearance {
         guard fullRange.length > 0 else { return text }
 
         // Typeset sizes of the text being replaced, so a run can be recognised
-        // as a heading or inline code whatever text size produced it.
+        // as a heading or inline code whatever text size produced it. The traits
+        // are the reader's own: a chapter set at a non-default text size must be
+        // set at that size, whatever the current context happens to be.
         let referencePointSize = AppFont.messageBody.pointSize * max(scale, 0.1)
         let isQuote = mutable.string.contains(quoteMarker)
 
@@ -56,12 +60,13 @@ enum BookReaderTextAppearance {
                 for: role,
                 bold: bold,
                 italic: italic,
-                scale: scale
+                scale: scale,
+                traits: traits
             )
             mutable.addAttribute(.font, value: font, range: range)
             mutable.addAttribute(
                 .paragraphStyle,
-                value: appearance.paragraphStyle(for: role, scale: scale),
+                value: appearance.paragraphStyle(for: role, scale: scale, traits: traits),
                 range: range
             )
 

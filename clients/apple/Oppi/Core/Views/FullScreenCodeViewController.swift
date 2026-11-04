@@ -188,6 +188,7 @@ final class FullScreenCodeViewController: UIViewController {
             name: .oppiThemeDidChange,
             object: nil
         )
+        observeVoiceOverStatusChanges()
 
         let themeID = appliedThemeID ?? ThemeRuntimeState.currentThemeID()
         appliedThemeID = themeID
@@ -540,14 +541,17 @@ final class FullScreenCodeViewController: UIViewController {
     /// True while a body asked for the reader's controls to be out of the way. A
     /// book read as pages does: the page is the only thing on screen until a tap
     /// in the middle of it brings the controls back.
-    private var isImmersiveChromeHidden = false
+    private(set) var isImmersiveChromeHidden = false
 
     /// Fades the bar items and the floating pills together. The bar keeps its
     /// place, so the content keeps the safe area it laid out with; VoiceOver
     /// keeps the controls, because a control that cannot be found is a reader
     /// that cannot be left.
-    private func setImmersiveChromeHidden(_ hidden: Bool, animated: Bool) {
-        let next = hidden && !UIAccessibility.isVoiceOverRunning
+    func setImmersiveChromeHidden(_ hidden: Bool, animated: Bool) {
+        let next = ReaderChromeVisibility.isHidden(
+            wantsHidden: hidden,
+            voiceOverRunning: UIAccessibility.isVoiceOverRunning
+        )
         let changed = next != isImmersiveChromeHidden
         isImmersiveChromeHidden = next
         // The set of controls changes as the reader builds them (the bar appears

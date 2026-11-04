@@ -9,6 +9,13 @@ import UIKit
 @MainActor
 final class BookReaderAppearanceMenuViewController: UIViewController {
     private let store: BookReaderAppearanceStore
+    /// The reader's paper and ink, so the sheet opened over a page looks like the
+    /// page it changes instead of a slab of app chrome.
+    private let palette: ThemePalette?
+    /// The reader's own text size and traits, so the sheet names the size the
+    /// page is actually set in and wraps its rows as the page would.
+    private let textScale: CGFloat
+    private let traits: UITraitCollection?
     private var appearance: BookReaderAppearance
 
     private let scrollView = UIScrollView()
@@ -33,8 +40,16 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
     /// Height the sheet asks for once its content is measured.
     private var measuredHeight: CGFloat = 420
 
-    init(store: BookReaderAppearanceStore = .shared) {
+    init(
+        store: BookReaderAppearanceStore = .shared,
+        palette: ThemePalette? = nil,
+        textScale: CGFloat = 1,
+        traits: UITraitCollection? = nil
+    ) {
         self.store = store
+        self.palette = palette
+        self.textScale = textScale
+        self.traits = traits
         self.appearance = store.appearance
         super.init(nibName: nil, bundle: nil)
     }
@@ -46,9 +61,23 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .secondarySystemBackground
         setUpContent()
+        applyPageColors()
         updateControls()
+    }
+
+    /// The sheet takes the page's paper and ink. Its own labels are system
+    /// colours, so the sheet also takes the page's light or dark cast: a cream
+    /// page gets dark labels, and a black one the light system colours.
+    private func applyPageColors() {
+        guard let palette else {
+            view.backgroundColor = .secondarySystemBackground
+            return
+        }
+        let paper = appearance.backgroundColor(in: palette)
+        view.backgroundColor = paper
+        overrideUserInterfaceStyle = ReaderPaper.isLight(paper) ? .light : .dark
+        justifySwitch.onTintColor = appearance.linkColor(in: palette)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -77,7 +106,10 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
             return
         }
         guard let sheet = sheetPresentationController else { return }
-        sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 })]
+        // The content's own height, and a taller stop for a size the sheet's
+        // measurement caps: a row below the fold with no way to reach it is a
+        // control the sheet does not have.
+        sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 }), .large()]
         sheet.prefersGrabberVisible = true
         sheet.preferredCornerRadius = 22
     }
@@ -97,7 +129,7 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
         measureHeight(for: width)
         guard abs(measuredHeight - previous) > 1, let sheet = sheetPresentationController else { return }
         sheet.animateChanges {
-            sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 })]
+            sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 }), .large()]
         }
     }
 
@@ -395,9 +427,15 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
     /// Reflects the store in every control, including the states a screen
     /// reader announces.
     private func updateControls() {
+        let pointSize = appearance.bodyPointSize(scale: textScale, traits: traits)
         sizeValueLabel.text = String(
             format: String(localized: "%d pt"),
-            Int(appearance.bodyPointSize().rounded())
+            Int(pointSize.rounded())
+        )
+        // What a screen reader hears is the same number the page is set in.
+        sizeValueLabel.accessibilityLabel = String(
+            format: String(localized: "%d points"),
+            Int(pointSize.rounded())
         )
         smallerButton.isEnabled = appearance.sizeStep > BookReaderAppearance.sizeStepRange.lowerBound
         largerButton.isEnabled = appearance.sizeStep < BookReaderAppearance.sizeStepRange.upperBound

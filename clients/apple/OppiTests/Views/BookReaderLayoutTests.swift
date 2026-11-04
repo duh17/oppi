@@ -106,6 +106,31 @@ struct BookReaderLayoutTests {
         )
     }
 
+    /// The reader's floating control is drawn over the foot of the scrolling
+    /// body; the footer is in the flow there, so it has to sit above it.
+    @Test("the scrolling footer clears the reader's floating control")
+    func scrollingFooterClearsFloatingControl() async throws {
+        let fixture = try BookReaderFixture()
+        defer { fixture.tearDown() }
+        try await fixture.settle()
+
+        let next = try #require(fixture.view(identifier: "fullScreen.book.next"), "the reader has no Next")
+        let floating = try #require(
+            fixture.view(identifier: "fullscreen.viewingOptions.button"),
+            "the reader has no floating control"
+        )
+        let nextFrame = next.convert(next.bounds, to: fixture.window)
+        let floatingFrame = floating.convert(floating.bounds, to: fixture.window)
+        #expect(
+            !nextFrame.intersects(floatingFrame),
+            "Next \(nextFrame) is under the floating control \(floatingFrame)"
+        )
+        #expect(
+            nextFrame.maxY <= floatingFrame.minY + 1,
+            "Next ends at \(nextFrame.maxY), below the floating control's top \(floatingFrame.minY)"
+        )
+    }
+
     /// Previous and Next are one row: their titles share a baseline.
     @Test("Previous and Next share one baseline")
     func footerButtonsShareOneBaseline() async throws {

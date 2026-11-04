@@ -22,8 +22,10 @@ enum ReaderChromeSurfacePainter {
             var config = button.configuration ?? .plain()
             if let surface {
                 config.background.backgroundColor = surface.paper.withAlphaComponent(0.94)
-                config.background.strokeColor = surface.ink.withAlphaComponent(0.16)
-                config.background.strokeWidth = 0.5
+                // A pill on paper needs an edge: a thin low-contrast stroke
+                // disappears at 3x, so a light paper gets a full hairline.
+                config.background.strokeColor = surface.ink.withAlphaComponent(0.22)
+                config.background.strokeWidth = 1
                 config.baseForegroundColor = surface.ink
                 // A glass pill draws its symbol from the glass, not from the
                 // configuration's foreground, so the page's ink is painted into
@@ -39,7 +41,7 @@ enum ReaderChromeSurfacePainter {
             // A glass pill draws its glyph in the style it was built in, so the
             // pill follows the page's own light: a cream page gets the light
             // style's dark glyph, a black page the dark style's light one.
-            button.overrideUserInterfaceStyle = surface.map { Self.isLight($0.paper) ? .light : .dark }
+            button.overrideUserInterfaceStyle = surface.map { ReaderPaper.isLight($0.paper) ? .light : .dark }
                 ?? .unspecified
         }
         // A bar item's glyph on a Liquid Glass bar is drawn from tint, which the
@@ -53,17 +55,34 @@ enum ReaderChromeSurfacePainter {
             } ?? image.withRenderingMode(.alwaysTemplate)
         }
         bar?.tintColor = surface?.ink
-        bar?.overrideUserInterfaceStyle = surface.map { Self.isLight($0.paper) ? .light : .dark }
+        bar?.overrideUserInterfaceStyle = surface.map { ReaderPaper.isLight($0.paper) ? .light : .dark }
             ?? .unspecified
     }
+}
 
-    /// Whether a paper reads as light, by its perceived luminance.
-    private static func isLight(_ color: UIColor) -> Bool {
+/// A book's paper, as the chrome over it and the sheets that belong to it read
+/// it.
+enum ReaderPaper {
+    /// Whether a paper reads as light, by its perceived luminance: the chrome and
+    /// the sheets over it then take the light appearance's colours.
+    static func isLight(_ color: UIColor) -> Bool {
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
         color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.5
+    }
+}
+
+/// Whether a body's chrome can leave the screen.
+///
+/// A body that fills the page asks for the reader's controls to fade, but
+/// VoiceOver always keeps them: a control a person cannot reach is a reader they
+/// cannot leave. The answer is re-resolved whenever the VoiceOver status changes,
+/// so turning the screen reader on beside a page brings the chrome back.
+enum ReaderChromeVisibility {
+    static func isHidden(wantsHidden: Bool, voiceOverRunning: Bool) -> Bool {
+        wantsHidden && !voiceOverRunning
     }
 }

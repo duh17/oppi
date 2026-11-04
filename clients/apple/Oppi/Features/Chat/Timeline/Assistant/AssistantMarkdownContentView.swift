@@ -76,6 +76,10 @@ final class AssistantMarkdownContentView: UIView {
         /// Optional book typography. A book chapter sets this so its text is
         /// typeset by the reader's appearance instead of the chat metrics.
         let bookAppearance: BookReaderAppearance?
+        /// The traits book type is measured in. Dynamic Type resolves against
+        /// these rather than whatever the current context happens to be, so a
+        /// chapter set at a non-default text size is set at that size.
+        let bookTraits: UITraitCollection?
         /// Controls whether async work (mermaid rendering, syntax highlighting,
         /// image loading) runs on background threads or the current thread.
         ///
@@ -104,6 +108,7 @@ final class AssistantMarkdownContentView: UIView {
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
             bookAppearance: BookReaderAppearance? = nil,
+            bookTraits: UITraitCollection? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
@@ -122,6 +127,7 @@ final class AssistantMarkdownContentView: UIView {
             self.lineAnchor = lineAnchor
             self.readerPreferences = readerPreferences
             self.bookAppearance = bookAppearance
+            self.bookTraits = bookTraits
             self.preparationRevision = preparationRevision
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
@@ -140,6 +146,7 @@ final class AssistantMarkdownContentView: UIView {
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
             bookAppearance: BookReaderAppearance? = nil,
+            bookTraits: UITraitCollection? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
@@ -158,6 +165,7 @@ final class AssistantMarkdownContentView: UIView {
                 lineAnchor: lineAnchor,
                 readerPreferences: readerPreferences,
                 bookAppearance: bookAppearance,
+                bookTraits: bookTraits,
                 preparationRevision: preparationRevision,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode,
@@ -178,6 +186,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.lineAnchor == rhs.lineAnchor
                 && lhs.readerPreferences == rhs.readerPreferences
                 && lhs.bookAppearance == rhs.bookAppearance
+                && lhs.bookTraits == rhs.bookTraits
                 && lhs.preparationRevision == rhs.preparationRevision
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
