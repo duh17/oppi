@@ -34,6 +34,11 @@ protocol ReaderBody: UIView {
     /// The rendered view as an image for Annotate. Throws
     /// `PaperMarkupCanvasSession.SnapshotError.notReady` until there is one.
     func renderedSnapshot() async throws -> UIImage
+
+    /// A body that can take the whole page asks the reader to fade the controls
+    /// it draws itself: the bar items and the floating pills. `true` means the
+    /// body is reading mode and the reader's chrome should be out of the way.
+    var onImmersiveChromeChange: ((Bool) -> Void)? { get set }
 }
 
 enum ReaderAnnotateAvailability: Equatable {
@@ -46,6 +51,11 @@ enum ReaderAnnotateAvailability: Equatable {
 
 extension ReaderBody {
     var liveCopyText: String? { nil }
+
+    var onImmersiveChromeChange: ((Bool) -> Void)? {
+        get { nil }
+        set {}
+    }
 
     var viewportIntent: FullScreenMarkdownViewportIntent? { nil }
 

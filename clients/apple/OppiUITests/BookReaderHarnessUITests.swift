@@ -1,8 +1,9 @@
 import XCTest
 
-/// The book reader over the seeded harness book (`--book-reader-harness`):
-/// table of contents, chapter change, and a position that survives leaving the
-/// reader, including after a text-size change.
+/// The book reader over the seeded harness book (`--book-reader-harness`): the
+/// pages a book opens as, the table of contents, page turns that cross chapters,
+/// and a position that survives leaving the reader, including after a text-size
+/// change. The scrolling body keeps its own journey, reached through the Aa menu.
 @MainActor
 final class BookReaderHarnessUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -14,43 +15,148 @@ final class BookReaderHarnessUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    /// A text-size change made in Viewing Options re-flows the chapter in
-    /// place. The chapter has to come out as one ordered stack: a row from the
-    /// old size left drawn over the new layout is the bug this covers.
-    func testLiveTextSizeChangeLeavesOneOrderedChapter() throws {
+    /// The journey the owner asked for: table of contents → chapter three → turn
+    /// pages → leave → come back on the same page, and again after a text-size
+    /// change.
+    func testPagedReadingKeepsThePageAcrossReopenAndTextSize() throws {
         launchHarness()
-        openBook()
-        XCTAssertTrue(chapterTitle.waitUntilExists(timeout: 10), "The reader did not open")
-        capture("epub-chapter")
+        openPagedBook()
+        XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open as pages")
+        XCTAssertEqual(pageNumber, 1, "The book did not open on its first page")
 
-        // The table of contents stays readable over the chapter it lists.
-        let toc = app.buttons["fullScreen.book.toc"]
-        XCTAssertTrue(toc.waitUntilExists(timeout: 5), "The reader has no table of contents")
-        toc.tap()
-        XCTAssertTrue(
-            app.buttons.matching(NSPredicate(format: "label == %@", "Two")).firstMatch
-                .waitUntilExists(timeout: 5),
-            "The table of contents did not open"
+        // The page is alone on screen until a tap in the middle brings the
+        // controls back.
+        XCTAssertFalse(chromeIsVisible, "The reader's chrome is showing while reading")
+        // The fade is short, but a capture has to see the page it leaves behind.
+        hold(for: 0.4)
+        capture("epub-paged")
+        let close = app.buttons["fullScreen.code.close"]
+        XCTAssertFalse(
+            close.exists && close.isHittable,
+            "The reader's own controls are still over the page (exists: \(close.exists), hittable: \(close.isHittable))"
         )
-        capture("epub-toc")
-        // The open menu closes on the chapter it already shows.
-        let current = app.buttons.matching(NSPredicate(format: "label == %@", "One")).firstMatch
-        current.tap()
-        _ = waitUntil { !current.exists || !current.isHittable }
+        showChrome()
+        capture("epub-paged-chrome")
+        XCTAssertTrue(chromeIsVisible)
 
-        chooseChapter("Three")
+        openChapter("Three", captureSheet: true)
         XCTAssertTrue(
             waitUntil { self.chapterTitle.label == "Three" },
             "The third chapter did not open, title is \(chapterTitle.label)"
         )
-        assertReaderChromeClearsThePage()
+        XCTAssertEqual(pageNumber, 1, "A chapter opened from the table of contents is not on its first page")
+
+        // Two page turns by tapping the trailing third of the page.
+        let turnedTo = turnPages(2)
+        XCTAssertEqual(turnedTo, 3, "Two page turns from page 1 landed on page \(turnedTo)")
+        // Read the page once its turn has settled: a snapshot taken mid-animation
+        // can lose the cell it was reading.
+        hold(for: 0.6)
+        let openingWords = try XCTUnwrap(firstWordsOfThePage(), "The page has no text to read")
+
+        // Leave and come back: the same chapter, and the words the person left
+        // on screen. The page number can move by one when the sheet settles to
+        // a point of a different height; the words cannot.
+        closeReader()
+        openPagedBook()
+        showChrome()
+        XCTAssertTrue(
+            waitUntil { self.chapterTitle.label == "Three" },
+            "Reopening lost the chapter, title is \(chapterTitle.label)"
+        )
+        XCTAssertTrue(
+            pageContains(openingWords),
+            "Reopening lost the words the person left: \"\(openingWords)\" is not on screen"
+        )
+        XCTAssertLessThanOrEqual(
+            abs(pageNumber - turnedTo),
+            1,
+            "Reopening moved more than a page: page \(pageNumber), not \(turnedTo)"
+        )
+
+        // A text-size change re-flows the chapter. What the person was reading
+        // is still on the page they come back to.
+        let anchor = try XCTUnwrap(middleWordsOfThePage(), "The page has no text to read")
+        changeTextSize()
+        closeReader()
+        openPagedBook()
+        showChrome()
+        XCTAssertTrue(
+            pageContains(anchor),
+            "After the text-size change the book opened away from \"\(anchor)\""
+        )
+    }
+
+    /// The scrolling body is one choice away in the Aa menu, and it keeps its
+    /// own journey: the chapter, and the paragraph the person was reading.
+    func testScrollingModeKeepsTheParagraph() throws {
+        launchHarness()
+        openBook()
+        XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open")
+
+        chooseScrollingMode()
+        XCTAssertTrue(
+            app.collectionViews["fullScreen.book.body"].firstMatch.waitUntilExists(timeout: 10),
+            "The scrolling body did not appear"
+        )
+        XCTAssertTrue(
+            app.buttons["fullScreen.book.previous"].waitUntilExists(timeout: 5),
+            "Scrolling lost its Previous/Next footer"
+        )
+        capture("epub-scrolling")
+
+        openChapter("Three")
+        let body = app.collectionViews["fullScreen.book.body"].firstMatch
+        body.swipeUp()
+        body.swipeUp()
+        let paragraph = try XCTUnwrap(topVisibleParagraph(timeout: 5), "No paragraph was visible after scrolling")
+        assertParagraphIsNearTheTop(paragraph)
+
+        closeReader()
+        openBook()
+        XCTAssertTrue(
+            waitUntil { self.chapterTitle.label == "Three" },
+            "Reopening lost the chapter, title is \(chapterTitle.label)"
+        )
+        assertParagraphIsNearTheTop(paragraph)
+    }
+
+    /// The reader's floating chrome and the body's own chrome do not overlap:
+    /// the chapter header sits below the close control, and the scrolling
+    /// footer's two buttons share one row.
+    func testScrollingChromeClearsThePage() throws {
+        launchHarness()
+        openBook()
+        XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open")
+        chooseScrollingMode()
+        XCTAssertTrue(app.collectionViews["fullScreen.book.body"].firstMatch.waitUntilExists(timeout: 10))
+
+        let close = app.buttons["fullScreen.code.close"]
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The reader has no close control")
+        XCTAssertFalse(
+            close.frame.intersects(chapterTitle.frame),
+            "The chapter header \(chapterTitle.frame) sits under the close control \(close.frame)"
+        )
+
+        let previous = app.buttons["fullScreen.book.previous"]
+        let next = app.buttons["fullScreen.book.next"]
+        XCTAssertTrue(previous.waitUntilExists(timeout: 5), "The reader has no Previous")
+        XCTAssertTrue(next.waitUntilExists(timeout: 5), "The reader has no Next")
+        XCTAssertEqual(previous.frame.minY, next.frame.minY, accuracy: 1, "Previous and Next are not on one baseline")
+    }
+
+    /// A live text-size change made in Viewing Options re-flows the chapter in
+    /// place: the rows come out as one ordered stack, with no row from the old
+    /// size left drawn over the new layout.
+    func testScrollingTextSizeChangeLeavesOneOrderedChapter() throws {
+        launchHarness()
+        openBook()
+        XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open")
+        chooseScrollingMode()
+        XCTAssertTrue(app.collectionViews["fullScreen.book.body"].firstMatch.waitUntilExists(timeout: 10))
+        openChapter("Three")
 
         setTextSizeToMaximum()
-        // Captured straight after the live change, before any reopen: the path
-        // that left the old layout drawn on screen.
-        capture("epub-larger-text")
-        assertReaderChromeClearsThePage()
-
         let paragraphs = visibleParagraphFrames()
         XCTAssertGreaterThan(paragraphs.count, 3, "The chapter drew almost nothing after the change")
         let ordered = paragraphs.sorted { $0.frame.minY < $1.frame.minY }
@@ -63,51 +169,6 @@ final class BookReaderHarnessUITests: XCTestCase {
         }
         let labels = ordered.map(\.label)
         XCTAssertEqual(Set(labels).count, labels.count, "A paragraph is drawn twice: \(labels)")
-    }
-
-    func testTableOfContentsKeepsTheParagraphAcrossReopenAndTextSize() throws {
-        launchHarness()
-        openBook()
-        XCTAssertTrue(chapterTitle.waitUntilExists(timeout: 10), "The reader did not open")
-        XCTAssertEqual(chapterTitle.label, "One")
-
-        chooseChapter("Three")
-        XCTAssertTrue(
-            waitUntil { self.chapterTitle.label == "Three" },
-            "The third chapter did not open, title is \(chapterTitle.label)"
-        )
-
-        // The body answers bookmark the view and its collection; the collection
-        // is the scroll view a swipe belongs to.
-        let body = app.collectionViews["fullScreen.book.body"].firstMatch
-        XCTAssertTrue(body.waitUntilExists(timeout: 5))
-        body.swipeUp()
-        body.swipeUp()
-
-        let paragraph = try XCTUnwrap(
-            topVisibleParagraph(timeout: 5),
-            "No chapter paragraph was visible after scrolling"
-        )
-        assertParagraphIsNearTheTop(paragraph)
-
-        // Leave the reader and come back: the same paragraph, same chapter.
-        closeReader()
-        openBook()
-        XCTAssertTrue(
-            waitUntil { self.chapterTitle.label == "Three" },
-            "Reopening lost the chapter, title is \(chapterTitle.label)"
-        )
-        assertParagraphIsNearTheTop(paragraph)
-
-        // A text-size change re-flows the chapter; the paragraph still leads.
-        changeTextSize()
-        closeReader()
-        openBook()
-        XCTAssertTrue(
-            waitUntil { self.chapterTitle.label == "Three" },
-            "Reopening after a text-size change lost the chapter"
-        )
-        assertParagraphIsNearTheTop(paragraph)
     }
 
     // MARK: - Actions
@@ -124,34 +185,100 @@ final class BookReaderHarnessUITests: XCTestCase {
     }
 
     private func openBook() {
-        let open = app.buttons["harness.book.open"]
-        XCTAssertTrue(open.waitUntilExists(timeout: 5), "The shelf has no Open book button")
+        openBookButton("harness.book.open")
+    }
+
+    /// The longer book the paged journey needs: its chapters run over several
+    /// pages, which the short one does not.
+    private func openPagedBook() {
+        openBookButton("harness.book.paged.open")
+    }
+
+    private func openBookButton(_ identifier: String) {
+        let open = app.buttons[identifier]
+        XCTAssertTrue(open.waitUntilExists(timeout: 5), "The shelf has no \(identifier) button")
         open.tap()
     }
 
     private func closeReader() {
+        showChrome()
         let close = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(close.waitUntilExists(timeout: 5), "The reader has no close control")
         close.tap()
+        XCTAssertTrue(close.waitUntilGone(timeout: 5), "The reader did not close")
+    }
+
+    /// The chrome is faded out while a book is read as pages; a tap in the middle
+    /// third of the page is what shows it.
+    private func showChrome() {
+        guard !chromeIsVisible else { return }
+        let pages = app.descendants(matching: .any)["fullScreen.book.pages"].firstMatch
+        if pages.exists {
+            pages.tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         XCTAssertTrue(
-            close.waitUntilGone(timeout: 5),
-            "The reader did not close"
+            waitUntil { self.chromeIsVisible },
+            "A tap in the middle of the page did not show the reader's chrome. The screen reads: \(app.debugDescription)"
         )
     }
 
-    private func chooseChapter(_ title: String) {
+    private var chromeIsVisible: Bool {
+        let toc = app.buttons["fullScreen.book.toc"]
+        return toc.exists && toc.isHittable
+    }
+
+    /// The table of contents sheet opens on the chapter on screen; a row is a
+    /// cell labelled with its title (and, for the open chapter, that it is).
+    private func openChapter(_ title: String, captureSheet: Bool = false) {
+        showChrome()
         let toc = app.buttons["fullScreen.book.toc"]
         XCTAssertTrue(toc.waitUntilExists(timeout: 5), "The reader has no table of contents")
         toc.tap()
-        // A popover action is a button, and the chapter's own text can share
-        // its label, so match the whole label on buttons only.
-        let item = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
-        XCTAssertTrue(item.waitUntilExists(timeout: 5), "No table of contents row for \(title)")
-        item.tap()
-        _ = waitUntil { !item.exists || !item.isHittable }
+        let sheet = app.descendants(matching: .any)["fullScreen.book.tocSheet"]
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "The table of contents sheet did not open")
+        if captureSheet { capture("epub-toc-sheet") }
+        // A row is a list cell, and the chapter's own text can share its words,
+        // so the search stays inside the sheet.
+        let row = sheet.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", title))
+            .firstMatch
+        XCTAssertTrue(row.waitUntilExists(timeout: 5), "No table of contents row for \(title)")
+        row.tap()
+        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "The table of contents sheet did not close")
+    }
+
+    private func chooseScrollingMode() {
+        showChrome()
+        let appearance = app.buttons["fullScreen.book.aa"]
+        XCTAssertTrue(appearance.waitUntilExists(timeout: 5), "The reader has no appearance control")
+        appearance.tap()
+        let scrolling = app.buttons.matching(NSPredicate(format: "label == %@", "Scrolling")).firstMatch
+        XCTAssertTrue(scrolling.waitUntilExists(timeout: 5), "The appearance menu has no Scrolling choice")
+        scrolling.tap()
+    }
+
+    /// Taps the trailing third of the page `count` times, and answers the page
+    /// number the reader shows afterwards.
+    @discardableResult
+    private func turnPages(_ count: Int, file: StaticString = #filePath, line: UInt = #line) -> Int {
+        var page = pageNumber
+        for _ in 0..<count {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            XCTAssertTrue(
+                waitUntil { self.pageNumber == page + 1 },
+                "The trailing tap did not turn the page from \(page)",
+                file: file,
+                line: line
+            )
+            page += 1
+        }
+        return page
     }
 
     private func changeTextSize() {
+        showChrome()
         let options = app.buttons["fullscreen.viewingOptions.button"]
         XCTAssertTrue(options.waitUntilExists(timeout: 5), "The reader has no Viewing Options")
         options.tap()
@@ -161,13 +288,13 @@ final class BookReaderHarnessUITests: XCTestCase {
         slider.adjust(toNormalizedSliderPosition: 0.1)
 
         let sheet = app.otherElements["fullscreen.viewingOptions"]
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Viewing Options did not open")
         sheet.swipeDown()
         XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
     }
 
-    /// The largest text size, changed in place: the chapter re-flows while the
-    /// person watches, without a reopen.
     private func setTextSizeToMaximum() {
+        showChrome()
         let options = app.buttons["fullscreen.viewingOptions.button"]
         XCTAssertTrue(options.waitUntilExists(timeout: 5), "The reader has no Viewing Options")
         options.tap()
@@ -182,34 +309,134 @@ final class BookReaderHarnessUITests: XCTestCase {
         XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
     }
 
-    /// The reader's floating chrome and the body's own chrome do not overlap:
-    /// the chapter header sits below the close control and the footer's two
-    /// buttons share one row.
-    private func assertReaderChromeClearsThePage(
+    // MARK: - Reading state
+
+    private var chapterTitle: XCUIElement {
+        app.staticTexts["fullScreen.book.title"]
+    }
+
+    private var progressLine: XCUIElement {
+        app.descendants(matching: .any)["fullScreen.book.progress"]
+    }
+
+    /// The page number in "Page 3 of 12, 5 min left in chapter".
+    private var pageNumber: Int {
+        let label = progressLine.label
+        guard let page = label.split(separator: " ").dropFirst().first, let number = Int(page) else {
+            XCTFail("The progress line does not name a page: \"\(label)\"")
+            return -1
+        }
+        return number
+    }
+
+    /// The text of the page on screen: the page cells are one accessibility stop
+    /// each, and only the one in the reading area is the person's page.
+    private func visiblePageTexts() -> [String] {
+        let area = app.windows.firstMatch.frame
+        return app.descendants(matching: .any)
+            .matching(identifier: "fullScreen.book.page")
+            .allElementsBoundByIndex
+            .filter { $0.exists && $0.frame.minX >= area.minX && $0.frame.maxX <= area.minX + area.width + 1 }
+            .map(\.label)
+            .filter { !$0.isEmpty }
+    }
+
+    /// True when some text on screen carries `words`: the page the person left
+    /// begins with them, wherever the re-flow put the page boundary.
+    private func pageContains(_ words: String, timeout: TimeInterval = 5) -> Bool {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", words))
+            .firstMatch
+            .waitUntilExists(timeout: timeout)
+    }
+
+    /// The first words of the page on screen: where the page the person left
+    /// begins.
+    private func firstWordsOfThePage() -> String? {
+        for text in visiblePageTexts() {
+            let words = text.split(separator: " ")
+            guard words.count > 4 else { continue }
+            return words.prefix(4).joined(separator: " ")
+        }
+        return nil
+    }
+
+    /// Three words from the middle of the page: what the person is looking at,
+    /// found again wherever a re-flow puts it.
+    private func middleWordsOfThePage() -> String? {
+        for text in visiblePageTexts() {
+            let words = text.split(separator: " ")
+            guard words.count > 12 else { continue }
+            let start = words.count / 2
+            return words[start..<min(start + 3, words.count)].joined(separator: " ")
+        }
+        return nil
+    }
+
+    /// The label of the paragraph nearest the top of the scrolling reading area.
+    private func topVisibleParagraph(timeout: TimeInterval) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let label = visibleParagraphs().min(by: { $0.frame.minY < $1.frame.minY })?.label {
+                return label
+            }
+            hold(for: 0.2)
+        } while Date() < deadline
+        return nil
+    }
+
+    private func assertParagraphIsNearTheTop(
+        _ paragraph: String,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let close = app.buttons["fullScreen.code.close"]
-        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The reader has no close control", file: file, line: line)
-        XCTAssertFalse(
-            close.frame.intersects(chapterTitle.frame),
-            "The chapter header \(chapterTitle.frame) sits under the close control \(close.frame)",
+        let match = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", paragraph))
+            .firstMatch
+        XCTAssertTrue(
+            match.waitUntilExists(timeout: 5),
+            "The saved paragraph is not on screen: \(paragraph). Visible: \(visibleParagraphs().prefix(3).map(\.label))",
             file: file,
             line: line
         )
+        XCTAssertTrue(
+            waitUntil { (0...360).contains(match.frame.minY) },
+            "The saved paragraph is not near the top: y=\(match.frame.minY)",
+            file: file,
+            line: line
+        )
+    }
 
-        let previous = app.buttons["fullScreen.book.previous"]
-        let next = app.buttons["fullScreen.book.next"]
-        XCTAssertTrue(previous.waitUntilExists(timeout: 5), "The reader has no Previous", file: file, line: line)
-        XCTAssertTrue(next.waitUntilExists(timeout: 5), "The reader has no Next", file: file, line: line)
-        XCTAssertEqual(
-            previous.frame.minY,
-            next.frame.minY,
-            accuracy: 1,
-            "Previous and Next are not on one baseline",
-            file: file,
-            line: line
-        )
+    /// The chapter paragraphs the scrolling body is drawing right now, ordered by
+    /// where they sit.
+    private func visibleParagraphFrames() -> [(label: String, frame: CGRect)] {
+        let area = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Chapter 3 paragraph"))
+            .allElementsBoundByIndex
+            .filter { $0.exists && $0.frame.height > 0 && $0.frame.minY >= area.minY && $0.frame.maxY <= area.maxY }
+            .map { ($0.label, $0.frame) }
+    }
+
+    private func visibleParagraphs() -> [XCUIElement] {
+        let predicate = NSPredicate(format: "label CONTAINS %@", "says the same calm thing")
+        // A rendered paragraph is a TextKit text view, not a plain label.
+        return app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex.filter {
+            $0.exists && $0.frame.height > 0 && $0.frame.minY > 120
+                && $0.frame.maxY < app.windows.firstMatch.frame.height - 60
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// A condition read on the run loop, so a settled layout is not raced.
+    private func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if condition() { return true }
+            hold(for: 0.2)
+        } while Date() < deadline
+        return condition()
     }
 
     /// Writes the screen to `OPPI_BOOK_SHOTS` when that is set, and keeps it on
@@ -233,87 +460,17 @@ final class BookReaderHarnessUITests: XCTestCase {
         )
     }
 
-    /// Lets the reader finish presenting or re-flowing: the chapter's frame has
+    /// Lets the reader finish presenting or re-flowing: the page's frame has
     /// stopped moving, so a capture sees the page at rest.
     private func waitUntilThePageIsStill() {
+        let page = app.descendants(matching: .any)["fullScreen.book.pages"].firstMatch
         var previous: CGRect = .null
         let deadline = Date().addingTimeInterval(5)
         repeat {
-            let frame = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+            let frame = page.exists ? page.frame : app.windows.firstMatch.frame
             if frame == previous, !frame.isEmpty { return }
             previous = frame
             hold(for: 0.2)
         } while Date() < deadline
-    }
-
-    // MARK: - Reading position
-
-    private var chapterTitle: XCUIElement {
-        app.staticTexts["fullScreen.book.title"]
-    }
-
-    /// The label of the paragraph nearest the top of the reading area.
-    private func topVisibleParagraph(timeout: TimeInterval) -> String? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if let label = visibleParagraphs().min(by: { $0.frame.minY < $1.frame.minY })?.label {
-                return label
-            }
-            hold(for: 0.2)
-        } while Date() < deadline
-        return nil
-    }
-
-    /// Assert `paragraph` is on screen in the upper part of the reading area,
-    /// which is where a restored block lands.
-    private func assertParagraphIsNearTheTop(
-        _ paragraph: String,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-        let match = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", paragraph))
-            .firstMatch
-        XCTAssertTrue(
-            match.waitUntilExists(timeout: 5),
-            "The saved paragraph is not on screen: \(paragraph)",
-            file: file,
-            line: line
-        )
-        XCTAssertTrue(
-            waitUntil { (0...360).contains(match.frame.minY) },
-            "The saved paragraph is not near the top: y=\(match.frame.minY)",
-            file: file,
-            line: line
-        )
-    }
-
-    /// A condition read on the run loop, so a settled layout is not raced.
-    private func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 5) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if condition() { return true }
-            hold(for: 0.2)
-        } while Date() < deadline
-        return condition()
-    }
-
-    /// Chapter paragraphs are the only texts that carry this sentence.
-    private func visibleParagraphs() -> [XCUIElement] {
-        let predicate = NSPredicate(format: "label CONTAINS %@", "says the same calm thing")
-        // A rendered paragraph is a TextKit text view, not a plain label.
-        return app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex.filter {
-            $0.exists && $0.frame.height > 0 && $0.frame.minY > 120 && $0.frame.maxY < app.windows.firstMatch.frame.height - 60
-        }
-    }
-
-    /// The chapter paragraphs the body is showing right now, in window space.
-    private func visibleParagraphFrames() -> [(label: String, frame: CGRect)] {
-        let area = app.collectionViews["fullScreen.book.body"].firstMatch.frame
-        return app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Chapter 3 paragraph"))
-            .allElementsBoundByIndex
-            .filter { $0.exists && $0.frame.height > 0 && $0.frame.minY >= area.minY && $0.frame.maxY <= area.maxY }
-            .map { ($0.label, $0.frame) }
     }
 }

@@ -409,6 +409,15 @@ final class FullScreenCodeViewController: UIViewController {
         installedBodyView = bodyView
         bodyView.translatesAutoresizingMaskIntoConstraints = false
         viewController.view.addSubview(bodyView)
+        // A body that takes the whole page fades the reader's own controls; it
+        // draws its own chrome, so it knows when reading should be alone on
+        // screen. A rebuilt body starts with them shown.
+        setImmersiveChromeHidden(false, animated: false)
+        bodyView.onImmersiveChromeChange = { [weak self] hidden in
+            self?.setImmersiveChromeHidden(hidden, animated: true)
+        }
+        // The new body draws its own chrome, so the reader's starts shown until
+        // that body says otherwise.
         // Top pinned to view edge (not safe area) so content scrolls behind
         // the navigation bar's Liquid Glass pills. See FullScreenViewerChrome.
         NSLayoutConstraint.activate([
@@ -510,6 +519,9 @@ final class FullScreenCodeViewController: UIViewController {
         }
         lastNavigationPresentation = navigationPresentation
         installRightBarItems(on: viewController, palette: palette)
+        // A control built after the body asked for the page to be alone is
+        // still out of the way.
+        setImmersiveChromeHidden(isImmersiveChromeHidden, animated: false)
     }
 
     private func syncFloatingControlVisibility(on viewController: UIViewController) {
@@ -517,6 +529,49 @@ final class FullScreenCodeViewController: UIViewController {
         floatingViewingOptionsButton?.isHidden = sideRail
         annotateButton?.isHidden = sideRail
         stashButton.isHidden = sideRail
+    }
+
+    /// True while a body asked for the reader's controls to be out of the way. A
+    /// book read as pages does: the page is the only thing on screen until a tap
+    /// in the middle of it brings the controls back.
+    private var isImmersiveChromeHidden = false
+
+    /// Fades the bar items and the floating pills together. The bar keeps its
+    /// place, so the content keeps the safe area it laid out with; VoiceOver
+    /// keeps the controls, because a control that cannot be found is a reader
+    /// that cannot be left.
+    private func setImmersiveChromeHidden(_ hidden: Bool, animated: Bool) {
+        let next = hidden && !UIAccessibility.isVoiceOverRunning
+        let changed = next != isImmersiveChromeHidden
+        isImmersiveChromeHidden = next
+        // The set of controls changes as the reader builds them (the bar appears
+        // after its host), so every call writes the state to all of them; only a
+        // change earns the fade.
+        let views = immersiveChromeViews
+        for view in views {
+            view.isUserInteractionEnabled = !next
+            view.accessibilityElementsHidden = next
+        }
+        guard changed, animated, !UIAccessibility.isReduceMotionEnabled else {
+            for view in views { view.alpha = next ? 0 : 1 }
+            return
+        }
+        UIView.animate(withDuration: 0.22) {
+            for view in views { view.alpha = next ? 0 : 1 }
+        }
+    }
+
+    /// What the reader draws over the content: the bar it installed and its
+    /// floating controls.
+    private var immersiveChromeViews: [UIView] {
+        var views: [UIView] = []
+        if let bar = contentHostController?.navigationController?.navigationBar {
+            views.append(bar)
+        }
+        for control in [floatingViewingOptionsButton, annotateButton, pickButton, commentButton, stashButton.button] {
+            if let control { views.append(control) }
+        }
+        return views
     }
 
     /// Sole writer of the content host's right bar items. Persistent viewer

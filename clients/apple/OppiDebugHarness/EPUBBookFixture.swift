@@ -35,7 +35,8 @@ enum EPUBFixture {
         title: String = "A Quiet Book",
         chapterTitles: [String] = ["One", "Two", "Three"],
         rightToLeft: Bool = false,
-        deflate: Bool = false
+        deflate: Bool = false,
+        paragraphsPerChapter: Int = 12
     ) -> Data {
         let chapters = chapterTitles.enumerated().map { index, chapterTitle in
             (name: String(format: "text/chapter-%02d.xhtml", index + 1), title: chapterTitle)
@@ -56,7 +57,7 @@ enum EPUBFixture {
         for (index, chapter) in chapters.enumerated() {
             files.append(File(name: "OEBPS/\(chapter.name)", text: chapterDocument(
                 title: chapter.title,
-                paragraphs: chapterParagraphs(index: index, title: chapter.title)
+                paragraphs: chapterParagraphs(index: index, title: chapter.title, count: paragraphsPerChapter)
             )))
         }
         return archive(files: files, deflate: deflate)
@@ -92,9 +93,10 @@ enum EPUBFixture {
         return archive(files: files)
     }
 
-    /// Enough paragraphs that a chapter scrolls and has a distinct middle.
-    static func chapterParagraphs(index: Int, title: String) -> [String] {
-        (1...12).map { paragraph in
+    /// Enough paragraphs that a chapter scrolls and has a distinct middle. A
+    /// paged reader needs more than one page, so it asks for more.
+    static func chapterParagraphs(index: Int, title: String, count: Int = 12) -> [String] {
+        (1...max(count, 1)).map { paragraph in
             "Chapter \(index + 1) paragraph \(paragraph) of \(title) says the same calm thing again."
         }
     }
