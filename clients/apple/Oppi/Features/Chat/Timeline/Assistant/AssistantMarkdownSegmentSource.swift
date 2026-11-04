@@ -633,14 +633,24 @@ final class AssistantMarkdownSegmentSource {
         to segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration
     ) -> [FlatSegment] {
-        guard let preferences = config.readerPreferences,
-              preferences != FullScreenReaderContentFamily.markdown.defaultPreferences
-        else { return segments }
-
-        return segments.map { segment in
-            guard case .text(let text) = segment else { return segment }
-            return .text(applyReaderPreferences(to: text, preferences: preferences))
+        var segments = segments
+        if let preferences = config.readerPreferences,
+           preferences != FullScreenReaderContentFamily.markdown.defaultPreferences {
+            segments = segments.map { segment in
+                guard case .text(let text) = segment else { return segment }
+                return .text(applyReaderPreferences(to: text, preferences: preferences))
+            }
         }
+        // Book typography has the last word on a chapter's text: it owns the
+        // font, ink and paragraph metrics of every run it sees.
+        if let appearance = config.bookAppearance {
+            segments = BookReaderTextAppearance.apply(
+                appearance,
+                scale: config.readerPreferences?.textScale ?? 1,
+                to: segments
+            )
+        }
+        return segments
     }
 
     private static func applyReaderPreferences(

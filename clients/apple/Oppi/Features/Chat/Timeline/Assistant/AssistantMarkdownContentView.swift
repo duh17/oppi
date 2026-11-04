@@ -73,6 +73,9 @@ final class AssistantMarkdownContentView: UIView {
         /// Optional full-screen reader styling. Inline/timeline markdown leaves
         /// this nil so chat rendering keeps its compact default metrics.
         let readerPreferences: FullScreenReaderPreferences?
+        /// Optional book typography. A book chapter sets this so its text is
+        /// typeset by the reader's appearance instead of the chat metrics.
+        let bookAppearance: BookReaderAppearance?
         /// Controls whether async work (mermaid rendering, syntax highlighting,
         /// image loading) runs on background threads or the current thread.
         ///
@@ -100,6 +103,7 @@ final class AssistantMarkdownContentView: UIView {
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
+            bookAppearance: BookReaderAppearance? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
@@ -117,6 +121,7 @@ final class AssistantMarkdownContentView: UIView {
             self.sourceFilePath = sourceFilePath
             self.lineAnchor = lineAnchor
             self.readerPreferences = readerPreferences
+            self.bookAppearance = bookAppearance
             self.preparationRevision = preparationRevision
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
@@ -134,6 +139,7 @@ final class AssistantMarkdownContentView: UIView {
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
+            bookAppearance: BookReaderAppearance? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
@@ -151,6 +157,7 @@ final class AssistantMarkdownContentView: UIView {
                 sourceFilePath: sourceFilePath,
                 lineAnchor: lineAnchor,
                 readerPreferences: readerPreferences,
+                bookAppearance: bookAppearance,
                 preparationRevision: preparationRevision,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode,
@@ -170,6 +177,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.lineAnchor == rhs.lineAnchor
                 && lhs.readerPreferences == rhs.readerPreferences
+                && lhs.bookAppearance == rhs.bookAppearance
                 && lhs.preparationRevision == rhs.preparationRevision
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode

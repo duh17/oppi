@@ -422,6 +422,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var untrimmedSegments: [FlatSegment]?
     private var intrinsicViewportContentHeight: CGFloat = 44
     private var readerPreferences: FullScreenReaderPreferences
+    /// Book typography for this document, when its owner is a book reader.
+    /// Nil keeps the app's chat metrics.
+    private var bookAppearance: BookReaderAppearance?
 
     private let perfSurface: MarkdownStreamingPerf.Surface?
 
@@ -480,6 +483,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
+        bookAppearance: BookReaderAppearance? = nil,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         maximumViewportHeight: CGFloat? = nil,
         allowsVerticalBounce: Bool = true,
@@ -502,6 +506,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let initialText = content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
+        self.bookAppearance = bookAppearance
         self.maximumViewportHeight = maximumViewportHeight
         self.visibleHeightCeiling = allowsVerticalScrolling ? nil : visibleHeightCeiling
         self.trimsTextToViewport = !allowsVerticalScrolling && visibleHeightCeiling != nil
@@ -530,10 +535,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
         #endif
 
-        backgroundColor = palette.ui.bgDark
+        backgroundColor = bookAppearance?.backgroundColor(in: palette) ?? palette.ui.bgDark
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.backgroundColor = palette.ui.bgDark
+        collectionView.backgroundColor = bookAppearance?.backgroundColor(in: palette) ?? palette.ui.bgDark
         collectionView.alwaysBounceVertical = allowsVerticalBounce && allowsVerticalScrolling
         collectionView.bounces = allowsVerticalBounce && allowsVerticalScrolling
         collectionView.isScrollEnabled = allowsVerticalScrolling
@@ -877,6 +882,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
+            bookAppearance: bookAppearance,
             perfSurface: perfSurface,
             // Static reader document: LaTeX/Mermaid must finish before cell
             // self-sizing, or their async resize invalidates the collection
@@ -2437,6 +2443,20 @@ extension NativeFullScreenMarkdownBody: ReaderBody {
         let inset = max(0, inset)
         guard abs(collectionView.contentInset.bottom - inset) > 0.5 else { return }
         collectionView.contentInset.bottom = inset
+    }
+
+    /// Book typography is part of what a text segment bakes in, so a change
+    /// re-renders the document the same way a new text size does.
+    func applyBookAppearance(_ appearance: BookReaderAppearance?) {
+        guard appearance != bookAppearance else { return }
+        bookAppearance = appearance
+        let paper = appearance?.backgroundColor(in: themeID.palette) ?? themeID.palette.ui.bgDark
+        backgroundColor = paper
+        collectionView.backgroundColor = paper
+        needsSnapshotReconfiguration = true
+        pendingReconfigurationLayoutReason = .readerPreferences
+        render(snapshot: latestSnapshot)
+        setNeedsLayout()
     }
 }
 

@@ -36,9 +36,9 @@
       "reason": "Loader, player, and probes in one grab-bag; a move-only split, not urgent."
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeBodies.swift": {
-      "budget": 2900,
+      "budget": 3000,
       "owner": "document reader plan",
-      "reason": "The Markdown reader body and its segment cell; the other bodies moved to Core/Views/Reader, and splitting this class needs its private state opened."
+      "reason": "The Markdown reader body and its segment cell; the other bodies moved to Core/Views/Reader, and splitting this class needs its private state opened. The book page's appearance hooks (paper, ink, book typography) land here until the paged book body takes them."
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
       "budget": 1700,

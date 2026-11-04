@@ -32,6 +32,8 @@ final class BookReaderBody: UIView {
     private let sourceContext: ReviewCommentSourceContext?
     private let positionStore: EPUBReadingPositionStore
     private let modeStore: BookReaderPageModeStore
+    private let appearanceStore: BookReaderAppearanceStore
+    private var appearance: BookReaderAppearance
 
     private let header = UIView()
     private let titleLabel = UILabel()
@@ -118,7 +120,8 @@ final class BookReaderBody: UIView {
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         positionStore: EPUBReadingPositionStore = EPUBReadingPositionStore(),
-        modeStore: BookReaderPageModeStore = BookReaderPageModeStore()
+        modeStore: BookReaderPageModeStore = BookReaderPageModeStore(),
+        appearanceStore: BookReaderAppearanceStore = .shared
     ) {
         self.document = document
         self.themeID = themeID
@@ -134,6 +137,8 @@ final class BookReaderBody: UIView {
             textScale: readerPreferences.textScale,
             spacing: readerPreferences.spacing
         )
+        self.appearanceStore = appearanceStore
+        self.appearance = appearanceStore.appearance
 
         let saved = positionStore.position(for: document.positionKey)
         let chapter = saved.flatMap { document.book.chapterIndex(forHref: $0.chapterHref) }
@@ -147,6 +152,7 @@ final class BookReaderBody: UIView {
         installChapterContent()
         restoreStoredPosition(saved)
         observeBackgrounding()
+        observeAppearanceChanges()
     }
 
     @available(*, unavailable)
@@ -234,15 +240,7 @@ final class BookReaderBody: UIView {
         appearanceButton.tintColor = palette.ui.blue
         appearanceButton.accessibilityIdentifier = "fullScreen.book.aa"
         appearanceButton.accessibilityLabel = String(localized: "Appearance")
-        // The appearance menu belongs to `BookReaderAppearance`; until it lands,
-        // this control carries the one choice the body owns. Deferred, so the
-        // checkmark is read when the person opens the menu.
-        appearanceButton.showsMenuAsPrimaryAction = true
-        appearanceButton.menu = UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] completion in
-                completion(self?.appearanceActions() ?? [])
-            },
-        ])
+        appearanceButton.addTarget(self, action: #selector(presentAppearanceMenu), for: .touchUpInside)
 
         for (button, title, identifier, symbol) in [
             (previousButton, String(localized: "Previous"), "fullScreen.book.previous", "chevron.backward"),
@@ -391,6 +389,51 @@ final class BookReaderBody: UIView {
         setNeedsLayout()
     }
 
+    /// The page behind the chapter is book paper, not app chrome: the chapter
+    /// header, footer and progress line keep the reading theme.
+    private func paintPage() {
+        contentHost.backgroundColor = appearance.backgroundColor(in: palette)
+    }
+
+    private func observeAppearanceChanges() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appearanceDidChange),
+            name: BookReaderAppearanceStore.didChangeNotification,
+            object: appearanceStore
+        )
+    }
+
+    @objc private func appearanceDidChange() {
+        let next = appearanceStore.appearance
+        guard next != appearance else { return }
+        appearance = next
+        paintPage()
+        // A paged chapter is typeset into page-sized containers, so a new
+        // appearance means new pages; the pages land on the same words.
+        rebuildStyle()
+        if mode == .pages {
+            schedulePagination()
+        } else {
+            chapterBody?.applyBookAppearance(appearance)
+        }
+    }
+
+    /// The reader's sheet is presented by whichever controller owns this body.
+    @objc private func presentAppearanceMenu() {
+        guard let owner = hostingViewController else { return }
+        let menu = BookReaderAppearanceMenuViewController(store: appearanceStore)
+        let presenter = owner.presentedViewController ?? owner
+        // A wide page gets a popover at the control that opened it; a phone
+        // gets a sheet that hugs its content.
+        if presenter.traitCollection.horizontalSizeClass == .regular {
+            menu.modalPresentationStyle = .popover
+            menu.popoverPresentationController?.sourceView = appearanceButton
+            menu.popoverPresentationController?.sourceRect = appearanceButton.bounds
+        }
+        presenter.present(menu, animated: true)
+    }
+
     private func updateChrome() {
         let chapter = document.book.chapters.indices.contains(chapterIndex)
             ? document.book.chapters[chapterIndex]
@@ -493,19 +536,6 @@ final class BookReaderBody: UIView {
         return nil
     }
 
-    /// The Aa menu's entries today: how the chapter is shown. The appearance
-    /// menu will join these when `BookReaderAppearance` lands.
-    private func appearanceActions() -> [UIMenuElement] {
-        BookReaderPageMode.allCases.map { candidate in
-            UIAction(
-                title: candidate.displayName,
-                state: candidate == mode ? .on : .off
-            ) { [weak self] _ in
-                self?.setMode(candidate)
-            }
-        }
-    }
-
     /// Switches how the chapter is shown, staying at the same block. The Aa menu
     /// calls this; so does the placeholder action sheet above.
     func setMode(_ next: BookReaderPageMode) {
@@ -572,11 +602,13 @@ extension BookReaderBody {
             reviewCommentSourceContext: sourceContext,
             sourceFilePath: document.filePath,
             readerPreferences: readerPreferences,
+            bookAppearance: appearance,
             perfSurface: .fullScreenMarkdown,
             mergeAdjacentTextSegments: false
         )
         body.translatesAutoresizingMaskIntoConstraints = false
         body.accessibilityIdentifier = "fullScreen.book.body"
+        paintPage()
         contentHost.addSubview(body)
         NSLayoutConstraint.activate([
             body.topAnchor.constraint(equalTo: contentHost.topAnchor),
