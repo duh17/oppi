@@ -16,11 +16,18 @@ import {
   type ToolExecutionResult,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { defineExtension, defineFacet, DurableInputCards, DurableUI, Extensions } from "oppi/v1";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import {
+  defineExtension,
+  defineFacet,
+  DurableInputCards,
+  Extensions,
+  oppiHost,
+  type SurfacePublisher,
+} from "oppi/v1";
 import {
   BACKGROUND_POLICY,
   backgroundDisposition,
-  backgroundPill,
   bashBackgroundAdvice,
   formatBackgroundNotice,
   formatForegroundResult,
@@ -28,6 +35,7 @@ import {
 } from "./jobs.js";
 import { RESULT_GUIDANCE } from "./delivery.js";
 import { DurableJobs, type Job, type Status } from "./contract.js";
+import { createJobsPanel, type JobsPanel, type PanelJob } from "./panel.js";
 
 type Output = { output: string; truncated: boolean };
 /**
@@ -61,52 +69,111 @@ function jobById(jobs: readonly Job[], jobId: string): Job {
   return job;
 }
 
-async function publish(tx: Tx, id: ConversationId): Promise<void> {
-  const jobs = (await tx.doc(DurableJobs, id)).jobs;
-  const pill = backgroundPill(
-    jobs
-      .filter((job) => job.decision === "background" && !job.delivered)
-      .map((job) => ({
-        ...job,
-        // The classic pill treats every non-success terminal outcome as an error.
-        status: job.status === "interrupted" ? "failed" : job.status,
-        backgrounded: true,
-      })),
-  );
-  const ui = await tx.doc(DurableUI, id);
-  const provenance = {
-    extensionScopeId: "repo:background-jobs",
-    extensionDisplayName: "Background Jobs",
-  };
-  ui.notifications["status:background-jobs"] = {
-    id: "background-jobs:status",
-    method: "setStatus",
-    statusKey: "background-jobs",
-    ...provenance,
-    ...(pill ? { statusText: pill.status } : {}),
-  };
-  ui.notifications["widget:background-jobs"] = {
-    id: "background-jobs:widget",
-    method: "setWidget",
-    widgetKey: "background-jobs",
-    ...provenance,
-    ...(pill
-      ? {
-          widgetLines: pill.lines,
-          nativeSurface: {
-            version: 1,
-            id: "widget:background-jobs",
-            source: "widget",
-            presentation: {
-              style: "surfacePanel",
-              title: pill.title,
-              subtitle: pill.subtitle,
-            },
-            blocks: [{ type: "activityList", id: "jobs", rows: pill.rows }],
-            fallback: { lines: pill.summary },
-          },
-        }
-      : {}),
+// --- the panel --------------------------------------------------------------------------------
+//
+// The jobs panel is a v2 surface (`panel.ts`) in the live Session's own loop, so it has no saved
+// record of its own: it is drawn from the job list in `DurableJobs`, which is. Every change to that
+// list publishes it again, and so does a runner that resumes after a restart, which is how it
+// returns once the Session is attached. A conversation with no live Session has no panel.
+
+/** One live Session's panel: the surface, the handles that stop its jobs, and its publish queue. */
+interface LivePanel extends JobsPanel {
+  /** Publishes run one after another, each reading the list afresh, so the last one is current. */
+  queue: Promise<void>;
+}
+
+/** A panel is per live Session loop: a new loop (after a Session restarts) gets a new panel. */
+const panels = new WeakMap<SurfacePublisher, LivePanel>();
+
+/** The Session loop of the conversation that runs `env`; none for a bare Harness or a stopped Session. */
+function surfacesOf(env: ExecutionEnv | undefined): SurfacePublisher | undefined {
+  try {
+    return oppiHost().surfaces(env);
+  } catch {
+    return undefined;
+  }
+}
+
+function panelOf(surfaces: SurfacePublisher): LivePanel {
+  let panel = panels.get(surfaces);
+  if (!panel) {
+    panel = { ...createJobsPanel(), queue: Promise.resolve() };
+    panels.set(surfaces, panel);
+  }
+  return panel;
+}
+
+/** The execution env of a task, or none when its sandbox is not attached. */
+async function envOf(
+  runtime: { env(context: Context): Promise<ExecutionEnv | undefined> },
+  context: Context,
+): Promise<ExecutionEnv | undefined> {
+  try {
+    return await runtime.env(context);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Publish the conversation's panel from its saved job list: the backgrounded jobs whose results
+ * are not delivered yet, or a dismissal when none is left. A panel that cannot be drawn must not
+ * fail the job it shows, so a failure here ends the publish and nothing else.
+ */
+async function syncPanel(
+  reader: DocumentReader,
+  conversationId: ConversationId,
+  env: ExecutionEnv | undefined,
+  context: Context,
+): Promise<void> {
+  const surfaces = surfacesOf(env);
+  if (!surfaces) return;
+  const panel = panelOf(surfaces);
+  panel.queue = panel.queue.then(async () => {
+    try {
+      const saved = (await reader.snapshot(DurableJobs, conversationId, context))?.jobs ?? [];
+      const shown: PanelJob[] = [];
+      for (const job of saved) {
+        if (job.decision !== "background" || job.delivered) continue;
+        // A finished job's output waits in its runner's document until delivery.
+        const output =
+          job.status === "running"
+            ? undefined
+            : (await reader.snapshot(JobOutput, job.taskId, context))?.output;
+        shown.push({
+          id: job.id,
+          command: job.command,
+          // The classic pill treats every non-success terminal outcome as an error.
+          status: job.status === "interrupted" ? "failed" : job.status,
+          startedAt: job.startedAt,
+          ...(output === undefined ? {} : { output }),
+        });
+      }
+      if (shown.length > 0) panel.surface.publish({ surfaces }, { jobs: shown, at: Date.now() });
+      else if (panel.surface.current() !== undefined) panel.surface.end({ surfaces });
+    } catch {
+      // The panel is display only; the next change publishes it again.
+    }
+  });
+  await panel.queue;
+}
+
+/**
+ * Leave `stop` where a tap on the job's Stop reaches it, until the returned function takes it
+ * back. Stop asks for the kill the way `background_job cancel` does: it marks the job in the
+ * saved list, and the runner, which watches that list, kills the process.
+ */
+function offerStop(
+  env: ExecutionEnv | undefined,
+  jobId: string,
+  stop: () => Promise<void>,
+): () => void {
+  const surfaces = surfacesOf(env);
+  if (!surfaces) return () => {};
+  const { stops } = panelOf(surfaces);
+  stops.set(jobId, stop);
+  return () => {
+    if (stops.get(jobId) === stop) stops.delete(jobId);
   };
 }
 
@@ -252,6 +319,15 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           });
           changed(watch?.value ?? null);
           if (live?.value?.run === undefined) await checkStop();
+          const withdrawStop = offerStop(env, job.id, () =>
+            runtime.commit(async (tx) => {
+              const current = jobById(
+                (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+                job.id,
+              );
+              if (current.status === "running") current.cancelRequested = true;
+            }, context),
+          );
           try {
             const result = await env.exec(
               job.command,
@@ -275,6 +351,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
               status = exitCode === 0 ? "completed" : "failed";
             }
           } finally {
+            withdrawStop();
             await watch?.stop();
             await live?.stop();
           }
@@ -298,7 +375,6 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           (await tx.doc(LiveDoc, runtime.conversationId)).run === undefined
         )
           current.decision = "foreground";
-        await publish(tx, runtime.conversationId);
         return { status: "running", checkpoint: { phase: "report" } };
       }, context);
     },
@@ -338,13 +414,15 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
         // Terminal settlement retires this runner's JobOutput document.
         current.delivered = true;
-        await publish(tx, runtime.conversationId);
         return {
           status: "terminal",
           outcome: { status: "completed", result: null },
         };
       };
       if (job.decision === "background") {
+        // The result waits for delivery, so the panel shows it: after a restart this is where the
+        // panel comes back for a job that finished or was interrupted while the server was down.
+        await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
         const conversation = await runtime.conversation(runtime.conversationId, context);
         if (!conversation) throw new Error("Background job conversation disappeared");
         // Follow pi-durable/test/examples/23-subagent-background.ts: one
@@ -393,6 +471,8 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         await runtime.waitForTask(job.starter, context);
       }
       await runtime.commit(settle, context);
+      if (job.decision === "background")
+        await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
     },
   },
   async abort(task, runtime, context) {
@@ -403,9 +483,9 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       );
       job.status = "cancelled";
       job.delivered = true;
-      await publish(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
+    await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
   },
 });
 
@@ -430,7 +510,7 @@ async function start(
   validateTimeout(timeout);
   const env = api.env;
   if (!env) throw new Error("No execution environment for background job");
-  return api.commit(async (tx) => {
+  const started = await api.commit(async (tx) => {
     const state = await tx.doc(DurableJobs, api.conversationId);
     const existing = state.jobs.find((job) => job.starter === api.taskId);
     if (existing) return { ...existing };
@@ -469,9 +549,10 @@ async function start(
       ...(timeout === undefined ? {} : { timeout }),
     };
     state.jobs.push(job);
-    await publish(tx, api.conversationId);
     return job;
   }, context);
+  if (started.decision === "background") await syncPanel(api, api.conversationId, env, context);
+  return started;
 }
 function notice(job: Job): ToolExecutionResult {
   return {
@@ -599,10 +680,12 @@ const bash = defineTool({
       const current = jobById((await tx.doc(DurableJobs, api.conversationId)).jobs, job.id);
       // Decide against committed completion, not a stale watcher frame at the deadline.
       current.decision = current.status === "running" ? "background" : "foreground";
-      await publish(tx, api.conversationId);
       return { ...current };
     }, context);
-    if (selected.decision === "background") return backgrounded(selected);
+    if (selected.decision === "background") {
+      await syncPanel(api, api.conversationId, api.env, context);
+      return backgrounded(selected);
+    }
     // The runner's report phase waits for this tool task before it settles, so
     // its JobOutput is still current here.
     const output = await jobOutput(api, selected.taskId, context);

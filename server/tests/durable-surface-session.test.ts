@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -8,7 +8,10 @@ import {
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+import {
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+} from "../src/extension-ui-contract.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -432,4 +435,185 @@ describe("durable plugin surfaces on the session stream", () => {
     expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
     expect(f.manager.surfacePublisherFor(f.session.id)).toBeUndefined();
   });
+});
+
+/**
+ * The built-in background-jobs plugin on the same stream: a real shell job, the panel its runner
+ * publishes, and the Stop a phone taps. Nothing here fakes the host: the process is a real `sleep`.
+ */
+describe("background jobs on their panel", () => {
+  type SurfaceFrame = Extract<ServerMessage, { type: "extension_ui_surface" }>;
+  type Surface = SurfaceFrame["surface"];
+  type Node = { id?: string; children?: Node[]; text?: string; action?: unknown };
+
+  const PANEL = "background-jobs";
+
+  /** The panel as a phone that draws blocks receives it. */
+  const isPanel = (frame: ObservedFrame): boolean =>
+    frame.message.type === "extension_ui_surface" &&
+    (frame.message as SurfaceFrame).surface.id === PANEL &&
+    frame.audience === "blocks";
+
+  const surfaceOf = (frame: ObservedFrame): Surface => (frame.message as SurfaceFrame).surface;
+
+  function find(surface: Surface, id: string): Node | undefined {
+    const section = surface.sections[0] as unknown as { body: Node };
+    const visit = (node: Node): Node | undefined => {
+      if (node.id === id) return node;
+      for (const child of node.children ?? []) {
+        const found = visit(child);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    return visit(section.body);
+  }
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  /** Waits for the model's answer to the job's result: the report woke it and it replied. */
+  async function answered(f: Awaited<ReturnType<typeof fixture>>, text: string): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const history = await f.manager.runCommand(f.session.id, { type: "get_messages" });
+      if (JSON.stringify(history).includes(text)) return;
+      if (Date.now() > deadline) throw new Error(`The model never answered with ${text}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function phone(f: Awaited<ReturnType<typeof fixture>>) {
+    await f.manager.startSession(f.session.id, f.workspace);
+    const tap = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    await tap(
+      {
+        type: "client_capabilities",
+        capabilities: [
+          EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+          EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+        ],
+      },
+      "phone-1",
+    );
+    return tap;
+  }
+
+  it("offers Stop on a running job, kills it on a tap, and clears once the result is delivered", async () => {
+    const pidFile = join(makeTempDir("oppi-jobs-panel-"), "job.pid");
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("background_job", {
+            action: "start",
+            command: `echo $$ > '${pidFile}' && exec sleep 300`,
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("STOP_NOTED"),
+    ]);
+    const tap = await phone(f);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next(isPanel);
+    await f.manager.sendPrompt(f.session.id, "Start the job");
+    const panel = surfaceOf(await published);
+
+    // One running job: its row offers Stop, and nothing else is offered.
+    expect(panel.header.title).toBe("1 job");
+    expect(find(panel, "stop:bash-1")).toMatchObject({
+      type: "button",
+      action: { id: "stop", values: { job: "bash-1" } },
+    });
+    expect(panel.actions.stop).toMatchObject({ title: "Stop", pending: { title: "Stopping…" } });
+    expect(Object.keys(panel.actions)).toEqual(["stop"]);
+    // The clients without composites are sent the same panel's v1 projection.
+    expect(
+      observed
+        .messages("extension_ui_notification")
+        .filter((message) => (message as { widgetKey?: string }).widgetKey?.endsWith(PANEL)),
+    ).not.toHaveLength(0);
+
+    await until(
+      () => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== "",
+      "the job",
+    );
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(alive(pid)).toBe(true);
+
+    const removed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.surfaceId === PANEL &&
+        frame.message.removed === true,
+    );
+    const settledTap = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_settled" &&
+        (frame.message as Extract<ServerMessage, { type: "extension_ui_settled" }>).id === "stop-1",
+    );
+    await tap(
+      {
+        type: "extension_ui_action",
+        surfaceId: PANEL,
+        compositeId: "jobs",
+        actionId: "stop",
+        nodeId: "stop:bash-1",
+        values: { job: "bash-1" },
+        revision: panel.revision,
+        requestId: "stop-1",
+      },
+      "phone-1",
+    );
+
+    await settledTap;
+    // The process is gone, not just the row.
+    await until(() => !alive(pid), "the process to die");
+    // The result reaches the model as one follow-up, which clears the panel.
+    await removed;
+    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
+    // The model was woken by the cancellation's report and answered it.
+    await answered(f, "STOP_NOTED");
+  }, 30_000);
+
+  it("clears the panel when a finished job's result is delivered", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("background_job", { action: "start", command: "sleep 1; echo FINISHED" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("RESULT_NOTED"),
+    ]);
+    await phone(f);
+    const observed = observe(f.manager, f.session.id);
+    const published = observed.next(isPanel);
+    const removed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.surfaceId === PANEL &&
+        frame.message.removed === true,
+    );
+    await f.manager.sendPrompt(f.session.id, "Start the job");
+    const panel = surfaceOf(await published);
+    expect(find(panel, "stop:bash-1")).toBeDefined();
+    await removed;
+    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
+    await answered(f, "RESULT_NOTED");
+  }, 30_000);
 });

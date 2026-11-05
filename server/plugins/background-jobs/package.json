@@ -14,6 +14,7 @@
     "server.ts",
     "contract.ts",
     "jobs.ts",
+    "panel.ts",
     "delivery.ts",
     "README.md",
     "package.json"

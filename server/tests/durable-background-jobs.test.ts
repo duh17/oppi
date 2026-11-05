@@ -26,8 +26,9 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
 import { DurableJobs } from "../plugins/background-jobs/contract.js";
-import { DurableUI } from "../src/durable-ui.js";
 import { DurableBackend } from "../src/durable-backend.js";
+import type { OppiDurableHost, SurfaceDispatch, SurfacePublisher } from "../src/oppi-v1.js";
+import type { ExtensionUISurface } from "../src/types.js";
 import { Storage } from "../src/storage.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 import { DurableHarness, type SessionHost } from "../src/durable-harness.js";
@@ -39,11 +40,47 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
+/**
+ * A Session's surface loop, as the panel sees it: what it published and dismissed, and the
+ * dispatch it handed back for a tap. Off by default: `oppiHost()` answers as it really does in a
+ * bare Harness, which has no Session, and the panel then publishes nothing.
+ */
+const loop = vi.hoisted(() => {
+  const state = {
+    on: false,
+    published: [] as Array<{ surface: ExtensionUISurface; dispatch?: SurfaceDispatch }>,
+    dismissed: [] as string[],
+  };
+  return state;
+});
+
+vi.mock("oppi/v1", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/oppi-v1.js")>();
+  const publisher: SurfacePublisher = {
+    publish: (surface, dispatch) => {
+      loop.published.push({ surface, ...(dispatch ? { dispatch } : {}) });
+    },
+    dismiss: (surfaceId) => {
+      loop.dismissed.push(surfaceId);
+    },
+  };
+  const mocked = {
+    ...actual,
+    oppiHost: () =>
+      loop.on ? ({ surfaces: () => publisher } as unknown as OppiDurableHost) : actual.oppiHost(),
+  };
+  // The plugin host loads the built-ins through this module and reads its `default` too.
+  return { ...mocked, default: mocked };
+});
+
 const harnesses = new Set<Harness>();
 afterEach(async () => {
   await Promise.all([...harnesses].map((h) => h.close(context)));
   harnesses.clear();
   vi.restoreAllMocks();
+  loop.on = false;
+  loop.published.length = 0;
+  loop.dismissed.length = 0;
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -51,6 +88,34 @@ function deferred<T>() {
     resolve = r;
   });
   return { promise, resolve };
+}
+/** A node of the published panel by id, wherever it sits in the tree. */
+function panelNode(
+  surface: ExtensionUISurface,
+  id: string,
+): { id?: string; text?: string; type?: string } | undefined {
+  type Node = { id?: string; children?: Node[] };
+  const section = surface.sections[0] as unknown as { body: Node };
+  const visit = (node: Node): Node | undefined => {
+    if (node.id === id) return node;
+    for (const child of node.children ?? []) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(section.body);
+}
+/** A tap on a job's Stop, as the loop hands it to the panel that was published. */
+async function tapStop(shown: { dispatch?: SurfaceDispatch }, job: string) {
+  return shown.dispatch!({
+    compositeId: "jobs",
+    actionId: "stop",
+    nodeId: `stop:${job}`,
+    values: { job },
+    revision: 1,
+    signal: new AbortController().signal,
+  });
 }
 function tool(name: string, args: Record<string, unknown>): FauxResponseStep {
   return fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
@@ -239,7 +304,7 @@ describe("native Durable background jobs", () => {
       );
     },
   );
-  it("is idle while running, publishes generic chrome, and answers exactly one idempotent follow-up", async () => {
+  it("is idle while running and answers exactly one idempotent follow-up", async () => {
     const f = await fixture([
       tool("background_job", { action: "start", command: "controlled command" }),
       answer(),
@@ -251,29 +316,6 @@ describe("native Durable background jobs", () => {
       ({ record }) => record.kind === "oppi.background-job",
     )!.record;
     expect(record).toMatchObject({ background: true, state: { status: "running" } });
-    const ui = await f.harness.snapshot(DurableUI, f.root.id, context);
-    expect(ui?.notifications["status:background-jobs"]?.statusText).toContain("1 job");
-    expect(ui?.notifications["widget:background-jobs"]?.nativeSurface?.blocks).toEqual([
-      {
-        type: "activityList",
-        id: "jobs",
-        rows: [
-          {
-            id: "bash-1",
-            title: "bash-1",
-            subtitle: "controlled command",
-            state: "running",
-            blocks: [
-              {
-                type: "text",
-                id: "output:bash-1",
-                spans: [{ text: "No output yet", role: "muted" }],
-              },
-            ],
-          },
-        ],
-      },
-    ]);
     f.finish.resolve();
     const reports = await delivery(f.harness, f.root);
     expect(JSON.stringify(reports)).toContain("FINAL-OUTPUT");
@@ -312,9 +354,6 @@ describe("native Durable background jobs", () => {
     });
     // Delivered output lives in the transcript only, not in any document's history.
     expect(documentRevisionsContaining(f.dir, "FINAL-OUTPUT")).toBe(0);
-    const cleared = await f.harness.snapshot(DurableUI, f.root.id, context);
-    expect(cleared?.notifications["status:background-jobs"]).not.toHaveProperty("statusText");
-    expect(cleared?.notifications["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
   });
 
   it("emits a compact live notice and keeps internal reports out of get_messages after reattach", async () => {
@@ -475,6 +514,94 @@ describe("native Durable background jobs", () => {
       }
     },
   );
+
+  it("stops a running job from its panel: the process is killed and the row follows", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    const shown = loop.published.at(-1)!;
+    expect(shown.surface.header.title).toBe("1 job");
+    expect(panelNode(shown.surface, "stop:bash-1")).toMatchObject({
+      action: { id: "stop", values: { job: "bash-1" } },
+    });
+    // A tap that names a job this conversation is not running stops nothing.
+    expect(await tapStop(shown, "bash-9")).toMatchObject({
+      error: { compositeId: "jobs", message: "bash-9 is not running." },
+    });
+    expect(f.counts().cancellations).toBe(0);
+
+    expect(await tapStop(shown, "bash-1")).toEqual({ patch: {} });
+    const reports = await delivery(f.harness, f.root);
+    expect(JSON.stringify(reports)).toContain("was cancelled");
+    expect(f.counts()).toEqual({ executions: 1, cancellations: 1 });
+
+    // The stopped job is published as stopped, with no Stop to tap again, and the panel is
+    // dismissed once its result is delivered.
+    const stopped = loop.published.find(
+      (entry) => panelNode(entry.surface, "status:bash-1")?.text === "cancelled",
+    )!;
+    expect(stopped.surface.header.title).toBe("1 result");
+    expect(panelNode(stopped.surface, "stop:bash-1")).toBeUndefined();
+    expect(loop.dismissed).toEqual(["background-jobs"]);
+    // A tap that arrives after that finds nothing to stop.
+    expect(await tapStop(shown, "bash-1")).toMatchObject({ error: { compositeId: "jobs" } });
+    expect(f.counts().cancellations).toBe(1);
+  });
+
+  it("clears the panel once a finished job's result is delivered", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    expect(loop.dismissed).toEqual([]);
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+    expect(loop.dismissed).toEqual(["background-jobs"]);
+    // Its output waited behind the row until delivery.
+    const finished = loop.published.find(
+      (entry) => panelNode(entry.surface, "status:bash-1")?.text === "done",
+    )!;
+    expect(panelNode(finished.surface, "tail:bash-1")).toMatchObject({
+      type: "code",
+      text: "FINAL-OUTPUT",
+    });
+    expect(panelNode(finished.surface, "stop:bash-1")).toBeUndefined();
+  });
+
+  it("draws the panel again from the saved job list when a runner resumes after a restart", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    await f.harness.close(context);
+    harnesses.delete(f.harness);
+    // The server went away: what the old Session's loop held went with it.
+    loop.published.length = 0;
+    loop.dismissed.length = 0;
+    const harness = await f.open();
+    const root = (await harness.conversation(f.root.id, context))!;
+    harness.resume();
+    await delivery(harness, root);
+    // The interrupted job is a result waiting for delivery: shown, and with nothing left to stop.
+    const redrawn = loop.published.find((entry) => panelNode(entry.surface, "status:bash-1"))!;
+    expect(redrawn.surface.header.title).toBe("1 result");
+    expect(panelNode(redrawn.surface, "status:bash-1")).toMatchObject({ text: "failed" });
+    expect(panelNode(redrawn.surface, "stop:bash-1")).toBeUndefined();
+    expect(loop.dismissed).toEqual(["background-jobs"]);
+  });
 
   it("server Stop leaves a job running, while cancel kills it and delivers its final cancellation", async () => {
     const f = await fixture([

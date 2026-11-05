@@ -346,7 +346,7 @@ function worstStatus(jobs: readonly BackgroundWidgetJob[]): JobStatus {
   return "completed";
 }
 
-function badgeLabel(status: JobStatus): string {
+export function badgeLabel(status: JobStatus): string {
   if (status === "running") return "running";
   if (status === "completed") return "done";
   if (status === "cancelled") return "cancelled";
@@ -364,11 +364,12 @@ function statePaint(
   return style.accent;
 }
 
-function displayCommand(command: string): string {
+export function displayCommand(command: string): string {
   return command.replace(/\s+/g, " ").trim();
 }
 
-function displayLines(output: string): string[] {
+/** Output as plain lines: escape sequences stripped, a carriage return's redraw dropped. */
+export function displayLines(output: string): string[] {
   // ANSI escape stripping needs the ESC and BEL control characters.
   const stripped = output
     // eslint-disable-next-line no-control-regex

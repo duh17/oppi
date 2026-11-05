@@ -35,6 +35,7 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 - Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pi-durable's `23-subagent-background` pattern). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
 - A compact card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as a generated input: excluded from the editable queue, preserved by queue replacement, rendered as a card in history, omitted from `get_messages`.
 - Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. Ordinary Stop preserves background jobs.
+- The job pill is a v2 surface owned by `background-jobs/panel.ts`. The Session's surface loop keeps no record of it, so `server.ts` redraws it from `DurableJobs` after every job change and when a runner resumes. Stop sets `cancelRequested` through the job runner's own handle, the same flag `background_job cancel` sets. The classic `index.ts` cannot publish a surface and keeps the v1 widget.
 - Crash smoke: `node --import tsx scripts/durable-background-jobs-smoke.ts` after `npm run build`, through the credential-approved tool.
 
 ## Input-card output
