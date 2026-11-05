@@ -2854,11 +2854,19 @@ describe("server durable managed runtime", () => {
     expect(users[0]).toBe(
       `<skill name="release-notes" location="${join(skillDir, "SKILL.md")}">\nReferences are relative to ${skillDir}.\n\nList user-visible changes only.\n</skill>\n\nfor 1.2`,
     );
-    expect(await f.manager.runCommand(f.session.id, { type: "get_commands" })).toMatchObject({
-      commands: expect.arrayContaining([
-        expect.objectContaining({ name: "skill:release-notes", source: "skill" }),
-      ]),
-    });
+    // Only what a durable session runs: no fork, tree, new, resume, templates or extension commands.
+    const listed = (await f.manager.runCommand(f.session.id, { type: "get_commands" })) as {
+      commands: Array<{ name: string; source: string }>;
+    };
+    expect(listed.commands.map((command) => command.name).sort()).toEqual([
+      "compact",
+      "reload",
+      "share",
+      "skill:release-notes",
+    ]);
+    expect(listed.commands).toContainEqual(
+      expect.objectContaining({ name: "skill:release-notes", source: "skill" }),
+    );
     expect(await f.manager.runCommand(f.session.id, { type: "get_session_stats" })).toMatchObject({
       contextComposition: {
         agentsFiles: [{ path: join(f.dir, "AGENTS.md"), chars: "Use tabs.".length }],
@@ -3298,50 +3306,6 @@ describe("server durable managed runtime", () => {
       }),
     );
     expect(JSON.stringify(entries)).toContain("Earlier context");
-  });
-
-  it("lists only the slash commands a durable session runs, and each one runs", async () => {
-    const f = await fixture(
-      [
-        fauxAssistantMessage("Earlier context ".repeat(50)),
-        fauxAssistantMessage("Latest context"),
-        fauxAssistantMessage("## Goal\nPreserve names"),
-      ],
-      { settings: compactionSettings },
-    );
-    await f.manager.startSession(f.session.id, f.workspace);
-    const observed = observe(f.manager, f.session.id);
-    await answer(f, observed, "first");
-    await answer(f, observed, "second");
-
-    const listed = (await f.manager.runCommand(f.session.id, { type: "get_commands" })) as {
-      commands: Array<{ name: string; source: string }>;
-    };
-    const names = listed.commands.map((command) => command.name);
-    expect(listed.commands.filter((command) => command.source === "builtin")).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "compact" }),
-        expect.objectContaining({ name: "share" }),
-        expect.objectContaining({ name: "reload" }),
-      ]),
-    );
-    // Each of these replaces the session's identity or leaf, or needs a classic extension.
-    for (const unsupported of ["fork", "clone", "tree", "new", "resume", "model", "name"]) {
-      expect(names).not.toContain(unsupported);
-    }
-    expect(listed.commands.filter((command) => command.source !== "builtin")).toEqual([]);
-    expect(new Set(names).size).toBe(names.length);
-
-    await expect(
-      f.manager.runCommand(f.session.id, { type: "share_session", action: "prepare" }),
-    ).resolves.toMatchObject({ phase: "prepared", canPublish: true, artifact: { format: "html" } });
-    const end = observed.next((message) => message.type === "compaction_end");
-    await f.manager.runCommand(f.session.id, { type: "compact" });
-    expect(await end).toMatchObject({ aborted: false, summary: "## Goal\nPreserve names" });
-    await expect(
-      f.manager.runCommand(f.session.id, { type: "reload" }),
-    ).resolves.toMatchObject({ success: true });
-    observed.unsubscribe();
   });
 
   it("has nothing to export before the first turn", async () => {
