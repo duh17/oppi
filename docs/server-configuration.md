@@ -125,7 +125,7 @@ The app reads `/server/info` when it connects, on each return to the foreground,
 
 ## Voice extensions
 
-Voice extensions synthesize speech for their own tools. Their audio contract is in [Voice replies / TTS](../server/docs/tts.md).
+Voice extensions synthesize speech for their own tools.
 
 ```bash
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
@@ -133,7 +133,7 @@ oppi config validate
 oppi server restart
 ```
 
-`runtimeEnv.TTS_BASE_URL` is passed into the host process for a voice extension. Inspect it with `oppi config get runtimeEnv`. Extension-specific auth, models, and voices stay in the extension's own settings. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored on load.
+`runtimeEnv.TTS_BASE_URL` is passed into the host process, where a voice extension can read it. Inspect with `oppi config get runtimeEnv`. Extension-specific auth, voices, and models stay in the extension's own settings. See [Voice replies / TTS](../server/docs/tts.md) for the audio contract.
 
 ## Push notifications
 
