@@ -7,6 +7,7 @@ Part of [Oppi server architecture](../architecture-server.md).
 - `SessionListService` builds lists from live snapshots, `session-sqlite-store.ts`, and the cached `local-sessions.ts` catalog, never full JSONL traces. The catalog's optional compact Git summary uses a lightweight status probe, not the review status payload.
 - The recent lane is time-bounded (`sinceMs`, `untilMs`). `SessionListService` alone places older and importable sessions in archive buckets (server local time: a day for the last 30 days, else a month). The client caps bucket requests at its recent lane's start (`beforeMs`), so a session is never in both; a time-zone mismatch can still split one calendar day.
 - `SessionTraceService` owns trace paging, outlines, recovery, tool output lookup, diffs, and changed-file previews. Full trace reads (`readSessionTrace`, `readSessionTraceFromFile(s)`, `readSessionTraceByUuid`) stay behind recovery and compatibility paths.
+- Cache-miss notices are derived, never stored. `cache-miss.ts` ports Pi's `cache-stats` (thresholds, compaction and branch-summary resets, none on aborted or failed answers) but ignores `cache_warm` usage entries. Session start seeds the runtime's tracker from saved history (`replayCacheMissHistory`). While the running backend shows notices (`getCacheMissNotices`), `buildSessionContext` adds a `system` event with `cacheMiss: true` and the live `cache_miss` frame's id after the answer that paid. A trace page compares only answers inside its window.
 
 ## Session change views
 
