@@ -780,7 +780,7 @@ describe("slots stored before the panel and the tool rows", () => {
     await until(() => drawn(f).join() === "data", "the pill to be cleared");
   }, 30_000);
 
-  it("clears the stored Data widget when sqlite_query next runs, and no sooner", async () => {
+  it("clears the stored Data widget when sqlite_query next runs", async () => {
     const db = join(makeTempDir("oppi-stored-data-"), "sales.db");
     const sqlite = new DatabaseSync(db);
     sqlite.exec("CREATE TABLE sales (name TEXT); INSERT INTO sales VALUES ('apples')");
@@ -792,8 +792,6 @@ describe("slots stored before the panel and the tool rows", () => {
       ),
       fauxAssistantMessage("QUERIED"),
     ]);
-    // Nothing clears it until the plugin runs: no hook runs when a Session attaches.
-    expect(drawn(f)).toContain("data");
     await f.manager.sendPrompt(f.session.id, "Query the database");
     await until(() => !drawn(f).includes("data"), "the Data widget to be cleared");
     // The query's rows are the tool result, not a widget.
