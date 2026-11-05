@@ -34,13 +34,19 @@ generic input presentation metadata shared by live and history projections.
 
 The job pill in a durable session is a surface (`panel.ts`), not the classic
 widget. It shows while a backgrounded job runs or its result waits for delivery,
-and clears once every result is delivered. Each running job has a **Stop**
-button, which kills it as `background_job cancel` does. A finished job shows the
-end of its output under **Output**; a running job has none to show yet. The
-panel is drawn from the saved job list, so it returns after a server restart
-once a job's runner resumes, and within a second when a Session stops and
-starts again while a job runs. A client that cannot draw surfaces sees the same
-jobs without buttons.
+and clears once every result is delivered. The pill counts the jobs ("1 job
+running", "2 jobs · 1 running") and shows how long the oldest running job has
+run; it never repeats a command. In the drawer, each job is one row: a status
+glyph, a short title (the program and its first plain arguments, without a
+leading `cd … &&`, options, pipes, or redirects), and the job id with its age in
+whole minutes or how it ended (`Exit 1`, `Stopped`, `Timed out`). The age is
+redrawn each minute. A running job has a **Stop** button, which kills it as
+`background_job cancel` does. **Details**, folded by default, holds the full
+command and, once the job has finished, the end of its output. The panel is
+drawn from the saved job list, so it returns after a server restart once a
+job's runner resumes, and within a second when a Session stops and starts again
+while a job runs. A client that cannot draw surfaces sees the same jobs without
+buttons.
 
 The classic extension above is unchanged. It can publish only Pi's widget, which
 has no buttons, so it offers no Stop. See
