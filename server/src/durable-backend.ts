@@ -1381,12 +1381,28 @@ export class DurableBackend implements AgentBackend {
   navigateTree(): never {
     return this.unsupported("navigateTree (fork a message instead)");
   }
+  /**
+   * Only what a durable session runs from a slash command: `/compact` and `/share` have
+   * backend commands, `/reload` rebuilds resources, `/skill:*` expands in `prompt`. Fork, tree,
+   * new and resume replace the session's identity or leaf (unsupported here), and classic
+   * extension and prompt-template commands cannot load, so none of them is advertised.
+   */
   commands(): ReturnType<AgentBackend["commands"]> {
     return {
       commands: [
         {
           name: "reload",
           description: "Reload plugins, skills and context files",
+          source: "builtin",
+        },
+        {
+          name: "compact",
+          description: "Manually compact the session context",
+          source: "builtin",
+        },
+        {
+          name: "share",
+          description: "Share session as an auto-redacted secret GitHub gist",
           source: "builtin",
         },
         ...this.resources.skills.map((skill) => ({
