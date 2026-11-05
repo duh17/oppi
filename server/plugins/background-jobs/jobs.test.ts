@@ -307,6 +307,12 @@ describe("background pill", () => {
         { id: "bash-3", command: "echo hi", status: "completed", backgrounded: true },
       ])?.title,
     ).toBe("1 result");
+    expect(
+      backgroundPill([
+        { id: "bash-4", command: "npm test", status: "failed", backgrounded: true },
+        { id: "bash-5", command: "go test", status: "cancelled", backgrounded: true },
+      ])?.title,
+    ).toBe("2 results");
   });
 
   test("collapsed band hides the tail and expanded band reveals the cut-off path", () => {

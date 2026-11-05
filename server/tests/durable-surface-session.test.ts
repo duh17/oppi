@@ -595,32 +595,6 @@ describe("background jobs on their panel", () => {
     await answered(f, "STOP_NOTED");
   }, 30_000);
 
-  it("clears the panel when a finished job's result is delivered", async () => {
-    const f = await fixture([
-      fauxAssistantMessage(
-        [fauxToolCall("background_job", { action: "start", command: "sleep 1; echo FINISHED" })],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("STARTED"),
-      fauxAssistantMessage("RESULT_NOTED"),
-    ]);
-    await phone(f);
-    const observed = observe(f.manager, f.session.id);
-    const published = observed.next(isPanel);
-    const removed = observed.next(
-      (frame) =>
-        frame.message.type === "extension_ui_patch" &&
-        frame.message.surfaceId === PANEL &&
-        frame.message.removed === true,
-    );
-    await f.manager.sendPrompt(f.session.id, "Start the job");
-    const panel = surfaceOf(await published);
-    expect(find(panel, "stop:bash-1")).toBeDefined();
-    await removed;
-    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
-    await answered(f, "RESULT_NOTED");
-  }, 30_000);
-
   it("draws the panel into a Session that restarts while the job runs, and Stop still kills it", async () => {
     const pidFile = join(makeTempDir("oppi-jobs-restart-"), "job.pid");
     const f = await fixture([

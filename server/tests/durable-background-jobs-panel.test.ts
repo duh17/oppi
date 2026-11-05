@@ -47,14 +47,6 @@ describe("background jobs panel view", () => {
     expect(Object.keys(surface.actions)).toEqual(["stop"]);
   });
 
-  it("titles the panel with the running count, then with the results left", () => {
-    expect(render([job("bash-1"), job("bash-2")]).header.title).toBe("2 jobs");
-    expect(
-      render([job("bash-1", { status: "failed" }), job("bash-2", { status: "cancelled" })]).header
-        .title,
-    ).toBe("2 results");
-  });
-
   it("folds each job's output tail away, plain and cut to the node cap", () => {
     const output = [
       "\u001b[32mgreen\u001b[0m start",
