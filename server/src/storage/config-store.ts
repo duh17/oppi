@@ -280,9 +280,11 @@ function normalizeConfig(
   // files keep validating, even strictly; load drops the key on rewrite.
   const retiredTopLevelKeys = new Set(["extensions"]);
 
-  if ("extensions" in obj) {
-    warnings.push("config.extensions: ignored; Oppi no longer reads extension settings");
-    changed = true;
+  for (const key of retiredTopLevelKeys) {
+    if (key in obj) {
+      warnings.push(`config.${key}: ignored; Oppi no longer reads it`);
+      changed = true;
+    }
   }
 
   const unknownTopLevelKeys = Object.keys(obj).filter(

@@ -165,7 +165,7 @@ Controls client-side preprocessing for image attachments before upload.
 
 ### Extensions
 
-Oppi has no extension settings. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored on load.
+Oppi has no extension settings. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored and removed from the file the next time the server loads it.
 
 There is no Oppi flag for MCP, codemode, or tool search. Managed host sessions always load Pi's `mcp`, `codemode`, and `tool-search` built-ins, and `-builtin:<name>` in Pi's `extensions` setting turns one off. Sandbox workspaces and terminal-owned mirror sessions never load them. See [server configuration](../../docs/server-configuration.md#mcp-servers-codemode-and-tool-search).
 

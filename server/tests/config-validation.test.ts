@@ -763,9 +763,7 @@ describe("Storage config validation", () => {
     // `oppi config validate` is strict; an old file must still pass it.
     const strict = Storage.validateConfigFile(configPath, dir);
     expect(strict.valid).toBe(true);
-    expect(strict.warnings).toContain(
-      "config.extensions: ignored; Oppi no longer reads extension settings",
-    );
+    expect(strict.warnings).toContain("config.extensions: ignored; Oppi no longer reads it");
 
     const storage = new Storage(dir);
     expect(storage.getConfig().port).toBe(9123);

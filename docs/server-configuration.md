@@ -133,7 +133,7 @@ oppi config validate
 oppi server restart
 ```
 
-`runtimeEnv.TTS_BASE_URL` is passed into the host process, where a voice extension can read it. Inspect with `oppi config get runtimeEnv`. Extension-specific auth, voices, and models stay in the extension's own settings. See [Voice replies / TTS](../server/docs/tts.md) for the audio contract.
+`runtimeEnv.TTS_BASE_URL` is passed into the host process, where a voice extension can read it. Inspect with `oppi config get runtimeEnv`. Extension-specific auth, voices, and models stay in the extension's own settings. See [Voice replies / TTS](../server/docs/tts.md) for the audio contract. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored and removed from the file the next time the server loads it.
 
 ## Push notifications
 
