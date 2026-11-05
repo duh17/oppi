@@ -3199,55 +3199,6 @@ describe("durable-native threads", () => {
     ).resolves.toBe(child.id);
   });
 
-  it("lists the child it spawned, stops it, and refuses a Session that is not its child", async () => {
-    const childGate = gate();
-    const f = await fixture(
-      model(async ({ last, text, signal }) => {
-        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
-        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
-        if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK later", name: "Later" });
-        await childGate.wait(signal);
-        return fauxAssistantMessage("LATE_ANSWER");
-      }),
-    );
-    const stranger = f.session("Stranger");
-    await f.manager.startSession(f.parent.id, f.workspace);
-    await f.manager.startSession(stranger.id, f.workspace);
-    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
-    const harness = await f.harness();
-    const parentConversation = conversationOf(f.storage, f.parent);
-    await until(
-      async () =>
-        (await toolResults(harness, parentConversation)).length === 1 &&
-        (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
-      "idle parent with a background child",
-    );
-    const child = f.storage
-      .listSessions()
-      .find((session) => session.id !== f.parent.id && session.id !== stranger.id)!;
-    const childConversation = conversationOf(f.storage, child);
-
-    const sessions = (await f.threads()).forCaller(await f.owner(), parentConversation);
-    // The one child this parent launched, in its own store, and nobody else.
-    expect(await sessions.children()).toMatchObject([
-      { sessionId: child.id, conversationId: childConversation, name: "Later" },
-    ]);
-
-    // Stop aborts the child's own work, through the same host Stop a Session's own Stop uses.
-    expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
-    await sessions.stop(child.id);
-    await until(
-      async () => (await harness.snapshot(LiveDoc, childConversation, context))?.run === undefined,
-      "child aborted",
-    );
-
-    // A Session the caller did not spawn is refused: its own row, and a Session of another store.
-    await expect(sessions.stop(f.parent.id)).rejects.toThrow("is not a child of this session");
-    await expect(sessions.stop(stranger.id)).rejects.toThrow("is not a child of this session");
-    expect((await harness.snapshot(LiveDoc, parentConversation, context))?.run).toBeUndefined();
-  });
-
   it("keeps the surviving children in one thread after their parent's Session is deleted", async () => {
     const childGate = gate();
     const f = await fixture(

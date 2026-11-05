@@ -397,13 +397,6 @@ export class Storage {
     );
   }
 
-  /** Session ids bound to conversations of one durable store; an indexed lookup. */
-  listDurableStoreConversations(
-    storeId: string,
-  ): Array<{ sessionId: string; conversationId: number }> {
-    return this.sessionStore.listDurableStoreConversations(storeId);
-  }
-
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
   hasDurableStoreSessions(storeId: string): boolean {
     return this.sessionStore.hasDurableStoreSessions(storeId);

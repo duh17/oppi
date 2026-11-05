@@ -207,24 +207,6 @@ export class SessionSqliteStore {
     return row ? this.getSession(row.id) : undefined;
   }
 
-  /**
-   * Every session bound to a conversation of one durable store, by the same index. Ordered like
-   * `findSessionByDurableConversation`: the first row for a conversation is the one it returns.
-   */
-  listDurableStoreConversations(
-    storeId: string,
-  ): Array<{ sessionId: string; conversationId: number }> {
-    const rows = this.db
-      .prepare(
-        `SELECT id, durable_conversation_id
-         FROM session_state_sessions
-         WHERE durable_store_id = ? AND durable_conversation_id IS NOT NULL
-         ORDER BY created_at ASC, id ASC`,
-      )
-      .all(storeId) as Array<{ id: string; durable_conversation_id: number }>;
-    return rows.map((row) => ({ sessionId: row.id, conversationId: row.durable_conversation_id }));
-  }
-
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
   hasDurableStoreSessions(storeId: string): boolean {
     return (

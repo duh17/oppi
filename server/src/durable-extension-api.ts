@@ -290,25 +290,6 @@ export interface ResolvedSubagent {
 export type Activated<T> = { submitted: T } | { failed: string; shuttingDown: boolean };
 
 /**
- * One child Session as the crew board lists it: the row the app's session list shows, not its
- * conversation. A child the caller launched and that has no Session yet is not among them.
- */
-export interface DurableChildSession {
-  readonly sessionId: string;
-  /** The conversation it runs; a Session id changes on resume, this does not. */
-  readonly conversationId: ConversationId;
-  readonly name?: string;
-  /** The Session's lifecycle status, in the vocabulary the app's list uses. */
-  readonly status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
-  /** Epoch ms of its newest message. */
-  readonly lastActivity: number;
-  /** One line of its newest message (the read-only preview the list row shows), when it has one. */
-  readonly latest?: string;
-  /** The branch of the checkout its spawn gave it, when it has one. */
-  readonly worktree?: string;
-}
-
-/**
  * What the subagent tool needs from Oppi (see `DurableThreads.forCaller`), for one calling
  * conversation. Every Session it takes must be bound to a child conversation that the caller
  * owns; any other is refused.
@@ -373,20 +354,6 @@ export interface DurableSessionsHost {
   ): Promise<SubagentWorktree>;
   /** One compact line of a child's worktree state, or undefined when it has none. */
   worktreeState(worktree: SubagentWorktree): Promise<string | undefined>;
-  /**
-   * The Sessions the caller launched, oldest first: what its own `crew_board` panel lists. Read
-   * from the Session records' launch edge and the store's conversations, so a child whose Session
-   * was deleted is not among them. This is the app's listing, not the authority for control: the
-   * Harness owner edge is that (see `stop`), and a listed Session that is not owned is refused.
-   */
-  children(): Promise<DurableChildSession[]>;
-  /**
-   * Stop a child's current work, as `subagent stop` does: abort its conversation and leave the
-   * Session usable, so its next message starts it again. A child that was never attached has no
-   * work to abort. Rejects for a Session that is not one of the caller's children — the Harness
-   * owner edge decides that, and it is the only edge a spawn writes with authority.
-   */
-  stop(sessionId: string): Promise<void>;
 }
 
 // --- control (`oppi.control`) ----------------------------------------------------------------
