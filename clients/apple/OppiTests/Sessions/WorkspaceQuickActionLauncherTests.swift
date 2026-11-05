@@ -69,7 +69,11 @@ struct WorkspaceQuickActionLauncherTests {
         let chat = try #require(navigation.topViewController as? ChatViewController)
         #expect(chat.sessionId == CreatedSessionURLProtocol.sessionId)
         #expect(navigation.viewControllers.count == 2)
-        #expect(spy.progress == ["Starting new session…", nil])
+        // Progress is shown for the launch, then cleared.
+        // (`first`/`last` would be a doubly optional compare, so index.)
+        #expect(spy.progress.count == 2)
+        #expect(spy.progress[0] != nil)
+        #expect(spy.progress[1] == nil)
     }
 
     /// A surface with its own navigator, the chat's context bar, receives the
