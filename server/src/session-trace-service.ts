@@ -126,6 +126,7 @@ export interface SessionTraceServiceDeps {
     "getToolFullOutputPath" | "getToolPartialOutput" | "refreshSessionState"
   > & {
     getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
+    getCacheMissNotices?: SessionRuntimes["getCacheMissNotices"];
     getServerDurableTrace?: SessionRuntimes["getServerDurableTrace"];
     getServerDurableTracePage?: SessionRuntimes["getServerDurableTracePage"];
     getServerDurableTraceOutline?: SessionRuntimes["getServerDurableTraceOutline"];
@@ -269,6 +270,8 @@ export class SessionTraceService {
     }
 
     const entryRenderers = this.liveEntryRenderers(params.session.id);
+    const cacheMissNotices = this.deps.sessionRuntimes?.getCacheMissNotices?.(params.session.id);
+    const cacheMissOption = cacheMissNotices ? { cacheMissNotices } : {};
     const result = readSessionTracePageFromFiles(jsonlPaths, {
       cursor: params.cursor,
       aroundEntryId: params.aroundEntryId,
@@ -280,6 +283,7 @@ export class SessionTraceService {
         ? { leafId: live.leafId }
         : {}),
       ...(entryRenderers ? { entryRenderers } : {}),
+      ...cacheMissOption,
     });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
@@ -675,12 +679,14 @@ export class SessionTraceService {
     leafId?: string | null;
     entryRenderers?: LiveEntryRendererSet;
   }): TraceReadOptions {
+    const cacheMissNotices = this.deps.sessionRuntimes?.getCacheMissNotices?.(params.sessionId);
     return {
       view: params.view ?? "context",
       attachmentDataDir: this.traceBaseDir(),
       attachmentSessionId: params.sessionId,
       ...(params.leafId !== undefined ? { leafId: params.leafId } : {}),
       ...(params.entryRenderers ? { entryRenderers: params.entryRenderers } : {}),
+      ...(cacheMissNotices ? { cacheMissNotices } : {}),
     };
   }
 

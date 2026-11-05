@@ -3,6 +3,7 @@ import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
 import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
+import type { CacheMissNoticeSource } from "./cache-miss.js";
 import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
 import type { TraceOutlineResult } from "./trace-outline.js";
 import type { ServerMessage, Session } from "./types.js";
@@ -126,6 +127,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
     if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
     return this.oppi.getEntryRenderers(sessionId);
+  }
+
+  getCacheMissNotices(sessionId: string): CacheMissNoticeSource | undefined {
+    if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
+    return this.oppi.getCacheMissNotices(sessionId);
   }
 
   /**

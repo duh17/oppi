@@ -48,7 +48,18 @@ import {
   type ToolPresenter,
   type UserImageStoreScope,
 } from "./durable-conversation-view.js";
-import { isAbortedAttempt, isRecoveredPartial, readRetryEvidence } from "./durable-history.js";
+import {
+  durableCacheMissHistory,
+  isAbortedAttempt,
+  isRecoveredPartial,
+  readCacheMissNotices,
+  readRetryEvidence,
+} from "./durable-history.js";
+import {
+  replayCacheMissHistory,
+  type CacheMissNotice,
+  type CacheMissNoticeSource,
+} from "./cache-miss.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -132,6 +143,8 @@ class ConversationRoom implements DocPresenter {
   private readonly hidden = new Set<number>();
   /** How the queue shows each queued user input in `pi.inbox`; generated inputs are absent. */
   private readonly queued = new Map<number, MessageQueueItem>();
+  /** The cache-miss notice each active answer paid for (`deriveCacheMisses`). */
+  private cacheMisses = new Map<number, CacheMissNotice>();
   /** Revision of each entry's latest presentation change. */
   private readonly revisions = new Map<number, number>();
   /** Increases with every presentation change. */
@@ -165,6 +178,8 @@ class ConversationRoom implements DocPresenter {
     private readonly renderers: MobileRendererRegistry,
     /** Where user-message images of this conversation's session are stored. */
     private readonly images?: UserImageStoreScope,
+    /** Present while the session shows cache-miss notices; read when notices are derived. */
+    private readonly cacheMissNotices?: () => CacheMissNoticeSource | undefined,
   ) {
     // Subscribe before reading so no commit falls between the read and the listener.
     const commits = harness.observeCommits({
@@ -211,6 +226,7 @@ class ConversationRoom implements DocPresenter {
     this.entries = [...active.entries];
     if (active.head) this.head = active.head.id;
     for (const entry of this.entries) this.index(entry);
+    this.deriveCacheMisses();
     for (const spec of CONVERSATION_CLIENT_DOCS) {
       if (spec.kind === LIVE_KIND) continue;
       const value = await this.harness.snapshot(spec.doc, this.conversationId, context);
@@ -347,6 +363,29 @@ class ConversationRoom implements DocPresenter {
     this.changed(id);
   }
 
+  /**
+   * The notices of the active answers, replayed over the active entries like Pi's transcript
+   * does on resume: a compaction or reset starts a new context, so the first answer after it is
+   * compared with nothing. Entries replay in id order, which puts the head entry after the
+   * entries it keeps (they display after it). An entry whose notice changed is presented again.
+   */
+  private deriveCacheMisses(): void {
+    const source = this.cacheMissNotices?.();
+    const next = new Map<number, CacheMissNotice>();
+    if (source) {
+      const { history, owners } = durableCacheMissHistory(
+        [...this.entries].sort((left, right) => left.id - right.id),
+      );
+      for (const { index, notice } of replayCacheMissHistory({}, history, source.models)) {
+        const owner = owners[index];
+        if (owner !== undefined) next.set(owner, notice);
+      }
+    }
+    for (const id of new Set([...this.cacheMisses.keys(), ...next.keys()]))
+      if (this.cacheMisses.get(id)?.id !== next.get(id)?.id) this.changed(id);
+    this.cacheMisses = next;
+  }
+
   private changed(id: number): void {
     this.entryViews.delete(id);
     this.revision += 1;
@@ -432,6 +471,14 @@ class ConversationRoom implements DocPresenter {
     }
     entries.sort((left, right) => left.id - right.id);
     const added = entries.filter((entry) => this.addEntry(entry));
+    // Only an answer or a new context moves what the notices compare.
+    if (
+      added.some(
+        (entry) =>
+          entry.head !== undefined || entry.model?.some((message) => message.role === "assistant"),
+      )
+    )
+      this.deriveCacheMisses();
     if (added.length || cardsChanged || inboxChanged || attemptTaskChanged) {
       // Card metadata is published before its input, but a late one still applies to it.
       const users = cardsChanged ? this.entries.filter(isUserEntry) : added.filter(isUserEntry);
@@ -514,6 +561,7 @@ class ConversationRoom implements DocPresenter {
         {
           inputCard: this.inputCards.get(entry.id),
           hidden: this.hidden.has(entry.id),
+          cacheMiss: this.cacheMisses.get(entry.id),
         },
         this.images,
       );
@@ -802,6 +850,7 @@ async function roomFor(
   conversationId: ConversationId,
   renderers: MobileRendererRegistry,
   images?: UserImageStoreScope,
+  cacheMissNotices?: () => CacheMissNoticeSource | undefined,
 ): Promise<ConversationRoom> {
   let rooms = ROOMS.get(harness);
   if (!rooms) {
@@ -810,7 +859,7 @@ async function roomFor(
   }
   let room = rooms.get(conversationId);
   if (!room) {
-    room = new ConversationRoom(harness, conversationId, renderers, images);
+    room = new ConversationRoom(harness, conversationId, renderers, images, cacheMissNotices);
     rooms.set(conversationId, room);
   }
   await room.ready;
@@ -828,6 +877,8 @@ export async function attachConversationStream(options: {
   renderers: MobileRendererRegistry;
   /** Where user-message images of the conversation's session are stored. */
   images?: UserImageStoreScope;
+  /** Present while the session shows cache-miss notices, which entries then carry. */
+  cacheMissNotices?: () => CacheMissNoticeSource | undefined;
   /** Default `full`. */
   mode?: ConversationStreamMode;
   /** `full` mode's resume cursor. */
@@ -842,6 +893,7 @@ export async function attachConversationStream(options: {
       options.conversationId,
       options.renderers,
       options.images,
+      options.cacheMissNotices,
     );
     // The first frame shows decided presentation only.
     await room.settled();
@@ -879,6 +931,8 @@ export async function readOlderConversationEntries(options: {
   renderers: MobileRendererRegistry;
   /** Where user-message images of the conversation's session are stored. */
   images?: UserImageStoreScope;
+  /** Present while the session shows cache-miss notices, which entries then carry. */
+  cacheMissNotices?: CacheMissNoticeSource;
   beforeEntryId: number;
   limit?: number;
 }): Promise<OlderFrame> {
@@ -922,6 +976,9 @@ export async function readOlderConversationEntries(options: {
         )
       ).entries
     : new Map<EntryId, ConversationEntryCard>();
+  const notices = options.cacheMissNotices
+    ? await readCacheMissNotices(conversation, options.cacheMissNotices, beforeEntryId)
+    : new Map<number, CacheMissNotice>();
   const tools: ToolPresenter = {
     call: (name, args) => renderToolCall(renderers, name, args),
     committedCall: () => undefined,
@@ -934,7 +991,7 @@ export async function readOlderConversationEntries(options: {
         entry,
         renderers,
         tools,
-        { inputCard: cards.get(entry.id as EntryId) },
+        { inputCard: cards.get(entry.id as EntryId), cacheMiss: notices.get(entry.id) },
         options.images,
       ),
     ),

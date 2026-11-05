@@ -55,6 +55,7 @@ import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
 import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
+import { cacheMissNoticeSource, type CacheMissNoticeSource } from "./cache-miss.js";
 import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
 import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
@@ -634,6 +635,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId }
             : {}),
           entryRenderers: this.getEntryRenderers(sessionId),
+          cacheMissNotices: this.getCacheMissNotices(sessionId),
         });
       }),
     );
@@ -757,6 +759,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return host.transcript(conversationId as ConversationId, {
       renderers: this.mobileRenderers,
       ...(images ? { images } : {}),
+      cacheMissNotices: () => this.getCacheMissNotices(session.id),
       mode: request.mode ?? "full",
       ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
       send,
@@ -776,6 +779,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return host.olderEntries(conversationId, {
       renderers: this.mobileRenderers,
       ...(images ? { images } : {}),
+      cacheMissNotices: this.getCacheMissNotices(session.id),
       beforeEntryId: request.beforeEntryId,
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
     });
@@ -821,6 +825,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           view,
           this.getEntryRenderers(sessionId),
           images,
+          this.getCacheMissNotices(sessionId),
         );
       }),
     );
@@ -1445,6 +1450,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
     return this.active.get(this.sessionKey(sessionId))?.sdkBackend.getEntryRenderers();
+  }
+
+  /** Where history derives its cache-miss notices: set while the session's Pi settings show them. */
+  getCacheMissNotices(sessionId: string): CacheMissNoticeSource | undefined {
+    return cacheMissNoticeSource(this.active.get(this.sessionKey(sessionId))?.sdkBackend);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

@@ -86,6 +86,16 @@ enum ConversationTraceProjector {
                 }
             case "assistant":
                 appendAssistant(entry, message: message, timestamp: timestamp, results: results, to: &events)
+                // After the whole answer, tool calls included, as `buildSessionContext` places it.
+                if let miss = entry.cacheMiss {
+                    events.append(TraceEvent(
+                        id: miss.id,
+                        type: .system,
+                        timestamp: timestamp,
+                        text: miss.message,
+                        cacheMiss: true
+                    ))
+                }
             case "toolResult":
                 events.append(toolResultEvent(entry, message: message, timestamp: timestamp))
             default:

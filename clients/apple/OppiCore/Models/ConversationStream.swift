@@ -67,6 +67,14 @@ struct ConversationEntryView: Codable, Equatable, Sendable {
     var origin: MessageOrigin?
     /// With `origin`: UTF-16 offset where the displayed text starts.
     var textOffset: Int?
+    /// Assistant entries: the answer re-billed cached context. `id` is the live `cache_miss`
+    /// frame's id.
+    var cacheMiss: ConversationCacheMiss?
+}
+
+struct ConversationCacheMiss: Codable, Equatable, Sendable {
+    var id: String
+    var message: String
 }
 
 /// One path segment of a document op: an object key or an array index.

@@ -13,6 +13,7 @@ import type { DurableBackend as DurableBackendType } from "./durable-backend.js"
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { AgentBackend } from "./agent-backend.js";
+import { replayCacheMissHistory } from "./cache-miss.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
   createRuntimeSessionStateScaffold,
@@ -179,6 +180,20 @@ export class SessionStartCoordinator {
             sdkBackend,
             workspaceId: identity.workspaceId,
           };
+          // The first answer after a restart or resume is compared with the last saved one.
+          // Durable events start only after this, so no live answer can precede the seed.
+          try {
+            replayCacheMissHistory(
+              activeSession.cacheMissTracker,
+              await sdkBackend.cacheMissHistory(),
+              sdkBackend.cacheMissModelPriceSource,
+            );
+          } catch (error) {
+            log.warn("session_start.cache_miss_seed_failed", {
+              sessionId: session.id,
+              error: safeErrorMessage(error),
+            });
+          }
 
           if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
           if (durableHost) activeSession.releaseDurableHold = durableHost.retain("attach");

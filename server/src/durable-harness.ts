@@ -62,9 +62,9 @@ import { OppiAgentDoc, type ClassicExtensionIndex } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
-  type ConversationStreamMode,
   type ConversationStreamSubscription,
 } from "./durable-conversation-stream.js";
+import type { CacheMissNoticeSource } from "./cache-miss.js";
 import type { UserImageStoreScope } from "./durable-conversation-view.js";
 import { DurableModels } from "./durable-models.js";
 import { createLogger } from "./logger.js";
@@ -400,14 +400,10 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
  */
 interface TranscriptStream {
   readonly id: ConversationId;
-  readonly options: {
-    renderers: MobileRendererRegistry;
-    mode: ConversationStreamMode;
-    /** Where user-message images of the conversation's session are stored. */
-    images?: UserImageStoreScope;
-    send: (frame: ConversationStreamServerMessage) => void;
-    onLost: () => void;
-  };
+  readonly options: Omit<
+    Parameters<typeof attachConversationStream>[0],
+    "harness" | "conversationId" | "afterEntryId"
+  >;
   subscription: ConversationStreamSubscription;
 }
 
@@ -721,23 +717,14 @@ export class SessionHost {
    */
   async transcript(
     id: ConversationId,
-    options: {
-      renderers: MobileRendererRegistry;
-      mode?: ConversationStreamMode;
-      /** Where user-message images of the conversation's session are stored. */
-      images?: UserImageStoreScope;
-      afterEntryId?: number;
-      send: (frame: ConversationStreamServerMessage) => void;
-    },
+    options: Omit<TranscriptStream["options"], "onLost"> & { afterEntryId?: number },
   ): Promise<() => void> {
     const release = this.retain("stream");
     try {
       const { harness } = await this.open();
+      const { afterEntryId, ...rest } = options;
       const streamOptions: TranscriptStream["options"] = {
-        renderers: options.renderers,
-        mode: options.mode ?? "full",
-        ...(options.images ? { images: options.images } : {}),
-        send: options.send,
+        ...rest,
         onLost: () => void this.reattachLostTranscript(stream),
       };
       const stream: TranscriptStream = {
@@ -747,7 +734,7 @@ export class SessionHost {
           harness,
           conversationId: id,
           ...streamOptions,
-          ...(options.afterEntryId !== undefined ? { afterEntryId: options.afterEntryId } : {}),
+          ...(afterEntryId !== undefined ? { afterEntryId } : {}),
         }),
       };
       this.transcripts.add(stream);
@@ -772,6 +759,8 @@ export class SessionHost {
       renderers: MobileRendererRegistry;
       /** Where user-message images of the conversation's session are stored. */
       images?: UserImageStoreScope;
+      /** Present while the session shows cache-miss notices, which entries then carry. */
+      cacheMissNotices?: CacheMissNoticeSource;
       beforeEntryId: number;
       limit?: number;
     },

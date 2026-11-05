@@ -23,8 +23,6 @@ import {
   type InboxState,
   type UsageState,
   type EntryRecord,
-  CompactionEntry,
-  ResetEntry,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
@@ -58,7 +56,11 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableClassicEvents } from "./durable-classic-events.js";
 import { exportDurableToHtml } from "./durable-export.js";
-import { isRecoveredPartial, readDurableSessionEntries } from "./durable-history.js";
+import {
+  durableCacheMissHistory,
+  isRecoveredPartial,
+  readDurableSessionEntries,
+} from "./durable-history.js";
 import { splitCanonicalModelId } from "./model-resolution.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
@@ -926,6 +928,9 @@ export class DurableBackend implements AgentBackend {
   get cacheMissModelPriceSource(): ModelRegistry {
     return this.registry;
   }
+  async cacheMissHistory(): Promise<readonly unknown[]> {
+    return durableCacheMissHistory(await this.historyEntries()).history;
+  }
   /** Read per event, as an SDK session reads its runtime's settings, not pinned at attach. */
   get showCacheMissNotices(): boolean {
     return this.piSettings.getShowCacheMissNotices();
@@ -1202,14 +1207,7 @@ export class DurableBackend implements AgentBackend {
     // The Harness compacts at the context window minus this reserve.
     const compaction = this.host.runtime.runPolicySettings.getCompactionSettings();
     return {
-      cacheWaste: computeCacheWaste(
-        (await this.historyEntries()).flatMap((entry) =>
-          CompactionEntry.is(entry) || ResetEntry.is(entry)
-            ? [{ type: "compaction" }]
-            : (entry.model ?? []).map((message) => ({ type: "message", message })),
-        ),
-        this.registry,
-      ),
+      cacheWaste: computeCacheWaste(await this.cacheMissHistory(), this.registry),
       modelBreakdown: sortedModelUsage(byModel),
       contextComposition: {
         piSystemPromptChars: systemPromptChars,

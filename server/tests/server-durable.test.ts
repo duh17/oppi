@@ -1670,67 +1670,94 @@ describe("server durable managed runtime", () => {
     20_000,
   );
 
-  it("reports no cache miss for the history a durable re-attach replays", async () => {
-    const f = await fixture([], { settings: { showCacheMissNotices: true } });
-    const opening = vi.spyOn(SessionHost.prototype, "open");
-    await f.manager.startSession(f.session.id, f.workspace);
-    const { harness } = await opening.mock.results[0]!.value;
-    const conversation = (await harness.conversation(
-      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
-      context,
-    ))!;
-    // Two answered turns an idle gap apart, as a session that went idle and came back leaves them.
-    await conversation.commit(async (tx) => {
-      for (const [text, timestamp, input, cacheRead] of [
-        ["old", 1_000, 0, 100_000],
-        ["older idle", 1_000 + 7 * 60_000, 100_000, 0],
-      ] as const)
+  it.each([
+    { name: "shows the notice", noticesShown: true, compacted: false },
+    { name: "shows none with the setting off", noticesShown: false, compacted: false },
+    { name: "shows none after a saved compaction", noticesShown: true, compacted: true },
+  ])(
+    "compares the first live answer after a restart with the last saved one: $name",
+    async ({ noticesShown, compacted }) => {
+      const f = await fixture([], { settings: { showCacheMissNotices: noticesShown } });
+      const opening = vi.spyOn(SessionHost.prototype, "open");
+      await f.manager.startSession(f.session.id, f.workspace);
+      const { harness } = await opening.mock.results[0]!.value;
+      const conversation = (await harness.conversation(
+        f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+        context,
+      ))!;
+      // Two answered turns an idle gap apart, as a session that went idle and came back leaves them.
+      const [saved] = await conversation.commit(async (tx) => {
+        const entries = [];
+        for (const [text, timestamp, input, cacheRead] of [
+          ["old", 1_000, 0, 100_000],
+          ["older idle", 1_000 + 7 * 60_000, 100_000, 0],
+        ] as const)
+          entries.push(
+            await tx.appendEntry(AssistantEntry, conversation.id, {
+              model: [
+                {
+                  ...fauxAssistantMessage(text),
+                  timestamp,
+                  usage: {
+                    input,
+                    output: 0,
+                    cacheRead,
+                    cacheWrite: 0,
+                    totalTokens: input + cacheRead,
+                    cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+                  },
+                },
+              ],
+            }),
+          );
+        return entries;
+      }, context);
+      if (compacted)
+        await conversation.commit(async (tx) => {
+          await tx.appendEntry(CompactionEntry, conversation.id, {
+            head: saved!.id,
+            model: [{ role: "user", content: "<summary>s</summary>", timestamp: 2 }],
+            data: { reason: "manual" },
+          });
+        }, context);
+      await f.manager.stopSession(f.session.id);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      // The restarted runtime has seen no answer yet: the first one is compared with the saved history.
+      const ended = observed.next(
+        (message) => message.type === "message_end" && message.content === "after attach",
+      );
+      await conversation.commit(async (tx) => {
         await tx.appendEntry(AssistantEntry, conversation.id, {
           model: [
             {
-              ...fauxAssistantMessage(text),
-              timestamp,
+              ...fauxAssistantMessage("after attach"),
+              timestamp: 1_000 + 20 * 60_000,
               usage: {
-                input,
+                input: 100_000,
                 output: 0,
-                cacheRead,
+                cacheRead: 0,
                 cacheWrite: 0,
-                totalTokens: input + cacheRead,
+                totalTokens: 100_000,
                 cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
               },
             },
           ],
         });
-    }, context);
-    await f.manager.stopSession(f.session.id);
-    await f.manager.startSession(f.session.id, f.workspace);
-    const observed = observe(f.manager, f.session.id);
-    // The first answer after the attach only starts tracking: nothing to compare it to yet.
-    const ended = observed.next(
-      (message) => message.type === "message_end" && message.content === "after attach",
-    );
-    await conversation.commit(async (tx) => {
-      await tx.appendEntry(AssistantEntry, conversation.id, {
-        model: [
-          {
-            ...fauxAssistantMessage("after attach"),
-            timestamp: 1_000 + 20 * 60_000,
-            usage: {
-              input: 100_000,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 100_000,
-              cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
-            },
-          },
-        ],
-      });
-    }, context);
-    await ended;
-    expect(observed.messages.filter((message) => message.type === "cache_miss")).toEqual([]);
-    observed.unsubscribe();
-  });
+      }, context);
+      await ended;
+      expect(observed.messages.filter((message) => message.type === "cache_miss")).toEqual(
+        noticesShown && !compacted
+          ? [
+              expect.objectContaining({
+                message: "Cache miss after 13m idle: 100k tokens re-billed (~$1.00)",
+              }),
+            ]
+          : [],
+      );
+      observed.unsubscribe();
+    },
+  );
 
   it("suppresses recoverable overflow errors and projects compact-and-retry", async () => {
     const flush = vi.spyOn(

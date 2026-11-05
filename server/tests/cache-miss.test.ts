@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeCacheWaste,
   observeCacheMiss,
+  replayCacheMissHistory,
   resetCacheMissTracker,
   type CacheMissAssistantMessage,
   type CacheMissTrackerState,
@@ -137,5 +138,78 @@ describe("Pi-compatible cache miss notices", () => {
       missedCost: expect.closeTo(0.77, 6),
       missCount: 1,
     });
+  });
+});
+
+describe("replaying saved history", () => {
+  const warm = {
+    type: "message",
+    message: assistant({ timestamp: 1_000, cacheRead: 100_000, cacheReadCost: 0.1 }),
+  };
+  const rebilled = (timestamp: number, stopReason = "stop") => ({
+    type: "message",
+    message: { ...assistant({ timestamp, input: 100_000, inputCost: 1 }), stopReason },
+  });
+
+  it("places each notice at the answer that paid and seeds the next live comparison", () => {
+    const tracker: CacheMissTrackerState = {};
+    const notices = replayCacheMissHistory(tracker, [warm, rebilled(2_000)], prices);
+
+    expect(notices).toEqual([
+      { index: 1, notice: expect.objectContaining({ id: expect.stringContaining(":2000:") }) },
+    ]);
+    // The next live answer is compared with the last saved one, not treated as the first.
+    expect(
+      observeCacheMiss(
+        tracker,
+        assistant({ timestamp: 3_000, input: 100_000, inputCost: 1 }),
+        prices,
+      ),
+    ).toMatchObject({ missedTokens: 100_000 });
+  });
+
+  it("compares the first live answer after a restart with the last saved answer", () => {
+    const tracker: CacheMissTrackerState = {};
+    replayCacheMissHistory(tracker, [warm], prices);
+
+    expect(
+      observeCacheMiss(
+        tracker,
+        assistant({ timestamp: 8 * 60_000, input: 100_000, inputCost: 1 }),
+        prices,
+      ),
+    ).toMatchObject({ reason: "idle", missedTokens: 100_000 });
+  });
+
+  it("does not compare a live answer with its own saved entry", () => {
+    const tracker: CacheMissTrackerState = {};
+    replayCacheMissHistory(tracker, [warm, rebilled(2_000)], prices);
+
+    expect(
+      observeCacheMiss(
+        tracker,
+        assistant({ timestamp: 2_000, input: 100_000, inputCost: 1 }),
+        prices,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("shows no notice across a compaction", () => {
+    const tracker: CacheMissTrackerState = {};
+    const notices = replayCacheMissHistory(
+      tracker,
+      [warm, { type: "compaction" }, rebilled(2_000)],
+      prices,
+    );
+
+    expect(notices).toEqual([]);
+  });
+
+  it("shows no notice on an aborted answer, but still tracks it", () => {
+    const tracker: CacheMissTrackerState = {};
+    const notices = replayCacheMissHistory(tracker, [warm, rebilled(2_000, "aborted")], prices);
+
+    expect(notices).toEqual([]);
+    expect(tracker.previous).toMatchObject({ timestamp: 2_000 });
   });
 });

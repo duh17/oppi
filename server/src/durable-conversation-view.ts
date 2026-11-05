@@ -23,6 +23,7 @@ import { DurableUIClientDoc, sanitizeTranscriptCard } from "./durable-ui.js";
 import { agentMessageOrigin } from "../plugins/subagents/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
+import { formatCacheMissNotice, type CacheMissNotice } from "./cache-miss.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { storeUserMessageImages } from "./session-attachments.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
@@ -172,11 +173,13 @@ function renderToolResult(
 
 /**
  * How the trace shows an entry beyond its content, decided by the caller from state outside
- * the entry: `inputCard` from `readDurableInputCards`, `hidden` from `isRecoveredPartial`.
+ * the entry: `inputCard` from `readDurableInputCards`, `hidden` from `isRecoveredPartial`,
+ * `cacheMiss` from the conversation's earlier answers (`replayCacheMissHistory`).
  */
 export interface EntryPresentation {
   inputCard?: ConversationEntryCard;
   hidden?: boolean;
+  cacheMiss?: CacheMissNotice;
 }
 
 /**
@@ -416,6 +419,12 @@ export function projectEntry(
     const data = asRecord(entry.data);
     const card = sanitizeTranscriptCard(data?.card);
     if (card) view.card = card;
+  }
+  if (presentation.cacheMiss) {
+    view.cacheMiss = {
+      id: presentation.cacheMiss.id,
+      message: formatCacheMissNotice(presentation.cacheMiss),
+    };
   }
   return view;
 }

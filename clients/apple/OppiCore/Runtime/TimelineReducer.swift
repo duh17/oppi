@@ -1408,7 +1408,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return nil
 
         case .system:
-            if let presentation = event.presentation, presentation.kind == "custom" {
+            if event.cacheMiss == true {
+                insertItem(.cacheMiss(id: event.id, message: event.text ?? ""), appendOnly: appendOnly)
+            } else if let presentation = event.presentation, presentation.kind == "custom" {
                 insertItem(.customEvent(
                     id: event.id,
                     message: event.text ?? "",

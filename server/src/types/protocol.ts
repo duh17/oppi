@@ -1344,6 +1344,12 @@ export interface ConversationEntryView {
   origin?: MessageOrigin;
   /** With `origin`: UTF-16 offset where the displayed text starts; the model-only header before it is hidden. */
   textOffset?: number;
+  /**
+   * Assistant entries: this answer re-billed cached context, shown after it while Pi's
+   * showCacheMissNotices is on. `id` is the live `cache_miss` frame's id, so a client that holds
+   * the live row updates it in place. Usage stays on the server, so clients cannot derive it.
+   */
+  cacheMiss?: { id: string; message: string };
 }
 
 /**

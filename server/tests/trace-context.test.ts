@@ -682,3 +682,74 @@ describe("findToolOutput", () => {
     expect(result!.isError).toBe(true);
   });
 });
+
+describe("cache-miss notices in history", () => {
+  const usage = (input: number, cacheRead: number) => ({
+    input,
+    output: 10,
+    cacheRead,
+    cacheWrite: 0,
+    totalTokens: input + cacheRead + 10,
+    cost: { input: input * 1e-5, output: 0, cacheRead: 0, cacheWrite: 0, total: input * 1e-5 },
+  });
+  const answer = (
+    id: string,
+    parentId: string,
+    timestamp: number,
+    input: number,
+    cacheRead: number,
+    content: unknown = "answer",
+  ) =>
+    msg(id, parentId, "assistant", content, {
+      provider: "anthropic",
+      model: "claude-sonnet",
+      timestamp,
+      stopReason: "stop",
+      usage: usage(input, cacheRead),
+    });
+  const notices = (events: ReturnType<typeof buildSessionContext>) =>
+    events.filter((event) => event.cacheMiss);
+
+  // A warm answer, then one that re-billed 100k tokens after 7 idle minutes.
+  const history = [
+    msg("1", null, "user", "hi"),
+    answer("2", "1", 1_000, 0, 100_000),
+    msg("3", "2", "user", "again"),
+    answer("4", "3", 1_000 + 7 * 60_000, 100_000, 0, [
+      { type: "toolCall", id: "tc1", name: "bash", arguments: { command: "ls" } },
+    ]),
+    msg("5", "4", "toolResult", "ok", { toolCallId: "tc1", toolName: "bash" }),
+  ];
+
+  it("places one notice after the answer that paid, before its tool result", () => {
+    const events = buildSessionContext(history, { cacheMissNotices: {} });
+
+    expect(notices(events)).toEqual([
+      expect.objectContaining({
+        id: `cache-miss:${1_000 + 7 * 60_000}:anthropic/claude-sonnet`,
+        type: "system",
+        text: "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)",
+      }),
+    ]);
+    const ids = events.map((event) => event.id);
+    // The tool call is part of the answer that paid, so the notice follows it.
+    expect(events[ids.indexOf(notices(events)[0]!.id) - 1]?.type).toBe("toolCall");
+    expect(ids.indexOf(notices(events)[0]!.id)).toBe(ids.indexOf("result-5") - 1);
+  });
+
+  it("shows nothing unless notices are on", () => {
+    expect(notices(buildSessionContext(history))).toEqual([]);
+  });
+
+  it("shows nothing for an answer after a compaction, even in the context view", () => {
+    const compacted = [
+      history[0]!,
+      answer("2", "1", 1_000, 0, 100_000),
+      entry("compaction", "3", "2", { summary: "s", firstKeptEntryId: "2", tokensBefore: 1 }),
+      msg("4", "3", "user", "again"),
+      answer("5", "4", 1_000 + 7 * 60_000, 100_000, 0),
+    ];
+
+    expect(notices(buildSessionContext(compacted, { cacheMissNotices: {} }))).toEqual([]);
+  });
+});

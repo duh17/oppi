@@ -9,6 +9,7 @@ import {
   type SessionEntry,
   type TraceEvent,
 } from "./trace.js";
+import type { CacheMissNoticeSource } from "./cache-miss.js";
 
 export interface TracePageOptions {
   cursor?: string;
@@ -21,6 +22,8 @@ export interface TracePageOptions {
   /// Current in-memory tree leaf for the initial page. Omit for cursor and around-entry pages.
   leafId?: string | null;
   entryRenderers?: LiveEntryRendererSet | null;
+  /** See `TraceReadOptions.cacheMissNotices`; notices cover the entries of the page. */
+  cacheMissNotices?: CacheMissNoticeSource;
 }
 
 export interface TracePageMetadata {
@@ -101,6 +104,16 @@ export function readSessionTracePageFromFile(
   return readSessionTracePageFromFiles([jsonlPath], options);
 }
 
+/**
+ * What shapes a page beyond its entries, for trace versions and cursors: the renderers, and
+ * cache-miss notices, which add events.
+ */
+export function tracePageRendererVersion(
+  options: Pick<TracePageOptions, "entryRenderers" | "cacheMissNotices">,
+): string {
+  return `${options.entryRenderers?.version ?? ""}${options.cacheMissNotices ? "+cm" : ""}`;
+}
+
 export function readSessionTracePageFromFiles(
   jsonlPaths: string[],
   options: TracePageOptions = {},
@@ -112,7 +125,7 @@ export function readSessionTracePageFromFiles(
     options.maxInitialReadBytes ?? DEFAULT_INITIAL_READ_BYTES,
   );
   const sources = traceSources(jsonlPaths);
-  const rendererVersion = options.entryRenderers?.version ?? "";
+  const rendererVersion = tracePageRendererVersion(options);
   const traceVersion = appendRendererVersion(traceVersionFor(sources), rendererVersion);
   const jsonlBytes = sources.reduce((sum, source) => sum + source.size, 0);
   const aroundEntryId = options.aroundEntryId?.trim();
@@ -127,6 +140,7 @@ export function readSessionTracePageFromFiles(
       attachmentDataDir: options.attachmentDataDir,
       attachmentSessionId: options.attachmentSessionId,
       entryRenderers: options.entryRenderers,
+      cacheMissNotices: options.cacheMissNotices,
     });
   }
 
@@ -250,6 +264,7 @@ export function readSessionTracePageFromFiles(
       attachmentSessionId: options.attachmentSessionId,
       leafId: requestedLeafId,
       entryRenderers: options.entryRenderers,
+      cacheMissNotices: options.cacheMissNotices,
     });
   }
 
@@ -320,7 +335,7 @@ export function readSessionTracePageFromEntries(
     // Window boundaries can change parent links; identity hashes only immutable content.
     hash: hashLine(Buffer.from(JSON.stringify({ ...entry, parentId: undefined }))),
   }));
-  const rendererVersion = options.entryRenderers?.version ?? "";
+  const rendererVersion = tracePageRendererVersion(options);
   const traceVersion = appendRendererVersion(
     `${sourceId}:${lines.at(-1)?.entry.id ?? ""}`,
     rendererVersion,
@@ -454,6 +469,7 @@ function readAroundTracePage(
     attachmentSessionId?: string;
     leafId?: string;
     entryRenderers?: LiveEntryRendererSet | null;
+    cacheMissNotices?: CacheMissNoticeSource;
   },
 ): TracePageResult {
   const readStart = performance.now();
@@ -1270,7 +1286,7 @@ function formatEntries(
   entries: SessionEntry[],
   options: Pick<
     TracePageOptions,
-    "attachmentDataDir" | "attachmentSessionId" | "leafId" | "entryRenderers"
+    "attachmentDataDir" | "attachmentSessionId" | "leafId" | "entryRenderers" | "cacheMissNotices"
   >,
 ): TraceEvent[] {
   return buildSessionContext(entries, {
@@ -1279,6 +1295,7 @@ function formatEntries(
     attachmentSessionId: options.attachmentSessionId,
     ...(options.leafId !== undefined ? { leafId: options.leafId } : {}),
     ...(options.entryRenderers ? { entryRenderers: options.entryRenderers } : {}),
+    ...(options.cacheMissNotices ? { cacheMissNotices: options.cacheMissNotices } : {}),
   });
 }
 

@@ -28,11 +28,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import {
-  DurableInputCards,
-  DurableUI,
-  DurableUIClientDoc,
-} from "../src/durable-ui.js";
+import { DurableInputCards, DurableUI, DurableUIClientDoc } from "../src/durable-ui.js";
 import {
   CONVERSATION_SNAPSHOT_LIMIT,
   attachConversationStream,
@@ -164,11 +160,13 @@ async function attach(
   afterEntryId?: number,
   client = new Client(),
   mode?: "live",
+  cacheMissNotices?: () => Record<string, never>,
 ): Promise<Client> {
   client.subscription = await attachConversationStream({
     harness: f.harness,
     conversationId: f.conversation.id,
     renderers: new MobileRendererRegistry(),
+    ...(cacheMissNotices ? { cacheMissNotices } : {}),
     ...(mode ? { mode } : {}),
     ...(afterEntryId !== undefined ? { afterEntryId } : {}),
     send: (frame) => {
@@ -604,6 +602,129 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     expect(afterReset.head).toBe(reset);
     expect(afterReset.entries.map((entry) => entry.kind)).toEqual(["pi.reset", "pi.user"]);
     await expectConverged(f, afterReset);
+  });
+
+  describe("cache-miss notices", () => {
+    // A warm answer, then one that re-billed 100k tokens after 7 idle minutes.
+    const answer = (text: string, timestamp: number, input: number, cacheRead: number) => ({
+      kind: "pi.assistant",
+      model: [
+        {
+          ...fauxAssistantMessage(text),
+          timestamp,
+          usage: {
+            input,
+            output: 0,
+            cacheRead,
+            cacheWrite: 0,
+            totalTokens: input + cacheRead,
+            cost: { input: input * 1e-5, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      ],
+    });
+    const warm = answer("warm", 1_000, 0, 100_000);
+    const rebilled = answer("rebilled", 1_000 + 7 * 60_000, 100_000, 0);
+    const notices = (client: Client) =>
+      client.entries.flatMap((entry) => (entry.cacheMiss ? [[entry.id, entry.cacheMiss]] : []));
+
+    it("sends the notice with the answer that paid on attach, and again after a reload", async () => {
+      const f = await fixture([]);
+      const ids = await f.conversation.commit(async (tx) => {
+        const first = await tx.appendEntry(f.conversation.id, warm);
+        const second = await tx.appendEntry(f.conversation.id, rebilled);
+        return [first.id, second.id];
+      }, context);
+      const expected = [
+        [
+          ids[1],
+          {
+            id: `cache-miss:${1_000 + 7 * 60_000}:faux/faux-1`,
+            message: "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)",
+          },
+        ],
+      ];
+
+      const first = await attach(f, undefined, new Client(), undefined, () => ({}));
+      expect(notices(first)).toEqual(expected);
+      first.subscription.dispose();
+      // A full reload attaches without a cursor to a new room: the same single notice.
+      const reloaded = await attach(f, undefined, new Client(), undefined, () => ({}));
+      expect(notices(reloaded)).toEqual(expected);
+    });
+
+    it("sends the notice in the frame that lands a live answer", async () => {
+      const f = await fixture([]);
+      await f.conversation.commit(async (tx) => {
+        await tx.appendEntry(f.conversation.id, warm);
+      }, context);
+      const client = await attach(f, undefined, new Client(), undefined, () => ({}));
+      expect(notices(client)).toEqual([]);
+
+      const landed = await f.conversation.commit(
+        async (tx) => (await tx.appendEntry(f.conversation.id, rebilled)).id,
+        context,
+      );
+      await settle();
+      expect(notices(client).map(([id]) => id)).toEqual([landed]);
+    });
+
+    it("sends the notice on a paged-in older answer, compared with answers before the page", async () => {
+      const f = await fixture([]);
+      const ids = await f.conversation.commit(async (tx) => {
+        const entries = [warm, rebilled, warm].map((entry) =>
+          tx.appendEntry(f.conversation.id, entry),
+        );
+        return (await Promise.all(entries)).map((entry) => entry.id);
+      }, context);
+      const read = (cacheMissNotices?: Record<string, never>) =>
+        readOlderConversationEntries({
+          harness: f.harness,
+          conversationId: f.conversation.id,
+          renderers: new MobileRendererRegistry(),
+          beforeEntryId: ids[2]!,
+          limit: 1,
+          ...(cacheMissNotices ? { cacheMissNotices } : {}),
+        });
+
+      // The page holds only the answer that paid; the one it was compared with is before it.
+      const withNotices = await read({});
+      expect(withNotices.entries.map((entry) => [entry.id, entry.cacheMiss?.message])).toEqual([
+        [ids[1], "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)"],
+      ]);
+      expect((await read()).entries[0]?.cacheMiss).toBeUndefined();
+    });
+
+    it("sends none while the setting is off", async () => {
+      const f = await fixture([]);
+      await f.conversation.commit(async (tx) => {
+        await tx.appendEntry(f.conversation.id, warm);
+        await tx.appendEntry(f.conversation.id, rebilled);
+      }, context);
+
+      expect(notices(await attach(f))).toEqual([]);
+    });
+
+    it("sends none for an answer after a compaction, though the entries it kept display after it", async () => {
+      const f = await fixture([]);
+      await f.conversation.commit(async (tx) => {
+        const kept = await tx.appendEntry(f.conversation.id, warm);
+        await tx.appendEntry(f.conversation.id, {
+          kind: "pi.compaction",
+          head: kept.id,
+          model: [{ role: "user", content: "<summary>s</summary>", timestamp: 2 }],
+        });
+        await tx.appendEntry(f.conversation.id, rebilled);
+      }, context);
+
+      const client = await attach(f, undefined, new Client(), undefined, () => ({}));
+      expect(client.entries.map((entry) => entry.kind)).toEqual([
+        "pi.compaction",
+        "pi.assistant",
+        "pi.assistant",
+      ]);
+      expect(notices(client)).toEqual([]);
+    });
   });
 
   it("fails an attach whose room closes while it loads, without retrying it", async () => {

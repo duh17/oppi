@@ -51,11 +51,21 @@ import {
   type StoredUserMessageImage,
 } from "./session-attachments.js";
 import { projectAssistantContentRuns, projectAssistantTimelineBlocks } from "./session-protocol.js";
+import {
+  formatCacheMissNotice,
+  replayCacheMissHistory,
+  type CacheMissNoticeSource,
+} from "./cache-miss.js";
 
 export type TraceViewMode = "context" | "full";
 
 export interface TraceReadOptions {
   view?: TraceViewMode;
+  /**
+   * Show a cache-miss notice after each answer that paid for one, as Pi's transcript does.
+   * Absent while Pi's showCacheMissNotices is off or no runtime reports it.
+   */
+  cacheMissNotices?: CacheMissNoticeSource;
   leafId?: string | null;
   attachmentDataDir?: string;
   attachmentSessionId?: string;
@@ -410,6 +420,11 @@ export interface TraceEvent {
    * not be stored (`storeUserMessageImages`). Same shape as a tool `details.media[]` entry.
    */
   media?: Record<string, unknown>[];
+  /**
+   * For system: the event is a cache-miss notice, shown as the live `cache_miss` frame is. Its
+   * `id` is that frame's id, so a client holding the live row updates it in place.
+   */
+  cacheMiss?: true;
 }
 
 export interface TraceEventPresentationField {
@@ -593,6 +608,14 @@ export function buildSessionContext(
   if (path.length === 0) return [];
 
   const visibleEntryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
+  // Replayed over the whole path: a notice depends on answers a compaction hides.
+  const cacheMissNotices = options.cacheMissNotices
+    ? new Map(
+        replayCacheMissHistory({}, path, options.cacheMissNotices.models).map(
+          ({ index, notice }) => [path[index]?.id, notice] as const,
+        ),
+      )
+    : undefined;
 
   // Convert visible entries to TraceEvents. Structural lifecycle is carried in
   // optional metadata on the nearest renderable event so older Apple clients
@@ -610,9 +633,20 @@ export function buildSessionContext(
     const eventCountBeforeEntry = events.length;
 
     switch (entry.type) {
-      case "message":
+      case "message": {
         emitMessageEvents(entry, timestamp, events, options);
+        const notice = cacheMissNotices?.get(entry.id);
+        if (notice) {
+          events.push({
+            id: notice.id,
+            type: "system",
+            timestamp,
+            text: formatCacheMissNotice(notice),
+            cacheMiss: true,
+          });
+        }
         break;
+      }
 
       case "compaction":
         events.push(formatCompactionEvent(entry));

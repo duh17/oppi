@@ -1,10 +1,12 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type {
-  Conversation,
-  ConversationId,
-  EntryId,
-  EntryRecord,
-  Harness,
+import {
+  CompactionEntry,
+  ResetEntry,
+  type Conversation,
+  type ConversationId,
+  type EntryId,
+  type EntryRecord,
+  type Harness,
 } from "@earendil-works/pi-durable";
 import type { Message, NestedToolCalls as PiNestedToolCalls } from "@earendil-works/pi-ai";
 import { performance } from "node:perf_hooks";
@@ -20,12 +22,18 @@ import {
 import {
   readSessionTracePageFromEntries,
   tracePageCursorEntryId,
+  tracePageRendererVersion,
   type TracePageOptions,
   type TracePageResult,
 } from "./trace-paging.js";
 import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./trace-outline.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "./durable-ui.js";
+import {
+  replayCacheMissHistory,
+  type CacheMissNotice,
+  type CacheMissNoticeSource,
+} from "./cache-miss.js";
 import { durableNestedCalls } from "./tool-nested-calls.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 
@@ -103,6 +111,62 @@ export async function readRetryEvidence(
 }
 
 /** An aborted assistant entry a task committed: the only entries `isRecoveredPartial` may hide. */
+/**
+ * Entries (oldest first) as `replayCacheMissHistory` reads them: each model message is a
+ * saved message, a compaction or reset is the reset. `owners[i]` is the entry id behind
+ * `history[i]`.
+ */
+export function durableCacheMissHistory(entries: readonly EntryRecord[]): {
+  history: Array<{ type: "message"; message: unknown } | { type: "compaction" }>;
+  owners: number[];
+} {
+  const history: Array<{ type: "message"; message: unknown } | { type: "compaction" }> = [];
+  const owners: number[] = [];
+  for (const entry of entries) {
+    if (CompactionEntry.is(entry) || ResetEntry.is(entry)) {
+      history.push({ type: "compaction" });
+      owners.push(entry.id);
+      continue;
+    }
+    for (const message of entry.model ?? []) {
+      history.push({ type: "message", message });
+      owners.push(entry.id);
+    }
+  }
+  return { history, owners };
+}
+
+/**
+ * The notices of the conversation's answers before `beforeEntryId` (all of it by default),
+ * by entry id, replayed over the whole history so a page sees the answers before it.
+ */
+export async function readCacheMissNotices(
+  conversation: Conversation,
+  source: CacheMissNoticeSource,
+  beforeEntryId?: number,
+): Promise<Map<number, CacheMissNotice>> {
+  const records: EntryRecord[] = [];
+  let cursor;
+  if (beforeEntryId === undefined || beforeEntryId > 1)
+    do {
+      const page = await conversation.entries(
+        beforeEntryId === undefined ? {} : { maxEntryId: (beforeEntryId - 1) as EntryId },
+        500,
+        cursor,
+        context,
+      );
+      records.push(...page.items);
+      cursor = page.next;
+    } while (cursor !== undefined);
+  const { history, owners } = durableCacheMissHistory(records.reverse());
+  return new Map(
+    replayCacheMissHistory({}, history, source.models).flatMap(({ index, notice }) => {
+      const owner = owners[index];
+      return owner === undefined ? [] : [[owner, notice] as const];
+    }),
+  );
+}
+
 export function isAbortedAttempt(
   entry: EntryRecord,
 ): entry is EntryRecord & { byTaskId: NonNullable<EntryRecord["byTaskId"]> } {
@@ -237,10 +301,12 @@ export async function readDurableTrace(
   entryRenderers?: LiveEntryRendererSet,
   /** Where user-message image bytes are stored; without it they stay data URIs. */
   images?: { dataDir: string; sessionId: string },
+  cacheMissNotices?: CacheMissNoticeSource,
 ): Promise<TraceEvent[]> {
   return buildSessionContext(await projectEntries(harness, await allEntries(harness, id)), {
     view,
     entryRenderers,
+    ...(cacheMissNotices ? { cacheMissNotices } : {}),
     ...(images ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId } : {}),
   });
 }
@@ -278,7 +344,7 @@ export async function readDurableTracePage(
   const target = Math.max(1, options.targetEvents ?? 450);
   const latest = await conversation?.entries({}, 1, undefined, context);
   const tip = latest?.items[0]?.id;
-  const rendererVersion = options.entryRenderers?.version ?? "";
+  const rendererVersion = tracePageRendererVersion(options);
 
   async function pageFromRecords(
     records: readonly EntryRecord[],

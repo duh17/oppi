@@ -96,6 +96,10 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     /// only for an image the server could not store.
     var media: [TraceMediaAttachment]? = nil
 
+    /// System events only: this is a cache-miss notice, shown like the live `cache_miss` frame.
+    /// Its `id` is that frame's id, so a row the live frame added updates in place.
+    var cacheMiss: Bool? = nil
+
     init(
         id: String,
         type: TraceEventType,
@@ -125,7 +129,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         nestedCalls: NestedToolCalls? = nil,
         display: ToolDisplay? = nil,
         origin: MessageOrigin? = nil,
-        media: [TraceMediaAttachment]? = nil
+        media: [TraceMediaAttachment]? = nil,
+        cacheMiss: Bool? = nil
     ) {
         self.id = id
         self.type = type
@@ -156,6 +161,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.display = display
         self.origin = origin
         self.media = media
+        self.cacheMiss = cacheMiss
     }
 }
 

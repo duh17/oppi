@@ -1,9 +1,11 @@
 /**
  * Pi-compatible cache-miss detection for live notices and session diagnostics.
  *
- * Live tracking starts with the first assistant response observed by the current
- * runtime, and notices remain gated by Pi's showCacheMissNotices setting.
- * Session diagnostics reconstruct cache re-billing from available history.
+ * A runtime seeds its tracker from saved history (`replayCacheMissHistory`), so the first
+ * live answer after a restart is compared with the last saved one, and history loads derive
+ * the same notices Pi's transcript re-injects on resume. Notices remain gated by Pi's
+ * showCacheMissNotices setting. Session diagnostics reconstruct cache re-billing from the
+ * same history.
  */
 
 /** Anthropic's default prompt-cache TTL, matching Pi's transcript notice. */
@@ -35,6 +37,26 @@ export interface CacheMissTrackerState {
     timestamp: number;
     reportedCache: boolean;
   };
+}
+
+/**
+ * Present while Pi's showCacheMissNotices is on: history then derives notices, priced from
+ * `models` when an answer's own usage carries no cache-read price.
+ */
+export interface CacheMissNoticeSource {
+  models?: CacheMissModelPriceSource;
+}
+
+/** The source a running backend gives history: absent while its Pi settings hide notices. */
+export function cacheMissNoticeSource(
+  backend:
+    | {
+        showCacheMissNotices: boolean;
+        cacheMissModelPriceSource: CacheMissModelPriceSource;
+      }
+    | undefined,
+): CacheMissNoticeSource | undefined {
+  return backend?.showCacheMissNotices ? { models: backend.cacheMissModelPriceSource } : undefined;
 }
 
 export interface CacheMissModelPriceSource {
@@ -158,12 +180,10 @@ function detectCacheMiss(
   return miss;
 }
 
-export function observeCacheMiss(
-  tracker: CacheMissTrackerState,
+function noticeForMiss(
   message: CacheMissAssistantMessage,
-  models?: CacheMissModelPriceSource,
+  miss: ReturnType<typeof detectCacheMiss>,
 ): CacheMissNotice | undefined {
-  const miss = detectCacheMiss(tracker, message, models);
   if (
     !miss ||
     (miss.missedTokens < CACHE_MISS_NOTICE_TOKENS && miss.missedCost < CACHE_MISS_NOTICE_COST)
@@ -184,15 +204,42 @@ export function observeCacheMiss(
   };
 }
 
-/** Full-history cache re-billing, reset at intentional structural context changes. */
-export function computeCacheWaste(
-  entries: readonly unknown[],
+/**
+ * Live detection. An answer the tracker already holds (its entry was saved before the
+ * runtime observed it, and history seeded the tracker) is not compared with itself.
+ */
+export function observeCacheMiss(
+  tracker: CacheMissTrackerState,
+  message: CacheMissAssistantMessage,
   models?: CacheMissModelPriceSource,
-): CacheWasteTotals {
-  const tracker: CacheMissTrackerState = {};
-  const totals: CacheWasteTotals = { missedTokens: 0, missedCost: 0, missCount: 0 };
+): CacheMissNotice | undefined {
+  const previous = tracker.previous;
+  if (
+    previous &&
+    previous.timestamp === message.timestamp &&
+    previous.modelKey === `${message.provider}/${message.model}`
+  ) {
+    return undefined;
+  }
+  return noticeForMiss(message, detectCacheMiss(tracker, message, models));
+}
 
-  for (const value of entries) {
+/**
+ * Feed saved history through the detector in order, resetting at compaction and branch
+ * summaries (`type: "compaction" | "branch_summary"`; answers are `type: "message"`).
+ * `visit` sees each assistant answer with the raw miss, if any.
+ */
+function replayHistory(
+  tracker: CacheMissTrackerState,
+  entries: readonly unknown[],
+  models: CacheMissModelPriceSource | undefined,
+  visit: (
+    index: number,
+    message: CacheMissAssistantMessage,
+    miss: ReturnType<typeof detectCacheMiss>,
+  ) => void,
+): void {
+  for (const [index, value] of entries.entries()) {
     if (!value || typeof value !== "object") continue;
     const entry = value as Record<string, unknown>;
     if (entry.type === "compaction" || entry.type === "branch_summary") {
@@ -203,13 +250,46 @@ export function computeCacheWaste(
 
     const message = asCacheMissAssistantMessage(entry.message);
     if (!message) continue;
-    const miss = detectCacheMiss(tracker, message, models);
-    if (!miss) continue;
+    visit(index, message, detectCacheMiss(tracker, message, models));
+  }
+}
+
+export interface CacheMissHistoryNotice {
+  /** Position in `entries` of the answer that paid. */
+  index: number;
+  notice: CacheMissNotice;
+}
+
+/**
+ * Replay saved history like Pi's `collectCacheMisses`: leaves `tracker` holding the last
+ * saved answer, so the next live answer is compared with it, and returns the notices a
+ * transcript shows, each at the answer that paid (never an aborted or failed one).
+ */
+export function replayCacheMissHistory(
+  tracker: CacheMissTrackerState,
+  entries: readonly unknown[],
+  models?: CacheMissModelPriceSource,
+): CacheMissHistoryNotice[] {
+  const notices: CacheMissHistoryNotice[] = [];
+  replayHistory(tracker, entries, models, (index, message, miss) => {
+    const notice = noticeForMiss(message, miss);
+    if (notice && shouldDisplayCacheMissForMessage(message)) notices.push({ index, notice });
+  });
+  return notices;
+}
+
+/** Full-history cache re-billing, reset at intentional structural context changes. */
+export function computeCacheWaste(
+  entries: readonly unknown[],
+  models?: CacheMissModelPriceSource,
+): CacheWasteTotals {
+  const totals: CacheWasteTotals = { missedTokens: 0, missedCost: 0, missCount: 0 };
+  replayHistory({}, entries, models, (_index, _message, miss) => {
+    if (!miss) return;
     totals.missedTokens += miss.missedTokens;
     totals.missedCost += miss.missedCost;
     totals.missCount += 1;
-  }
-
+  });
   return totals;
 }
 

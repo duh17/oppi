@@ -34,6 +34,8 @@ export interface AgentBackend {
   readonly persistsWithoutSessionFile?: boolean;
   readonly showCacheMissNotices: boolean;
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
+  /** Saved history in `replayCacheMissHistory` form: answers, with compaction and branch summaries as resets. */
+  cacheMissHistory(): Promise<readonly unknown[]>;
 
   /**
    * Whether work this session started will wake it later: a running background job, or a

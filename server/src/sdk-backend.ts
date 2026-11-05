@@ -1888,6 +1888,10 @@ export class SdkBackend implements AgentBackend {
     return this.modelRegistry;
   }
 
+  cacheMissHistory(): Promise<readonly unknown[]> {
+    return Promise.resolve(this.piSession.sessionManager.getEntries());
+  }
+
   private subscribeToCurrentSession(): void {
     this.unsub?.();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {

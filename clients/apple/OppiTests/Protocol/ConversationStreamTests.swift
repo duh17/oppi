@@ -273,6 +273,39 @@ struct ConversationStreamTests {
         #expect(event.media?.map(\.id) == ["att_user_abc"])
     }
 
+    /// A cache miss the server derived from history shows after the answer that paid, and the
+    /// live frame for the same answer (same id) updates that row instead of adding a second.
+    @MainActor
+    @Test func cacheMissEntryShowsOnceAfterItsAnswerAndLiveFrameUpserts() throws {
+        let noticeID = "cache-miss:1791650000000:anthropic/claude-sonnet"
+        let text = "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)"
+        let answer = ConversationEntryView(
+            id: 4,
+            kind: "pi.assistant",
+            model: [.object([
+                "role": .string("assistant"),
+                "content": .array([.object(["type": .string("text"), "text": .string("done")])]),
+                "timestamp": .number(1_791_650_000_000),
+            ])],
+            cacheMiss: ConversationCacheMiss(id: noticeID, message: text)
+        )
+        let events = ConversationTraceProjector.traceEvents(from: [answer])
+        #expect(events.map(\.type) == [.assistant, .system])
+
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted(events)
+        #expect(reducer.items.count == 2)
+        guard case .cacheMiss(let id, let message) = reducer.items[1] else {
+            Issue.record("Expected the notice after the answer, got \(reducer.items[1])")
+            return
+        }
+        #expect(id == noticeID)
+        #expect(message == text)
+
+        reducer.appendClientRow(.cacheMiss(id: noticeID, message: text))
+        #expect(reducer.items.count == 2)
+    }
+
     @Test func framesForAnotherConversationAndMissingPathsThrow() throws {
         var replica = ConversationReplica()
         try replica.apply(.snapshot(.init(conversationId: 3, head: 0, hasOlder: false, entries: [], docs: ["d": ["a": "x"]])))
