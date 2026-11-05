@@ -19,12 +19,12 @@ extension ComposerBarController {
             slash = []
         }
         slashPanel.apply(content: slash.isEmpty ? .empty : .slash(slash), colors: colors)
-        let showFiles = !content.fileSuggestions.isEmpty && {
-            if case .atFile = context { return true }
-            return false
-        }()
         filePanel.apply(
-            content: showFiles ? .files(content.fileSuggestions) : .empty,
+            content: ComposerModelMentions.panelContent(
+                for: context,
+                catalog: content.modelCatalog,
+                files: content.fileSuggestions
+            ),
             colors: colors
         )
 

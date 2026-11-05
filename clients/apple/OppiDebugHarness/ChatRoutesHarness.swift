@@ -494,6 +494,7 @@ enum ChatRoutesFixture {
 
     static let models = [
         ModelInfo(id: "claude-routes", name: "Claude Routes", provider: "anthropic", contextWindow: 200_000),
+        ModelInfo(id: "claude-sonnet-routes", name: "Claude Sonnet Routes", provider: "anthropic", contextWindow: 200_000),
         ModelInfo(id: "gpt-routes", name: "GPT Routes", provider: "openai", contextWindow: 200_000),
     ]
 

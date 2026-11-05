@@ -256,7 +256,7 @@ final class HarnessLaunchReset {
 
     private static var installed: HarnessLaunchReset?
 
-    private let root: AppRootEnvironment
+    private var root: AppRootEnvironment
     private let launchArguments: [String: Any]
     private weak var current: HarnessRootViewController?
     private var token: Int32 = NOTIFY_TOKEN_INVALID
@@ -311,6 +311,19 @@ final class HarnessLaunchReset {
         }
         UserDefaults.standard.setVolatileDomain(launchArguments, forName: UserDefaults.argumentDomain)
         TestLaunchContract.applyInProcessReset(generation: generation)
+        // The contract removed the draft files, but the root's store still holds the
+        // last test's drafts in memory and would hand them to the next chat: the next
+        // test's root owns a new, empty one, as a fresh process would.
+        root = AppRootEnvironment(
+            coordinator: root.coordinator,
+            navigation: root.navigation,
+            themeStore: root.themeStore,
+            quickCommentTemplateStore: root.quickCommentTemplateStore,
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: root.chatReaderPayloadStore,
+            sessionRows: root.sessionRows,
+            liveVoiceCalls: root.liveVoiceCalls
+        )
         Self.resetProcessCaches()
         Self.resetHarnessFixtures()
         // The new root's state starts from the theme in effect when it is built, so the

@@ -188,6 +188,11 @@ extension ComposerBarController {
             self?.host?.insertSlashCommand(command)
             self?.applyChrome()
         }
+        filePanel.onSelectModel = { [weak self] model in
+            guard let host = self?.host else { return }
+            host.setText(ComposerModelMentions.insert(model, into: host.content.text))
+            self?.applyChrome()
+        }
         filePanel.onSelectFile = { [weak self] suggestion in
             self?.host?.insertFileSuggestion(suggestion)
             self?.applyChrome()

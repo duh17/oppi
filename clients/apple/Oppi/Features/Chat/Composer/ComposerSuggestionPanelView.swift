@@ -1,14 +1,16 @@
 import UIKit
 
-/// Rounded @file / slash-command panel. Looks like the previous SwiftUI list:
+/// Rounded @mention / slash-command panel. Looks like the previous SwiftUI list:
 /// dark fill, 12pt continuous corners, 260pt cap, hairline dividers, whole-row tap.
+/// An `@` mention lists models first, then files.
 final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
     enum Content {
-        case files([FileSuggestion])
+        case mentions(models: [ModelInfo], files: [FileSuggestion])
         case slash([SlashCommand])
         case empty
     }
 
+    var onSelectModel: ((ModelInfo) -> Void)?
     var onSelectFile: ((FileSuggestion) -> Void)?
     var onSelectSlash: ((SlashCommand) -> Void)?
     var onHeightChange: (() -> Void)?
@@ -76,12 +78,7 @@ final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UIC
         backgroundColor = colors.bgDark
         layer.borderColor = colors.comment.withAlphaComponent(0.22).cgColor
         collectionView.reloadData()
-        let count: Int
-        switch content {
-        case .files(let items): count = items.count
-        case .slash(let items): count = items.count
-        case .empty: count = 0
-        }
+        let count = content.rowCount
         collectionView.showsVerticalScrollIndicator = count > 5
         setHiddenIfChanged(count == 0)
         collectionView.collectionViewLayout.invalidateLayout()
@@ -99,11 +96,7 @@ final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UIC
     func numberOfSections(in collectionView: UICollectionView) -> Int { 1 }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        switch content {
-        case .files(let items): return items.count
-        case .slash(let items): return items.count
-        case .empty: return 0
-        }
+        content.rowCount
     }
 
     func collectionView(
@@ -114,14 +107,16 @@ final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UIC
             withReuseIdentifier: ComposerSuggestionCell.reuseID,
             for: indexPath
         ) as? ComposerSuggestionCell ?? ComposerSuggestionCell()
-        let isLast: Bool
+        let showsDivider = indexPath.item < content.rowCount - 1
         switch content {
-        case .files(let items):
-            isLast = indexPath.item == items.count - 1
-            cell.applyFile(items[indexPath.item], colors: colors, showsDivider: !isLast)
+        case .mentions(let models, let files):
+            if indexPath.item < models.count {
+                cell.applyModel(models[indexPath.item], colors: colors, showsDivider: showsDivider)
+            } else {
+                cell.applyFile(files[indexPath.item - models.count], colors: colors, showsDivider: showsDivider)
+            }
         case .slash(let items):
-            isLast = indexPath.item == items.count - 1
-            cell.applySlash(items[indexPath.item], colors: colors, showsDivider: !isLast)
+            cell.applySlash(items[indexPath.item], colors: colors, showsDivider: showsDivider)
         case .empty:
             break
         }
@@ -131,12 +126,28 @@ final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UIC
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         switch content {
-        case .files(let items):
-            onSelectFile?(items[indexPath.item])
+        case .mentions(let models, let files):
+            if indexPath.item < models.count {
+                onSelectModel?(models[indexPath.item])
+            } else {
+                onSelectFile?(files[indexPath.item - models.count])
+            }
         case .slash(let items):
             onSelectSlash?(items[indexPath.item])
         case .empty:
             break
+        }
+    }
+}
+
+extension ComposerSuggestionPanelView.Content {
+    var isEmpty: Bool { rowCount == 0 }
+
+    fileprivate var rowCount: Int {
+        switch self {
+        case .mentions(let models, let files): models.count + files.count
+        case .slash(let items): items.count
+        case .empty: 0
         }
     }
 }
@@ -219,7 +230,39 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
         }
     }
 
+    /// Name, provider, and the canonical id the mention inserts, under the
+    /// provider's picker icon. The row's id is scoped by that canonical id.
+    func applyModel(_ model: ModelInfo, colors: ComposerThemeColors, showsDivider: Bool) {
+        let fullID = ModelSwitchPolicy.fullModelID(for: model)
+        let providerName = providerDisplayLabel(model.provider)
+        iconView.image = EntityIcon.image(.provider(model.provider), size: 14)
+        titleLabel.attributedText = nil
+        titleLabel.text = model.name
+        titleLabel.font = UIFont.systemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize,
+            weight: .medium
+        )
+        titleLabel.textColor = colors.fg
+        trailingLabel.setHiddenIfChanged(false)
+        trailingLabel.text = providerName
+        trailingLabel.font = UIFont.preferredFont(forTextStyle: .caption2)
+        trailingLabel.textColor = colors.comment
+        subtitleLabel.setHiddenIfChanged(false)
+        subtitleLabel.text = fullID
+        subtitleLabel.font = UIFont.monospacedSystemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
+            weight: .regular
+        )
+        subtitleLabel.textColor = colors.comment
+        divider.backgroundColor = colors.comment.withAlphaComponent(0.18)
+        divider.setHiddenIfChanged(!showsDivider)
+        hitTarget.accessibilityIdentifier = "composer.suggestion.model.\(fullID)"
+        hitTarget.accessibilityLabel = model.name
+        hitTarget.accessibilityValue = "\(providerName), \(fullID)"
+    }
+
     func applyFile(_ suggestion: FileSuggestion, colors: ComposerThemeColors, showsDivider: Bool) {
+        resetRowSemantics()
         trailingLabel.setHiddenIfChanged(true)
         subtitleLabel.setHiddenIfChanged(suggestion.parentPath == nil)
         subtitleLabel.text = suggestion.parentPath
@@ -254,10 +297,18 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
         }
         divider.backgroundColor = colors.comment.withAlphaComponent(0.18)
         divider.setHiddenIfChanged(!showsDivider)
+        hitTarget.accessibilityIdentifier = "composer.suggestion.file.\(suggestion.path)"
         hitTarget.accessibilityLabel = suggestion.displayName
     }
 
+    /// A recycled cell drops the previous row's id and value before drawing a file or command.
+    private func resetRowSemantics() {
+        hitTarget.accessibilityIdentifier = nil
+        hitTarget.accessibilityValue = nil
+    }
+
     func applySlash(_ command: SlashCommand, colors: ComposerThemeColors, showsDivider: Bool) {
+        resetRowSemantics()
         trailingLabel.setHiddenIfChanged(false)
         let iconColor: UIColor
         switch command.source {

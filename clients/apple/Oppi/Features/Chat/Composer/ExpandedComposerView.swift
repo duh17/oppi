@@ -15,6 +15,7 @@ struct ExpandedComposerLiveState {
     var busyStreamingBehavior: StreamingBehavior = .followUp
     var slashCommands: [SlashCommand] = []
     var fileSuggestions: [FileSuggestion] = []
+    var modelCatalog: [ModelInfo] = []
     var session: Session?
     var modelOverride: String?
     var providerOverride: String?
@@ -282,6 +283,10 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                 setText: { self.setComposerText($0) }
             )
         }
+        filePanel.onSelectModel = { [weak self] model in
+            guard let self else { return }
+            setComposerText(ComposerModelMentions.insert(model, into: live.text))
+        }
         filePanel.onSelectFile = { [weak self] suggestion in
             guard let self else { return }
             ComposerShared.insertFileSuggestion(
@@ -532,10 +537,13 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             slash = ComposerAutocomplete.slashSuggestions(query: query, commands: live.slashCommands)
         }
         slashPanel.apply(content: slash.isEmpty ? .empty : .slash(slash), colors: colors)
-        var showsFiles = false
-        if case .atFile = context { showsFiles = !live.fileSuggestions.isEmpty }
-        filePanel.apply(content: showsFiles ? .files(live.fileSuggestions) : .empty, colors: colors)
-        suggestionStack.isHidden = slash.isEmpty && !showsFiles
+        let mentions = ComposerModelMentions.panelContent(
+            for: context,
+            catalog: live.modelCatalog,
+            files: live.fileSuggestions
+        )
+        filePanel.apply(content: mentions, colors: colors)
+        suggestionStack.isHidden = slash.isEmpty && mentions.isEmpty
     }
 
     private func applyBottomBar(colors: ComposerThemeColors) {

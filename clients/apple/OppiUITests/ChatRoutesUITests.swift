@@ -512,6 +512,56 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// `@` offers the chat's models beside files; choosing one writes its
+    /// canonical `provider/model-id` into the draft as plain text.
+    func testAtMentionInsertsTheChosenModelID() {
+        launch()
+        focusComposer()
+        let input = app.descendants(matching: .any)["chat.input"]
+        input.typeText("Use @son")
+        let row = app.buttons["composer.suggestion.model.anthropic/claude-sonnet-routes"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 5), "Typing @son must offer the Sonnet model")
+        XCTAssertFalse(
+            app.buttons["composer.suggestion.model.openai/gpt-routes"].exists,
+            "A model the query does not match must not show"
+        )
+        attachScreenshot("model-mention-suggestions")
+        row.tap()
+        XCTAssertTrue(
+            waitFor(self.text(of: input).contains("Use anthropic/claude-sonnet-routes")),
+            "The chosen model's id must reach the draft: \(text(of: input))"
+        )
+        XCTAssertTrue(row.waitUntilGone(timeout: 5), "Choosing a model must close the suggestions")
+        input.typeText("for implementation work")
+        attachScreenshot("model-mention-inserted")
+        assertRunning()
+    }
+
+    /// Models list above files without hiding them: a file row below the model
+    /// rows still selects its own file.
+    func testAtMentionKeepsFileRowsSelectableBelowModels() {
+        launch()
+        focusComposer()
+        let input = app.descendants(matching: .any)["chat.input"]
+        input.typeText("@route")
+        XCTAssertTrue(
+            app.buttons["composer.suggestion.model.openai/gpt-routes"].waitUntilExists(timeout: 5),
+            "@route must offer the models whose names match; the draft reads: \(text(of: input))"
+        )
+        let file = app.buttons["composer.suggestion.file.Route.md"]
+        XCTAssertTrue(file.waitUntilExists(timeout: 5), "@route must still offer the Route.md file row")
+        file.tap()
+        // The repo-file pill has no identifier: its name and remove control are the proof.
+        XCTAssertTrue(
+            app.staticTexts["Route.md"].waitUntilExists(timeout: 5) && app.buttons["Remove file"].exists,
+            "Tapping the file row must attach that file, not a model"
+        )
+        XCTAssertFalse(
+            text(of: app.descendants(matching: .any)["chat.input"]).contains("routes"),
+            "A file choice must not insert a model id"
+        )
+    }
+
     func testBusyModePopoverChoiceReachesTheComposer() {
         launch(environment: ["CHAT_ROUTES_STATUS": "busy"])
         focusComposer()

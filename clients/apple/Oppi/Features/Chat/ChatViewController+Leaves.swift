@@ -322,6 +322,7 @@ extension ChatViewController: ChatComposerSource {
             askRequest: ask,
             slashCommands: availableSlashCommands,
             fileSuggestions: chatState.fileSuggestions,
+            modelCatalog: chatState.cachedModels,
             appliesOuterPadding: true,
             alwaysShowActionRow: false,
             allowsExpansion: ask == nil,
@@ -449,6 +450,7 @@ extension ChatViewController: ChatComposerSource {
             busyStreamingBehavior: model.busyStreamingBehavior,
             slashCommands: availableSlashCommands,
             fileSuggestions: chatState.fileSuggestions,
+            modelCatalog: chatState.cachedModels,
             session: session,
             thinkingLevel: chatState.thinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(

@@ -55,6 +55,8 @@ struct ComposerBarContent {
     var askRequest: AskRequest?
     var slashCommands: [SlashCommand]
     var fileSuggestions: [FileSuggestion]
+    /// The model catalog an `@` mention suggests from; empty offers no models.
+    var modelCatalog: [ModelInfo] = []
     var appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool
     var allowsExpansion: Bool
