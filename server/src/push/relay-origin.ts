@@ -1,8 +1,8 @@
 /** Relay origins for `push.relays` (protocol/push/spec.md §5). */
 
-export type RelayOriginsResult = { ok: true; value: string[] } | { ok: false; error: string };
+import { isLoopbackHostname } from "../request-trust.js";
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+export type RelayOriginsResult = { ok: true; value: string[] } | { ok: false; error: string };
 
 /**
  * One relay origin: `https://host[:port]`, or `http://` on a loopback host for local testing.
@@ -30,7 +30,7 @@ export function parseRelayOrigin(
     return { ok: false, error: `expected an origin without path, query, or credentials: ${raw}` };
   }
   if (url.protocol === "https:") return { ok: true, value: url.origin };
-  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) {
+  if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) {
     return { ok: true, value: url.origin };
   }
   return { ok: false, error: `relay must use https (http only on loopback): ${raw}` };

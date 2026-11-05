@@ -41,6 +41,21 @@ export type RequestProvenance = {
   insecureReason?: string;
 };
 
+/**
+ * Whether `host` names this machine: `localhost`, `127.0.0.1`, or `::1`. Takes both the
+ * bare form a config or bind address uses (`::1`) and the bracketed form `URL.hostname`
+ * reports (`[::1]`).
+ */
+export function isLoopbackHostname(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
 export function markLocalRequest(req: IncomingMessage): void {
   (req as LocalRequest)[LOCAL_REQUEST_KEY] = true;
 }

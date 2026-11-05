@@ -3,6 +3,7 @@ import { CredentialSynchronizationError, type ModelRuntime } from "@earendil-wor
 
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
+import { isLoopbackHostname } from "../request-trust.js";
 import { openBrowser as defaultOpenBrowser } from "./browser-launcher.js";
 import { ProviderAuthFlowStore, createDeferred, type Deferred } from "./flow-store.js";
 import {
@@ -68,8 +69,6 @@ function redactSensitiveError(message: string): string {
     .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer <redacted>");
 }
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 /**
  * Authorization URLs are opened in a browser on the server or the phone.
  * Allow https anywhere and http only on loopback (local OAuth callback servers).
@@ -82,7 +81,7 @@ function isSafeAuthorizationUrl(value: string): boolean {
     return false;
   }
   if (url.protocol === "https:") return true;
-  return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  return url.protocol === "http:" && isLoopbackHostname(url.hostname);
 }
 
 function flowTypeForProvider(_provider: Provider): ProviderAuthFlowType {

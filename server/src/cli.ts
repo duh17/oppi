@@ -10,6 +10,7 @@ import * as c from "./ansi.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
+import { isLoopbackHostname } from "./request-trust.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join, resolve } from "node:path";
@@ -542,11 +543,6 @@ async function cmdPair(
   }
 }
 
-function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
-}
-
 async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
@@ -554,7 +550,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
 
   const config = storage.getConfig();
   const host = config.host;
-  const loopback = isLoopbackHost(host);
+  const loopback = isLoopbackHostname(host);
 
   if (!loopback && !config.token) {
     checks.push({

@@ -59,6 +59,7 @@ import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableClassicEvents } from "./durable-classic-events.js";
 import { exportDurableToHtml } from "./durable-export.js";
 import { isRecoveredPartial, readDurableSessionEntries } from "./durable-history.js";
+import { splitCanonicalModelId } from "./model-resolution.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -1162,14 +1163,8 @@ export class DurableBackend implements AgentBackend {
     const byModel = new Map<string, SessionModelUsageSnapshot>();
     for (const [key, value] of Object.entries(usage?.models ?? {})) {
       // `pi.usage` keys models as `provider/modelId`.
-      const slash = key.indexOf("/");
-      addUsageToModelBreakdown(
-        byModel,
-        key,
-        slash < 0 ? key : key.slice(slash + 1),
-        slash < 0 ? undefined : key.slice(0, slash),
-        value,
-      );
+      const split = splitCanonicalModelId(key);
+      addUsageToModelBreakdown(byModel, key, split?.modelId ?? key, split?.provider, value);
     }
     for (const value of Object.values(usage?.tools ?? {}))
       addUsageToModelBreakdown(

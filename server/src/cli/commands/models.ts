@@ -1,5 +1,6 @@
 import * as c from "../../ansi.js";
 import type { ProviderQuota, ProviderQuotasStatus } from "../../provider-quota.js";
+import { splitCanonicalModelId } from "../../model-resolution.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { formatQuotaPacing, formatQuotaRemaining, isProviderQuotaPacing } from "../quota.js";
@@ -198,8 +199,7 @@ function trimDecimal(value: number): string {
 function asModelRow(value: unknown): ModelListRow | undefined {
   if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) return undefined;
   const id = value.id.trim();
-  const slash = id.indexOf("/");
-  const providerFromId = slash > 0 ? id.slice(0, slash) : "";
+  const providerFromId = splitCanonicalModelId(id)?.provider ?? "";
   return {
     id,
     name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : id,

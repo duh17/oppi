@@ -1,5 +1,6 @@
 import { calculateCost, type KnownProvider, type Usage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { splitCanonicalModelId } from "./model-resolution.js";
 import type { PiMessageUsage } from "./pi-events.js";
 
 export interface NormalizedUsage {
@@ -158,13 +159,13 @@ export function estimateUsageCostFromModel(
     return 0;
   }
 
-  const slashIndex = modelId.indexOf("/");
-  if (slashIndex <= 0 || slashIndex >= modelId.length - 1) {
+  const split = splitCanonicalModelId(modelId);
+  if (!split) {
     return 0;
   }
 
-  const provider = modelId.slice(0, slashIndex) as KnownProvider;
-  const rawModelId = modelId.slice(slashIndex + 1);
+  const provider = split.provider as KnownProvider;
+  const rawModelId = split.modelId;
   const candidateProviders = [provider, ...(COST_PROVIDER_FALLBACKS[provider] ?? [])];
 
   for (const candidateProvider of candidateProviders) {

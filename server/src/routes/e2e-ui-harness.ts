@@ -19,6 +19,7 @@ import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
 import { validateIconChoice } from "../icon-choice.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
+import { splitCanonicalModelId } from "../model-resolution.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
 import type { AskQuestion, IconChoice, ServerMessage, Session, StyledSegment } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
@@ -381,9 +382,9 @@ async function handleLocalPiSessionFixture(
   const assistantMessage =
     stringField(body.assistantMessage)?.trim() || "Imported local session fixture.";
   const model = stringField(body.model)?.trim() || "anthropic/claude-haiku-5-5";
-  const slashIndex = model.indexOf("/");
-  const provider = slashIndex > 0 ? model.slice(0, slashIndex) : "anthropic";
-  const modelId = slashIndex > 0 ? model.slice(slashIndex + 1) : model;
+  const split = splitCanonicalModelId(model);
+  const provider = split?.provider ?? "anthropic";
+  const modelId = split?.modelId ?? model;
   const timestamp = new Date().toISOString();
   const root = getPiSessionsRoot();
   const sessionDir = join(root, directoryName);

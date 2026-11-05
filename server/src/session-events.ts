@@ -21,6 +21,7 @@ import {
   readWorktreeChanges,
   storedWorktreeChangeStats,
 } from "./session-git-changes.js";
+import { splitCanonicalModelId } from "./model-resolution.js";
 import { buildSessionSummary } from "./session-summary.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { EventTags } from "./telemetry/catalog.js";
@@ -98,16 +99,6 @@ function estimateTokensFromChars(chars: number): number {
 
 const SAFE_TOOL_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** Split canonical `provider/modelId` without inventing a provider. */
-function splitExactProviderModel(
-  model: string | undefined,
-): { provider: string; model: string } | undefined {
-  if (!model) return undefined;
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash === model.length - 1) return undefined;
-  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
-}
-
 function sanitizeToolName(toolName: unknown): string | undefined {
   if (typeof toolName !== "string") return undefined;
   const trimmed = toolName.trim();
@@ -153,10 +144,11 @@ function classifyTurnError(errorMessage: unknown): TurnErrorKind {
 
 /** Session-configured route plus a bounded configured thinking level when known. */
 function routingTags(session: Session): EventTags<"server.turn_ttft"> {
-  const parsed = splitExactProviderModel(session.model);
+  // No provider is invented for a bare model id.
+  const parsed = session.model ? splitCanonicalModelId(session.model) : undefined;
   return {
     runtime: sessionMetricRuntime(session),
-    ...(parsed ? { provider: parsed.provider, model: parsed.model } : {}),
+    ...(parsed ? { provider: parsed.provider, model: parsed.modelId } : {}),
     ...(session.thinkingLevel && isThinkingLevel(session.thinkingLevel)
       ? { thinking: session.thinkingLevel }
       : {}),

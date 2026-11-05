@@ -3,11 +3,30 @@ import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
   isAllowedWebSocketOrigin,
+  isLoopbackHostname,
   isSecureNetworkRequest,
   markLocalRequest,
   resolveRequestProvenance,
 } from "../src/request-trust.js";
 import { parsePublicUrl } from "../src/proxy-config.js";
+
+describe("isLoopbackHostname", () => {
+  it.each(["localhost", "LOCALHOST", " 127.0.0.1 ", "::1", "[::1]"])("accepts %j", (host) => {
+    expect(isLoopbackHostname(host)).toBe(true);
+  });
+
+  it.each(["", "0.0.0.0", "::", "127.0.0.2", "localhost.example.com", "[::2]"])(
+    "rejects %j",
+    (host) => {
+      expect(isLoopbackHostname(host)).toBe(false);
+    },
+  );
+
+  it("matches what URL reports for loopback hosts", () => {
+    expect(isLoopbackHostname(new URL("http://[::1]:8080/").hostname)).toBe(true);
+    expect(isLoopbackHostname(new URL("http://LocalHost:8080/").hostname)).toBe(true);
+  });
+});
 
 function request(opts: {
   remoteAddress?: string;

@@ -10,6 +10,7 @@
 import { closeSync, openSync, readSync } from "node:fs";
 
 import { extractQueuedUserText } from "./session-queue-utils.js";
+import { composeModelId } from "./session-state.js";
 
 /** Default head budget for catalog/import. Mirror uses a larger caller budget. */
 export const DEFAULT_SESSION_JSONL_META_READ_BYTES = 16_384;
@@ -108,7 +109,7 @@ export function parseSessionJsonlHead(
       const provider = record.provider;
       const modelId = record.modelId;
       if (typeof provider === "string" && typeof modelId === "string") {
-        meta.model = modelId.startsWith(`${provider}/`) ? modelId : `${provider}/${modelId}`;
+        meta.model = composeModelId(provider, modelId);
       }
     }
 

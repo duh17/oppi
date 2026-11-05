@@ -120,6 +120,7 @@ import { allowsTrustedPrivateHttpBind, trustConfigFromServerConfig } from "./pro
 import {
   isAllowedWebSocketOrigin,
   isLocalRequest,
+  isLoopbackHostname,
   isSecureNetworkRequest,
   markLocalRequest,
   parseHttpRequestTarget,
@@ -263,10 +264,6 @@ function normalizeBindHost(host: string): string {
   return trimmed;
 }
 
-function isLoopbackBindHost(host: string): boolean {
-  return host === "127.0.0.1" || host === "localhost" || host === "::1";
-}
-
 function isWildcardBindHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::";
 }
@@ -295,7 +292,7 @@ export function resolveBonjourLanHost(
   interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
 ): string | null {
   const normalizedHost = normalizeBindHost(bindHost);
-  if (!normalizedHost || isLoopbackBindHost(normalizedHost)) {
+  if (!normalizedHost || isLoopbackHostname(normalizedHost)) {
     return null;
   }
 
@@ -318,7 +315,7 @@ function allowInsecureNetworkHttp(config: ServerConfig): boolean {
 
 export function validateStartupSecurityConfig(config: ServerConfig): string | null {
   const host = normalizeBindHost(config.host);
-  const loopbackOnly = isLoopbackBindHost(host);
+  const loopbackOnly = isLoopbackHostname(host);
 
   if (!loopbackOnly && !config.token) {
     return `Cannot bind to ${config.host} without a token configured. Set token in config or use --host 127.0.0.1`;
@@ -340,7 +337,7 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   const warnings: string[] = [];
   const host = normalizeBindHost(config.host);
   const wildcardBind = isWildcardBindHost(host);
-  const loopbackOnly = isLoopbackBindHost(host);
+  const loopbackOnly = isLoopbackHostname(host);
 
   if (wildcardBind) {
     warnings.push(
@@ -1005,7 +1002,7 @@ export class Server {
     const config = this.storage.getConfig();
     const invalidTls = this.storage.describeInvalidTlsConfig();
     // An invalid on-disk TLS block cannot opt into plaintext, even via a proxy.
-    if (invalidTls && !isLoopbackBindHost(normalizeBindHost(config.host))) {
+    if (invalidTls && !isLoopbackHostname(normalizeBindHost(config.host))) {
       throw new Error(invalidTls);
     }
     const startupSecurityError = validateStartupSecurityConfig(config);
@@ -1314,7 +1311,7 @@ export class Server {
 
     const config = this.storage.getConfig();
     const normalizedBindHost = normalizeBindHost(config.host);
-    if (isLoopbackBindHost(normalizedBindHost)) {
+    if (isLoopbackHostname(normalizedBindHost)) {
       log.warn("bonjour.skipped", {
         reason: "loopback_bind_host",
         host: config.host,

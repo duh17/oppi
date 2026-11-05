@@ -7,6 +7,7 @@ import {
 import type { McpAuthFlowSnapshot } from "./types/mcp.js";
 import type { McpCli, McpCliProcess } from "./mcp-cli.js";
 import { McpError } from "./mcp-config.js";
+import { isLoopbackHostname } from "./request-trust.js";
 
 function loopback(value: string): URL {
   let url: URL;
@@ -17,7 +18,7 @@ function loopback(value: string): URL {
   }
   if (
     url.protocol !== "http:" ||
-    !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+    !isLoopbackHostname(url.hostname) ||
     url.username ||
     url.password ||
     url.hash
