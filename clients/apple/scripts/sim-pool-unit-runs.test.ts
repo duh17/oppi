@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { completionWaitSeconds, unmatchedSelectors, withUnitDiagnosticsOff, zeroTestSummary } from "./sim-pool-ops";
+import { completionWaitSeconds, withUnitDiagnosticsOff, zeroTestSummary } from "./sim-pool-ops";
 
 const prelude = "Test Suite 'All tests' passed at 2026-11-01 10:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds\n◇ Test run started.\n";
 
@@ -13,19 +13,10 @@ describe("zero-test runs", () => {
     // A Swift Testing run after XCTest's zero-test prelude, and an XCTest run with tests, ran something.
     expect(zeroTestSummary(`${prelude}✔ Test run with 9 tests in 1 suite passed after 1.2 seconds.\n`)).toBeUndefined();
     expect(zeroTestSummary("Test Suite 'Selected tests' failed at 2026-11-01 10:00:00.000.\n\t Executed 3 tests, with 1 failure (0 unexpected) in 9.0 (9.1) seconds\n")).toBeUndefined();
+    // A run whose tests were all skipped prints its result line behind a zero-width space; it still found its tests.
+    expect(zeroTestSummary(`${prelude}\u200b✔ Test run with 5 tests in 1 suite passed after 0.001 seconds.\n`)).toBeUndefined();
     // No summary at all is a run that stopped early, not proof that the filter matched nothing.
     expect(zeroTestSummary("** BUILD INTERRUPTED **\n")).toBeUndefined();
-  });
-});
-
-describe("selectors that matched no test", () => {
-  const ran = ["FooTests/testA()", "FooTests/testB(arg:)", "BarTests/testC"];
-
-  test("a selector must name a type or a test that ran; the target is not in the executed ids and file names match nothing", () => {
-    expect(unmatchedSelectors(["OppiTests/FooTests.swift", "OppiTests/FooTests"], ran)).toEqual(["OppiTests/FooTests.swift"]);
-    expect(unmatchedSelectors(["OppiTests", "OppiTests/FooTests", "OppiTests/FooTests/testA", "OppiTests/FooTests/testB(arg:)", "OppiTests/BarTests/testC"], ran)).toEqual([]);
-    expect(unmatchedSelectors(["OppiTests/FooTests/testC", "OppiTests/Foo"], ran)).toEqual(["OppiTests/FooTests/testC", "OppiTests/Foo"]);
-    expect(unmatchedSelectors(["OppiTests"], [])).toEqual(["OppiTests"]);
   });
 });
 

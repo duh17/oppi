@@ -174,12 +174,12 @@ export function splitQuarantine(entries: QuarantineEntry[], today: string): { ac
   };
 }
 
-/** Identifiers (`Suite/test()`) of the test cases in an xcresult whose result is one of `results`, or undefined when it cannot be read. */
-function testIdsWith(xcresultTestsJson: string, results: Set<string>): string[] | undefined {
+/** Identifiers (`Suite/test()`) of the test cases in an xcresult whose result is one of `results` (any result when omitted), or undefined when it cannot be read. */
+function testIdsWith(xcresultTestsJson: string, results?: Set<string>): string[] | undefined {
   try {
     const ids: string[] = [];
     const walk = (node: { nodeType?: string; result?: string; nodeIdentifier?: string; children?: unknown[] }) => {
-      if (node.nodeType === "Test Case" && results.has(node.result ?? "") && node.nodeIdentifier) ids.push(node.nodeIdentifier);
+      if (node.nodeType === "Test Case" && (!results || results.has(node.result ?? "")) && node.nodeIdentifier) ids.push(node.nodeIdentifier);
       for (const child of node.children ?? []) walk(child as typeof node);
     };
     for (const node of JSON.parse(xcresultTestsJson).testNodes ?? []) walk(node);
@@ -192,8 +192,25 @@ function testIdsWith(xcresultTestsJson: string, results: Set<string>): string[] 
 /** Failed test identifiers (`Suite/test()`) in an xcresult, or undefined when it cannot be read. */
 export const failedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson, new Set(["Failed"]));
 
-/** Identifiers of the tests that ran (passed or failed; not skipped or disabled), or undefined when unreadable. */
-export const ranTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson, new Set(["Passed", "Failed", "Expected Failure"]));
+/** Identifiers of every test an xcresult lists, whatever its result (skipped and disabled included), or undefined when unreadable. */
+const listedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson);
+
+/**
+ * Which `-only-testing` selectors (`Target[/Type[/method]]`) name none of the tests an xcresult lists.
+ * Listed ids are `Type/method()` and carry no target, so a selector's target is dropped and the rest
+ * must name a listed test or a type holding one. A test that was skipped (`.enabled(if:)`, XCTSkip)
+ * is still listed: the selector found it, and what the test did is the run's verdict, not the
+ * selector's. Swift Testing's trailing `()` is ignored on both sides. A bare `Target` matches any run
+ * that listed something.
+ */
+export function unmatchedSelectors(selectors: string[], listed: string[]): string[] {
+  const bare = (id: string) => id.replace(/\([^/]*\)$/, "");
+  const ids = listed.map(bare);
+  return selectors.filter((selector) => {
+    const wanted = bare(selector.split("/").slice(1).join("/"));
+    return wanted === "" ? ids.length === 0 : !ids.some((id) => id === wanted || id.startsWith(`${wanted}/`));
+  });
+}
 
 /**
  * The record of the last full unit run in this checkout, under clients/apple/.build: its HEAD and
@@ -272,7 +289,7 @@ export function readFailures(command: string, args: string[]): Failures {
 
 /** Run an xcresulttool-style command that prints the tests JSON and pick test ids out of it with `pick`. */
 function readTestIds(command: string, args: string[], pick: (json: string) => string[] | undefined): Failures {
-  const tool = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: XCRESULT_MAX_BYTES });
+  const tool = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: XCRESULT_MAX_BYTES, killSignal: "SIGKILL" });
   if (tool.error) return { reason: `xcresulttool did not finish: ${tool.error.message}` };
   if (tool.status !== 0) {
     const stderr = tool.stderr.trim().split("\n").slice(-3).join(" | ");
@@ -299,11 +316,16 @@ export function runFailures(summary: string | undefined): Failures {
   return readFailures("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path]);
 }
 
-/** Tests a finished run ran, read from the xcresult in its run directory. */
+/** Every test the xcresult at `path` lists, whatever its result, or why it cannot be read. */
+export function xcresultTestIds(path: string): Failures {
+  return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", path], listedTestIds);
+}
+
+/** Tests a finished run listed, read from the xcresult in its run directory. */
 export function runTestIds(summary: string | undefined): Failures {
   const xcresult = xcresultOf(summary);
   if ("reason" in xcresult) return xcresult;
-  return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path], ranTestIds);
+  return xcresultTestIds(xcresult.path);
 }
 
 /** The gate lane the full unit run is, in the rerun and red-lane ledgers and dev/testing/lane-budgets.json. */

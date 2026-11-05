@@ -8,7 +8,7 @@
 // at the checkout's canonical path (the one pre-push built in). --target is the branch the batch will
 // land on: the gate replays the pre-push plan for `merge-base(HEAD, target)..HEAD`, and when that plan
 // ran the Apple lane (every OppiUnitTests test, in clients/apple/scripts/unit-shards.ts) it checks the
-// named OppiTests selectors against the tests that run executed (unmatchedUnitSelectors) but does
+// named OppiTests selectors against the tests that run listed (unmatchedUnitSelectors) but does
 // not run them again. Without --target, or without a readable record of that run, the ios-unit lane runs.
 //
 // `bun scripts/batch-gate.ts --supports-profile-scope` prints PROFILE_SCOPE_CAPABILITY and exits 0
@@ -79,7 +79,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadQuarantine, runFailures, runTestIds, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
+import { loadQuarantine, runFailures, runTestIds, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
@@ -434,8 +434,8 @@ function holdQuarantined(filters: string[], entries: QuarantineEntry[], bundle: 
 /**
  * Which named unit selectors matched no test of the pre-push unit run, read from the xcresults of its
  * shards (clients/apple/.build/unit-shards-last.json, written by unit-shards.ts). A selector matches a
- * test it names or a test inside the type it names; Swift Testing's `()` are ignored on both sides, so
- * the check asks whether the named test ran, not how xcodebuild would have spelled the filter. Without
+ * listed test it names or one inside the type it names, skipped or not (unit-shards' unmatchedSelectors,
+ * which sim-pool applies to a single run too). Without
  * a readable record of a unit run at this HEAD the answer is a reason, and the gate runs the lane.
  */
 export function unmatchedUnitSelectors(worktree: string, head: string, selectors: string[]): { unmatched: string[] } | { reason: string } {
@@ -448,18 +448,14 @@ export function unmatchedUnitSelectors(worktree: string, head: string, selectors
     return { reason: `${UNIT_RUN_RECORD} is not JSON` };
   }
   if (record.head !== head) return { reason: `the last unit shards ran at ${String(record.head).slice(0, 9)}, not at HEAD ${head.slice(0, 9)}` };
-  const ran = new Set<string>();
+  const listed: string[] = [];
   for (const summary of record.summaries ?? []) {
     const tests = runTestIds(summary);
     if ("reason" in tests) return { reason: `unit shard results unreadable: ${tests.reason}` };
-    for (const id of tests.ids) ran.add(bare(id));
+    listed.push(...tests.ids);
   }
-  if (ran.size === 0) return { reason: "the unit shards' results list no tests" };
-  const unmatched = selectors.filter((selector) => {
-    const wanted = bare(selector.slice("OppiTests/".length));
-    return ![...ran].some((id) => id === wanted || id.startsWith(`${wanted}/`));
-  });
-  return { unmatched };
+  if (listed.length === 0) return { reason: "the unit shards' results list no tests" };
+  return { unmatched: unmatchedSelectors(selectors, listed) };
 }
 
 /**

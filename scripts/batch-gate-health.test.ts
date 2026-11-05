@@ -189,13 +189,13 @@ describe("batch gate: the ios-unit lane and the pre-push unit shards", () => {
 
   test("a named unit selector that matched no test of the pre-push unit run fails the gate as a selector, though the lane is not run", () => {
     const fx = appChange();
-    // `a` is disabled: the xcresult lists it as skipped, so it did not run.
+    // `a` is disabled: the xcresult lists it as skipped. The selector still found it, so it is matched.
     fx.unitRun(["FooTests/b()"], ["FooTests/a()"]);
     // `helper` is a function FooTests declares, so the plan accepts it, but it is not a test.
     const result = fx.run(["--target", "main", "--test", "OppiTests/FooTests/helper", "--test", "OppiTests/FooTests/a()", "--test", "OppiTests/FooTests"]);
     expect(result.code).toBe(1);
     expect(fx.calls("sim-pool")).toEqual([]);
-    expect(result.out).toContain("ios-unit: zero tests ran for OppiTests/FooTests/helper, OppiTests/FooTests/a(): no test matches the selector");
+    expect(result.out).toContain("ios-unit: zero tests ran for OppiTests/FooTests/helper: no test matches the selector");
     expect(result.out).toContain("[batch-gate] ios-unit: FAIL (exit 1)");
     expect(fx.ledger("land-queue/red-lanes.jsonl")[0]).toMatchObject({ lane: "ios-unit", exit: 1, cause_guess: "selector" });
   });

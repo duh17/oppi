@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { failedTestIds, infrastructureFailure, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, verdict, type TestType } from "./unit-shards";
+import { failedTestIds, infrastructureFailure, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, unmatchedSelectors, verdict, type TestType } from "./unit-shards";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
 
 // Some tests spawn a Bun or shell child; see sim-pool-test-support.ts for the sizing.
@@ -74,6 +74,12 @@ describe("unit shards", () => {
     });
     expect(failedTestIds(tree)).toEqual(["SSHTerminalTests/aPasswordPrompt()", "Outer/Inner/x()"]);
     expect(failedTestIds("Error: bundle is incomplete")).toBeUndefined();
+  });
+
+  test("a selector matches listed tests by name or by type, ignoring Swift Testing's parameter lists on both sides", () => {
+    const listed = ["FooTests/testB(arg:)", "Outer/Inner/test()"];
+    expect(unmatchedSelectors(["OppiTests/FooTests/testB", "OppiTests/FooTests/testB(arg:)", "OppiTests/Outer/Inner", "OppiTests/Outer/Inner/test"], listed)).toEqual([]);
+    expect(unmatchedSelectors(["OppiTests/Outer/Inne", "OppiTests/FooTests/testB/x"], listed)).toEqual(["OppiTests/Outer/Inne", "OppiTests/FooTests/testB/x"]);
   });
 
   test("reads the failures of a full shard's tests JSON, which is several MiB", () => {

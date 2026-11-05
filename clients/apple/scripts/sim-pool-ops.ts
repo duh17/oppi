@@ -69,7 +69,7 @@ import {
   type StopResult,
   type Supervised,
 } from "./sim-pool-supervise";
-import { ranTestIds } from "./unit-shards";
+import { unmatchedSelectors, xcresultTestIds } from "./unit-shards";
 
 export class PoolError extends Error {
   constructor(message: string) {
@@ -1372,50 +1372,42 @@ export function withUnitDiagnosticsOff(callerArgv: string[], testArgv: string[])
  * The summary of a run that finished having executed zero tests, or undefined when it ran some or
  * printed no summary at all (a run that stopped early is not proof that a filter matched nothing).
  * A Swift Testing run prints XCTest's zero-test prelude first, so the prelude counts as zero only
- * when no Swift Testing result with tests follows it.
+ * when no Swift Testing result with tests follows it. A run whose tests were all skipped prints its
+ * result line behind a zero-width space (U+200B), and those tests still count: the run found them.
  */
 export function zeroTestSummary(logText: string): string | undefined {
   const xctest = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+(Executed ([0-9]+) tests?.*?)\r?$/gm)];
-  const swift = [...logText.matchAll(/^[✔✘] Test run with ([0-9]+) tests?\b.*?\r?$/gm)];
+  const swift = [...logText.matchAll(/^\u200b*[✔✘] Test run with ([0-9]+) tests?\b.*?\r?$/gm)];
   if (xctest.length === 0 && swift.length === 0) return undefined;
   if (xctest.some((match) => Number(match[2]) > 0) || swift.some((match) => Number(match[1]) > 0)) return undefined;
   return (swift.at(-1)?.[0] ?? xctest.at(-1)![1]).trim();
 }
 
 /**
- * Which `-only-testing` selectors (values, `Target[/Type[/method]]`) matched none of the tests a run
- * executed. Ids are an xcresult's `Type/method()`, which carries no target, so a selector's target
- * is dropped and the rest must name a test or a type that ran. Swift Testing's trailing `()` is
- * ignored on both sides: the question is whether the named test ran, not how xcodebuild spells the
- * filter. batch-gate's `unmatchedUnitSelectors` asks the same question of a unit run's shard results;
- * it is bound to that run record and the OppiTests target, so the three-line match is mirrored here.
- * A bare `Target` matches any run that executed something.
+ * The tests this attempt's xcresult lists (skipped ones included: a selector is matched by a test it
+ * covers, whatever that test did), or why they cannot be read. The bundle is the attempt's own
+ * `-resultBundlePath`; without one, the newest .xcresult in `derivedData` written after the attempt
+ * started, so a bundle an earlier attempt left in a reused directory is never read.
  */
-export function unmatchedSelectors(selectors: string[], ran: string[]): string[] {
-  const bare = (id: string) => id.replace(/\([^/]*\)$/, "");
-  const ids = ran.map(bare);
-  return selectors.filter((selector) => {
-    const wanted = bare(selector.split("/").slice(1).join("/"));
-    return wanted === "" ? ids.length === 0 : !ids.some((id) => id === wanted || id.startsWith(`${wanted}/`));
-  });
-}
-
-/** Ids of the tests the run's newest xcresult in `derivedData` records as executed, or why they cannot be read. */
-function executedTestIds(derivedData: string): { ids: string[] } | { reason: string } {
-  const testLogs = join(derivedData, "Logs", "Test");
-  const latest = existsSync(testLogs) ? readdirSync(testLogs).filter((name) => name.endsWith(".xcresult")).sort().at(-1) : undefined;
-  if (!latest) return { reason: `no .xcresult in ${testLogs}` };
-  // ~0.7 KB of JSON per test: a big shard is several MB, past Bun's default 1 MiB spawn buffer.
-  const tool = spawnSync("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", join(testLogs, latest)], {
-    encoding: "utf8",
-    timeout: 60_000,
-    maxBuffer: 256 * 1024 * 1024,
-    killSignal: "SIGKILL",
-  });
-  if (tool.error || tool.status !== 0) return { reason: `xcresulttool failed: ${tool.error?.message ?? `exit ${tool.status}`}` };
-  const ids = ranTestIds(tool.stdout);
-  if (!ids) return { reason: "xcresulttool output is not test-results JSON" };
-  return ids.length > 0 ? { ids } : { reason: `${latest} lists no executed test` };
+function listedTestIds(argv: string[], derivedData: string, startedMs: number): { ids: string[] } | { reason: string } {
+  const explicit = extractFlagValue("-resultBundlePath", argv);
+  let path = explicit ? resolve(explicit) : undefined;
+  if (!path) {
+    const testLogs = join(derivedData, "Logs", "Test");
+    const fresh = existsSync(testLogs)
+      ? readdirSync(testLogs)
+          .filter((name) => name.endsWith(".xcresult"))
+          .map((name) => ({ path: join(testLogs, name), mtimeMs: statSync(join(testLogs, name)).mtimeMs }))
+          .filter((bundle) => bundle.mtimeMs > startedMs)
+          .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      : [];
+    if (fresh.length === 0) return { reason: `no .xcresult in ${testLogs} written by this run` };
+    path = fresh[0].path;
+  }
+  if (!existsSync(path)) return { reason: `no .xcresult at ${path}` };
+  const tests = xcresultTestIds(path);
+  if ("reason" in tests) return tests;
+  return tests.ids.length > 0 ? tests : { reason: `${basename(path)} lists no test` };
 }
 
 function logTestFailureLines(logText: string): string[] {
@@ -1596,6 +1588,7 @@ async function runXcodebuildAttempt(input: {
 }> {
   writeFileSync(input.logFile, "");
   const logFd = openSync(input.logFile, "a");
+  const attemptStartedMs = Date.now();
   const spawned = await input.session.spawn(
     input.command,
     [
@@ -1751,15 +1744,15 @@ async function runXcodebuildAttempt(input: {
       code = 65;
     }
     // Some selectors matching is not enough: a file name beside a type name runs the type and
-    // matches nothing for itself. Check each selector against the tests the run executed.
+    // matches nothing for itself. Check each selector against the tests the run lists.
     // -skip-testing values are not selectors.
     if (code === 0 && selectors.length > 0) {
-      const ran = executedTestIds(input.derivedData);
-      if ("reason" in ran) {
-        log(`[sim-pool] selectors not checked against the executed tests: ${ran.reason}`);
+      const listed = listedTestIds(input.argv, input.derivedData, attemptStartedMs);
+      if ("reason" in listed) {
+        log(`[sim-pool] selectors not checked against the run's tests: ${listed.reason}`);
       } else {
-        for (const selector of unmatchedSelectors(selectors, ran.ids)) {
-          log(`error: selector ${selector} matched no test (a type name, not a file name)`);
+        for (const selector of unmatchedSelectors(selectors, listed.ids)) {
+          log(`error: selector ${selector} matched no test (name a target, type, or test; not a file)`);
           code = 65;
         }
       }
