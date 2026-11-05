@@ -1,13 +1,5 @@
 [
   {
-    "id": "OppiUITests/UIHangHarnessUITests/testExpandedExtensionTextScrollOwnership",
-    "owner": "lead",
-    "backlog": "harness/expanded-extension-scroll-ipad",
-    "reason": "iPad: 'Timeline offset did not decrease enough during downward drag inside expanded extension text (baseline=7670, last=7821, minimumDelta=24)', a deterministic +151 pt flip, the same bug this entry first recorded at +183. It fails the same way on the UIKit harness host that replaced the SwiftUI one, so the host is not the cause; only the viewport geometry moved.",
-    "addedAt": "2026-11-01",
-    "expires": "2026-11-15"
-  },
-  {
     "id": "OppiUITests/SSHTerminalBottomBarUITests/testRexPanelSwitchesPaneAndOpensAnotherSession",
     "owner": "lead",
     "backlog": "terminal/rex-panel-switch-ipad",

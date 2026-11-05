@@ -736,30 +736,32 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
 
         // The row's final height starts a top-anchored correction after the offset
         // first holds still; a baseline read before that lands is not a baseline.
-        let baselineOffset = waitForExpandedRowAtRest(diagTick: diagTick, row: extensionRow)
+        _ = waitForExpandedRowAtRest(diagTick: diagTick, row: extensionRow)
 
         // Both drags start on the expanded row, so the row must stay on screen between
         // them: drag toward earlier content first (the row moves down, away from the top
         // edge), then back. The reverse order can fling a short row out of the viewport.
-        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
+        // The row under the finger must follow it; the timeline's offset is not read here
+        // because rows revealed above the row re-measure and move it on their own.
+        dragRowUntilItMoves(
             timeline,
-            diagTick: diagTick,
-            baseline: baselineOffset,
+            row: extensionRow,
             minimumDelta: 24,
             direction: .decreasing,
-            context: "downward drag inside expanded extension text",
-            startingInside: extensionRow
+            context: "downward drag inside expanded extension text"
         )
 
-        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
+        dragRowUntilItMoves(
             timeline,
-            diagTick: diagTick,
-            baseline: offsetAfterDownDrag,
+            row: extensionRow,
             minimumDelta: 24,
             direction: .increasing,
-            context: "upward drag inside expanded extension text",
-            startingInside: extensionRow
+            context: "upward drag inside expanded extension text"
         )
+
+        // Rows revealed by the drags above may still be re-measuring: the baseline for
+        // the drags that follow is the offset once it rests.
+        let offsetAfterUpDrag = waitForTimelineOffsetToRest(diagTick: diagTick)
 
         let offsetAfterPastExtensionDrag = dragTimelineUntilOffsetMoves(
             timeline,

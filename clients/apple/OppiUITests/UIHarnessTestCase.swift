@@ -332,6 +332,50 @@ class UIHarnessTestCase: XCTestCase {
         }
     }
 
+    /// Drags on `row`'s body and returns once the row itself has followed the finger by
+    /// `minimumDelta` points, `.decreasing` meaning the finger goes down and the row with
+    /// it. That the row under the finger moves is what "the timeline owns the drag"
+    /// means; a row that does not move means the row's own text view kept the pan.
+    ///
+    /// The timeline's `contentOffset` cannot stand in for it. Scrolling toward earlier
+    /// content realizes rows whose estimated heights are then replaced by their real
+    /// ones, and the offset moves by that difference, in either direction, while every
+    /// row still follows the finger (iPad: a +314 pt offset step beside a row that moved
+    /// 81.5 pt down).
+    func dragRowUntilItMoves(
+        _ timeline: XCUIElement,
+        row: XCUIElement,
+        minimumDelta: CGFloat,
+        direction: OffsetDirection,
+        context: String
+    ) {
+        var lastMovement: CGFloat = 0
+        for _ in 0..<3 {
+            guard row.exists, let path = dragPath(inside: row, of: timeline, direction: direction) else {
+                XCTFail(
+                    "Drag start is not inside the row during \(context) " +
+                    "(row=\(row.frame), exists=\(row.exists), timeline=\(timeline.frame))"
+                )
+                return
+            }
+            let before = row.frame.minY
+            dragTimeline(timeline, from: path.from, to: path.to, settling: true)
+            guard row.exists else {
+                XCTFail("The row left the viewport during \(context) (it was at y=\(before))")
+                return
+            }
+            // A downward finger moves the row toward larger y.
+            let movement = direction == .decreasing ? row.frame.minY - before : before - row.frame.minY
+            lastMovement = movement
+            if movement >= minimumDelta { return }
+        }
+        let directionDescription = direction == .decreasing ? "down" : "up"
+        XCTFail(
+            "The row did not follow the finger \(directionDescription) enough during \(context) " +
+            "(moved \(lastMovement) pt, minimumDelta=\(minimumDelta))"
+        )
+    }
+
     func dragTimelineUntilOffsetMoves(
         _ timeline: XCUIElement,
         diagTick: XCUIElement,
