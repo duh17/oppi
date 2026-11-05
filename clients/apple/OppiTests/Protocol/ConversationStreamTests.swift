@@ -306,6 +306,28 @@ struct ConversationStreamTests {
         #expect(reducer.items.count == 2)
     }
 
+    /// The live `cache_miss` frame can arrive before the update that lands its answer, and that
+    /// update only appends (the incremental path): the committed notice takes the live row.
+    @MainActor
+    @Test func cacheMissLiveFrameBeforeTheLandingAppendShowsOnce() throws {
+        let noticeID = "cache-miss:1791650000000:anthropic/claude-sonnet"
+        let text = "Cache miss after 7m idle: 100k tokens re-billed (~$1.00)"
+        let user = TraceEvent(id: "1", type: .user, timestamp: "2026-01-01T00:00:00Z", text: "go")
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted([user])
+        reducer.appendClientRow(.cacheMiss(id: noticeID, message: text))
+
+        reducer.applyConversationCommitted(
+            [
+                user,
+                TraceEvent(id: "2", type: .assistant, timestamp: "2026-01-01T00:07:00Z", text: "done"),
+                TraceEvent(id: noticeID, type: .system, timestamp: "2026-01-01T00:07:00Z", text: text, cacheMiss: true),
+            ],
+            appendStart: 1
+        )
+        #expect(reducer.items.filter { $0.id == noticeID }.count == 1)
+    }
+
     @Test func framesForAnotherConversationAndMissingPathsThrow() throws {
         var replica = ConversationReplica()
         try replica.apply(.snapshot(.init(conversationId: 3, head: 0, hasOlder: false, entries: [], docs: ["d": ["a": "x"]])))

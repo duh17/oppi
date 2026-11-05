@@ -97,10 +97,10 @@ function isLiveVoiceFrame(msg: { type: string; command?: string }): boolean {
  * Classic session events a socket attached to the durable conversation stream no longer
  * gets, because its entries and documents restate them: streamed text and thinking, tool
  * calls and output, committed messages, cards, compaction and retry status (`pi.live`), the
- * queue (`pi.inbox`), and a notice restating a committed card (`entry:<id>`). Run
- * boundaries, session state, stop feedback, errors, other notices, cache misses, extension
- * UI, command results, and audio still go: no entry or document carries those effects to
- * clients yet. Here rather than in `durable-conversation-stream.ts`, which loads lazily.
+ * queue (`pi.inbox`), a notice restating a committed card (`entry:<id>`), and a cache miss
+ * (the answer's entry carries it as `cacheMiss`, same id). Run boundaries, session state, stop
+ * feedback, errors, other notices, extension UI, command results, and audio still go: no entry
+ * or document carries those effects to clients yet. Here rather than in `durable-conversation-stream.ts`, which loads lazily.
  */
 function restatedByConversationStream(message: ServerMessage): boolean {
   switch (message.type) {
@@ -118,6 +118,7 @@ function restatedByConversationStream(message: ServerMessage): boolean {
     case "retry_end":
     case "queue_state":
     case "queue_item_started":
+    case "cache_miss":
       return true;
     case "notice":
       return message.id.startsWith("entry:");

@@ -1409,7 +1409,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .system:
             if event.cacheMiss == true {
-                insertItem(.cacheMiss(id: event.id, message: event.text ?? ""), appendOnly: appendOnly)
+                // The live `cache_miss` frame may have added this row before its answer landed
+                // through an append: the committed notice takes that row instead of a second one.
+                insertItem(
+                    .cacheMiss(id: event.id, message: event.text ?? ""),
+                    appendOnly: appendOnly && indexForID(event.id) == nil
+                )
             } else if let presentation = event.presentation, presentation.kind == "custom" {
                 insertItem(.customEvent(
                     id: event.id,

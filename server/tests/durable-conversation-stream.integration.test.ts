@@ -299,6 +299,7 @@ const RESTATED_EVENTS = new Set([
   "tool_end",
   "queue_state",
   "queue_item_started",
+  "cache_miss",
 ]);
 
 type QueueView = { steering: Array<{ message: string }>; followUp: Array<{ message: string }> };
