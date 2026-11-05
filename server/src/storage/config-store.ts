@@ -23,6 +23,11 @@ import {
   parseTrustedPeers,
 } from "../proxy-config.js";
 import { extractAutoTitle, hasAutoTitle } from "./auto-title-extension-migration.js";
+import {
+  hasLegacyMobileOutputGuide,
+  readLegacyMobileOutputGuide,
+  retireLegacyMobileOutputGuide,
+} from "./mobile-output-guide-migration.js";
 import { parsePushEvents } from "../push/events.js";
 import { isRevision } from "../settings/revision.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
@@ -67,6 +72,33 @@ function readSettingRevision(value: unknown, path: string, errors: string[]): nu
   if (isRevision(value)) return value;
   errors.push(`${path}.revision: expected a non-negative safe integer`);
   return undefined;
+}
+
+/** A saved on/off setting: `{ enabled, revision? }`, as Server Metrics and the Mobile Output Guide keep it. */
+function readEnabledSetting(
+  value: unknown,
+  path: string,
+  strictUnknown: boolean,
+  errors: string[],
+): { enabled: boolean; revision?: number } | undefined {
+  if (!isRecord(value)) {
+    errors.push(`${path}: expected object`);
+    return undefined;
+  }
+  if (strictUnknown) {
+    for (const key of Object.keys(value)) {
+      if (key !== "enabled" && key !== "revision") errors.push(`${path}.${key}: unknown key`);
+    }
+  }
+  if (!("enabled" in value)) return undefined;
+  if (typeof value.enabled !== "boolean") {
+    errors.push(`${path}.enabled: expected boolean`);
+    return undefined;
+  }
+  const setting: { enabled: boolean; revision?: number } = { enabled: value.enabled };
+  const revision = readSettingRevision(value.revision, path, errors);
+  if (revision !== undefined) setting.revision = revision;
+  return setting;
 }
 
 function optionalNonEmptyString(value: unknown): string | undefined {
@@ -256,6 +288,7 @@ function normalizeConfig(
     "oppiDocsPrompt",
     "oppiCliPrompt",
     "serverMetrics",
+    "mobileOutputGuide",
     "experimental",
     "tls",
     "publicUrl",
@@ -538,34 +571,22 @@ function normalizeConfig(
 
   if (!("serverMetrics" in obj)) {
     changed = true;
-  } else if (isRecord(obj.serverMetrics)) {
-    const serverMetrics = obj.serverMetrics;
-
-    if (strictUnknown) {
-      for (const key of Object.keys(serverMetrics)) {
-        if (key !== "enabled" && key !== "revision") {
-          errors.push(`config.serverMetrics.${key}: unknown key`);
-        }
-      }
-    }
-
-    if ("enabled" in serverMetrics) {
-      if (typeof serverMetrics.enabled === "boolean") {
-        config.serverMetrics = { enabled: serverMetrics.enabled };
-        const revision = readSettingRevision(
-          serverMetrics.revision,
-          "config.serverMetrics",
-          errors,
-        );
-        if (revision !== undefined) config.serverMetrics.revision = revision;
-      } else {
-        errors.push("config.serverMetrics.enabled: expected boolean");
-        changed = true;
-      }
-    }
   } else {
-    errors.push("config.serverMetrics: expected object");
-    changed = true;
+    config.serverMetrics =
+      readEnabledSetting(obj.serverMetrics, "config.serverMetrics", strictUnknown, errors) ??
+      config.serverMetrics;
+  }
+
+  // No default: absent means never saved, which the one-time migration from the old settings file
+  // tells apart from a saved value.
+  if ("mobileOutputGuide" in obj) {
+    const saved = readEnabledSetting(
+      obj.mobileOutputGuide,
+      "config.mobileOutputGuide",
+      strictUnknown,
+      errors,
+    );
+    if (saved) config.mobileOutputGuide = saved;
   }
 
   const parseTlsConfig = (
@@ -1218,6 +1239,29 @@ export class ConfigStore {
     // a read-only command never waits on a lock.
     if (hasAutoTitle(this.dataDir)) this.withLock(() => extractAutoTitle(this.dataDir));
     this.config = this.loadConfig();
+    this.migrateMobileOutputGuide();
+  }
+
+  /**
+   * Carries `settings/mobile-output-guide.json` into config.json once (see
+   * `mobile-output-guide-migration.ts`). An unreadable old file or a failed write never blocks
+   * startup: the file stays where it is, a warning says why, and the guide reads as off until
+   * the next start retries or a save writes config.json (which then retires the file).
+   */
+  private migrateMobileOutputGuide(): void {
+    if (!hasLegacyMobileOutputGuide(this.dataDir)) return;
+    try {
+      this.mutate((latest) =>
+        latest.mobileOutputGuide
+          ? {}
+          : { mobileOutputGuide: readLegacyMobileOutputGuide(this.dataDir) },
+      );
+      retireLegacyMobileOutputGuide(this.dataDir);
+    } catch (error) {
+      log.warn("config_store.mobile_output_guide_migration.failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

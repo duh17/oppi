@@ -8,7 +8,6 @@
  */
 import { hostMountValidationError } from "../host.js";
 import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
-import { validateMobileOutputGuideSettingsReplacement } from "../mobile-output-guide-settings.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
@@ -36,7 +35,7 @@ export interface ServerSettingDefinition<T> {
   validate(value: unknown): T;
 }
 
-/** A config-stored on/off setting's write: Server Metrics, Durable Sessions. */
+/** A config-stored on/off setting's write: Server Metrics, Durable Sessions, Mobile Output Guide. */
 export interface EnabledPatch {
   enabled: boolean;
 }
@@ -246,11 +245,10 @@ const SETTINGS = {
   },
   mobileOutputGuide: {
     scope: "server",
-    storage: "settings-file",
-    default: { enabled: false },
+    storage: "config",
+    default: { enabled: false } as EnabledPatch,
     revisioned: true,
-    validate: (value: unknown) =>
-      asSettingError(() => validateMobileOutputGuideSettingsReplacement(value)),
+    validate: validateEnabledPatch,
   },
   dictionaryGlobal: {
     scope: "server",

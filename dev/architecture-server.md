@@ -90,7 +90,7 @@ The durable conversation stream types sit outside the `ServerMessage`/`ClientMes
 
 `server/src/settings/registry.ts` declares every server-owned setting (key, scope, storage, default, `revisioned`, `validate`). Routes and stores validate through the definition; `validate` throws `SettingValidationError` (400). `server/tests/settings-registry.test.ts` holds `protocol/settings.json` to the registry; a new setting adds both together.
 
-Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. Server Metrics without `baseRevision` is last-writer-wins (`applySetting` in `settings/config-settings.ts`, under the config lock); the Mobile Output Guide requires it. `oppi config set` does not bump a revision.
+Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `ConfigStore` carries the guide's old `settings/mobile-output-guide.json` into `config.json` once and renames it `.migrated`. `oppi config set` does not bump a revision.
 
 ### Route registry
 

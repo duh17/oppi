@@ -17,6 +17,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { LiveVoiceSpeech, type RunOutcome } from "../src/live-voice-speech.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
+import { applySetting } from "../src/settings/config-settings.js";
 import { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "../src/oppi-docs.js";
@@ -851,7 +852,7 @@ describe("durable prompt appends", () => {
 
   function setGuide(f: Fixture, enabled: boolean) {
     const current = f.storage.getMobileOutputGuideSettings();
-    expect(f.storage.replaceMobileOutputGuideSettings(current.revision, { enabled }).ok).toBe(true);
+    expect(applySetting(f.storage, "mobileOutputGuide", { enabled }, current.revision).ok).toBe(true);
   }
 
   function withWorkspacePrompt(f: Fixture, runtime: "host" | "sandbox") {

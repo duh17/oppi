@@ -72,8 +72,8 @@ import {
 } from "./sdk-backend.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
-  type MobileOutputGuideSettingsSnapshot,
-} from "./mobile-output-guide-settings.js";
+  type RevisionedEnabled,
+} from "./settings/config-settings.js";
 import {
   dropInstructionsWorkspacePrompt,
   syncProjectContext,
@@ -148,7 +148,7 @@ interface DurableBackendOptions {
   /** Server settings that gate Oppi's prompt appends, as for SDK sessions. */
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Read on every attach and `/reload`, as an SDK session reads it per runtime rebuild. */
-  getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
+  getMobileOutputGuideSettings?: () => RevisionedEnabled;
 }
 
 /**

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => vi.restoreAllMocks());
 
-import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-guide-settings.js";
+import type { RevisionedEnabled } from "../src/settings/config-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
 import type { Storage } from "../src/storage.js";
@@ -54,7 +54,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
-    getMobileOutputGuideSettings: vi.fn((): MobileOutputGuideSettingsSnapshot => ({
+    getMobileOutputGuideSettings: vi.fn((): RevisionedEnabled => ({
       enabled: false,
       revision: 0,
     })),
@@ -141,7 +141,7 @@ describe("SessionStartCoordinator status persistence", () => {
   it("passes one atomic Mobile Output Guide reader to managed backend construction", async () => {
     const session = makeSession({ status: "ready" });
     const deps = makeDeps(session);
-    const latest: MobileOutputGuideSettingsSnapshot = { enabled: true, revision: 8 };
+    const latest: RevisionedEnabled = { enabled: true, revision: 8 };
     const getMobileOutputGuideSettings = vi.fn(() => latest);
     Object.assign(deps.storage, { getMobileOutputGuideSettings });
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);

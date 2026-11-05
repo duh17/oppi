@@ -34,7 +34,7 @@ import {
   OPPI_CALLER_SESSION_ID_ENV,
 } from "../src/session-caller-identity.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
-import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-guide-settings.js";
+import type { RevisionedEnabled } from "../src/settings/config-settings.js";
 import { buildMobileOutputGuide } from "../src/oppi-docs.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
@@ -211,7 +211,7 @@ describe("SdkBackend control sessions", () => {
       workspaceId: undefined,
       control: { domain: "agents", intent: "revise", targetName: "Reviewer" },
     });
-    let snapshot: MobileOutputGuideSettingsSnapshot = { enabled: true, revision: 1 };
+    let snapshot: RevisionedEnabled = { enabled: true, revision: 1 };
     const getMobileOutputGuideSettings = vi.fn(() => snapshot);
     let backend: SdkBackend | undefined;
 
@@ -1483,7 +1483,7 @@ describe("SdkBackend host extensions", () => {
 
   it("reloads the Mobile Output Guide for an ordinary managed workspace session", async () => {
     const cwd = makeTempDir("oppi-mobile-guide-reload-");
-    let snapshot: MobileOutputGuideSettingsSnapshot = { enabled: false, revision: 0 };
+    let snapshot: RevisionedEnabled = { enabled: false, revision: 0 };
     const getMobileOutputGuideSettings = vi.fn(() => snapshot);
     const backend = await SdkBackend.create({
       session: makeSession({ ephemeral: true }),

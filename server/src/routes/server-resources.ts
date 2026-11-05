@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { revisionConflictBody } from "../settings/config-settings.js";
+import { applySetting, revisionConflictBody } from "../settings/config-settings.js";
 import { httpStatusForPiResourceError } from "../settings/pi-resource-errors.js";
 import { isRevision } from "../settings/revision.js";
 import { SettingValidationError, validateSetting, type SettingKey } from "../settings/registry.js";
@@ -525,7 +525,7 @@ export function createServerResourceRoutes(
     }
 
     try {
-      const result = ctx.storage.replaceMobileOutputGuideSettings(body.baseRevision, replacement);
+      const result = applySetting(ctx.storage, "mobileOutputGuide", replacement, body.baseRevision);
       if (!result.ok) {
         logRouteRejected("guide_persistence", "mobile_output_guide", "conflict");
         helpers.json(res, revisionConflictBody("mobileOutputGuide", result.current), 409);

@@ -1,6 +1,7 @@
 /**
  * Save contract for the settings stored in `config.json` and revisioned: Server Metrics
- * (`serverMetrics.enabled`) and Durable Sessions (`experimental.serverDurable`). A write is
+ * (`serverMetrics.enabled`), Durable Sessions (`experimental.serverDurable`), and the Mobile
+ * Output Guide (`mobileOutputGuide.enabled`). A write is
  * validated through its registry definition by the route, then applied here under the config
  * lock. A `baseRevision` that is not the saved revision is refused and leaves the setting as it
  * is; omitting it keeps last-writer-wins.
@@ -15,12 +16,19 @@ export interface RevisionedEnabled {
   revision: number;
 }
 
-export type RevisionedConfigKey = "serverMetrics" | "durableSessions";
+/** The Mobile Output Guide as it reads when nothing is saved (a fresh install). */
+export const DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS: Readonly<RevisionedEnabled> = Object.freeze({
+  enabled: false,
+  revision: 0,
+});
 
-/** What a conflict names in `error`, matching the Mobile Output Guide's `<name> setting changed`. */
+export type RevisionedConfigKey = "serverMetrics" | "durableSessions" | "mobileOutputGuide";
+
+/** What a conflict names in `error`: `<name> setting changed`. */
 const CONFLICT_LABELS: Record<RevisionedConfigKey, string> = {
   serverMetrics: "Server Metrics",
   durableSessions: "Durable Sessions",
+  mobileOutputGuide: "Mobile Output Guide",
 };
 
 export type ConfigSettingResult =
@@ -47,7 +55,9 @@ export function readConfigSetting(
       revision: experimental?.serverDurableRevision ?? 0,
     };
   }
-  const saved = config.serverMetrics ?? { enabled: false };
+  const saved = (key === "mobileOutputGuide" ? config.mobileOutputGuide : config.serverMetrics) ?? {
+    enabled: false,
+  };
   return { enabled: saved.enabled, revision: saved.revision ?? 0 };
 }
 
@@ -66,7 +76,8 @@ function storedFields(
       },
     };
   }
-  return { serverMetrics: { enabled: value.enabled, revision: value.revision } };
+  const stored = { enabled: value.enabled, revision: value.revision };
+  return key === "mobileOutputGuide" ? { mobileOutputGuide: stored } : { serverMetrics: stored };
 }
 
 /** `baseRevision` from a request body: absent is last-writer-wins, anything else must be a count. */
@@ -80,11 +91,10 @@ export function parseBaseRevision(value: unknown): number | undefined {
 
 /** The 409 body for a stale write, the same shape for every revisioned setting. */
 export function revisionConflictBody(
-  key: RevisionedConfigKey | "mobileOutputGuide",
+  key: RevisionedConfigKey,
   current: unknown,
 ): { error: string; code: "revision_conflict"; current: unknown } {
-  const label = key === "mobileOutputGuide" ? "Mobile Output Guide" : CONFLICT_LABELS[key];
-  return { error: `${label} setting changed`, code: "revision_conflict", current };
+  return { error: `${CONFLICT_LABELS[key]} setting changed`, code: "revision_conflict", current };
 }
 
 /** Saves a patch that its registry definition already validated. */

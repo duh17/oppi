@@ -37,10 +37,9 @@ import {
   IconAssetStore,
   type IconAssetRecord,
 } from "./storage/icon-asset-store.js";
-import { MobileOutputGuideSettingsStore } from "./storage/mobile-output-guide-settings-store.js";
 import { SessionSqliteStore, type RestartResumeEntry } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
-import type { MobileOutputGuideSettingsSnapshot } from "./mobile-output-guide-settings.js";
+import { readConfigSetting, type RevisionedEnabled } from "./settings/config-settings.js";
 import type {
   CreateWorkspaceRequest,
   DevicePairingInfo,
@@ -99,7 +98,6 @@ export class Storage {
   private readonly deviceAuthStore: DeviceAuthStore;
   private readonly sessionStore: SessionSqliteStore;
   private readonly iconAssetStore: IconAssetStore;
-  private readonly mobileOutputGuideSettingsStore: MobileOutputGuideSettingsStore;
   private readonly agentDefinitionStore: AgentDefinitionStore;
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
@@ -117,9 +115,6 @@ export class Storage {
     this.deviceAuthStore = new DeviceAuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
     this.iconAssetStore = new IconAssetStore(this.configStore.getDataDir());
-    this.mobileOutputGuideSettingsStore = new MobileOutputGuideSettingsStore(
-      this.configStore.getDataDir(),
-    );
     this.agentDefinitionStore = new AgentDefinitionStore(
       this.configStore.getDataDir(),
       undefined,
@@ -241,19 +236,8 @@ export class Storage {
 
   // ─── Mobile Output Guide settings ───
 
-  getMobileOutputGuideSettings(): MobileOutputGuideSettingsSnapshot {
-    return this.mobileOutputGuideSettingsStore.get();
-  }
-
-  getMobileOutputGuideSettingsLoadError(): string | undefined {
-    return this.mobileOutputGuideSettingsStore.getLoadError();
-  }
-
-  replaceMobileOutputGuideSettings(
-    baseRevision: unknown,
-    desired: unknown,
-  ): ReturnType<MobileOutputGuideSettingsStore["replace"]> {
-    return this.mobileOutputGuideSettingsStore.replace(baseRevision, desired);
+  getMobileOutputGuideSettings(): RevisionedEnabled {
+    return readConfigSetting(this.configStore.getConfig(), "mobileOutputGuide");
   }
 
   // ─── Pairing / auth / push tokens ───

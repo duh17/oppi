@@ -87,9 +87,8 @@ import { createNotifyExtension } from "./session-notify-extension.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
-  freezeMobileOutputGuideSettingsSnapshot,
-  type MobileOutputGuideSettingsSnapshot,
-} from "./mobile-output-guide-settings.js";
+  type RevisionedEnabled,
+} from "./settings/config-settings.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -732,7 +731,7 @@ export interface SdkBackendConfig {
   /** Server settings that affect Oppi-owned SDK sessions. */
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
-  getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
+  getMobileOutputGuideSettings?: () => RevisionedEnabled;
   /** Startup-only relay, registered before protected project resources load. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   hasUI?: () => boolean;
@@ -743,7 +742,7 @@ export interface SdkBackendConfig {
 }
 
 type MobileOutputGuideSettingsHolder = {
-  snapshot: MobileOutputGuideSettingsSnapshot;
+  snapshot: RevisionedEnabled;
 };
 
 type QueuedModelTurnInput = {
@@ -1033,7 +1032,7 @@ export class SdkBackend implements AgentBackend {
   private readonly oppiSessionId: string;
   private readonly dataDir?: string;
   private readonly mobileOutputGuideSettingsHolder?: MobileOutputGuideSettingsHolder;
-  private readonly getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
+  private readonly getMobileOutputGuideSettings?: () => RevisionedEnabled;
   private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
   private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
   private entryRendererGeneration = 0;
@@ -1053,7 +1052,7 @@ export class SdkBackend implements AgentBackend {
     cwdOverrides?: { displayCwd?: string },
     mobileOutputGuideRuntimeSettings?: {
       holder: MobileOutputGuideSettingsHolder;
-      get: () => MobileOutputGuideSettingsSnapshot;
+      get: () => RevisionedEnabled;
     },
     assertSelectedResourcesAvailableBeforeReload?: () => void,
     consumeSelectedResourceReloadError?: () => Error | undefined,
@@ -1186,9 +1185,7 @@ export class SdkBackend implements AgentBackend {
       sessionStartEvent,
     }) => {
       if (managedSession) {
-        mobileOutputGuideSettingsHolder.snapshot = freezeMobileOutputGuideSettingsSnapshot(
-          getMobileOutputGuideSettings(),
-        );
+        mobileOutputGuideSettingsHolder.snapshot = getMobileOutputGuideSettings();
       }
       const hostCwd = sandboxMode ? initialHostCwd : cwd;
       const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
@@ -2030,7 +2027,7 @@ export class SdkBackend implements AgentBackend {
       if (holder && getSettings) {
         // Read before Pi emits session_shutdown so storage failures leave the
         // current runtime and its guide snapshot untouched.
-        holder.snapshot = freezeMobileOutputGuideSettingsSnapshot(getSettings());
+        holder.snapshot = getSettings();
       }
 
       try {

@@ -8,6 +8,8 @@ import {
 } from "../src/server-resource-service.js";
 import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { readConfigSetting } from "../src/settings/config-settings.js";
+import type { ServerConfig } from "../src/types.js";
 import { makeRequest, makeResponse, makeRouteSessions } from "./harness/route-test-helpers.js";
 
 const FILE_REVISION = "a".repeat(64);
@@ -71,12 +73,14 @@ function makeRoutes(sessions: ReturnType<typeof makeRouteSessions> = makeRouteSe
     })),
   };
   const refreshModelCatalog = vi.fn(async () => undefined);
+  // The real revisioned save (`applySetting`) over an in-memory config.
+  let config: ServerConfig = {} as ServerConfig;
   const storage = {
-    getMobileOutputGuideSettings: vi.fn(() => ({ enabled: false, revision: 0 })),
-    replaceMobileOutputGuideSettings: vi.fn(() => ({
-      ok: true as const,
-      current: { enabled: true, revision: 1 },
-    })),
+    getMobileOutputGuideSettings: vi.fn(() => readConfigSetting(config, "mobileOutputGuide")),
+    mutateConfig: vi.fn((mutator: (latest: ServerConfig) => Partial<ServerConfig>) => {
+      config = { ...config, ...mutator(config) };
+      return config;
+    }),
   };
   return {
     routes: new RouteHandler({
@@ -186,16 +190,11 @@ describe("server resource routes", () => {
     serverResources.setExtensionEnabled.mockRejectedValueOnce(
       new Error(`write failed for ${sensitiveContext}`),
     );
-    storage.replaceMobileOutputGuideSettings.mockImplementationOnce(() => {
+    storage.mutateConfig.mockImplementationOnce(() => {
       throw new Error(`fsync failed for ${sensitiveContext}`);
     });
-    storage.replaceMobileOutputGuideSettings.mockImplementationOnce(() => {
+    storage.mutateConfig.mockImplementationOnce(() => {
       throw new Error(`rename failed for ${sensitiveContext}`);
-    });
-    storage.replaceMobileOutputGuideSettings.mockReturnValueOnce({
-      ok: false,
-      reason: "revision_conflict",
-      current: { enabled: false, revision: 2 },
     });
     serverResources.getExtensionDetail.mockRejectedValueOnce(
       new ServerResourceNotFoundError("extension"),
@@ -245,7 +244,7 @@ describe("server resource routes", () => {
           routes,
           "PUT",
           "/server/mobile-output-guide",
-          jsonRequest({ enabled: true, baseRevision: 0 }),
+          jsonRequest({ enabled: true, baseRevision: 5 }),
         )
       ).statusCode,
     ).toBe(409);
@@ -446,25 +445,21 @@ describe("server resource routes", () => {
     );
     expect(put.statusCode).toBe(200);
     expect(JSON.parse(put.body)).toEqual({ enabled: true, revision: 1 });
-    expect(storage.replaceMobileOutputGuideSettings).toHaveBeenCalledWith(0, { enabled: true });
+    expect(storage.getMobileOutputGuideSettings()).toEqual({ enabled: true, revision: 1 });
 
-    storage.replaceMobileOutputGuideSettings.mockReturnValueOnce({
-      ok: false,
-      reason: "revision_conflict",
-      current: { enabled: false, revision: 2 },
-    });
     const conflict = await dispatch(
       routes,
       "PUT",
       "/server/mobile-output-guide",
-      jsonRequest({ enabled: false, baseRevision: 1 }),
+      jsonRequest({ enabled: false, baseRevision: 0 }),
     );
     expect(conflict.statusCode).toBe(409);
     expect(JSON.parse(conflict.body)).toEqual({
       error: "Mobile Output Guide setting changed",
       code: "revision_conflict",
-      current: { enabled: false, revision: 2 },
+      current: { enabled: true, revision: 1 },
     });
+    expect(storage.getMobileOutputGuideSettings()).toEqual({ enabled: true, revision: 1 });
   });
 
   it("rejects cwd, malformed paths, unknown queries, invalid bodies, and wrong content types", async () => {

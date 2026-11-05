@@ -120,6 +120,17 @@ export interface ServerConfig {
     revision?: number;
   };
 
+  /**
+   * Tells Oppi-owned sessions when to link and embed files (the app's Mobile Output Guide
+   * switch). Absent means off, never saved. Read at each session build, so a save applies to the
+   * next session without a restart.
+   */
+  mobileOutputGuide?: {
+    enabled: boolean;
+    /** Counts saves made through `PUT /server/mobile-output-guide`; absent reads as 0. */
+    revision?: number;
+  };
+
   /** Opt-in runtime experiments. Each needs a server restart unless its comment says otherwise. */
   experimental?: {
     /**

@@ -28,7 +28,7 @@
     {
       "key": "mobileOutputGuide",
       "scope": "server",
-      "storage": "settings-file",
+      "storage": "config",
       "type": "{ enabled: boolean }",
       "default": { "enabled": false },
       "validation": "PUT /server/mobile-output-guide takes exactly enabled (boolean) and baseRevision.",
