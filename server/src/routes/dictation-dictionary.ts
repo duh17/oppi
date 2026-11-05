@@ -4,6 +4,7 @@ import {
 } from "../storage/dictation-dictionary-store.js";
 import { isDictationStreamEnabled, resolveAsrProvider } from "../dictation-types.js";
 import { SettingValidationError, validateSetting } from "../settings/registry.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 /** Authenticated on both owner Unix socket and paired HTTPS; never log phrase bodies. */
@@ -88,13 +89,13 @@ export function createDictationDictionaryRoutes(
       });
     } catch (error) {
       // Neither text nor raw decode errors may reach logs or responses.
-      helpers.error(
-        res,
-        error instanceof DictionaryError ? error.status : 400,
-        error instanceof DictionaryError || error instanceof SettingValidationError
-          ? error.message
-          : "Invalid dictionary request",
-      );
+      if (!answerStatusError(helpers, res, error)) {
+        helpers.error(
+          res,
+          400,
+          error instanceof SettingValidationError ? error.message : "Invalid dictionary request",
+        );
+      }
     }
     return true;
   };

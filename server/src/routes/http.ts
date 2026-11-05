@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { gzipSync } from "node:zlib";
 
+import { HttpStatusError } from "../http-status-error.js";
 import type { ApiError } from "../types.js";
 import type { RouteHelpers } from "./types.js";
 
@@ -70,6 +71,20 @@ function compressedJson(
 function error(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: message } as ApiError));
+}
+
+/**
+ * Answers an `HttpStatusError` with its status and message through the route's own `helpers`.
+ * Returns false for any other error so the caller keeps its own fallback.
+ */
+export function answerStatusError(
+  helpers: Pick<RouteHelpers, "error">,
+  res: ServerResponse,
+  err: unknown,
+): boolean {
+  if (!(err instanceof HttpStatusError)) return false;
+  helpers.error(res, err.status, err.message);
+  return true;
 }
 
 export function createRouteHelpers(): RouteHelpers {

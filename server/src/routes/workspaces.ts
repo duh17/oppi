@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
-  CommitDiffError,
   getCommitDetail,
   getCommitFileDiff,
   getCommitGraph,
@@ -26,7 +25,6 @@ import {
   removeWorkspaceWorktree,
   resolveWorkspaceWorktree,
   workspaceHasPendingWorktreeClaim,
-  WorkspaceWorktreeError,
 } from "../worktrees.js";
 import type {
   CreateWorkspaceRequest,
@@ -44,12 +42,12 @@ import type {
   OpenWorkspaceWorktreeRequest,
   PreviewWorkspaceWorktreeRequest,
 } from "../types.js";
-import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
+import { buildWorkspaceReviewDiff } from "../workspace-review-diff.js";
 import {
   loadWorkspaceQuickActionOptions,
   prepareWorkspaceQuickActionSession,
-  WorkspaceQuickActionSessionError,
 } from "../workspace-quick-action-session.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { deleteWorkspaceAndStopVm } from "../workspace-sandbox-lifecycle.js";
 import {
@@ -310,10 +308,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   function handleWorktreeLifecycleError(error: unknown, res: ServerResponse): void {
-    if (error instanceof WorkspaceWorktreeError) {
-      helpers.error(res, error.statusCode, error.message);
-      return;
-    }
+    if (answerStatusError(helpers, res, error)) return;
 
     const message = error instanceof Error ? error.message : "Workspace worktree operation failed";
     helpers.error(res, 500, message);
@@ -722,10 +717,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       );
       helpers.compressedJson(req, res, diff);
     } catch (error) {
-      if (error instanceof CommitDiffError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
       const message = error instanceof Error ? error.message : "Failed to get commit diff";
       helpers.error(res, 500, message);
     }
@@ -762,10 +754,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       });
       helpers.compressedJson(req, res, diff);
     } catch (error) {
-      if (error instanceof WorkspaceReviewDiffError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
       throw error;
     }
   }
@@ -859,10 +848,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       };
       helpers.json(res, response);
     } catch (error) {
-      if (error instanceof WorkspaceQuickActionSessionError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
 
       const message = error instanceof Error ? error.message : "Failed to load quick actions";
       helpers.error(res, 500, message);
@@ -898,10 +884,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       };
       helpers.json(res, response);
     } catch (error) {
-      if (error instanceof WorkspaceQuickActionSessionError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
 
       const message =
         error instanceof Error ? error.message : "Failed to prepare quick-action selection";
@@ -922,10 +905,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     try {
       await handleQuickAction(wsId, parsed.workspace, parsed.body, parsed.selectedSession, res);
     } catch (error) {
-      if (error instanceof WorkspaceQuickActionSessionError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
 
       const message =
         error instanceof Error ? error.message : "Failed to create quick-action session";

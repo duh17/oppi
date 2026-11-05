@@ -1,5 +1,6 @@
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import { ProviderAuthError, type ProviderAuthLaunchMode } from "../provider-auth/types.js";
+import type { ProviderAuthLaunchMode } from "../provider-auth/types.js";
+import { answerStatusError } from "./http.js";
 
 const LAUNCH_MODES = new Set<ProviderAuthLaunchMode>(["server_browser", "phone_browser", "none"]);
 
@@ -12,18 +13,6 @@ function parseFlowSubresource(path: string, suffix: string): string | null {
   const pattern = new RegExp(`^/provider-auth/flows/([^/]+)/${suffix}$`);
   const match = path.match(pattern);
   return match ? decodeURIComponent(match[1]) : null;
-}
-
-function handleProviderAuthError(
-  error: unknown,
-  helpers: RouteHelpers,
-  res: Parameters<RouteDispatcher>[0]["res"],
-): boolean {
-  if (error instanceof ProviderAuthError) {
-    helpers.error(res, error.statusCode, error.message);
-    return true;
-  }
-  return false;
 }
 
 export function createProviderAuthRoutes(
@@ -114,9 +103,7 @@ export function createProviderAuthRoutes(
 
       return false;
     } catch (error) {
-      if (handleProviderAuthError(error, helpers, res)) {
-        return true;
-      }
+      if (answerStatusError(helpers, res, error)) return true;
       throw error;
     }
   };

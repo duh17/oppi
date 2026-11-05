@@ -19,7 +19,6 @@ import {
   createHostWorkspaceDirectory,
   discoverProjects,
   getHostPathStatus,
-  HostPathCreateError,
   resolveHostPath,
   scanDirectories,
 } from "../host.js";
@@ -34,6 +33,7 @@ import {
   WorkspaceResourceScopeError,
 } from "../settings/pi-resource-errors.js";
 import type { ProjectTrustState } from "../types.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_SKILL_FILE_BYTES = 1024 * 1024;
@@ -907,10 +907,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       const result = createHostWorkspaceDirectory(body.path);
       helpers.json(res, result, result.created ? 201 : 200);
     } catch (err: unknown) {
-      if (err instanceof HostPathCreateError) {
-        helpers.error(res, err.status, err.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, err)) return;
       const message = err instanceof Error ? err.message : "Failed to create directory";
       helpers.error(res, 500, message);
     }

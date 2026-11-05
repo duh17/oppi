@@ -229,7 +229,7 @@ describe("sandbox git: repository-controlled execution", () => {
     const workspace = sandboxWorkspace(mount);
     const dataDir = tempDir("oppi-git-safe-data-");
     const refused = {
-      statusCode: 409,
+      status: 409,
       message: "Worktrees are not available for sandbox workspaces",
     };
 

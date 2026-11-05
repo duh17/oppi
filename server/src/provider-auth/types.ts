@@ -1,3 +1,5 @@
+import { HttpStatusError } from "../http-status-error.js";
+
 export type ProviderAuthLaunchMode = "server_browser" | "phone_browser" | "none";
 
 export type ProviderAuthFlowType = "oauth_callback" | "device_code" | "oauth";
@@ -72,12 +74,4 @@ export function isTerminalProviderAuthStatus(status: ProviderAuthFlowStatus): bo
   );
 }
 
-export class ProviderAuthError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ProviderAuthError";
-  }
-}
+export class ProviderAuthError extends HttpStatusError {}

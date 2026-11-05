@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { HttpStatusError } from "../http-status-error.js";
 import { ICON_ASSET_ID_PATTERN } from "../icon-choice.js";
 
 export const ICON_ASSET_MAX_BYTES = 2 * 1024 * 1024;
@@ -44,14 +45,13 @@ export interface IconAssetStoreOptions {
 export type IconAssetErrorCode =
   "oversized" | "unsupported" | "corrupt" | "invalid_id" | "missing" | "quota";
 
-export class IconAssetStoreError extends Error {
+export class IconAssetStoreError extends HttpStatusError {
   constructor(
     readonly code: IconAssetErrorCode,
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
-    this.name = "IconAssetStoreError";
+    super(status, message);
   }
 }
 

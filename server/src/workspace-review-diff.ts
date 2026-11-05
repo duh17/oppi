@@ -2,6 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { execGit, type GitTrust } from "./git-safe.js";
+import { HttpStatusError } from "./http-status-error.js";
 import { isPathWithinRoot, resolveHomePath } from "./git-utils.js";
 import {
   computeDiffLines,
@@ -34,15 +35,7 @@ const WORD_FALLBACK_MAX_REGIONS = 3;
 /** Work cap for one positional pair: a few dozen token edits, never a paragraph rewrite. */
 const WORD_FALLBACK_MAX_COST = 4_096;
 
-export class WorkspaceReviewDiffError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "WorkspaceReviewDiffError";
-  }
-}
+export class WorkspaceReviewDiffError extends HttpStatusError {}
 
 type ReadTextResult = {
   text: string;

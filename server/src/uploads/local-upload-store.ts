@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "no
 import { basename, dirname, extname, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 
+import { HttpStatusError } from "../http-status-error.js";
 import type { AttachmentKind, ChatAttachmentRef, ServerConfig } from "../types.js";
 
 export interface UploadRecord {
@@ -46,15 +47,7 @@ export interface UploadStoreGcResult {
 
 const ORPHAN_BLOB_GC_GRACE_MS = 5 * 60 * 1000;
 
-export class UploadStoreError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "UploadStoreError";
-  }
-}
+export class UploadStoreError extends HttpStatusError {}
 
 function sanitizeFileName(name: string): string {
   const base = basename(name || "").trim();

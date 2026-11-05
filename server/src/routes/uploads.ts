@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
   createUploadRecord,
   resolveUploadStoreConfig,
-  UploadStoreError,
   uploadRecordToAttachmentRef,
   writeUploadContent,
 } from "../uploads/local-upload-store.js";
@@ -98,10 +98,7 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         201,
       );
     } catch (error) {
-      if (error instanceof UploadStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
       if (error instanceof Error && error.message === "Request body too large") {
         helpers.error(res, 413, error.message);
         return;
@@ -137,10 +134,7 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       });
       helpers.json(res, { attachment: uploadRecordToAttachmentRef(record) });
     } catch (error) {
-      if (error instanceof UploadStoreError) {
-        helpers.error(res, error.status, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
       throw error;
     }
   }

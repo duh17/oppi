@@ -283,7 +283,7 @@ describe("workspace worktrees", async () => {
     // Without adoption the route keeps refusing the taken id, as it always has.
     await expect(
       ensureWorkspaceWorktree(workspace, { branch: "feature/adopt-branch" }, { dataDir }),
-    ).rejects.toMatchObject({ statusCode: 409, message: "Worktree id already exists" });
+    ).rejects.toMatchObject({ status: 409, message: "Worktree id already exists" });
   });
 
   it("refuses an id that retained session history still references", async () => {
@@ -539,12 +539,12 @@ describe("workspace worktrees", async () => {
       await expect(
         removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id }),
       ).rejects.toMatchObject({
-        statusCode: 409,
+        status: 409,
         message: "Worktree removal is already in progress",
       });
       await expect(
         createWorkspaceWorktree(workspace, { branch: "feature/pending" }, { dataDir }),
-      ).rejects.toMatchObject({ statusCode: 409, message: "Worktree id already exists" });
+      ).rejects.toMatchObject({ status: 409, message: "Worktree id already exists" });
 
       expect((await removal).id).toBe(created.id);
       expect(existsSync(created.path)).toBe(false);
@@ -566,7 +566,7 @@ describe("workspace worktrees", async () => {
     );
     await expect(
       removeWorkspaceWorktree(left.workspace, { dataDir, worktreeId: rightTree.id }),
-    ).rejects.toMatchObject({ statusCode: 404, message: "Worktree not found" });
+    ).rejects.toMatchObject({ status: 404, message: "Worktree not found" });
     expect(
       await resolveWorkspaceWorktree(right.workspace, rightTree.id, { dataDir }),
     ).toBeDefined();
@@ -639,7 +639,7 @@ describe("workspace worktrees", async () => {
       });
       writeFileSync(join(stateDir, "release-list"), "1");
       await expect(creating).rejects.toMatchObject({
-        statusCode: 409,
+        status: 409,
         message: "Worktree id already exists",
       });
       expect(existsSync(join(stateDir, "add-log"))).toBe(false);

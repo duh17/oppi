@@ -64,7 +64,7 @@ describe("MCP CLI subprocess supervision", () => {
         }
         const settled = await result;
         if (reason === "timeout")
-          expect(settled).toMatchObject({ statusCode: 504, message: "Pi MCP command timed out" });
+          expect(settled).toMatchObject({ status: 504, message: "Pi MCP command timed out" });
         else expect(settled).toMatchObject({ code: 1 });
         if (reason === "shutdown") expect(performance.now() - stoppingAt).toBeLessThan(1500);
         // Child close alone is not proof: Pi launches the server in a detached group.

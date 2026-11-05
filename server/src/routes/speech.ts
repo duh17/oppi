@@ -1,5 +1,6 @@
 import { createLogger } from "../logger.js";
 import { SpeechError, startSpeech } from "../speech-synthesis.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const log = createLogger({ base: { component: "speech" } });
@@ -80,8 +81,7 @@ export function createSpeechRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         res.destroy();
         return true;
       }
-      const status = error instanceof SpeechError ? error.status : 502;
-      helpers.error(res, status, errorMessage(error));
+      if (!answerStatusError(helpers, res, error)) helpers.error(res, 502, errorMessage(error));
     } finally {
       res.off("close", onClose);
     }

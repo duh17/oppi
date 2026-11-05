@@ -1,14 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { HttpStatusError } from "./http-status-error.js";
 import type { McpPatchServerRequest, McpServerConfig } from "./types/mcp.js";
 
-export class McpError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export class McpError extends HttpStatusError {}
 export const MCP_EXPOSURES = ["codemode", "deferred", "direct", "hidden"] as const;
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

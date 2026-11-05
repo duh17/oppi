@@ -1,9 +1,7 @@
-import {
-  ControlConversationError,
-  ControlConversationService,
-} from "../control-conversation-service.js";
+import { ControlConversationService } from "../control-conversation-service.js";
+import { HttpStatusError } from "../http-status-error.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
+import { SessionLifecycleService } from "../session-lifecycle-service.js";
 import { isThinkingLevel } from "../thinking-levels.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -45,11 +43,11 @@ export function createControlConversationRoutes(
       });
       helpers.json(res, { session }, created ? 201 : 200);
     } catch (error: unknown) {
-      const status =
-        error instanceof ControlConversationError || error instanceof SessionLifecycleError
-          ? error.statusCode
-          : 500;
-      helpers.error(res, status, safeErrorMessage(error));
+      helpers.error(
+        res,
+        error instanceof HttpStatusError ? error.status : 500,
+        safeErrorMessage(error),
+      );
     }
     return true;
   };

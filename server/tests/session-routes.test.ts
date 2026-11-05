@@ -721,7 +721,7 @@ describe("sessions module", () => {
 
       writeFileSync(join(stateDir, "fail-remove"), "1");
       writeFileSync(join(stateDir, "release-remove"), "1");
-      await expect(removal).rejects.toMatchObject({ statusCode: 409 });
+      await expect(removal).rejects.toMatchObject({ status: 409 });
       expect(existsSync(created.path)).toBe(true);
       expect(persisted.get("stopped-1")?.worktreeId).toBe(created.id);
 

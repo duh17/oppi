@@ -9,6 +9,7 @@ import {
 
 import { getCommitDetail } from "./git-commits.js";
 import { gitTrustForWorkspace } from "./git-safe.js";
+import { HttpStatusError } from "./http-status-error.js";
 import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
 import { workspaceMountRoot } from "./session-work-root.js";
@@ -16,15 +17,7 @@ import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
 import type { Session, Workspace, WorkspaceQuickActionOption } from "./types.js";
 
-export class WorkspaceQuickActionSessionError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "WorkspaceQuickActionSessionError";
-  }
-}
+export class WorkspaceQuickActionSessionError extends HttpStatusError {}
 
 type QuickActionSelectedFile = {
   path: string;

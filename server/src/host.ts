@@ -11,6 +11,7 @@ import { dirname, join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import { execGit, HOST_GIT_TRUST } from "./git-safe.js";
+import { HttpStatusError } from "./http-status-error.js";
 
 // ─── Types ───
 
@@ -37,15 +38,7 @@ export interface HostPathCreateResult {
   status: HostPathStatus;
 }
 
-export class HostPathCreateError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HostPathCreateError";
-  }
-}
+export class HostPathCreateError extends HttpStatusError {}
 
 export interface HostDirectory {
   /** Absolute path (with ~ prefix for display) */

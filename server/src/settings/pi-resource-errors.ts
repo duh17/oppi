@@ -3,6 +3,7 @@
  * the server-global `/server/resources/*` and the workspace-scoped `/workspaces/:id/skills/*`.
  * Both map a failure to an HTTP status here, so the same failure answers the same status.
  */
+import { HttpStatusError } from "../http-status-error.js";
 import {
   ServerResourceConflictError,
   ServerResourceNotFoundError,
@@ -26,13 +27,9 @@ export class PiResourceNotFoundError extends Error {
   }
 }
 
-export class WorkspaceResourceScopeError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "WorkspaceResourceScopeError";
+export class WorkspaceResourceScopeError extends HttpStatusError {
+  constructor(message: string, status: number) {
+    super(status, message);
   }
 }
 

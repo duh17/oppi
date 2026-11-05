@@ -10,6 +10,7 @@ import {
   type ThinkingLevel,
 } from "./agent-launch-service.js";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
+import { HttpStatusError } from "./http-status-error.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import {
   isControlConversation,
@@ -129,13 +130,9 @@ export function canResumeAfterServerRestart(session: Session): boolean {
   );
 }
 
-export class SessionLifecycleError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 500,
-  ) {
-    super(message);
-    this.name = "SessionLifecycleError";
+export class SessionLifecycleError extends HttpStatusError {
+  constructor(message: string, status = 500) {
+    super(status, message);
   }
 }
 

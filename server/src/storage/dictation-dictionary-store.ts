@@ -13,20 +13,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { HttpStatusError } from "../http-status-error.js";
 import {
   DICTATION_CONTEXT_MAX_PHRASES,
   DICTATION_CONTEXT_MAX_PHRASE_BYTES,
   DICTATION_CONTEXT_MAX_TOTAL_BYTES,
 } from "../dictation-types.js";
 
-export class DictionaryError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export class DictionaryError extends HttpStatusError {}
 
 type List = { revision: number; phrases: string[] };
 type RecordV1 = { version: 1; global: List; workspaces: Record<string, List> };

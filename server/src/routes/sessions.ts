@@ -15,8 +15,10 @@ import {
   type Session,
   type Workspace,
 } from "../types.js";
+import { HttpStatusError } from "../http-status-error.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { createSessionListRouteHandlers } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
@@ -280,10 +282,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         ctx.appEvents?.emitSessionImported(result.session);
         helpers.json(res, { session: result.session }, result.created ? 201 : 200);
       } catch (error: unknown) {
-        if (error instanceof SessionLifecycleError) {
-          helpers.error(res, error.statusCode, error.message);
-          return;
-        }
+        if (answerStatusError(helpers, res, error)) return;
         helpers.error(res, 500, safeErrorMessage(error));
       }
       return;
@@ -393,14 +392,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function respondToLaunchFailure(res: ServerResponse, error: unknown): void {
-    if (error instanceof SessionLifecycleError) {
-      if (error.message === "launch_in_progress") {
-        helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
-        return;
-      }
-      helpers.error(res, error.statusCode, error.message);
+    if (error instanceof SessionLifecycleError && error.message === "launch_in_progress") {
+      helpers.json(res, { error: "launch_in_progress", retryable: true }, error.status);
       return;
     }
+    if (answerStatusError(helpers, res, error)) return;
     helpers.error(res, 500, safeErrorMessage(error));
   }
 
@@ -483,10 +479,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
-      if (err instanceof SessionLifecycleError) {
-        helpers.error(res, err.statusCode, message);
-        return;
-      }
+      if (answerStatusError(helpers, res, err)) return;
       log.error("sessions.resume.failed", {
         sessionId,
         workspaceId,
@@ -524,10 +517,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       helpers.json(res, { session: result.session }, 201);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Fork failed";
-      if (err instanceof SessionLifecycleError) {
-        helpers.error(res, err.statusCode, message);
-        return;
-      }
+      if (answerStatusError(helpers, res, err)) return;
 
       log.error("sessions.fork.failed", {
         workspaceId,
@@ -557,10 +547,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       ctx.appEvents?.emitSessionDeleted(result.session);
       helpers.json(res, { ok: true, deleted: result.deleted });
     } catch (error: unknown) {
-      if (error instanceof SessionLifecycleError) {
-        helpers.error(res, error.statusCode, error.message);
-        return;
-      }
+      if (answerStatusError(helpers, res, error)) return;
       helpers.error(res, 500, safeErrorMessage(error));
     }
   }
@@ -595,7 +582,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           : await lifecycle.resumeControlSession(session);
         helpers.json(res, { session: result.session });
       } catch (error: unknown) {
-        const status = error instanceof SessionLifecycleError ? error.statusCode : 500;
+        const status = error instanceof HttpStatusError ? error.status : 500;
         helpers.error(res, status, safeErrorMessage(error));
       }
       return true;

@@ -356,7 +356,7 @@ export class McpService {
         );
       } catch (error) {
         snapshot.errors.push(
-          error instanceof McpError && error.statusCode === 504
+          error instanceof McpError && error.status === 504
             ? "This scope's live probe timed out after 20 seconds."
             : "Pi could not probe this scope. Check its path and MCP configuration on the host.",
         );

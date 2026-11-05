@@ -9,6 +9,7 @@
 import { execGit, SandboxGitRefusedError, type GitTrust } from "./git-safe.js";
 import { resolveHomePath } from "./git-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
+import { HttpStatusError } from "./http-status-error.js";
 import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
 import type {
   GitCommitDetail,
@@ -476,12 +477,4 @@ export async function getCommitFileDiff(
   };
 }
 
-export class CommitDiffError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CommitDiffError";
-  }
-}
+export class CommitDiffError extends HttpStatusError {}

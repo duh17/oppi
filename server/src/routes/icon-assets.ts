@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { ICON_ASSET_MAX_BYTES, IconAssetStoreError } from "../storage/icon-asset-store.js";
+import { answerStatusError } from "./http.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createIconAssetRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -84,10 +85,7 @@ function readBoundedBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 function handleAssetError(error: unknown, res: ServerResponse, helpers: RouteHelpers): void {
-  if (error instanceof IconAssetStoreError) {
-    helpers.error(res, error.status, error.message);
-    return;
-  }
+  if (answerStatusError(helpers, res, error)) return;
   helpers.error(res, 500, "Icon asset operation failed");
 }
 

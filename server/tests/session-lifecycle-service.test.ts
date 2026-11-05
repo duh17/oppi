@@ -637,7 +637,7 @@ describe("SessionLifecycleService", () => {
         }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
-        statusCode: 409,
+        status: 409,
         message: "launch_delivery_unknown",
       });
       expect(restarted.claimSessionLaunchRecovery).not.toHaveBeenCalled();
@@ -669,7 +669,7 @@ describe("SessionLifecycleService", () => {
           prompt: "Do not race this launch",
           idempotencyKey: "control-in-progress-key",
         }),
-      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      ).rejects.toMatchObject({ status: 409, message: "launch_in_progress" });
       expect(claimSessionLaunchRecovery).not.toHaveBeenCalled();
       expect(sendPrompt).not.toHaveBeenCalled();
     });
@@ -700,7 +700,7 @@ describe("SessionLifecycleService", () => {
           prompt: "One contender only",
           idempotencyKey: "control-cas-lost-key",
         }),
-      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      ).rejects.toMatchObject({ status: 409, message: "launch_in_progress" });
       expect(claimSessionLaunchRecovery).toHaveBeenCalledOnce();
       expect(sendPrompt).not.toHaveBeenCalled();
     });
@@ -747,7 +747,7 @@ describe("SessionLifecycleService", () => {
           prompt: "Dispatch once under contention",
           idempotencyKey: "control-contended-key",
         }),
-      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      ).rejects.toMatchObject({ status: 409, message: "launch_in_progress" });
       releasePrompt();
 
       await expect(winner).resolves.toMatchObject({ prompted: true, launchKind: "existing" });
@@ -1044,7 +1044,7 @@ describe("SessionLifecycleService", () => {
         }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
-        statusCode: 409,
+        status: 409,
         message: "Workspace main checkout is unavailable",
       } satisfies Partial<SessionLifecycleError>);
       expect(startSession).not.toHaveBeenCalled();
@@ -1070,7 +1070,7 @@ describe("SessionLifecycleService", () => {
 
         await expect(service.resumeWorkspaceSession({ session, workspace })).rejects.toMatchObject({
           name: "SessionLifecycleError",
-          statusCode: 409,
+          status: 409,
         } satisfies Partial<SessionLifecycleError>);
         expect(saveSession).not.toHaveBeenCalled();
         expect(startSession).not.toHaveBeenCalled();
@@ -1231,7 +1231,7 @@ describe("SessionLifecycleService", () => {
         service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
-        statusCode: 409,
+        status: 409,
         message: modelError.message,
       } satisfies Partial<SessionLifecycleError>);
       expect(startSession).toHaveBeenCalledOnce();
@@ -1286,7 +1286,7 @@ describe("SessionLifecycleService", () => {
 
       await expect(
         harness.service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
-      ).rejects.toMatchObject({ statusCode: 409 });
+      ).rejects.toMatchObject({ status: 409 });
 
       expect(harness.getPersistedSession(session.id)).toMatchObject({
         status: "error",
@@ -1399,7 +1399,7 @@ describe("SessionLifecycleService", () => {
 
         await expect(service.resumeWorkspaceSession({ session, workspace })).rejects.toMatchObject({
           name: "SessionLifecycleError",
-          statusCode: 409,
+          status: 409,
           message: "Worktree inspection failed",
         } satisfies Partial<SessionLifecycleError>);
         expect(saveSession).not.toHaveBeenCalled();
@@ -1562,7 +1562,7 @@ describe("SessionLifecycleService", () => {
 
         await expect(service.openFocusedSession({ session, workspace })).rejects.toMatchObject({
           name: "SessionLifecycleError",
-          statusCode: 409,
+          status: 409,
           message: "Worktree removal is in progress",
         } satisfies Partial<SessionLifecycleError>);
         expect(saveSession).not.toHaveBeenCalled();
@@ -1572,7 +1572,7 @@ describe("SessionLifecycleService", () => {
 
         writeFileSync(join(stateDir, "fail-remove"), "1");
         writeFileSync(join(stateDir, "release-remove"), "1");
-        await expect(removal).rejects.toMatchObject({ statusCode: 409 });
+        await expect(removal).rejects.toMatchObject({ status: 409 });
         expect(existsSync(created.path)).toBe(true);
         expect(getPersistedSession("sess-1")?.worktreeId).toBe(created.id);
       } finally {
@@ -1602,7 +1602,7 @@ describe("SessionLifecycleService", () => {
 
         await expect(service.openFocusedSession({ session, workspace })).rejects.toMatchObject({
           name: "SessionLifecycleError",
-          statusCode: 409,
+          status: 409,
           message: "Session worktree is no longer available",
         } satisfies Partial<SessionLifecycleError>);
         expect(startSession).not.toHaveBeenCalled();
@@ -1744,7 +1744,7 @@ describe("SessionLifecycleService", () => {
           }),
         ).rejects.toMatchObject({
           message: expect.stringContaining("Control session transcripts cannot be imported"),
-          statusCode: 400,
+          status: 400,
         });
         expect(createSession).not.toHaveBeenCalled();
       } finally {
@@ -1786,7 +1786,7 @@ describe("SessionLifecycleService", () => {
           sourceSession: makeSession({ serverDurable: { conversationId: 1 } }),
           entryId: "entry-1",
         }),
-      ).rejects.toMatchObject({ statusCode: 404 });
+      ).rejects.toMatchObject({ status: 404 });
       expect(createSession).not.toHaveBeenCalled();
       expect(startSession).not.toHaveBeenCalled();
     });
@@ -1861,7 +1861,7 @@ describe("SessionLifecycleService", () => {
         }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
-        statusCode: 409,
+        status: 409,
         message: "Source session has no trace file to fork from",
       } satisfies Partial<SessionLifecycleError>);
       expect(createSession).not.toHaveBeenCalled();

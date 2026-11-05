@@ -138,7 +138,7 @@ describe("sessionWorkRoot", () => {
       });
       if (missing.kind !== "worktree-unavailable") throw new Error(`got ${missing.kind}`);
       expect(missing.error).toBeInstanceOf(WorkspaceWorktreeError);
-      expect(missing.error.statusCode).toBe(409);
+      expect(missing.error.status).toBe(409);
       expect(missing.error.message).toBe("Session worktree is no longer available");
     });
   });
@@ -265,7 +265,7 @@ describe("attachmentWorkRoot", () => {
     expect(await attachmentWorkRoot(sessionOf({ workspaceId: "ws-gone" }), store)).toBeNull();
     await expect(
       attachmentWorkRoot(sessionOf({ worktreeId: "wt_removed" }), store),
-    ).rejects.toMatchObject({ statusCode: 409 });
+    ).rejects.toMatchObject({ status: 409 });
   });
 
   it("creates the control directory an attachment write needs", async () => {

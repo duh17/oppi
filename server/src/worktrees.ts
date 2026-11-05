@@ -9,6 +9,7 @@ import {
   isGitRepository,
   type GitTrust,
 } from "./git-safe.js";
+import { HttpStatusError } from "./http-status-error.js";
 import { resolveHostPath } from "./host.js";
 import { DEFAULT_DATA_DIR } from "./storage/config-store.js";
 import type {
@@ -61,15 +62,7 @@ export interface RemoveWorkspaceWorktreeOptions extends WorkspaceWorktreeLifecyc
   activeSessionCount?: number;
 }
 
-export class WorkspaceWorktreeError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "WorkspaceWorktreeError";
-  }
-}
+export class WorkspaceWorktreeError extends HttpStatusError {}
 
 /** Sandbox mounts are writable from the VM, so the host never runs `git worktree` there. */
 const SANDBOX_WORKTREES_UNAVAILABLE = "Worktrees are not available for sandbox workspaces";

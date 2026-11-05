@@ -199,13 +199,13 @@ describe("MCP configuration boundary", () => {
       const project = service.list("workspace-one");
       await expect.poll(() => gates.length).toBe(2);
       await expect(service.add("global", { name: "new", command: "echo" })).rejects.toMatchObject({
-        statusCode: 409,
+        status: 409,
       });
       for (const open of gates.splice(0)) open();
       expect(await global).toBe(await shared);
       expect((await project).scope.id).toBe("workspace-one");
       const mutation = service.add("global", { name: "new", command: "echo" });
-      await expect(service.list("global")).rejects.toMatchObject({ statusCode: 409 });
+      await expect(service.list("global")).rejects.toMatchObject({ status: 409 });
       await mutation;
       const next = service.list("global");
       await expect.poll(() => gates.length).toBe(1);
@@ -224,7 +224,7 @@ describe("MCP configuration boundary", () => {
     const run = vi.spyOn(McpCli.prototype, "run").mockResolvedValue({ code: 0, stdout: "" });
     try {
       const pending = service.add("global", { name: "new", command: "echo" });
-      await expect(service.remove("global", "remote")).rejects.toMatchObject({ statusCode: 409 });
+      await expect(service.remove("global", "remote")).rejects.toMatchObject({ status: 409 });
       await pending;
       await service.remove("global", "remote");
       await service.logout("global", "remote");
@@ -261,7 +261,7 @@ describe("MCP configuration boundary", () => {
         () => service.logout("workspace-one", "remote"),
       ])
         await expect(action()).rejects.toMatchObject({
-          statusCode: 409,
+          status: 409,
           message: expect.stringContaining("Trust (remember)"),
         });
       expect(run).not.toHaveBeenCalled();
@@ -280,7 +280,7 @@ describe("MCP configuration boundary", () => {
         JSON.stringify({ [realpathSync(project)]: false }),
       );
       await expect(service.login("workspace-one", "remote", "phone_browser")).rejects.toMatchObject(
-        { statusCode: 409, message: expect.stringContaining("not trusted") },
+        { status: 409, message: expect.stringContaining("not trusted") },
       );
     } finally {
       run.mockRestore();
@@ -499,7 +499,7 @@ describe("MCP configuration boundary", () => {
         () => service.login("sandbox", "allowed", "phone_browser"),
         () => service.logout("sandbox", "allowed"),
       ])
-        await expect(change()).rejects.toMatchObject({ statusCode: 409 });
+        await expect(change()).rejects.toMatchObject({ status: 409 });
       expect(run).not.toHaveBeenCalled();
     } finally {
       run.mockRestore();
@@ -510,16 +510,16 @@ describe("MCP configuration boundary", () => {
     const path = join(agentDir, "mcp.json");
     writeFileSync(path, '{"headers": "private-value",');
     await expect(service.patch("global", "echo", { enabled: false })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
     expect(readFileSync(path, "utf8")).toBe('{"headers": "private-value",');
     await expect(
       service.patch("global", "echo", { exposure: "bogus" } as never),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
     await expect(service.add("missing", { name: "bad", command: "echo" })).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
-    await expect(service.list("missing")).rejects.toMatchObject({ statusCode: 404 });
+    await expect(service.list("missing")).rejects.toMatchObject({ status: 404 });
     const snapshot = await service.list("global");
     expect(JSON.stringify(snapshot)).not.toContain("private-value");
     expect(snapshot.scope.errors).toHaveLength(1);
@@ -650,7 +650,7 @@ describe("MCP routes through real bundled Pi", () => {
       expect(performance.now() - start).toBeLessThan(1500);
       await expect.poll(alive, { timeout: 2000 }).toBe(false);
       await expect(service.add("global", { name: "late", command: "echo" })).rejects.toMatchObject({
-        statusCode: 503,
+        status: 503,
       });
     } finally {
       if (pid && alive()) process.kill(pid, "SIGKILL");
@@ -904,11 +904,11 @@ describe("MCP routes through real bundled Pi", () => {
       .poll(() => service.auth.get(flow.flowId).status, { timeout: 10_000 })
       .toBe("awaiting_external");
     await expect(service.login("global", "remote", "phone_browser")).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
     expect(service.auth.cancel(flow.flowId).status).toBe("cancelled");
     await expect(service.auth.submit(flow.flowId, "bad")).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
     expect(service.auth.get(flow.flowId).status).toBe("cancelled");
     await expect.poll(() => service.auth.hasActive(), { timeout: 5000 }).toBe(false);

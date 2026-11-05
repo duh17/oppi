@@ -3,17 +3,14 @@ import {
   isControlConversation,
   newControlSessionRow,
 } from "./control-session.js";
+import { HttpStatusError } from "./http-status-error.js";
 import type { SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 
-export class ControlConversationError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message);
-    this.name = "ControlConversationError";
+export class ControlConversationError extends HttpStatusError {
+  constructor(message: string, status: number) {
+    super(status, message);
   }
 }
 

@@ -1,5 +1,6 @@
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { McpError } from "../mcp-config.js";
+import { answerStatusError } from "./http.js";
 import {
   parseMcpAddRequest,
   parseMcpPatchRequest,
@@ -81,12 +82,9 @@ export function createMcpRoutes(ctx: RouteContext, helpers: RouteHelpers): Route
       }
       return false;
     } catch (error) {
-      if (error instanceof McpError || error instanceof URIError) {
-        helpers.error(
-          res,
-          error instanceof McpError ? error.statusCode : 400,
-          error instanceof McpError ? error.message : "Invalid path encoding",
-        );
+      if (answerStatusError(helpers, res, error)) return true;
+      if (error instanceof URIError) {
+        helpers.error(res, 400, "Invalid path encoding");
         return true;
       }
       throw error;

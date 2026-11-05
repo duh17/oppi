@@ -1122,7 +1122,7 @@ export class BoundSessionStreamMux {
       // that same terminal configuration boundary.
       const terminalAgentConfigurationFailure =
         err instanceof AgentConfigurationError ||
-        (err instanceof SessionLifecycleError && err.statusCode === 422);
+        (err instanceof SessionLifecycleError && err.status === 422);
       if (!terminalAgentConfigurationFailure) {
         send({ type: "error", error: message, sessionId });
       }

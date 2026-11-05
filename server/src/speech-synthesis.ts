@@ -15,6 +15,7 @@
  */
 
 import { resolveSttBearerToken, type SttGetAuth } from "./create-stt-provider.js";
+import { HttpStatusError } from "./http-status-error.js";
 import type { ServerConfig } from "./types.js";
 
 export type TtsConfig = NonNullable<ServerConfig["tts"]>;
@@ -35,15 +36,7 @@ export interface PcmAudio {
   pcm: Buffer;
 }
 
-export class SpeechError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "SpeechError";
-  }
-}
+export class SpeechError extends HttpStatusError {}
 
 export function resolveTtsProvider(tts: TtsConfig | undefined): TtsProviderId | undefined {
   if (tts?.provider === "http" || tts?.provider === "yuwp" || tts?.provider === "xai") {
