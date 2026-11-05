@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
   fauxAssistantMessage,
@@ -13,6 +16,7 @@ import {
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
+import { DurableUI, type UINotification } from "../src/durable-ui.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { WsMessageHandler } from "../src/ws-message-handler.js";
@@ -684,5 +688,141 @@ describe("background jobs on their panel", () => {
     );
     await until(() => !alive(pid), "the process to die");
     await removed;
+  }, 30_000);
+});
+
+/**
+ * Conversations saved by 0.54.0 hold the pill and the Data widget in their `DurableUI` document,
+ * and a client replays that document when it attaches. The plugins clear those slots the next time
+ * they write for the conversation; this seeds the stored entries and reads what a client attaching
+ * afterwards is sent.
+ */
+describe("slots stored before the panel and the tool rows", () => {
+  type Held = Extract<ServerMessage, { type: "extension_ui_notification" }>;
+
+  /** What 0.54.0 stored: a pill with a status and a native widget, and the Data widget. */
+  const STORED: Record<string, UINotification> = {
+    "status:background-jobs": {
+      id: "background-jobs:status",
+      method: "setStatus",
+      statusKey: "background-jobs",
+      statusText: "1 job · 12s",
+      extensionScopeId: "repo:background-jobs",
+      extensionDisplayName: "Background Jobs",
+    },
+    "widget:background-jobs": {
+      id: "background-jobs:widget",
+      method: "setWidget",
+      widgetKey: "background-jobs",
+      widgetLines: ["1 job"],
+      nativeSurface: {
+        version: 1,
+        id: "widget:background-jobs",
+        source: "widget",
+        presentation: { style: "surfacePanel", title: "1 job", subtitle: "sleep 300" },
+        blocks: [{ type: "activityList", id: "jobs", rows: [] }],
+        fallback: { lines: ["1 job"] },
+      },
+      extensionScopeId: "repo:background-jobs",
+      extensionDisplayName: "Background Jobs",
+    },
+    "widget:data": {
+      id: "sql-explorer:data",
+      method: "setWidget",
+      widgetKey: "data",
+      widgetLines: ["sales.db", "3 rows"],
+      nativeSurface: {
+        version: 1,
+        id: "widget:data",
+        source: "widget",
+        presentation: { style: "surfacePanel", title: "sales.db", subtitle: "3 rows" },
+        blocks: [{ type: "table", id: "result", columns: ["name"], rows: [["apples"]] }],
+        fallback: { lines: ["sales.db"] },
+      },
+      extensionScopeId: "repo:sql-explorer",
+      extensionDisplayName: "Data",
+    },
+  };
+
+  async function seed(f: Awaited<ReturnType<typeof fixture>>): Promise<void> {
+    const runtime = await (
+      f.manager as unknown as {
+        durableHarness: Promise<{
+          host(id: string): { open(): Promise<{ harness: Harness }> } | undefined;
+        }>;
+      }
+    ).durableHarness;
+    const { harness } = await runtime.host(f.session.id)!.open();
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
+    const conversation = (await harness.conversation(id, context))!;
+    await conversation.commit(async (tx) => {
+      Object.assign((await tx.doc(DurableUI, id)).notifications, structuredClone(STORED));
+    }, context);
+  }
+
+  /** The slots a client that attaches now is told to draw, by their key. */
+  function drawn(f: Awaited<ReturnType<typeof fixture>>): string[] {
+    return f.manager
+      .getPendingUIRequestMessages(f.session.id)
+      .filter((message): message is Held => message.type === "extension_ui_notification")
+      .filter(
+        (message) =>
+          message.statusText ||
+          message.nativeSurface ||
+          message.widgetLines?.some((line) => line.length > 0),
+      )
+      .map((message) => message.statusKey ?? message.widgetKey ?? "")
+      .sort();
+  }
+
+  async function sessionWithStoredSlots(responses: FauxResponseStep[]) {
+    const f = await fixture(responses);
+    await f.manager.startSession(f.session.id, f.workspace);
+    await seed(f);
+    await until(() => drawn(f).length === 3, "the stored slots to reach a client");
+    expect(drawn(f)).toEqual(["background-jobs", "background-jobs", "data"]);
+    return f;
+  }
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  it("clears the stored pill when the background jobs plugin next writes for the conversation", async () => {
+    const f = await sessionWithStoredSlots([
+      fauxAssistantMessage(
+        [fauxToolCall("background_job", { action: "start", command: "sleep 1" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("DONE"),
+    ]);
+    await f.manager.sendPrompt(f.session.id, "Start the job");
+    // Only the Data widget is left: the pill is gone from what a client attaching now is sent.
+    await until(() => drawn(f).join() === "data", "the pill to be cleared");
+  }, 30_000);
+
+  it("clears the stored Data widget when sqlite_query next runs, and no sooner", async () => {
+    const db = join(makeTempDir("oppi-stored-data-"), "sales.db");
+    const sqlite = new DatabaseSync(db);
+    sqlite.exec("CREATE TABLE sales (name TEXT); INSERT INTO sales VALUES ('apples')");
+    sqlite.close();
+    const f = await sessionWithStoredSlots([
+      fauxAssistantMessage(
+        [fauxToolCall("sqlite_query", { path: db, sql: "SELECT name FROM sales" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("QUERIED"),
+    ]);
+    // Nothing clears it until the plugin runs: no hook runs when a Session attaches.
+    expect(drawn(f)).toContain("data");
+    await f.manager.sendPrompt(f.session.id, "Query the database");
+    await until(() => !drawn(f).includes("data"), "the Data widget to be cleared");
+    // The query's rows are the tool result, not a widget.
+    expect(drawn(f)).toEqual(["background-jobs", "background-jobs"]);
   }, 30_000);
 });

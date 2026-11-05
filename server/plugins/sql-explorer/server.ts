@@ -5,7 +5,7 @@ import {
   type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord";
-import { defineExtension, defineFacet, Extensions } from "oppi/v1";
+import { defineExtension, defineFacet, DurableUI, Extensions } from "oppi/v1";
 
 const QUERY_TIMEOUT_SECONDS = 15;
 const QUERY_OUTPUT_MAX_BYTES = 256 * 1024;
@@ -527,6 +527,30 @@ function toolOk(text: string): ToolExecutionResult {
 }
 
 /**
+ * Before results became tool rows, a query left a Data widget in the conversation's `DurableUI`
+ * document, and a client replays what that document holds when it attaches. Durable plugins have no
+ * hook that runs when a Session attaches, so a conversation saved with that widget loses it at its
+ * next query, which writes the cleared form of the slot. One that never queries again keeps it.
+ * A cleared slot is left alone, so a conversation pays one write.
+ */
+async function retireDataWidget(api: ToolExecutionApi, context: Context): Promise<void> {
+  const widget = (await api.snapshot(DurableUI, api.conversationId, context))?.notifications[
+    "widget:data"
+  ];
+  if (!widget?.nativeSurface && !widget?.widgetLines?.length) return;
+  await api.commit(async (tx) => {
+    const { notifications } = await tx.doc(DurableUI, api.conversationId);
+    notifications["widget:data"] = {
+      id: "sql-explorer:data",
+      method: "setWidget",
+      widgetKey: "data",
+      extensionScopeId: "repo:sql-explorer",
+      extensionDisplayName: "Data",
+    };
+  }, context);
+}
+
+/**
  * One statement against one database file, answered as the tool's result: a line saying what ran,
  * then the rows as a markdown table, which the tool row shows like any other tool output.
  */
@@ -535,6 +559,7 @@ async function executeQuery(
   api: ToolExecutionApi,
   context: Context,
 ): Promise<ToolExecutionResult> {
+  await retireDataWidget(api, context);
   const ran = await runSqlite(api.env, args.path, args.sql, context);
   if (ran.error) return toolError(ran.error);
   const parsed = parseSqliteJson(ran.stdout);

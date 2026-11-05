@@ -27,6 +27,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
 import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { DurableBackend } from "../src/durable-backend.js";
+import { DurableUI } from "../src/durable-ui.js";
 import type { OppiDurableHost, SurfaceDispatch, SurfacePublisher } from "../src/oppi-v1.js";
 import type { ExtensionUISurface } from "../src/types.js";
 import { Storage } from "../src/storage.js";
@@ -601,6 +602,49 @@ describe("native Durable background jobs", () => {
     expect(panelNode(redrawn.surface, "status:bash-1")).toMatchObject({ text: "failed" });
     expect(panelNode(redrawn.surface, "stop:bash-1")).toBeUndefined();
     expect(loop.dismissed).toEqual(["background-jobs"]);
+  });
+
+  it("clears a pill saved before the panel when a runner resumes after a restart", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    // What 0.54.0 stored for a conversation with a job running.
+    await f.root.commit(async (tx) => {
+      const { notifications } = await tx.doc(DurableUI, f.root.id);
+      notifications["status:background-jobs"] = {
+        id: "background-jobs:status",
+        method: "setStatus",
+        statusKey: "background-jobs",
+        statusText: "1 job",
+      };
+      notifications["widget:background-jobs"] = {
+        id: "background-jobs:widget",
+        method: "setWidget",
+        widgetKey: "background-jobs",
+        widgetLines: ["1 job"],
+        nativeSurface: { version: 1, id: "widget:background-jobs" },
+      };
+    }, context);
+    await f.harness.close(context);
+    harnesses.delete(f.harness);
+    const harness = await f.open();
+    const root = (await harness.conversation(f.root.id, context))!;
+    harness.resume();
+    await delivery(harness, root);
+    const stored = (await harness.snapshot(DurableUI, root.id, context))!.notifications;
+    expect(stored["status:background-jobs"]).toEqual({
+      id: "background-jobs:status",
+      method: "setStatus",
+      statusKey: "background-jobs",
+      extensionScopeId: "repo:background-jobs",
+      extensionDisplayName: "Background Jobs",
+    });
+    expect(stored["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
+    expect(stored["widget:background-jobs"]).not.toHaveProperty("widgetLines");
   });
 
   it("server Stop leaves a job running, while cancel kills it and delivers its final cancellation", async () => {

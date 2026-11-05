@@ -21,6 +21,7 @@ import {
   defineExtension,
   defineFacet,
   DurableInputCards,
+  DurableUI,
   Extensions,
   oppiHost,
   type SurfacePublisher,
@@ -80,6 +81,37 @@ function jobById(jobs: readonly Job[], jobId: string): Job {
 interface LivePanel extends JobsPanel {
   /** Publishes run one after another, each reading the list afresh, so the last one is current. */
   queue: Promise<void>;
+}
+
+/**
+ * Before the panel, the pill was two notification slots in the conversation's `DurableUI`
+ * document, and a client replays what that document holds when it attaches. A conversation saved
+ * with a pill (a session from before the panel) would keep drawing it, so the first commit this
+ * plugin makes for a conversation writes the cleared form of both slots, as the pill did when no
+ * job was left. A cleared slot is left alone, so a conversation pays this once.
+ */
+async function retireLegacyPill(tx: Tx, id: ConversationId): Promise<void> {
+  const provenance = {
+    extensionScopeId: "repo:background-jobs",
+    extensionDisplayName: "Background Jobs",
+  };
+  const { notifications } = await tx.doc(DurableUI, id);
+  const status = notifications["status:background-jobs"];
+  if (status?.statusText)
+    notifications["status:background-jobs"] = {
+      id: "background-jobs:status",
+      method: "setStatus",
+      statusKey: "background-jobs",
+      ...provenance,
+    };
+  const widget = notifications["widget:background-jobs"];
+  if (widget?.nativeSurface || widget?.widgetLines?.length)
+    notifications["widget:background-jobs"] = {
+      id: "background-jobs:widget",
+      method: "setWidget",
+      widgetKey: "background-jobs",
+      ...provenance,
+    };
 }
 
 /** How often a running job's runner looks for a Session loop it has not drawn the panel into. */
@@ -395,6 +427,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           (await tx.doc(LiveDoc, runtime.conversationId)).run === undefined
         )
           current.decision = "foreground";
+        await retireLegacyPill(tx, runtime.conversationId);
         return { status: "running", checkpoint: { phase: "report" } };
       }, context);
     },
@@ -434,6 +467,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
         // Terminal settlement retires this runner's JobOutput document.
         current.delivered = true;
+        await retireLegacyPill(tx, runtime.conversationId);
         return {
           status: "terminal",
           outcome: { status: "completed", result: null },
@@ -503,6 +537,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       );
       job.status = "cancelled";
       job.delivered = true;
+      await retireLegacyPill(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
     await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
@@ -569,6 +604,7 @@ async function start(
       ...(timeout === undefined ? {} : { timeout }),
     };
     state.jobs.push(job);
+    await retireLegacyPill(tx, api.conversationId);
     return job;
   }, context);
   if (started.decision === "background") await syncPanel(api, api.conversationId, env, context);
@@ -700,6 +736,7 @@ const bash = defineTool({
       const current = jobById((await tx.doc(DurableJobs, api.conversationId)).jobs, job.id);
       // Decide against committed completion, not a stale watcher frame at the deadline.
       current.decision = current.status === "running" ? "background" : "foreground";
+      await retireLegacyPill(tx, api.conversationId);
       return { ...current };
     }, context);
     if (selected.decision === "background") {
