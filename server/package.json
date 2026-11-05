@@ -153,6 +153,7 @@
       "dns-sd",
       "mkfifo",
       "openssl",
+      "oppi",
       "scutil",
       "vm_stat",
       "xdg-open",

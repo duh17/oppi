@@ -1099,21 +1099,25 @@ describe("Mac architecture layer rules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-new-"));
     const swift = "clients/apple/Oppi/Features/Chat/Timeline/NewOwnerView.swift";
     const server = "server/src/new-owner.ts";
+    const plugin = "server/plugins/notify/new-owner.ts";
     try {
       write(join(repoRoot, swift), sourceLines(1501));
       write(join(repoRoot, server), sourceLines(1501));
+      write(join(repoRoot, plugin), sourceLines(1501));
       const ios = findFileLineBudgetViolations(repoRoot, "ios");
       expect(ios.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
         [swift, 1501, "file-line-budget"],
       ]);
       const serverViolations = findFileLineBudgetViolations(repoRoot, "server");
       expect(serverViolations.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
+        [plugin, 1501, "file-line-budget"],
         [server, 1501, "file-line-budget"],
       ]);
 
       // Exactly at the limit is allowed, and a generated file is exempt.
       write(join(repoRoot, swift), sourceLines(1500));
       write(join(repoRoot, server), sourceLines(1500));
+      write(join(repoRoot, plugin), sourceLines(1500));
       write(
         join(repoRoot, "clients/apple/Oppi/Core/Telemetry/TelemetryCatalog.generated.swift"),
         sourceLines(2000),

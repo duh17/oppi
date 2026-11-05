@@ -163,7 +163,7 @@ const FILE_LINE_BUDGET_SOURCES = {
   },
   server: {
     extension: ".ts",
-    production: ["server/src/"],
+    production: ["server/src/", "server/plugins/"],
     reported: ["server/tests/"],
   },
 };

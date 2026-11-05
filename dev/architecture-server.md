@@ -113,4 +113,4 @@ Pi resource failures (Skills, Extensions) map to HTTP by error class through `ht
 - `mirror-session-resume.ts` is imported only by `session-lifecycle-service.ts`.
 - `runtime == "pi-tui"` checks live only in runtime, lifecycle, mirror-resume, and input-command boundary modules; others consume typed results or capabilities.
 - Generic extension UI relay and rendering never branch on tool, extension, status, widget, or display names; add protocol metadata at the producer.
-- Production sources under `server/src` stay at or under 1,500 lines; bigger files are frozen at their size in `scripts/file-line-budget-baseline.json`, and budgets only go down (`file-line-budget`; `server/tests` is reported, not enforced).
+- Production sources under `server/src` and `server/plugins` stay at or under 1,500 lines; bigger files are frozen at their size in `scripts/file-line-budget-baseline.json`, and budgets only go down (`file-line-budget`; `server/tests` is reported, not enforced).
