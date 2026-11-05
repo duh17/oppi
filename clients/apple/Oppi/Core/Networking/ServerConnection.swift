@@ -1524,9 +1524,14 @@ final class ServerConnection {
             ? focusedSessionStore.claim(sessionId: sessionId, holder: holder)
             : focusedSessionStore.focus(sessionId: sessionId)
         sessionStore.setViewingSession(sessionId)
-        // Reset per-connection chat state for the new focused session.
+        // Reset per-connection chat state for a newly focused session. Re-focusing the
+        // session already in focus (a chat coming back from a reader pushed over it)
+        // keeps its state: the stream never dropped, so no `connected` follows to refill
+        // the slash command list the reset would empty.
         // Sheet-backed extension dialogs are derived from extensionDialogs.
-        chatState.resetSessionState()
+        if previousSessionId != sessionId {
+            chatState.resetSessionState()
+        }
 
         syncActiveAskWorkspaceSummary()
         return context

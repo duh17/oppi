@@ -64,7 +64,21 @@ extension ChatViewController {
             hasReviewComment: model.activeReviewCommentRequest != nil,
             hasAskRequest: activeComposerAskRequest != nil
         )
+        let before = composerDraftController.text
         composerDraftController.updateVisibleText(newText, for: mode)
+        // The list `connected` fetched may have failed or come back empty; opening the
+        // slash panel on an empty list asks again instead of offering only `/compact`.
+        if Self.opensSlashPanel(from: before, to: composerDraftController.text),
+           chatState.slashCommands.isEmpty,
+           let session {
+            connection.scheduleSlashCommandsRefresh(for: session, force: false)
+        }
+    }
+
+    private static func opensSlashPanel(from before: String, to after: String) -> Bool {
+        guard case .slash = ComposerAutocomplete.context(for: after) else { return false }
+        if case .slash = ComposerAutocomplete.context(for: before) { return false }
+        return true
     }
 
     /// Message mode stores an attachment-bar update; a refused non-message

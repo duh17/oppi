@@ -146,9 +146,12 @@ extension ServerConnection {
         requestId: String?,
         success: Bool,
         data: JSONValue?,
-        error _: String?,
+        error: String?,
         sessionId: String
     ) {
+        // `chatState` holds the focused session's list; another session's answer is not it.
+        guard isFocusedSession(sessionId) else { return }
+
         if let expectedRequestId = chatState.slashCommandsRequestId,
            let requestId,
            requestId != expectedRequestId {
@@ -157,7 +160,12 @@ extension ServerConnection {
 
         defer { chatState.slashCommandsRequestId = nil }
 
+        // The list stays as it was; the slash panel asks again the next time it opens empty.
         guard success else {
+            ClientLog.warning("SlashCommands", "get_commands failed", metadata: [
+                "sessionId": sessionId,
+                "error": error ?? "unknown",
+            ])
             return
         }
 

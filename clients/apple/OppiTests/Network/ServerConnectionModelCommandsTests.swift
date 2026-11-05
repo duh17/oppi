@@ -440,11 +440,39 @@ struct ServerConnectionModelCommandsTests {
             success: false,
             data: makeSlashCommandsPayload(),
             error: "boom",
-            sessionId: "missing"
+            sessionId: "s1"
         )
 
         #expect(connection.chatState.slashCommands.map(\.name) == ["existing"])
         #expect(connection.chatState.slashCommandsRequestId == nil)
+    }
+
+    @Test func refocusingTheFocusedSessionKeepsItsSlashCommandsButAnotherSessionDropsThem() async {
+        let (connection, _) = await makeTestConnection()
+        let session = makeTestSession(id: "s1", workspaceId: "w1")
+        connection.chatState.slashCommands = [Self.slashCommand(name: "existing", description: nil, source: .prompt)]
+        connection.chatState.slashCommandsCacheKey = connection.slashCommandCacheKey(for: session)
+
+        connection.focusSession("s1")
+        #expect(connection.chatState.slashCommands.map(\.name) == ["existing"])
+
+        connection.focusSession("s2")
+        #expect(connection.chatState.slashCommands.isEmpty)
+    }
+
+    @Test func handleSlashCommandsResultIgnoresAnotherSessionsAnswer() async {
+        let (connection, _) = await makeTestConnection()
+        connection.chatState.slashCommands = [Self.slashCommand(name: "existing", description: nil, source: .prompt)]
+
+        connection.handleSlashCommandsResult(
+            requestId: nil,
+            success: true,
+            data: makeSlashCommandsPayload(),
+            error: nil,
+            sessionId: "another-session"
+        )
+
+        #expect(connection.chatState.slashCommands.map(\.name) == ["existing"])
     }
 
     @Test func parseSlashCommandsDedupesCaseInsensitivelyAndSorts() {
