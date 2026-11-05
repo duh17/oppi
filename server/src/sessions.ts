@@ -59,6 +59,7 @@ import { cacheMissNoticeSource, type CacheMissNoticeSource } from "./cache-miss.
 import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
 import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
+import { sessionEventRingCapacity } from "./session-runtime-state.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
@@ -69,20 +70,6 @@ import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
 const log = createLogger({ base: { component: "sessions" } });
-
-function parsePositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return parsed;
-}
 
 // ─── Types ───
 
@@ -230,7 +217,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.runtimeManager = runtimeManager;
     this.mobileRenderers = new MobileRendererRegistry();
-    const eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
 
     const bundle = createSessionCoordinatorBundle({
       storage,
@@ -240,7 +226,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       runtimeManager,
       active: this.active,
       mobileRenderers: this.mobileRenderers,
-      eventRingCapacity,
+      eventRingCapacity: sessionEventRingCapacity(),
       stopAbortTimeoutMs: this.stopAbortTimeoutMs,
       stopAbortRetryTimeoutMs: this.stopAbortRetryTimeoutMs,
       stopSessionGraceMs: this.stopSessionGraceMs,

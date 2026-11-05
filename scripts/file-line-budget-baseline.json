@@ -215,11 +215,6 @@
       "owner": "SP1 session protocol modules",
       "reason": "Four topics and a 590-line translatePiEvent; a move-only split later."
     },
-    "server/src/sessions.ts": {
-      "budget": 1600,
-      "owner": "server runtime",
-      "reason": "The session facade; every history load (stream attach, older pages, HTTP traces) reads the cache-miss notice source from the running backend beside the entry renderers."
-    },
     "server/src/storage/config-store.ts": {
       "budget": 1600,
       "owner": "CF1 config schema validation",

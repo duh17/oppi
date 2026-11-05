@@ -48,6 +48,12 @@ export function createEmptyRuntimeMessageQueue(): MessageQueueState {
   };
 }
 
+/** Events each session's ring keeps: `OPPI_SESSION_EVENT_RING_CAPACITY` when a positive integer. */
+export function sessionEventRingCapacity(): number {
+  const parsed = Number.parseInt(process.env.OPPI_SESSION_EVENT_RING_CAPACITY ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 500;
+}
+
 export function createRuntimeSessionStateScaffold<
   TQueue extends MessageQueueState = MessageQueueState,
 >(
