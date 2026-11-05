@@ -20,7 +20,7 @@ final class BookReaderHarnessUITests: XCTestCase {
     /// change.
     func testPagedReadingKeepsThePageAcrossReopenAndTextSize() throws {
         launchHarness()
-        openPagedBook()
+        openLongBook()
         XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open as pages")
         XCTAssertEqual(pageNumber, 1, "The book did not open on its first page")
 
@@ -58,7 +58,7 @@ final class BookReaderHarnessUITests: XCTestCase {
         // on screen. The page number can move by one when the sheet settles to
         // a point of a different height; the words cannot.
         closeReader()
-        openPagedBook()
+        openLongBook()
         showChrome()
         XCTAssertTrue(
             waitUntil { self.chapterTitle.label == "Three" },
@@ -79,7 +79,7 @@ final class BookReaderHarnessUITests: XCTestCase {
         let anchor = try XCTUnwrap(middleWordsOfThePage(), "The page has no text to read")
         changeTextSize()
         closeReader()
-        openPagedBook()
+        openLongBook()
         showChrome()
         XCTAssertTrue(
             pageContains(anchor),
@@ -91,7 +91,7 @@ final class BookReaderHarnessUITests: XCTestCase {
     /// own journey: the chapter, and the paragraph the person was reading.
     func testScrollingModeKeepsTheParagraph() throws {
         launchHarness()
-        openBook()
+        openLongBook()
         XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open")
 
         chooseScrollingMode()
@@ -113,7 +113,7 @@ final class BookReaderHarnessUITests: XCTestCase {
         assertParagraphIsNearTheTop(paragraph)
 
         closeReader()
-        openBook()
+        openLongBook()
         XCTAssertTrue(
             waitUntil { self.chapterTitle.label == "Three" },
             "Reopening lost the chapter, title is \(chapterTitle.label)"
@@ -150,7 +150,7 @@ final class BookReaderHarnessUITests: XCTestCase {
     /// size left drawn over the new layout.
     func testScrollingTextSizeChangeLeavesOneOrderedChapter() throws {
         launchHarness()
-        openBook()
+        openLongBook()
         XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open")
         chooseScrollingMode()
         XCTAssertTrue(app.collectionViews["fullScreen.book.body"].firstMatch.waitUntilExists(timeout: 10))
@@ -158,8 +158,25 @@ final class BookReaderHarnessUITests: XCTestCase {
 
         setTextSizeToMaximum()
         let paragraphs = visibleParagraphFrames()
-        XCTAssertGreaterThan(paragraphs.count, 3, "The chapter drew almost nothing after the change")
         let ordered = paragraphs.sorted { $0.frame.minY < $1.frame.minY }
+        // How many rows fit depends on the body: at the largest size a card on
+        // iPad shows three and a half. So the check is that the rows are one run
+        // of consecutive paragraphs that reaches the bottom edge of the body, with
+        // nothing missing at the top, in the middle, or at the end.
+        let body = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+        let numbers = ordered.compactMap { Int($0.label.split(separator: " ").dropFirst(3).first ?? "") }
+        XCTAssertEqual(numbers.count, ordered.count, "A paragraph label has no number: \(ordered.map(\.label))")
+        XCTAssertEqual(
+            numbers,
+            Array((numbers.first ?? 0)..<((numbers.first ?? 0) + numbers.count)),
+            "The chapter skipped a paragraph after the change: \(numbers)"
+        )
+        XCTAssertEqual(numbers.first, 1, "The chapter does not start at its first paragraph: \(numbers)")
+        XCTAssertGreaterThanOrEqual(
+            ordered.last?.frame.maxY ?? 0,
+            body.maxY,
+            "The chapter stops short of the bottom of the body after the change: body \(body), rows \(ordered.map(\.frame))"
+        )
         for (above, below) in zip(ordered, ordered.dropFirst()) {
             XCTAssertLessThanOrEqual(
                 above.frame.maxY,
@@ -188,9 +205,9 @@ final class BookReaderHarnessUITests: XCTestCase {
         openBookButton("harness.book.open")
     }
 
-    /// The longer book the paged journey needs: its chapters run over several
-    /// pages, which the short one does not.
-    private func openPagedBook() {
+    /// The longer book: its chapters run over several pages and well past one
+    /// screen of scrolling text, which the short one does not on a wide screen.
+    private func openLongBook() {
         openBookButton("harness.book.paged.open")
     }
 
@@ -253,7 +270,7 @@ final class BookReaderHarnessUITests: XCTestCase {
     /// contents, then the Aa sheet it sits beside.
     func testAppearanceSheetAndTableOfContentsOverThePage() throws {
         launchHarness()
-        openPagedBook()
+        openLongBook()
         XCTAssertTrue(progressLine.waitUntilExists(timeout: 10), "The book did not open as pages")
         showChrome()
 
@@ -288,12 +305,16 @@ final class BookReaderHarnessUITests: XCTestCase {
     }
 
     /// Taps the trailing third of the page `count` times, and answers the page
-    /// number the reader shows afterwards.
+    /// number the reader shows afterwards. The tap is placed inside the page
+    /// view: on iPad the reader is a card, and a tap on the window beside it
+    /// would dismiss the card instead.
     @discardableResult
     private func turnPages(_ count: Int, file: StaticString = #filePath, line: UInt = #line) -> Int {
+        let pages = app.descendants(matching: .any)["fullScreen.book.pages"].firstMatch
+        XCTAssertTrue(pages.waitUntilExists(timeout: 5), "The reader has no page view to tap", file: file, line: line)
         var page = pageNumber
         for _ in 0..<count {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            pages.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
             XCTAssertTrue(
                 waitUntil { self.pageNumber == page + 1 },
                 "The trailing tap did not turn the page from \(page)",
@@ -358,9 +379,10 @@ final class BookReaderHarnessUITests: XCTestCase {
     }
 
     /// The text of the page on screen: the page cells are one accessibility stop
-    /// each, and only the one in the reading area is the person's page.
+    /// each, and only the one in the reading area (the page view, which on iPad
+    /// is the reader's card and not the window) is the person's page.
     private func visiblePageTexts() -> [String] {
-        let area = app.windows.firstMatch.frame
+        let area = app.descendants(matching: .any)["fullScreen.book.pages"].firstMatch.frame
         return app.descendants(matching: .any)
             .matching(identifier: "fullScreen.book.page")
             .allElementsBoundByIndex
@@ -427,31 +449,38 @@ final class BookReaderHarnessUITests: XCTestCase {
             file: file,
             line: line
         )
+        // Measured from the top of the scrolling body: on iPad the reader is a
+        // card, so the body does not start at the top of the screen.
+        let body = app.collectionViews["fullScreen.book.body"].firstMatch
         XCTAssertTrue(
-            waitUntil { (0...360).contains(match.frame.minY) },
-            "The saved paragraph is not near the top: y=\(match.frame.minY)",
+            waitUntil { (0...360).contains(match.frame.minY - body.frame.minY) },
+            "The saved paragraph is not near the top of the body: y=\(match.frame.minY - body.frame.minY)",
             file: file,
             line: line
         )
     }
 
-    /// The chapter paragraphs the scrolling body is drawing right now, ordered by
-    /// where they sit.
+    /// The chapter paragraphs the scrolling body is drawing right now: every row
+    /// that shows any of itself in the body, the one cut off at the bottom
+    /// included.
     private func visibleParagraphFrames() -> [(label: String, frame: CGRect)] {
         let area = app.collectionViews["fullScreen.book.body"].firstMatch.frame
         return app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Chapter 3 paragraph"))
             .allElementsBoundByIndex
-            .filter { $0.exists && $0.frame.height > 0 && $0.frame.minY >= area.minY && $0.frame.maxY <= area.maxY }
+            .filter { $0.exists && $0.frame.height > 0 && $0.frame.intersects(area) }
             .map { ($0.label, $0.frame) }
     }
 
     private func visibleParagraphs() -> [XCUIElement] {
         let predicate = NSPredicate(format: "label CONTAINS %@", "says the same calm thing")
-        // A rendered paragraph is a TextKit text view, not a plain label.
+        let area = app.collectionViews["fullScreen.book.body"].firstMatch.frame
+        // A rendered paragraph is a TextKit text view, not a plain label. The
+        // margins keep out the header above and the footer below the text,
+        // measured from the body, which is a card on iPad.
         return app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex.filter {
-            $0.exists && $0.frame.height > 0 && $0.frame.minY > 120
-                && $0.frame.maxY < app.windows.firstMatch.frame.height - 60
+            $0.exists && $0.frame.height > 0 && $0.frame.minY > area.minY + 120
+                && $0.frame.maxY < area.maxY - 60
         }
     }
 
