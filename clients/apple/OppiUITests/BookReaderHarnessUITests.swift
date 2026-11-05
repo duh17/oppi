@@ -171,7 +171,11 @@ final class BookReaderHarnessUITests: XCTestCase {
             Array((numbers.first ?? 0)..<((numbers.first ?? 0) + numbers.count)),
             "The chapter skipped a paragraph after the change: \(numbers)"
         )
-        XCTAssertEqual(numbers.first, 1, "The chapter does not start at its first paragraph: \(numbers)")
+        XCTAssertEqual(
+            numbers.first,
+            1,
+            "The reading position moved after the text-size change: the chapter opens at paragraph \(numbers.first ?? 0), not its first: \(numbers)"
+        )
         XCTAssertGreaterThanOrEqual(
             ordered.last?.frame.maxY ?? 0,
             body.maxY,
@@ -182,6 +186,15 @@ final class BookReaderHarnessUITests: XCTestCase {
                 above.frame.maxY,
                 below.frame.minY + 0.5,
                 "\"\(above.label)\" runs into \"\(below.label)\" after the text-size change"
+            )
+            // The rows are one stack: the space between two is the paragraph
+            // spacing (measured at the largest size: 8.5 pt on iPad, 8.4 pt on
+            // iPhone), so a gap of three times that is a row that was not drawn
+            // or laid out.
+            XCTAssertLessThanOrEqual(
+                below.frame.minY - above.frame.maxY,
+                24,
+                "\"\(above.label)\" and \"\(below.label)\" have a gap of \(below.frame.minY - above.frame.maxY) pt between them after the text-size change"
             )
         }
         let labels = ordered.map(\.label)
