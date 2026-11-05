@@ -20,20 +20,16 @@ struct PiAvatarTests {
         #expect(PiAvatar.accessibilityLabel == "Pi")
     }
 
-    @Test("renderer preserves the mark, counter, and theme color")
-    func rendererPreservesMarkCounterAndThemeColor() throws {
-        let darkImage = PiAvatarRenderer.render(size: 800, themeID: .dark)
-        let lightImage = PiAvatarRenderer.render(size: 800, themeID: .light)
+    @Test("renderer fills its box with the mark and keeps the counter open")
+    func rendererFillsBoxAndKeepsCounterOpen() throws {
+        let image = PiAvatarRenderer.render(size: 800)
 
-        let darkMark = try #require(pixel(in: darkImage, normalizedX: 0.25, normalizedY: 0.25))
-        let lightMark = try #require(pixel(in: lightImage, normalizedX: 0.25, normalizedY: 0.25))
-        let counter = try #require(pixel(in: darkImage, normalizedX: 0.42, normalizedY: 0.42))
-        let dot = try #require(pixel(in: darkImage, normalizedX: 0.72, normalizedY: 0.62))
-        let margin = try #require(pixel(in: darkImage, normalizedX: 0.10, normalizedY: 0.10))
+        let corner = try #require(pixel(in: image, normalizedX: 0.10, normalizedY: 0.10))
+        let counter = try #require(pixel(in: image, normalizedX: 0.40, normalizedY: 0.40))
+        let dot = try #require(pixel(in: image, normalizedX: 0.90, normalizedY: 0.90))
+        let margin = try #require(pixel(in: image, normalizedX: 0.90, normalizedY: 0.10))
 
-        #expect(darkMark.alpha > 0.9)
-        #expect(lightMark.alpha > 0.9)
-        #expect(darkMark.luminance > lightMark.luminance)
+        #expect(corner.alpha > 0.9)
         #expect(counter.alpha < 0.01)
         #expect(dot.alpha > 0.9)
         #expect(margin.alpha < 0.01)
@@ -71,8 +67,4 @@ private struct Pixel {
     let green: CGFloat
     let blue: CGFloat
     let alpha: CGFloat
-
-    var luminance: CGFloat {
-        red * 0.2126 + green * 0.7152 + blue * 0.0722
-    }
 }

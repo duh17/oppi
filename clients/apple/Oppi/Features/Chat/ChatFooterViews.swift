@@ -595,7 +595,8 @@ final class ChatTitleView: UIView {
     weak var chat: ChatViewController?
     /// The Pi mark on its rounded tile, or the session's Agent icon.
     private let piTile = UIView()
-    private let piIcon = IconChoiceUIView(size: 20, frameSize: 20)
+    /// The mark fills its frame, so it sits inside the 20 pt tile with a margin.
+    private let piIcon = IconChoiceUIView(size: 14, frameSize: 14)
     private let agentIcon = IconChoiceUIView(
         size: AgentIconSizingPolicy.titleTextMinimum,
         frameSize: AgentIconSizingPolicy.titleSlotSize
@@ -656,10 +657,10 @@ final class ChatTitleView: UIView {
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
-            piIcon.topAnchor.constraint(equalTo: piTile.topAnchor),
-            piIcon.bottomAnchor.constraint(equalTo: piTile.bottomAnchor),
-            piIcon.leadingAnchor.constraint(equalTo: piTile.leadingAnchor),
-            piIcon.trailingAnchor.constraint(equalTo: piTile.trailingAnchor),
+            piIcon.topAnchor.constraint(equalTo: piTile.topAnchor, constant: 3),
+            piIcon.bottomAnchor.constraint(equalTo: piTile.bottomAnchor, constant: -3),
+            piIcon.leadingAnchor.constraint(equalTo: piTile.leadingAnchor, constant: 3),
+            piIcon.trailingAnchor.constraint(equalTo: piTile.trailingAnchor, constant: -3),
             maxWidth,
         ])
     }

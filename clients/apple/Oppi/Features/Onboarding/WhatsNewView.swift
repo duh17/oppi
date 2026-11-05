@@ -388,16 +388,12 @@ private final class FeatureRow: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The Pi avatar's mark, whose artwork covers about 60% of its canvas,
-    /// enlarged to about the size of the symbols (24 pt) in the 28 pt icon slot.
-    private static func piMarkImage(color: UIColor) -> UIImage {
+    /// The colorful Pi mark, drawn at the size of the symbols (24 pt) in the 28 pt icon slot.
+    private static func piMarkImage() -> UIImage {
         let slot: CGFloat = 28
-        let canvas: CGFloat = 41
-        let mark = PiAvatarRenderer.render(size: canvas)
-            .withRenderingMode(.alwaysTemplate)
-            .withTintColor(color, renderingMode: .alwaysOriginal)
+        let mark = PiAvatarRenderer.render(size: 24)
         return UIGraphicsImageRenderer(size: CGSize(width: slot, height: slot)).image { _ in
-            mark.draw(in: CGRect(x: (slot - canvas) / 2, y: (slot - canvas) / 2, width: canvas, height: canvas))
+            mark.draw(at: CGPoint(x: (slot - 24) / 2, y: (slot - 24) / 2))
         }
     }
 
@@ -409,7 +405,7 @@ private final class FeatureRow: UIView {
         case .gitLogo:
             GitLogoImage.image(textStyle: .title3)?.withTintColor(color, renderingMode: .alwaysOriginal)
         case .piMark:
-            Self.piMarkImage(color: color)
+            Self.piMarkImage()
         }
         titleLabel.font = .scaled(.headline, .semibold)
         titleLabel.textColor = colors.fg

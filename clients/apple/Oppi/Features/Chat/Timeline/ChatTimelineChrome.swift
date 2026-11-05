@@ -59,7 +59,8 @@ enum ChatTimelineChromeOverlap {
 final class ChatEmptyStateView: UIView {
     private static let side: CGFloat = 112
     private let piTile = UIView()
-    private let piIcon = IconChoiceUIView(size: side, frameSize: side)
+    /// The mark fills its frame, so it sits inside the tile with a margin.
+    private let piIcon = IconChoiceUIView(size: side * 0.68, frameSize: side * 0.68)
     private let agentIcon = IconChoiceUIView(size: 64, frameSize: side)
     private var top: NSLayoutConstraint?
     private var bottom: NSLayoutConstraint?

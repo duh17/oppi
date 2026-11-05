@@ -168,7 +168,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
                 Self.row(
-                    icon: Self.tile(PiAvatarRenderer.render(size: 30, themeID: nil), size: 30, padding: 4, radius: 10, palette: palette),
+                    icon: Self.tile(PiAvatarRenderer.render(size: 22), size: 22, padding: 8, radius: 10, palette: palette),
                     title: "Pi",
                     badge: nil,
                     subtitle: "Global Pi configuration",
