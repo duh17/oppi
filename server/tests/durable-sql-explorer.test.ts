@@ -13,40 +13,14 @@ import {
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { DurableUI } from "../src/durable-ui.js";
-import { DurableSqlExplorer, pagedSql, parseSqliteJson } from "../plugins/sql-explorer/server.js";
+import { DurableSqlExplorer, parseSqliteJson } from "../plugins/sql-explorer/server.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
-
-/**
- * A host whose surface loop refuses every publish, the way it refuses a panel whose render threw.
- * Off by default: `oppiHost()` answers as it really does in a bare Harness, which has no loop.
- */
-const surfaceFault = vi.hoisted(() => ({ refused: false }));
-
-vi.mock("oppi/v1", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/oppi-v1.js")>();
-  return {
-    ...actual,
-    oppiHost: () => {
-      if (!surfaceFault.refused) return actual.oppiHost();
-      return {
-        surfaces: () => ({
-          publish: () => {
-            throw new Error('surface "sql-explorer": the surface exceeds 65536 bytes');
-          },
-          dismiss: () => undefined,
-        }),
-      };
-    },
-  };
-});
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
   await Promise.all([...harnesses].map((harness) => harness.close(context)));
   harnesses.clear();
-  surfaceFault.refused = false;
   vi.restoreAllMocks();
 });
 
@@ -147,12 +121,11 @@ async function lastToolText(root: Awaited<ReturnType<typeof fixture>>["root"]): 
 }
 
 describe("durable SQLite explorer", { timeout: 20_000 }, () => {
-  it("queries a real database through env.exec and publishes a table plus chart widget", async () => {
+  it("queries a real database through env.exec and answers with a markdown table", async () => {
     const f = await fixture([
       tool("sqlite_query", {
         path: "sales.db",
         sql: "SELECT name, amount FROM sales ORDER BY amount DESC",
-        chart: { kind: "bar", title: "Sales" },
       }),
       fauxAssistantMessage("DONE"),
     ]);
@@ -172,43 +145,10 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     ]);
 
     const text = await lastToolText(f.root);
-    expect(text).toContain("sales.db");
-    expect(text).toContain("apples");
-    expect(text).toContain("3 row");
-
-    const ui = await f.harness.snapshot(DurableUI, f.root.id, context);
-    const widget = ui?.notifications["widget:data"];
-    expect(widget?.method).toBe("setWidget");
-    expect(widget?.widgetKey).toBe("data");
-    expect(widget?.nativeSurface).toMatchObject({
-      version: 1,
-      id: "widget:data",
-      source: "widget",
-      presentation: { style: "surfacePanel", title: "sales.db" },
-    });
-    expect(widget?.nativeSurface?.presentation).toEqual(
-      expect.objectContaining({ subtitle: expect.stringMatching(/3 rows · \d+ms/) }),
+    expect(text).toMatch(
+      /^sales\.db · 3 row\(s\) · \d+ms\n\n\| name \| amount \|\n\| --- \| --- \|\n/,
     );
-    expect(widget?.nativeSurface?.blocks).toEqual([
-      {
-        type: "table",
-        id: "result",
-        columns: ["name", "amount"],
-        rows: [
-          ["apples", "12"],
-          ["bananas", "9"],
-          ["cherries", "4"],
-        ],
-      },
-      {
-        type: "chart",
-        id: "chart",
-        kind: "bar",
-        title: "Sales",
-        labels: ["apples", "bananas", "cherries"],
-        series: [{ name: "amount", values: [12, 9, 4] }],
-      },
-    ]);
+    expect(text).toContain("| apples | 12 |\n| bananas | 9 |\n| cherries | 4 |");
   });
 
   it("refuses ATTACH under sqlite3 -safe", async () => {
@@ -222,9 +162,6 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     seedSales(join(f.dir, "sales.db"));
     await prompt(f.root);
     expect((await lastToolResult(f.root)).isError).toBe(true);
-    expect(
-      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-    ).toBeUndefined();
     expect(existsSync(join(f.dir, "other.db"))).toBe(false);
   });
 
@@ -241,7 +178,7 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     expect(await lastToolText(f.root)).toMatch(/readonly/i);
   });
 
-  it("clips widget rows when the result is larger than the table cap", async () => {
+  it("shows the first rows of a larger result and says how many it left out", async () => {
     const f = await fixture([
       tool("sqlite_query", { path: "sales.db", sql: "SELECT name, amount FROM sales" }),
       fauxAssistantMessage("DONE"),
@@ -249,15 +186,10 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     seedSales(join(f.dir, "sales.db"), 250);
     await prompt(f.root);
     const text = await lastToolText(f.root);
-    expect(text).toContain("Result truncated.");
-    const table = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ]?.nativeSurface?.blocks?.[0] as {
-      rows: unknown[];
-      truncated?: boolean;
-    };
-    expect(table.truncated).toBe(true);
-    expect(table.rows).toHaveLength(200);
+    expect(text).toContain("253 row(s)");
+    // The header and rule, then the first hundred rows.
+    expect(text.split("\n").filter((line) => line.startsWith("| "))).toHaveLength(102);
+    expect(text).toContain("… 153 more row(s) not shown.");
   });
 
   it("returns a missing-binary error when sqlite3 cannot be spawned", async () => {
@@ -339,41 +271,13 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const queryText = await lastToolText(f.root);
     expect(queryText).toContain("apples");
     expect(queryText).toContain("immutable snapshot of the main file");
-    const queryWidget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ];
-    expect(queryWidget?.method).toBe("setWidget");
-    expect(queryWidget?.nativeSurface?.blocks?.[0]).toEqual({
-      type: "table",
-      id: "result",
-      columns: ["name", "amount"],
-      rows: [
-        ["apples", "12"],
-        ["bananas", "9"],
-        ["cherries", "4"],
-      ],
-    });
+    expect(queryText).toContain("| apples | 12 |");
 
     await prompt(f.root);
     const schemaText = await lastToolText(f.root);
+    expect(schemaText).toContain("| name | type | sql |");
     expect(schemaText).toContain("CREATE TABLE sales");
     expect(schemaText).toContain("immutable snapshot of the main file");
-    const schemaWidget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ];
-    expect(schemaWidget?.method).toBe("setWidget");
-    expect(schemaWidget?.nativeSurface?.blocks?.[0]).toEqual(
-      expect.objectContaining({
-        type: "table",
-        id: "result",
-        columns: ["name", "type", "sql"],
-      }),
-    );
-    expect(
-      (schemaWidget?.nativeSurface?.blocks?.[0] as { rows: unknown[][] }).rows.some((row) =>
-        String(row[2]).includes("CREATE TABLE sales"),
-      ),
-    ).toBe(true);
   });
 
   it("opens a closed WAL database whose path contains a space and a hash", async () => {
@@ -422,9 +326,6 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const text = textOf(result.content);
     expect(text).toContain("unable to open database file");
     expect(text).not.toContain("immutable=1");
-    expect(
-      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-    ).toBeUndefined();
     expect(existsSync(join(f.dir, "missing.db"))).toBe(false);
     expect(existsSync(join(f.dir, "missing.db-shm"))).toBe(false);
     expect(existsSync(join(f.dir, "missing.db-wal"))).toBe(false);
@@ -456,25 +357,21 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
       expect(text).not.toContain("stale-row");
       expect(text).not.toContain("immutable snapshot");
       expect(exec).toHaveBeenCalledTimes(1);
-      expect(
-        (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-      ).toBeUndefined();
     } finally {
       writer.close();
     }
   });
 
-  it("caps oversized sqlite3 output before publishing a widget", async () => {
+  it("fails a query whose sqlite3 output is over the cap", async () => {
     const f = await fixture([
       tool("sqlite_query", { path: "sales.db", sql: "SELECT hex(zeroblob(200000)) AS blob" }),
       fauxAssistantMessage("DONE"),
     ]);
     seedSales(join(f.dir, "sales.db"));
     await prompt(f.root);
-    expect(await lastToolText(f.root)).toMatch(/truncated/i);
-    expect(
-      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-    ).toBeUndefined();
+    const result = await lastToolResult(f.root);
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/truncated/i);
   });
 
   it("keeps duplicate JOIN column names and order", async () => {
@@ -494,47 +391,26 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     `);
     db.close();
     await prompt(f.root);
-    const table = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ]?.nativeSurface?.blocks?.[0];
-    expect(table).toEqual({
-      type: "table",
-      id: "result",
-      columns: ["id", "name", "id", "name"],
-      rows: [["1", "left", "1", "right"]],
-    });
+    const text = await lastToolText(f.root);
+    expect(text).toContain(
+      "| id | name | id | name |\n| --- | --- | --- | --- |\n| 1 | left | 1 | right |",
+    );
   });
 
-  it("keeps Inf and -Inf from overflow as text and skips them in charts", async () => {
+  it("keeps Inf and -Inf from overflow as text", async () => {
     const f = await fixture([
       tool("sqlite_query", {
         path: "sales.db",
         sql: "SELECT 1e999 AS a, -1e999 AS b, 'Inf' AS c, 1 AS d",
-        chart: { kind: "bar" },
       }),
       fauxAssistantMessage("DONE"),
     ]);
     seedSales(join(f.dir, "sales.db"));
     await prompt(f.root);
     expect((await lastToolResult(f.root)).isError).toBeFalsy();
-    const widget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ];
-    expect(widget?.nativeSurface?.blocks).toEqual([
-      {
-        type: "table",
-        id: "result",
-        columns: ["a", "b", "c", "d"],
-        rows: [["Inf", "-Inf", "Inf", "1"]],
-      },
-      {
-        type: "chart",
-        id: "chart",
-        kind: "bar",
-        labels: ["Inf"],
-        series: [{ name: "d", values: [1] }],
-      },
-    ]);
+    expect(await lastToolText(f.root)).toContain(
+      "| a | b | c | d |\n| --- | --- | --- | --- |\n| Inf | -Inf | Inf | 1 |",
+    );
   });
 
   it("keeps integers beyond 2^53 as exact text", async () => {
@@ -549,13 +425,9 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const text = await lastToolText(f.root);
     expect(text).toContain("9223372036854775807");
     expect(text).not.toContain("9223372036854776000");
-    const table = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ]?.nativeSurface?.blocks?.[0] as { rows: unknown[][] };
-    expect(table.rows[0]?.[0]).toBe("9223372036854775807");
   });
 
-  it("keeps a blob, CR/comma/quotes/LF text, and null vs empty as exact cells", async () => {
+  it("writes a blob, CR/LF text, pipes, and NULL vs empty into one table row", async () => {
     const f = await fixture([
       tool("sqlite_query", {
         path: "sales.db",
@@ -566,19 +438,13 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const db = new DatabaseSync(join(f.dir, "sales.db"));
     db.exec(`
       CREATE TABLE t (blob BLOB, text TEXT, empty TEXT, missing TEXT);
-      INSERT INTO t VALUES (x'00412c0a22ff', char(13) || ',' || '"' || char(10), '', NULL);
+      INSERT INTO t VALUES (x'00412c0a22ff', char(13) || '|' || '"' || char(10) || '\\', '', NULL);
     `);
     db.close();
     await prompt(f.root);
-    const table = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ]?.nativeSurface?.blocks?.[0];
-    expect(table).toEqual({
-      type: "table",
-      id: "result",
-      columns: ["blob", "text", "empty", "missing"],
-      rows: [['\u0000A,\n"\u00ff', '\r,"\n', "", null]],
-    });
+    const text = await lastToolText(f.root);
+    // One physical line per row: the line breaks, the pipe, and the backslash are written out.
+    expect(text).toContain('| \u0000A,\\n"\u00ff | \\r\\|"\\n\\\\ |  | NULL |');
   });
 
   it("reports a zero-row query without claiming an empty schema", async () => {
@@ -594,18 +460,10 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const text = await lastToolText(f.root);
     expect(text).toMatch(/0 row/);
     expect(text).not.toContain("0 columns");
-    const table = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ]?.nativeSurface?.blocks?.[0];
-    expect(table).toEqual({
-      type: "table",
-      id: "result",
-      columns: [],
-      rows: [],
-    });
+    expect(text).not.toContain("| ---");
   });
 
-  it("fails closed on malformed sqlite3 JSON without publishing a widget", async () => {
+  it("fails closed on malformed sqlite3 JSON", async () => {
     const f = await fixture(
       [tool("sqlite_query", { path: "sales.db", sql: "SELECT 1" }), fauxAssistantMessage("DONE")],
       (env) => {
@@ -622,12 +480,9 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     seedSales(join(f.dir, "sales.db"));
     await prompt(f.root);
     expect((await lastToolResult(f.root)).isError).toBe(true);
-    expect(
-      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-    ).toBeUndefined();
   });
 
-  it("rejects multiple statements without publishing a widget", async () => {
+  it("rejects multiple statements", async () => {
     const f = await fixture([
       tool("sqlite_query", {
         path: "sales.db",
@@ -640,65 +495,20 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
     const result = await lastToolResult(f.root);
     expect(result.isError).toBe(true);
     expect(textOf(result.content)).toBe("Run one statement per query.");
-    expect(
-      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
-    ).toBeUndefined();
   });
 
-  it("returns its rows when the host refuses the panel", async () => {
-    surfaceFault.refused = true;
+  it("accepts a trailing semicolon and comment, and a semicolon inside a string", async () => {
     const f = await fixture([
-      tool("sqlite_query", { path: "sales.db", sql: "SELECT name, amount FROM sales" }),
+      tool("sqlite_query", {
+        path: "sales.db",
+        sql: "SELECT ';' AS semi; -- done",
+      }),
       fauxAssistantMessage("DONE"),
     ]);
     seedSales(join(f.dir, "sales.db"));
     await prompt(f.root);
-
-    // A surface the host would not take is a rendering problem, not a failed query.
-    const result = await lastToolResult(f.root);
-    expect(result.isError).toBeFalsy();
-    expect(textOf(result.content)).toContain("apples");
-    const widget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
-      "widget:data"
-    ];
-    expect(widget).toMatchObject({ method: "setWidget", widgetKey: "data" });
-    expect(widget?.nativeSurface?.blocks).toEqual([
-      {
-        type: "table",
-        id: "result",
-        columns: ["name", "amount"],
-        rows: [
-          ["apples", "12"],
-          ["bananas", "9"],
-          ["cherries", "4"],
-        ],
-      },
-    ]);
-  });
-});
-
-describe("pagedSql", () => {
-  const wrap = (body: string) => `SELECT * FROM (\n${body}\n) LIMIT 201 OFFSET 200`;
-
-  it("drops the final semicolon and any comment after it", () => {
-    expect(pagedSql("SELECT * FROM orders;", 200)).toBe(wrap("SELECT * FROM orders"));
-    expect(pagedSql("SELECT * FROM orders; -- paid only", 200)).toBe(wrap("SELECT * FROM orders"));
-    expect(pagedSql("SELECT * FROM orders ;; /* paid */\n", 200)).toBe(
-      wrap("SELECT * FROM orders"),
-    );
-    expect(pagedSql("SELECT * FROM orders\n;\n-- trailing\n", 200)).toBe(
-      wrap("SELECT * FROM orders"),
-    );
-  });
-
-  it("keeps the statement's own text, including a `;` a quote makes part of it", () => {
-    const cte = "WITH x AS (SELECT 1 AS a) SELECT a FROM x";
-    expect(pagedSql(`${cte};`, 200)).toBe(wrap(cte));
-    expect(pagedSql('SELECT * FROM "a;b";', 200)).toBe(wrap('SELECT * FROM "a;b"'));
-    expect(pagedSql("SELECT ';' AS semi;", 200)).toBe(wrap("SELECT ';' AS semi"));
-    expect(pagedSql("SELECT 1 /* ; */ + 2;", 200)).toBe(wrap("SELECT 1 /* ; */ + 2"));
-    // A comment after the last token belongs to nobody once the `;` is gone.
-    expect(pagedSql("SELECT 1 /* ; */;", 200)).toBe(wrap("SELECT 1"));
+    expect((await lastToolResult(f.root)).isError).toBeFalsy();
+    expect(await lastToolText(f.root)).toContain("| semi |\n| --- |\n| ; |");
   });
 });
 
@@ -748,19 +558,11 @@ describe("SQLite explorer arguments", () => {
       {
         path: "/tmp/state.db",
         sql: "SELECT status, COUNT(*) AS sessions FROM sessions GROUP BY status",
-        chart: { kind: "bar", title: "Sessions by status" },
       },
     ])
       expect(toolArguments(query, args)).toEqual(args);
     expect(() =>
       toolArguments(query, { path: "/tmp/state.db", sql: "SELECT 1", limit: 10 }),
     ).toThrow("limit: unknown field");
-    expect(() =>
-      toolArguments(query, {
-        path: "/tmp/state.db",
-        sql: "SELECT 1",
-        chart: { kind: "bar", x: "status" },
-      }),
-    ).toThrow("chart.x: unknown field");
   });
 });

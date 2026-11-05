@@ -43,7 +43,7 @@ An input card may advertise `output: { kind: "terminal", offset, length, command
 
 ## SQLite explorer
 
-`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite.
+`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite. The result is the tool's own text, a markdown table of the first 100 rows, shown as an ordinary tool row; the plugin publishes no surface or widget.
 
 ## Proof commands
 

@@ -1,95 +1,23 @@
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionApi,
   type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
-import type { Context, JsonValue } from "@earendil-works/chord";
-import {
-  actionBar,
-  dataTable,
-  defineExtension,
-  defineFacet,
-  DurableUI,
-  Extensions,
-  oppiHost,
-  surface,
-  type DataTableFields,
-  type Surface,
-  type SurfaceActionInvocation,
-  type SurfaceActionReturn,
-  type SurfacePublisher,
-  type SurfaceView,
-} from "oppi/v1";
+import type { Context } from "@earendil-works/chord";
+import { defineExtension, defineFacet, Extensions } from "oppi/v1";
 
 const QUERY_TIMEOUT_SECONDS = 15;
 const QUERY_OUTPUT_MAX_BYTES = 256 * 1024;
-const WIDGET_MAX_ROWS = 200;
-const WIDGET_MAX_COLUMNS = 32;
-const WIDGET_MAX_CELL_CHARS = 200;
-/**
- * The panel's own caps. One surface has a single 64 KiB wire budget for the whole card, so a cell
- * is shorter than the widget's and a page that still would not fit loses its trailing rows here,
- * where paging can reach them, instead of losing the card.
- */
-const PANEL_MAX_CELL_CHARS = 80;
-const PANEL_MAX_TITLE_CHARS = 200;
-/** The host's surface cap (`EXTENSION_UI_SURFACE_MAX_BYTES`) and the share kept for its chrome. */
-const PANEL_MAX_SURFACE_BYTES = 64 * 1024;
-/** Header, column titles, action bar, and fallback words: measured generously, never exact. */
-const PANEL_CHROME_BYTES = 16 * 1024;
-const PANEL_ROWS_BYTES = PANEL_MAX_SURFACE_BYTES - PANEL_CHROME_BYTES;
-const CHART_MAX_LABELS = 48;
-const CHART_MAX_SERIES = 8;
-const MODEL_PREVIEW_ROWS = 12;
-const WIDGET_KEY = "data";
-const WIDGET_ID = "sql-explorer:data";
-const WIDGET_SLOT = "widget:data";
-/** The surface's rows a fallback keeps before it stops being worth reading. */
-const FALLBACK_ROWS = 8;
-/** `fallback.text`'s cap on the wire; a longer fallback drops the whole surface. */
-const FALLBACK_MAX_CHARS = 2000;
-/** One page of results: the table cap is what a single run can show. */
-const PAGE_ROWS = WIDGET_MAX_ROWS;
-/** A schema row action's own read: enough rows to recognise the table. */
-const PREVIEW_ROWS = 50;
-const SNAPSHOT_SHORT = "read-only snapshot";
-const SURFACE_ID = "sql-explorer";
-const ROWS_SECTION = "rows";
-const ACTIONS_SECTION = "actions";
-const ACTION_RUN_AGAIN = "runAgain";
-const ACTION_NEXT = "next";
-const ACTION_PREVIOUS = "previous";
-const ACTION_BACK = "back";
-const ACTION_PREVIEW = "preview";
+/** What one result shows, for the person reading the tool row and for the model alike. */
+const RESULT_MAX_ROWS = 100;
+const RESULT_MAX_COLUMNS = 32;
+const RESULT_MAX_CELL_CHARS = 500;
 const SCHEMA_SQL = "SELECT name, type, sql FROM sqlite_schema ORDER BY type, name";
 const SQLITE3 = "sqlite3";
 const SQLITE_ARGV = [SQLITE3, "-readonly", "-safe", "-noinit", "-json"] as const;
-const PROVENANCE = {
-  extensionScopeId: "repo:sql-explorer",
-  extensionDisplayName: "Data",
-} as const;
 
 type Cell = string | number | null;
-type ChartKind = "bar" | "line" | "pie";
-type ChartSpec = { kind: ChartKind; title?: string };
-type TableBlock = {
-  type: "table";
-  id: string;
-  columns: string[];
-  rows: Cell[][];
-  truncated?: boolean;
-};
-type ChartBlock = {
-  type: "chart";
-  id: string;
-  kind: ChartKind;
-  title?: string;
-  labels: string[];
-  series: Array<{ name?: string; values: number[] }>;
-  truncated?: boolean;
-};
 
 function fileName(path: string): string {
   const trimmed = path.replace(/[/\\]+$/, "");
@@ -97,72 +25,15 @@ function fileName(path: string): string {
   return (slash >= 0 ? trimmed.slice(slash + 1) : trimmed) || path;
 }
 
-function clipCell(value: Cell): Cell {
-  if (typeof value !== "string") return value;
-  return value.length > WIDGET_MAX_CELL_CHARS ? value.slice(0, WIDGET_MAX_CELL_CHARS) : value;
-}
-
 /**
- * A cell as the panel draws it: the surface caps a cell and counts characters, not code units, so
- * a long value is shortened here first and the rows get whatever budget is left.
+ * True when `sql` has a second statement after a non-trailing semicolon. One quote-, bracket-, and
+ * comment-aware pass, so a `;` in a string, an identifier, or a comment never counts as the
+ * statement's own.
  */
-function panelCell(value: Cell): Cell {
-  if (typeof value !== "string") return value;
-  const chars = Array.from(value);
-  if (chars.length <= PANEL_MAX_CELL_CHARS) return value;
-  return `${chars.slice(0, PANEL_MAX_CELL_CHARS - 1).join("")}…`;
-}
-
-/** Every cell at the panel's cap, and whether any value was shortened to get there. */
-function panelCells(rows: Cell[][]): { rows: Cell[][]; clipped: boolean } {
-  let clipped = false;
-  const next = rows.map((row) =>
-    row.map((cell) => {
-      const panel = panelCell(cell);
-      if (panel !== cell) clipped = true;
-      return panel;
-    }),
-  );
-  return { rows: next, clipped };
-}
-
-const UTF8 = new TextEncoder();
-
-/** Bytes a text spends on the wire: the surface cap counts UTF-8 bytes, not characters. */
-function wireBytes(text: string): number {
-  return UTF8.encode(text).length;
-}
-
-/** One row's cells keyed by column id, in column order: the shape the dataTable draws. */
-function rowCells(columnCount: number, row: Cell[]): Record<string, Cell> {
-  return Object.fromEntries(
-    Array.from({ length: columnCount }, (_, index) => [`c${index}`, row[index] ?? null]),
-  );
-}
-
-function cellText(value: Cell): string {
-  if (value === null) return "";
-  return typeof value === "number" ? String(value) : value;
-}
-
-/** What one scan of a statement found: whether a second follows it, and where its text ends. */
-interface SqlScan {
-  /** A second statement follows the first, so the query is refused whole. */
-  multiple: boolean;
-  /** Offset past the last significant character; only `;`, comments, and space follow it. */
-  bodyEnd: number;
-}
-
-/**
- * One quote-, bracket-, and comment-aware pass over `sql`. Every question about where a statement
- * starts and ends is answered here, so a `;` in a string, an identifier, or a comment never counts
- * as the statement's own.
- */
-function scanStatement(sql: string): SqlScan {
+function hasMultipleStatements(sql: string): boolean {
   let i = 0;
   let seen = false;
   let ended = false;
-  let bodyEnd = 0;
   const skipUntil = (pred: (ch: string) => boolean): void => {
     while (i < sql.length) {
       const next = sql[i];
@@ -189,7 +60,6 @@ function scanStatement(sql: string): SqlScan {
       }
       seen = true;
       ended = false;
-      bodyEnd = i;
       continue;
     }
     if (ch === "[") {
@@ -198,7 +68,6 @@ function scanStatement(sql: string): SqlScan {
       if (i < sql.length) i += 1;
       seen = true;
       ended = false;
-      bodyEnd = i;
       continue;
     }
     if (ch === "-" && sql[i + 1] === "-") {
@@ -220,27 +89,12 @@ function scanStatement(sql: string): SqlScan {
       i += 1;
       continue;
     }
-    if (ended && seen) return { multiple: true, bodyEnd };
+    if (ended && seen) return true;
     seen = true;
     ended = false;
     i += 1;
-    bodyEnd = i;
   }
-  return { multiple: false, bodyEnd };
-}
-
-/** True when `sql` has a second statement after a non-trailing semicolon. */
-function hasMultipleStatements(sql: string): boolean {
-  return scanStatement(sql).multiple;
-}
-
-/**
- * The statement without its trailing semicolon and whatever comments follow it: inside the paging
- * wrapper's parentheses sqlite3 reads that `;` as the end of the inner query and fails the rest.
- */
-function statementBody(sql: string): string {
-  const body = sql.slice(0, scanStatement(sql).bodyEnd).trim();
-  return body.length > 0 ? body : sql.trim();
+  return false;
 }
 
 const MALFORMED_SQLITE_JSON = "sqlite3 JSON output is malformed.";
@@ -478,125 +332,46 @@ function scanSqliteJson(text: string): { columns: string[]; rows: Cell[][] } {
   return { columns, rows };
 }
 
+/** The result as it is shown: columns and rows cut to the caps, and whether any cell was cut. */
 function clipTable(
   columns: string[],
   rows: Cell[][],
-): { columns: string[]; rows: Cell[][]; truncated: boolean; cellsClipped: boolean } {
-  let truncated = false;
-  // Whether a value the host draws got shortened, as opposed to rows the reader can page to.
+): { columns: string[]; rows: Cell[][]; cellsClipped: boolean } {
   let cellsClipped = false;
-  let nextColumns = columns.map((column) => {
-    const clipped = clipCell(column);
-    if (clipped !== column) cellsClipped = true;
-    return typeof clipped === "string" ? clipped : String(column);
-  });
-  if (nextColumns.length > WIDGET_MAX_COLUMNS) {
-    nextColumns = nextColumns.slice(0, WIDGET_MAX_COLUMNS);
+  const clipped = (value: Cell): Cell => {
+    if (typeof value !== "string" || value.length <= RESULT_MAX_CELL_CHARS) return value;
     cellsClipped = true;
-  }
-  let nextRows = rows.map((row) => {
-    const clipped = nextColumns.map((_, index) => {
-      const cell = clipCell(row[index] ?? null);
-      if (typeof row[index] === "string" && cell !== row[index]) cellsClipped = true;
-      return cell;
-    });
-    if (row.length > nextColumns.length) cellsClipped = true;
-    return clipped;
-  });
-  if (nextRows.length > WIDGET_MAX_ROWS) {
-    nextRows = nextRows.slice(0, WIDGET_MAX_ROWS);
-    truncated = true;
-  }
-  truncated ||= cellsClipped;
-  return { columns: nextColumns, rows: nextRows, truncated, cellsClipped };
-}
-
-/** Integers that do not round-trip through JS number stay out of charts. */
-function exactNumber(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (trimmed === "") return undefined;
-  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) return undefined;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return undefined;
-  if (/^[+-]?\d+$/.test(trimmed)) {
-    try {
-      if (BigInt(trimmed) !== BigInt(n)) return undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  return n;
-}
-
-function chartFrom(spec: ChartSpec, columns: string[], rows: Cell[][]): ChartBlock | undefined {
-  if (rows.length === 0 || columns.length === 0) return undefined;
-  const numericIndexes = columns.flatMap((_, index) => {
-    let sawNumber = false;
-    for (const row of rows) {
-      const cell = row[index];
-      if (cell === null) continue;
-      const text = cellText(cell);
-      if (text === "") continue;
-      const n = exactNumber(text);
-      if (n === undefined) return [];
-      sawNumber = true;
-    }
-    return sawNumber ? [index] : [];
-  });
-  const labelIndex = columns.findIndex((_, index) => !numericIndexes.includes(index));
-  const resolvedLabel = labelIndex >= 0 ? labelIndex : 0;
-  const valueIndexes = numericIndexes.filter((index) => index !== resolvedLabel);
-  if (valueIndexes.length === 0) return undefined;
-
-  let truncated = rows.length > CHART_MAX_LABELS || valueIndexes.length > CHART_MAX_SERIES;
-  const usedRows = rows.slice(0, CHART_MAX_LABELS);
-  const usedIndexes = valueIndexes.slice(0, spec.kind === "pie" ? 1 : CHART_MAX_SERIES);
-  const labels = usedRows.map((row) => {
-    const text = cellText(row[resolvedLabel] ?? null);
-    if (text.length > WIDGET_MAX_CELL_CHARS) {
-      truncated = true;
-      return text.slice(0, WIDGET_MAX_CELL_CHARS);
-    }
-    return text;
-  });
-  const series = usedIndexes.map((index) => ({
-    name: columns[index],
-    values: usedRows.map((row) => {
-      const cell = row[index];
-      if (cell === null) return 0;
-      return exactNumber(cellText(cell)) ?? 0;
-    }),
-  }));
-  const block: ChartBlock = {
-    type: "chart",
-    id: "chart",
-    kind: spec.kind,
-    labels,
-    series,
+    return value.slice(0, RESULT_MAX_CELL_CHARS);
   };
-  if (spec.title) block.title = spec.title;
-  if (truncated) block.truncated = true;
-  return block;
+  const shownColumns = columns.slice(0, RESULT_MAX_COLUMNS);
+  if (shownColumns.length < columns.length) cellsClipped = true;
+  return {
+    columns: shownColumns.map((column) => String(clipped(column))),
+    rows: rows
+      .slice(0, RESULT_MAX_ROWS)
+      .map((row) => shownColumns.map((_, index) => clipped(row[index] ?? null))),
+    cellsClipped,
+  };
 }
 
-function formatPreview(
-  columns: string[],
-  rows: Cell[][],
-  truncated: boolean,
-  extra: string[],
-): string {
-  const lines = [...extra];
-  if (columns.length > 0) {
-    lines.push(columns.join(" | "));
-    for (const row of rows.slice(0, MODEL_PREVIEW_ROWS)) {
-      lines.push(row.map(cellText).join(" | "));
-    }
-    if (rows.length > MODEL_PREVIEW_ROWS) {
-      lines.push(`… ${rows.length - MODEL_PREVIEW_ROWS} more row(s)`);
-    }
-  }
-  if (truncated) lines.push("Result truncated.");
-  return lines.join("\n");
+/** One markdown table cell: backslashes and pipes escaped, line breaks written out, NULL spelled. */
+function markdownCell(value: Cell): string {
+  if (value === null) return "NULL";
+  const text = typeof value === "number" ? String(value) : value;
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n");
+}
+
+function markdownTable(columns: string[], rows: Cell[][]): string {
+  const line = (cells: string[]): string => `| ${cells.join(" | ")} |`;
+  return [
+    line(columns.map(markdownCell)),
+    line(columns.map(() => "---")),
+    ...rows.map((cells) => line(cells.map(markdownCell))),
+  ].join("\n");
 }
 
 function missingSqliteMessage(message: string): boolean {
@@ -743,503 +518,6 @@ async function runSqlite(
   return finish({ ...retry, immutableSnapshot: true });
 }
 
-function tableFrom(
-  columns: string[],
-  rows: Cell[][],
-): { columns: string[]; rows: Cell[][]; table: TableBlock } {
-  const clipped = clipTable(columns, rows);
-  const table: TableBlock = {
-    type: "table",
-    id: "result",
-    columns: clipped.columns,
-    rows: clipped.rows,
-  };
-  if (clipped.truncated) table.truncated = true;
-  return { columns: clipped.columns, rows: clipped.rows, table };
-}
-
-// --- the results panel ------------------------------------------------------------------------
-//
-// `sqlite_query` and `sqlite_schema` publish one persistent strip surface for their Session: the
-// file and what the last run cost, the rows as a `dataTable`, and an `actionBar` whose actions
-// re-run or page the same statement in the handler, with no model turn. Surfaces live in the
-// Session's memory (`SessionSurfaces`), so a server restart clears the panel until the next query
-// publishes one again.
-
-/** One run's display rows, already clipped to the surface's caps. */
-interface ResultView {
-  columns: string[];
-  rows: Cell[][];
-  elapsedMs: number;
-  /** More rows exist past this page: the read asked for one row more than it shows. */
-  hasMore: boolean;
-  /** A cell or a column was clipped to the surface's cap. */
-  clipped: boolean;
-  /** The database could not be opened for writing, so it was read as a snapshot. */
-  immutableSnapshot: boolean;
-  /** Per row, the schema object a "Preview" row action reads; rows without one offer nothing. */
-  previews?: Array<string | undefined>;
-  /** Rows this page's read returned that the surface's byte budget could not hold. */
-  droppedRows?: number;
-}
-
-/** What the panel shows: the last run, or the failure it ended in. */
-interface ExplorerState {
-  /** The database path as the model wrote it. */
-  path: string;
-  /** The statement the view came from: "Run again" and paging re-run it, never the model. */
-  sql: string;
-  /** Rows skipped by paging, 0 for the query's own first page. */
-  offset: number;
-  kind: "results" | "schema";
-  view?: ResultView;
-  /** The sqlite or JSON error this run ended in, in the card's own words. */
-  failure?: string;
-  /** The schema a "Preview" opened from, restored by "Back to schema". */
-  schema?: { sql: string; view: ResultView };
-}
-
-/** One statement against one database file, runnable long after the tool call that made it. */
-type Run = (sql: string) => Promise<SqliteRun>;
-
-type ViewRun = { view: ResultView } | { failure: string };
-
-/** Every action any state of this panel offers, with the role that state gives it. */
-function actionTable(
-  state: ExplorerState,
-): Record<string, { title: string; role?: "primary" | "secondary" | "destructive" }> {
-  const previewing = state.schema !== undefined;
-  return {
-    [ACTION_RUN_AGAIN]: { title: "Run again", role: previewing ? "secondary" : "primary" },
-    [ACTION_NEXT]: { title: `Next ${PAGE_ROWS} rows` },
-    [ACTION_PREVIOUS]: { title: `Previous ${PAGE_ROWS} rows` },
-    [ACTION_BACK]: { title: "Back to schema", ...(previewing ? { role: "primary" as const } : {}) },
-    [ACTION_PREVIEW]: { title: "Preview" },
-  };
-}
-
-/** A card's words are capped on the wire; a longer one would drop the surface. */
-function clipTitle(text: string): string {
-  const chars = Array.from(text);
-  return chars.length <= PANEL_MAX_TITLE_CHARS
-    ? text
-    : `${chars.slice(0, PANEL_MAX_TITLE_CHARS - 1).join("")}…`;
-}
-
-/** What the run was: rows, how long it took, and whether it read a snapshot. */
-function surfaceSubtitle(state: ExplorerState): string {
-  if (state.failure !== undefined) return "Query failed";
-  const view = state.view;
-  if (!view) return "";
-  const dropped = view.droppedRows ?? 0;
-  const parts = [
-    // A page the byte budget shortened says so here, so the count is never a silent lie.
-    dropped > 0
-      ? `${view.rows.length} of ${view.rows.length + dropped} rows`
-      : `${view.rows.length} row${view.rows.length === 1 ? "" : "s"}`,
-    `${view.elapsedMs}ms`,
-  ];
-  if (state.offset > 0) parts.push(`from row ${state.offset + 1}`);
-  if (view.immutableSnapshot) parts.push(SNAPSHOT_SHORT);
-  return parts.join(" · ");
-}
-
-/**
- * The words a client without composites reads instead: the file, the count, the columns, and the
- * first rows — enough to answer "what came back?" without the grid.
- */
-function surfaceFallback(state: ExplorerState): string {
-  const lines = [clipTitle(fileName(state.path))];
-  const subtitle = surfaceSubtitle(state);
-  if (subtitle) lines.push(subtitle);
-  if (state.failure !== undefined) lines.push("The query failed.", state.failure);
-  const view = state.view;
-  if (view && view.columns.length > 0) {
-    lines.push(view.columns.join(" | "));
-    // The notes come before the rows: a wide row can fill this text's own cap, and a reader who
-    // never reached them would take the page for the whole result.
-    if (view.droppedRows) lines.push(`… ${view.droppedRows} more row(s) did not fit the panel.`);
-    if (view.clipped) lines.push("Some values are shortened to fit the panel.");
-    for (const row of view.rows.slice(0, FALLBACK_ROWS)) lines.push(row.map(cellText).join(" | "));
-    if (view.rows.length > FALLBACK_ROWS)
-      lines.push(`… ${view.rows.length - FALLBACK_ROWS} more row(s)`);
-  }
-  const text = lines.join("\n");
-  return text.length <= FALLBACK_MAX_CHARS ? text : `${text.slice(0, FALLBACK_MAX_CHARS - 1)}…`;
-}
-
-/** A column the host right-aligns: every filled cell is a number it can draw exactly. */
-function numericColumn(rows: Cell[][], index: number): boolean {
-  let sawNumber = false;
-  for (const row of rows) {
-    const cell = row[index];
-    if (cell === null) continue;
-    const text = cellText(cell);
-    if (text === "") continue;
-    if (exactNumber(text) === undefined) return false;
-    sawNumber = true;
-  }
-  return sawNumber;
-}
-
-/** The card's own state: the rows, nothing at all, or the error the run ended in. */
-function tableState(state: ExplorerState): NonNullable<DataTableFields["state"]> {
-  if (state.failure !== undefined)
-    return { kind: "failure", title: "Query failed", message: clipTitle(state.failure) };
-  if ((state.view?.rows.length ?? 0) === 0) {
-    // A page past the last row is not an empty query: the words say which one happened.
-    if (state.kind === "schema")
-      return {
-        kind: "empty",
-        title: "No rows",
-        message: "This database has no schema objects.",
-      };
-    if (state.offset > 0)
-      return { kind: "empty", title: "No more rows", message: "No rows past this point." };
-    return { kind: "empty", title: "No rows", message: "The query returned no rows." };
-  }
-  return { kind: "content" };
-}
-
-/**
- * The rows a page can afford, measured the way the host measures the surface: the wire bytes of
- * the row payload, against the budget the chrome leaves. A page that would not fit loses trailing
- * rows — reachable by paging — and the caller keeps the count for `hasMore` and the offset.
- */
-function budgetRows(columnCount: number, rows: Cell[][]): Cell[][] {
-  let bytes = 0;
-  let kept = 0;
-  for (const row of rows) {
-    const cost = wireBytes(JSON.stringify({ id: `r${kept}`, cells: rowCells(columnCount, row) }));
-    // The first row is always kept: a card with one row still says what the query returned.
-    if (kept > 0 && bytes + cost > PANEL_ROWS_BYTES) break;
-    bytes += cost;
-    kept += 1;
-  }
-  return kept === rows.length ? rows : rows.slice(0, kept);
-}
-
-/** One run's rows, clipped to the surface's caps and its byte budget. */
-function rowsView(
-  parsed: { columns: string[]; rows: Cell[][] },
-  elapsedMs: number,
-  immutableSnapshot: boolean,
-): ResultView {
-  const clipped = clipTable(parsed.columns, parsed.rows);
-  const cells = panelCells(clipped.rows);
-  const rows = budgetRows(clipped.columns.length, cells.rows);
-  const droppedRows = cells.rows.length - rows.length;
-  return {
-    columns: clipped.columns,
-    rows,
-    elapsedMs,
-    // Whatever the read returned past the rows on screen is one "next", whether the budget or
-    // the page cap left it out; paging continues from the rows this page actually showed.
-    hasMore: parsed.rows.length > rows.length,
-    clipped: clipped.cellsClipped || cells.clipped,
-    immutableSnapshot,
-    ...(droppedRows > 0 ? { droppedRows } : {}),
-  };
-}
-
-/** A schema as (name, type, sql), with the tables and views a "Preview" tap can read. */
-function schemaView(
-  parsed: { columns: string[]; rows: Cell[][] },
-  elapsedMs: number,
-  immutableSnapshot: boolean,
-): ResultView {
-  // The CREATE statements stay legible: they are clipped at the surface's own cell cap, not the
-  // panel's shorter one, because a schema row is the one place that text is worth reading.
-  const clipped = clipTable(
-    [parsed.columns[0] ?? "name", parsed.columns[1] ?? "type", parsed.columns[2] ?? "sql"],
-    parsed.rows.map((row) => [row[0] ?? null, row[1] ?? null, row[2] ?? null]),
-  );
-  const rows = budgetRows(clipped.columns.length, clipped.rows);
-  const droppedRows = clipped.rows.length - rows.length;
-  return {
-    columns: clipped.columns,
-    rows,
-    elapsedMs,
-    hasMore: false,
-    clipped: clipped.cellsClipped,
-    immutableSnapshot,
-    previews: rows.map((row) => {
-      const type = cellText(row[1] ?? null);
-      return type === "table" || type === "view" ? cellText(row[0] ?? null) : undefined;
-    }),
-    ...(droppedRows > 0 ? { droppedRows } : {}),
-  };
-}
-
-/**
- * Rows past the first page, read from the same statement. sqlite3's CLI takes no bound
- * parameters, and the statement is the model's own (already refused if it holds a second one), so
- * the offset is the only text this adds: the query's plan and limits stay its own.
- */
-export function pagedSql(sql: string, offset: number): string {
-  return `SELECT * FROM (\n${statementBody(sql)}\n) LIMIT ${PAGE_ROWS + 1} OFFSET ${offset}`;
-}
-
-/** A table or view's own rows, for the schema's "Preview" row action. */
-function previewSql(name: string): string {
-  return `SELECT * FROM ${quoteIdentifier(name)} LIMIT ${PREVIEW_ROWS}`;
-}
-
-/** An identifier from the database, quoted back to it: `"` is the only character to double. */
-function quoteIdentifier(name: string): string {
-  return `"${name.replaceAll('"', '""')}"`;
-}
-
-/** The surface for one state: the file, its rows, and what the user can do next. */
-function renderExplorer(state: ExplorerState): SurfaceView {
-  const view = state.view;
-  const actions = state.schema ? [ACTION_BACK, ACTION_RUN_AGAIN] : [ACTION_RUN_AGAIN];
-  if (view?.hasMore) actions.push(ACTION_NEXT);
-  if (state.offset > 0) actions.push(ACTION_PREVIOUS);
-  const table = actionTable(state);
-  const columns = (view?.columns ?? []).map((title, index) => ({
-    id: `c${index}`,
-    title,
-    ...(view && numericColumn(view.rows, index) ? { kind: "number" as const } : {}),
-  }));
-  return {
-    header: { title: clipTitle(fileName(state.path)), subtitle: surfaceSubtitle(state) },
-    sections: [
-      dataTable({
-        id: ROWS_SECTION,
-        header: { title: state.kind === "schema" ? "Schema objects" : "Results" },
-        state: tableState(state),
-        columns,
-        rows: (view?.rows ?? []).map((row, index) => ({
-          id: `r${index}`,
-          cells: rowCells(columns.length, row),
-          ...(view?.previews?.[index] ? { actions: [ACTION_PREVIEW] } : {}),
-        })),
-        fallback: { text: surfaceFallback(state) },
-      }),
-      actionBar({
-        id: ACTIONS_SECTION,
-        header: { title: state.failure === undefined ? "Actions" : "Try again" },
-        actions,
-        fallback: { text: actions.map((id) => table[id]?.title ?? id).join(" · ") },
-      }),
-    ],
-  };
-}
-
-/** One page of a statement's own rows, or the failure the read ended in. */
-async function readRows(run: Run, sql: string, offset: number): Promise<ViewRun> {
-  const ran = await run(offset > 0 ? pagedSql(sql, offset) : sql);
-  if (ran.error) return { failure: ran.error };
-  const parsed = parseSqliteJson(ran.stdout);
-  if (!parsed.ok) return { failure: parsed.error };
-  return { view: rowsView(parsed, ran.elapsedMs, ran.immutableSnapshot === true) };
-}
-
-/** The schema, as the panel shows it. */
-async function readSchema(run: Run): Promise<ViewRun> {
-  const ran = await run(SCHEMA_SQL);
-  if (ran.error) return { failure: ran.error };
-  const parsed = parseSqliteJson(ran.stdout);
-  if (!parsed.ok) return { failure: parsed.error };
-  return { view: schemaView(parsed, ran.elapsedMs, ran.immutableSnapshot === true) };
-}
-
-/** The state a read leaves: its rows, or the failure instead of them. */
-function outcomeState(base: ExplorerState, outcome: ViewRun): ExplorerState {
-  if ("failure" in outcome)
-    return { ...base, view: undefined, failure: clipTitle(outcome.failure) };
-  return { ...base, view: outcome.view, failure: undefined };
-}
-
-/** The same view at another page: a schema is one read, so only results page. */
-async function rerun(run: Run, state: ExplorerState, offset: number): Promise<ExplorerState> {
-  const base: ExplorerState = { ...state, offset };
-  if (state.kind === "schema") return outcomeState(base, await readSchema(run));
-  return outcomeState(base, await readRows(run, state.sql, offset));
-}
-
-/** How far one page of this state moved: a page the byte budget shortened ends where it showed. */
-function pageRows(state: ExplorerState): number {
-  return state.view && state.view.rows.length > 0 ? state.view.rows.length : PAGE_ROWS;
-}
-
-/** The schema object a "Preview" tap names, from the row id the dataTable gave it. */
-function previewName(state: ExplorerState, rowId: string | undefined): string | undefined {
-  const match = rowId === undefined ? null : /^r(\d+)$/.exec(rowId);
-  if (!match?.[1]) return undefined;
-  return state.view?.previews?.[Number(match[1])];
-}
-
-/**
- * One panel, published into the Session's surface loop and ready to answer its own actions. Each
- * publish builds a fresh panel, so the state it shows brings its own fallback words and action
- * roles, and the host rebinds this handler set to whatever it now offers.
- */
-function explorerPanel(run: Run, first: ExplorerState): Surface<ExplorerState> {
-  const panel = surface<ExplorerState>({
-    id: SURFACE_ID,
-    title: clipTitle(fileName(first.path)),
-    empty: { title: "No rows", message: "The query returned no rows." },
-    actions: actionTable(first),
-    fallback: surfaceFallback(first),
-    view: renderExplorer,
-  });
-
-  const republish = (
-    invocation: SurfaceActionInvocation<ExplorerState>,
-    next: ExplorerState,
-  ): SurfaceActionReturn => {
-    if (!publishExplorer(run, invocation.ctx.surfaces, next))
-      return {
-        error: {
-          compositeId: invocation.compositeId,
-          message: "The panel could not show this page.",
-        },
-      };
-    return { patch: {} };
-  };
-
-  panel.action(ACTION_RUN_AGAIN, async (state, invocation) =>
-    republish(invocation, await rerun(run, state, state.offset)),
-  );
-  panel.action(ACTION_NEXT, async (state, invocation) =>
-    republish(invocation, await rerun(run, state, state.offset + pageRows(state))),
-  );
-  panel.action(ACTION_PREVIOUS, async (state, invocation) =>
-    republish(invocation, await rerun(run, state, Math.max(0, state.offset - PAGE_ROWS))),
-  );
-  panel.action(ACTION_BACK, (state, invocation) => {
-    const saved = state.schema;
-    if (!saved)
-      return { error: { compositeId: invocation.compositeId, message: "The schema is gone." } };
-    return republish(invocation, {
-      path: state.path,
-      kind: "schema",
-      sql: saved.sql,
-      offset: 0,
-      view: saved.view,
-    });
-  });
-  panel.action(ACTION_PREVIEW, async (state, invocation) => {
-    const name = previewName(state, invocation.rowId);
-    if (!name)
-      return {
-        error: { compositeId: invocation.compositeId, message: "This row has nothing to preview." },
-      };
-    const sql = previewSql(name);
-    // A preview keeps the schema it came from, so "Back to schema" shows the rows the tap came
-    // from rather than a second reading of a database that may have changed under it.
-    const opened: ExplorerState = {
-      path: state.path,
-      kind: "results",
-      sql,
-      offset: 0,
-      ...(state.kind === "schema" && state.view
-        ? { schema: { sql: state.sql, view: state.view } }
-        : {}),
-    };
-    return republish(invocation, outcomeState(opened, await readRows(run, sql, 0)));
-  });
-  return panel;
-}
-
-/**
- * Publish one panel state, or report that the host refused it. A render problem (a surface over
- * the wire cap, a rule the state broke) is never the tool call's failure: the caller falls back to
- * the v1 widget, which is what the query's own rows always fitted in.
- */
-function publishExplorer(run: Run, publisher: SurfacePublisher, state: ExplorerState): boolean {
-  try {
-    explorerPanel(run, state).publish({ surfaces: publisher }, state);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The Session's surface loop, when this call runs inside one. A bare pi-durable Harness (this
- * plugin loaded without Oppi's server around it) has no host bound at all, and a conversation
- * whose Session is not live has no loop: both publish the v1 widget instead.
- */
-function surfacePublisher(env: ToolExecutionApi["env"]): SurfacePublisher | undefined {
-  try {
-    return oppiHost().surfaces(env);
-  } catch {
-    return undefined;
-  }
-}
-
-interface DataWidget {
-  title: string;
-  subtitle: string;
-  lines: string[];
-  blocks: JsonValue[];
-}
-
-/** The v1 lines a client without `nativeSurface` shows: header, columns, then the first rows. */
-function widgetLines(title: string, subtitle: string, columns: string[], rows: Cell[][]): string[] {
-  return [
-    title,
-    subtitle,
-    columns.join(" | "),
-    ...rows.slice(0, FALLBACK_ROWS).map((row) => row.map(cellText).join(" | ")),
-  ];
-}
-
-/** The conversation's `data` widget: the chart alone beside the surface, or the whole v1 panel. */
-function dataWidget(state: ExplorerState, table: TableBlock, blocks: JsonValue[]): DataWidget {
-  const title = fileName(state.path);
-  const subtitle = surfaceSubtitle(state);
-  return {
-    title,
-    subtitle,
-    lines: widgetLines(title, subtitle, table.columns, table.rows),
-    blocks,
-  };
-}
-
-/**
- * Write the conversation's `data` widget slot, or clear it: an explicit empty widget is how the
- * slot is emptied, so a session that had this plugin's old table panel replaces it with the
- * surface's own projection instead of showing both. The chart is still a v1 widget beside the
- * surface until `chart` lands (slice 5), and only the tool call writes it: an action has no task
- * of its own to commit from. A paging tap therefore leaves the chart on the page it drew.
- */
-async function commitDataWidget(
-  api: ToolExecutionApi,
-  context: Context,
-  write: DataWidget | undefined,
-): Promise<void> {
-  await api.commit(async (tx) => {
-    const ui = await tx.doc(DurableUI, api.conversationId);
-    ui.notifications[WIDGET_SLOT] = write
-      ? {
-          id: WIDGET_ID,
-          method: "setWidget",
-          widgetKey: WIDGET_KEY,
-          widgetLines: write.lines,
-          ...PROVENANCE,
-          nativeSurface: {
-            version: 1,
-            id: `widget:${WIDGET_KEY}`,
-            source: "widget",
-            presentation: { style: "surfacePanel", title: write.title, subtitle: write.subtitle },
-            blocks: write.blocks,
-            fallback: { lines: write.lines },
-          },
-        }
-      : {
-          id: WIDGET_ID,
-          method: "setWidget",
-          widgetKey: WIDGET_KEY,
-          widgetLines: [],
-          ...PROVENANCE,
-        };
-  }, context);
-}
-
 function toolError(text: string): ToolExecutionResult {
   return { isError: true, output: [{ type: "text", text }] };
 }
@@ -1248,99 +526,61 @@ function toolOk(text: string): ToolExecutionResult {
   return { output: [{ type: "text", text }] };
 }
 
+/**
+ * One statement against one database file, answered as the tool's result: a line saying what ran,
+ * then the rows as a markdown table, which the tool row shows like any other tool output.
+ */
 async function executeQuery(
-  args: { path: string; sql: string; chart?: ChartSpec; kind: ExplorerState["kind"] },
+  args: { path: string; sql: string },
   api: ToolExecutionApi,
   context: Context,
 ): Promise<ToolExecutionResult> {
-  const publisher = surfacePublisher(api.env);
-  // A tap runs later, outside this call: its read must not be cancelled by this call's context.
-  const run: Run = (sql) => runSqlite(api.env, args.path, sql, BACKGROUND_CONTEXT);
   const ran = await runSqlite(api.env, args.path, args.sql, context);
-  const failed = async (message: string): Promise<ToolExecutionResult> => {
-    const state: ExplorerState = {
-      path: args.path,
-      kind: args.kind,
-      sql: args.sql,
-      offset: 0,
-      failure: clipTitle(message),
-    };
-    // A chart from an earlier run would contradict the failure card beside it, and a card the
-    // host refused leaves the v1 panel it drew before untouched.
-    if (publisher && publishExplorer(run, publisher, state))
-      await commitDataWidget(api, context, undefined);
-    return toolError(message);
-  };
-  if (ran.error) return failed(ran.error);
+  if (ran.error) return toolError(ran.error);
   const parsed = parseSqliteJson(ran.stdout);
-  if (!parsed.ok) return failed(parsed.error);
-  const { columns, rows, table } = tableFrom(parsed.columns, parsed.rows);
-  const chart = args.chart ? chartFrom(args.chart, columns, rows) : undefined;
-  const snapshot = ran.immutableSnapshot === true;
-  const state: ExplorerState = {
-    path: args.path,
-    kind: args.kind,
-    sql: args.sql,
-    offset: 0,
-    view:
-      args.kind === "schema"
-        ? schemaView(parsed, ran.elapsedMs, snapshot)
-        : rowsView(parsed, ran.elapsedMs, snapshot),
-  };
-  if (publisher && publishExplorer(run, publisher, state)) {
-    await commitDataWidget(
-      api,
-      context,
-      chart ? dataWidget(state, table, [chart as unknown as JsonValue]) : undefined,
+  if (!parsed.ok) return toolError(parsed.error);
+  const shown = clipTable(parsed.columns, parsed.rows);
+  const lines = [
+    `${fileName(args.path)} · ${parsed.rows.length} row(s) · ${ran.elapsedMs}ms`,
+    ...(ran.immutableSnapshot === true ? [IMMUTABLE_SNAPSHOT_NOTE] : []),
+  ];
+  if (shown.columns.length > 0) lines.push("", markdownTable(shown.columns, shown.rows));
+  if (parsed.rows.length > shown.rows.length)
+    lines.push(
+      "",
+      `… ${parsed.rows.length - shown.rows.length} more row(s) not shown. Narrow the query with WHERE, LIMIT, or OFFSET.`,
     );
-  } else {
-    // No surface loop to project into, or a surface the host refused: the v1 widget is the only
-    // panel there is, and a render problem must never turn the query itself into a failure.
-    await commitDataWidget(
-      api,
-      context,
-      dataWidget(state, table, [table, ...(chart ? [chart] : [])] as unknown as JsonValue[]),
+  if (shown.cellsClipped)
+    lines.push(
+      "",
+      `Values past ${RESULT_MAX_CELL_CHARS} characters and columns past ${RESULT_MAX_COLUMNS} were cut.`,
     );
-  }
-  return toolOk(
-    formatPreview(table.columns, table.rows, table.truncated === true, [
-      `${fileName(args.path)} · ${table.rows.length} row(s) · ${ran.elapsedMs}ms`,
-      ...(snapshot ? [IMMUTABLE_SNAPSHOT_NOTE] : []),
-      ...(args.chart && !chart ? ["Chart omitted: the result has no numeric series."] : []),
-    ]),
-  );
+  return toolOk(lines.join("\n"));
 }
 
 const sqliteSchema = defineTool({
   name: "sqlite_schema",
   description:
     "Inspect a SQLite database schema (tables, views, indexes, and their SQL). Read-only. " +
-    "Publishes the schema to the database panel, where a table or view can be previewed.",
+    "Returns one row per object as a markdown table.",
   parameters: obj({
     path: str({ description: "Path to the SQLite database file." }),
   }),
   replay: "safe",
-  execute: (args, api, context) =>
-    executeQuery({ path: args.path, sql: SCHEMA_SQL, kind: "schema" }, api, context),
+  execute: (args, api, context) => executeQuery({ path: args.path, sql: SCHEMA_SQL }, api, context),
 });
 
 const sqliteQuery = defineTool({
   name: "sqlite_query",
   description:
-    "Run a read-only SQL query against a SQLite file. Publishes the rows to the database panel " +
-    "and, when chart.kind is set, a bar, line, or pie chart of the numeric columns.",
+    "Run a read-only SQL query against a SQLite file. Returns the rows as a markdown table, " +
+    `the first ${RESULT_MAX_ROWS} rows at most.`,
   parameters: obj({
     path: str({ description: "Path to the SQLite database file." }),
     sql: str({ description: "Read-only SQL. Writes, ATTACH, and shell commands fail." }),
-    chart: opt(
-      obj({
-        kind: oneOf(["bar", "line", "pie"]),
-        title: opt(str()),
-      }),
-    ),
   }),
   replay: "safe",
-  execute: (args, api, context) => executeQuery({ ...args, kind: "results" }, api, context),
+  execute: (args, api, context) => executeQuery(args, api, context),
 });
 
 export const DurableSqlExplorer = defineExtension({
