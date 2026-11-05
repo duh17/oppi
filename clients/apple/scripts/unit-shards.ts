@@ -195,6 +195,9 @@ export const failedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresult
 /** Identifiers of every test an xcresult lists, whatever its result (skipped and disabled included), or undefined when unreadable. */
 const listedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson);
 
+/** Identifiers of the tests that ran (passed or failed; not skipped or disabled), or undefined when unreadable. */
+const executedTestIds = (xcresultTestsJson: string) => testIdsWith(xcresultTestsJson, new Set(["Passed", "Failed", "Expected Failure"]));
+
 /**
  * Which `-only-testing` selectors (`Target[/Type[/method]]`) name none of the tests an xcresult lists.
  * Listed ids are `Type/method()` and carry no target, so a selector's target is dropped and the rest
@@ -321,11 +324,14 @@ export function xcresultTestIds(path: string): Failures {
   return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", path], listedTestIds);
 }
 
-/** Tests a finished run listed, read from the xcresult in its run directory. */
-export function runTestIds(summary: string | undefined): Failures {
+/**
+ * Tests a finished run executed (a skipped or disabled test is not one), read from the xcresult in its
+ * run directory. A gate's named tests are evidence that they ran, which a skipped test is not.
+ */
+export function runExecutedTestIds(summary: string | undefined): Failures {
   const xcresult = xcresultOf(summary);
   if ("reason" in xcresult) return xcresult;
-  return xcresultTestIds(xcresult.path);
+  return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path], executedTestIds);
 }
 
 /** The gate lane the full unit run is, in the rerun and red-lane ledgers and dev/testing/lane-budgets.json. */

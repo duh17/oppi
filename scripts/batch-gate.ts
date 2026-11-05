@@ -8,7 +8,7 @@
 // at the checkout's canonical path (the one pre-push built in). --target is the branch the batch will
 // land on: the gate replays the pre-push plan for `merge-base(HEAD, target)..HEAD`, and when that plan
 // ran the Apple lane (every OppiUnitTests test, in clients/apple/scripts/unit-shards.ts) it checks the
-// named OppiTests selectors against the tests that run listed (unmatchedUnitSelectors) but does
+// named OppiTests selectors against the tests that run executed (unmatchedUnitSelectors) but does
 // not run them again. Without --target, or without a readable record of that run, the ios-unit lane runs.
 //
 // `bun scripts/batch-gate.ts --supports-profile-scope` prints PROFILE_SCOPE_CAPABILITY and exits 0
@@ -79,7 +79,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadQuarantine, runFailures, runTestIds, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
+import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
@@ -434,9 +434,10 @@ function holdQuarantined(filters: string[], entries: QuarantineEntry[], bundle: 
 /**
  * Which named unit selectors matched no test of the pre-push unit run, read from the xcresults of its
  * shards (clients/apple/.build/unit-shards-last.json, written by unit-shards.ts). A selector matches a
- * listed test it names or one inside the type it names, skipped or not (unit-shards' unmatchedSelectors,
- * which sim-pool applies to a single run too). Without
- * a readable record of a unit run at this HEAD the answer is a reason, and the gate runs the lane.
+ * executed test it names or one inside the type it names (unit-shards' unmatchedSelectors). Unlike
+ * sim-pool's per-run check, a skipped or disabled test is not a match: a gate's named tests are
+ * evidence that they ran. Without a readable record of a unit run at this HEAD the answer is a reason,
+ * and the gate runs the lane.
  */
 export function unmatchedUnitSelectors(worktree: string, head: string, selectors: string[]): { unmatched: string[] } | { reason: string } {
   const path = join(worktree, "clients", "apple", ".build", UNIT_RUN_RECORD);
@@ -448,14 +449,14 @@ export function unmatchedUnitSelectors(worktree: string, head: string, selectors
     return { reason: `${UNIT_RUN_RECORD} is not JSON` };
   }
   if (record.head !== head) return { reason: `the last unit shards ran at ${String(record.head).slice(0, 9)}, not at HEAD ${head.slice(0, 9)}` };
-  const listed: string[] = [];
+  const executed: string[] = [];
   for (const summary of record.summaries ?? []) {
-    const tests = runTestIds(summary);
+    const tests = runExecutedTestIds(summary);
     if ("reason" in tests) return { reason: `unit shard results unreadable: ${tests.reason}` };
-    listed.push(...tests.ids);
+    executed.push(...tests.ids);
   }
-  if (listed.length === 0) return { reason: "the unit shards' results list no tests" };
-  return { unmatched: unmatchedSelectors(selectors, listed) };
+  if (executed.length === 0) return { reason: "the unit shards' results list no executed tests" };
+  return { unmatched: unmatchedSelectors(selectors, executed) };
 }
 
 /**
@@ -484,6 +485,8 @@ export function executedTests(output: string): number {
   const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
   if (!log || !existsSync(log)) return 0;
   const text = readFileSync(log, "utf8");
+  // Not `\u200b*`-tolerant on purpose: a run whose tests were all skipped prints its result line behind
+  // a zero-width space, and for a gate an all-skipped run is zero tests run.
   const swift = [...text.matchAll(/^[\u2714\u2718] Test run with ([0-9]+) tests?/gm)].at(-1);
   const xctest = [...text.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+Executed ([0-9]+) tests?/gm)].at(-1);
   return Math.max(swift ? Number(swift[1]) : 0, xctest ? Number(xctest[1]) : 0);
