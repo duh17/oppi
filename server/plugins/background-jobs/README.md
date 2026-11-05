@@ -37,8 +37,9 @@ widget. It shows while a backgrounded job runs or its result waits for delivery,
 and clears once every result is delivered. Each running job has a **Stop**
 button, which kills it as `background_job cancel` does. A finished job shows the
 end of its output under **Output**; a running job has none to show yet. The
-panel is drawn from the saved job list, so it returns when a job's runner
-resumes after a server restart. A client that cannot draw surfaces sees the same
+panel is drawn from the saved job list, so it returns after a server restart
+once a job's runner resumes, and within a second when a Session stops and
+starts again while a job runs. A client that cannot draw surfaces sees the same
 jobs without buttons.
 
 The classic extension above is unchanged. It can publish only Pi's widget, which
