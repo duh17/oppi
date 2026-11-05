@@ -522,8 +522,12 @@ function toolError(text: string): ToolExecutionResult {
   return { isError: true, output: [{ type: "text", text }] };
 }
 
+/** The same Markdown goes to the model and, through `details`, to the phone's Markdown renderer. */
 function toolOk(text: string): ToolExecutionResult {
-  return { output: [{ type: "text", text }] };
+  return {
+    output: [{ type: "text", text }],
+    details: { expandedText: text, presentationFormat: "markdown" },
+  };
 }
 
 /**

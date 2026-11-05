@@ -149,6 +149,11 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
       /^sales\.db · 3 row\(s\) · \d+ms\n\n\| name \| amount \|\n\| --- \| --- \|\n/,
     );
     expect(text).toContain("| apples | 12 |\n| bananas | 9 |\n| cherries | 4 |");
+    // The phone renders the row's output as Markdown only when the result says so.
+    expect((await lastToolResult(f.root)).details).toEqual({
+      expandedText: text,
+      presentationFormat: "markdown",
+    });
   });
 
   it("refuses ATTACH under sqlite3 -safe", async () => {
