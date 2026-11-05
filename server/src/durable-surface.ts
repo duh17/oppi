@@ -208,7 +208,8 @@ export interface MenuNodeFields {
 
 /** What a pill shows: one line of inline facts, in the order it lists them. */
 export interface PillFields {
-  content: ExtensionUISurfacePillNode[];
+  /** Text, badges, icons, and rings: the builders above return one node type, and the host's validator rejects the rest. */
+  content: ExtensionUISurfaceNode[];
   /** `drawer` (the default) opens the panel; an action sends that action instead. */
   tap?: "drawer" | NodeActionFields;
 }
@@ -545,7 +546,7 @@ export function menu(fields: MenuNodeFields): ExtensionUISurfaceNode {
 /** The strip's own one-line summary; without one the host derives it from the header. */
 export function pill(fields: PillFields): ExtensionUISurfacePill {
   return {
-    content: { type: "row", children: fields.content },
+    content: { type: "row", children: fields.content as ExtensionUISurfacePillNode[] },
     tap: fields.tap === undefined || fields.tap === "drawer" ? "drawer" : { action: fields.tap },
   };
 }

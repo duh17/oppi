@@ -114,7 +114,10 @@ async function retireLegacyPill(tx: Tx, id: ConversationId): Promise<void> {
     };
 }
 
-/** How often a running job's runner looks for a Session loop it has not drawn the panel into. */
+/**
+ * How often a running job's runner looks for a Session loop it has not drawn the panel into, and
+ * for a whole minute of running time that the panel does not show yet.
+ */
 const PANEL_LOOP_CHECK_MS = 1_000;
 
 /** A panel is per live Session loop: a new loop (after a Session restarts) gets a new panel. */
@@ -181,6 +184,7 @@ async function syncPanel(
           // The classic pill treats every non-success terminal outcome as an error.
           status: job.status === "interrupted" ? "failed" : job.status,
           startedAt: job.startedAt,
+          ...(job.status === "running" ? {} : { exitCode: job.exitCode }),
           ...(output === undefined ? {} : { output }),
         });
       }
@@ -370,12 +374,24 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           // the panel into a loop that appears.
           let loop = surfacesOf(env);
           let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
+          // The panel shows the job's age in whole minutes, so it is drawn again each time that
+          // number changes: a frozen "3m" on a job that has run ten would be wrong, not stale.
+          const minutesRun = (): number => Math.floor((Date.now() - job.startedAt) / 60_000);
+          let drawnMinutes = minutesRun();
           const watchLoop = setInterval(() => {
             const current = surfacesOf(env);
-            if (current === loop) return;
+            const minutes = minutesRun();
+            if (current === loop) {
+              if (current && minutes !== drawnMinutes) {
+                drawnMinutes = minutes;
+                void syncPanel(runtime, runtime.conversationId, env, context);
+              }
+              return;
+            }
             withdrawStop();
             loop = current;
             withdrawStop = current ? offerStop(current, job.id, stop) : () => {};
+            drawnMinutes = minutes;
             if (current) void syncPanel(runtime, runtime.conversationId, env, context);
           }, PANEL_LOOP_CHECK_MS);
           watchLoop.unref?.();

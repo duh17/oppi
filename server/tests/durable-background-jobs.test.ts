@@ -526,7 +526,7 @@ describe("native Durable background jobs", () => {
     await prompt(f.root);
     await f.entered.promise;
     const shown = loop.published.at(-1)!;
-    expect(shown.surface.header.title).toBe("1 job");
+    expect(shown.surface.header.subtitle).toBe("1 running");
     expect(panelNode(shown.surface, "stop:bash-1")).toMatchObject({
       action: { id: "stop", values: { job: "bash-1" } },
     });
@@ -544,9 +544,9 @@ describe("native Durable background jobs", () => {
     // The stopped job is published as stopped, with no Stop to tap again, and the panel is
     // dismissed once its result is delivered.
     const stopped = loop.published.find(
-      (entry) => panelNode(entry.surface, "status:bash-1")?.text === "cancelled",
+      (entry) => panelNode(entry.surface, "meta:bash-1")?.text === "bash-1 · Stopped",
     )!;
-    expect(stopped.surface.header.title).toBe("1 result");
+    expect(stopped.surface.header.subtitle).toBe("1 finished");
     expect(panelNode(stopped.surface, "stop:bash-1")).toBeUndefined();
     expect(loop.dismissed).toEqual(["background-jobs"]);
     // A tap that arrives after that finds nothing to stop.
@@ -569,7 +569,7 @@ describe("native Durable background jobs", () => {
     expect(loop.dismissed).toEqual(["background-jobs"]);
     // Its output waited behind the row until delivery.
     const finished = loop.published.find(
-      (entry) => panelNode(entry.surface, "status:bash-1")?.text === "done",
+      (entry) => panelNode(entry.surface, "meta:bash-1")?.text === "bash-1 · Exit 0",
     )!;
     expect(panelNode(finished.surface, "tail:bash-1")).toMatchObject({
       type: "code",
@@ -597,9 +597,9 @@ describe("native Durable background jobs", () => {
     harness.resume();
     await delivery(harness, root);
     // The interrupted job is a result waiting for delivery: shown, and with nothing left to stop.
-    const redrawn = loop.published.find((entry) => panelNode(entry.surface, "status:bash-1"))!;
-    expect(redrawn.surface.header.title).toBe("1 result");
-    expect(panelNode(redrawn.surface, "status:bash-1")).toMatchObject({ text: "failed" });
+    const redrawn = loop.published.find((entry) => panelNode(entry.surface, "meta:bash-1"))!;
+    expect(redrawn.surface.header.subtitle).toBe("1 finished");
+    expect(panelNode(redrawn.surface, "meta:bash-1")).toMatchObject({ text: "bash-1 · Failed" });
     expect(panelNode(redrawn.surface, "stop:bash-1")).toBeUndefined();
     expect(loop.dismissed).toEqual(["background-jobs"]);
   });

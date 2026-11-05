@@ -539,7 +539,7 @@ describe("background jobs on their panel", () => {
     const panel = surfaceOf(await published);
 
     // One running job: its row offers Stop, and nothing else is offered.
-    expect(panel.header.title).toBe("1 job");
+    expect(panel.header.subtitle).toBe("1 running");
     expect(find(panel, "stop:bash-1")).toMatchObject({
       type: "button",
       action: { id: "stop", values: { job: "bash-1" } },
@@ -638,7 +638,7 @@ describe("background jobs on their panel", () => {
         .find((surface) => surface.id === PANEL);
     await until(() => drawn() !== undefined, "the panel in the new Session");
     const panel = drawn()!;
-    expect(panel.header.title).toBe("1 job");
+    expect(panel.header.subtitle).toBe("1 running");
     expect(find(panel, "stop:bash-1")).toBeDefined();
 
     const removed = observed.next(

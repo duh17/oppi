@@ -9,6 +9,7 @@
 export const EXTENSION_UI_SURFACE_ICON_NAMES = [
   "arrow.clockwise",
   "arrow.down.circle",
+  "arrow.triangle.2.circlepath",
   "arrow.up.circle",
   "arrow.up.right",
   "bell",

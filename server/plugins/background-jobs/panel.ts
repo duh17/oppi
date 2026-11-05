@@ -1,9 +1,11 @@
 import {
-  badge,
   blocks,
   button,
   code,
+  divider,
   group,
+  icon,
+  pill,
   row,
   stack,
   surface,
@@ -11,13 +13,7 @@ import {
   type Surface,
   type SurfaceView,
 } from "oppi/v1";
-import {
-  backgroundPill,
-  badgeLabel,
-  displayCommand,
-  displayLines,
-  type JobStatus,
-} from "./jobs.js";
+import { backgroundPill, displayCommand, displayLines, type JobStatus } from "./jobs.js";
 
 // The durable form of the job pill: one persistent strip panel per conversation, drawn by the
 // host from `oppi/v1`'s `surface()`. The classic extension (`index.ts`) cannot publish one — it
@@ -30,6 +26,11 @@ export const PANEL_ID = "background-jobs";
 const MAX_SHOWN_JOBS = 11;
 /** A row's command and output tail stay inside the wire's 500 characters a node. */
 const COMMAND_CHARS = 200;
+/**
+ * A row's title is one line: the host wraps a card's text rather than cutting it, so the cut is
+ * made here, at what fits beside the status glyph and Stop on a phone.
+ */
+const TITLE_CHARS = 24;
 const TAIL_LINES = 12;
 const TAIL_CHARS = 480;
 /** The surface's fallback text is capped at 2,000 characters on the wire. */
@@ -41,6 +42,8 @@ export interface PanelJob {
   command: string;
   status: JobStatus;
   startedAt: number;
+  /** How a finished job's process ended; none when it was stopped or never reported one. */
+  exitCode?: number | null;
   /** The output of a finished job; one that is still running has none saved yet. */
   output?: string;
 }
@@ -48,7 +51,7 @@ export interface PanelJob {
 export interface PanelState {
   /** Never empty: with nothing to show the panel is dismissed instead. */
   jobs: PanelJob[];
-  /** When the state was read, for the elapsed time the header shows. */
+  /** When the state was read, for the elapsed time a running job shows. */
   at: number;
 }
 
@@ -69,26 +72,97 @@ function outputTail(output: string | undefined): string | undefined {
     : `…${characters.slice(characters.length - TAIL_CHARS + 1).join("")}`;
 }
 
-function tone(status: JobStatus): "accent" | "success" | "warning" | "danger" {
-  if (status === "running") return "accent";
-  if (status === "completed") return "success";
-  if (status === "cancelled") return "warning";
-  return "danger";
+/** The status glyph and its tone: what a person scans for before reading a word. */
+function glyph(status: JobStatus): {
+  name: string;
+  tone: "accent" | "success" | "warning" | "danger";
+} {
+  if (status === "running") return { name: "arrow.triangle.2.circlepath", tone: "accent" };
+  if (status === "completed") return { name: "checkmark.circle.fill", tone: "success" };
+  if (status === "cancelled") return { name: "minus.circle", tone: "warning" };
+  if (status === "timed_out") return { name: "exclamationmark.triangle.fill", tone: "warning" };
+  return { name: "xmark.circle.fill", tone: "danger" };
 }
 
-function jobNode(job: PanelJob): ReturnType<typeof stack> {
+const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)\s*/u;
+/** A word that ends the command proper: a pipe, a list operator, or a redirect. */
+const SHELL_OPERATOR = /^(?:\|\|?|&&?|;|\d*[<>])/u;
+
+/** A path is named by its file: `~/tools/scripts/build.ts` is `build.ts`. */
+function pathLeaf(word: string): string {
+  return word.split("/").length > 2 ? (word.split("/").at(-1) ?? word) : word;
+}
+
+/**
+ * What a job is called in its row: the program and its first plain arguments, one short line.
+ * A leading `cd <dir> &&` is where the shell starts, not what runs, and everything from the first
+ * option, pipe, or redirect on is detail the disclosure carries in full.
+ */
+export function commandTitle(command: string): string {
+  let rest = displayCommand(command);
+  for (let match = LEADING_CD.exec(rest); match && match[0].length < rest.length;) {
+    rest = rest.slice(match[0].length);
+    match = LEADING_CD.exec(rest);
+  }
+  const words = rest.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/gu) ?? [];
+  const title: string[] = [];
+  let skipping = true;
+  for (const word of words) {
+    if (SHELL_OPERATOR.test(word)) break;
+    // Leading `NAME=value` words configure the program; they are not it.
+    if (skipping && /^[A-Za-z_]\w*=/u.test(word)) continue;
+    // The program, then arguments up to the first option.
+    if (!skipping && (word.startsWith("-") || title.length >= 3)) break;
+    skipping = false;
+    const cut = word.endsWith(";");
+    title.push(pathLeaf(cut ? word.slice(0, -1) : word));
+    if (cut) break;
+  }
+  return clamp(title.join(" ") || displayCommand(command), TITLE_CHARS);
+}
+
+/** Whole minutes, as a status line reads: `<1m`, `12m`, `1h 5m`. */
+function elapsed(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return "<1m";
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/** How a finished job ended: its exit status when the process reported one, else the outcome. */
+function outcome(job: PanelJob): string {
+  if (typeof job.exitCode === "number") return `Exit ${job.exitCode}`;
+  if (job.status === "cancelled") return "Stopped";
+  if (job.status === "timed_out") return "Timed out";
+  return "Failed";
+}
+
+function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof stack> {
   const tail = outputTail(job.output);
+  const running = job.status === "running";
+  const mark = glyph(job.status);
   return stack({
     id: `job:${job.id}`,
+    spacing: "tight",
     children: [
+      ...(first ? [] : [divider({ id: `rule:${job.id}` })]),
       row({
         id: `head:${job.id}`,
-        align: "spread",
         children: [
-          text({ id: `title:${job.id}`, text: job.id, style: "headline" }),
-          badge({ id: `status:${job.id}`, text: badgeLabel(job.status), tone: tone(job.status) }),
+          icon({ id: `status:${job.id}`, name: mark.name, tone: mark.tone }),
+          stack({
+            id: `titles:${job.id}`,
+            spacing: "tight",
+            children: [
+              text({ id: `title:${job.id}`, text: commandTitle(job.command), style: "headline" }),
+              text({
+                id: `meta:${job.id}`,
+                text: `${job.id} · ${running ? `Running ${elapsed(at - job.startedAt)}` : outcome(job)}`,
+                style: "caption",
+              }),
+            ],
+          }),
           // Only a job that is still running offers Stop.
-          ...(job.status === "running"
+          ...(running
             ? [
                 button({
                   id: `stop:${job.id}`,
@@ -100,18 +174,21 @@ function jobNode(job: PanelJob): ReturnType<typeof stack> {
             : []),
         ],
       }),
-      text({
-        id: `command:${job.id}`,
-        text: clamp(displayCommand(job.command), COMMAND_CHARS),
-        style: "mono",
-      }),
       group({
         id: `output:${job.id}`,
-        title: "Output",
+        title: "Details",
         collapsed: true,
         children: [
+          // The whole command on its own line, in the host's monospace. The row's title is the
+          // short form; this is what was run.
+          text({
+            id: `command:${job.id}`,
+            text: clamp(displayCommand(job.command), COMMAND_CHARS),
+            style: "mono",
+          }),
+          // The `code` node's header carries its label: this is output, not source.
           tail
-            ? code({ id: `tail:${job.id}`, text: tail })
+            ? code({ id: `tail:${job.id}`, language: "output", text: tail })
             : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" }),
         ],
       }),
@@ -136,17 +213,49 @@ function fallbackText(state: PanelState): string {
   return clamp(pill?.summary.join("\n") ?? "Background jobs", FALLBACK_CHARS);
 }
 
-/** The panel for a non-empty job list: its header, and one row per job with its output behind a fold. */
+function jobCount(count: number): string {
+  return `${count} ${count === 1 ? "job" : "jobs"}`;
+}
+
+/** The strip pill's one line: how many jobs there are and how many still run; no command. */
+function pillLine(jobs: readonly PanelJob[], at: number): ReturnType<typeof pill> {
+  const running = jobs.filter((job) => job.status === "running");
+  const label =
+    running.length === jobs.length
+      ? `${jobCount(jobs.length)} running`
+      : running.length === 0
+        ? `${jobCount(jobs.length)} finished`
+        : `${jobCount(jobs.length)} · ${running.length} running`;
+  // The longest-running job's age, the number that says whether a job is stuck.
+  const oldest = Math.min(...running.map((job) => job.startedAt));
+  return pill({
+    content: [
+      text({ id: "pill:count", text: label, style: "headline" }),
+      ...(running.length > 0
+        ? [text({ id: "pill:elapsed", text: elapsed(at - oldest), style: "caption" })]
+        : []),
+    ],
+  });
+}
+
+/** The panel for a non-empty job list: a status header, and one row per job with its detail behind a fold. */
 export function jobsView(state: PanelState): SurfaceView {
   const jobs = ordered(state.jobs);
-  const pill = backgroundPill(
-    jobs.map((job) => ({ ...job, backgrounded: true })),
-    state.at,
-  );
-  if (!pill) throw new Error("The background jobs panel needs at least one job.");
+  if (jobs.length === 0) throw new Error("The background jobs panel needs at least one job.");
+  const running = jobs.filter((job) => job.status === "running").length;
+  const finished = jobs.length - running;
   const hidden = jobs.length - MAX_SHOWN_JOBS;
   return {
-    header: { title: pill.title, subtitle: clamp(pill.subtitle, COMMAND_CHARS) },
+    header: {
+      title: "Background jobs",
+      subtitle: [
+        running > 0 ? `${running} running` : "",
+        finished > 0 ? `${finished} finished` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    },
+    pill: pillLine(jobs, state.at),
     sections: [
       blocks({
         id: "jobs",
@@ -154,7 +263,9 @@ export function jobsView(state: PanelState): SurfaceView {
         body: stack({
           id: "list",
           children: [
-            ...jobs.slice(0, MAX_SHOWN_JOBS).map(jobNode),
+            ...jobs
+              .slice(0, MAX_SHOWN_JOBS)
+              .map((job, index) => jobNode(job, state.at, index === 0)),
             ...(hidden > 0
               ? [text({ id: "more", text: `+${hidden} more`, style: "caption" })]
               : []),
