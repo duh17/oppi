@@ -16,7 +16,9 @@ import UIKit
 /// `CHAT_ROUTES_SURFACE=tall` publishes a composable surface (a long table
 /// card, then an Actions card with Run again) whose drawer is taller than the
 /// space above the composer. `chatRoutes.surfaceActions` lists the surface
-/// actions the chat sent over its socket. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
+/// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE_FILE=<path>` publishes the surface
+/// JSON in that file instead (a server's rendered `ExtensionUISurface`, so a panel is shown as the
+/// phone receives it). `CHAT_ROUTES_WARNINGS=N` adds N warning rows
 /// above the composer.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -356,9 +358,16 @@ enum ChatRoutesFixture {
     /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
     /// surface above the composer. Reseeded like Share, since the connect loop clears surfaces.
     @MainActor static func seedSurfaceIfNeeded(on connection: ServerConnection) {
-        guard environment["CHAT_ROUTES_SURFACE"] == "tall",
+        let json: Data? = if let path = environment["CHAT_ROUTES_SURFACE_FILE"] {
+            FileManager.default.contents(atPath: path)
+        } else if environment["CHAT_ROUTES_SURFACE"] == "tall" {
+            Data(tallSurfaceJSON.utf8)
+        } else {
+            nil
+        }
+        guard let json,
               connection.extensionSurfaces.surface(for: sessionId).state.composableSurfaces.isEmpty,
-              let surface = try? JSONDecoder().decode(ExtensionUISurface.self, from: Data(tallSurfaceJSON.utf8))
+              let surface = try? JSONDecoder().decode(ExtensionUISurface.self, from: json)
         else { return }
         connection.extensionSurfaces.apply(surface, sessionId: sessionId)
     }

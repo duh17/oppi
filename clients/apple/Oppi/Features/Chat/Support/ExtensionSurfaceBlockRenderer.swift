@@ -14,6 +14,9 @@ struct ExtensionSurfaceBlocksEnvironment {
     let identifierRoot: String
     /// A strip pill's one line: nothing wraps, and text truncates instead of taking two lines.
     var inline = false
+    /// Whether the node is a direct child of a row: a control there is a trailing accessory of the
+    /// line it ends, so it draws compact instead of as a block of its own.
+    var inRow = false
     /// The card's own gap between the body's top-level children. A tree's spacing step is the
     /// protocol's; the card's rhythm is the host's, so only the body root carries it.
     var topLevelSpacing: CGFloat?
@@ -148,13 +151,32 @@ enum ExtensionSurfaceBlockMetrics {
         return inline ? max(6, step) : step
     }
 
-    static func font(_ raw: String?) -> UIFont {
+    /// A text style's face. The ramp is the system list's: `headline` is the row title (body,
+    /// semibold) and `caption` its secondary line (footnote). Inside a strip pill the same three
+    /// steps drop to the strip's own labels, so a composed pill reads like the ones the host
+    /// derives from a header.
+    static func font(_ raw: String?, inline: Bool = false) -> UIFont {
         switch (raw ?? "").lowercased() {
-        case "headline": return ExtensionNativeBlockStyle.font(.headline, weight: .semibold)
-        case "caption": return ExtensionNativeBlockStyle.font(.caption1)
-        case "mono": return ExtensionNativeBlockStyle.font(.footnote, monospaced: true)
-        default: return ExtensionNativeBlockStyle.font(.body)
+        case "headline":
+            return inline
+                ? ExtensionNativeBlockStyle.font(.caption1, weight: .semibold)
+                : ExtensionNativeBlockStyle.font(.headline, weight: .semibold)
+        case "caption":
+            return inline
+                ? ExtensionNativeBlockStyle.font(.caption2, weight: .semibold)
+                : ExtensionNativeBlockStyle.font(.footnote)
+        case "mono": return ExtensionNativeBlockStyle.font(inline ? .caption2 : .footnote, monospaced: true)
+        default: return ExtensionNativeBlockStyle.font(inline ? .caption1 : .body)
         }
+    }
+
+    /// A text node's ink: its tone, and for an unstyled tone the host's foreground — except
+    /// `caption`, which is secondary text and takes the host's secondary ink.
+    static func textColor(_ raw: String?, style: String?, _ palette: ThemePalette) -> UIColor {
+        if (style ?? "").lowercased() == "caption", ExtensionSurfaceTone(raw: raw) == .neutral {
+            return palette.ui.comment
+        }
+        return textColor(raw, palette)
     }
 
     static func color(_ raw: String?, _ palette: ThemePalette) -> UIColor {
@@ -235,7 +257,7 @@ final class BlocksRenderer {
         case .row(let layout):
             let view: BlocksLayoutView = cached(key, BlocksLayoutView())
             view.apply(
-                children: children(layout.children, path: path, environment: environment),
+                children: children(layout.children, path: path, environment: environment, inRow: true),
                 node: node,
                 action: layout.action,
                 spacing: environment.topLevelSpacing
@@ -395,10 +417,12 @@ final class BlocksRenderer {
     private func children(
         _ nodes: [ExtensionUISurfaceNode],
         path: String,
-        environment: ExtensionSurfaceBlocksEnvironment
+        environment: ExtensionSurfaceBlocksEnvironment,
+        inRow: Bool = false
     ) -> [UIView] {
         // The card's own rhythm is the body root's; a nested level keeps its tree spacing.
-        let nested = withoutTopLevelSpacing(environment)
+        var nested = withoutTopLevelSpacing(environment)
+        nested.inRow = inRow
         return nodes.enumerated().map { index, child in
             render(child, path: "\(path).\(index)", environment: nested)
         }
@@ -468,8 +492,14 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
     private var onTap: (() -> Void)?
     private var onSelect: ((String) -> Void)?
     private(set) var isPrimary = false
+    /// Set while the button is a row's trailing accessory (see `apply(button:)`).
+    private var compact = false
 
     var fillsColumn: Bool { isPrimary }
+
+    /// The smallest target a touch should have to land on; a compact capsule paints less than this
+    /// and keeps its frame at it.
+    private static let minimumTarget: CGFloat = 44
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -487,6 +517,9 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
     ) {
         let action = node.action
         isPrimary = node.isPrimary
+        // A secondary control at the end of a row is that row's accessory: a small tinted capsule
+        // in a 44 pt target. Primary stays the card's one prominent block.
+        compact = environment.inRow && !environment.inline && !node.isPrimary
         var configuration = ExtensionSurfaceButtonFactory.configuration(
             title: action.map {
                 environment.pendingTitle(for: $0, nodeId: surfaceNode.id, fallback: node.title)
@@ -494,7 +527,8 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
             isPrimary: node.isPrimary,
             isDestructive: node.isDestructive,
             icon: node.icon,
-            palette: environment.palette
+            palette: environment.palette,
+            compact: compact
         )
         // The active item of a set of buttons: the host's selection, under the button's own role.
         let selected = node.selected == true
@@ -527,6 +561,7 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         isPrimary = false
+        compact = false
         isSelected = false
         let configuration = ExtensionSurfaceButtonFactory.configuration(
             title: node.title ?? String(localized: "More Actions"),
@@ -565,6 +600,12 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
         accessibilityHint = node.base.accessibility?.hint
         accessibilityValue = node.base.accessibility?.value
         accessibilityTraits = Self.traits(enabled: isEnabled, selected: false)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        var size = super.intrinsicContentSize
+        if compact { size.height = max(size.height, Self.minimumTarget) }
+        return size
     }
 
     /// A control that cannot be used says so, and one that is the active item of a set does too.
@@ -729,6 +770,17 @@ final class ExtensionSurfaceBlocksView: ExtensionSurfaceCompositeCardView {
     /// 14 pt, while a nested stack keeps the spacing step the tree asked for.
     override var bodySpacing: CGFloat { 12 }
     override var actionSpacing: CGFloat { 14 }
+
+    override func drawsFrame(
+        header: ExtensionUISurfaceHeader?,
+        actionIds: [String],
+        tone: ExtensionSurfaceTone,
+        context: ExtensionSurfaceCompositeContext
+    ) -> Bool {
+        let hasHeader = (header?.title.isEmpty == false) || (header?.subtitle?.isEmpty == false)
+        let alone = context.surface.sections.count == 1
+        return !(alone && !hasHeader && actionIds.isEmpty && tone == .neutral)
+    }
 
     override var bodyOffersPrimaryAction: Bool {
         guard case .blocks(let blocks)? = appliedSection else { return false }

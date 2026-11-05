@@ -28,7 +28,7 @@ final class UIValidateTests: XCTestCase {
         let app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen
-        for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") {
+        for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") || key.hasPrefix("CHAT_ROUTES_") {
             app.launchEnvironment[key] = value
         }
         // The theme the capture asks for goes in as launch arguments, which land

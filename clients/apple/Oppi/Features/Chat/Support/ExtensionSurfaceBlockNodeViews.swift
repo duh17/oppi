@@ -99,6 +99,13 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     private var paintsSelection = false
     private var columnFill: [(UIView, NSLayoutConstraint)] = []
     private var childWidths: [(UIView, NSLayoutConstraint)] = []
+    /// The children as the tree gave them. `stack` holds them directly, except while a row that
+    /// starts with a glyph is stacked as a column: then the glyph and the view after it sit in
+    /// `leadingPair`, so the glyph stays beside the words it labels instead of alone on a line.
+    private var children: [UIView] = []
+    private let leadingPair = UIStackView()
+    private lazy var leadingPairFill = leadingPair.widthAnchor.constraint(equalTo: stack.widthAnchor)
+    private var pairsLeadingGlyph = false
     private var align: String?
     private var isRow = true
     private var inline = false
@@ -117,7 +124,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     /// line, so an icon beside a stack of controls sits with the first control instead of floating
     /// halfway down the stack.
     private var containsColumn: Bool {
-        stack.arrangedSubviews.contains { ($0 as? BlocksLayoutView)?.laysOutVertically == true }
+        children.contains { ($0 as? BlocksLayoutView)?.laysOutVertically == true }
     }
 
     override init(frame: CGRect) {
@@ -170,16 +177,10 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         stackBottom?.constant = -inset.bottom
         stackLeading?.constant = inset.left
         stackTrailing?.constant = -inset.right
-        for view in stack.arrangedSubviews where !children.contains(where: { $0 === view }) {
-            stack.removeArrangedSubview(view)
+        for view in self.children where !children.contains(where: { $0 === view }) {
             view.removeFromSuperview()
         }
-        for (index, view) in children.enumerated() {
-            if stack.arrangedSubviews.indices.contains(index), stack.arrangedSubviews[index] === view {
-                continue
-            }
-            stack.insertArrangedSubview(view, at: index)
-        }
+        self.children = children
         for entry in columnFill { entry.1.isActive = false }
         for entry in childWidths { entry.1.isActive = false }
         // Whatever a child's own hugging says, it never draws outside the stack that holds it: a
@@ -193,6 +194,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         }
         appliedVertical = nil
         applyLayout()
+        arrangeChildren()
         applyTap(
             action.flatMap { environment.tap(for: node, action: $0) },
             label: node.base?.accessibility?.label ?? ExtensionSurfaceBlockWords.words(of: node),
@@ -215,13 +217,24 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         stack.axis = vertical ? .vertical : .horizontal
         stack.alignment = vertical ? .leading : rowAlignment
         stack.distribution = .fill
+        // A glyph labels the words after it: a stacked row keeps the two on one line, with the
+        // words wrapping beside it, where a glyph alone above them labels nothing. Controls are
+        // not words; a column of them takes the width a line of its own gives it.
+        pairsLeadingGlyph = vertical && isRow && children.count >= 3 && children[0] is BlocksIconView
+            && Self.isWords(children[1])
+        arrangeChildren()
         guard !vertical else {
             stackLeading?.isActive = true
             stackTrailing?.isActive = true
             stackCenter?.isActive = false
-            for entry in columnFill { entry.1.isActive = true }
+            for entry in columnFill {
+                // The view beside the glyph shares its line, so it does not take the column.
+                entry.1.isActive = !(pairsLeadingGlyph && entry.0 === children[1])
+            }
+            leadingPairFill.isActive = pairsLeadingGlyph
             return
         }
+        leadingPairFill.isActive = false
         for entry in columnFill { entry.1.isActive = false }
         switch align {
         case "center":
@@ -244,14 +257,59 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         }
     }
 
+    /// Whether a view is text, or a column of nothing but text.
+    private static func isWords(_ view: UIView) -> Bool {
+        if view is BlocksTextView { return true }
+        guard let layout = view as? BlocksLayoutView, !layout.isRow else { return false }
+        return !layout.children.isEmpty && layout.children.allSatisfy(isWords)
+    }
+
+    /// Put the children where the current layout wants them: in the stack, or with the first two
+    /// in the leading pair.
+    private func arrangeChildren() {
+        let wanted: [UIView]
+        if pairsLeadingGlyph {
+            leadingPair.axis = .horizontal
+            leadingPair.alignment = .top
+            leadingPair.spacing = stack.spacing
+            let pair = Array(children.prefix(2))
+            for view in leadingPair.arrangedSubviews where !pair.contains(where: { $0 === view }) {
+                leadingPair.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            for (index, view) in pair.enumerated()
+            where !(leadingPair.arrangedSubviews.indices.contains(index) && leadingPair.arrangedSubviews[index] === view) {
+                leadingPair.insertArrangedSubview(view, at: index)
+            }
+            wanted = [leadingPair] + children.dropFirst(2)
+        } else {
+            for view in leadingPair.arrangedSubviews {
+                leadingPair.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            leadingPair.removeFromSuperview()
+            wanted = children
+        }
+        for view in stack.arrangedSubviews where !wanted.contains(where: { $0 === view }) {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, view) in wanted.enumerated() {
+            if stack.arrangedSubviews.indices.contains(index), stack.arrangedSubviews[index] === view {
+                continue
+            }
+            stack.insertArrangedSubview(view, at: index)
+        }
+    }
+
     /// Whether a row's children cannot share one line at the width it is given.
     private var shouldStack: Bool {
         guard isRow else { return false }
         guard !traitCollection.preferredContentSizeCategory.isAccessibilityCategory else { return true }
         let available = bounds.width > 0 ? bounds.width : measuredWidth
         guard available > 0 else { return false }
-        let spacing = stack.spacing * CGFloat(max(0, stack.arrangedSubviews.count - 1))
-        let natural = stack.arrangedSubviews.reduce(CGFloat.zero) { total, view in
+        let spacing = stack.spacing * CGFloat(max(0, children.count - 1))
+        let natural = children.reduce(CGFloat.zero) { total, view in
             guard !view.isHidden else { return total }
             return total + view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
         }
@@ -265,7 +323,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         }
         applyLayout()
         if paintsSelection { layer.cornerRadius = ExtensionSurfaceBlockMetrics.selectionRadius(bounds) }
-        for case let block as any ExtensionNativeBlockRendering in stack.arrangedSubviews {
+        for case let block as any ExtensionNativeBlockRendering in children {
             block.adoptLayoutWidth(stack.bounds.width)
         }
     }
@@ -315,9 +373,9 @@ final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         label.text = node.text
-        label.font = ExtensionSurfaceBlockMetrics.font(node.style)
+        label.font = ExtensionSurfaceBlockMetrics.font(node.style, inline: environment.inline)
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = ExtensionSurfaceBlockMetrics.textColor(node.tone, environment.palette)
+        label.textColor = ExtensionSurfaceBlockMetrics.textColor(node.tone, style: node.style, environment.palette)
         // A pill gives one line; a card body never truncates the extension's words.
         label.numberOfLines = environment.inline ? 1 : 0
         label.lineBreakMode = environment.inline ? .byTruncatingTail : .byWordWrapping
@@ -459,6 +517,8 @@ final class BlocksBadgeView: BlocksTapControl {
 /// empty rather than failing the node.
 final class BlocksIconView: UIView {
     private let image = UIImageView()
+    /// A glyph in a pill keeps the symbol's own size; beside a card's text it gets a column.
+    private var inline = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -491,6 +551,7 @@ final class BlocksIconView: UIView {
             color: color
         )
         image.isHidden = image.image == nil
+        inline = environment.inline
         let label = node.base.accessibility?.label
         isAccessibilityElement = label != nil
         accessibilityLabel = label
@@ -500,8 +561,24 @@ final class BlocksIconView: UIView {
         invalidateIntrinsicContentSize()
     }
 
+    /// Beside text the glyph sits in a box as tall as one line of body type and a little wider
+    /// than it, centred: in a row whose children share their first line, the glyph then centres on
+    /// the title's first line, and every glyph takes the same column so titles line up from row to
+    /// row whatever symbol leads them.
     override var intrinsicContentSize: CGSize {
-        image.isHidden ? .zero : image.intrinsicContentSize
+        guard !image.isHidden else { return .zero }
+        let symbol = image.intrinsicContentSize
+        guard !inline else { return symbol }
+        let line = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).lineHeight
+        let height = ceil(max(line, symbol.height))
+        return CGSize(width: ceil(height * 1.2), height: height)
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if previous?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            invalidateIntrinsicContentSize()
+        }
     }
 }
 
@@ -511,8 +588,12 @@ final class BlocksIconView: UIView {
 /// `collapsed` decides what a reader first sees, and after that the person's own choice stands
 /// until the surface publishes a different one. Nothing here sends an action — folding a region is
 /// the reader's business, not the extension's.
+///
+/// The control is the activity list's disclosure row: the words at the leading edge, the chevron
+/// at the trailing edge, down while the region is folded and up while it is open, in footnote type
+/// and the secondary ink so it stays behind the content it folds.
 final class BlocksGroupView: UIView, BlocksColumnFillable {
-    private let disclosure = UIButton(type: .system)
+    private let disclosure = BlocksDisclosureControl()
     private let content = UIStackView()
     private var publishedCollapsed: Bool?
     /// What the reader last saw: the chevron follows it, and so does what VoiceOver reads.
@@ -521,7 +602,6 @@ final class BlocksGroupView: UIView, BlocksColumnFillable {
     override init(frame: CGRect) {
         super.init(frame: frame)
         disclosure.translatesAutoresizingMaskIntoConstraints = false
-        disclosure.contentHorizontalAlignment = .leading
         disclosure.addTarget(self, action: #selector(toggleCollapsed), for: .touchUpInside)
         content.axis = .vertical
         content.alignment = .fill
@@ -529,7 +609,7 @@ final class BlocksGroupView: UIView, BlocksColumnFillable {
         let column = UIStackView(arrangedSubviews: [disclosure, content])
         column.axis = .vertical
         column.alignment = .fill
-        column.spacing = 6
+        column.spacing = 0
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
@@ -560,19 +640,8 @@ final class BlocksGroupView: UIView, BlocksColumnFillable {
             publishedCollapsed = collapsed
             isExpanded = !(collapsed ?? false)
         }
-        disclosure.setTitle(title, for: .normal)
-        disclosure.setTitleColor(palette.ui.comment, for: .normal)
-        disclosure.titleLabel?.font = ExtensionNativeBlockStyle.font(.caption1, weight: .semibold)
-        disclosure.titleLabel?.adjustsFontForContentSizeCategory = true
-        disclosure.tintColor = palette.ui.comment
-        disclosure.semanticContentAttribute = .forceLeftToRight
-        disclosure.imageEdgeInsets = UIEdgeInsets(top: 0, left: -2, bottom: 0, right: 2)
+        disclosure.apply(title: title, palette: palette)
         disclosure.accessibilityIdentifier = identifier.map { "\($0).disclosure" }
-        disclosure.accessibilityLabel = title
-        disclosure.accessibilityValue = isExpanded
-            ? String(localized: "Expanded")
-            : String(localized: "Collapsed")
-        disclosure.accessibilityTraits = .button
 
         for view in content.arrangedSubviews where !children.contains(where: { $0 === view }) {
             content.removeArrangedSubview(view)
@@ -584,27 +653,85 @@ final class BlocksGroupView: UIView, BlocksColumnFillable {
             }
             content.insertArrangedSubview(view, at: index)
         }
-        // A collapsed region keeps its children built — a patch may change them — but takes them
-        // off screen and out of the accessibility tree.
-        content.isHidden = !isExpanded
-        disclosure.setImage(chevron(), for: .normal)
+        showExpansion()
     }
 
     @objc private func toggleCollapsed() {
         isExpanded.toggle()
-        content.isHidden = !isExpanded
-        disclosure.setImage(chevron(), for: .normal)
-        disclosure.accessibilityValue = isExpanded
-            ? String(localized: "Expanded")
-            : String(localized: "Collapsed")
+        showExpansion()
     }
 
-    private func chevron() -> UIImage? {
-        UIImage(
-            systemName: isExpanded ? "chevron.down" : "chevron.right",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-        )
+    /// A collapsed region keeps its children built — a patch may change them — but takes them
+    /// off screen and out of the accessibility tree.
+    private func showExpansion() {
+        content.isHidden = !isExpanded
+        disclosure.showExpansion(isExpanded)
     }
+}
+
+/// The disclosure row of a group: its words and a chevron, as one control.
+final class BlocksDisclosureControl: UIControl {
+    private let label = ExtensionNativeBlockStyle.label(.footnote)
+    private let chevron = UIImageView()
+    /// The row is as quiet as its words (footnote, secondary ink), 32 pt tall; the touch target
+    /// reaches 44 pt by extending past it, so the row does not cost a full list row.
+    private static let minimumTarget: CGFloat = 44
+    private static let rowHeight: CGFloat = 32
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.isUserInteractionEnabled = false
+        chevron.contentMode = .center
+        chevron.isUserInteractionEnabled = false
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [label, chevron])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 10
+        row.isUserInteractionEnabled = false
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.rowHeight),
+        ])
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        addTarget(self, action: #selector(dim), for: [.touchDown, .touchDragEnter])
+        addTarget(self, action: #selector(undim), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(title: String, palette: ThemePalette) {
+        label.text = title
+        label.textColor = palette.ui.comment
+        chevron.tintColor = palette.ui.comment
+        accessibilityLabel = title
+    }
+
+    func showExpansion(_ expanded: Bool) {
+        chevron.image = UIImage(
+            systemName: expanded ? "chevron.up" : "chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption2, scale: .default)
+                .applying(UIImage.SymbolConfiguration(weight: .semibold))
+        )
+        accessibilityValue = expanded ? String(localized: "Expanded") : String(localized: "Collapsed")
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: min(0, (bounds.height - Self.minimumTarget) / 2)).contains(point)
+    }
+
+    @objc private func dim() { alpha = 0.6 }
+    @objc private func undim() { alpha = 1 }
 }
 
 // MARK: - Progress

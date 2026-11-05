@@ -308,6 +308,8 @@ class ExtensionSurfaceCompositeCardView: UIView {
     private let column = UIStackView()
     private var stateHeight: NSLayoutConstraint?
     private var measuredStateHeight: CGFloat = 0
+    private var columnInsets: [NSLayoutConstraint] = []
+    private static let cardPadding: CGFloat = 10
     private(set) var context: ExtensionSurfaceCompositeContext?
 
     var identifier: String {
@@ -345,11 +347,13 @@ class ExtensionSurfaceCompositeCardView: UIView {
         for view in [header, stateView, body, actions] as [UIView] {
             column.addArrangedSubview(view)
         }
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+        columnInsets = [
+            column.topAnchor.constraint(equalTo: topAnchor, constant: Self.cardPadding),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.cardPadding),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.cardPadding),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.cardPadding),
+        ]
+        NSLayoutConstraint.activate(columnInsets + [
             titles.topAnchor.constraint(equalTo: header.topAnchor),
             titles.bottomAnchor.constraint(equalTo: header.bottomAnchor),
             titles.leadingAnchor.constraint(equalTo: header.leadingAnchor),
@@ -368,6 +372,17 @@ class ExtensionSurfaceCompositeCardView: UIView {
     /// tree's levels read as groups, so it gives its top level more room than a nested stack does.
     var bodySpacing: CGFloat { 8 }
     var actionSpacing: CGFloat { 8 }
+
+    /// Whether the card draws its own frame: the faint fill, hairline, and padding that set one
+    /// card off from the next. A card that is its whole surface's only content, with nothing of its
+    /// own to say in a header or an action row, is drawn straight onto the drawer, which is already
+    /// the surface's card; framing it again puts a card inside a card.
+    func drawsFrame(
+        header: ExtensionUISurfaceHeader?,
+        actionIds: [String],
+        tone: ExtensionSurfaceTone,
+        context: ExtensionSurfaceCompositeContext
+    ) -> Bool { true }
 
     /// Whether the body already offers a primary action of its own: the card's action row is then
     /// secondary, so one card never shows two primary buttons.
@@ -422,9 +437,19 @@ class ExtensionSurfaceCompositeCardView: UIView {
         // A tree's region may carry no header at all: the card then starts at its body.
         header.isHidden = title == nil && subtitle == nil
 
-        ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
-        layer.borderWidth = tone == .neutral ? 0.5 : 1
-        layer.borderColor = tone.color(palette).withAlphaComponent(tone == .neutral ? 0.08 : 0.4).cgColor
+        let framed = drawsFrame(header: cardHeader, actionIds: actionIds, tone: tone, context: context)
+        if framed {
+            ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
+            layer.borderWidth = tone == .neutral ? 0.5 : 1
+            layer.borderColor = tone.color(palette).withAlphaComponent(tone == .neutral ? 0.08 : 0.4).cgColor
+        } else {
+            backgroundColor = .clear
+            layer.borderWidth = 0
+        }
+        for constraint in columnInsets {
+            constraint.constant = (constraint.firstAttribute == .top || constraint.firstAttribute == .leading ? 1 : -1)
+                * (framed ? Self.cardPadding : 0)
+        }
 
         header.accessibilityLabel = [title, subtitle].compactMap(\.self).joined(separator: ", ")
         header.accessibilityValue = state.isContent ? value : Self.stateWords(state)
@@ -989,8 +1014,17 @@ enum ExtensionSurfaceButtonFactory {
         isPrimary: Bool,
         isDestructive: Bool,
         icon: String?,
-        palette: ThemePalette
+        palette: ThemePalette,
+        compact: Bool = false
     ) -> UIButton.Configuration {
+        if compact {
+            return compactConfiguration(
+                title: title,
+                isDestructive: isDestructive,
+                icon: icon,
+                palette: palette
+            )
+        }
         var configuration = isPrimary ? UIButton.Configuration.borderedProminent() : .bordered()
         configuration.title = title
         configuration.titleLineBreakMode = isPrimary ? .byWordWrapping : .byTruncatingTail
@@ -1008,6 +1042,40 @@ enum ExtensionSurfaceButtonFactory {
         } else {
             configuration.baseForegroundColor = isDestructive ? palette.ui.red : palette.ui.fg
         }
+        return configuration
+    }
+
+    /// A row's trailing accessory: a tinted capsule one line of subheadline tall, drawn inside a
+    /// frame of 44 pt so the target is the system's without the capsule being. The tint is the
+    /// control's one colour, so destructive is red text on a quiet red fill rather than a button
+    /// the size of its row.
+    private static func compactConfiguration(
+        title: String,
+        isDestructive: Bool,
+        icon: String?,
+        palette: ThemePalette
+    ) -> UIButton.Configuration {
+        // A destructive accessory is red words on the quiet grey fill, not red on red.
+        var configuration = isDestructive ? UIButton.Configuration.gray() : .tinted()
+        configuration.title = title
+        configuration.titleLineBreakMode = .byTruncatingTail
+        configuration.cornerStyle = .capsule
+        configuration.buttonSize = .small
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = ExtensionNativeBlockStyle.font(.subheadline, weight: .semibold)
+            return attributes
+        }
+        if let icon {
+            configuration.image = UIImage.scaledSymbol(icon, style: .subheadline, weight: .semibold)
+            configuration.imagePadding = 4
+        }
+        configuration.baseForegroundColor = isDestructive ? palette.ui.red : palette.ui.cyan
+        configuration.baseBackgroundColor = isDestructive ? palette.ui.fg.withAlphaComponent(0.12) : palette.ui.cyan
+        // 12 pt above and below the words makes the frame 44 pt at the default size; the capsule
+        // is painted 7 pt in from each, so it is the words plus 5 pt.
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
+        configuration.background.backgroundInsets = NSDirectionalEdgeInsets(top: 7, leading: 0, bottom: 7, trailing: 0)
         return configuration
     }
 }

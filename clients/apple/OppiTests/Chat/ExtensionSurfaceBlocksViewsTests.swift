@@ -749,6 +749,91 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(isHiddenFromReader(repaintedChip, in: view))
     }
 
+    // MARK: - A row's glyph, accessory, and the card that holds it
+
+    /// A surface whose sections are headerless blocks trees with the given bodies, in order.
+    private func headerlessBlocks(_ bodies: [[String: Any]]) throws -> ExtensionUISurface {
+        try surface("blocks-panel.json") { object in
+            object["sections"] = bodies.enumerated().map { index, body -> [String: Any] in
+                [
+                    "composite": "blocks",
+                    "id": "section-\(index)",
+                    "state": ["kind": "content"],
+                    "fallback": ["text": "fallback"],
+                    "body": body,
+                ]
+            }
+        }
+    }
+
+    private func jobRow(title: String = "A running job") -> [String: Any] {
+        [
+            "type": "row",
+            "id": "head",
+            "children": [
+                ["type": "icon", "id": "glyph", "name": "checkmark.circle.fill", "tone": "success"],
+                ["type": "text", "id": "title", "text": title, "style": "headline"],
+                [
+                    "type": "button", "id": "stop", "title": "Stop", "role": "destructive",
+                    "action": ["id": "retry"],
+                ],
+            ],
+        ]
+    }
+
+    @Test func aCardThatIsItsSurfacesOnlyContentSitsOnTheDrawerWithoutAFrame() throws {
+        func cards(_ bodies: [[String: Any]]) throws -> [ExtensionSurfaceBlocksView] {
+            subviews(of: ExtensionSurfaceBlocksView.self, in: composites(try headerlessBlocks(bodies)))
+        }
+        let alone = try #require(cards([jobRow()]).first)
+        #expect(alone.layer.borderWidth == 0, "the only card framed itself inside the drawer")
+        #expect(alone.backgroundColor == .clear)
+
+        // With a neighbour, each card is a card: the frame is what tells them apart.
+        let neighbours = try cards([jobRow(), jobRow()])
+        #expect(neighbours.count == 2)
+        #expect(neighbours.allSatisfy { $0.layer.borderWidth > 0 })
+    }
+
+    @Test func aSecondaryButtonEndingARowIsACompactCapsuleInA44PointTarget() throws {
+        let view = composites(try headerlessBlocks([jobRow()]))
+        let stop = try #require(
+            control(node("blocks-panel", "section-0", "stop"), in: view) as? UIButton
+        )
+        #expect(stop.frame.height >= 44, "Stop is \(stop.frame.height) pt tall")
+        // The capsule is painted inside that frame, not across it.
+        let inset = try #require(stop.configuration?.background.backgroundInsets)
+        #expect(inset.top > 0 && inset.bottom > 0)
+
+        // The same button on a line of its own is the card's ordinary bordered button.
+        let alone = composites(try headerlessBlocks([[
+            "type": "stack", "children": [[
+                "type": "button", "id": "stop", "title": "Stop", "role": "destructive",
+                "action": ["id": "retry"],
+            ]],
+        ]]))
+        let block = try #require(
+            control(node("blocks-panel", "section-0", "stop"), in: alone) as? UIButton
+        )
+        #expect(block.configuration?.background.backgroundInsets == NSDirectionalEdgeInsets.zero)
+    }
+
+    @Test func aRowThatStacksAtAnAccessibilitySizeKeepsItsGlyphBesideItsWords() throws {
+        let view = composites(
+            try headerlessBlocks([jobRow(title: "bun run release")]),
+            sizeCategory: .accessibilityExtraExtraExtraLarge
+        )
+        let glyph = try #require(subviews(of: BlocksIconView.self, in: view).first)
+        let title = try #require(control(node("blocks-panel", "section-0", "title"), in: view))
+        let stop = try #require(control(node("blocks-panel", "section-0", "stop"), in: view))
+        let glyphFrame = glyph.convert(glyph.bounds, to: view)
+        let titleFrame = title.convert(title.bounds, to: view)
+        let stopFrame = stop.convert(stop.bounds, to: view)
+        #expect(glyphFrame.maxX <= titleFrame.minX + 0.5, "the glyph is not beside its title")
+        #expect(abs(glyphFrame.minY - titleFrame.minY) < 12, "the glyph left its title's first line")
+        #expect(stopFrame.minY >= titleFrame.maxY - 0.5, "Stop did not wrap below the title")
+    }
+
     @Test func aGroupPublishedFoldedStartsFoldedAndOpensOnTap() throws {
         let view = composites(try panelWithFoldedGroup())
         let disclosure = try testUnwrap(
