@@ -424,7 +424,6 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "string; Live Voice media: yuwp, grok-voice, or openrouter",
       },
       { name: "images.autoResize", summary: "boolean; resize large image uploads" },
-      { name: "extensions.voice.defaultVoiceId", summary: "string; saved voice id" },
     ],
     notes: [
       'JSON-valued keys must receive valid JSON, for example \'{"mode":"self-signed"}\'.',

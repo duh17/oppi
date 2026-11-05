@@ -36,7 +36,6 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `asr.liveVoiceBackend` | Live Voice: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`), `grok-voice` (Grok uses the xAI `tts.voice`, else `eve`), or `openrouter` (OpenRouter transcription and speech with the server's OpenRouter credential; see [OpenRouter Live Voice](../server/docs/asr.md#live-voice-openrouter)). No restart: each call reads `asr` and `tts` from disk. The app offers Live Voice only while this backend is ready ([Voice backend health](#voice-backend-health)) |
 | `tts.provider` / `endpoint` / `model` / `voice` / `language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
 | `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
-| `extensions.voice.defaultVoiceId` | Default voice id for a voice extension |
 | `push.mode` / `push.relays` | Push (restart; see [Push notifications](#push-notifications)) |
 | `images.autoResize` | Phones resize images over 2000 px before upload (default `true`; `false` keeps originals and leaves resizing to Pi on the server) |
 | `providerQuotas.openaiUseCodexPlan` | Opt in to legacy Codex plan-wide usage on the OpenAI row (default `false`; restart; see [Provider quotas](provider-quotas.md)) |
@@ -126,16 +125,15 @@ The app reads `/server/info` when it connects, on each return to the foreground,
 
 ## Voice extensions
 
-Voice extensions synthesize speech for their own tools.
+Voice extensions synthesize speech for their own tools. Their audio contract is in [Voice replies / TTS](../server/docs/tts.md).
 
 ```bash
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
-oppi config set extensions.voice.defaultVoiceId my-voice-id
 oppi config validate
 oppi server restart
 ```
 
-`runtimeEnv.TTS_BASE_URL` is passed into the host process for a voice extension, and `extensions.voice.defaultVoiceId` is the saved default voice. Inspect with `oppi config get runtimeEnv` and `oppi config get extensions.voice`. Extension-specific auth and models stay in the extension's own settings.
+`runtimeEnv.TTS_BASE_URL` is passed into the host process for a voice extension. Inspect it with `oppi config get runtimeEnv`. Extension-specific auth, models, and voices stay in the extension's own settings. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored on load.
 
 ## Push notifications
 

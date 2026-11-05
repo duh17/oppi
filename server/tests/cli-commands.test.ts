@@ -123,10 +123,6 @@ describe("oppi config", () => {
   it("config set/get roundtrips values", () => {
     run(["config", "set", "port", "9999"]);
     expect(run(["config", "get", "port"]).stdout.trim()).toContain("9999");
-    run(["config", "set", "extensions", '{"voice":{"defaultVoiceId":"warm"}}']);
-    expect(run(["config", "get", "extensions"]).stdout.trim()).toContain(
-      '"defaultVoiceId": "warm"',
-    );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
     run(["config", "set", "asr.provider", "xai"]);

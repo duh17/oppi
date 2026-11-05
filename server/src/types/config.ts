@@ -238,13 +238,4 @@ export interface ServerConfig {
 
   /** Local upload store config for chat attachments. */
   uploadStore?: UploadStoreConfig;
-
-  /**
-   * Server-managed extension configuration and lightweight persisted state.
-   */
-  extensions?: {
-    voice?: {
-      defaultVoiceId?: string;
-    };
-  };
 }

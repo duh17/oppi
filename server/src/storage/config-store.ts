@@ -275,10 +275,19 @@ function normalizeConfig(
     "providerQuotas",
     "images",
     "uploadStore",
-    "extensions",
   ]);
+  // `extensions` held only `voice.defaultVoiceId`, which nothing read. Older
+  // files keep validating, even strictly; load drops the key on rewrite.
+  const retiredTopLevelKeys = new Set(["extensions"]);
 
-  const unknownTopLevelKeys = Object.keys(obj).filter((key) => !topLevelKeys.has(key));
+  if ("extensions" in obj) {
+    warnings.push("config.extensions: ignored; Oppi no longer reads extension settings");
+    changed = true;
+  }
+
+  const unknownTopLevelKeys = Object.keys(obj).filter(
+    (key) => !topLevelKeys.has(key) && !retiredTopLevelKeys.has(key),
+  );
   if (unknownTopLevelKeys.length > 0) {
     changed = true;
   }
@@ -1121,55 +1130,6 @@ function normalizeConfig(
         ...(config.uploadStore ?? {}),
         ...uploadConfig,
       };
-    }
-  }
-
-  // Extension configuration
-  if ("extensions" in obj && isRecord(obj.extensions)) {
-    const extensions = obj.extensions;
-    const extensionConfig: NonNullable<ServerConfig["extensions"]> = {};
-    const allowedExtensionKeys = new Set(["voice"]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(extensions)) {
-        if (!allowedExtensionKeys.has(key)) {
-          errors.push(`config.extensions.${key}: unknown key`);
-        }
-      }
-    }
-
-    if ("voice" in extensions) {
-      if (isRecord(extensions.voice)) {
-        const voice = extensions.voice;
-        const voiceConfig: NonNullable<NonNullable<ServerConfig["extensions"]>["voice"]> = {};
-        const allowedVoiceKeys = new Set(["defaultVoiceId"]);
-
-        if (strictUnknown) {
-          for (const key of Object.keys(voice)) {
-            if (!allowedVoiceKeys.has(key)) {
-              errors.push(`config.extensions.voice.${key}: unknown key`);
-            }
-          }
-        }
-
-        if (typeof voice.defaultVoiceId === "string" && voice.defaultVoiceId.trim().length > 0) {
-          voiceConfig.defaultVoiceId = voice.defaultVoiceId.trim();
-        } else if ("defaultVoiceId" in voice && voice.defaultVoiceId !== undefined) {
-          errors.push("config.extensions.voice.defaultVoiceId: expected non-empty string");
-          changed = true;
-        }
-
-        if (Object.keys(voiceConfig).length > 0) {
-          extensionConfig.voice = voiceConfig;
-        }
-      } else if (extensions.voice !== undefined) {
-        errors.push("config.extensions.voice: expected object");
-        changed = true;
-      }
-    }
-
-    if (Object.keys(extensionConfig).length > 0) {
-      config.extensions = extensionConfig;
     }
   }
 

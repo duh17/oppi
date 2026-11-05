@@ -749,6 +749,32 @@ describe("Storage config validation", () => {
     });
   });
 
+  it("loads a config with the retired extensions.voice key and drops it from disk", () => {
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...Storage.getDefaultConfig(dir),
+        port: 9123,
+        extensions: { voice: { defaultVoiceId: "warm" } },
+      }),
+    );
+
+    // `oppi config validate` is strict; an old file must still pass it.
+    const strict = Storage.validateConfigFile(configPath, dir);
+    expect(strict.valid).toBe(true);
+    expect(strict.warnings).toContain(
+      "config.extensions: ignored; Oppi no longer reads extension settings",
+    );
+
+    const storage = new Storage(dir);
+    expect(storage.getConfig().port).toBe(9123);
+    expect(storage.getConfig()).not.toHaveProperty("extensions");
+    const onDisk = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    expect(onDisk).not.toHaveProperty("extensions");
+    expect(onDisk.port).toBe(9123);
+  });
+
   it("survives round-trip through Storage constructor with asr config", () => {
     const configPath = join(dir, "config.json");
     writeFileSync(

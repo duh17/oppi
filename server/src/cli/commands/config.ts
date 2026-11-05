@@ -112,12 +112,6 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   "uploadStore.unusedTtlMs": { type: "number", desc: "Unused upload TTL" },
   "uploadStore.retainedTtlMs": { type: "number", desc: "Retained upload TTL" },
   "uploadStore.allowedMimeTypes": { type: "json", desc: "Allowed MIME types JSON array" },
-  extensions: {
-    type: "json",
-    desc: "Extension config JSON object",
-  },
-  "extensions.voice": { type: "json", desc: "Voice extension config JSON object" },
-  "extensions.voice.defaultVoiceId": { type: "string", desc: "Default saved voice ID" },
 };
 
 export function cmdConfig(
