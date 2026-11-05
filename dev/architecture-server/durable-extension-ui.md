@@ -35,7 +35,7 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 - Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pi-durable's `23-subagent-background` pattern). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
 - A compact card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as a generated input: excluded from the editable queue, preserved by queue replacement, rendered as a card in history, omitted from `get_messages`.
 - Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. Ordinary Stop preserves background jobs.
-- The job pill is a v2 surface owned by `background-jobs/panel.ts`. The Session's surface loop keeps no record of it, so `server.ts` redraws it from `DurableJobs` after every job change and when a runner resumes. Stop sets `cancelRequested` through the job runner's own handle, the same flag `background_job cancel` sets. The classic `index.ts` cannot publish a surface and keeps the v1 widget.
+- `background-jobs/panel.ts` owns the job panel: a session surface (`oppiHost().surfaces(env)`) whose one action is Stop. Surfaces live only in the Session's memory, so `server.ts` republishes it from `DurableJobs` after each job change and when a runner resumes; a conversation without a live Session has no panel. Stop sets `cancelRequested`, the flag `background_job cancel` sets, through a handle the runner registers while its shell runs. The classic `index.ts` cannot reach `surface()` and keeps its v1 widget.
 - Crash smoke: `node --import tsx scripts/durable-background-jobs-smoke.ts` after `npm run build`, through the credential-approved tool.
 
 ## Input-card output
@@ -44,7 +44,7 @@ An input card may advertise `output: { kind: "terminal", offset, length, command
 
 ## SQLite explorer
 
-`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite. The result is the tool's own text, a markdown table of the first 100 rows, shown as an ordinary tool row; the plugin publishes no surface or widget.
+`sql-explorer` offers read-only `sqlite_schema`/`sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` because `~/.sqliterc` runs before `-safe`) with a timeout and output cap, never `node:fs`, `node:child_process`, or in-process SQLite. The tool result (a markdown table) is the whole answer, shown as an ordinary tool row; the plugin publishes no surface and writes no widget slot.
 
 ## Proof commands
 

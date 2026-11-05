@@ -31,13 +31,17 @@ still wake the model. Interrupted shell commands are reported, never rerun.
 The model receives the complete bounded result, while Oppi displays a compact
 result card instead of a synthetic user bubble containing raw output. This uses
 generic input presentation metadata shared by live and history projections.
-In a durable session the job pill is a surface from `oppi/v1` (`panel.ts`), not the classic
-widget. It shows while a backgrounded job runs or its result waits for delivery. Each running
-job has a **Stop** button, which kills it the way `background_job cancel` does, and each job folds
-its output tail behind a row; a job that has finished has no Stop. The panel is drawn from the
-saved job list, so it comes back after a server restart, and it clears itself once every result
-is delivered. A client that cannot draw surfaces gets the same terminal band the classic pill
-shows. The classic extension above is unchanged: it can only publish the host's v1 widget, which
-has no actions. See
+
+The job pill in a durable session is a surface (`panel.ts`), not the classic
+widget. It shows while a backgrounded job runs or its result waits for delivery,
+and clears once every result is delivered. Each running job has a **Stop**
+button, which kills it as `background_job cancel` does. A finished job shows the
+end of its output under **Output**; a running job has none to show yet. The
+panel is drawn from the saved job list, so it returns when a job's runner
+resumes after a server restart. A client that cannot draw surfaces sees the same
+jobs without buttons.
+
+The classic extension above is unchanged. It can publish only Pi's widget, which
+has no buttons, so it offers no Stop. See
 [Durable background jobs](../../dev/architecture-server/durable-extension-ui.md#background-jobs)
 for restart, output, and Stop details.

@@ -2,6 +2,6 @@
   "name": "oppi-sql-explorer",
   "version": "0.0.0",
   "private": true,
-  "description": "Oppi built-in: read-only SQLite schema and query tools with a live Data widget.",
+  "description": "Oppi built-in: read-only SQLite schema and query tools that answer in the tool row.",
   "type": "module"
 }
