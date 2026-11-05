@@ -1,5 +1,6 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { isLoopbackHostname } from "./request-trust.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 
 export type ModelAuthKind = "subscription" | "local" | "apiKey";
@@ -218,8 +219,7 @@ function isLocalModel(model: RegistryModel): boolean {
   if (!model.baseUrl) return false;
 
   try {
-    const hostname = new URL(model.baseUrl).hostname.toLowerCase();
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    return isLoopbackHostname(new URL(model.baseUrl).hostname);
   } catch {
     return false;
   }
