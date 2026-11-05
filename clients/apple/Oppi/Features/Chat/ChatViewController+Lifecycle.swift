@@ -29,7 +29,18 @@ extension ChatViewController {
         footerStack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(footerStack)
 
+        // A drawer grows the footer up from the composer. The footer stops short of the bar, and
+        // a drawer's scrolling body (`CappedScrollView`, whose hug is 249) gives the height up.
+        // Just under the 750 that labels compress at, so nothing but that body gives way: not
+        // text, and not the composer, which holds its own height at 999.
+        let footerTopLimit = footerStack.topAnchor.constraint(
+            greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor,
+            constant: 8
+        )
+        footerTopLimit.priority = .defaultHigh - 1
+
         NSLayoutConstraint.activate([
+            footerTopLimit,
             contentBottomGuide.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentBottomGuide.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentBottomGuide.topAnchor.constraint(equalTo: view.topAnchor),

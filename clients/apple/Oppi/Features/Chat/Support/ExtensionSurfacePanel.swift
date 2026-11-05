@@ -152,6 +152,9 @@ final class CappedScrollView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // The scroll view sizes its content in its own layout pass, which runs after this view's
+        // `super` returns: read a stale size and a body that overflows would never scroll.
+        scrollView.layoutIfNeeded()
         let canScroll = scrollView.contentSize.height > scrollView.bounds.height + 0.5
         scrollView.isScrollEnabled = canScroll
         scrollView.alwaysBounceVertical = canScroll

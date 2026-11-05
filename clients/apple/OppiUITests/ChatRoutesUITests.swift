@@ -618,6 +618,61 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// A surface drawer taller than the space above the composer keeps its own height inside that
+    /// space and scrolls: the Actions card at its foot is reachable, and its button reaches the
+    /// socket. The session's activity clock ticks under the open drawer, as a busy session's does,
+    /// and each tick repaints the footer; the button must live through that.
+    func testTallSurfaceDrawerScrollsAboveTheComposerAndDispatchesItsAction() {
+        runTallSurfaceDrawer(shotSuffix: "", environment: [:])
+    }
+
+    /// The same drawer with session warnings between the strip and the composer, so the space
+    /// between the bar and the composer is smaller than the drawer's natural height.
+    func testTallSurfaceDrawerFitsBetweenTheBarAndTheComposerAmongWarnings() {
+        runTallSurfaceDrawer(shotSuffix: "-warnings", environment: ["CHAT_ROUTES_WARNINGS": "6"])
+    }
+
+    private func runTallSurfaceDrawer(shotSuffix: String, environment: [String: String]) {
+        launch(environment: environment.merging(["CHAT_ROUTES_SURFACE": "tall"]) { $1 })
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-query"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The published surface shows its pill")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(composer.waitUntilExists(timeout: 10))
+        attachScreenshot("surface-collapsed\(shotSuffix)")
+        pill.tap()
+
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-query"]
+        let again = app.buttons["extension.surface.query.actions.again"]
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        attachScreenshot("surface-expanded\(shotSuffix)")
+        XCTAssertLessThanOrEqual(
+            drawer.frame.maxY, composer.frame.minY,
+            "The drawer must end above the composer: \(drawer.frame) vs \(composer.frame)"
+        )
+        XCTAssertGreaterThanOrEqual(
+            drawer.frame.minY, app.buttons["chat.toolbar.context"].frame.maxY,
+            "The drawer must start below the bar: \(drawer.frame)"
+        )
+
+        for _ in 0..<8 where !(again.exists && again.isHittable) {
+            drawer.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(again.isHittable, "Run again must scroll into reach: \(again.frame)")
+        XCTAssertLessThanOrEqual(
+            again.frame.maxY, composer.frame.minY,
+            "Run again must sit above the composer: \(again.frame)"
+        )
+        attachScreenshot("surface-scrolled\(shotSuffix)")
+        // Held, so a repaint lands while the finger is down: a button replaced under it never
+        // sends.
+        again.press(forDuration: 0.5)
+        XCTAssertTrue(
+            waitFor(app.staticTexts["chatRoutes.surfaceActions"].label == "query/actions/again"),
+            "Run again must reach the socket: \(app.staticTexts["chatRoutes.surfaceActions"].label)"
+        )
+        assertRunning()
+    }
+
     /// A pending composer image opens the annotate canvas. Its bar must carry
     /// undo/redo beside the checkmark — Add to Chat returns the annotated image,
     /// Cancel keeps the attachment — and the composer must be usable again

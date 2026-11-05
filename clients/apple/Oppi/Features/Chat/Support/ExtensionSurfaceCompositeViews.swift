@@ -161,6 +161,20 @@ final class ExtensionSurfaceCompositesView: UIView {
     private let stack = UIStackView()
     private var cards: [String: UIView] = [:]
     private var kinds: [String: String] = [:]
+    /// What the cards were last drawn from. The drawer is applied again for anything its footer
+    /// repaints for (a followed child's tail streams ten times a second), and a card redraws by
+    /// replacing its controls: a touch already down on one would never end.
+    private var drawn: (
+        surface: ExtensionUISurface,
+        pending: ExtensionSurfacePendingAction?,
+        themeID: ThemeID,
+        sendsActions: Bool,
+        sizeCategory: UIContentSizeCategory
+    )?
+    /// The last inputs, to draw again when the text size changes: some blocks measure their
+    /// layout when drawn.
+    private var latest: (surface: ExtensionUISurface, pending: ExtensionSurfacePendingAction?, themeID: ThemeID)?
+    private var onAction: ((ExtensionSurfaceActionIntent) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -175,6 +189,15 @@ final class ExtensionSurfaceCompositesView: UIView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            guard let latest = self.latest else { return }
+            self.apply(
+                surface: latest.surface,
+                pending: latest.pending,
+                themeID: latest.themeID,
+                onAction: self.onAction
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -186,11 +209,19 @@ final class ExtensionSurfaceCompositesView: UIView {
         themeID: ThemeID,
         onAction: ((ExtensionSurfaceActionIntent) -> Void)?
     ) {
+        self.onAction = onAction
+        latest = (surface, pending, themeID)
+        let sendsActions = onAction != nil
+        let sizeCategory = traitCollection.preferredContentSizeCategory
+        if let drawn, drawn.surface == surface, drawn.pending == pending, drawn.themeID == themeID,
+           drawn.sendsActions == sendsActions, drawn.sizeCategory == sizeCategory { return }
+        drawn = (surface, pending, themeID, sendsActions, sizeCategory)
+        // The cards send through this view, so an unchanged card still reaches the latest host.
         let context = ExtensionSurfaceCompositeContext(
             themeID: themeID,
             surface: surface,
             pending: pending,
-            onAction: onAction
+            onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil
         )
         var kept: [String: UIView] = [:]
         var nextKinds: [String: String] = [:]

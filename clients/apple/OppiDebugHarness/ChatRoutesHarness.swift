@@ -13,6 +13,11 @@ import UIKit
 /// `CHAT_ROUTES_STATUS=busy` makes the session busy (busy send mode picker);
 /// `CHAT_ROUTES_ASK=1` puts a two-question ask in the composer.
 /// `CHAT_ROUTES_QUEUE=long` queues a report taller than the screen.
+/// `CHAT_ROUTES_SURFACE=tall` publishes a composable surface (a long table
+/// card, then an Actions card with Run again) whose drawer is taller than the
+/// space above the composer. `chatRoutes.surfaceActions` lists the surface
+/// actions the chat sent over its socket. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
+/// above the composer.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
 /// production presenter (a test tap on a timeline pill did not reach the pill
@@ -31,6 +36,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
     private let reducer: TimelineReducer
     private let landingProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.landing")
     private let createdSessionsProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.createdSessions")
+    private let surfaceActionsProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.surfaceActions")
     private var loops: [Task<Void, Never>] = []
     /// The reader last pushed for app navigation, so each new one pushes once.
     private var pushedReader: ChatReaderNavTarget?
@@ -99,7 +105,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
         ])
         controls.axis = .vertical
         controls.spacing = 2
-        for subview in [controls, landingProbe, createdSessionsProbe] {
+        for subview in [controls, landingProbe, createdSessionsProbe, surfaceActionsProbe] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
         }
@@ -112,6 +118,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
             landingProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
             createdSessionsProbe.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
             createdSessionsProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
+            surfaceActionsProbe.centerXAnchor.constraint(equalTo: safeArea.centerXAnchor),
+            surfaceActionsProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
         ])
     }
 
@@ -136,7 +144,20 @@ final class ChatRoutesPreviewController: PreviewRootController {
                 while !Task.isCancelled {
                     ChatRoutesFixture.enableShare(on: connection)
                     ChatRoutesFixture.seedQueueIfNeeded(on: connection)
+                    ChatRoutesFixture.seedSurfaceIfNeeded(on: connection)
                     try? await Task.sleep(for: .milliseconds(200))
+                }
+            },
+            // A busy session's store updates all the time, and each one repaints the footer
+            // and the drawer in it (`CHAT_ROUTES_SURFACE=tall`).
+            Task { @MainActor [connection] in
+                var tick = 0
+                while !Task.isCancelled, ChatRoutesFixture.ticksSession {
+                    tick += 1
+                    _ = connection.sessionStore.upsert(
+                        ChatRoutesFixture.session(id: ChatRoutesFixture.sessionId, status: .ready, activityTick: tick)
+                    )
+                    try? await Task.sleep(for: .milliseconds(50))
                 }
             },
         ]
@@ -153,6 +174,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
     override func updateProperties() {
         super.updateProperties()
         setProbe(createdSessionsProbe, "\(ChatRoutesStubRecord.shared.createdSessions)")
+        setProbe(surfaceActionsProbe, ChatRoutesStubRecord.shared.surfaceActions.joined(separator: ","))
         let target = openedChatReader
         guard target != pushedReader else { return }
         pushedReader = target
@@ -214,6 +236,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
 private final class ChatRoutesStubRecord {
     static let shared = ChatRoutesStubRecord()
     var createdSessions = 0
+    /// `<surfaceId>/<compositeId>/<actionId>` of each surface action the chat sent.
+    var surfaceActions: [String] = []
 }
 
 enum ChatRoutesFixture {
@@ -264,6 +288,7 @@ enum ChatRoutesFixture {
         built = nil
         lastArrival = ""
         ChatRoutesStubRecord.shared.createdSessions = 0
+        ChatRoutesStubRecord.shared.surfaceActions = []
     }
 
     @MainActor private static func makeConnection() -> ServerConnection {
@@ -274,6 +299,13 @@ enum ChatRoutesFixture {
         // which the harness never opens: answer `get_session_stats`, and fail
         // every other send the way an unopened socket does.
         connection._sendMessageForTesting = { [weak connection] message in
+            if case .extensionUIAction(let surfaceId, let compositeId, let actionId, _, _, _, _, _) = message {
+                // A socket that took the action; the server's settle never comes.
+                Task { @MainActor in
+                    ChatRoutesStubRecord.shared.surfaceActions.append("\(surfaceId)/\(compositeId)/\(actionId)")
+                }
+                return
+            }
             guard case .getSessionStats(let requestId?) = message else {
                 throw WebSocketError.notConnected
             }
@@ -321,6 +353,49 @@ enum ChatRoutesFixture {
         )
     }
 
+    /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
+    /// surface above the composer. Reseeded like Share, since the connect loop clears surfaces.
+    @MainActor static func seedSurfaceIfNeeded(on connection: ServerConnection) {
+        guard environment["CHAT_ROUTES_SURFACE"] == "tall",
+              connection.extensionSurfaces.surface(for: sessionId).state.composableSurfaces.isEmpty,
+              let surface = try? JSONDecoder().decode(ExtensionUISurface.self, from: Data(tallSurfaceJSON.utf8))
+        else { return }
+        connection.extensionSurfaces.apply(surface, sessionId: sessionId)
+    }
+
+    /// Whether the session's activity clock ticks, repainting the footer (`CHAT_ROUTES_SURFACE=tall`).
+    static var ticksSession: Bool { environment["CHAT_ROUTES_SURFACE"] == "tall" }
+
+    static let tallSurfaceId = "query"
+    static let tallSurfaceActionsCardId = "actions"
+    static let tallSurfaceActionId = "again"
+
+    private static var tallSurfaceJSON: String {
+        let rows = (1...14).map { index in
+            #"{"id":"row\#(index)","cells":{"name":"table_\#(index)","rows":\#(index * 100)}}"#
+        }.joined(separator: ",")
+        return #"""
+        {
+          "version": 2, "id": "\#(tallSurfaceId)", "title": "Query",
+          "placement": {"kind": "strip", "preferred": "aboveComposer"},
+          "lifecycle": "persistent",
+          "header": {"title": "telemetry.db", "subtitle": "14 rows"},
+          "actions": {"\#(tallSurfaceActionId)": {"title": "Run again", "role": "primary"}},
+          "fallback": {"text": "telemetry.db: 14 rows"},
+          "revision": 1,
+          "sections": [
+            {"composite": "dataTable", "id": "rows", "header": {"title": "Schema objects"},
+             "state": {"kind": "content"}, "fallback": {"text": "Schema objects"},
+             "columns": [{"id": "name", "title": "Name"}, {"id": "rows", "title": "Rows", "kind": "number"}],
+             "rows": [\#(rows)]},
+            {"composite": "actionBar", "id": "\#(tallSurfaceActionsCardId)", "header": {"title": "Actions"},
+             "state": {"kind": "content"}, "actions": ["\#(tallSurfaceActionId)"],
+             "fallback": {"text": "Actions"}}
+          ]
+        }
+        """#
+    }
+
     @MainActor static func enableShare(on connection: ServerConnection) {
         guard connection.chatState.slashCommands.isEmpty else { return }
         connection.chatState.slashCommands = [
@@ -357,7 +432,7 @@ enum ChatRoutesFixture {
         )
     }
 
-    static func session(id: String, status: SessionStatus) -> Session {
+    static func session(id: String, status: SessionStatus, activityTick: Int = 0) -> Session {
         Session(
             id: id,
             workspaceId: workspace.id,
@@ -365,7 +440,7 @@ enum ChatRoutesFixture {
             name: id == sessionId ? "Routes" : "New routes session",
             status: status,
             createdAt: Date(timeIntervalSince1970: 1_770_000_010),
-            lastActivity: Date(timeIntervalSince1970: 1_770_000_020),
+            lastActivity: Date(timeIntervalSince1970: 1_770_000_020 + TimeInterval(activityTick)),
             model: "anthropic/claude-routes",
             messageCount: 1,
             tokens: TokenUsage(input: 0, output: 0, cacheRead: nil, cacheWrite: nil),
@@ -380,8 +455,16 @@ enum ChatRoutesFixture {
             contextWindow: 128_000,
             firstMessage: nil,
             lastMessage: nil,
-            thinkingLevel: "medium"
+            thinkingLevel: "medium",
+            warnings: id == sessionId ? warnings : nil
         )
+    }
+
+    /// `CHAT_ROUTES_WARNINGS=N`: N session warnings, each a row of the footer between the
+    /// strip and the composer, so a drawer has less room above the composer.
+    private static var warnings: [String]? {
+        guard let count = environment["CHAT_ROUTES_WARNINGS"].flatMap(Int.init), count > 0 else { return nil }
+        return (1...count).map { "Routes warning \($0): the fixture server keeps this notice on screen." }
     }
 
     static let sessionStats: JSONValue = [
