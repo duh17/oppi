@@ -848,6 +848,22 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(!isHiddenFromReader(chip, in: view), "the opened group kept its children off screen")
     }
 
+    @Test func aFoldsRowTakesTouchesAcrossA44PointTargetThoughItIsDrawnShorter() throws {
+        let view = composites(try panelWithFoldedGroup())
+        let disclosure = try testUnwrap(
+            control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
+        )
+        let frame = disclosure.convert(disclosure.bounds, to: view)
+        #expect(frame.height < 44, "the fold's row is drawn compact")
+        // Just above the drawn row, inside the 44 pt target: the fold answers, not the card.
+        let reach = (44 - frame.height) / 2
+        let above = CGPoint(x: frame.midX, y: frame.minY - reach + 1)
+        #expect(view.hitTest(above, with: nil) === disclosure, "a touch just above the fold missed it")
+        // Past the target, the touch is not the fold's.
+        let outside = CGPoint(x: frame.midX, y: frame.minY - reach - 1)
+        #expect(view.hitTest(outside, with: nil) !== disclosure)
+    }
+
     // MARK: - Pill
 
     @Test func aComposedPillDrawsItsContentRowInsteadOfTheHeaderTitle() throws {

@@ -661,6 +661,17 @@ final class BlocksGroupView: UIView, BlocksColumnFillable {
         showExpansion()
     }
 
+    /// The fold's row reaches past the top (and, folded, the bottom) of this view to make its 44 pt
+    /// target, and a touch there never reaches it through UIKit's own hit test, which stops at a
+    /// view's bounds. Inside the bounds the ordinary test runs, so the region's own controls win.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !bounds.contains(point), isUserInteractionEnabled, !isHidden, alpha > 0.01,
+           disclosure.point(inside: convert(point, to: disclosure), with: event) {
+            return disclosure
+        }
+        return super.hitTest(point, with: event)
+    }
+
     /// A collapsed region keeps its children built — a patch may change them — but takes them
     /// off screen and out of the accessibility tree.
     private func showExpansion() {
