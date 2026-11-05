@@ -616,4 +616,73 @@ describe("background jobs on their panel", () => {
     expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
     await answered(f, "RESULT_NOTED");
   }, 30_000);
+
+  it("draws the panel into a Session that restarts while the job runs, and Stop still kills it", async () => {
+    const pidFile = join(makeTempDir("oppi-jobs-restart-"), "job.pid");
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("background_job", {
+            action: "start",
+            command: `echo $$ > '${pidFile}' && exec sleep 300`,
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("STOP_NOTED"),
+    ]);
+    await phone(f);
+    const first = observe(f.manager, f.session.id);
+    const published = first.next(isPanel);
+    await f.manager.sendPrompt(f.session.id, "Start the job");
+    await published;
+    await until(
+      () => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== "",
+      "the job",
+    );
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const before = f.manager.surfacePublisherFor(f.session.id);
+
+    // The Session stops and starts again; a stopped Session leaves its job running.
+    await f.manager.stopSession(f.session.id);
+    expect(alive(pid)).toBe(true);
+    const tap = await phone(f);
+    expect(f.manager.surfacePublisherFor(f.session.id)).not.toBe(before);
+    const observed = observe(f.manager, f.session.id);
+
+    // The new Session's loop gets the panel without any job changing: a client that connects
+    // reads it from the live surfaces.
+    const drawn = (): Surface | undefined =>
+      f.manager
+        .getSurfaceMessages(f.session.id, "phone-1")
+        .flatMap((message) => (message.type === "extension_ui_surface" ? [message.surface] : []))
+        .find((surface) => surface.id === PANEL);
+    await until(() => drawn() !== undefined, "the panel in the new Session");
+    const panel = drawn()!;
+    expect(panel.header.title).toBe("1 job");
+    expect(find(panel, "stop:bash-1")).toBeDefined();
+
+    const removed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.surfaceId === PANEL &&
+        frame.message.removed === true,
+    );
+    await tap(
+      {
+        type: "extension_ui_action",
+        surfaceId: PANEL,
+        compositeId: "jobs",
+        actionId: "stop",
+        nodeId: "stop:bash-1",
+        values: { job: "bash-1" },
+        revision: panel.revision,
+        requestId: "stop-restart",
+      },
+      "phone-1",
+    );
+    await until(() => !alive(pid), "the process to die");
+    await removed;
+  }, 30_000);
 });

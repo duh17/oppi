@@ -82,6 +82,9 @@ interface LivePanel extends JobsPanel {
   queue: Promise<void>;
 }
 
+/** How often a running job's runner looks for a Session loop it has not drawn the panel into. */
+const PANEL_LOOP_CHECK_MS = 1_000;
+
 /** A panel is per live Session loop: a new loop (after a Session restarts) gets a new panel. */
 const panels = new WeakMap<SurfacePublisher, LivePanel>();
 
@@ -159,17 +162,14 @@ async function syncPanel(
 }
 
 /**
- * Leave `stop` where a tap on the job's Stop reaches it, until the returned function takes it
- * back. Stop asks for the kill the way `background_job cancel` does: it marks the job in the
- * saved list, and the runner, which watches that list, kills the process.
+ * Leave `stop` where a tap on the job's Stop in `surfaces` reaches it, until the returned function
+ * takes it back. It answers whether the job was running and is now marked for the kill.
  */
 function offerStop(
-  env: ExecutionEnv | undefined,
+  surfaces: SurfacePublisher,
   jobId: string,
-  stop: () => Promise<void>,
+  stop: () => Promise<boolean>,
 ): () => void {
-  const surfaces = surfacesOf(env);
-  if (!surfaces) return () => {};
   const { stops } = panelOf(surfaces);
   stops.set(jobId, stop);
   return () => {
@@ -319,15 +319,34 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           });
           changed(watch?.value ?? null);
           if (live?.value?.run === undefined) await checkStop();
-          const withdrawStop = offerStop(env, job.id, () =>
-            runtime.commit(async (tx) => {
+          // A tap on Stop asks for the kill as `background_job cancel` does: look the job up in the
+          // saved list and mark it, if it still runs; this runner's watcher then kills the process.
+          const stop = async (): Promise<boolean> => {
+            const saved = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
+            if (saved?.jobs.find((item) => item.id === job.id)?.status !== "running") return false;
+            await runtime.commit(async (tx) => {
               const current = jobById(
                 (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
                 job.id,
               );
               if (current.status === "running") current.cancelRequested = true;
-            }, context),
-          );
+            }, context);
+            return true;
+          };
+          // The panel lives in a Session's surface loop, and a Session that stops and starts again
+          // while this job runs has a new one. Offer Stop to whichever loop is current, and draw
+          // the panel into a loop that appears.
+          let loop = surfacesOf(env);
+          let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
+          const watchLoop = setInterval(() => {
+            const current = surfacesOf(env);
+            if (current === loop) return;
+            withdrawStop();
+            loop = current;
+            withdrawStop = current ? offerStop(current, job.id, stop) : () => {};
+            if (current) void syncPanel(runtime, runtime.conversationId, env, context);
+          }, PANEL_LOOP_CHECK_MS);
+          watchLoop.unref?.();
           try {
             const result = await env.exec(
               job.command,
@@ -351,6 +370,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
               status = exitCode === 0 ? "completed" : "failed";
             }
           } finally {
+            clearInterval(watchLoop);
             withdrawStop();
             await watch?.stop();
             await live?.stop();

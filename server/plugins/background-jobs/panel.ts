@@ -171,12 +171,13 @@ export interface JobsPanel {
   /**
    * How to stop each running job of this conversation, by job id. A tap on Stop runs outside any
    * task, so the job's own runner leaves its handle here while it runs and takes it back after.
+   * A handle answers whether the job was running and is now marked for the kill.
    */
-  readonly stops: Map<string, () => Promise<void>>;
+  readonly stops: Map<string, () => Promise<boolean>>;
 }
 
 export function createJobsPanel(): JobsPanel {
-  const stops = new Map<string, () => Promise<void>>();
+  const stops = new Map<string, () => Promise<boolean>>();
   const panel = surface<PanelState>({
     id: PANEL_ID,
     title: "Background jobs",
@@ -186,15 +187,14 @@ export function createJobsPanel(): JobsPanel {
   });
   panel.action("stop", async (_state, tap) => {
     const job = tap.values?.job;
-    const stop = typeof job === "string" ? stops.get(job) : undefined;
-    if (!stop)
+    const stopped = typeof job === "string" ? await stops.get(job)?.() : undefined;
+    if (!stopped)
       return {
         error: {
           compositeId: tap.compositeId,
           message: `${typeof job === "string" ? job : "That job"} is not running.`,
         },
       };
-    await stop();
     // The row changes when the runner reports the job stopped, which republishes the panel.
     return undefined;
   });
