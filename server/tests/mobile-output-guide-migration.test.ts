@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -124,5 +132,46 @@ describe("Mobile Output Guide setting in config.json", () => {
       revision: 0,
     });
     expect(existsSync(legacyPath(root))).toBe(true);
+  });
+
+  it("leaves config.json and the old file alone while config.json has invalid fields", () => {
+    const root = makeRoot();
+    new Storage(root);
+    const invalid = JSON.parse(readFileSync(join(root, "config.json"), "utf8"));
+    invalid.port = 70_000;
+    writeFileSync(join(root, "config.json"), JSON.stringify(invalid));
+    const before = readFileSync(join(root, "config.json"));
+    writeLegacy(root, { version: 1, enabled: true, revision: 4 });
+
+    const storage = new Storage(root);
+
+    expect(storage.getMobileOutputGuideSettings()).toEqual({ enabled: false, revision: 0 });
+    expect(readFileSync(join(root, "config.json")).equals(before)).toBe(true);
+    expect(existsSync(legacyPath(root))).toBe(true);
+    expect(existsSync(migratedPath(root))).toBe(false);
+  });
+
+  it("keeps an earlier .migrated copy and gives this one a timestamped name", () => {
+    const root = makeRoot();
+    new Storage(root);
+    writeLegacy(root, { version: 1, enabled: true, revision: 2 });
+    writeFileSync(migratedPath(root), "earlier copy");
+
+    expect(new Storage(root).getMobileOutputGuideSettings()).toEqual({
+      enabled: true,
+      revision: 2,
+    });
+
+    expect(readFileSync(migratedPath(root), "utf8")).toBe("earlier copy");
+    expect(existsSync(legacyPath(root))).toBe(false);
+    const extra = readdirSync(join(root, "settings")).filter((name) =>
+      /^mobile-output-guide\.json\.migrated\.\d+$/.test(name),
+    );
+    expect(extra).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(root, "settings", extra[0]), "utf8"))).toEqual({
+      version: 1,
+      enabled: true,
+      revision: 2,
+    });
   });
 });

@@ -23,11 +23,7 @@ import {
   parseTrustedPeers,
 } from "../proxy-config.js";
 import { extractAutoTitle, hasAutoTitle } from "./auto-title-extension-migration.js";
-import {
-  hasLegacyMobileOutputGuide,
-  readLegacyMobileOutputGuide,
-  retireLegacyMobileOutputGuide,
-} from "./mobile-output-guide-migration.js";
+import { carryOverLegacyMobileOutputGuide } from "./mobile-output-guide-migration.js";
 import { parsePushEvents } from "../push/events.js";
 import { isRevision } from "../settings/revision.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
@@ -1227,6 +1223,8 @@ export class ConfigStore {
   private readonly workspacesDir: string;
   private config: ServerConfig;
   private invalidTlsOnDisk: unknown;
+  /** Whether the load found invalid fields in config.json, which it reads as defaults. */
+  private loadFoundFieldErrors = false;
 
   constructor(dataDir: string = DEFAULT_DATA_DIR) {
     this.dataDir = dataDir;
@@ -1239,29 +1237,9 @@ export class ConfigStore {
     // a read-only command never waits on a lock.
     if (hasAutoTitle(this.dataDir)) this.withLock(() => extractAutoTitle(this.dataDir));
     this.config = this.loadConfig();
-    this.migrateMobileOutputGuide();
-  }
-
-  /**
-   * Carries `settings/mobile-output-guide.json` into config.json once (see
-   * `mobile-output-guide-migration.ts`). An unreadable old file or a failed write never blocks
-   * startup: the file stays where it is, a warning says why, and the guide reads as off until
-   * the next start retries or a save writes config.json (which then retires the file).
-   */
-  private migrateMobileOutputGuide(): void {
-    if (!hasLegacyMobileOutputGuide(this.dataDir)) return;
-    try {
-      this.mutate((latest) =>
-        latest.mobileOutputGuide
-          ? {}
-          : { mobileOutputGuide: readLegacyMobileOutputGuide(this.dataDir) },
-      );
-      retireLegacyMobileOutputGuide(this.dataDir);
-    } catch (error) {
-      log.warn("config_store.mobile_output_guide_migration.failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    carryOverLegacyMobileOutputGuide(this.dataDir, this.loadFoundFieldErrors, (mutator) =>
+      this.mutate(mutator),
+    );
   }
 
   /**
@@ -1355,6 +1333,7 @@ export class ConfigStore {
       }
 
       this.invalidTlsOnDisk = normalized.invalidTls;
+      this.loadFoundFieldErrors = normalized.errors.length > 0;
       for (const err of normalized.errors) {
         log.warn("config_store.field.invalid", {
           issue: err,

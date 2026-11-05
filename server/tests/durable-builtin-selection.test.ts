@@ -852,7 +852,9 @@ describe("durable prompt appends", () => {
 
   function setGuide(f: Fixture, enabled: boolean) {
     const current = f.storage.getMobileOutputGuideSettings();
-    expect(applySetting(f.storage, "mobileOutputGuide", { enabled }, current.revision).ok).toBe(true);
+    expect(applySetting(f.storage, "mobileOutputGuide", { enabled }, current.revision).ok).toBe(
+      true,
+    );
   }
 
   function withWorkspacePrompt(f: Fixture, runtime: "host" | "sandbox") {
