@@ -165,9 +165,9 @@ Controls client-side preprocessing for image attachments before upload.
 
 ### Extensions
 
-| Setting                           | Type   | Default | Description                                                                          |
-| --------------------------------- | ------ | ------- | ------------------------------------------------------------------------------------ |
-| `extensions.voice.defaultVoiceId` | string | -       | Default saved voice ID used by the sample voice extension. See [`tts.md`](./tts.md). |
+| Setting                           | Type   | Default | Description                                                                     |
+| --------------------------------- | ------ | ------- | ------------------------------------------------------------------------------- |
+| `extensions.voice.defaultVoiceId` | string | -       | Validated and saved, but nothing in Oppi reads it, so setting it has no effect. |
 
 There is no Oppi flag for MCP, codemode, or tool search. Managed host sessions always load Pi's `mcp`, `codemode`, and `tool-search` built-ins, and `-builtin:<name>` in Pi's `extensions` setting turns one off. Sandbox workspaces and terminal-owned mirror sessions never load them. See [server configuration](../../docs/server-configuration.md#mcp-servers-codemode-and-tool-search).
 
@@ -210,7 +210,6 @@ oppi config set asr.liveVoiceBackend yuwp
 oppi config set images.autoResize false
 oppi config set oppiDocsPrompt.enabled false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
-oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
 oppi config validate
 ```
 
