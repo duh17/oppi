@@ -78,7 +78,9 @@ export class RegistrationObject extends DurableObject<Env> {
   async create(record: RegistrationRecord): Promise<void> {
     await this.ctx.storage.put(RECORD_KEY, record);
     // One alarm for the registration's life: it fires when the registration could first have
-    // gone idle and moves itself to the last push + 90 days, so a push writes no alarm.
+    // gone idle and moves itself to the last push + REGISTRATION_IDLE_MS, so a push writes no
+    // alarm. An alarm set under an earlier, longer limit keeps its date: an idle registration
+    // runs no code before it fires, and when it fires it applies the current limit.
     await this.ctx.storage.setAlarm(registrationExpiresAt(record));
     this.expiryAlarmChecked = true;
   }

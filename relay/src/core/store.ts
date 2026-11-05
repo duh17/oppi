@@ -129,10 +129,10 @@ export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
 
 export const MAX_PERMISSIONS_PER_REGISTRATION = 16;
 /** A registration that carries no push for this long is deleted (spec §3.4). */
-export const REGISTRATION_IDLE_MS = 90 * 86_400_000;
+export const REGISTRATION_IDLE_MS = 30 * 86_400_000;
 
 /**
- * When an idle registration is deleted: 90 days after it was created or last carried a push
+ * When an idle registration is deleted: 30 days after it was created or last carried a push
  * (alert or Live Activity), whichever is later. Reads only times the record already keeps:
  * each counted push sets its quota's `minuteStart` in the write it already makes, so tracking
  * this adds no field and no write.

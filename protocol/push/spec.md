@@ -393,14 +393,17 @@ still leaves that window at its host; a self-hosted relay leaves it with whoever
 TLS. The path names the registration's id, which is opaque and not a credential: a caller
 also needs the registration secret and, when attested, a fresh App Attest assertion.
 
-A registration that carries no push, alert or Live Activity, for 90 days is deleted with its
+A registration that carries no push, alert or Live Activity, for 30 days is deleted with its
 permissions and its APNs-token entry. The relay counts from its creation or the last counted
 push, whichever is later, using the quota counters above, so this keeps no extra data. The
-Cloudflare adapter sets one alarm per registration, which moves itself to the last push + 90
-days; a registration made before the adapter had this alarm gets it at its next counted push,
-so on a relay deployed before this change such a registration starts its 90-day count then.
-The Node adapter sweeps on its next call. A phone whose registration went this way gets
-`410` on its next relay call and registers again.
+Cloudflare adapter sets one alarm per registration, which moves itself to the last push + 30
+days. A registration made before the adapter had this alarm gets it at its next counted push,
+so its 30-day count starts then. An alarm set while the limit was 90 days keeps its date, and
+when it fires it applies the 30-day limit: such a registration is deleted on that date or 30
+days after its last push, whichever is later. The Node adapter applies the current limit at
+its next sweep, on a call. A phone whose registration went this way learns it from a `410`:
+the relay's, on the phone's next relay call, or its server's `send_token_gone` (§5) after a
+push was refused. It then registers again; pushes refused before then are lost.
 
 ### 3.5 APNs request (fixed template)
 

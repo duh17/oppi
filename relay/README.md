@@ -42,8 +42,10 @@ The relay deletes a registration when:
 
 - APNs reports its token retired (`410`, `400 BadDeviceToken`, `400 DeviceTokenNotForTopic`);
 - the app deletes it;
-- 90 days pass without a push. A registration made before idle expiry was deployed starts this
-  count at its next push.
+- 30 days pass without a push. A registration made before idle expiry was deployed has no
+  deletion date until its next push, which starts this count. A registration that already had a deletion date when the limit
+  dropped from 90 to 30 days is deleted on that date or 30 days after its last push,
+  whichever is later.
 
 What the relay sends to APNs is fixed. An alert is always:
 
