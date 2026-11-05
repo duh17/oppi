@@ -14,9 +14,9 @@ struct ExtensionSurfaceBlocksEnvironment {
     let identifierRoot: String
     /// A strip pill's one line: nothing wraps, and text truncates instead of taking two lines.
     var inline = false
-    /// Whether the node is a direct child of a row: a control there is a trailing accessory of the
-    /// line it ends, so it draws compact instead of as a block of its own.
-    var inRow = false
+    /// Whether the node is a direct child of a row that holds more than controls: a control there is
+    /// an accessory of that line, so it draws compact instead of as a block of its own.
+    var isRowAccessory = false
     /// The card's own gap between the body's top-level children. A tree's spacing step is the
     /// protocol's; the card's rhythm is the host's, so only the body root carries it.
     var topLevelSpacing: CGFloat?
@@ -257,7 +257,12 @@ final class BlocksRenderer {
         case .row(let layout):
             let view: BlocksLayoutView = cached(key, BlocksLayoutView())
             view.apply(
-                children: children(layout.children, path: path, environment: environment, inRow: true),
+                children: children(
+                    layout.children,
+                    path: path,
+                    environment: environment,
+                    rowAccessories: layout.children.contains { !Self.isControl($0) }
+                ),
                 node: node,
                 action: layout.action,
                 spacing: environment.topLevelSpacing
@@ -418,13 +423,23 @@ final class BlocksRenderer {
         _ nodes: [ExtensionUISurfaceNode],
         path: String,
         environment: ExtensionSurfaceBlocksEnvironment,
-        inRow: Bool = false
+        rowAccessories: Bool = false
     ) -> [UIView] {
         // The card's own rhythm is the body root's; a nested level keeps its tree spacing.
         var nested = withoutTopLevelSpacing(environment)
-        nested.inRow = inRow
+        nested.isRowAccessory = rowAccessories
         return nodes.enumerated().map { index, child in
             render(child, path: "\(path).\(index)", environment: nested)
+        }
+    }
+
+    /// A control, or the space between controls. A row of nothing else is a set of controls
+    /// (segments, a toolbar) rather than a line of content with accessories, and keeps the card's
+    /// own buttons, so its selected item still stands out from the rest.
+    private static func isControl(_ node: ExtensionUISurfaceNode) -> Bool {
+        switch node {
+        case .button, .toggle, .menu, .spacer, .divider: true
+        default: false
         }
     }
 
@@ -517,9 +532,9 @@ final class BlocksButtonView: UIButton, BlocksColumnFillable {
     ) {
         let action = node.action
         isPrimary = node.isPrimary
-        // A secondary control at the end of a row is that row's accessory: a small tinted capsule
+        // A secondary control in a row of content is that row's accessory: a small tinted capsule
         // in a 44 pt target. Primary stays the card's one prominent block.
-        compact = environment.inRow && !environment.inline && !node.isPrimary
+        compact = environment.isRowAccessory && !environment.inline && !node.isPrimary
         var configuration = ExtensionSurfaceButtonFactory.configuration(
             title: action.map {
                 environment.pendingTitle(for: $0, nodeId: surfaceNode.id, fallback: node.title)

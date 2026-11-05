@@ -816,6 +816,14 @@ struct ExtensionSurfaceBlocksViewsTests {
             control(node("blocks-panel", "section-0", "stop"), in: alone) as? UIButton
         )
         #expect(block.configuration?.background.backgroundInsets == NSDirectionalEdgeInsets.zero)
+
+        // A row of nothing but buttons is a set, not a line with an accessory: its unselected items
+        // keep the ordinary look, so the selected one is the one that stands out.
+        let set = composites(try surface("blocks-filters.json"))
+        let unselected = try #require(
+            control(node("blocks-filters", "filters", "seg-running"), in: set) as? UIButton
+        )
+        #expect(unselected.configuration?.background.backgroundInsets == NSDirectionalEdgeInsets.zero)
     }
 
     @Test func aRowThatStacksAtAnAccessibilitySizeKeepsItsGlyphBesideItsWords() throws {
