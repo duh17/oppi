@@ -725,6 +725,29 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       ]);
       expect(notices(client)).toEqual([]);
     });
+
+    it("keeps the notice of an answer a compaction kept, live and after a reload", async () => {
+      const f = await fixture([]);
+      const paid = await f.conversation.commit(async (tx) => {
+        await tx.appendEntry(f.conversation.id, warm);
+        return (await tx.appendEntry(f.conversation.id, rebilled)).id;
+      }, context);
+      const live = await attach(f, undefined, new Client(), undefined, () => ({}));
+      await f.conversation.commit(async (tx) => {
+        await tx.appendEntry(f.conversation.id, {
+          kind: "pi.compaction",
+          head: paid,
+          model: [{ role: "user", content: "<summary>s</summary>", timestamp: 2 }],
+        });
+      }, context);
+      await settle();
+
+      // The kept answer was compared with the one before it, which the compaction dropped.
+      expect(notices(live).map(([id]) => id)).toEqual([paid]);
+      live.subscription.dispose();
+      const reloaded = await attach(f, undefined, new Client(), undefined, () => ({}));
+      expect(notices(reloaded).map(([id]) => id)).toEqual([paid]);
+    });
   });
 
   it("fails an attach whose room closes while it loads, without retrying it", async () => {

@@ -210,6 +210,13 @@ describe("replaying saved history", () => {
     const notices = replayCacheMissHistory(tracker, [warm, rebilled(2_000, "aborted")], prices);
 
     expect(notices).toEqual([]);
-    expect(tracker.previous).toMatchObject({ timestamp: 2_000 });
+    // The aborted request still refreshed the cache: idle time counts from it.
+    expect(
+      observeCacheMiss(
+        tracker,
+        assistant({ timestamp: 9 * 60_000, input: 100_000, inputCost: 1 }),
+        prices,
+      ),
+    ).toMatchObject({ idleMs: 9 * 60_000 - 2_000 });
   });
 });

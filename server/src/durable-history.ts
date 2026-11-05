@@ -30,9 +30,12 @@ import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./t
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "./durable-ui.js";
 import {
+  asCacheMissAssistantMessage,
   replayCacheMissHistory,
+  type CacheMissModelPriceSource,
   type CacheMissNotice,
   type CacheMissNoticeSource,
+  type CacheMissTrackerState,
 } from "./cache-miss.js";
 import { durableNestedCalls } from "./tool-nested-calls.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
@@ -110,7 +113,6 @@ export async function readRetryEvidence(
   return entries;
 }
 
-/** An aborted assistant entry a task committed: the only entries `isRecoveredPartial` may hide. */
 /**
  * Entries (oldest first) as `replayCacheMissHistory` reads them: each model message is a
  * saved message, a compaction or reset is the reset. `owners[i]` is the entry id behind
@@ -137,36 +139,62 @@ export function durableCacheMissHistory(entries: readonly EntryRecord[]): {
 }
 
 /**
- * The notices of the conversation's answers before `beforeEntryId` (all of it by default),
- * by entry id, replayed over the whole history so a page sees the answers before it.
+ * Feed `entries` (oldest first, contiguous with what `tracker` saw) through `tracker`; the
+ * notices of their answers by entry id.
  */
-export async function readCacheMissNotices(
+export function trackDurableCacheMisses(
+  tracker: CacheMissTrackerState,
+  entries: readonly EntryRecord[],
+  models?: CacheMissModelPriceSource,
+): Map<number, CacheMissNotice> {
+  const { history, owners } = durableCacheMissHistory(entries);
+  const notices = new Map<number, CacheMissNotice>();
+  for (const { index, notice } of replayCacheMissHistory(tracker, history, models)) {
+    const owner = owners[index];
+    if (owner !== undefined) notices.set(owner, notice);
+  }
+  return notices;
+}
+
+/** Most entries `readCacheMissSeed` reads back. */
+const CACHE_MISS_SEED_LIMIT = 200;
+
+/**
+ * The saved entries before `entryId` (oldest first) that leave a fresh tracker as a replay of
+ * the whole history would: back to the newest answer that reported cache activity, or to the
+ * newest compaction or reset. Usually one or two entries, so a page or a room starting at
+ * `entryId` compares its first answer without reading the whole history. A provider that never
+ * reports caching shows no notices, and its walk stops after `CACHE_MISS_SEED_LIMIT` entries.
+ */
+export async function readCacheMissSeed(
   conversation: Conversation,
-  source: CacheMissNoticeSource,
-  beforeEntryId?: number,
-): Promise<Map<number, CacheMissNotice>> {
-  const records: EntryRecord[] = [];
+  entryId: number,
+): Promise<EntryRecord[]> {
+  const seed: EntryRecord[] = [];
   let cursor;
-  if (beforeEntryId === undefined || beforeEntryId > 1)
+  if (entryId > 1)
     do {
       const page = await conversation.entries(
-        beforeEntryId === undefined ? {} : { maxEntryId: (beforeEntryId - 1) as EntryId },
-        500,
+        { maxEntryId: (entryId - 1) as EntryId },
+        16,
         cursor,
         context,
       );
-      records.push(...page.items);
+      for (const entry of page.items) {
+        if (CompactionEntry.is(entry) || ResetEntry.is(entry)) return seed.reverse();
+        seed.push(entry);
+        const reportsCache = (entry.model ?? []).some((message) => {
+          const usage = asCacheMissAssistantMessage(message)?.usage;
+          return usage !== undefined && usage.cacheRead + usage.cacheWrite > 0;
+        });
+        if (reportsCache || seed.length >= CACHE_MISS_SEED_LIMIT) return seed.reverse();
+      }
       cursor = page.next;
     } while (cursor !== undefined);
-  const { history, owners } = durableCacheMissHistory(records.reverse());
-  return new Map(
-    replayCacheMissHistory({}, history, source.models).flatMap(({ index, notice }) => {
-      const owner = owners[index];
-      return owner === undefined ? [] : [[owner, notice] as const];
-    }),
-  );
+  return seed.reverse();
 }
 
+/** An aborted assistant entry a task committed: the only entries `isRecoveredPartial` may hide. */
 export function isAbortedAttempt(
   entry: EntryRecord,
 ): entry is EntryRecord & { byTaskId: NonNullable<EntryRecord["byTaskId"]> } {

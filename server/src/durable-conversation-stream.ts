@@ -49,16 +49,16 @@ import {
   type UserImageStoreScope,
 } from "./durable-conversation-view.js";
 import {
-  durableCacheMissHistory,
   isAbortedAttempt,
   isRecoveredPartial,
-  readCacheMissNotices,
+  readCacheMissSeed,
   readRetryEvidence,
+  trackDurableCacheMisses,
 } from "./durable-history.js";
-import {
-  replayCacheMissHistory,
-  type CacheMissNotice,
-  type CacheMissNoticeSource,
+import type {
+  CacheMissNotice,
+  CacheMissNoticeSource,
+  CacheMissTrackerState,
 } from "./cache-miss.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { createLogger } from "./logger.js";
@@ -143,8 +143,13 @@ class ConversationRoom implements DocPresenter {
   private readonly hidden = new Set<number>();
   /** How the queue shows each queued user input in `pi.inbox`; generated inputs are absent. */
   private readonly queued = new Map<number, MessageQueueItem>();
-  /** The cache-miss notice each active answer paid for (`deriveCacheMisses`). */
-  private cacheMisses = new Map<number, CacheMissNotice>();
+  /**
+   * Fed each entry as the room adds it, in id order, after `readCacheMissSeed` of the first, so
+   * it holds what a replay of the whole history would, compactions included.
+   */
+  private readonly cacheMissTracker: CacheMissTrackerState = {};
+  /** The cache-miss notice each active answer paid for. Fixed once the answer is added. */
+  private readonly cacheMisses = new Map<number, CacheMissNotice>();
   /** Revision of each entry's latest presentation change. */
   private readonly revisions = new Map<number, number>();
   /** Increases with every presentation change. */
@@ -226,15 +231,20 @@ class ConversationRoom implements DocPresenter {
     this.entries = [...active.entries];
     if (active.head) this.head = active.head.id;
     for (const entry of this.entries) this.index(entry);
-    this.deriveCacheMisses();
+    let first: number | undefined;
+    for (const entry of this.entries) first = Math.min(first ?? entry.id, entry.id);
+    // In id order the head entry follows the entries it keeps, as it does in the history.
+    if (this.cacheMissNotices && first !== undefined)
+      this.trackCacheMisses([
+        ...(await readCacheMissSeed(conversation, first)),
+        ...[...this.entries].sort((left, right) => left.id - right.id),
+      ]);
     for (const spec of CONVERSATION_CLIENT_DOCS) {
       if (spec.kind === LIVE_KIND) continue;
       const value = await this.harness.snapshot(spec.doc, this.conversationId, context);
       if (value) this.setDoc(spec.kind, value);
     }
     this.applyLive();
-    let first: number | undefined;
-    for (const entry of this.entries) first = Math.min(first ?? entry.id, entry.id);
     if (first !== undefined && first > 1) {
       const older = await conversation.entries(
         { maxEntryId: (first - 1) as EntryId },
@@ -364,26 +374,20 @@ class ConversationRoom implements DocPresenter {
   }
 
   /**
-   * The notices of the active answers, replayed over the active entries like Pi's transcript
-   * does on resume: a compaction or reset starts a new context, so the first answer after it is
-   * compared with nothing. Entries replay in id order, which puts the head entry after the
-   * entries it keeps (they display after it). An entry whose notice changed is presented again.
+   * Feed entries the room just added (id order) to its tracker, like Pi's transcript replay: a
+   * compaction or reset starts a new context, so the first answer after it is compared with
+   * nothing, while the answers a compaction keeps keep their notices. O(entries added). While
+   * the session hides notices the tracker still follows, and the answers get none.
    */
-  private deriveCacheMisses(): void {
+  private trackCacheMisses(entries: readonly EntryRecord[]): void {
     const source = this.cacheMissNotices?.();
-    const next = new Map<number, CacheMissNotice>();
-    if (source) {
-      const { history, owners } = durableCacheMissHistory(
-        [...this.entries].sort((left, right) => left.id - right.id),
-      );
-      for (const { index, notice } of replayCacheMissHistory({}, history, source.models)) {
-        const owner = owners[index];
-        if (owner !== undefined) next.set(owner, notice);
-      }
+    const notices = trackDurableCacheMisses(this.cacheMissTracker, entries, source?.models);
+    if (!source) return;
+    for (const [id, notice] of notices) {
+      if (!this.ids.has(id)) continue;
+      this.cacheMisses.set(id, notice);
+      this.changed(id);
     }
-    for (const id of new Set([...this.cacheMisses.keys(), ...next.keys()]))
-      if (this.cacheMisses.get(id)?.id !== next.get(id)?.id) this.changed(id);
-    this.cacheMisses = next;
   }
 
   private changed(id: number): void {
@@ -471,14 +475,7 @@ class ConversationRoom implements DocPresenter {
     }
     entries.sort((left, right) => left.id - right.id);
     const added = entries.filter((entry) => this.addEntry(entry));
-    // Only an answer or a new context moves what the notices compare.
-    if (
-      added.some(
-        (entry) =>
-          entry.head !== undefined || entry.model?.some((message) => message.role === "assistant"),
-      )
-    )
-      this.deriveCacheMisses();
+    if (this.cacheMissNotices) this.trackCacheMisses(added);
     if (added.length || cardsChanged || inboxChanged || attemptTaskChanged) {
       // Card metadata is published before its input, but a late one still applies to it.
       const users = cardsChanged ? this.entries.filter(isUserEntry) : added.filter(isUserEntry);
@@ -520,6 +517,8 @@ class ConversationRoom implements DocPresenter {
       for (const id of [...this.inputCards.keys()])
         if (!this.ids.has(id)) this.inputCards.delete(id);
       for (const id of [...this.hidden]) if (!this.ids.has(id)) this.hidden.delete(id);
+      for (const id of [...this.cacheMisses.keys()])
+        if (!this.ids.has(id)) this.cacheMisses.delete(id);
       for (const id of [...this.revisions.keys()]) if (!this.ids.has(id)) this.revisions.delete(id);
       this.markToolViewsDirty();
       return true;
@@ -976,9 +975,16 @@ export async function readOlderConversationEntries(options: {
         )
       ).entries
     : new Map<EntryId, ConversationEntryCard>();
-  const notices = options.cacheMissNotices
-    ? await readCacheMissNotices(conversation, options.cacheMissNotices, beforeEntryId)
-    : new Map<number, CacheMissNotice>();
+  // `scanned` is newest first and contiguous; the seed compares its oldest answer.
+  const oldest = scanned.at(-1);
+  const notices =
+    options.cacheMissNotices && oldest
+      ? trackDurableCacheMisses(
+          {},
+          [...(await readCacheMissSeed(conversation, oldest.id)), ...[...scanned].reverse()],
+          options.cacheMissNotices.models,
+        )
+      : new Map<number, CacheMissNotice>();
   const tools: ToolPresenter = {
     call: (name, args) => renderToolCall(renderers, name, args),
     committedCall: () => undefined,
