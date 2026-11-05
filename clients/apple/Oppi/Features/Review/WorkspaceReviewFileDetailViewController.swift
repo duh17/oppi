@@ -768,10 +768,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             selectedSessionId: configuration.selectedSessionId,
             presenter: self,
             isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
-            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
-            push: { [weak self] chat in
-                if let self { Router.push(chat, from: self) }
-            }
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
         )
     }
 
