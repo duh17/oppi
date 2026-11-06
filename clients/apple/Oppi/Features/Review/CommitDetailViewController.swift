@@ -5,12 +5,11 @@ struct CommitDetailActionMenuState: Equatable {
     let promptTemplatesDisabled: Bool
 
     static func make(
-        workspaceId: String,
         detail: GitCommitDetail?,
         launchActionInFlightTitle: String?
     ) -> Self {
         Self(
-            menuDisabled: launchActionInFlightTitle != nil || workspaceId.isEmpty,
+            menuDisabled: launchActionInFlightTitle != nil,
             promptTemplatesDisabled: launchActionInFlightTitle != nil || (detail?.files.isEmpty ?? true)
         )
     }
@@ -26,7 +25,10 @@ struct CommitDetailActionMenuState: Equatable {
 final class CommitDetailViewController: UIViewController {
     struct Configuration {
         let workspaceId: String
-        let commit: GitCommitSummary
+        /// The commit's SHA, and its subject when the opener has it (the
+        /// timeline's pill carries only the SHA).
+        let sha: String
+        var message = ""
         var reviewCommentSelectionScope: ReviewCommentSelectionScope?
         /// The close control's identifier, for a commit that is a modal's root.
         var closeAccessibilityIdentifier: String?
@@ -112,7 +114,6 @@ final class CommitDetailViewController: UIViewController {
 
     private var actionMenuState: CommitDetailActionMenuState {
         CommitDetailActionMenuState.make(
-            workspaceId: configuration.workspaceId,
             detail: detail,
             launchActionInFlightTitle: launchActionInFlightTitle
         )
@@ -270,7 +271,7 @@ final class CommitDetailViewController: UIViewController {
     private func diffController(_ file: GitCommitFileInfo) -> () -> UIViewController {
         let configuration = CommitFileDiffViewController.Configuration(
             workspaceId: configuration.workspaceId,
-            sha: self.configuration.commit.sha,
+            sha: self.configuration.sha,
             file: file,
             reviewCommentSelectionScope: self.configuration.reviewCommentSelectionScope
         )
@@ -316,26 +317,18 @@ final class CommitDetailViewController: UIViewController {
     }
 
     private func startEmptySession() async {
-        guard !configuration.workspaceId.isEmpty else {
-            WorkspaceQuickActionMenu.presentLaunchError("Workspace is unavailable.", from: self)
-            return
-        }
         let configuration = configuration
         await quickActionLauncher.startEmptySession { [weak self] session in
             let detail = self?.detail
             return .attachingCommit(
                 sessionId: session.id,
-                sha: detail?.sha ?? configuration.commit.sha,
-                message: detail?.message ?? configuration.commit.message
+                sha: detail?.sha ?? configuration.sha,
+                message: detail?.message ?? configuration.message
             )
         }
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
-        guard !configuration.workspaceId.isEmpty else {
-            WorkspaceQuickActionMenu.presentLaunchError("Workspace is unavailable.", from: self)
-            return
-        }
         guard let detail else { return }
         let paths = detail.files.map(\.path)
         guard !paths.isEmpty else {
@@ -353,7 +346,7 @@ final class CommitDetailViewController: UIViewController {
             return
         }
         do {
-            let loaded = try await api.getCommitDetail(workspaceId: configuration.workspaceId, sha: configuration.commit.sha)
+            let loaded = try await api.getCommitDetail(workspaceId: configuration.workspaceId, sha: configuration.sha)
             guard !Task.isCancelled else { return }
             detail = loaded
         } catch {
@@ -363,7 +356,7 @@ final class CommitDetailViewController: UIViewController {
     }
 
     private func loadQuickActionsIfNeeded() async {
-        guard !configuration.workspaceId.isEmpty, !isLoadingQuickActions, let api = apiClient else { return }
+        guard !isLoadingQuickActions, let api = apiClient else { return }
         isLoadingQuickActions = true
         defer { isLoadingQuickActions = false }
         do {

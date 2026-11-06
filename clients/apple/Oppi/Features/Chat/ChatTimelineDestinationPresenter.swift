@@ -47,7 +47,7 @@ struct ChatTimelineDestinationPresenter {
         let viewer = CommitDetailViewController(
             configuration: .init(
                 workspaceId: workspaceId,
-                commit: GitCommitSummary(sha: sha, message: "", date: ""),
+                sha: sha,
                 reviewCommentSelectionScope: reviewCommentSelectionScope,
                 closeAccessibilityIdentifier: "chat.commit-detail.dismiss"
             ),

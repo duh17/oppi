@@ -187,7 +187,6 @@ struct WorkspaceReviewModelsTests {
 
     @Test func commitDetailActionMenuKeepsNewSessionEnabledWhileCommitLoads() {
         let loading = CommitDetailActionMenuState.make(
-            workspaceId: "w1",
             detail: nil,
             launchActionInFlightTitle: nil
         )
@@ -198,7 +197,6 @@ struct WorkspaceReviewModelsTests {
 
     @Test func commitDetailActionMenuEnablesPromptTemplatesAfterDetailLoads() {
         let loaded = CommitDetailActionMenuState.make(
-            workspaceId: "w1",
             detail: GitCommitDetail(
                 sha: "abc1234",
                 message: "Test commit",

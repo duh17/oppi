@@ -1567,10 +1567,12 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private func presentCommit(_ commit: GitCommitSummary) {
+        guard let workspaceId = context.workspaceId else { return }
         let viewer = CommitDetailViewController(
             configuration: .init(
-                workspaceId: context.workspaceId ?? "",
-                commit: commit,
+                workspaceId: workspaceId,
+                sha: commit.sha,
+                message: commit.message,
                 reviewCommentSelectionScope: reviewScopeClosingTheReview()
             ),
             connection: connection,
