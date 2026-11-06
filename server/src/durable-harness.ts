@@ -31,7 +31,7 @@ import {
   type CodemodeNamespace,
 } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -125,6 +125,8 @@ const STORAGE_FILE = "session.sqlite";
  * lock: the next refresh saw a changed mtime and the store lost its lock.
  */
 const LOCK_DIR = ".lock";
+/** A store lock not refreshed for this long is stale: its holder died, and the next open takes it. */
+const LOCK_STALE_MS = 2_000;
 
 /** The store and conversation each execution env the server made runs; one env, one conversation. */
 const conversationsByEnv = new WeakMap<
@@ -859,7 +861,7 @@ export class SessionHost {
         this.releaseLock = await properLockfile.lock(this.directory, {
           lockfilePath: lockPath,
           realpath: true,
-          stale: 2_000,
+          stale: LOCK_STALE_MS,
           update: 1_000,
           retries: 0,
           onCompromised: (error) => this.loseLock(token, error),
@@ -1894,6 +1896,20 @@ export class DurableHarness {
 
   forgetHost(host: SessionHost): void {
     if (this.hosts.get(host.storeId) === host) this.hosts.delete(host.storeId);
+  }
+
+  /**
+   * Milliseconds until store `storeId`'s lock goes stale if nobody refreshes it, 0 without one.
+   * Capped at the stale window, so a lock dated in the future cannot stall a caller.
+   */
+  lockStaleInMs(storeId: string): number {
+    let refreshedMs: number;
+    try {
+      refreshedMs = statSync(durableStoreLockPath(this.dataDir, storeId)).mtimeMs;
+    } catch {
+      return 0;
+    }
+    return Math.min(LOCK_STALE_MS, Math.max(0, refreshedMs + LOCK_STALE_MS - Date.now()));
   }
 
   /**

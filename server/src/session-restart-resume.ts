@@ -351,9 +351,13 @@ async function continueAfterRestart(
  * (corrupt, locked, missing) or fence must not stop the server from starting; it is returned
  * with its error so its sessions can be abandoned. A store whose fence failed is closed, never
  * left to run its interrupted work unfenced.
+ *
+ * A locked store is opened again once its lock goes stale. Startup owns the data directory, so
+ * the holder is a server that just crashed (a restart can beat its last refresh by up to the
+ * stale window), not a live one; abandoning would stop a session that only had to wait.
  */
 export async function openQueuedStores(
-  runtime: Pick<DurableHarness, "host" | "openHost" | "openHosts">,
+  runtime: Pick<DurableHarness, "host" | "openHost" | "openHosts" | "lockStaleInMs">,
   storeIds: Iterable<string>,
   fence: (hosts: readonly SessionHost[]) => Promise<void>,
 ): Promise<Map<string, unknown>> {
@@ -365,7 +369,19 @@ export async function openQueuedStores(
       ?.close()
       .catch(() => undefined);
   };
+  const locked: string[] = [];
   for (const storeId of storeIds) {
+    try {
+      await runtime.openHost(storeId);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "durable_store_locked") locked.push(storeId);
+      else await drop(storeId, error);
+    }
+  }
+  for (const storeId of locked) {
+    // proper-lockfile takes a lock strictly older than the stale window: wait just past it.
+    const staleInMs = runtime.lockStaleInMs(storeId);
+    if (staleInMs > 0) await new Promise((resolve) => setTimeout(resolve, staleInMs + 50));
     try {
       await runtime.openHost(storeId);
     } catch (error) {

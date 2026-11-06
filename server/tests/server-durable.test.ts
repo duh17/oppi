@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -52,6 +52,7 @@ import {
   DurableRuntime,
   SessionHost,
   durableStoreDir,
+  durableStoreLockPath,
 } from "../src/durable-harness.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
@@ -2753,6 +2754,27 @@ describe("server durable managed runtime", () => {
     expect(restarted.isActive(broken.id)).toBe(false);
     expect(storage.listRestartResume()).toEqual([]);
     expect(storage.getSession(broken.id)?.warnings?.join("\n")).toContain("fence failed");
+  });
+
+  it("resumes a queued session once a crashed server's store lock goes stale", async () => {
+    const f = await fixture([]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.session.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    // A server that crashed while holding the store left its lock, last refreshed just before.
+    const lockPath = durableStoreLockPath(f.dir, f.session.id);
+    mkdirSync(lockPath);
+    const refreshed = new Date(Date.now() - 1_500);
+    utimesSync(lockPath, refreshed, refreshed);
+
+    const storage = new Storage(f.dir);
+    const restarted = new SessionManager(storage);
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+
+    expect(restarted.isActive(f.session.id)).toBe(true);
+    expect(storage.getSession(f.session.id)?.warnings ?? []).toEqual([]);
   });
 
   it.each(["prompt", "steer", "follow-up"])(
