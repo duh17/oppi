@@ -18,6 +18,7 @@ import { stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { isPathWithinRoot } from "./path-utils.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isDeepStrictEqual } from "node:util";
 
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { generateId } from "./id.js";
@@ -567,7 +568,12 @@ function upsertAttachmentRecord(
   const manifest = readManifest(dataDir, sessionId);
   const existingIndex = manifest.attachments.findIndex((item) => item.id === record.id);
   if (existingIndex >= 0) {
-    manifest.attachments[existingIndex] = { ...manifest.attachments[existingIndex], ...record };
+    const existing = manifest.attachments[existingIndex];
+    const merged = { ...existing, ...record, createdAt: existing.createdAt };
+    // Each streamed update and each replay of a tool result stores its media again; when nothing
+    // changed, skip the durable rewrite, which costs a file and a directory fsync.
+    if (isDeepStrictEqual(merged, existing)) return;
+    manifest.attachments[existingIndex] = merged;
   } else {
     manifest.attachments.push(record);
   }

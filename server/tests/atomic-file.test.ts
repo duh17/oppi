@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileLiveActivityStateStore } from "../src/live-activity-state-store.js";
-import { storeUserMessageImages } from "../src/session-attachments.js";
+import {
+  materializeToolMediaContentBlocks,
+  storeUserMessageImages,
+} from "../src/session-attachments.js";
 import { writeFileAtomic, type AtomicWriteStep } from "../src/storage/atomic-file.js";
 import { extractAutoTitle } from "../src/storage/auto-title-extension-migration.js";
 import { DictationDictionaryStore } from "../src/storage/dictation-dictionary-store.js";
@@ -111,6 +114,23 @@ describe("writers that share writeFileAtomic", () => {
     run(makeTempDir("oppi-atomic-"));
 
     expect(sync.calls).toEqual(Array(writes).fill(["file", "directory"]).flat());
+  });
+
+  it("does not sync again when the same tool image is stored a second time", () => {
+    const dataDir = makeTempDir("oppi-atomic-");
+    const store = () =>
+      materializeToolMediaContentBlocks({
+        dataDir,
+        sessionId: "s",
+        toolCallId: "call-1",
+        contents: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
+      });
+
+    const first = store();
+    const second = store();
+
+    expect(second).toEqual(first);
+    expect(sync.calls).toEqual(["file", "directory", "file", "directory"]);
   });
 });
 
