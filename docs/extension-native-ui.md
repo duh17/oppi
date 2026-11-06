@@ -2,7 +2,7 @@
 
 API reference for how Oppi turns Pi extension UI into native Apple UI. Use it to keep a terminal-first Pi extension usable in Oppi, and to give an extension native cards, sheets, rows, and display surfaces without writing Swift. For packaging, tool output, and mobile do's and don'ts, see [Oppi extension behavior](extensions.md).
 
-This is version 1 of the contract.
+Most of this page is version 1 of the contract. [Composable surfaces](#composable-surfaces-version-2) are version 2.
 
 **Core rule:** native UI needs explicit semantics. An extension always provides terminal output through `render(width): string[]`, which Oppi shows as a styled terminal fallback. To get native UI, the extension returns a serializable native surface from `renderNative()`. Oppi never infers native behavior from terminal art.
 
@@ -367,6 +367,52 @@ export interface NativeRenderContext {
 
 In managed sessions Oppi creates the `ctx.ui` bridge, so the server translates extension UI at the source. `getEditorText` returns an empty string, `getToolsExpanded` returns the bridge's native tool expansion state, and `onTerminalInput`, `setFooter`, `setHeader`, `custom`, `addAutocompleteProvider`, and theme switching are no-op or unsupported shims. In mirrored sessions the terminal Pi process owns the real component objects. Both kinds render the same semantic payloads the same way; they differ only where terminal ownership hides opaque components.
 
+## Composable surfaces (version 2)
+
+A server plugin can publish a composable surface: a pill in the strip above or below the composer, and a drawer of sections with actions. Define it with `surface()` from `oppi/v1` and publish it with `panel.publish({ surfaces: oppiHost().surfaces(env) }, state)`. A section is one of the closed composites (`statusCard`, `checklist`, `dataTable`, `actionBar`) or a `blocks` section, whose `body` is a tree of the nodes below. The pill, when the surface has one, is one row of inline nodes. The server rejects a surface that breaks a rule; it never repairs one.
+
+### Blocks nodes
+
+`oppi/v1` has one builder per node kind, with the same name (`row`, `text`, `elapsed`, and so on). Every node can take an `id` and `accessibility` (`label`, `value`, `hint`). An `id` is a stable identifier, unique across the whole surface, and a node that offers an `action` must have one.
+
+| `type` | Fields | Notes |
+| --- | --- | --- |
+| `row` | `children`, `spacing?`, `align?`, `selected?`, `disabled?`, `action?` | Children side by side. `spacing`: `tight`, `normal`. `align`: `leading`, `center`, `trailing`, `spread`. |
+| `stack` | `children`, `spacing?`, `disabled?`, `action?` | Children one above another. |
+| `group` | `title`, `children`, `collapsed?` | A titled region the reader can fold. |
+| `text` | `text`, `style?`, `tone?`, `selected?`, `disabled?`, `action?` | `style`: `body`, `headline`, `caption`, `mono`. |
+| `markdown` | `markdown` | |
+| `badge` | `text`, `tone?`, `icon?`, `selected?`, `disabled?`, `action?` | A short status word. |
+| `icon` | `name`, `tone?` | An SF Symbol name from the server's allow-list. |
+| `elapsed` | `since`, `format?`, `style?`, `tone?` | A live count. See [Elapsed](#elapsed). |
+| `progress` | `value?`, `kind?`, `label?`, `tone?` | `value` is 0–1; without it the progress is indeterminate. `kind`: `bar`, `ring`. |
+| `keyValue` | `pairs` | Each pair is `{ key, value, tone? }`; at most 24. |
+| `table` | `columns`, `rows`, `truncated?` | A row is `{ id?, cells, actions? }`. A row with actions needs an `id`, and so does its table. |
+| `chart` | `kind`, `labels`, `series`, `title?`, `truncated?` | `kind`: `bar`, `line`, `pie`. |
+| `code` | `text`, `language?` | |
+| `divider` | | |
+| `spacer` | `size?` | `small`, `medium`, `large`. |
+| `button` | `id`, `title`, `action`, `role?`, `icon?`, `selected?`, `disabled?` | `role`: `primary`, `secondary`, `destructive`. |
+| `toggle` | `id`, `title`, `value`, `action`, `disabled?` | A tap sends the new value as `values.value`. |
+| `menu` | `id`, `items`, `title?`, `icon?`, `disabled?` | An item is `{ id?, title, role?, action }`. |
+
+`tone` is `neutral`, `accent`, `success`, `warning`, or `danger`. A field that a node kind does not take, such as a `tone` on `markdown` or an `action` on `icon`, makes the surface invalid. A body is at most 5 nodes deep, a layout node holds 1 to 12 children, a surface holds at most 300 nodes, and node text is at most 500 characters.
+
+A pill holds only `text`, `badge`, `icon`, `elapsed`, and `progress` nodes, and none of them can have an `action`. The pill's own `tap` is `"drawer"` (the default), which opens the drawer, or an action.
+
+### Elapsed
+
+An `elapsed` node shows the time since `since`, in epoch milliseconds. The client advances it once a second while it is on screen, so a running timer needs no republish and costs no server traffic. A `since` in the future shows zero.
+
+| `format` | Under a minute | Under an hour | An hour or more |
+| --- | --- | --- | --- |
+| `clock` (default) | `0:42` | `5:07` | `1:05:10` |
+| `short` | `42s` | `5m` | `1h 5m`, or `2h` on the hour |
+
+`style` and `tone` work as they do on `text`. The digits keep a fixed width, so the line does not shift as the count changes. VoiceOver reads the current count in words ("1 minute, 5 seconds") when it focuses the count, or the pill or row that holds it. `accessibility.label` names the count, and `accessibility.value` replaces the spoken count.
+
+A client that cannot tick the node gets the count as it was when the server sent the surface. A client that draws blocks but not `elapsed` gets a `text` node with the same words, `style`, and `tone`, and the version 1 projection shows the same words. That text changes only when the surface is published again.
+
 ## Capabilities and fallback
 
 The server advertises these capability levels and clients must support at least text fallback:
@@ -377,6 +423,11 @@ The server advertises these capability levels and clients must support at least 
 | `extension-native-ui:v1:prompt-native` | Standard Pi dialog mappings from `extension_ui_request` |
 | `extension-native-ui:v1:surface-native` | All blocks and persistent surface panels |
 | `extension-native-ui:v1:osc8-links` | OSC 8 hyperlinks in terminal fallback as tappable links |
+| `extension-native-ui:v2:composites` | Composable surfaces with the closed composites, and their actions |
+| `extension-native-ui:v2:blocks` | `blocks` sections and composed pills |
+| `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client |
+
+A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text.
 
 Terminal fallback is part of the contract:
 
