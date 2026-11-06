@@ -9,8 +9,6 @@
   },
   "files": [
     "dist/",
-    "!dist/oppi-extensions/",
-    "!dist/oppi-extensions/**",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts",
     "!dist/**/*.d.ts",
