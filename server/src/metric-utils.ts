@@ -3,7 +3,7 @@
  * server-stats). Extracted to eliminate copy-paste across metric modules.
  */
 
-import { appendFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 /** Format epoch-ms as "YYYY-MM-DD" in UTC. */
@@ -42,38 +42,6 @@ export function jsonlMaxBytesFromEnv(envVarName: string): number | null {
   const parsed = Number(raw);
   if (Number.isInteger(parsed) && parsed > 0) return parsed;
   return null;
-}
-
-/**
- * Append a JSONL record only if doing so keeps the file under a byte budget.
- *
- * Returns false when the record is dropped. The caller decides whether to log a
- * warning; this helper stays silent so a full telemetry file cannot cause a
- * warning loop that writes another unbounded log.
- */
-export function appendJsonlLineWithByteLimit(
-  filePath: string,
-  line: string,
-  maxBytes: number | null,
-): boolean {
-  if (maxBytes === null) {
-    appendFileSync(filePath, line, { encoding: "utf8", mode: 0o600 });
-    return true;
-  }
-
-  const lineBytes = Buffer.byteLength(line, "utf8");
-  if (lineBytes > maxBytes) return false;
-
-  let currentBytes: number;
-  try {
-    currentBytes = statSync(filePath).size;
-  } catch {
-    currentBytes = 0;
-  }
-
-  if (currentBytes + lineBytes > maxBytes) return false;
-  appendFileSync(filePath, line, { encoding: "utf8", mode: 0o600 });
-  return true;
 }
 
 /**

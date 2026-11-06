@@ -1,14 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { isSensitiveLogKey, redactLogString, REDACTED } from "../log-redact.js";
-import {
-  appendJsonlLineWithByteLimit,
-  jsonlMaxBytesFromEnv,
-  pruneOldJsonlFiles,
-  retentionDaysFromEnv,
-} from "../metric-utils.js";
 import { createLogger, type Logger } from "../logger.js";
 import { TelemetryEventWriter } from "../telemetry/event-writer.js";
 import { validateEvent } from "../telemetry/validate.js";
@@ -28,9 +21,7 @@ import {
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const TELEMETRY_DIR = "telemetry";
-const FILE_SUFFIX = ".jsonl";
 
-const METRICKIT_FILE_PREFIX = "metrickit-";
 const METRICKIT_MAX_PAYLOAD_COUNT = 160;
 const METRICKIT_MAX_SUMMARY_FIELDS = 24;
 const METRICKIT_MAX_SUMMARY_VALUE_CHARS = 256;
@@ -38,7 +29,6 @@ const METRICKIT_MAX_SUMMARY_VALUE_CHARS = 256;
 const EVENTS_MAX_PER_UPLOAD = 500;
 const EVENT_ID_MAX_CHARS = 96;
 
-const CLIENT_LOG_FILE_PREFIX = "client-logs-";
 const CLIENT_LOG_MAX_ENTRY_COUNT = 200;
 const CLIENT_LOG_MAX_CATEGORY_CHARS = 96;
 const CLIENT_LOG_MAX_MESSAGE_CHARS = 2_048;
@@ -48,14 +38,9 @@ const CLIENT_LOG_MAX_METADATA_VALUE_CHARS = 512;
 const CLIENT_LOG_MAX_ID_CHARS = 128;
 
 const log = createLogger({ base: { component: "telemetry_routes" } });
-const cappedTelemetryFiles = new Set<string>();
 
 function telemetryDir(ctx: RouteContext): string {
   return join(ctx.storage.getDataDir(), "diagnostics", TELEMETRY_DIR);
-}
-
-function dailyFileName(prefix: string, timestampMs: number): string {
-  return `${prefix}${new Date(timestampMs).toISOString().slice(0, 10)}${FILE_SUFFIX}`;
 }
 
 function isString(value: unknown): value is string {
@@ -232,29 +217,6 @@ function flattenedClient(client: TelemetryClient): Record<string, string | undef
   };
 }
 
-function appendTelemetryRecord(kind: string, path: string, record: unknown): void {
-  const maxBytes = jsonlMaxBytesFromEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES");
-  const wrote = appendJsonlLineWithByteLimit(path, `${JSON.stringify(record)}\n`, maxBytes);
-  if (wrote) return;
-
-  const key = `${kind}:${path}`;
-  if (cappedTelemetryFiles.has(key)) return;
-  cappedTelemetryFiles.add(key);
-  log.warn("telemetry.write.daily_file_cap_reached", {
-    kind,
-    path,
-    maxBytes,
-  });
-}
-
-function ensureTelemetryDir(ctx: RouteContext): string {
-  const dir = telemetryDir(ctx);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-  return dir;
-}
-
 // ── MetricKit ──
 
 function normalizePayload(
@@ -289,6 +251,8 @@ function parseMetricKitRequest(body: unknown): MetricKitUploadRequest | null {
   if (!client || !Array.isArray(body.payloads)) return null;
 
   const generatedAt = toFiniteNumber(body.generatedAt, Date.now());
+  // The timestamp names the daily file; one outside the Date range has no day.
+  if (Number.isNaN(new Date(generatedAt).getTime())) return null;
   const payloads: MetricKitPayloadItem[] = [];
   for (const candidate of body.payloads.slice(0, METRICKIT_MAX_PAYLOAD_COUNT)) {
     const parsed = normalizePayload(candidate, generatedAt);
@@ -299,20 +263,14 @@ function parseMetricKitRequest(body: unknown): MetricKitUploadRequest | null {
   return { generatedAt, client, payloads };
 }
 
-function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadRequest): void {
-  const dir = ensureTelemetryDir(ctx);
-  const record = {
+function metricKitRecord(request: MetricKitUploadRequest): Record<string, unknown> {
+  return {
     receivedAt: Date.now(),
     generatedAt: request.generatedAt,
     ...flattenedClient(request.client),
     payloadCount: request.payloads.length,
     payloads: request.payloads,
   };
-  appendTelemetryRecord(
-    "metrickit",
-    join(dir, dailyFileName(METRICKIT_FILE_PREFIX, request.generatedAt)),
-    record,
-  );
 }
 
 // ── App events ──
@@ -498,11 +456,10 @@ function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
   };
 }
 
-function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadRequest): void {
-  const dir = ensureTelemetryDir(ctx);
+function clientLogRecord(request: ClientLogUploadRequest): Record<string, unknown> {
   const receivedAt = Date.now();
   const { client } = request;
-  const record = {
+  return {
     receivedAt,
     generatedAt: request.generatedAt,
     ...flattenedClient(client),
@@ -516,11 +473,6 @@ function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadReques
       ...entry,
     })),
   };
-  appendTelemetryRecord(
-    "client_logs",
-    join(dir, dailyFileName(CLIENT_LOG_FILE_PREFIX, request.generatedAt)),
-    record,
-  );
 }
 
 /** Distinct (reason, build) pairs remembered for drop logging before the set resets. */
@@ -532,6 +484,8 @@ export function createTelemetryRoutes(
   logger: Logger = log,
 ): RouteDispatcher {
   let eventWriter: TelemetryEventWriter | undefined;
+  const writer = (): TelemetryEventWriter =>
+    (eventWriter ??= new TelemetryEventWriter(telemetryDir(ctx)));
   const loggedDrops = new Set<string>();
 
   /**
@@ -574,13 +528,7 @@ export function createTelemetryRoutes(
       return;
     }
 
-    appendMetricKitRecord(ctx, request);
-    pruneOldJsonlFiles(
-      telemetryDir(ctx),
-      METRICKIT_FILE_PREFIX,
-      FILE_SUFFIX,
-      retentionDaysFromEnv("OPPI_METRICKIT_RETENTION_DAYS", 14),
-    );
+    writer().writeRecord("metrickit", request.generatedAt, metricKitRecord(request));
 
     const windowStartMs = Math.min(...request.payloads.map((payload) => payload.windowStartMs));
     const windowEndMs = Math.max(...request.payloads.map((payload) => payload.windowEndMs));
@@ -605,8 +553,7 @@ export function createTelemetryRoutes(
       return;
     }
 
-    eventWriter ??= new TelemetryEventWriter(telemetryDir(ctx));
-    eventWriter.write("app", parsed.records);
+    writer().write("app", parsed.records);
     logDrops(parsed.dropped, parsed.client);
     const response: TelemetryEventUploadResponse = {
       ok: true,
@@ -632,14 +579,7 @@ export function createTelemetryRoutes(
       return;
     }
 
-    appendClientLogRecord(ctx, request);
-    // Client logs share the app-event retention.
-    pruneOldJsonlFiles(
-      telemetryDir(ctx),
-      CLIENT_LOG_FILE_PREFIX,
-      FILE_SUFFIX,
-      retentionDaysFromEnv("OPPI_CHAT_METRICS_RETENTION_DAYS", 14),
-    );
+    writer().writeRecord("client_logs", request.generatedAt, clientLogRecord(request));
 
     const windowStartMs = Math.min(...request.entries.map((entry) => entry.ts));
     const windowEndMs = Math.max(...request.entries.map((entry) => entry.ts));

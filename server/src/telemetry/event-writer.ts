@@ -20,6 +20,11 @@
  * Pruning also removes the pre-v2 files (`chat-metrics-`, `server-ops-metrics-`,
  * `server-metrics-`) on their successor's retention so they age out. Nothing
  * reads or writes those files any more.
+ *
+ * The same writer owns the two other daily client uploads, one record per line,
+ * named by the client's `generatedAt` and held to the app daily cap:
+ *   metrickit-YYYY-MM-DD.jsonl   (OPPI_METRICKIT_RETENTION_DAYS, 14)
+ *   client-logs-YYYY-MM-DD.jsonl (OPPI_CHAT_METRICS_RETENTION_DAYS, 14)
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -50,7 +55,10 @@ function isCapExemptLine(line: string): boolean {
   }
 }
 
-const ORIGIN_FILES = {
+/** The origins' event files plus the two client upload files. */
+type TelemetryStream = TelemetryOrigin | "metrickit" | "client_logs";
+
+const STREAM_FILES = {
   app: {
     prefix: "app-events-",
     legacyPrefixes: ["chat-metrics-"],
@@ -65,8 +73,22 @@ const ORIGIN_FILES = {
     defaultRetentionDays: 30,
     maxBytesEnv: "OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES",
   },
+  metrickit: {
+    prefix: "metrickit-",
+    legacyPrefixes: [],
+    retentionEnv: "OPPI_METRICKIT_RETENTION_DAYS",
+    defaultRetentionDays: 14,
+    maxBytesEnv: "OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES",
+  },
+  client_logs: {
+    prefix: "client-logs-",
+    legacyPrefixes: [],
+    retentionEnv: "OPPI_CHAT_METRICS_RETENTION_DAYS",
+    defaultRetentionDays: 14,
+    maxBytesEnv: "OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES",
+  },
 } as const satisfies Record<
-  TelemetryOrigin,
+  TelemetryStream,
   {
     prefix: string;
     legacyPrefixes: readonly string[];
@@ -80,7 +102,7 @@ const log = createLogger({ base: { component: "telemetry_event_writer" } });
 
 /** File name of an origin's daily event file for a UTC timestamp. */
 export function telemetryEventFileName(origin: TelemetryOrigin, ts: number): string {
-  return `${ORIGIN_FILES[origin].prefix}${dateString(ts)}${FILE_SUFFIX}`;
+  return `${STREAM_FILES[origin].prefix}${dateString(ts)}${FILE_SUFFIX}`;
 }
 
 export interface TelemetryEventSink {
@@ -96,33 +118,46 @@ export class TelemetryEventWriter implements TelemetryEventSink {
 
   /** Append records as one write. Best effort: logs and returns on failure. */
   write(origin: TelemetryOrigin, records: readonly TelemetryEventRecord[]): void {
-    if (records.length === 0) return;
     try {
-      if (!existsSync(this.telemetryDir)) {
-        mkdirSync(this.telemetryDir, { recursive: true, mode: 0o700 });
-      }
-      const filePath = join(this.telemetryDir, telemetryEventFileName(origin, Date.now()));
-      let lines = "";
-      let exemptLines = "";
-      for (const record of records) {
-        const line = `${JSON.stringify(record)}\n`;
-        if (CAP_EXEMPT_EVENTS.has(record.name)) exemptLines += line;
-        else lines += line;
-      }
-      if (exemptLines) appendFileSync(filePath, exemptLines, { encoding: "utf8", mode: 0o600 });
-      if (lines) {
-        const maxBytes = jsonlMaxBytesFromEnv(ORIGIN_FILES[origin].maxBytesEnv);
-        if (!this.appendCounted(filePath, lines, maxBytes)) {
-          this.warnDailyCapOnce(filePath, maxBytes);
-        }
-      }
-      this.prune(origin);
+      this.append(origin, Date.now(), records);
     } catch (err) {
       log.error("telemetry_events.write.failed", {
         origin,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Append one client upload record to the stream's daily file for `ts`. Unlike
+   * `write`, a failure throws: the upload route answers it rather than dropping
+   * the client's only copy.
+   */
+  writeRecord(stream: "metrickit" | "client_logs", ts: number, record: unknown): void {
+    this.append(stream, ts, [record]);
+  }
+
+  private append(stream: TelemetryStream, ts: number, records: readonly unknown[]): void {
+    if (records.length === 0) return;
+    if (!existsSync(this.telemetryDir)) {
+      mkdirSync(this.telemetryDir, { recursive: true, mode: 0o700 });
+    }
+    const spec = STREAM_FILES[stream];
+    const filePath = join(this.telemetryDir, `${spec.prefix}${dateString(ts)}${FILE_SUFFIX}`);
+    let lines = "";
+    let exemptLines = "";
+    for (const record of records) {
+      const line = `${JSON.stringify(record)}\n`;
+      const name = (record as { name?: unknown }).name;
+      if (typeof name === "string" && CAP_EXEMPT_EVENTS.has(name)) exemptLines += line;
+      else lines += line;
+    }
+    if (exemptLines) appendFileSync(filePath, exemptLines, { encoding: "utf8", mode: 0o600 });
+    if (lines) {
+      const maxBytes = jsonlMaxBytesFromEnv(spec.maxBytesEnv);
+      if (!this.appendCounted(filePath, lines, maxBytes)) this.warnDailyCapOnce(filePath, maxBytes);
+    }
+    this.prune(stream);
   }
 
   /** Append cap-counted lines unless they would push the file's counted bytes past `maxBytes`. */
@@ -153,9 +188,9 @@ export class TelemetryEventWriter implements TelemetryEventSink {
     return counted;
   }
 
-  /** Remove an origin's event files, and its legacy files, past retention. */
-  prune(origin: TelemetryOrigin): void {
-    const spec = ORIGIN_FILES[origin];
+  /** Remove a stream's files, and its legacy files, past retention. */
+  prune(stream: TelemetryStream): void {
+    const spec = STREAM_FILES[stream];
     const days = retentionDaysFromEnv(spec.retentionEnv, spec.defaultRetentionDays);
     for (const prefix of [spec.prefix, ...spec.legacyPrefixes]) {
       pruneOldJsonlFiles(this.telemetryDir, prefix, FILE_SUFFIX, days);

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -347,6 +347,33 @@ describe("POST /telemetry/metrickit", () => {
       payloadCount: 1,
     });
     expect(record.gitCommit).toBeUndefined();
+  });
+
+  it("rejects a generatedAt outside the Date range instead of naming a file after it", async () => {
+    const { status } = await post("/telemetry/metrickit", {
+      generatedAt: Number.MAX_VALUE,
+      client: CLIENT,
+      payloads: [{ kind: "metric", windowStartMs: 1, windowEndMs: 2, summary: {}, raw: {} }],
+    });
+
+    expect(status).toBe(400);
+    expect(existsSync(telemetryDir())).toBe(false);
+  });
+
+  it("accepts but does not append past the daily file cap", async () => {
+    setEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES", "32");
+    mkdirSync(telemetryDir(), { recursive: true });
+    const dayFile = join(telemetryDir(), `metrickit-${today()}.jsonl`);
+    writeFileSync(dayFile, '{"existing":true}\n');
+
+    const { status } = await post("/telemetry/metrickit", {
+      generatedAt: Date.now(),
+      client: CLIENT,
+      payloads: [{ kind: "metric", windowStartMs: 1, windowEndMs: 2, summary: {}, raw: {} }],
+    });
+
+    expect(status).toBe(200);
+    expect(readFileSync(dayFile, "utf8")).toBe('{"existing":true}\n');
   });
 
   it("prunes old MetricKit files on its retention", async () => {
