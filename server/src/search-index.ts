@@ -64,7 +64,12 @@ export interface DurableSearchSource {
   readTranscript(sessionId: string): Promise<SearchTranscriptContent>;
   /** Keep the session's store open until the returned release runs. */
   holdStore(sessionId: string): Promise<() => void>;
+  /** Newest write time (epoch ms) of the store's files; Infinity when they cannot be read. */
+  storeModifiedAtMs(storeId: string): Promise<number>;
 }
+
+/** `fts_schema` key holding when a durable store's last complete catch-up began (epoch ms). */
+const durableStoreSyncedKey = (storeId: string): string => `durable_store_synced:${storeId}`;
 
 export interface SearchIndexSyncResult {
   reindexed: number;
@@ -1513,6 +1518,38 @@ export class SearchIndex {
     return [...groups.values()];
   }
 
+  /**
+   * Whether startup catch-up can leave this store closed: its files are older than the start of
+   * its last complete catch-up, and every session in it still has an index row for its current
+   * conversation, title, and workspace. Any doubt means a full pass.
+   */
+  private async durableStoreUnchanged(
+    storeId: string,
+    sessionIds: string[],
+    indexed: Set<string>,
+  ): Promise<boolean> {
+    const row = this.db
+      .prepare("SELECT value FROM fts_schema WHERE key = ?")
+      .get(durableStoreSyncedKey(storeId)) as { value: string } | undefined;
+    const syncedAt = Number(row?.value);
+    if (!(syncedAt <= Date.now())) return false;
+    for (const sessionId of sessionIds) {
+      const live = this.getSession(sessionId);
+      const meta = this.stmtGetMeta.get(sessionId) as FtsMetaRow | undefined;
+      if (
+        !live ||
+        !indexed.has(sessionId) ||
+        !meta?.durable_marker?.startsWith(`${live.serverDurable?.conversationId}:`) ||
+        meta.workspace_id !== (live.workspaceId ?? "") ||
+        meta.title !== extractSessionTitle(live)
+      ) {
+        return false;
+      }
+    }
+    const modifiedAt = await this.durableSource?.storeModifiedAtMs(storeId).catch(() => Infinity);
+    return modifiedAt !== undefined && modifiedAt < syncedAt;
+  }
+
   private isIndexedFromDurable(session: Session): boolean {
     return (
       this.durableSource !== undefined &&
@@ -2338,12 +2375,24 @@ export class SearchIndex {
     this.lateDurableSessionIds.clear();
     let turnStartedAt = performance.now();
     for (const storeSessionIds of this.groupByDurableStore(durableIds)) {
+      const first = this.getSession(storeSessionIds[0]);
+      const storeId = first && durableStoreId(first);
+      // The mark is taken before the pass and written only after a clean one, so a crash, a
+      // failed session, or a write landing during the pass leaves the store due next time.
+      const passStartedAt = Date.now();
+      if (storeId && (await this.durableStoreUnchanged(storeId, storeSessionIds, ftsIds))) {
+        result.skipped += storeSessionIds.length;
+        sessionsChecked += storeSessionIds.filter((id) => snapshotDurableIds.has(id)).length;
+        continue;
+      }
+      let clean = true;
       // Every store open fences all of the store's stopped conversations. Letting
       // the store idle-close between its sessions reopened it once per session,
       // which made startup catch-up quadratic in a store's conversation count.
       const release = await this.durableSource
         ?.holdStore(storeSessionIds[0])
         .catch(() => undefined);
+      if (!release) clean = false;
       try {
         for (const sessionId of storeSessionIds) {
           if (this.closed) {
@@ -2358,6 +2407,7 @@ export class SearchIndex {
           try {
             mergeSyncResults(result, await this.syncDurableSession(sessionId));
           } catch (err: unknown) {
+            clean = false;
             log.error("search_index.durable_index.failed", {
               sessionId,
               error: err instanceof Error ? err.message : String(err),
@@ -2372,6 +2422,11 @@ export class SearchIndex {
         }
       } finally {
         release?.();
+      }
+      if (clean && storeId) {
+        this.db
+          .prepare("INSERT OR REPLACE INTO fts_schema VALUES (?, ?)")
+          .run(durableStoreSyncedKey(storeId), String(passStartedAt));
       }
     }
 

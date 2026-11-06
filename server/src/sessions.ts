@@ -83,8 +83,8 @@ type ActiveSession = SessionStartActiveSession;
 import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
 import type { PluginCatalog } from "./plugin-host.js";
 import { isControlConversation } from "./control-session.js";
+import { createDurableSearchSource } from "./durable-search-source.js";
 import {
-  DURABLE_STORE_MISSING,
   durableStoreId,
   hasServerDurableBinding,
   requireDurableStoreId,
@@ -788,36 +788,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     });
   }
 
-  /** Read-only Harness access for the search index. */
   durableSearchSource(): DurableSearchSource {
-    const runtime = this.durableHarness;
-    const withConversation = async <T>(
-      sessionId: string,
-      read: (harness: Harness, id: ConversationId) => Promise<T>,
-    ): Promise<T> => {
-      const session = this.storage.getSession(sessionId);
-      const conversationId = session?.serverDurable?.conversationId;
-      if (!session || conversationId === undefined) throw new Error(DURABLE_STORE_MISSING);
-      return (await runtime).withSession(session, (harness) =>
-        read(harness, conversationId as ConversationId),
-      );
-    };
-    return {
-      readTipEntryId: async (sessionId) => {
-        const { readDurableTipEntryId } = await import("./durable-history.js");
-        return withConversation(sessionId, readDurableTipEntryId);
-      },
-      readTranscript: async (sessionId) => {
-        const { readDurableSearchTranscript } = await import("./durable-history.js");
-        return withConversation(sessionId, readDurableSearchTranscript);
-      },
-      holdStore: async (sessionId) => {
-        const session = this.storage.getSession(sessionId);
-        if (!session) throw new Error(DURABLE_STORE_MISSING);
-        const host = await (await runtime).openHost(requireDurableStoreId(session));
-        return host.retain("search-index");
-      },
-    };
+    return createDurableSearchSource(this.storage, this.durableHarness);
   }
 
   async getServerDurableTrace(

@@ -111,6 +111,7 @@ async function durableFixture() {
     readTipEntryId: () => readDurableTipEntryId(harness, id),
     readTranscript: () => readTranscript(id as number),
     holdStore: async () => () => {},
+    storeModifiedAtMs: async () => Infinity,
   };
   return { id: id as number, turn, source, readTranscript, resume };
 }
@@ -221,6 +222,7 @@ describe("SearchIndex durable sessions", () => {
       readTranscript: (id) =>
         id === broken.id ? Promise.reject(lockError) : f.source.readTranscript(id),
       holdStore: (id) => (id === broken.id ? Promise.reject(lockError) : f.source.holdStore(id)),
+      storeModifiedAtMs: f.source.storeModifiedAtMs,
     });
 
     const result = await index.startBackgroundSync([broken, good]);
@@ -257,6 +259,7 @@ describe("SearchIndex durable sessions", () => {
         held.add(storeOf(id));
         return () => held.delete(storeOf(id));
       },
+      storeModifiedAtMs: f.source.storeModifiedAtMs,
     });
 
     const result = await index.startBackgroundSync(sessions, { budgetMs: 0 });
@@ -266,6 +269,109 @@ describe("SearchIndex durable sessions", () => {
     expect(readOutsideHold).toEqual([]);
     expect(held.size).toBe(0);
     expect(index.search("tarsier")).toHaveLength(5);
+  });
+
+  describe("catch-up of unchanged stores", () => {
+    /** Stores A (two sessions) and B (one) over one index directory; `modifiedAt` stands in for their file mtimes. */
+    async function servers() {
+      const f = await durableFixture();
+      await f.turn("okapi prompt", "dikdik reply");
+      const sessions = ["A", "A", "B"].map((storeId, n) =>
+        makeSession(f.id, { id: `s${n}`, serverDurable: { storeId, conversationId: f.id } }),
+      );
+      const dir = mkdtempSync(join(tmpdir(), "oppi-durable-search-index-"));
+      cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+      const s = {
+        f,
+        sessions,
+        holds: [] as string[],
+        failing: new Set<string>(),
+        cutOff: false,
+        modifiedAt: { A: 1, B: 1 } as Record<string, number>,
+        /** One server start: a new index over the same directory, synced once, then closed. */
+        async boot(query = "dikdik") {
+          s.holds = [];
+          const index = new SearchIndex(dir, (id) => sessions.find((x) => x.id === id));
+          let closed = false;
+          const close = () => {
+            if (!closed) index.close();
+            closed = true;
+          };
+          index.durableSource = {
+            ...f.source,
+            readTipEntryId: (id) => {
+              if (s.cutOff) close();
+              return s.failing.has(id)
+                ? Promise.reject(new Error("x"))
+                : f.source.readTipEntryId(id);
+            },
+            holdStore: async (id) => {
+              s.holds.push(sessions.find((x) => x.id === id)!.serverDurable!.storeId!);
+              return () => {};
+            },
+            storeModifiedAtMs: async (storeId) => s.modifiedAt[storeId]!,
+          };
+          const result = await index.startBackgroundSync(sessions, { budgetMs: 0 });
+          const hits = closed ? [] : index.search(query).map((hit) => hit.sessionId);
+          close();
+          return { result, hits: hits.sort() };
+        },
+      };
+      return s;
+    }
+
+    it("leaves a store closed when its files predate the last complete sync", async () => {
+      const s = await servers();
+      await s.boot();
+      const reads = s.f.readTranscript.mock.calls.length;
+
+      const { result, hits } = await s.boot();
+      expect(result).toMatchObject({ skipped: 3, added: 0, sessionsChecked: 3 });
+      expect(s.holds).toEqual([]);
+      expect(s.f.readTranscript.mock.calls.length).toBe(reads);
+      expect(hits).toHaveLength(3);
+    });
+
+    it("catches up a store written after the last sync, such as while the server was down", async () => {
+      const s = await servers();
+      await s.boot();
+      await s.f.turn("numbat prompt", "aardwolf reply");
+      s.modifiedAt.A = Date.now() + 60_000;
+
+      const { result, hits } = await s.boot("aardwolf");
+      expect(result).toMatchObject({ reindexed: 2, skipped: 1 });
+      expect(s.holds).toEqual(["A"]);
+      expect(hits).toEqual(["s0", "s1"]);
+    });
+
+    it("retries a store whose sync had a failed session", async () => {
+      const s = await servers();
+      s.failing.add("s1");
+      expect((await s.boot()).result).toMatchObject({ added: 2 });
+      s.failing.clear();
+
+      expect((await s.boot()).result).toMatchObject({ added: 1, skipped: 2 });
+      expect(s.holds).toEqual(["A"]);
+    });
+
+    it("retries every store when the sync was cut off mid-pass", async () => {
+      const s = await servers();
+      s.cutOff = true;
+      expect((await s.boot()).result).toMatchObject({ cancelled: true });
+      s.cutOff = false;
+
+      expect((await s.boot()).result).toMatchObject({ cancelled: false, added: 3 });
+      expect(s.holds.sort()).toEqual(["A", "B"]);
+    });
+
+    it("checks a store again when a session's title changed", async () => {
+      const s = await servers();
+      await s.boot();
+      s.sessions[2]!.name = "Renamed";
+
+      expect((await s.boot()).result).toMatchObject({ reindexed: 1, skipped: 2 });
+      expect(s.holds).toEqual(["B"]);
+    });
   });
 
   it("does not index ephemeral durable sessions", async () => {
