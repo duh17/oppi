@@ -1566,7 +1566,8 @@ const EVENTS = {
     },
   },
   "server.mcp_connect": {
-    description: "How long did the first MCP connect take on a durable session, and did it fail?",
+    description:
+      "How long did a durable session's first connect to an MCP server take, at session start or at the first call of a codemode-only server, and did it fail?",
     group: "server_ops",
     fields: { duration_ms: "ms" },
     tags: {

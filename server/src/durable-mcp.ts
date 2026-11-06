@@ -20,9 +20,16 @@
  *   (the session's `mcp_servers` section has those): the extension is shared, and a sandbox
  *   server's instructions are guest-written text.
  * - A tool reruns after a crash only when the server marks it read-only or idempotent.
+ * - A server reached only through codemode connects at its first call, not at session start:
+ *   `mcp-tool-cache.ts` keeps the last list it reported, and the session builds the server's
+ *   tools, its namespace, and its resource tools from that, so the catalog and codemode's type
+ *   declarations need no live connection. A server never connected with this config connects
+ *   at attach (which fills the cache), as does one with a `direct` or `deferred` tool, which
+ *   the model is offered or searches for. A connect that fails at first use fails that call.
  * - Sign-in stays in Oppi's MCP settings. Problems are reported once after startup, and a
  *   server whose stored credentials changed since it needed sign-in reconnects before the
  *   next prompt.
+ *   A server that connects at first use reports its problem in the failed call instead.
  * - In a sandbox workspace, `sandbox` (from `sandboxMcpForWorkspace`) replaces config
  *   loading, transports, and the log, so the classic sandbox boundary applies unchanged.
  */
@@ -40,6 +47,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
 import { recordMcpConnect } from "./mcp-connect-metrics.js";
+import { mcpToolCacheKey, type McpServerSnapshot, type McpToolCache } from "./mcp-tool-cache.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   loadPiMcpInternals,
@@ -65,9 +73,22 @@ type ToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
 interface Server {
   entry: McpServerEntry;
+  /** The `McpToolCache` key of this entry's config. */
+  key: string;
+  /** Only codemode reaches its tools, so a cached list serves them and the connect can wait. */
+  cacheable: boolean;
+  /**
+   * What the server's tools, resource tools, and `mcp_servers` line are built from: the cached
+   * list until a connection reports one, then that. A `cacheable` server that starts with one
+   * connects at first use instead of at attach.
+   */
+  snapshot?: McpServerSnapshot;
   connection?: McpServerConnection;
-  /** Settles when the first connection attempt connected or failed. */
+  /** Settles when the first connection attempt connected or failed; not set for a lazy server. */
   ready?: Promise<void>;
+  /** When the first connection attempt began; undefined before it and once it is recorded. */
+  connectStartedAt?: number;
+  connectRecorded: boolean;
 }
 
 interface Registered {
@@ -93,6 +114,8 @@ export interface DurableMcpOptions {
   /** The Pi Tools setting's tools (`piDefaultTools`), which can turn `tool_search` on. */
   piTools: ReadonlySet<string>;
   providerToken: (provider: string) => Promise<string | undefined>;
+  /** Last-known tool lists, shared by every session of this server. */
+  toolCache: McpToolCache;
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
   /** This session's connected servers as codemode namespaces; undefined once it closes. */
@@ -107,6 +130,21 @@ function exposureOf(entry: McpServerEntry): McpExposure {
 /** Exposures the server's tools can have, known from its config before it connects. */
 function configuredExposures(entry: McpServerEntry): Set<McpExposure> {
   return new Set([exposureOf(entry), ...Object.values(entry.config.toolExposure ?? {})]);
+}
+
+/** Codemode scripts, and `tool_search` for the model, reach these tools; nothing offers them directly. */
+function reachedOnlyByCodemode(entry: McpServerEntry): boolean {
+  return [...configuredExposures(entry)].every(
+    (exposure) => exposure === "codemode" || exposure === "hidden",
+  );
+}
+
+function snapshotOf(connection: McpServerConnection): McpServerSnapshot {
+  return {
+    tools: connection.tools,
+    hasResources: connection.hasResources,
+    instructions: connection.instructions,
+  };
 }
 
 function replayOf(definition: ToolDefinition): "safe" | "unsafe" {
@@ -191,6 +229,18 @@ function liveToolClient(
     getClient: async () => {
       const connection = live.mcp?.connectionOf(server);
       if (!connection) throw new Error(`MCP server "${server}" is shut down`);
+      // A server left to connect at its first call connects here; a connected one answers at once.
+      try {
+        await connection.getClient();
+      } catch (error) {
+        // Pi's own text sends the user to `/mcp`, which Oppi sessions do not have.
+        if (connection.state === "needs-auth")
+          throw new Error(
+            `MCP server "${server}" needs sign-in. Sign in from MCP Servers in Oppi's settings, then call it again.`,
+            { cause: error },
+          );
+        throw error;
+      }
       return connection;
     },
     readableResources: () =>
@@ -299,7 +349,15 @@ export class DurableMcp {
       renderServersSection: () => this.renderServersSection(),
       searchTools: (args, api, context) => this.searchTools(args, api, context),
     };
-    this.servers = entries.map((entry) => ({ entry }));
+    const cached = entries.some(reachedOnlyByCodemode)
+      ? options.toolCache.load()
+      : new Map<string, McpServerSnapshot>();
+    this.servers = entries.map((entry) => {
+      const key = mcpToolCacheKey(entry, options.sandbox !== undefined);
+      const cacheable = reachedOnlyByCodemode(entry);
+      const snapshot = cacheable ? cached.get(key) : undefined;
+      return { entry, key, cacheable, connectRecorded: false, ...(snapshot ? { snapshot } : {}) };
+    });
     this.configErrors = configErrors;
     this.credentials = new internals.McpOAuthCredentialStore();
     this.serverLog = new internals.McpServerLog(
@@ -350,14 +408,17 @@ export class DurableMcp {
   }
 
   /**
-   * Start connecting. Codemode and tool search are offered as the servers' exposure asks, and
-   * each server's tools are appended to the conversation's tool list as it connects.
+   * Offer codemode and tool search as the servers' exposure asks. A server with a cached tool
+   * list gets its tools now and connects at its first call; each of the others starts connecting,
+   * and its tools are appended to the conversation's tool list as it connects.
    */
   attach(conversation: Conversation): void {
     if (this.conversation) throw new Error("Durable MCP is already attached");
     this.conversation = conversation;
     this.offerTools(this.discoveryTools);
-    const readies = this.servers.map((server) => {
+    const lazy = this.servers.filter((server) => server.snapshot);
+    const readies: Promise<void>[] = [];
+    for (const server of this.servers) {
       const connection = new this.internals.McpServerConnection({
         entry: server.entry,
         cwd: this.options.cwd,
@@ -366,29 +427,18 @@ export class DurableMcp {
         credentials: this.credentials,
         providerToken: this.options.providerToken,
         log: this.serverLog,
-        onTools: (changed) => this.registerTools(changed),
-        onChange: (changed) => this.onConnectionChange(changed),
+        onTools: (changed) => this.onTools(server, changed),
+        onChange: (changed) => this.onConnectionChange(server, changed),
       });
       server.connection = connection;
-      const startedAt = Date.now();
+      if (server.snapshot) continue;
       server.ready = connection.getClient().then(
-        () => {
-          recordMcpConnect(this.options.metrics, {
-            sessionId: this.options.sessionId,
-            startedAt,
-            state: "connected",
-          });
-        },
-        () => {
-          recordMcpConnect(this.options.metrics, {
-            sessionId: this.options.sessionId,
-            startedAt,
-            state: connection.state,
-          });
-        },
+        () => undefined,
+        () => undefined,
       );
-      return server.ready;
-    });
+      readies.push(server.ready);
+    }
+    if (lazy.length) this.registerTools(lazy);
     this.startup = Promise.all(readies).then(() => undefined);
   }
 
@@ -451,7 +501,8 @@ export class DurableMcp {
     const resourceTools = new Set(this.internals.MCP_RESOURCE_TOOL_NAMES);
     const loadedBefore = loaded.some((name) => name.startsWith("mcp__") || resourceTools.has(name));
     // A codemode script runs on the tools its call started with: a server that connects during
-    // the call is too late for it. So with codemode, the first prompt waits for every server.
+    // the call is too late for it. So with codemode, the first prompt waits for every server
+    // that connects at attach; one with a cached list already has its tools.
     await this.waitFor(
       loadedBefore || codemode
         ? this.servers
@@ -507,7 +558,26 @@ export class DurableMcp {
     return url ? JSON.stringify(this.credentials.tokens(connection.name, url) ?? null) : "null";
   }
 
-  private onConnectionChange(connection: McpServerConnection): void {
+  /** The first attempt's duration and outcome, wherever it began: at attach or a first call. */
+  private recordFirstConnect(server: Server, connection: McpServerConnection): void {
+    const { state } = connection;
+    if (server.connectRecorded) return;
+    if (state === "connecting") server.connectStartedAt ??= Date.now();
+    else if (
+      server.connectStartedAt !== undefined &&
+      (state === "connected" || state === "failed" || state === "needs-auth")
+    ) {
+      server.connectRecorded = true;
+      recordMcpConnect(this.options.metrics, {
+        sessionId: this.options.sessionId,
+        startedAt: server.connectStartedAt,
+        state,
+      });
+    }
+  }
+
+  private onConnectionChange(server: Server, connection: McpServerConnection): void {
+    this.recordFirstConnect(server, connection);
     if (connection.state !== "needs-auth") this.tokensAtSignIn.delete(connection);
     else if (!this.tokensAtSignIn.has(connection))
       this.tokensAtSignIn.set(connection, this.storedTokens(connection));
@@ -523,16 +593,33 @@ export class DurableMcp {
     await Promise.allSettled(signedIn.map(([connection]) => connection.reconnect()));
   }
 
-  private registerTools(connection: McpServerConnection): void {
+  /** A connection reported its tools: a new list rebuilds the server's tools, and a cacheable one is saved. */
+  private onTools(server: Server, connection: McpServerConnection): void {
+    const snapshot = snapshotOf(connection);
+    // A first connect after a cached list, or a refresh, that changed nothing leaves the tools as built.
+    if (JSON.stringify(snapshot) === JSON.stringify(server.snapshot)) return;
+    server.snapshot = snapshot;
+    if (server.cacheable) this.options.toolCache.save(server.key, snapshot);
+    this.registerTools([server]);
+  }
+
+  /** Build the servers' tools from their snapshots; publish and offer once for all of them. */
+  private registerTools(servers: readonly Server[]): void {
     if (this.closed) return;
-    const server = connection.entry.name;
-    const entry = this.servers.find((candidate) => candidate.entry.name === server)?.entry;
-    if (!entry) return;
+    for (const server of servers) this.setTools(server);
+    this.syncResourceTools();
+    this.publish();
+    this.offerTools(this.enabledToolNames());
+  }
+
+  private setTools({ entry, connection, snapshot }: Server): void {
+    if (!connection || !snapshot) return;
+    const server = entry.name;
     const description = entry.config.description?.trim();
     const namespace = {
       name: this.internals.mcpNamespace(server),
       ...(description ? { description } : {}),
-      ...(connection.instructions ? { instructions: connection.instructions } : {}),
+      ...(snapshot.instructions ? { instructions: snapshot.instructions } : {}),
     };
     // Tool names are `mcp__<server>__<tool>` with the server name sanitized like the namespace.
     this.namespaces.set(server, {
@@ -544,7 +631,7 @@ export class DurableMcp {
     const current = new Map<string, Registered>();
     // Like Pi: every tool whose name sanitizes to the same name gets the hash suffix, so which
     // one keeps the plain name does not depend on the order of the list.
-    const plain = [...new Set(connection.tools.map((tool) => tool.name))].map((tool) =>
+    const plain = [...new Set(snapshot.tools.map((tool) => tool.name))].map((tool) =>
       this.internals.createMcpToolName(server, tool),
     );
     const assignName = (tool: McpTool): string => {
@@ -560,7 +647,7 @@ export class DurableMcp {
       this.toolOwners.set(name, owner);
       return name;
     };
-    for (const tool of connection.tools) {
+    for (const tool of snapshot.tools) {
       const name = assignName(tool);
       const exposure = this.internals.getMcpToolExposure(entry.config, tool.name);
       if (exposure === "hidden") continue;
@@ -580,19 +667,16 @@ export class DurableMcp {
       });
     }
     this.serverTools.set(server, current);
-    this.syncResourceTools();
-    this.publish();
-    this.offerTools(this.enabledToolNames());
   }
 
   private connectionOf(server: string): McpServerConnection | undefined {
     return this.servers.find((candidate) => candidate.entry.name === server)?.connection;
   }
 
-  /** Connected servers with resources whose exposure is not `hidden`, which the resource tools reach. */
+  /** Servers with resources whose exposure is not `hidden`, which the resource tools reach. */
   private resourceConnections(): McpServerConnection[] {
     return this.servers.flatMap((server) =>
-      server.connection?.hasResources && exposureOf(server.entry) !== "hidden"
+      server.connection && server.snapshot?.hasResources && exposureOf(server.entry) !== "hidden"
         ? [server.connection]
         : [],
     );
@@ -602,7 +686,7 @@ export class DurableMcp {
   private syncResourceTools(): void {
     const exposures = new Set(
       this.servers
-        .filter((server) => server.connection?.hasResources)
+        .filter((server) => server.snapshot?.hasResources)
         .map((server) => exposureOf(server.entry)),
     );
     const exposure = (["direct", "codemode", "deferred"] as const).find((candidate) =>
@@ -657,7 +741,7 @@ export class DurableMcp {
     return this.internals.renderServersSection(
       this.servers.map((server) => ({
         entry: server.entry,
-        ...(server.connection ? { connection: server.connection } : {}),
+        ...(server.snapshot ? { connection: { instructions: server.snapshot.instructions } } : {}),
       })),
     );
   }

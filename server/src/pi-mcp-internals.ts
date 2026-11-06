@@ -49,10 +49,10 @@ export interface McpOAuthCredentialStore {
 
 type McpServerLog = object;
 
-/** Pi's `{ entry, connection }` shape that `renderServersSection` reads. */
+/** Pi's `{ entry, connection }` shape; `renderServersSection` reads only the connection's instructions. */
 export interface McpServerListing {
   entry: McpServerEntry;
-  connection?: McpServerConnection;
+  connection?: Pick<McpServerConnection, "instructions">;
 }
 
 export interface ToolSearchDocument {

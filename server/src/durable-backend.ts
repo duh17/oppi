@@ -116,6 +116,7 @@ import {
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
+import { McpToolCache, mcpToolCachePath } from "./mcp-tool-cache.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import { expandSkillCommand, loadDurableProjectResources } from "./durable-project-resources.js";
 import { ProjectContextDoc } from "../plugins/project-context/contract.js";
@@ -441,6 +442,7 @@ export class DurableBackend implements AgentBackend {
               policy: session.launch?.tools,
               piTools,
               providerToken: (provider) => registry.getApiKeyForProvider(provider),
+              toolCache: new McpToolCache(mcpToolCachePath(options.dataDir)),
               install: (extension) => host.runtime.installExtension(extension),
               uninstall: (extension) => host.runtime.uninstallExtension(extension),
               namespaces: (namespaces) => host.runtime.setMcpNamespaces(session.id, namespaces),

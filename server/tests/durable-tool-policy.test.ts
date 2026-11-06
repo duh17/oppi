@@ -10,6 +10,7 @@ import {
   type DurableToolNarrowing,
 } from "../src/durable-agent.js";
 import { DurableMcp } from "../src/durable-mcp.js";
+import { McpToolCache, mcpToolCachePath } from "../src/mcp-tool-cache.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
 import { fileToolsHost } from "../src/durable-file-tools-host.js";
 import type { Session } from "../src/types.js";
@@ -369,6 +370,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         policy,
         piTools: EVERY_PI_TOOL,
         providerToken: async () => undefined,
+        toolCache: new McpToolCache(mcpToolCachePath(agentDir)),
         install: () => {},
         uninstall: () => {},
         namespaces: () => {},

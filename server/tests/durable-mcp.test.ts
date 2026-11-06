@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -16,6 +18,8 @@ import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gon
 import { DurableBackend } from "../src/durable-backend.js";
 import { DurableHarness, SessionHost } from "../src/durable-harness.js";
 import { DurableMcp } from "../src/durable-mcp.js";
+import { McpToolCache, mcpToolCacheKey, mcpToolCachePath } from "../src/mcp-tool-cache.js";
+import { loadPiMcpInternals } from "../src/pi-mcp-internals.js";
 import { collected } from "./helpers/collected.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
 import { SdkBackend } from "../src/sdk-backend.js";
@@ -388,6 +392,151 @@ describe("server durable MCP (host)", () => {
     expect(results[2]).toContain("echo:script");
     expect(results[2]).toContain("mcp__secret__echo unavailable");
     expect(results[2]).toContain("mcp__loud__echo unavailable");
+  });
+
+  it("connects a cached codemode server at its first call, not at session start, and fails that call when the server is down", async () => {
+    const marker = join(agentDir, "echo.marker");
+    const down = join(agentDir, "echo.down");
+    // Starts the echo server unless the flag file exists, as a server that went away.
+    const wrapper = join(agentDir, "echo-wrapper.mjs");
+    writeFileSync(
+      wrapper,
+      [
+        'import { existsSync } from "node:fs";',
+        'if (existsSync(process.env.MCP_ECHO_DOWN)) { console.error("echo server is down"); process.exit(1); }',
+        `await import(${JSON.stringify(pathToFileURL(ECHO_SERVER).href)});`,
+      ].join("\n"),
+    );
+    writeMcpJson(agentDir, {
+      echo: {
+        command: process.execPath,
+        args: [wrapper],
+        env: { MCP_ECHO_MARKER: marker, MCP_ECHO_DOWN: down },
+      },
+    });
+    const spawns = () =>
+      read(marker)
+        .split("\n")
+        .filter((line) => line.startsWith("spawn ")).length;
+    const script = (text: string) =>
+      fauxAssistantMessage(
+        [
+          fauxToolCall("codemode", {
+            code: [
+              "try {",
+              `  console.log(await tools.mcp__echo__echo({ text: ${JSON.stringify(text)} }));`,
+              "} catch (error) {",
+              '  console.log("CALL_FAILED", error instanceof Error ? error.message : String(error));',
+              "}",
+            ].join("\n"),
+          }),
+        ],
+        { stopReason: "toolUse" },
+      );
+    const f = await fixture([fauxAssistantMessage("COLD_DONE")]);
+    const cache = join(f.dir, "mcp-tool-cache.json");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
+    const restart = async (): Promise<SessionManager> => {
+      await managers.pop()!.close();
+      const manager = new SessionManager(new Storage(f.dir));
+      managers.push(manager);
+      await manager.resumeDurableSessions();
+      await manager.startSession(f.session.id, f.workspace);
+      return manager;
+    };
+
+    // Never connected with this config: no list to build from, so it connects at attach.
+    await f.manager.startSession(f.session.id, f.workspace);
+    await prompt(f.manager, f.session.id, "hi");
+    expect(spawns()).toBe(1);
+    expect(existsSync(cache)).toBe(true);
+
+    // Warm: the tool is in the catalog and a prompt runs without starting the server.
+    f.faux.appendResponses([
+      fauxAssistantMessage("WARM_DONE"),
+      script("first use"),
+      fauxAssistantMessage("USED_DONE"),
+    ]);
+    const warm = await restart();
+    await prompt(warm, f.session.id, "hello");
+    expect(spawns()).toBe(1);
+    const { harness } = await opening.mock.results.at(-1)!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
+    const agent = await (await harness.conversation(id, BACKGROUND_CONTEXT))!.agent(
+      BACKGROUND_CONTEXT,
+    );
+    expect(agent.callable.map((tool: { name: string }) => tool.name)).toContain("mcp__echo__echo");
+
+    // The first call connects it and the call works.
+    await prompt(warm, f.session.id, "use it");
+    expect(spawns()).toBe(2);
+    expect(read(marker)).toContain('call echo {"text":"first use"}');
+    expect((await toolResults(warm, f.session.id)).at(-1)).toContain("echo:first use");
+
+    // Down at first use: that call fails with the server's own error, and the session lives.
+    writeFileSync(down, "");
+    f.faux.appendResponses([script("never"), fauxAssistantMessage("DOWN_DONE")]);
+    const after = await restart();
+    await prompt(after, f.session.id, "use it again");
+    expect(spawns()).toBe(2);
+    const failed = (await toolResults(after, f.session.id)).at(-1)!;
+    expect(failed).toContain("CALL_FAILED");
+    expect(failed).toContain('MCP server \\"echo\\"');
+    expect(failed).toContain("echo server is down");
+    expect(read(marker)).not.toContain("never");
+  });
+
+  it("fails a call to a cached OAuth server that needs sign-in with a pointer to Oppi's MCP settings", async () => {
+    const remote = createServer((_req, res) => {
+      res.writeHead(401, { "WWW-Authenticate": 'Bearer realm="mcp"' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+    try {
+      const url = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/mcp`;
+      writeMcpJson(agentDir, { remote: { url } });
+      const f = await fixture([
+        fauxAssistantMessage(
+          [
+            fauxToolCall("codemode", {
+              code: [
+                "try { await tools.mcp__remote__echo({ text: 'hi' }); }",
+                "catch (error) { console.log('CALL_FAILED', error instanceof Error ? error.message : String(error)); }",
+              ].join("\n"),
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("AUTH_DONE"),
+      ]);
+      // The list a connect once reported; the server has since lost its sign-in.
+      const internals = await loadPiMcpInternals();
+      const [entry] = internals.loadMcpConfig({
+        agentDir,
+        cwd: f.dir,
+        projectTrusted: false,
+      }).servers;
+      new McpToolCache(mcpToolCachePath(f.dir)).save(mcpToolCacheKey(entry!, false), {
+        tools: [
+          {
+            name: "echo",
+            description: "Echo the given text back.",
+            inputSchema: { type: "object", properties: { text: { type: "string" } } },
+          },
+        ],
+        hasResources: false,
+        instructions: undefined,
+      });
+      await f.manager.startSession(f.session.id, f.workspace);
+      await prompt(f.manager, f.session.id, "Echo hi");
+      const failed = (await toolResults(f.manager, f.session.id)).at(-1)!;
+      expect(failed).toContain("CALL_FAILED");
+      expect(failed).toContain('MCP server \\"remote\\" needs sign-in');
+      expect(failed).toContain("Oppi's settings");
+      expect(failed).not.toContain("/mcp");
+    } finally {
+      remote.close();
+    }
   });
 
   it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {
