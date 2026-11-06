@@ -34,7 +34,7 @@ afterEach(async () => {
     ),
   );
 });
-function fixture(ttl?: number) {
+function fixture(ttl?: number, cliTimeoutMs?: number) {
   const dir = makeTempDir("oppi-mcp-proof-");
   const agentDir = join(dir, "agent");
   const project = join(dir, "project");
@@ -50,6 +50,7 @@ function fixture(ttl?: number) {
     agentDir,
     listWorkspaces: () => [workspace, { ...workspace, id: "sandbox", runtime: "sandbox" }],
     loginTtlMs: ttl,
+    cliTimeoutMs,
   });
   services.push(service);
   return { dir, agentDir, project, workspace, service };
@@ -657,8 +658,8 @@ describe("MCP routes through real bundled Pi", () => {
       await flight.catch(() => {});
     }
   }, 30_000);
-  it("lists a healthy scope while another scope's probe hangs, within the phone deadline", async () => {
-    const { service, agentDir, project } = fixture();
+  it("lists a healthy scope while another scope's probe hangs, within the probe deadline", async () => {
+    const { service, agentDir, project } = fixture(undefined, 6000);
     const hanging = await listen(
       createServer(() => {
         /* deliberately never answers initialize */
@@ -674,9 +675,9 @@ describe("MCP routes through real bundled Pi", () => {
     const second = api<McpServersResponse>(base, GLOBAL);
     const other = api<McpServersResponse>(base, PROJECT);
     const [snapshot, coalesced, projectSnapshot] = await Promise.all([first, second, other]);
-    expect(performance.now() - started).toBeLessThan(25_000);
+    expect(performance.now() - started).toBeLessThan(12_000);
     expect(snapshot).toEqual(coalesced);
-    expect(snapshot.scope.errors).toEqual(["This scope's live probe timed out after 20 seconds."]);
+    expect(snapshot.scope.errors).toEqual(["This scope's live probe timed out after 6 seconds."]);
     expect(projectSnapshot.scope).toMatchObject({
       projectTrust: "trusted",
       errors: [],
@@ -896,7 +897,7 @@ describe("MCP routes through real bundled Pi", () => {
   );
   it("cancel/expiry are terminal despite late child exit; duplicate and post-terminal submissions are rejected", async () => {
     // Pi's login child needs more than 1.5s to publish the URL on a busy host.
-    const { service } = fixture(20_000);
+    const { service } = fixture(8000);
     const remote = await oauthServer();
     await service.add("global", { name: "remote", url: remote + "/mcp" });
     const flow = await service.login("global", "remote", "phone_browser");
@@ -914,7 +915,7 @@ describe("MCP routes through real bundled Pi", () => {
     await expect.poll(() => service.auth.hasActive(), { timeout: 5000 }).toBe(false);
     const expired = await service.login("global", "remote", "phone_browser");
     await expect
-      .poll(() => service.auth.get(expired.flowId).status, { timeout: 25_000 })
+      .poll(() => service.auth.get(expired.flowId).status, { timeout: 15_000 })
       .toBe("expired");
     expect(service.auth.get(flow.flowId).status).toBe("cancelled");
   }, 60_000);

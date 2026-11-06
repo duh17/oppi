@@ -100,6 +100,9 @@ export class McpService {
       agentDir: string;
       listWorkspaces: () => Workspace[];
       loginTtlMs?: number;
+      /** Deadline for one Pi CLI call. The default leaves room below the iOS 30-second
+       * resource deadline for termination and transport. */
+      cliTimeoutMs?: number;
       /** Upper bound on waiting for killed children during dispose. */
       disposeDeadlineMs?: number;
     },
@@ -112,6 +115,9 @@ export class McpService {
       void child.done.then(settled, settled);
     });
     this.auth = new McpAuthManager(this.cli, options.loginTtlMs);
+  }
+  private get cliTimeoutMs(): number {
+    return this.options.cliTimeoutMs ?? 20_000;
   }
   private scopes(): Scope[] {
     return [
@@ -333,9 +339,10 @@ export class McpService {
     if (!live) snapshot.errors.push("Live status is paused while a sign-in is in progress.");
     else
       try {
-        // Leave room below the iOS 30-second resource deadline for termination and transport.
         // Pi skips the project file without a remembered Trust; global servers still probe here.
-        const result = await this.cli.run(["list", "--json"], scope.cwd, { timeoutMs: 20_000 });
+        const result = await this.cli.run(["list", "--json"], scope.cwd, {
+          timeoutMs: this.cliTimeoutMs,
+        });
         const report: unknown = JSON.parse(result.stdout);
         if (!isRecord(report) || !Array.isArray(report.servers) || !Array.isArray(report.errors))
           throw new Error("Invalid Pi response");
@@ -357,7 +364,7 @@ export class McpService {
       } catch (error) {
         snapshot.errors.push(
           error instanceof McpError && error.status === 504
-            ? "This scope's live probe timed out after 20 seconds."
+            ? `This scope's live probe timed out after ${this.cliTimeoutMs / 1000} seconds.`
             : "Pi could not probe this scope. Check its path and MCP configuration on the host.",
         );
       }
@@ -507,7 +514,7 @@ export class McpService {
         input.name,
         ...(input.command === undefined ? [] : [input.command, ...(input.args ?? [])]),
       );
-      const result = await this.cli.run(args, scope.cwd, { timeoutMs: 20_000 });
+      const result = await this.cli.run(args, scope.cwd, { timeoutMs: this.cliTimeoutMs });
       if (result.code !== 0)
         throw new McpError(
           422,
@@ -539,7 +546,7 @@ export class McpService {
       const result = await this.cli.run(
         ["remove", ...(scope.kind === "project" ? ["--local"] : []), "--", name],
         scope.cwd,
-        { timeoutMs: 20_000 },
+        { timeoutMs: this.cliTimeoutMs },
       );
       if (result.code !== 0) throw new McpError(422, "Pi could not remove the MCP server");
     });
@@ -564,7 +571,9 @@ export class McpService {
       const scope = this.scope(scopeId);
       this.entry(scope, name);
       this.requireCliTrust(scope);
-      const result = await this.cli.run(["logout", "--", name], scope.cwd, { timeoutMs: 20_000 });
+      const result = await this.cli.run(["logout", "--", name], scope.cwd, {
+        timeoutMs: this.cliTimeoutMs,
+      });
       if (result.code !== 0)
         throw new McpError(
           422,

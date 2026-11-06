@@ -24,7 +24,10 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
+import {
+  DurableBackgroundJobs,
+  createDurableBackgroundJobs,
+} from "../plugins/background-jobs/server.js";
 import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { DurableBackend } from "../src/durable-backend.js";
 import { DurableUI } from "../src/durable-ui.js";
@@ -132,7 +135,12 @@ function tool(name: string, args: Record<string, unknown>): FauxResponseStep {
   return fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
 }
 const answer = () => fauxAssistantMessage("Integrated the result.");
-async function fixture(responses: FauxResponseStep[], realExec = false, serverOwner = false) {
+async function fixture(
+  responses: FauxResponseStep[],
+  realExec = false,
+  serverOwner = false,
+  foregroundWaitMs?: number,
+) {
   const dir = makeTempDir("oppi-durable-background-jobs-");
   console.info(`Background jobs integration artifacts: ${dir}`);
   const models = await ModelRuntime.create({
@@ -213,7 +221,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     }
     const registry = createRegistry();
     registry.install(CodingTools);
-    registry.install(DurableBackgroundJobs);
+    registry.install(createDurableBackgroundJobs({ foregroundWaitMs }));
     openedStorage = await openNodeSqliteStorage(join(dir, "jobs.sqlite"));
     const harness = await Harness.open(
       openedStorage,
@@ -1054,11 +1062,16 @@ describe("native Durable background jobs", () => {
     });
   });
 
-  it("bash backgrounds a still-running command after 15 seconds", async () => {
-    const f = await fixture([tool("bash", { command: "controlled command" }), answer(), answer()]);
+  it("bash backgrounds a still-running command after the foreground wait", async () => {
+    const f = await fixture(
+      [tool("bash", { command: "controlled command" }), answer(), answer()],
+      false,
+      false,
+      1000,
+    );
     await prompt(f.root);
     const job = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]!;
-    expect(job.deadline - job.startedAt).toBe(15_000);
+    expect(job.deadline - job.startedAt).toBe(1000);
     expect(job).toMatchObject({ status: "running", decision: "background" });
     await f.root.abort(context);
     expect(f.counts().cancellations).toBe(0);
