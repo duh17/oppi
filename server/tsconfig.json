@@ -9,7 +9,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
+    "declaration": false,
     "resolveJsonModule": true,
     "paths": {
       "oppi/v1": ["./src/oppi-v1.ts"],
