@@ -28,10 +28,8 @@ import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import { Storage } from "../src/storage.js";
 import { ConfigStore } from "../src/storage/config-store.js";
-import {
-  WorkspaceStore,
-  type WorkspaceMigrationFaultPhase,
-} from "../src/storage/workspace-store.js";
+import type { AtomicWriteStep } from "../src/storage/atomic-file.js";
+import { WorkspaceStore } from "../src/storage/workspace-store.js";
 import { loadWorkspacePromptTemplates } from "../src/workspace-quick-action-session.js";
 import { defaultHostWorkspaceFolder } from "../src/workspace-folder.js";
 
@@ -218,7 +216,7 @@ describe("startup migration of records from before every workspace had a folder"
     }
   });
 
-  it.each<WorkspaceMigrationFaultPhase>([
+  it.each<AtomicWriteStep>([
     "after_temp_write",
     "after_temp_fsync",
     "before_rename",

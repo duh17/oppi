@@ -31,7 +31,7 @@ import {
   type CodemodeNamespace,
 } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,6 +49,7 @@ import {
 import type { DurableControlCli } from "./durable-control-cli.js";
 import { fileToolsHost } from "./durable-file-tools-host.js";
 import { DurableUI } from "./durable-ui.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 import type { PluginRuntime } from "./oppi-v1.js";
 import {
   PluginHost,
@@ -388,10 +389,10 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
   if (meta.name !== undefined) body.name = meta.name;
   if (meta.workspaceId !== undefined) body.workspaceId = meta.workspaceId;
   if (meta.agent !== undefined) body.agent = meta.agent;
-  const dest = join(directory, METADATA_FILE);
-  const tmp = join(directory, `${METADATA_FILE}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(body, null, "\t")}\n`);
-  renameSync(tmp, dest);
+  // Durable: without meta.json a store the server just created cannot be opened again.
+  writeFileAtomic(join(directory, METADATA_FILE), `${JSON.stringify(body, null, "\t")}\n`, {
+    durable: true,
+  });
 }
 
 /**

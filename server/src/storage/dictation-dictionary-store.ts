@@ -1,17 +1,4 @@
-import { randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fchmodSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HttpStatusError } from "../http-status-error.js";
 import {
@@ -19,6 +6,7 @@ import {
   DICTATION_CONTEXT_MAX_PHRASE_BYTES,
   DICTATION_CONTEXT_MAX_TOTAL_BYTES,
 } from "../dictation-types.js";
+import { writeFileAtomic } from "./atomic-file.js";
 
 export class DictionaryError extends HttpStatusError {}
 
@@ -220,37 +208,15 @@ export class DictationDictionaryStore {
   }
 
   private persist(record: RecordV1): void {
-    let fd: number | undefined;
-    let temp: string | undefined;
     try {
       if (existsSync(this.directory)) {
         const stat = lstatSync(this.directory);
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error();
       } else mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-      temp = join(this.directory, `.dictation-dictionary.${randomUUID()}.tmp`);
-      fd = openSync(temp, "wx", 0o600);
-      fchmodSync(fd, 0o600);
-      writeFileSync(fd, JSON.stringify(record), "utf8");
-      fsyncSync(fd);
-      closeSync(fd);
-      fd = undefined;
-      renameSync(temp, this.path);
-      temp = undefined;
-      try {
-        const dirFd = openSync(this.directory, "r");
-        try {
-          fsyncSync(dirFd);
-        } finally {
-          closeSync(dirFd);
-        }
-      } catch {
-        /* File was fsynced and renamed atomically. */
-      }
+      // Durable: the user's dictionary has no other copy.
+      writeFileAtomic(this.path, JSON.stringify(record), { durable: true });
     } catch {
       throw new DictionaryError(503, "Dictionary store unavailable; write failed");
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-      if (temp) rmSync(temp, { force: true });
     }
   }
 }

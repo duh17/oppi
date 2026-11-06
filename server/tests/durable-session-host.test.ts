@@ -142,6 +142,9 @@ describe("durable SessionHost stores", () => {
     await f.manager.startSession(session.id, f.workspace);
     const directory = durableStoreDir(f.dir, session.id);
     expect(existsSync(join(directory, "meta.json"))).toBe(true);
+    // It names the store and its working directory, so it is private like the rest of the data dir.
+    expect(statSync(join(directory, "meta.json")).mode & 0o777).toBe(0o600);
+    expect(readdirSync(directory).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     expect(existsSync(durableStoreSqlitePath(f.dir, session.id))).toBe(true);
     const meta = JSON.parse(
       await import("node:fs/promises").then((fs) =>

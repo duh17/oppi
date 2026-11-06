@@ -6,13 +6,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
+import { writeFileAtomic } from "./atomic-file.js";
 
 const log = createLogger({ base: { component: "auto_title_extension_migration" } });
 
@@ -73,7 +72,9 @@ export function extractAutoTitle(dataDir: string): AutoTitleExtraction {
   // `autoTitle` still there, rather than losing the model.
   if (carried) writeCarryover(dataDir, { model, backupPath });
   delete config.autoTitle;
-  writeConfig(configPath, dataDir, config);
+  // Durable, as ConfigStore's own save is: the carry-over above must not outlive a config that
+  // still has `autoTitle`, nor the reverse.
+  writeFileAtomic(configPath, JSON.stringify(config, null, 2), { durable: true });
   log.info("auto_title_extension_migration.extracted", {
     key: AUTO_TITLE_TO_EXTENSION_MIGRATION_KEY,
     backupPath,
@@ -87,8 +88,9 @@ const carryoverPath = (dataDir: string): string =>
   join(dataDir, `${AUTO_TITLE_TO_EXTENSION_MIGRATION_KEY}.pending.json`);
 
 function writeCarryover(dataDir: string, carryover: AutoTitleCarryover): void {
-  writeFileSync(carryoverPath(dataDir), `${JSON.stringify(carryover, null, 2)}\n`, {
-    mode: 0o600,
+  // Durable: this is the only copy of the model once the config rewrite below drops it.
+  writeFileAtomic(carryoverPath(dataDir), `${JSON.stringify(carryover, null, 2)}\n`, {
+    durable: true,
   });
 }
 
@@ -143,13 +145,4 @@ function backUp(configPath: string, dataDir: string): string {
     );
   }
   return backupPath;
-}
-
-function writeConfig(configPath: string, dataDir: string, config: Record<string, unknown>): void {
-  const temporaryPath = join(
-    dataDir,
-    `.config.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
-  );
-  writeFileSync(temporaryPath, JSON.stringify(config, null, 2), { flag: "wx", mode: 0o600 });
-  renameSync(temporaryPath, configPath);
 }

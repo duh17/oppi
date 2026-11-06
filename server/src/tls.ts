@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { createSecureContext } from "node:tls";
 import { expandHome } from "./path-utils.js";
 import { CLOUDFLARE_TLS_MODE_MIGRATION } from "./proxy-config.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 import type { ServerConfig, TlsMode } from "./types.js";
 
 const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
@@ -800,14 +801,8 @@ function writeTailscaleTicketState(
   ticketPath: string,
   state: { choosing: boolean; number: number; active: boolean },
 ): void {
-  const statePath = join(ticketPath, "state.json");
-  const tempPath = join(ticketPath, `.state-${randomUUID()}.tmp`);
-  try {
-    writeFileSync(tempPath, JSON.stringify(state), { mode: 0o600 });
-    renameSync(tempPath, statePath);
-  } finally {
-    rmSync(tempPath, { force: true });
-  }
+  // Not durable: the ticket belongs to a running renewal and means nothing after a restart.
+  writeFileAtomic(join(ticketPath, "state.json"), JSON.stringify(state), { durable: false });
 }
 
 function readTailscaleRenewalTickets(lockDir: string): TailscaleRenewalTicket[] {

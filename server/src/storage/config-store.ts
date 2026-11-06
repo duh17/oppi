@@ -2,18 +2,14 @@ import {
   closeSync,
   constants,
   existsSync,
-  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   rmdirSync,
-  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { createLogger } from "../logger.js";
@@ -22,6 +18,7 @@ import {
   parsePublicUrl,
   parseTrustedPeers,
 } from "../proxy-config.js";
+import { writeFileAtomic } from "./atomic-file.js";
 import { extractAutoTitle, hasAutoTitle } from "./auto-title-extension-migration.js";
 import { carryOverLegacyMobileOutputGuide } from "./mobile-output-guide-migration.js";
 import { parsePushEvents } from "../push/events.js";
@@ -1402,27 +1399,8 @@ export class ConfigStore {
   }
 
   private saveConfig(config: Omit<ServerConfig, "tls"> & { tls?: unknown }): void {
-    const temporaryPath = join(this.dataDir, `.config.${process.pid}.${randomUUID()}.tmp`);
-    let fileDescriptor: number | undefined;
-    let directoryDescriptor: number | undefined;
-    try {
-      fileDescriptor = openSync(temporaryPath, "wx", 0o600);
-      writeFileSync(fileDescriptor, JSON.stringify(config, null, 2));
-      fsyncSync(fileDescriptor);
-      closeSync(fileDescriptor);
-      fileDescriptor = undefined;
-
-      renameSync(temporaryPath, this.configPath);
-      directoryDescriptor = openSync(this.dataDir, "r");
-      fsyncSync(directoryDescriptor);
-      closeSync(directoryDescriptor);
-      directoryDescriptor = undefined;
-    } catch (error) {
-      if (fileDescriptor !== undefined) closeSync(fileDescriptor);
-      if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
-      rmSync(temporaryPath, { force: true });
-      throw error;
-    }
+    // Durable: auth tokens and every setting live here; a crash must not lose or empty them.
+    writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { durable: true });
   }
 
   getConfig(): ServerConfig {

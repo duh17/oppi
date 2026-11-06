@@ -40,15 +40,14 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
-  renameSync,
   rmSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { isPathWithinRoot, expandHome } from "./path-utils.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 import type { Workspace } from "./types.js";
 
 // ─── Trust ───
@@ -493,9 +492,8 @@ function atomicWrite(path: string, content: string): void {
   } catch {
     // Missing or unreadable: write below.
   }
-  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  writeFileSync(temp, content, { mode: 0o600 });
-  renameSync(temp, path);
+  // Not durable: the shadow's config and excludes are rewritten from the workspace on use.
+  writeFileAtomic(path, content, { durable: false });
 }
 
 function ensureSymlink(path: string, target: string): void {

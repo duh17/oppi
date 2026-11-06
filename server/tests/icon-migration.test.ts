@@ -9,10 +9,8 @@ import { openDatabase } from "../src/sqlite-compat.js";
 import { Storage } from "../src/storage.js";
 import { ConfigStore } from "../src/storage/config-store.js";
 import { ICON_ASSET_ORPHAN_GRACE_MS } from "../src/storage/icon-asset-store.js";
-import {
-  WorkspaceStore,
-  type WorkspaceMigrationFaultPhase,
-} from "../src/storage/workspace-store.js";
+import type { AtomicWriteStep } from "../src/storage/atomic-file.js";
+import { WorkspaceStore } from "../src/storage/workspace-store.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
 
 function sample(suffix = "sample"): Buffer {
@@ -119,7 +117,7 @@ describe("coordinated icon migration", () => {
       writeFileSync(workspacePath, original, { mode: 0o600 });
 
       new WorkspaceStore(configStore, undefined, {
-        faultInjector(phase: WorkspaceMigrationFaultPhase) {
+        faultInjector(phase: AtomicWriteStep) {
           if (phase === faultPhase) throw new Error(`injected ${phase}`);
         },
       });

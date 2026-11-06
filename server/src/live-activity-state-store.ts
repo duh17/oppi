@@ -1,9 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 
 const log = createLogger({ base: { component: "live_activity" } });
 
@@ -72,16 +72,10 @@ export class FileLiveActivityStateStore implements LiveActivityStateStore {
     return cards;
   }
 
-  /** Write to a temporary file and rename it over the old one, so a crash leaves one whole file. */
+  /** A crash leaves one whole file. Durable: a restart resumes and ends the cards listed here. */
   save(cards: ReadonlyMap<string, PersistedCard>): void {
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
     const payload = `${JSON.stringify({ version: STORE_VERSION, cards: Object.fromEntries(cards) })}\n`;
-    const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(temporaryPath, payload, { mode: 0o600, flag: "wx", flush: true });
-    try {
-      renameSync(temporaryPath, this.path);
-    } finally {
-      rmSync(temporaryPath, { force: true });
-    }
+    writeFileAtomic(this.path, payload, { durable: true });
   }
 }

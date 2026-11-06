@@ -12,7 +12,6 @@ import {
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -22,6 +21,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { generateId } from "./id.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 
 const MANIFEST_VERSION = 1;
 const MAX_SESSION_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -131,31 +131,6 @@ function readManifest(dataDir: string, sessionId: string): SessionAttachmentMani
     version: MANIFEST_VERSION,
     attachments: parsed.attachments,
   };
-}
-
-/**
- * Write the manifest through a temp file and a rename. A projection reads it on every history
- * delivery, so a torn write would make one bad write fail every later read.
- */
-function writeManifest(
-  dataDir: string,
-  sessionId: string,
-  manifest: SessionAttachmentManifest,
-): void {
-  const dir = sessionDir(dataDir, sessionId);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmpPath = join(dir, `.manifest-${generateId(16)}.tmp`);
-  try {
-    writeFileSync(tmpPath, JSON.stringify(manifest, null, 2), { mode: 0o600 });
-    renameSync(tmpPath, manifestPath(dataDir, sessionId));
-  } catch (error) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // temp may already be renamed or removed
-    }
-    throw error;
-  }
 }
 
 function mimeExtension(mimeType: string, fallbackFileName?: string): string {
@@ -596,7 +571,12 @@ function upsertAttachmentRecord(
   } else {
     manifest.attachments.push(record);
   }
-  writeManifest(dataDir, sessionId, manifest);
+  mkdirSync(sessionDir(dataDir, sessionId), { recursive: true, mode: 0o700 });
+  // A projection reads the manifest on every history delivery, so a torn write would fail every
+  // later read. Durable: it is the only index of the session's stored attachments.
+  writeFileAtomic(manifestPath(dataDir, sessionId), JSON.stringify(manifest, null, 2), {
+    durable: true,
+  });
 }
 
 function copyFileStreamingWithSha256(
@@ -761,24 +741,9 @@ function storeAttachment(options: {
 
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (!existsSync(filePath)) {
-    // Content-addressed: the final name only ever appears complete, renamed into place, so a
-    // later reader trusts an existing file and an interrupted write leaves a temp file only.
-    const tmpPath = join(dir, `.store-${generateId(16)}.tmp`);
-    try {
-      writeFileSync(tmpPath, bytes, { mode: 0o600 });
-      if (existsSync(filePath)) {
-        unlinkSync(tmpPath);
-      } else {
-        renameSync(tmpPath, filePath);
-      }
-    } catch (error) {
-      try {
-        unlinkSync(tmpPath);
-      } catch {
-        // temp may already be renamed or removed
-      }
-      throw error;
-    }
+    // Content-addressed: the final name only ever appears complete, so a later reader trusts an
+    // existing file. Durable: after a crash that file must not be empty.
+    writeFileAtomic(filePath, bytes, { durable: true });
   }
 
   const detectedDimensions = kind === "image" ? imageDimensions(bytes, mimeType) : undefined;

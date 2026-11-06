@@ -1,14 +1,9 @@
-import { randomUUID } from "node:crypto";
 import {
-  closeSync,
   existsSync,
-  fsyncSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   rmdirSync,
   writeFileSync,
@@ -35,16 +30,14 @@ import {
   validateWorkspaceWrite,
 } from "../settings/registry.js";
 import { defaultHostWorkspaceFolder, defaultSandboxHostMount } from "../workspace-folder.js";
+import { type AtomicWriteStep, writeFileAtomic } from "./atomic-file.js";
 import type { ConfigStore } from "./config-store.js";
 
 const log = createLogger({ base: { component: "workspace_store" } });
 
-export type WorkspaceMigrationFaultPhase =
-  "after_temp_write" | "after_temp_fsync" | "before_rename" | "after_rename";
-
 export interface WorkspaceStoreOptions {
   /** Deterministic fault seam for startup migration recovery tests. */
-  faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void;
+  faultInjector?: (phase: AtomicWriteStep) => void;
   /** Test seam: runs after a default folder was found free and before it is created. */
   beforeFolderCreate?: (path: string) => void;
 }
@@ -603,35 +596,28 @@ function workspaceTopLevelType(value: unknown): string {
 function replaceWorkspaceMigrationFile(
   path: string,
   build: (original: Buffer) => Buffer | undefined,
-  faultInjector: ((phase: WorkspaceMigrationFaultPhase) => void) | undefined,
+  faultInjector: ((phase: AtomicWriteStep) => void) | undefined,
   label: string,
 ): void {
-  const directory = dirname(path);
   const original = readFileSync(path);
   const bytes = build(original);
   if (!bytes) return;
-  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
-  let descriptor: number | undefined;
   let renamed = false;
 
   try {
-    descriptor = openSync(temporaryPath, "wx", 0o600);
-    writeFileSync(descriptor, bytes);
-    faultInjector?.("after_temp_write");
-    fsyncSync(descriptor);
-    faultInjector?.("after_temp_fsync");
-    closeSync(descriptor);
-    descriptor = undefined;
-
-    faultInjector?.("before_rename");
-    renameSync(temporaryPath, path);
-    renamed = true;
-    faultInjector?.("after_rename");
-    syncWorkspaceDirectory(directory);
+    // Durable: a migration that a crash half-applies must leave the old record or the new one.
+    writeFileAtomic(path, bytes, {
+      durable: true,
+      onStep: (step) => {
+        renamed ||= step === "after_rename";
+        faultInjector?.(step);
+      },
+    });
   } catch (error) {
     if (renamed) {
       try {
-        restoreWorkspaceMigrationFile(path, original);
+        // Durable: the rollback has to outlast the crash the migration was recovering from.
+        writeFileAtomic(path, original, { durable: true });
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -641,37 +627,5 @@ function replaceWorkspaceMigrationFile(
       }
     }
     throw error;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-    // This exact random path is owned by this migration attempt. Never scan or
-    // remove another process's temporary files here.
-    rmSync(temporaryPath, { force: true });
-  }
-}
-
-function restoreWorkspaceMigrationFile(path: string, bytes: Buffer): void {
-  const directory = dirname(path);
-  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(temporaryPath, "wx", 0o600);
-    writeFileSync(descriptor, bytes);
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = undefined;
-    renameSync(temporaryPath, path);
-    syncWorkspaceDirectory(directory);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-    rmSync(temporaryPath, { force: true });
-  }
-}
-
-function syncWorkspaceDirectory(directory: string): void {
-  const descriptor = openSync(directory, "r");
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
   }
 }

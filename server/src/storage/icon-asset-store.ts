@@ -1,14 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync,
   existsSync,
-  fsyncSync,
   linkSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -18,6 +14,7 @@ import { dirname, join } from "node:path";
 
 import { HttpStatusError } from "../http-status-error.js";
 import { ICON_ASSET_ID_PATTERN } from "../icon-choice.js";
+import { syncDirectory, writeFileAtomic } from "./atomic-file.js";
 
 export const ICON_ASSET_MAX_BYTES = 2 * 1024 * 1024;
 export const ICON_ASSET_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -127,7 +124,8 @@ export class IconAssetStore {
         lastUploadedAt: Math.max(existing.lastUploadedAt, now),
       };
       if (refreshed.lastUploadedAt !== existing.lastUploadedAt) {
-        replaceDurableFile(metadataPath, Buffer.from(`${JSON.stringify(refreshed, null, 2)}\n`));
+        // Durable: an acknowledged upload's retention clock must survive a crash.
+        writeFileAtomic(metadataPath, `${JSON.stringify(refreshed, null, 2)}\n`, { durable: true });
       }
       return this.read(assetId).record;
     }
@@ -165,7 +163,8 @@ export class IconAssetStore {
 
     this.faultInjector?.("before_metadata_commit");
     const metadata = Buffer.from(`${JSON.stringify(refreshedRecord, null, 2)}\n`);
-    if (hadMetadata) replaceDurableFile(metadataPath, metadata);
+    // Durable: a committed icon asset must survive a crash.
+    if (hadMetadata) writeFileAtomic(metadataPath, metadata, { durable: true });
     else createDurableFileIfAbsent(metadataPath, metadata);
 
     return this.read(assetId).record;
@@ -798,17 +797,6 @@ function createDurableFileIfAbsent(path: string, bytes: Buffer): void {
   }
 }
 
-function replaceDurableFile(path: string, bytes: Buffer): void {
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, bytes, { mode: 0o600, flag: "wx", flush: true });
-  try {
-    renameSync(temporaryPath, path);
-    syncDirectory(dirname(path));
-  } finally {
-    rmSync(temporaryPath, { force: true });
-  }
-}
-
 function removeAbandonedTemporaryFiles(directory: string): void {
   const cutoff = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS;
   let removed = false;
@@ -820,15 +808,6 @@ function removeAbandonedTemporaryFiles(directory: string): void {
     removed = true;
   }
   if (removed) syncDirectory(directory);
-}
-
-function syncDirectory(directory: string): void {
-  const descriptor = openSync(directory, "r");
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

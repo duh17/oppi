@@ -10,10 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
 import { ConfigStore } from "../src/storage/config-store.js";
-import {
-  WorkspaceStore,
-  type WorkspaceMigrationFaultPhase,
-} from "../src/storage/workspace-store.js";
+import type { AtomicWriteStep } from "../src/storage/atomic-file.js";
+import { WorkspaceStore } from "../src/storage/workspace-store.js";
 import type { Workspace, CreateWorkspaceRequest } from "../src/types.js";
 import {
   GondolinManager,
@@ -372,7 +370,7 @@ describe("Sandbox empty-folder hostMount persistence", () => {
       const configStore = new ConfigStore(dataDir);
 
       const faulty = new WorkspaceStore(configStore, undefined, {
-        faultInjector(phase: WorkspaceMigrationFaultPhase) {
+        faultInjector(phase: AtomicWriteStep) {
           if (phase === faultPhase) throw new Error(`injected ${phase}`);
         },
       });

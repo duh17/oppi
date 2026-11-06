@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import {
   CorruptVoiceCallStoreError,
@@ -8,6 +7,7 @@ import {
   type VoiceCallPersistence,
 } from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
+import { writeFileAtomic } from "./storage/atomic-file.js";
 
 const log = createLogger({ base: { component: "voice_call_store" } });
 
@@ -63,13 +63,8 @@ export class FileVoiceCallStore implements VoiceCallPersistence {
     const directory = dirname(this.path);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const payload = `${JSON.stringify({ version: STORE_VERSION, calls }, null, 2)}\n`;
-    const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(temporaryPath, payload, { mode: 0o600, flag: "wx", flush: true });
-    try {
-      renameSync(temporaryPath, this.path);
-    } finally {
-      rmSync(temporaryPath, { force: true });
-    }
+    // Durable: a restart fences the calls this file lists; a lost write leaves one unfenced.
+    writeFileAtomic(this.path, payload, { durable: true });
   }
 }
 
