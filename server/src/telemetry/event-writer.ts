@@ -100,9 +100,9 @@ const STREAM_FILES = {
 
 const log = createLogger({ base: { component: "telemetry_event_writer" } });
 
-/** File name of an origin's daily event file for a UTC timestamp. */
-export function telemetryEventFileName(origin: TelemetryOrigin, ts: number): string {
-  return `${STREAM_FILES[origin].prefix}${dateString(ts)}${FILE_SUFFIX}`;
+/** File name of a stream's daily file for a UTC timestamp. */
+export function telemetryEventFileName(stream: TelemetryStream, ts: number): string {
+  return `${STREAM_FILES[stream].prefix}${dateString(ts)}${FILE_SUFFIX}`;
 }
 
 export interface TelemetryEventSink {
@@ -142,8 +142,7 @@ export class TelemetryEventWriter implements TelemetryEventSink {
     if (!existsSync(this.telemetryDir)) {
       mkdirSync(this.telemetryDir, { recursive: true, mode: 0o700 });
     }
-    const spec = STREAM_FILES[stream];
-    const filePath = join(this.telemetryDir, `${spec.prefix}${dateString(ts)}${FILE_SUFFIX}`);
+    const filePath = join(this.telemetryDir, telemetryEventFileName(stream, ts));
     let lines = "";
     let exemptLines = "";
     for (const record of records) {
@@ -154,7 +153,7 @@ export class TelemetryEventWriter implements TelemetryEventSink {
     }
     if (exemptLines) appendFileSync(filePath, exemptLines, { encoding: "utf8", mode: 0o600 });
     if (lines) {
-      const maxBytes = jsonlMaxBytesFromEnv(spec.maxBytesEnv);
+      const maxBytes = jsonlMaxBytesFromEnv(STREAM_FILES[stream].maxBytesEnv);
       if (!this.appendCounted(filePath, lines, maxBytes)) this.warnDailyCapOnce(filePath, maxBytes);
     }
     this.prune(stream);
