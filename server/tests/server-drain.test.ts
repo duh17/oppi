@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { createRouteHelpers } from "../src/routes/http.js";
+import { createSessionRoutes } from "../src/routes/sessions.js";
+import type { RouteContext } from "../src/routes/types.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { ServerDrain, type DrainSession } from "../src/server-drain.js";
 import {
@@ -16,6 +20,7 @@ import {
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { Session, Workspace } from "../src/types.js";
+import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const dirs: string[] = [];
@@ -263,6 +268,39 @@ describe("server drain admission", () => {
       expect(restarted.listHeldInputs()).toEqual([]);
     },
   );
+
+  it("withdraws what was held for a session when the app's Stop session stops it", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "stopped", { workspaceId: workspace.id, status: "ready" });
+    saveSession(storage, "other", { workspaceId: workspace.id, status: "ready" });
+    storage.holdInput({ sessionId: "stopped", message: "never mind", heldAt: 1 });
+    storage.holdInput({ sessionId: "other", message: "still wanted", heldAt: 2 });
+    const stopSession = vi.fn(async () => undefined);
+    const dispatch = createSessionRoutes(
+      {
+        storage,
+        sessions: { mobileRenderer: new MobileRendererRegistry() },
+        sessionRuntimes: { stopSession },
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const res = makeResponse();
+
+    // `stop_session` is the command the app's Stop session sends (the command route is how the
+    // CLI and HTTP callers send it).
+    await dispatch({
+      method: "POST",
+      path: "/sessions/stopped/command",
+      url: new URL("http://localhost/sessions/stopped/command"),
+      req: makeRequest({ type: "stop_session", requestId: "stop-1" }) as never,
+      res: res as never,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(stopSession).toHaveBeenCalledWith("stopped");
+    expect(storage.listHeldInputs().map((input) => input.message)).toEqual(["still wanted"]);
+  });
 
   it("refuses input to an incognito session, which does not come back after the restart", async () => {
     const { storage, workspace } = makeStorage();

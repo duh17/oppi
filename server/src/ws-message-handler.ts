@@ -79,6 +79,12 @@ export interface WsMessageHandlerDeps {
   /** Picker catalog (GET /models): enabled models whose provider has auth. */
   getModelCatalog: () => ModelInfo[];
   emitSessionSummary?: (session: Session) => void;
+  /**
+   * Stop session (`stop_session`, the app's Stop) withdraws the messages held for the session
+   * while the server drains for a restart, as the HTTP stop does. Other stops (idle timeout,
+   * auto-stop) keep them: they start the session again after the restart.
+   */
+  withdrawHeldInputs?: (sessionId: string) => void;
   voiceCalls?: VoiceCallController;
   voiceMedia?: VoiceCallMediaCoordinator;
 }
@@ -849,6 +855,7 @@ export class WsMessageHandler {
     });
 
     try {
+      this.deps.withdrawHeldInputs?.(session.id);
       await this.deps.sessions.stopSession(session.id);
       if (requestId) {
         send(runtimeCommandSuccess("stop_session", requestId));

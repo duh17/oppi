@@ -681,6 +681,7 @@ export class Server {
       getModelCatalog: () => this.models.getAll(),
       emitSessionSummary: (targetSession) =>
         this.appEventStreamMux.emitSessionSummary(targetSession),
+      withdrawHeldInputs: (sessionId) => this.storage.clearHeldInputs(sessionId),
       voiceCalls: this.voiceCallController,
       voiceMedia: this.voiceMediaCoordinator,
     });

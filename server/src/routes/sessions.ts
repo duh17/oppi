@@ -94,6 +94,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
     getModelCatalog: ctx.getModelCatalog,
     emitSessionSummary: (session) => ctx.appEvents?.emitSessionSummary(session),
+    withdrawHeldInputs: (sessionId) => ctx.storage.clearHeldInputs(sessionId),
   });
   const {
     handleSearchSessions,
