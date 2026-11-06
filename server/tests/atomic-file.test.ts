@@ -10,8 +10,15 @@ import { DictationDictionaryStore } from "../src/storage/dictation-dictionary-st
 import { FileVoiceCallStore } from "../src/voice-call-store.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
-/** What every `fsyncSync` in the process synced, in order; `failDirectory` fails the directory's. */
-const sync = vi.hoisted(() => ({ calls: [] as Array<"file" | "directory">, failDirectory: false }));
+/**
+ * What every `fsyncSync` in the process synced, in order; `failDirectory` fails the directory's.
+ * `failFileClose` fails the next file close the way the kernel does: the descriptor is released.
+ */
+const sync = vi.hoisted(() => ({
+  calls: [] as Array<"file" | "directory">,
+  failDirectory: false,
+  failFileClose: false,
+}));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -23,12 +30,20 @@ vi.mock("node:fs", async (importOriginal) => {
       if (kind === "directory" && sync.failDirectory) throw new Error("EIO: directory sync");
       actual.fsyncSync(fd);
     },
+    closeSync(fd: number) {
+      const failing = sync.failFileClose && actual.fstatSync(fd).isFile();
+      actual.closeSync(fd);
+      if (!failing) return;
+      sync.failFileClose = false;
+      throw new Error("EIO: close");
+    },
   };
 });
 
 beforeEach(() => {
   sync.calls = [];
   sync.failDirectory = false;
+  sync.failFileClose = false;
 });
 
 const leftovers = (dir: string) => readdirSync(dir).filter((name) => name.endsWith(".tmp"));
@@ -55,7 +70,7 @@ describe("writeFileAtomic", () => {
     expect(readdirSync(dir)).toEqual(["a"]);
   });
 
-  it("keeps the old file and removes its temp file when a step, the rename, or the directory sync fails", () => {
+  it("keeps the old file and removes its temp file when a step, the rename, the close, or the directory sync fails", () => {
     const dir = makeTempDir("oppi-atomic-");
     writeFileSync(join(dir, "a"), "old");
     const onStep = () => {
@@ -66,6 +81,10 @@ describe("writeFileAtomic", () => {
 
     mkdirSync(join(dir, "occupied", "child"), { recursive: true });
     expect(() => writeFileAtomic(join(dir, "occupied"), "x", { durable: true })).toThrow();
+
+    sync.failFileClose = true;
+    expect(() => writeFileAtomic(join(dir, "a"), "new", { durable: true })).toThrow("EIO: close");
+    expect(readFileSync(join(dir, "a"), "utf8")).toBe("old");
 
     sync.failDirectory = true;
     expect(() => writeFileAtomic(join(dir, "b"), "x", { durable: true })).toThrow("directory sync");

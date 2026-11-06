@@ -41,15 +41,24 @@ export function writeFileAtomic(
       fsyncSync(descriptor);
       onStep?.("after_temp_fsync");
     }
-    closeSync(descriptor);
+    // Forget the descriptor before closing: a failed close has still released it, and closing
+    // the number again could close a file another thread has since opened.
+    const written = descriptor;
     descriptor = undefined;
+    closeSync(written);
 
     onStep?.("before_rename");
     renameSync(temporaryPath, path);
     onStep?.("after_rename");
     if (durable) syncDirectory(directory);
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The write already failed; keep its error and still remove the temp file.
+      }
+    }
     // This exact random path belongs to this call: never scan for or remove anyone else's.
     rmSync(temporaryPath, { force: true });
   }
