@@ -11,7 +11,6 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import type { NotifyInput } from "../plugins/notify/contract.js";
 import { AgentDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
-import { ensureControlConversationSession } from "../src/control-conversation-service.js";
 import { SessionHost } from "../src/durable-harness.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { LiveVoiceSpeech, type RunOutcome } from "../src/live-voice-speech.js";
@@ -23,6 +22,7 @@ import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "../src/oppi-docs.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../src/oppi-cli-prompt.js";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
+import { saveControlRow } from "./harness/control-row.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 import { DurableNotify } from "../plugins/notify/server.js";
@@ -527,9 +527,7 @@ describe("durable built-in selection", () => {
       status: "accepted",
       requestedAt: Date.now(),
     } as unknown as Session["launch"]);
-    const { session: control } = ensureControlConversationSession(f.storage, {
-      model: "faux/faux-1",
-    });
+    const control = saveControlRow(f.storage, { model: "faux/faux-1" });
     const pinned = {
       host: await createdAndReattached(f, host.session, host.workspace),
       sandbox: await createdAndReattached(f, sandbox.session, sandbox.workspace),
@@ -941,9 +939,7 @@ describe("durable prompt appends", () => {
   it("gives an Oppi Control session the guide under the same setting, and no hints", async () => {
     const { prompts, steps } = capturing(2);
     const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
-    const { session: control } = ensureControlConversationSession(f.storage, {
-      model: "faux/faux-1",
-    });
+    const control = saveControlRow(f.storage, { model: "faux/faux-1" });
     setGuide(f, true);
     await f.manager.startSession(control.id);
     await turn(f, control.id);

@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runCliMain } from "../src/cli.js";
 import { cmdAgent } from "../src/cli/commands/agent.js";
-import { cmdControl } from "../src/cli/commands/control.js";
 import { cmdSchedule } from "../src/cli/commands/schedule.js";
 import { inspectSession } from "../src/cli/commands/session-inspect.js";
 import { cmdWait } from "../src/cli/commands/wait.js";
@@ -23,77 +22,6 @@ const storage = {} as LocalApiConnection;
 const request = vi.mocked(localApiRequest);
 
 beforeEach(() => request.mockReset());
-
-describe("oppi control", () => {
-  const session = {
-    id: "11111111-1111-4111-8111-111111111111",
-    status: "ready",
-    serverDurable: { conversationId: 9, role: "control" },
-  };
-
-  it("open posts the find-or-create request and reports both ids", async () => {
-    request.mockResolvedValueOnce({ session } as never);
-    const { stdout, exitCode } = await captureCliOutput(() =>
-      cmdControl(storage, "open", [], { json: "true" }),
-    );
-    expect(exitCode).toBe(0);
-    expect(request).toHaveBeenCalledWith(storage, "/control-conversation", {
-      method: "POST",
-      body: {},
-    });
-    expect(JSON.parse(stdout)).toEqual({
-      ok: true,
-      data: { session_id: session.id, conversation_id: 9, status: "ready" },
-    });
-  });
-
-  it("send opens, then prompts with a caller-chosen turn id it returns", async () => {
-    request
-      .mockResolvedValueOnce({ session } as never)
-      .mockResolvedValueOnce({ messages: [] } as never);
-    const { stdout } = await captureCliOutput(() =>
-      cmdControl(storage, "send", ["Pause the nightly run"], { json: "true" }),
-    );
-    const data = JSON.parse(stdout).data as { turn_id: string };
-    expect(data).toEqual({ session_id: session.id, conversation_id: 9, turn_id: data.turn_id });
-    const [, path, options] = request.mock.calls[1]!;
-    expect(path).toBe(`/sessions/${session.id}/command`);
-    expect(options).toMatchObject({
-      method: "POST",
-      body: {
-        type: "prompt",
-        message: "Pause the nightly run",
-        clientTurnId: data.turn_id,
-        requestId: data.turn_id,
-      },
-    });
-  });
-
-  it("send with bad input fails before the conversation is created", async () => {
-    const { stdout, exitCode } = await captureCliOutput(() =>
-      cmdControl(storage, "send", [], { json: "true" }),
-    );
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(stdout)).toMatchObject({ ok: false });
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it("surfaces the server's refusal while experimental.serverDurable is off", async () => {
-    request.mockRejectedValueOnce(
-      Object.assign(new Error("The control conversation is not available on this server"), {
-        status: 409,
-      }),
-    );
-    const { stdout, exitCode } = await captureCliOutput(() =>
-      cmdControl(storage, "open", [], { json: "true" }),
-    );
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(stdout)).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("not available"), status: 409 },
-    });
-  });
-});
 
 describe("agent create idempotency flag", () => {
   it("sends the key with the definition and reports a conflict code", async () => {

@@ -8,20 +8,12 @@ export function isDeclaredControlSession(
 }
 
 /**
- * Launch idempotency key of the one control conversation per data directory. Reserved:
- * client create routes reject it (`reservedLaunchKeyError`), so only the find-or-create
- * service can hold a Session row under it.
- */
-export const CONTROL_CONVERSATION_LAUNCH_KEY = "control-conversation";
-
-/**
  * A durable Oppi Control session: a workspace-less server durable session marked by
- * `serverDurable.role`, either the standing control conversation (`oppi control`) or one that
- * `POST /control-sessions` creates per request. It is not a declared control session (no
- * `control` metadata; those are classic Pi Control rows created before control moved to the
- * durable engine). It uses the same `/control-sessions` routes and global recent list as
- * declared control sessions, never enters a workspace catalog or count, and is the only kind of
- * conversation the `oppi` CLI host serves.
+ * `serverDurable.role`, one that `POST /control-sessions` creates per request. It is not a
+ * declared control session (no `control` metadata; those are classic Pi Control rows created
+ * before control moved to the durable engine). It uses the same `/control-sessions` routes and
+ * global recent list as declared control sessions, never enters a workspace catalog or count, and
+ * is the only kind of conversation the `oppi` CLI host serves.
  */
 export function isControlConversation(session: Pick<Session, "serverDurable">): boolean {
   return session.serverDurable?.role === "control";
@@ -29,8 +21,8 @@ export function isControlConversation(session: Pick<Session, "serverDurable">): 
 
 /**
  * A new durable Oppi Control row: workspace-less, its own durable store, launched by a human
- * for the server. `launch` carries only what differs between the standing conversation and a
- * per-request session (status, request time, idempotency key, lease, prompt dispatch).
+ * for the server. `launch` carries what the request decides (status, request time, idempotency
+ * key, lease, prompt dispatch).
  */
 export function newControlSessionRow(params: {
   now: number;

@@ -45,8 +45,6 @@ describe("control host argv denylist", () => {
     ["stdin phrases", ["dictionary", "add", "--phrases", "@-"]],
     ["stdin as a prompt", ["session", "send", "abc", "--text", "@-"]],
     ["stdin as a positional", ["session", "create", "--workspace", "w", "--prompt", "@-"]],
-    ["the control family", ["control", "send", "hello"]],
-    ["the control family, even to ask for help", ["control", "open", "--help"]],
     ["status, which blocks the event loop", ["status"]],
     ["config set", ["config", "set", "port", "1"]],
     ["a config file", ["config", "validate", "--config-file", "/tmp/x.json"]],

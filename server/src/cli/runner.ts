@@ -3,7 +3,6 @@ import { safeErrorMessage } from "../log-utils.js";
 import { parseCliArgs, RUNNER_COMMANDS } from "./args.js";
 import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
-import { cmdControl } from "./commands/control.js";
 import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdExtensions } from "./commands/extensions.js";
 import { cmdSchedule } from "./commands/schedule.js";
@@ -166,20 +165,6 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
               ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
               ...(options.onLiveSnapshot ? { onLiveSnapshot: options.onLiveSnapshot } : {}),
-            }
-          : undefined,
-      );
-      return;
-    case "control":
-      await cmdControl(
-        connection,
-        positional[0],
-        positional.slice(1),
-        flags,
-        options.callerSessionId || options.signal
-          ? {
-              ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
-              ...(options.signal ? { signal: options.signal } : {}),
             }
           : undefined,
       );

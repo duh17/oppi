@@ -11,7 +11,6 @@ export const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
   "workspace",
   "worktree",
   "session",
-  "control",
   "extensions",
   "schedule",
   "wait",

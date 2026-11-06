@@ -27,8 +27,6 @@ import { getOppiDocsPath } from "./oppi-docs.js";
  * - flags that read a file of this host (`--definition PATH`, `--instructions-file`, dictionary
  *   `--file`) or stdin (`@-`, `--phrases`): the server's own files and stdin are not the owner's
  * - `--config-file`, and `config set`, which edits the config file directly with no request to gate
- * - `control`: its `send` would prompt the standing control conversation, maybe this very one,
- *   from inside a turn
  * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
  * - `--idempotency-key=…`, `--request-id=…`, `--turn-id=…`: the CLI does not split on `=`, so that
  *   form is an unknown flag, which the runner refuses. The host cannot tell it from
@@ -48,10 +46,6 @@ const HOST_INPUT_FLAGS = new Set([
 const REPLAY_KEY_EQUALS_FORMS = ["--idempotency-key=", "--request-id=", "--turn-id="];
 
 const DENIED_COMMANDS: ReadonlyMap<string, string> = new Map([
-  [
-    "control",
-    "control is not available to the control agent: it would send the control conversation a message from inside its own turn.",
-  ],
   [
     "status",
     "status runs blocking system commands on the server's event loop and is not available to the control agent.",

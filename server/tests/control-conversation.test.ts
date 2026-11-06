@@ -13,31 +13,22 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
 
-import {
-  ControlConversationError,
-  ControlConversationService,
-  ensureControlConversationSession,
-} from "../src/control-conversation-service.js";
-import {
-  CONTROL_CONVERSATION_LAUNCH_KEY,
-  isControlConversation,
-  isDeclaredControlSession,
-} from "../src/control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "../src/control-session.js";
 import { createCliConfigStorage } from "../src/cli/connection-config.js";
 import { controlConversationTools } from "../src/durable-control-conversation.js";
 import type { DurableHarness } from "../src/durable-harness.js";
-import { reservedLaunchKeyError } from "../src/reserved-launch-keys.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
-import { createControlConversationRoutes } from "../src/routes/control-conversation.js";
 import { createRouteHelpers } from "../src/routes/http.js";
-import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { resolveSdkSessionCwdAsync } from "../src/sdk-backend.js";
 import { SessionRuntimes } from "../src/runtime-router.js";
 import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
 import { WsMessageHandler } from "../src/ws-message-handler.js";
 import { SessionListService } from "../src/session-list-service.js";
-import { canResumeAfterServerRestart } from "../src/session-lifecycle-service.js";
+import {
+  canResumeAfterServerRestart,
+  SessionLifecycleService,
+} from "../src/session-lifecycle-service.js";
 import {
   queueOrphanedSessionsForRestart,
   recordLiveSessionsForRestart,
@@ -47,7 +38,7 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { saveControlRow } from "./harness/control-row.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -164,144 +155,6 @@ describe("control conversation marker gates", () => {
       resolveSdkSessionCwdAsync(undefined, controlRow(), { dataDir: dir }),
     ).rejects.toThrow("Control conversation cwd parent must be a real directory");
   });
-
-  it("keeps the launch key out of client create routes", async () => {
-    expect(reservedLaunchKeyError(CONTROL_CONVERSATION_LAUNCH_KEY)).toContain("reserved");
-    expect(reservedLaunchKeyError(` ${CONTROL_CONVERSATION_LAUNCH_KEY} `)).toContain("reserved");
-    expect(reservedLaunchKeyError("control-conversation-2", "ordinary")).toBeUndefined();
-
-    const storage = new Storage(dir);
-    const workspace = storage.createWorkspace({ name: "Reserved key", hostMount: dir });
-    const dispatch = createSessionRoutes(
-      {
-        storage,
-        sessions: {},
-        sessionRuntimes: {},
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext,
-      createRouteHelpers(),
-    );
-    for (const [path, body] of [
-      [
-        `/workspaces/${workspace.id}/sessions`,
-        { prompt: "hi", launchIdempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY },
-      ],
-      [
-        `/workspaces/${workspace.id}/sessions`,
-        { prompt: "hi", idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY },
-      ],
-      [
-        "/control-sessions",
-        {
-          domain: "agents",
-          intent: "create",
-          launchIdempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY,
-        },
-      ],
-    ] as const) {
-      const res = makeResponse();
-      await dispatch({
-        method: "POST",
-        path,
-        url: new URL(path, "http://localhost"),
-        req: makeRequest(body),
-        res: res as never,
-      });
-      expect(res.statusCode, path).toBe(400);
-      expect(JSON.parse(res.body).error, path).toContain("reserved");
-    }
-    expect(storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY)).toBe(
-      undefined,
-    );
-  });
-});
-
-describe("control conversation find-or-create service", () => {
-  function serviceFixture(options: { resume?: () => Promise<void> } = {}) {
-    const rows = new Map<string, Session>();
-    const storage = {
-      findSessionByLaunchIdempotencyKey: (key: string) =>
-        [...rows.values()].find((row) => row.launch?.idempotencyKey === key),
-      getSession: (id: string) => rows.get(id),
-      saveSession: (session: Session) => void rows.set(session.id, structuredClone(session)),
-      deleteSession: (id: string) => rows.delete(id),
-    };
-    const resume = vi.fn(async (session: Session) => {
-      await options.resume?.();
-      const stored = rows.get(session.id)!;
-      stored.serverDurable = { ...stored.serverDurable, conversationId: 7 };
-      return { session: structuredClone(stored) };
-    });
-    const service = new ControlConversationService({
-      storage: storage as never,
-      lifecycle: { resumeControlConversation: resume } as never,
-    });
-    return { rows, resume, service };
-  }
-
-  it("serializes concurrent first calls into one row and one start order", async () => {
-    const order: string[] = [];
-    const f = serviceFixture({
-      resume: async () => {
-        order.push("start");
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        order.push("end");
-      },
-    });
-    const results = await Promise.all([f.service.open(), f.service.open(), f.service.open()]);
-    expect(f.rows.size).toBe(1);
-    expect(new Set(results.map((r) => r.session.id)).size).toBe(1);
-    expect(results.map((r) => r.created)).toEqual([true, false, false]);
-    expect(order).toEqual(["start", "end", "start", "end", "start", "end"]);
-    const row = [...f.rows.values()][0]!;
-    expect(row.workspaceId).toBeUndefined();
-    expect(row).toMatchObject({
-      serverDurable: { role: "control", conversationId: 7 },
-      launch: { idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY },
-    });
-    expect(row.control).toBeUndefined();
-  });
-
-  it("adopts a row saved before the conversation bound instead of creating a second one", async () => {
-    const f = serviceFixture();
-    // A crash after the row was saved and before the runtime attached.
-    const first = f.service.open({ model: "faux/faux-1" });
-    await first;
-    const bound = [...f.rows.values()][0]!;
-    delete bound.serverDurable!.conversationId;
-
-    const again = await f.service.open({ model: "ignored/on-existing" });
-    expect(again.created).toBe(false);
-    expect(f.rows.size).toBe(1);
-    expect(again.session.id).toBe(bound.id);
-    expect(bound.model).toBe("faux/faux-1");
-  });
-
-  it("drops a fresh row that failed to start so the next open can retry", async () => {
-    let failures = 1;
-    const f = serviceFixture({
-      resume: async () => {
-        if (failures-- > 0) throw new Error("Server durable model is unavailable: nope/none");
-      },
-    });
-    await expect(f.service.open({ model: "nope/none" })).rejects.toThrow("unavailable");
-    expect(f.rows.size).toBe(0);
-    const retried = await f.service.open();
-    expect(retried.created).toBe(true);
-    expect(f.rows.size).toBe(1);
-  });
-
-  it("will not adopt another session's row under the reserved key", async () => {
-    const f = serviceFixture();
-    f.rows.set(
-      "other",
-      makeSession({
-        id: "other",
-        launch: { idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY, status: "accepted" },
-      }),
-    );
-    await expect(f.service.open()).rejects.toBeInstanceOf(ControlConversationError);
-  });
 });
 
 describe("control conversation lifecycle on the durable harness", () => {
@@ -350,26 +203,19 @@ describe("control conversation lifecycle on the durable harness", () => {
     const manager = new SessionManager(storage);
     managers.push(manager);
     await manager.resumeDurableSessions();
-    const dispatch = createControlConversationRoutes(
-      {
-        storage,
-        sessions: manager,
-        sessionRuntimes: manager,
-        ensureSessionContextWindow: (session: Session) => session,
-      } as unknown as RouteContext,
-      createRouteHelpers(),
-    );
-    async function open(body: Record<string, unknown> = {}) {
-      const res = makeResponse();
-      const handled = await dispatch({
-        method: "POST",
-        path: "/control-conversation",
-        url: new URL("http://localhost/control-conversation"),
-        req: makeRequest(body),
-        res: res as never,
-      });
-      expect(handled).toBe(true);
-      return { status: res.statusCode, body: JSON.parse(res.body) as { session: Session } };
+    const lifecycle = new SessionLifecycleService({
+      storage,
+      sessions: manager,
+      sessionRuntimes: manager,
+      ensureSessionContextWindow: (session: Session) => session,
+    });
+    // Attaches the data directory's stored control row, saving one first when it has none.
+    async function open(options: { model?: string } = {}) {
+      const stored = storage.listSessions().find(isControlConversation);
+      const { session } = await lifecycle.resumeControlConversation(
+        stored ?? saveControlRow(storage, options),
+      );
+      return { session };
     }
     return { manager, open };
   }
@@ -377,8 +223,7 @@ describe("control conversation lifecycle on the durable harness", () => {
   it("does not start an unbound control row an earlier server created at boot", async () => {
     const { storage } = await setup();
     const first = await boot(storage);
-    ensureControlConversationSession(storage);
-    const row = storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY)!;
+    const row = saveControlRow(storage);
     expect(row.status).toBe("stopped");
     expect(first.manager.isActive(row.id)).toBe(false);
     expect(row.serverDurable?.conversationId).toBeUndefined();
@@ -407,26 +252,18 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(storage.listRestartResume()).toEqual([]);
 
     const opened = await second.open({ model: "faux/faux-1" });
-    expect(opened.status).toBe(200);
-    expect(opened.body.session.id).toBe(row.id);
+    expect(opened.session.id).toBe(row.id);
     expect(second.manager.isActive(row.id)).toBe(true);
-    expect(opened.body.session.serverDurable?.conversationId).toBeGreaterThan(0);
+    expect(opened.session.serverDurable?.conversationId).toBeGreaterThan(0);
   });
 
-  it("creates one conversation under concurrency and finds the same one after a restart", async () => {
+  it("binds one conversation and finds the same one after a restart", async () => {
     const { storage } = await setup();
     const first = await boot(storage);
 
-    const opened = await Promise.all([
-      first.open({ model: "faux/faux-1" }),
-      first.open(),
-      first.open(),
-    ]);
-    expect(opened.map((r) => r.status).sort()).toEqual([200, 200, 201]);
-    const ids = new Set(opened.map((r) => r.body.session.id));
-    expect(ids.size).toBe(1);
-    const sessionId = [...ids][0]!;
-    const conversationId = opened[0]!.body.session.serverDurable?.conversationId;
+    const opened = await first.open({ model: "faux/faux-1" });
+    const sessionId = opened.session.id;
+    const conversationId = opened.session.serverDurable?.conversationId;
     expect(conversationId).toBeGreaterThan(0);
     expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
     expect(storage.getSession(sessionId)?.serverDurable).toEqual({
@@ -483,9 +320,8 @@ describe("control conversation lifecycle on the durable harness", () => {
     const second = await boot(storage);
     expect(second.manager.isActive(sessionId)).toBe(true);
     const reopened = await second.open();
-    expect(reopened.status).toBe(200);
-    expect(reopened.body.session.id).toBe(sessionId);
-    expect(reopened.body.session.serverDurable?.conversationId).toBe(conversationId);
+    expect(reopened.session.id).toBe(sessionId);
+    expect(reopened.session.serverDurable?.conversationId).toBe(conversationId);
     expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
   });
 
@@ -507,10 +343,10 @@ describe("control conversation lifecycle on the durable harness", () => {
     const opened = await booted.open({ model: "faux/faux-1" });
     const owner = await (booted.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const storeId = opened.body.session.serverDurable?.storeId ?? opened.body.session.id;
+    const storeId = opened.session.serverDurable?.storeId ?? opened.session.id;
     const { harness } = await (await owner.openHost(storeId)).open();
     const conversation = (await harness.conversation(
-      opened.body.session.serverDurable!.conversationId as ConversationId,
+      opened.session.serverDurable!.conversationId as ConversationId,
       context,
     ))!;
     const settled = await (
@@ -538,15 +374,14 @@ describe("control conversation lifecycle on the durable harness", () => {
     const { storage } = await setup();
     const first = await boot(storage);
     const opened = await first.open({ model: "faux/faux-1" });
-    const sessionId = opened.body.session.id;
+    const sessionId = opened.session.id;
     await first.manager.stopSession(sessionId);
     expect(first.manager.isActive(sessionId)).toBe(false);
 
     const again = await first.open();
-    expect(again.status).toBe(200);
-    expect(again.body.session.id).toBe(sessionId);
-    expect(again.body.session.serverDurable?.conversationId).toBe(
-      opened.body.session.serverDurable?.conversationId,
+    expect(again.session.id).toBe(sessionId);
+    expect(again.session.serverDurable?.conversationId).toBe(
+      opened.session.serverDurable?.conversationId,
     );
     expect(first.manager.isActive(sessionId)).toBe(true);
   });
@@ -655,7 +490,7 @@ describe("control conversation lifecycle on the durable harness", () => {
         ]);
         const booted = await boot(storage);
         const opened = await booted.open({ model: "faux/faux-1" });
-        const sessionId = opened.body.session.id;
+        const sessionId = opened.session.id;
         // The row the phone lists as control: no workspace, no control metadata.
         expect(storage.getSession(sessionId)).toMatchObject({ serverDurable: { role: "control" } });
         expect(storage.getSession(sessionId)?.workspaceId).toBeUndefined();

@@ -93,10 +93,6 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "schedule", summary: "create and run scheduled agent work" },
       { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
       {
-        name: "control",
-        summary: "open or message the standing Oppi Control conversation",
-      },
-      {
         name: "extensions",
         summary: "list, enable, disable, or reload extensions and plugins",
       },
@@ -2072,73 +2068,6 @@ const HELP_TOPICS: HelpTopic[] = [
           'oppi session create --agent Reviewer --workspace ws_123 --prompt "Review this" --json',
       },
     ],
-  },
-  {
-    path: ["control"],
-    title: "Control conversation",
-    summary: "Open or message the one durable control conversation of this server.",
-    usage: "oppi control open|send [flags]",
-    description: [
-      "The control conversation is a single durable Oppi Control session per data directory, created on first use and kept across server restarts. It has the same tools and instructions as the Oppi Control sessions the app starts. It is not a workspace session. The phone lists it with Oppi Control sessions. Use 'oppi session' commands with the printed session id.",
-    ],
-    subcommands: [
-      { name: "open", summary: "find or create the conversation and print its ids" },
-      { name: "send <text|@->", summary: "find or create the conversation, then send a prompt" },
-    ],
-    examples: [
-      { command: "oppi control open --json" },
-      { command: 'oppi control send "List my active schedules" --json' },
-    ],
-  },
-  {
-    path: ["control", "open"],
-    title: "Open the control conversation",
-    summary: "Find or create the control conversation and attach it to a runtime.",
-    usage: "oppi control open [--model <id>] [--thinking <level>] [--json]",
-    flags: [
-      {
-        name: "--model",
-        value: "<id>",
-        summary: "model for a newly created conversation; ignored when it already exists",
-      },
-      {
-        name: "--thinking",
-        value: "<level>",
-        summary: "thinking level for a newly created conversation; ignored when it already exists",
-      },
-      { name: "--json", summary: "write the standard JSON envelope" },
-    ],
-    notes: [
-      "JSON data: session_id (use with 'oppi session'), conversation_id (the durable conversation, stable across restarts), status.",
-      "Calling open again returns the same session and conversation.",
-    ],
-    examples: [{ command: "oppi control open --json" }],
-  },
-  {
-    path: ["control", "send"],
-    title: "Message the control conversation",
-    summary: "Find or create the control conversation, then send it a prompt.",
-    usage: "oppi control send <text|@-> [--model <id>] [--thinking <level>] [--json]",
-    arguments: [{ name: "<text|@->", summary: "prompt text; @- reads it from stdin" }],
-    flags: [
-      {
-        name: "--model",
-        value: "<id>",
-        summary: "model for a newly created conversation; ignored when it already exists",
-      },
-      {
-        name: "--thinking",
-        value: "<level>",
-        summary: "thinking level for a newly created conversation; ignored when it already exists",
-      },
-      { name: "--json", summary: "write the standard JSON envelope" },
-    ],
-    notes: [
-      "JSON data: session_id, conversation_id, turn_id (the id of the turn this call started).",
-      "A prompt sent while a turn is running steers that turn.",
-      "Follow the reply with 'oppi session wait <session_id>' and 'oppi session inspect <session_id> --view response'.",
-    ],
-    examples: [{ command: 'oppi control send "Pause the nightly schedule" --json' }],
   },
   {
     path: ["extensions"],
