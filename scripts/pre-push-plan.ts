@@ -22,9 +22,6 @@ const gatePolicyPaths = new Set([
   "scripts/pre-push-plan.test.ts",
   "scripts/heavy.sh",
   "scripts/heavy.test.ts",
-  "server/testing-policy.json",
-  "server/scripts/testing-gates.ts",
-  "server/tests/testing-policy-gate.test.ts",
   "dev/testing/README.md",
   "scripts/dev-docs-guard.ts",
   "scripts/dev-docs-guard.test.ts",
@@ -71,7 +68,6 @@ function serverMode(path: string): ServerGateMode {
   if (
     path === "server/package.json"
     || path === "server/package-lock.json"
-    || path === "server/testing-policy.json"
     || path.startsWith("server/scripts/")
     || path.startsWith("server/e2e/")
     // The plugin host evaluates server/plugins at runtime (jiti), outside Vitest's import graph,

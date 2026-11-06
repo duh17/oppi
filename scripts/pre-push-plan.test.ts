@@ -33,7 +33,6 @@ describe("pre-push gate planning", () => {
     ["heavy-job semaphore", ["scripts/heavy.sh"], ["none", "none", false, true]],
     ["heavy-job semaphore test", ["scripts/heavy.test.ts"], ["none", "none", false, true]],
     ["gate allowlist", [".gitignore"], ["none", "none", false, true]],
-    ["server gate policy", ["server/testing-policy.json"], ["full", "none", false, true]],
     ["unknown fails closed", ["tools/release.ts"], ["full", "unit", true, false]],
     // batch-gate is executable gate code: it keeps the fail-closed lanes of an unknown path and
     // also runs its own self-test (the hook's run_self_test), which only harness=true triggers.

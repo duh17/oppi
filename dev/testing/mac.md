@@ -16,7 +16,7 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiMac -destination 'platform=macOS'
   -derivedDataPath .build/mac-tests CODE_SIGNING_ALLOWED=NO test
 ```
 
-Filters use `-only-testing:OppiMacTests/...`. The pre-push Mac lane is compile-only and never runs `OppiMacTests`; run the tests when Mac behaviour changed. `server/testing-policy.json` has no Mac key, so its gates are not Mac coverage.
+Filters use `-only-testing:OppiMacTests/...`. The pre-push Mac lane is compile-only and never runs `OppiMacTests`; run the tests when Mac behaviour changed. The server and iOS coverage gates are not Mac coverage.
 
 ## Visual evidence
 

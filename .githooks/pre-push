@@ -77,8 +77,6 @@ run_self_test() {
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
       "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
       "$REPO_ROOT/scripts/gate-report.test.ts" "$REPO_ROOT/scripts/dev-docs-guard.test.ts"
-    (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
-      --reporter=dot --silent=passed-only)
     "$SIM_POOL" self-test
   fi
 
