@@ -621,6 +621,37 @@ describe("native Durable background jobs", () => {
     });
   }, 20_000);
 
+  it("carries a running job's age as an elapsed node and does not redraw when a minute passes", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "silent command" }),
+      answer(),
+      answer(),
+    ]);
+    const finish = deferred<void>();
+    const entered = deferred<void>();
+    vi.spyOn(f.env, "exec").mockImplementation(async () => {
+      entered.resolve();
+      await finish.promise;
+      return { ok: true, value: { exitCode: 0, stdout: "", stderr: "" } };
+    });
+    await prompt(f.root);
+    await entered.promise;
+    const shown = loop.published.at(-1)!;
+    const since = (panelNode(shown.surface, "elapsed:bash-1") as { since?: number }).since;
+    expect(since).toEqual(expect.any(Number));
+    expect(JSON.stringify(shown.surface.pill)).toContain(`"since":${since}`);
+
+    // Two minutes go by on the clock while the job prints nothing.
+    const settled = loop.published.length;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 120_000);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(loop.published.length).toBe(settled);
+    finish.resolve();
+    await delivery(f.harness, f.root);
+  }, 20_000);
+
   it("redraws for several printing jobs at the panel's one pace, each row with its own tail", async () => {
     loop.on = true;
     const f = await fixture([

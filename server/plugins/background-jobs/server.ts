@@ -120,7 +120,7 @@ async function retireLegacyPill(tx: Tx, id: ConversationId): Promise<void> {
 
 /**
  * How often a running job's runner looks for a Session loop it has not drawn the panel into, and
- * for a whole minute of running time that the panel does not show yet.
+ * for new output to redraw (and, with a timeout, for a minute of the countdown the panel lacks).
  */
 const PANEL_LOOP_CHECK_MS = 1_000;
 /**
@@ -419,10 +419,13 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
             // the panel into a loop that appears.
             let loop = surfacesOf(env);
             let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
-            // The panel shows the job's age in whole minutes, so it is drawn again each time that
-            // number changes: a frozen "3m" on a job that has run ten would be wrong, not stale.
-            const minutesRun = (): number => Math.floor((Date.now() - job.startedAt) / 60_000);
-            let drawnMinutes = minutesRun();
+            // The job's age is a client-ticked node and needs no redraw. Only the static "times out
+            // in Nm" caption does, so a job with a timeout is drawn again each minute.
+            const minutesLeft = (): number =>
+              job.timeout === undefined
+                ? 0
+                : Math.floor((job.startedAt + job.timeout * 1000 - Date.now()) / 60_000);
+            let drawnMinutes = minutesLeft();
             // New output redraws the panel once it has gone LIVE_REDRAW_MS unpublished, and only
             // when this job's row would change. The same tick paces it: a job adds no timer.
             const outputChanged = (panel: LivePanel | undefined): boolean =>
@@ -432,7 +435,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
               (outputTail(liveOutput()) ?? "") !== (panel.drawnTails.get(job.id) ?? "");
             const watchLoop = setInterval(() => {
               const current = surfacesOf(env);
-              const minutes = minutesRun();
+              const minutes = minutesLeft();
               if (current === loop) {
                 if (current && (minutes !== drawnMinutes || outputChanged(panels.get(current)))) {
                   drawnMinutes = minutes;

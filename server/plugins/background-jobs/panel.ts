@@ -4,6 +4,7 @@ import {
   button,
   code,
   divider,
+  elapsed,
   group,
   icon,
   pill,
@@ -134,8 +135,8 @@ export function commandTitle(command: string): string {
   return clamp(title.join(" ") || displayCommand(command), TITLE_CHARS);
 }
 
-/** Whole minutes, as a status line reads: `<1m`, `12m`, `1h 5m`. */
-function elapsed(ms: number): string {
+/** Time left before a timeout, in whole minutes: `<1m`, `12m`, `1h 5m`. */
+function remaining(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
   if (minutes < 1) return "<1m";
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
@@ -167,7 +168,7 @@ function runningDetail(job: PanelJob, at: number): string | undefined {
     ...(job.cwd ? [basename(job.cwd)] : []),
     ...(job.timeoutAt === undefined
       ? []
-      : [job.timeoutAt <= at ? "timing out" : `times out in ${elapsed(job.timeoutAt - at)}`]),
+      : [job.timeoutAt <= at ? "timing out" : `times out in ${remaining(job.timeoutAt - at)}`]),
   ];
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
@@ -198,14 +199,22 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
               text({ id: `title:${job.id}`, text: commandTitle(job.command), style: "headline" }),
               text({
                 id: `meta:${job.id}`,
-                text: `${job.id} · ${running ? `Running ${elapsed(at - job.startedAt)}` : outcome(job)}`,
+                text: `${job.id} · ${running ? "Running" : outcome(job)}`,
                 style: "caption",
               }),
             ],
           }),
-          // Only a job that is still running offers Stop.
+          // A running job's age is a node the client ticks, so the panel is not republished each
+          // minute. `clock` (5:07): the row has room, and the seconds show the job is alive. It sits
+          // in the head row because the body's depth limit leaves no room beside the id.
           ...(running
             ? [
+                elapsed({
+                  id: `elapsed:${job.id}`,
+                  since: job.startedAt,
+                  format: "clock",
+                  style: "caption",
+                }),
                 button({
                   id: `stop:${job.id}`,
                   title: "Stop",
@@ -266,7 +275,7 @@ function jobCount(count: number): string {
 }
 
 /** The strip pill's one line: how many jobs there are and how many still run; no command. */
-function pillLine(jobs: readonly PanelJob[], at: number): ReturnType<typeof pill> {
+function pillLine(jobs: readonly PanelJob[]): ReturnType<typeof pill> {
   const running = jobs.filter((job) => job.status === "running");
   const label =
     running.length === jobs.length
@@ -289,7 +298,15 @@ function pillLine(jobs: readonly PanelJob[], at: number): ReturnType<typeof pill
       ...(running.length > 0 ? [progress({ id: "pill:spinner", tone: "accent" })] : []),
       text({ id: "pill:count", text: label, style: "headline" }),
       ...(running.length > 0
-        ? [text({ id: "pill:elapsed", text: elapsed(at - oldest), style: "caption" })]
+        ? // `short` (5m): the pill is narrow, and the oldest job's order of magnitude is the point.
+          [
+            elapsed({
+              id: "pill:elapsed",
+              since: oldest,
+              format: "short",
+              style: "caption",
+            }),
+          ]
         : []),
       ...(line ? [text({ id: "pill:line", text: line, style: "caption" })] : []),
       ...(failed > 0
@@ -316,7 +333,7 @@ export function jobsView(state: PanelState): SurfaceView {
         .filter(Boolean)
         .join(" · "),
     },
-    pill: pillLine(jobs, state.at),
+    pill: pillLine(jobs),
     sections: [
       blocks({
         id: "jobs",

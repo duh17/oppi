@@ -59,7 +59,7 @@ describe("background jobs panel view", () => {
     const list = body(surface);
     expect(find(list, "title:bash-262")).toMatchObject({ text: "bun land.ts run" });
     // The id and the age are the secondary line; nothing before the fold repeats the command.
-    expect(find(list, "meta:bash-262")).toMatchObject({ text: "bash-262 · Running <1m" });
+    expect(find(list, "meta:bash-262")).toMatchObject({ text: "bash-262 · Running" });
     const folded = find(list, "output:bash-262");
     expect(folded).toMatchObject({ type: "group", collapsed: true });
     const outside = words(list).filter((word) => !words(folded!).includes(word));
@@ -87,14 +87,24 @@ describe("background jobs panel view", () => {
     });
   });
 
-  it("shows how long a running job has run, in whole minutes", () => {
-    const jobs = [
-      job("bash-1", { startedAt: AT - (65 * 60_000 + 30_000) }),
-      job("bash-2", { startedAt: AT - 12 * 60_000 }),
-    ];
-    const list = body(render(jobs));
-    expect(find(list, "meta:bash-1")).toMatchObject({ text: "bash-1 · Running 1h 5m" });
-    expect(find(list, "meta:bash-2")).toMatchObject({ text: "bash-2 · Running 12m" });
+  it("gives a running job's row and the pill a client-ticked elapsed node from its start", () => {
+    const started1 = AT - (65 * 60_000 + 30_000);
+    const started2 = AT - 12 * 60_000;
+    const surface = render([
+      job("bash-1", { startedAt: started1 }),
+      job("bash-2", { startedAt: started2 }),
+      job("bash-3", { status: "completed", exitCode: 0, startedAt: AT - 60_000 }),
+    ]);
+    const list = body(surface);
+    expect(find(list, "elapsed:bash-1")).toMatchObject({ type: "elapsed", since: started1 });
+    expect(find(list, "elapsed:bash-2")).toMatchObject({ type: "elapsed", since: started2 });
+    // A finished job keeps its static outcome text.
+    expect(find(list, "elapsed:bash-3")).toBeUndefined();
+    expect(find(list, "meta:bash-3")).toMatchObject({ text: "bash-3 · Exit 0" });
+    // The pill counts the oldest running job.
+    const pillNodes = JSON.stringify(surface.pill);
+    expect(pillNodes).toContain(`"type":"elapsed"`);
+    expect(pillNodes).toContain(`"since":${started1}`);
   });
 
   it("says how each finished job ended, by exit status when it has one", () => {
@@ -170,7 +180,9 @@ describe("background jobs panel view", () => {
     expect(Array.from(line)).toHaveLength(40);
     expect(pillNodes).not.toContain("old output");
     // Nothing printed yet: the pill is still the count and the age.
-    expect(words(render([job("quiet")]).pill!.content)).toEqual(["1 job running", "<1m"]);
+    const quiet = render([job("quiet")]).pill!.content;
+    expect(words(quiet)).toEqual(["1 job running"]);
+    expect(find(quiet, "pill:elapsed")).toMatchObject({ type: "elapsed", format: "short" });
   });
 
   it("says in the pill how many jobs failed, so it shows without opening the panel", () => {

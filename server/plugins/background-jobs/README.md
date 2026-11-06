@@ -42,8 +42,8 @@ job failed or was interrupted, a red badge counts it ("2 failed").
 
 In the drawer, each job is one row: a status glyph, a short title (the program
 and its first plain arguments, without a leading `cd … &&`, options, pipes, or
-redirects), and the job id with its age in whole minutes or how it ended
-(`Exit 1`, `Stopped`, `Timed out`). The age is redrawn each minute. A running
+redirects), and the job id with a live age counter or how it ended
+(`Exit 1`, `Stopped`, `Timed out`). The client ticks the age itself. A running
 job has a **Stop** button, which kills it as `background_job cancel` does.
 Under the title, a running job shows its folder, the time left before its
 timeout if it has one, and its live output: the last 12 lines, at most 480
