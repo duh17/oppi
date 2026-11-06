@@ -128,9 +128,6 @@
     },
     "@earendil-works/chord": {
       "ws": "$ws"
-    },
-    "@earendil-works/pi-coding-agent": {
-      "undici": "8.12.2"
     }
   },
   "devDependencies": {
