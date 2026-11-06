@@ -1,4 +1,5 @@
 import {
+  badge,
   blocks,
   button,
   code,
@@ -6,6 +7,7 @@ import {
   group,
   icon,
   pill,
+  progress,
   row,
   stack,
   surface,
@@ -32,6 +34,8 @@ const COMMAND_CHARS = 200;
  */
 const TITLE_CHARS = 24;
 const TAIL_LINES = 12;
+/** The pill's live line: what fits beside the count and the age on a phone's strip. */
+const PILL_LINE_CHARS = 40;
 const TAIL_CHARS = 480;
 /** The surface's fallback text is capped at 2,000 characters on the wire. */
 const FALLBACK_CHARS = 1_900;
@@ -44,8 +48,14 @@ export interface PanelJob {
   startedAt: number;
   /** How a finished job's process ended; none when it was stopped or never reported one. */
   exitCode?: number | null;
-  /** The output of a finished job; one that is still running has none saved yet. */
+  /** A finished job's saved output, or a running job's live tail (memory only, never saved). */
   output?: string;
+  /** The job's working directory; shown for a running job. */
+  cwd?: string;
+  /** When a running job's timeout kills it, if it has one. */
+  timeoutAt?: number;
+  /** Whether the runner has dropped the start of this job's output. */
+  truncated?: boolean;
 }
 
 export interface PanelState {
@@ -60,8 +70,11 @@ function clamp(value: string, chars: number): string {
   return characters.length <= chars ? value : `${characters.slice(0, chars - 1).join("")}…`;
 }
 
-/** The last lines of a job's output, plain, cut at a character budget from the front. */
-function outputTail(output: string | undefined): string | undefined {
+/**
+ * The last lines of a job's output, plain, cut at a character budget from the front: what a row
+ * shows, and so what a running job's redraw compares.
+ */
+export function outputTail(output: string | undefined): string | undefined {
   const tail = displayLines(output ?? "")
     .slice(-TAIL_LINES)
     .join("\n");
@@ -136,10 +149,39 @@ function outcome(job: PanelJob): string {
   return "Failed";
 }
 
+/** The last non-empty line of a job's output, plain and cut for the pill. */
+function latestLine(output: string | undefined): string | undefined {
+  const line = displayLines(output ?? "")
+    .at(-1)
+    ?.trim();
+  return line ? clamp(line, PILL_LINE_CHARS) : undefined;
+}
+
+function basename(path: string): string {
+  return path.replace(/\/+$/u, "").split("/").at(-1) || path;
+}
+
+/** A running job's where and until-when, one caption: `app · times out in 4m`. */
+function runningDetail(job: PanelJob, at: number): string | undefined {
+  const parts = [
+    ...(job.cwd ? [basename(job.cwd)] : []),
+    ...(job.timeoutAt === undefined
+      ? []
+      : [job.timeoutAt <= at ? "timing out" : `times out in ${elapsed(job.timeoutAt - at)}`]),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof stack> {
   const tail = outputTail(job.output);
   const running = job.status === "running";
   const mark = glyph(job.status);
+  const detail = running ? runningDetail(job, at) : undefined;
+  // A running job's tail is the point of opening the panel, so it is not folded away; a finished
+  // job's output stays behind Details.
+  const tailNode = tail
+    ? code({ id: `tail:${job.id}`, language: "output", text: tail })
+    : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" });
   return stack({
     id: `job:${job.id}`,
     spacing: "tight",
@@ -174,6 +216,11 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
             : []),
         ],
       }),
+      ...(detail ? [text({ id: `detail:${job.id}`, text: detail, style: "caption" })] : []),
+      ...(running ? [tailNode] : []),
+      ...(running && job.truncated
+        ? [text({ id: `truncated:${job.id}`, text: "Output truncated", style: "caption" })]
+        : []),
       group({
         id: `output:${job.id}`,
         title: "Details",
@@ -186,10 +233,11 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
             text: clamp(displayCommand(job.command), COMMAND_CHARS),
             style: "mono",
           }),
+          ...(running && job.cwd
+            ? [text({ id: `cwd:${job.id}`, text: clamp(job.cwd, COMMAND_CHARS), style: "mono" })]
+            : []),
           // The `code` node's header carries its label: this is output, not source.
-          tail
-            ? code({ id: `tail:${job.id}`, language: "output", text: tail })
-            : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" }),
+          ...(running ? [] : [tailNode]),
         ],
       }),
     ],
@@ -228,11 +276,24 @@ function pillLine(jobs: readonly PanelJob[], at: number): ReturnType<typeof pill
         : `${jobCount(jobs.length)} · ${running.length} running`;
   // The longest-running job's age, the number that says whether a job is stuck.
   const oldest = Math.min(...running.map((job) => job.startedAt));
+  // What the newest running job last printed; nothing until it prints something.
+  const newest = running.reduce<PanelJob | undefined>(
+    (latest, job) => (!latest || job.startedAt > latest.startedAt ? job : latest),
+    undefined,
+  );
+  const line = latestLine(newest?.output);
+  const failed = jobs.filter((job) => job.status === "failed").length;
   return pill({
     content: [
+      // No value: an indeterminate spinner while anything runs.
+      ...(running.length > 0 ? [progress({ id: "pill:spinner", tone: "accent" })] : []),
       text({ id: "pill:count", text: label, style: "headline" }),
       ...(running.length > 0
         ? [text({ id: "pill:elapsed", text: elapsed(at - oldest), style: "caption" })]
+        : []),
+      ...(line ? [text({ id: "pill:line", text: line, style: "caption" })] : []),
+      ...(failed > 0
+        ? [badge({ id: "pill:failed", text: `${failed} failed`, tone: "danger" })]
         : []),
     ],
   });

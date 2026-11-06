@@ -49,7 +49,12 @@ import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 const loop = vi.hoisted(() => {
   const state = {
     on: false,
-    published: [] as Array<{ surface: ExtensionUISurface; dispatch?: SurfaceDispatch }>,
+    published: [] as Array<{
+      surface: ExtensionUISurface;
+      dispatch?: SurfaceDispatch;
+      /** When it was published, for the redraw pacing. */
+      at: number;
+    }>,
     dismissed: [] as string[],
   };
   return state;
@@ -59,7 +64,7 @@ vi.mock("oppi/v1", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/oppi-v1.js")>();
   const publisher: SurfacePublisher = {
     publish: (surface, dispatch) => {
-      loop.published.push({ surface, ...(dispatch ? { dispatch } : {}) });
+      loop.published.push({ surface, ...(dispatch ? { dispatch } : {}), at: Date.now() });
     },
     dismiss: (surfaceId) => {
       loop.dismissed.push(surfaceId);
@@ -106,6 +111,11 @@ function panelNode(
     return undefined;
   };
   return visit(section.body);
+}
+/** Publishes that only new output caused: each at least the panel's 2 s redraw pace after the last. */
+function expectPaced(published: ReadonlyArray<{ at: number }>) {
+  for (let index = 1; index < published.length; index++)
+    expect(published[index]!.at - published[index - 1]!.at).toBeGreaterThanOrEqual(2_000);
 }
 /** A tap on a job's Stop, as the loop hands it to the panel that was published. */
 async function tapStop(shown: { dispatch?: SurfaceDispatch }, job: string) {
@@ -553,6 +563,117 @@ describe("native Durable background jobs", () => {
     expect(await tapStop(shown, "bash-1")).toMatchObject({ error: { compositeId: "jobs" } });
     expect(f.counts().cancellations).toBe(1);
   });
+
+  it("draws a running job's output into the panel at a paced rate, and stops once it settles", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    const finish = deferred<void>();
+    const entered = deferred<(text: string) => void>();
+    vi.spyOn(f.env, "exec").mockImplementation(async (_command, options) => {
+      entered.resolve((text) => options?.onOutput?.(text));
+      await finish.promise;
+      options?.onOutput?.("last line\n");
+      return { ok: true, value: { exitCode: 0, stdout: "", stderr: "" } };
+    });
+    const tails = () =>
+      loop.published.map(
+        (entry) => (panelNode(entry.surface, "tail:bash-1") as { text?: string })?.text,
+      );
+    await prompt(f.root);
+    const emit = await entered.promise;
+    expect(tails().at(-1)).toBe("No output yet");
+
+    // Ten lines a second, each a change the row would show: far more changes than redraws.
+    const before = loop.published.length;
+    for (let line = 1; line <= 20; line++) {
+      emit(`line ${line}\n`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // A progress bar redraws its line in place, and a CRLF ends a line: the row shows what a
+    // terminal would.
+    emit("fetch 10%\rfetch 50%\rfetch 100%\r\n");
+    await vi.waitFor(() => expect(tails().at(-1)).toMatch(/line 20\nfetch 100%$/), {
+      timeout: 4_000,
+    });
+    expectPaced(loop.published.slice(before - 1));
+    const live = loop.published.at(-1)!;
+    expect(panelNode(live.surface, "tail:bash-1")).toMatchObject({ type: "code" });
+    expect(JSON.stringify(live.surface.pill)).toContain("progress");
+    expect(JSON.stringify(live.surface.pill)).toContain('"fetch 100%"');
+
+    // The tail is shown while the job runs and nothing reaches the document store for it.
+    expect(documentRevisionsContaining(f.dir, "line 20")).toBe(0);
+
+    finish.resolve();
+    await delivery(f.harness, f.root);
+    const settled = loop.published.length;
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(loop.published.length).toBe(settled);
+    const final = loop.published.findLast(
+      (entry) => panelNode(entry.surface, "meta:bash-1")?.text === "bash-1 · Exit 0",
+    )!;
+    expect(panelNode(final.surface, "tail:bash-1")).toMatchObject({
+      text: expect.stringContaining("last line"),
+    });
+  }, 20_000);
+
+  it("redraws for several printing jobs at the panel's one pace, each row with its own tail", async () => {
+    loop.on = true;
+    const f = await fixture([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("background_job", { action: "start", command: "job one" }),
+          fauxToolCall("background_job", { action: "start", command: "job two" }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      answer(),
+      answer(),
+      answer(),
+    ]);
+    const finish = deferred<void>();
+    const running = deferred<void>();
+    const emitters = new Map<string, (text: string) => void>();
+    vi.spyOn(f.env, "exec").mockImplementation(async (command, options) => {
+      emitters.set(command, (text) => options?.onOutput?.(text));
+      if (emitters.size === 2) running.resolve();
+      await finish.promise;
+      return { ok: true, value: { exitCode: 0, stdout: "", stderr: "" } };
+    });
+    await prompt(f.root);
+    await running.promise;
+
+    const before = loop.published.length;
+    for (let tick = 1; tick <= 30; tick++) {
+      emitters.get("job one")!(`one ${tick}\n`);
+      emitters.get("job two")!(`two ${tick}\n`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const rows = () =>
+      ["bash-1", "bash-2"].map(
+        (id) => panelNode(loop.published.at(-1)!.surface, `tail:${id}`)?.text ?? "",
+      );
+    await vi.waitFor(
+      () =>
+        expect(rows().sort()).toEqual([
+          expect.stringMatching(/one 30$/),
+          expect.stringMatching(/two 30$/),
+        ]),
+      { timeout: 4_000 },
+    );
+    // Two jobs printing ten lines a second each still redraw the one panel at its own pace.
+    expectPaced(loop.published.slice(before - 1));
+    expect(rows().every((tail) => !(tail.includes("one") && tail.includes("two")))).toBe(true);
+
+    finish.resolve();
+    await vi.waitFor(() => expect(loop.dismissed).toEqual(["background-jobs"]), {
+      timeout: 10_000,
+    });
+  }, 20_000);
 
   it("clears the panel once a finished job's result is delivered", async () => {
     loop.on = true;

@@ -158,6 +158,57 @@ describe("background jobs panel view", () => {
     });
   });
 
+  it("shows a spinner and the newest running job's last line in the pill, trimmed", () => {
+    const surface = render([
+      job("old", { startedAt: AT - 60_000, output: "old output\n" }),
+      job("new", { output: `\u001b[32m${"x".repeat(80)}\u001b[0m\n\n` }),
+    ]);
+    const pillNodes = JSON.stringify(surface.pill);
+    expect(pillNodes).toContain('"type":"progress"');
+    expect(pillNodes).not.toContain('"value"');
+    const line = words(surface.pill!.content).find((word) => word.startsWith("x"))!;
+    expect(Array.from(line)).toHaveLength(40);
+    expect(pillNodes).not.toContain("old output");
+    // Nothing printed yet: the pill is still the count and the age.
+    expect(words(render([job("quiet")]).pill!.content)).toEqual(["1 job running", "<1m"]);
+  });
+
+  it("says in the pill how many jobs failed, so it shows without opening the panel", () => {
+    const pillWords = (jobs: PanelJob[]) => words(render(jobs).pill!.content);
+    expect(
+      pillWords([
+        job("a", { status: "failed", exitCode: 1 }),
+        job("b", { status: "failed", exitCode: null }),
+        job("c", { status: "completed", exitCode: 0 }),
+      ]),
+    ).toContain("2 failed");
+    expect(pillWords([job("a", { status: "completed", exitCode: 0 })]).join()).not.toContain(
+      "failed",
+    );
+  });
+
+  it("shows a running job's live lines, folder, time left, and truncation outside the fold", () => {
+    const output = Array.from({ length: 30 }, (_, index) => `step ${index}`).join("\n");
+    const list = body(
+      render([
+        job("a", {
+          output,
+          cwd: "/work/app/",
+          timeoutAt: AT + 5 * 60_000,
+          truncated: true,
+        }),
+      ]),
+    );
+    const folded = find(list, "output:a")!;
+    const tail = find(list, "tail:a") as { text: string };
+    expect(find(folded, "tail:a")).toBeUndefined();
+    expect(tail.text.split("\n")).toHaveLength(12);
+    expect(tail.text).toContain("step 29");
+    expect(find(list, "detail:a")).toMatchObject({ text: "app · times out in 5m" });
+    expect(find(list, "truncated:a")).toBeDefined();
+    expect(find(folded, "cwd:a")).toMatchObject({ text: "/work/app/" });
+  });
+
   it("lists running jobs first and counts what it cannot draw", () => {
     const jobs = [
       ...Array.from({ length: 6 }, (_, index) =>

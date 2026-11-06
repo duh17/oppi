@@ -368,7 +368,10 @@ export function displayCommand(command: string): string {
   return command.replace(/\s+/g, " ").trim();
 }
 
-/** Output as plain lines: escape sequences stripped, a carriage return's redraw dropped. */
+/**
+ * Output as plain lines: escape sequences and other control characters stripped, a CRLF line end
+ * read as a newline, and a bare carriage return's redraw dropped.
+ */
 export function displayLines(output: string): string[] {
   // ANSI escape stripping needs the ESC and BEL control characters.
   const stripped = output
@@ -377,7 +380,11 @@ export function displayLines(output: string): string[] {
     // eslint-disable-next-line no-control-regex
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
     // eslint-disable-next-line no-control-regex
-    .replace(/\u001b./g, "");
+    .replace(/\u001b./g, "")
+    .replace(/\r\n/g, "\n")
+    // Tabs, newlines, and carriage returns stay; every other C0 control and DEL would draw as junk.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
   const lines: string[] = [];
   let current = "";
   for (const char of stripped) {

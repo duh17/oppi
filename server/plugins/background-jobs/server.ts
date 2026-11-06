@@ -36,7 +36,7 @@ import {
 } from "./jobs.js";
 import { RESULT_GUIDANCE } from "./delivery.js";
 import { DurableJobs, type Job, type Status } from "./contract.js";
-import { createJobsPanel, type JobsPanel, type PanelJob } from "./panel.js";
+import { createJobsPanel, outputTail, type JobsPanel, type PanelJob } from "./panel.js";
 
 type Output = { output: string; truncated: boolean };
 /**
@@ -81,6 +81,10 @@ function jobById(jobs: readonly Job[], jobId: string): Job {
 interface LivePanel extends JobsPanel {
   /** Publishes run one after another, each reading the list afresh, so the last one is current. */
   queue: Promise<void>;
+  /** When the panel was last published; new output waits `LIVE_REDRAW_MS` from then. */
+  drawnAt: number;
+  /** The output tail each running job's row showed in that publish, by job id. */
+  drawnTails: Map<string, string>;
 }
 
 /**
@@ -119,6 +123,24 @@ async function retireLegacyPill(tx: Tx, id: ConversationId): Promise<void> {
  * for a whole minute of running time that the panel does not show yet.
  */
 const PANEL_LOOP_CHECK_MS = 1_000;
+/**
+ * The least time between a panel's last publish and a redraw for new output. It is the panel's
+ * pace, not each job's: several jobs printing at once still redraw it at most this often.
+ */
+const LIVE_REDRAW_MS = 2_000;
+/**
+ * How much of the end of a running job's output the panel reads. A row shows at most 12 lines and
+ * 480 characters, and a carriage-return progress line is redrawn in place, so this holds what is
+ * drawn unless one line is longer.
+ */
+const LIVE_TAIL_CHARS = 16_384;
+
+/**
+ * Running jobs' output, by runner task: a read of the string the runner already holds, so a live
+ * tail costs no copy and no write. Memory only: the terminal commit in `JobOutput` stays the only
+ * write of a job's output, and nothing here reaches the transcript or the model.
+ */
+const liveTails = new Map<TaskId, () => { output: string; truncated: boolean }>();
 
 /** A panel is per live Session loop: a new loop (after a Session restarts) gets a new panel. */
 const panels = new WeakMap<SurfacePublisher, LivePanel>();
@@ -135,7 +157,7 @@ function surfacesOf(env: ExecutionEnv | undefined): SurfacePublisher | undefined
 function panelOf(surfaces: SurfacePublisher): LivePanel {
   let panel = panels.get(surfaces);
   if (!panel) {
-    panel = { ...createJobsPanel(), queue: Promise.resolve() };
+    panel = { ...createJobsPanel(), queue: Promise.resolve(), drawnAt: 0, drawnTails: new Map() };
     panels.set(surfaces, panel);
   }
   return panel;
@@ -178,9 +200,15 @@ async function syncPanel(
           job.status === "running"
             ? undefined
             : (await reader.snapshot(JobOutput, job.taskId, context))?.output;
+        const live = job.status === "running" ? liveTails.get(job.taskId)?.() : undefined;
         shown.push({
           id: job.id,
           command: job.command,
+          cwd: job.cwd,
+          ...(job.status === "running" && job.timeout !== undefined
+            ? { timeoutAt: job.startedAt + job.timeout * 1000 }
+            : {}),
+          ...(live ? { output: live.output, truncated: live.truncated } : {}),
           // The classic pill treats every non-success terminal outcome as an error.
           status: job.status === "interrupted" ? "failed" : job.status,
           startedAt: job.startedAt,
@@ -188,8 +216,15 @@ async function syncPanel(
           ...(output === undefined ? {} : { output }),
         });
       }
-      if (shown.length > 0) panel.surface.publish({ surfaces }, { jobs: shown, at: Date.now() });
-      else if (panel.surface.current() !== undefined) panel.surface.end({ surfaces });
+      if (shown.length > 0) {
+        panel.surface.publish({ surfaces }, { jobs: shown, at: Date.now() });
+        panel.drawnAt = Date.now();
+        panel.drawnTails = new Map(
+          shown
+            .filter((job) => job.status === "running")
+            .map((job) => [job.id, outputTail(job.output) ?? ""]),
+        );
+      } else if (panel.surface.current() !== undefined) panel.surface.end({ surfaces });
     } catch {
       // The panel is display only; the next change publishes it again.
     }
@@ -329,123 +364,143 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           truncated = true;
         }
       };
-      if (winner === claim) {
-        try {
-          const env = await runtime.env(context);
-          if (!env) throw new Error("No execution environment for background job");
-          const cancel = new AbortController();
-          const watch = await runtime.watchDoc(DurableJobs, runtime.conversationId, context);
-          const live = await runtime.watchDoc(LiveDoc, runtime.conversationId, context);
-          const changed = (value: { jobs: readonly Job[] } | null): void => {
-            if (value?.jobs.find((item) => item.id === job.id)?.cancelRequested) cancel.abort();
-          };
-          const checkStop = async (): Promise<void> => {
-            // Independent document watchers can deliver idle before promotion.
-            // Read committed job ownership rather than a cached watcher frame.
-            const latest = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
-            if (latest?.jobs.find((item) => item.id === job.id)?.decision === "waiting")
-              cancel.abort();
-          };
-          watch?.start(async (call) => {
-            if (call.kind === "value") changed(call.retired ? null : call.value);
-          });
-          live?.start(async (call) => {
-            if (call.kind === "value" && (call.retired || call.value.run === undefined))
-              await checkStop();
-          });
-          changed(watch?.value ?? null);
-          if (live?.value?.run === undefined) await checkStop();
-          // A tap on Stop asks for the kill as `background_job cancel` does: look the job up in the
-          // saved list and mark it, if it still runs; this runner's watcher then kills the process.
-          const stop = async (): Promise<boolean> => {
-            const saved = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
-            if (saved?.jobs.find((item) => item.id === job.id)?.status !== "running") return false;
-            await runtime.commit(async (tx) => {
-              const current = jobById(
-                (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
-                job.id,
-              );
-              if (current.status === "running") current.cancelRequested = true;
-            }, context);
-            return true;
-          };
-          // The panel lives in a Session's surface loop, and a Session that stops and starts again
-          // while this job runs has a new one. Offer Stop to whichever loop is current, and draw
-          // the panel into a loop that appears.
-          let loop = surfacesOf(env);
-          let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
-          // The panel shows the job's age in whole minutes, so it is drawn again each time that
-          // number changes: a frozen "3m" on a job that has run ten would be wrong, not stale.
-          const minutesRun = (): number => Math.floor((Date.now() - job.startedAt) / 60_000);
-          let drawnMinutes = minutesRun();
-          const watchLoop = setInterval(() => {
-            const current = surfacesOf(env);
-            const minutes = minutesRun();
-            if (current === loop) {
-              if (current && minutes !== drawnMinutes) {
-                drawnMinutes = minutes;
-                void syncPanel(runtime, runtime.conversationId, env, context);
-              }
-              return;
-            }
-            withdrawStop();
-            loop = current;
-            withdrawStop = current ? offerStop(current, job.id, stop) : () => {};
-            drawnMinutes = minutes;
-            if (current) void syncPanel(runtime, runtime.conversationId, env, context);
-          }, PANEL_LOOP_CHECK_MS);
-          watchLoop.unref?.();
+      // The panel reads the end of this run's output while it runs. The entry stays until the
+      // terminal commit, so the panel never draws this job as running without its output.
+      const liveOutput = (): string => output.slice(-LIVE_TAIL_CHARS);
+      liveTails.set(runtime.taskId, () => ({ output: liveOutput(), truncated }));
+      try {
+        if (winner === claim) {
           try {
-            const result = await env.exec(
-              job.command,
-              {
-                cwd: job.cwd,
-                inheritEnv: true,
-                ...(job.timeout === undefined ? {} : { timeout: job.timeout }),
-                onOutput: appendOutput,
-              },
-              withAbortSignal(cancel.signal, context),
-            );
-            // Invocation cancellation is process detach/background abort, not an
-            // exec result. Leave the claim and run checkpoint for restart/abort.
-            if (runtime.signal.aborted) return;
-            if (cancel.signal.aborted) status = "cancelled";
-            else if (!result.ok) {
-              status = result.error.code === "timeout" ? "timed_out" : "failed";
-              appendOutput(`${output ? "\n" : ""}${result.error.message}`);
-            } else {
-              exitCode = result.value.exitCode;
-              status = exitCode === 0 ? "completed" : "failed";
+            const env = await runtime.env(context);
+            if (!env) throw new Error("No execution environment for background job");
+            const cancel = new AbortController();
+            const watch = await runtime.watchDoc(DurableJobs, runtime.conversationId, context);
+            const live = await runtime.watchDoc(LiveDoc, runtime.conversationId, context);
+            // Only a backgrounded job is a row in the panel; a foreground one's output never redraws it.
+            let shown = job.decision === "background";
+            const changed = (value: { jobs: readonly Job[] } | null): void => {
+              const current = value?.jobs.find((item) => item.id === job.id);
+              shown = current?.decision === "background";
+              if (current?.cancelRequested) cancel.abort();
+            };
+            const checkStop = async (): Promise<void> => {
+              // Independent document watchers can deliver idle before promotion.
+              // Read committed job ownership rather than a cached watcher frame.
+              const latest = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
+              if (latest?.jobs.find((item) => item.id === job.id)?.decision === "waiting")
+                cancel.abort();
+            };
+            watch?.start(async (call) => {
+              if (call.kind === "value") changed(call.retired ? null : call.value);
+            });
+            live?.start(async (call) => {
+              if (call.kind === "value" && (call.retired || call.value.run === undefined))
+                await checkStop();
+            });
+            changed(watch?.value ?? null);
+            if (live?.value?.run === undefined) await checkStop();
+            // A tap on Stop asks for the kill as `background_job cancel` does: look the job up in the
+            // saved list and mark it, if it still runs; this runner's watcher then kills the process.
+            const stop = async (): Promise<boolean> => {
+              const saved = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
+              if (saved?.jobs.find((item) => item.id === job.id)?.status !== "running")
+                return false;
+              await runtime.commit(async (tx) => {
+                const current = jobById(
+                  (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
+                  job.id,
+                );
+                if (current.status === "running") current.cancelRequested = true;
+              }, context);
+              return true;
+            };
+            // The panel lives in a Session's surface loop, and a Session that stops and starts again
+            // while this job runs has a new one. Offer Stop to whichever loop is current, and draw
+            // the panel into a loop that appears.
+            let loop = surfacesOf(env);
+            let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
+            // The panel shows the job's age in whole minutes, so it is drawn again each time that
+            // number changes: a frozen "3m" on a job that has run ten would be wrong, not stale.
+            const minutesRun = (): number => Math.floor((Date.now() - job.startedAt) / 60_000);
+            let drawnMinutes = minutesRun();
+            // New output redraws the panel once it has gone LIVE_REDRAW_MS unpublished, and only
+            // when this job's row would change. The same tick paces it: a job adds no timer.
+            const outputChanged = (panel: LivePanel | undefined): boolean =>
+              shown &&
+              panel !== undefined &&
+              Date.now() - panel.drawnAt >= LIVE_REDRAW_MS &&
+              (outputTail(liveOutput()) ?? "") !== (panel.drawnTails.get(job.id) ?? "");
+            const watchLoop = setInterval(() => {
+              const current = surfacesOf(env);
+              const minutes = minutesRun();
+              if (current === loop) {
+                if (current && (minutes !== drawnMinutes || outputChanged(panels.get(current)))) {
+                  drawnMinutes = minutes;
+                  void syncPanel(runtime, runtime.conversationId, env, context);
+                }
+                return;
+              }
+              withdrawStop();
+              loop = current;
+              withdrawStop = current ? offerStop(current, job.id, stop) : () => {};
+              drawnMinutes = minutes;
+              if (current) void syncPanel(runtime, runtime.conversationId, env, context);
+            }, PANEL_LOOP_CHECK_MS);
+            watchLoop.unref?.();
+            try {
+              const result = await env.exec(
+                job.command,
+                {
+                  cwd: job.cwd,
+                  inheritEnv: true,
+                  ...(job.timeout === undefined ? {} : { timeout: job.timeout }),
+                  onOutput: appendOutput,
+                },
+                withAbortSignal(cancel.signal, context),
+              );
+              // Invocation cancellation is process detach/background abort, not an
+              // exec result. Leave the claim and run checkpoint for restart/abort.
+              if (runtime.signal.aborted) return;
+              if (cancel.signal.aborted) status = "cancelled";
+              else if (!result.ok) {
+                status = result.error.code === "timeout" ? "timed_out" : "failed";
+                appendOutput(`${output ? "\n" : ""}${result.error.message}`);
+              } else {
+                exitCode = result.value.exitCode;
+                status = exitCode === 0 ? "completed" : "failed";
+              }
+            } finally {
+              clearInterval(watchLoop);
+              withdrawStop();
+              await watch?.stop();
+              await live?.stop();
             }
-          } finally {
-            clearInterval(watchLoop);
-            withdrawStop();
-            await watch?.stop();
-            await live?.stop();
+          } catch (error) {
+            if (runtime.signal.aborted) return;
+            status = "failed";
+            appendOutput(
+              `${output ? "\n" : ""}${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-        } catch (error) {
-          if (runtime.signal.aborted) return;
-          status = "failed";
-          appendOutput(
-            `${output ? "\n" : ""}${error instanceof Error ? error.message : String(error)}`,
-          );
         }
+        await runtime.commit(async (tx) => {
+          const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
+          Object.assign(current, { status, exitCode });
+          Object.assign(await tx.doc(JobOutput, runtime.taskId), {
+            output,
+            truncated,
+          });
+          if (
+            current.decision === "waiting" &&
+            (await tx.doc(LiveDoc, runtime.conversationId)).run === undefined
+          )
+            current.decision = "foreground";
+          await retireLegacyPill(tx, runtime.conversationId);
+          return { status: "running", checkpoint: { phase: "report" } };
+        }, context);
+      } finally {
+        liveTails.delete(runtime.taskId);
       }
-      await runtime.commit(async (tx) => {
-        const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
-        Object.assign(current, { status, exitCode });
-        Object.assign(await tx.doc(JobOutput, runtime.taskId), {
-          output,
-          truncated,
-        });
-        if (
-          current.decision === "waiting" &&
-          (await tx.doc(LiveDoc, runtime.conversationId)).run === undefined
-        )
-          current.decision = "foreground";
-        await retireLegacyPill(tx, runtime.conversationId);
-        return { status: "running", checkpoint: { phase: "report" } };
-      }, context);
     },
     async report(task, runtime, context) {
       // Stop can win after exec completion but before the bash tool claims its
