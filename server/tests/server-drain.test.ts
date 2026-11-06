@@ -6,7 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SdkBackend } from "../src/sdk-backend.js";
 import { ServerDrain, type DrainSession } from "../src/server-drain.js";
-import { deliverHeldInputs } from "../src/session-restart-resume.js";
+import {
+  RESTART_CONTINUE_PROMPT,
+  deliverHeldInputs,
+  queueOrphanedSessionsForRestart,
+  recordLiveSessionsForRestart,
+  resumeSessionsAfterRestart,
+} from "../src/session-restart-resume.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -47,8 +53,11 @@ function saveSession(storage: Storage, id: string, fields: Partial<Session> = {}
 /** A SessionManager whose sessions run on stub backends; `prompts` records what reached one. */
 function makeManager(storage: Storage) {
   const prompts: Array<{ sessionId: string; text: string; streamingBehavior?: string }> = [];
+  /** Each session's stub backend, to set what Pi reports (`isStreaming`, `isCompacting`). */
+  const backends = new Map<string, { isStreaming: boolean; isCompacting: boolean }>();
   vi.spyOn(SdkBackend, "create").mockImplementation((async (opts: { session: Session }) => {
     const { sdkBackend, prompt } = makeSdkBackendStub();
+    backends.set(opts.session.id, sdkBackend as never);
     prompt.mockImplementation(async (text: string, options?: Record<string, unknown>) => {
       prompts.push({
         sessionId: opts.session.id,
@@ -65,7 +74,7 @@ function makeManager(storage: Storage) {
   managers.push(manager);
   const drain = { isDraining: false };
   manager.restartHold.drain = drain;
-  return { manager, prompts, drain };
+  return { manager, prompts, drain, backends };
 }
 
 function setBusy(manager: SessionManager, sessionId: string, busy: boolean): void {
@@ -153,6 +162,107 @@ describe("server drain admission", () => {
       held: "server_restart",
     });
   });
+
+  it("waits for a classic session that compacts or streams before its status reads busy", async () => {
+    const { storage, workspace } = makeStorage();
+    saveSession(storage, "compacting", { workspaceId: workspace.id });
+    saveSession(storage, "starting", { workspaceId: workspace.id });
+    const { manager, prompts, drain, backends } = makeManager(storage);
+    await manager.startSession("compacting", workspace);
+    await manager.startSession("starting", workspace);
+    // A manual compaction does not mark the session busy; a run Pi just started is not busy
+    // until its agent_start reaches Oppi. Pi's own flags are what count.
+    backends.get("compacting")!.isCompacting = true;
+    backends.get("starting")!.isStreaming = true;
+    expect(manager.getActiveSession("compacting")?.status).toBe("ready");
+    expect(manager.getActiveSession("starting")?.status).toBe("ready");
+
+    expect(manager.restartHold.drainSessions()).toEqual([
+      { sessionId: "compacting", engine: "classic", waitingOnUser: false },
+      { sessionId: "starting", engine: "classic", waitingOnUser: false },
+    ]);
+    drain.isDraining = true;
+    expect(await manager.sendFollowUp("compacting", "after the compaction")).toEqual({
+      held: "server_restart",
+    });
+    // A steer joins the run Pi is streaming.
+    expect(
+      await manager.sendPrompt("starting", "use the other file", { streamingBehavior: "steer" }),
+    ).toBeUndefined();
+    expect(prompts).toEqual([
+      { sessionId: "starting", text: "use the other file", streamingBehavior: "steer" },
+    ]);
+  });
+
+  // The restart that cuts a classic turn short: the deadline's orderly stop records the live
+  // sessions; kill -9 leaves them marked running and the next start queues them.
+  it.each(["deadline", "crash"] as const)(
+    "after a %s restart, continues the cut classic turn first, then sends what was held, once",
+    async (how) => {
+      const { storage, workspace } = makeStorage();
+      saveSession(storage, "worker", { workspaceId: workspace.id });
+      saveSession(storage, "idle", { workspaceId: workspace.id });
+      const before = makeManager(storage);
+      await before.manager.startSession("worker", workspace);
+      await before.manager.startSession("idle", workspace);
+      setBusy(before.manager, "worker", true);
+      before.drain.isDraining = true;
+      await before.manager.sendFollowUp("worker", "after your turn");
+      await before.manager.sendPrompt("idle", "new task", { clientTurnId: "t-idle" });
+      expect(before.prompts).toEqual([]);
+      if (how === "deadline") {
+        const live = ["worker", "idle"].map((id) => before.manager.getActiveSession(id)!);
+        recordLiveSessionsForRestart(
+          storage,
+          live,
+          before.manager.restartHold.sessionIdsLosingWork(),
+        );
+        await before.manager.close();
+      } else {
+        saveSession(storage, "worker", { workspaceId: workspace.id, status: "busy" });
+        saveSession(storage, "idle", { workspaceId: workspace.id, status: "ready" });
+      }
+
+      // The re-exec'd (or freshly started) process on the same data directory.
+      const restarted = new Storage(storage.getDataDir());
+      const after = makeManager(restarted);
+      if (how === "crash") queueOrphanedSessionsForRestart(restarted);
+      const lifecycle = {
+        resumeWorkspaceSession: async ({ session }: { session: Session }) =>
+          ({ session: await after.manager.startSession(session.id, workspace) }) as never,
+        resumeControlSession: async () => {
+          throw new Error("not a control session");
+        },
+        resumeControlConversation: async () => {
+          throw new Error("not a control conversation");
+        },
+      };
+      await resumeSessionsAfterRestart({
+        storage: restarted,
+        lifecycle,
+        sendPrompt: (id, text) => after.manager.sendPrompt(id, text),
+        sendFollowUp: (id, text) => after.manager.sendFollowUp(id, text),
+        reportsLostWork: (id) => after.manager.restartHold.reportsLostWork(id),
+      });
+      // The continuation runs: the held follow-up queues behind it.
+      after.backends.get("worker")!.isStreaming = true;
+      const delivery = {
+        storage: restarted,
+        lifecycle,
+        isActive: (id: string) => after.manager.isActive(id),
+        deliver: (id: string) => after.manager.restartHold.deliver(id),
+      };
+      await deliverHeldInputs(delivery);
+      await deliverHeldInputs(delivery);
+
+      expect(after.prompts).toEqual([
+        { sessionId: "worker", text: RESTART_CONTINUE_PROMPT },
+        { sessionId: "worker", text: "after your turn", streamingBehavior: "followUp" },
+        { sessionId: "idle", text: "new task" },
+      ]);
+      expect(restarted.listHeldInputs()).toEqual([]);
+    },
+  );
 
   it("refuses input to an incognito session, which does not come back after the restart", async () => {
     const { storage, workspace } = makeStorage();
