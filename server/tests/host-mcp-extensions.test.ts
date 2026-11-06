@@ -8,10 +8,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFile } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import {
   ProjectTrustStore,
@@ -35,6 +37,8 @@ import { Storage } from "../src/storage.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { Session, Workspace } from "../src/types.js";
+
+const execFileAsync = promisify(execFile);
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
 
@@ -1340,4 +1344,52 @@ describe("builtin extension availability boundaries", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("resolves an Agent's Extensions in a workspace whose .agents/skills links back to itself", async () => {
+    // A sandbox guest can plant these; Pi's Skill walk follows them without a cycle guard. A
+    // child process, so a walk that never finishes fails on the timeout instead of blocking.
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-ext-cycle-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-ext-cycle-agent-"));
+    try {
+      mkdirSync(join(cwd, ".git"));
+      const skills = join(cwd, ".agents", "skills");
+      mkdirSync(skills, { recursive: true });
+      symlinkSync(".", join(skills, "loop"));
+      symlinkSync(".", join(skills, "loop2"));
+      mkdirSync(join(agentDir, "extensions"));
+      const extension = join(agentDir, "extensions", "picked.ts");
+      writeFileSync(extension, "export default function () {}\n");
+      const script = [
+        'import { SettingsManager } from "@earendil-works/pi-coding-agent";',
+        'import { resolveSelectedAgentExtensionPaths } from "./src/agent-extension-selection.ts";',
+        "const { CWD, AGENT_DIR, EXTENSION_ID } = process.env;",
+        "const paths = await resolveSelectedAgentExtensionPaths(",
+        "  [EXTENSION_ID], CWD, AGENT_DIR, SettingsManager.create(CWD, AGENT_DIR), [],",
+        ");",
+        "console.log(JSON.stringify(paths));",
+      ].join("\n");
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "-e", script],
+        {
+          cwd: fileURLToPath(new URL("..", import.meta.url)),
+          timeout: 20_000,
+          // The walk is synchronous; only SIGKILL is sure to stop it.
+          killSignal: "SIGKILL",
+          env: {
+            ...process.env,
+            CWD: cwd,
+            AGENT_DIR: agentDir,
+            EXTENSION_ID: serverResourceId("extension", extension),
+          },
+        },
+      );
+      expect((JSON.parse(stdout) as string[]).map((path) => realpathSync(path))).toEqual([
+        realpathSync(extension),
+      ]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

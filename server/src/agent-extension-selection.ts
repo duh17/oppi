@@ -2,6 +2,7 @@ import { DefaultPackageManager, type SettingsManager } from "@earendil-works/pi-
 
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
+import { keepAutoDiscoveryOffHost } from "./sandbox-host-extensions.js";
 import { serverResourceId } from "./server-resource-id.js";
 
 /** Scopes that can satisfy an Agent's exact Extension selection for a launch cwd. */
@@ -30,6 +31,8 @@ export async function resolveSelectedAgentExtensionPaths(
   if (extensionIds.length === 0) return [];
 
   const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
+  // Only Skills come from the `.agents/skills` walk, which a sandbox guest can make endless.
+  keepAutoDiscoveryOffHost(packageManager);
   const resolved = await packageManager.resolve(async () => "skip");
   const pathsById = new Map(
     resolved.extensions

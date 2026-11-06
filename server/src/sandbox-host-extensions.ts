@@ -20,8 +20,9 @@ const log = createLogger({ base: { component: "sandbox_host_extensions" } });
 type PiAutoDiscovery = { cwd: string; addAutoDiscoveredResources: (...args: unknown[]) => void };
 
 /**
- * Keep a sandbox's Pi package manager from walking the guest's `.agents/skills` on the host. On
- * every resolve it walks `.agents/skills` from its cwd up to the git root
+ * Keep a Pi package manager from walking a workspace's `.agents/skills` on the host: a
+ * sandbox's, or one that resolves only extensions, which that walk never adds. On every resolve
+ * it walks `.agents/skills` from its cwd up to the git root
  * (`addAutoDiscoveredResources`, synchronously, with no cycle guard), so two `loop -> .` links
  * block the server. That walk is the method's only use of `cwd`, so it runs from `/`, which no
  * guest can write; project `.pi` resources keep the workspace's base dir. Throws if Pi no longer
