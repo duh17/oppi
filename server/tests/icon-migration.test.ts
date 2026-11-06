@@ -354,7 +354,7 @@ describe("coordinated icon migration", () => {
         sessionId,
       );
       if (rewriteDue) {
-        db.prepare("DELETE FROM app_state_migrations WHERE key = 'stored-icon-choices'").run();
+        db.prepare("DELETE FROM app_state_migrations WHERE key = 'stored_icon_choices_v1'").run();
       }
     } finally {
       db.close();

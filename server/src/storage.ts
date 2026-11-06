@@ -88,7 +88,7 @@ export class Storage {
       this.iconAssetStore.has(assetId),
     );
     // The string-to-object icon change of July 2026, once per data directory.
-    this.sessionStore.runMigrationOnceSync("stored-icon-choices", () => {
+    this.sessionStore.runMigrationOnceSync("stored_icon_choices_v1", () => {
       this.sessionStore.migrateStoredIconChoices();
       this.agentDefinitionStore.migrateStoredIconChoices();
       return this.workspaceStore.migrateStoredIconChoices();
