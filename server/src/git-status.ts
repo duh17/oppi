@@ -25,6 +25,12 @@ const FILE_CAP = 500;
  * content did not gets no numstat line.
  */
 const STATUS_ARGS = ["--no-optional-locks", "status", "--porcelain"];
+/**
+ * Catalog probe: the same status plus a `## branch...upstream [ahead N, behind M]` header, so one
+ * git process answers both the dirty count and ahead/behind. `--ahead-behind` is explicit because
+ * `status.aheadBehind=false` in a user's config would otherwise drop the counts and read as 0/0.
+ */
+const SUMMARY_STATUS_ARGS = [...STATUS_ARGS, "--branch", "--ahead-behind"];
 const GIT_TIMEOUT_MS = 5000;
 const SUMMARY_GIT_TIMEOUT_MS = 1500;
 
@@ -59,36 +65,48 @@ export async function getWorkspaceGitSummary(
     return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
   }
 
-  const [statusOut, upstreamOut] = await Promise.all([
-    git(trust, resolved, STATUS_ARGS, SUMMARY_GIT_TIMEOUT_MS),
-    git(
-      trust,
-      resolved,
-      ["rev-list", "--left-right", "--count", "@{u}...HEAD"],
-      SUMMARY_GIT_TIMEOUT_MS,
-    ),
-  ]);
-  // A missing upstream is valid and leaves ahead/behind unknown. A failed
-  // status probe is not a clean tree: omit the summary so clients preserve
-  // their last trustworthy value instead of displaying a false zero.
+  const statusOut = await git(trust, resolved, SUMMARY_STATUS_ARGS, SUMMARY_GIT_TIMEOUT_MS);
+  // A failed status probe is not a clean tree: omit the summary so clients
+  // preserve their last trustworthy value instead of displaying a false zero.
   if (statusOut === null) {
     return undefined;
   }
 
-  const changedCount = statusOut
-    ? statusOut.split("\n").filter((line) => line.length > 0).length
-    : 0;
+  let changedCount = 0;
   let ahead: number | null = null;
   let behind: number | null = null;
-  if (upstreamOut) {
-    const parts = upstreamOut.trim().split(/\s+/);
-    if (parts.length === 2) {
-      behind = Number.parseInt(parts[0], 10);
-      ahead = Number.parseInt(parts[1], 10);
+  for (const line of statusOut.split("\n")) {
+    if (line.length === 0) continue;
+    if (line.startsWith("## ")) {
+      ({ ahead, behind } = parseBranchHeaderAheadBehind(line));
+    } else {
+      changedCount++;
     }
   }
 
   return { isGitRepo: true, changedCount, ahead, behind };
+}
+
+/**
+ * Ahead/behind from a porcelain `## ` header. A branch without an upstream (no `...`), a gone
+ * upstream, a detached HEAD, and an unborn branch leave both unknown. An upstream with no
+ * bracketed counts is level with HEAD.
+ */
+function parseBranchHeaderAheadBehind(header: string): {
+  ahead: number | null;
+  behind: number | null;
+} {
+  const unknown = { ahead: null, behind: null };
+  if (!header.includes("...")) return unknown;
+  const counts = /\[([^\]]*)\]$/.exec(header)?.[1];
+  if (counts === undefined) return { ahead: 0, behind: 0 };
+  const ahead = /\bahead (\d+)/.exec(counts)?.[1];
+  const behind = /\bbehind (\d+)/.exec(counts)?.[1];
+  if (ahead === undefined && behind === undefined) return unknown;
+  return {
+    ahead: ahead === undefined ? 0 : Number.parseInt(ahead, 10),
+    behind: behind === undefined ? 0 : Number.parseInt(behind, 10),
+  };
 }
 
 /**

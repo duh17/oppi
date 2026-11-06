@@ -55,6 +55,9 @@ import {
   type PendingUIRequestProvider,
 } from "../session-attention.js";
 
+/** Git probes in flight at once while building the catalog. */
+const GIT_SUMMARY_CONCURRENCY = 12;
+
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const removedDefaultModelError =
     "Workspace defaultModel is no longer supported; Pi settings own the default model. Configure defaultProvider and defaultModel in ~/.pi/agent/settings.json.";
@@ -94,20 +97,22 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const gitSummaries: Array<WorkspaceGitSummary | undefined> = [];
-    const concurrency = 4;
-    for (let index = 0; index < workspaces.length; index += concurrency) {
-      const batch = workspaces.slice(index, index + concurrency);
-      const batchSummaries = await Promise.all(
-        batch.map(async (workspace) => {
-          if (workspace.gitStatusEnabled === false) {
-            return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
-          }
-          return getWorkspaceGitSummary(workspace.hostMount, gitTrustForWorkspace(workspace));
-        }),
-      );
-      gitSummaries.push(...batchSummaries);
-    }
+    // A pool, not fixed batches: one slow repository must not hold up the probes queued behind it.
+    const gitSummaries = new Array<WorkspaceGitSummary | undefined>(workspaces.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < workspaces.length) {
+        const index = next++;
+        const workspace = workspaces[index];
+        gitSummaries[index] =
+          workspace.gitStatusEnabled === false
+            ? { isGitRepo: false, changedCount: 0, ahead: null, behind: null }
+            : await getWorkspaceGitSummary(workspace.hostMount, gitTrustForWorkspace(workspace));
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(GIT_SUMMARY_CONCURRENCY, workspaces.length) }, worker),
+    );
 
     helpers.json(res, {
       serverNow,

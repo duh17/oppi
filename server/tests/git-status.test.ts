@@ -87,6 +87,57 @@ describe("getWorkspaceGitSummary", () => {
       rmSync(join(repoDir, "summary-untracked.txt"));
     }
   });
+
+  it("reports ahead/behind against the upstream next to the changed count", async () => {
+    const root = mkdtempSync(join(tmpdir(), "git-status-summary-upstream-"));
+    const remote = join(root, "remote.git");
+    const local = join(root, "local");
+    const peer = join(root, "peer");
+    const identity = "-c user.email=test@test.com -c user.name=Test";
+    try {
+      gitIn(root, `init --bare -b main ${remote}`);
+      gitIn(root, `clone ${remote} ${local}`);
+      writeFileSync(join(local, "a.txt"), "a\n");
+      gitIn(local, "add a.txt");
+      gitIn(local, `${identity} commit -m first`);
+      gitIn(local, "push -u origin HEAD:main");
+      const summary = () => getWorkspaceGitSummary(local, HOST_GIT_TRUST);
+
+      await expect(summary()).resolves.toEqual({
+        isGitRepo: true,
+        changedCount: 0,
+        ahead: 0,
+        behind: 0,
+      });
+
+      writeFileSync(join(local, "b.txt"), "b\n");
+      gitIn(local, "add b.txt");
+      gitIn(local, `${identity} commit -m second`);
+      writeFileSync(join(local, "untracked.txt"), "u\n");
+      await expect(summary()).resolves.toEqual({
+        isGitRepo: true,
+        changedCount: 1,
+        ahead: 1,
+        behind: 0,
+      });
+
+      gitIn(root, `clone ${remote} ${peer}`);
+      writeFileSync(join(peer, "c.txt"), "c\n");
+      gitIn(peer, "add c.txt");
+      gitIn(peer, `${identity} commit -m third`);
+      gitIn(peer, "push origin HEAD:main");
+      gitIn(local, "fetch origin");
+      await expect(summary()).resolves.toMatchObject({ ahead: 1, behind: 1 });
+
+      gitIn(local, "reset --hard origin/main~1");
+      await expect(summary()).resolves.toMatchObject({ ahead: 0, behind: 1 });
+
+      gitIn(local, "update-ref -d refs/remotes/origin/main");
+      await expect(summary()).resolves.toMatchObject({ ahead: null, behind: null });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("getGitStatus", () => {
