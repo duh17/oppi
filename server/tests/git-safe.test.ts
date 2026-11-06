@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getCommitDetail, getCommitFileDiff, getCommitLog } from "../src/git-commits.js";
+import { getCommitDetail, getCommitFileDiff } from "../src/git-commits.js";
 import {
   execGit,
   gitTrustForWorkspace,
@@ -197,10 +197,6 @@ describe("sandbox git: repository-controlled execution", () => {
       [" M", "a.txt"],
       ["??", "b.md"],
     ]);
-
-    const log = await getCommitLog(mount, trust, 0, 10);
-    expect(log).toMatchObject({ total: 2, hasMore: false });
-    expect(log.commits.map((commit) => commit.message)).toEqual(["second", "first"]);
 
     const detail = await getCommitDetail(mount, trust, commitSha);
     expect(detail.files).toEqual([{ path: "a.txt", status: "M", addedLines: 1, removedLines: 1 }]);
@@ -409,7 +405,6 @@ describe("sandbox git: confinement to the mount", () => {
       behind: null,
     });
     expect((await getGitStatus(mount, trust)).isGitRepo).toBe(false);
-    expect((await getCommitLog(mount, trust, 0, 10)).commits).toEqual([]);
     const result = await execGit(trust, mount, ["rev-parse", "HEAD"]);
     expect(result.error).toBeInstanceOf(SandboxGitRefusedError);
     expect(markerLines(outside.marker)).toEqual([]);

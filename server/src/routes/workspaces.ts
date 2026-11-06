@@ -1,11 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import {
-  getCommitDetail,
-  getCommitFileDiff,
-  getCommitGraph,
-  getCommitLog,
-} from "../git-commits.js";
+import { getCommitDetail, getCommitFileDiff, getCommitGraph } from "../git-commits.js";
 import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
@@ -609,32 +604,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, status);
   }
 
-  async function handleGetWorkspaceCommitLog(
-    wsId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
-    const limit = Math.min(
-      100,
-      Math.max(1, parseInt(url.searchParams.get("limit") ?? "20", 10) || 20),
-    );
-
-    const result = await getCommitLog(
-      workspace.hostMount,
-      gitTrustForWorkspace(workspace),
-      offset,
-      limit,
-    );
-    helpers.json(res, result);
-  }
-
   /**
    * A page of the commit graph of the queried checkout (`worktreeId`, or the
    * selected session's). The first page also lists the repository's
@@ -1068,12 +1037,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsGitDiffMatch = path.match(/^\/workspaces\/([^/]+)\/git\/diff$/);
     if (wsGitDiffMatch && method === "GET") {
       await handleGetWorkspaceReviewDiff(wsGitDiffMatch[1], url, req, res);
-      return true;
-    }
-
-    const wsGitCommitsMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits$/);
-    if (wsGitCommitsMatch && method === "GET") {
-      await handleGetWorkspaceCommitLog(wsGitCommitsMatch[1], url, res);
       return true;
     }
 

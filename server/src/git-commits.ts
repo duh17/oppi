@@ -1,7 +1,7 @@
 /**
  * Git commit browsing for workspace directories.
  *
- * Provides paginated commit log, per-commit detail with file stats,
+ * Provides the paginated commit graph, per-commit detail with file stats,
  * and per-file diffs for individual commits. Uses the same shell-out
  * patterns as git-status.ts.
  */
@@ -14,7 +14,6 @@ import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-revie
 import type {
   GitCommitDetail,
   GitCommitFileInfo,
-  GitCommitSummary,
   GitGraphCommit,
   GitGraphRef,
   WorkspaceReviewDiffHunk,
@@ -123,50 +122,6 @@ function validateSha(sha: string): void {
   if (!/^[a-zA-Z0-9]+$/.test(sha)) {
     throw new Error("Invalid commit SHA");
   }
-}
-
-// ─── Commit log ───
-
-export async function getCommitLog(
-  dir: string,
-  trust: GitTrust,
-  offset: number,
-  limit: number,
-): Promise<{
-  commits: GitCommitSummary[];
-  total: number;
-  hasMore: boolean;
-}> {
-  const resolved = expandHome(dir);
-
-  const [logOut, countOut] = await Promise.all([
-    git(trust, resolved, [
-      "log",
-      `--skip=${offset}`,
-      `--max-count=${limit}`,
-      `--format=%h${FIELD_SEP}%s${FIELD_SEP}%aI`,
-    ]),
-    git(trust, resolved, ["rev-list", "--count", "HEAD"]),
-  ]);
-
-  const total = countOut ? parseInt(countOut.trim(), 10) || 0 : 0;
-
-  const commits: GitCommitSummary[] = [];
-  if (logOut) {
-    const lines = logOut.split("\n").filter((l) => l.length > 0);
-    for (const line of lines) {
-      const parts = line.split(FIELD_SEP);
-      if (parts.length >= 3) {
-        commits.push({ sha: parts[0], message: parts[1], date: parts[2] });
-      }
-    }
-  }
-
-  return {
-    commits,
-    total,
-    hasMore: offset + commits.length < total,
-  };
 }
 
 // ─── Commit graph ───
