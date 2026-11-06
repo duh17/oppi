@@ -7,7 +7,7 @@
  */
 
 import { execGit, SandboxGitRefusedError, type GitTrust } from "./git-safe.js";
-import { resolveHomePath } from "./git-utils.js";
+import { expandHome } from "./path-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
@@ -137,7 +137,7 @@ export async function getCommitLog(
   total: number;
   hasMore: boolean;
 }> {
-  const resolved = resolveHomePath(dir);
+  const resolved = expandHome(dir);
 
   const [logOut, countOut] = await Promise.all([
     git(trust, resolved, [
@@ -188,7 +188,7 @@ export async function getCommitGraph(
   offset: number,
   limit: number,
 ): Promise<{ commits: GitGraphCommit[]; hasMore: boolean }> {
-  const cwd = resolveHomePath(dir);
+  const cwd = expandHome(dir);
   const { error, stdout } = await execGit(
     trust,
     cwd,
@@ -274,7 +274,7 @@ export async function getCommitDetail(
   sha: string,
 ): Promise<GitCommitDetail> {
   validateSha(sha);
-  const resolved = resolveHomePath(dir);
+  const resolved = expandHome(dir);
 
   const [metaOut, numstatOut, nameStatusOut] = await Promise.all([
     git(trust, resolved, [
@@ -370,7 +370,7 @@ export async function getCommitFileDiff(
   workspaceId: string,
 ): Promise<WorkspaceReviewDiffResponse> {
   validateSha(sha);
-  const resolved = resolveHomePath(dir);
+  const resolved = expandHome(dir);
 
   if (!filePath || filePath.trim().length === 0) {
     throw new CommitDiffError(400, "path parameter required");

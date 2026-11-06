@@ -11,7 +11,7 @@ import { lstatSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { execGit, isGitRepository, type GitTrust } from "./git-safe.js";
-import { resolveHomePath } from "./git-utils.js";
+import { expandHome } from "./path-utils.js";
 import type { GitCommitSummary, GitFileStatus, GitStatus, WorkspaceGitSummary } from "./types.js";
 
 const FILE_CAP = 500;
@@ -60,7 +60,7 @@ export async function getWorkspaceGitSummary(
   dir: string,
   trust: GitTrust,
 ): Promise<WorkspaceGitSummary | undefined> {
-  const resolved = resolveHomePath(dir);
+  const resolved = expandHome(dir);
   if (!isGitRepository(trust, resolved)) {
     return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
   }
@@ -114,7 +114,7 @@ function parseBranchHeaderAheadBehind(header: string): {
  * If the directory is not a git repo, returns { isGitRepo: false, ... }.
  */
 export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitStatus> {
-  const resolved = resolveHomePath(dir);
+  const resolved = expandHome(dir);
 
   const empty: GitStatus = {
     isGitRepo: false,

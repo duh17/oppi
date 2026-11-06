@@ -1,7 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 
 import { toHostPath } from "./gondolin-ops.js";
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import type { Workspace } from "./types.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 
@@ -56,8 +56,7 @@ export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams)
 function sandboxGuestPath(requestedPath: string, guestCwd: string): string | null {
   const normalized = requestedPath.replaceAll("\\", "/");
   const absolute = normalized.startsWith("/") ? normalized : `/${normalized}`;
-  if (absolute === guestCwd || absolute.startsWith(`${guestCwd}/`)) return absolute;
-  return null;
+  return isPathWithinRoot(absolute, guestCwd) ? absolute : null;
 }
 
 function containedUnderRoot(candidate: string, root: string): string | null {

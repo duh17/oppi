@@ -6,8 +6,8 @@ import {
   type JsonWebKey,
 } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { expandHome } from "./path-utils.js";
 
 export interface IdentityMaterial {
   keyId: string;
@@ -30,11 +30,6 @@ export function identityConfigForDataDir(dataDir: string): IdentityConfig {
     privateKeyPath: join(dataDir, "identity_ed25519"),
     publicKeyPath: join(dataDir, "identity_ed25519.pub"),
   };
-}
-
-function expandHome(path: string): string {
-  if (!path.startsWith("~/")) return path;
-  return path.replace(/^~\//, `${homedir()}/`);
 }
 
 function getPublicKeyRaw(publicKeyPem: string): string {

@@ -48,7 +48,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { isPathWithinRoot, resolveHomePath } from "./git-utils.js";
+import { isPathWithinRoot, expandHome } from "./path-utils.js";
 import type { Workspace } from "./types.js";
 
 // ─── Trust ───
@@ -74,7 +74,7 @@ export function gitTrustForWorkspace(
   workspace: Pick<Workspace, "runtime" | "hostMount">,
 ): GitTrust {
   if (workspace.runtime !== "sandbox") return HOST_GIT_TRUST;
-  return { kind: "sandbox", root: resolve(resolveHomePath(workspace.hostMount)) };
+  return { kind: "sandbox", root: resolve(expandHome(workspace.hostMount)) };
 }
 
 export interface GitExecOptions {
@@ -356,7 +356,7 @@ function resolveSandboxRepo(
   cwd: string,
 ): SandboxRepo | null {
   const mountRoot = realpathOrNull(trust.root);
-  const realCwd = realpathOrNull(resolveHomePath(cwd));
+  const realCwd = realpathOrNull(expandHome(cwd));
   if (!mountRoot || !realCwd || !isPathWithinRoot(realCwd, mountRoot)) return null;
 
   const gitDir = confinedGitDir(mountRoot, mountRoot);

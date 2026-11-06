@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
 import { openVerifiedFile, resolveCurrentFilePath } from "./current-file.js";
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import {
   collectFileMutations,
   computeDiffLines,

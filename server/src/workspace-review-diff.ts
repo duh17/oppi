@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { execGit, type GitTrust } from "./git-safe.js";
 import { HttpStatusError } from "./http-status-error.js";
-import { isPathWithinRoot, resolveHomePath } from "./git-utils.js";
+import { isPathWithinRoot, expandHome } from "./path-utils.js";
 import {
   computeDiffLines,
   computeLineDiffStatsFromLines,
@@ -67,7 +67,7 @@ async function readHeadText(
   trust: GitTrust,
   reqPath: string,
 ): Promise<ReadTextResult> {
-  const resolved = resolveHomePath(repoDir);
+  const resolved = expandHome(repoDir);
   const stdout = await gitBuffer(trust, resolved, ["show", `HEAD:${reqPath}`]);
 
   if (stdout === null) {
@@ -89,7 +89,7 @@ async function readHeadText(
 }
 
 async function readCurrentText(repoDir: string, reqPath: string): Promise<ReadTextResult> {
-  const resolvedRepoDir = resolveHomePath(repoDir);
+  const resolvedRepoDir = expandHome(repoDir);
   const target = resolve(resolvedRepoDir, reqPath);
 
   try {

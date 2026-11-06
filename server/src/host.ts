@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 
 import { execGit, HOST_GIT_TRUST } from "./git-safe.js";
 import { HttpStatusError } from "./http-status-error.js";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 
 // ─── Types ───
 
@@ -72,17 +73,12 @@ const DISALLOWED_CREATE_SEGMENTS = new Set(["", ".", ".."]);
 
 function compressHome(path: string): string {
   const home = homedir();
-  return path === home || path.startsWith(home + "/") ? path.replace(home, "~") : path;
+  return isPathWithinRoot(path, home) ? path.replace(home, "~") : path;
 }
 
 export function resolveHostPath(rawPath: string): string {
   const trimmed = rawPath.trim();
-  const expanded =
-    trimmed === "~" || trimmed.startsWith("~/")
-      ? trimmed.replace(/^~(?=\/|$)/, homedir())
-      : trimmed;
-
-  return resolve(expanded);
+  return resolve(expandHome(trimmed));
 }
 
 export function getHostPathStatus(rawPath: string): HostPathStatus {
@@ -148,7 +144,7 @@ function realpathOrResolved(path: string): string {
 export function hostFolderClaimsHome(hostMount: string): boolean {
   const folder = realpathOrResolved(resolveHostPath(hostMount));
   const home = realpathOrResolved(homedir());
-  return home === folder || home.startsWith(folder === "/" ? "/" : `${folder}/`);
+  return isPathWithinRoot(home, folder);
 }
 
 /** Validates that a folder the owner entered exists and is a directory. */
@@ -181,10 +177,6 @@ export function hostMountValidationError(hostMount: unknown): string | undefined
   }
 }
 
-function pathWithin(parent: string, child: string): boolean {
-  return child === parent || child.startsWith(parent + "/");
-}
-
 function existingCreateRoots(): string[] {
   return DEFAULT_WORKSPACE_CREATE_ROOTS.map(resolveHostPath).filter((root) => {
     try {
@@ -206,7 +198,7 @@ function allowedCreateRootRealpaths(): string[] {
 }
 
 function isWithinAllowedCreateRoot(realpath: string): boolean {
-  return allowedCreateRootRealpaths().some((root) => pathWithin(root, realpath));
+  return allowedCreateRootRealpaths().some((root) => isPathWithinRoot(realpath, root));
 }
 
 function assertSafeCreateTarget(resolvedPath: string): void {
@@ -372,7 +364,7 @@ export async function scanDirectories(
   root: string,
   isSandboxMount: (dir: string) => boolean,
 ): Promise<HostDirectory[]> {
-  const resolved = root.replace(/^~/, homedir());
+  const resolved = expandHome(root);
   if (!existsSync(resolved)) return [];
 
   const SKIP = new Set([

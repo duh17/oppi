@@ -1,6 +1,7 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 
 import {
   DefaultPackageManager,
@@ -928,11 +929,7 @@ function pathsMatch(left: string, right: string): boolean {
 }
 
 function pathContains(parent: string, child: string): boolean {
-  const canonicalParent = canonicalPath(parent);
-  const canonicalChild = canonicalPath(child);
-  return (
-    canonicalChild === canonicalParent || canonicalChild.startsWith(`${canonicalParent}${sep}`)
-  );
+  return isPathWithinRoot(canonicalPath(child), canonicalPath(parent));
 }
 
 function resourceContainsPath(resource: ResolvedResource, path: string): boolean {
@@ -1078,10 +1075,7 @@ function stripPatternPrefix(pattern: string): string {
 
 function resolveSettingsEntryPath(entry: string, baseDir: string): string {
   const stripped = stripPatternPrefix(entry);
-  const expanded =
-    stripped === "~" || stripped.startsWith("~/")
-      ? stripped.replace(/^~(?=\/|$)/, homedir())
-      : stripped;
+  const expanded = expandHome(stripped);
   return resolve(isAbsolute(expanded) ? expanded : join(baseDir, expanded));
 }
 

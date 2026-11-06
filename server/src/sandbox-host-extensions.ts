@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import {
   DefaultPackageManager,
@@ -10,6 +10,7 @@ import {
 import { shouldShadowSandboxWorkspacePath } from "./gondolin-manager.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX, type McpBuiltinName } from "./host-mcp-extensions.js";
 import { createLogger } from "./logger.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 import { piPackageRoot } from "./plugin-discovery.js";
@@ -50,11 +51,11 @@ export function keepAutoDiscoveryOffHost(packageManager: unknown): void {
  * (`mountRoot`, canonical) and not hidden by the mount's shadow, as `.pi` is.
  */
 function guestWritable(path: string, mountRoot: string): boolean {
-  const inside = relative(mountRoot, canonicalServerResourcePath(path));
-  if (inside.startsWith("..") || isAbsolute(inside)) return false;
+  const real = canonicalServerResourcePath(path);
+  if (!isPathWithinRoot(real, mountRoot)) return false;
   return !shouldShadowSandboxWorkspacePath({
     op: "write",
-    path: `/${inside.split(sep).join("/")}`,
+    path: `/${relative(mountRoot, real).split(sep).join("/")}`,
   });
 }
 

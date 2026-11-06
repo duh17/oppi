@@ -10,8 +10,8 @@
  */
 
 import { accessSync, constants, existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { expandHome } from "./path-utils.js";
 import type { ServerConfig } from "./types.js";
 
 const initialHostEnv = { ...process.env } as Record<string, string>;
@@ -20,13 +20,6 @@ let lastAppliedRuntimeEnvKeys = new Set<string>();
 export interface ResolvedHostEnv {
   configuredPathEntries: string[];
   env: Record<string, string>;
-}
-
-function expandHome(value: string): string {
-  if (value === "~" || value.startsWith("~/")) {
-    return value.replace(/^~(?=\/|$)/, homedir());
-  }
-  return value;
 }
 
 function normalizePathEntries(entries: string[] | undefined): string[] {

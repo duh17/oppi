@@ -1,4 +1,4 @@
-import { normalizePath } from "./git-utils.js";
+import { normalizePath } from "./path-utils.js";
 import type {
   GitFileStatus,
   GitStatus,

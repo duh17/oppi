@@ -13,9 +13,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isIP } from "node:net";
-import { homedir, networkInterfaces } from "node:os";
+import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { createSecureContext } from "node:tls";
+import { expandHome } from "./path-utils.js";
 import { CLOUDFLARE_TLS_MODE_MIGRATION } from "./proxy-config.js";
 import type { ServerConfig, TlsMode } from "./types.js";
 
@@ -90,11 +91,6 @@ const TAILSCALE_RENEW_LOCK_WAIT_MS = 120_000;
 // therefore fences PID reuse without reclaiming a legitimate renewal.
 const TAILSCALE_STALE_LOCK_MS = 90_000;
 const TAILSCALE_LOCK_POLL_MS = 25;
-
-function expandHome(path: string): string {
-  if (!path.startsWith("~/")) return path;
-  return path.replace(/^~\//, `${homedir()}/`);
-}
 
 function defaultSelfSignedPaths(dataDir: string): SelfSignedPaths {
   const baseDir = join(dataDir, "tls", "self-signed");

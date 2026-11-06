@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
 
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import type { ChatAttachmentRef } from "./types.js";
 import {
   resolveUploadAttachment,

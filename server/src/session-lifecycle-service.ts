@@ -18,7 +18,7 @@ import {
   isDeclaredControlSession,
   newControlSessionRow,
 } from "./control-session.js";
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import {
   canResumeStoppedMirrorAsOppi,
   promoteStoppedMirrorToOppi,

@@ -34,7 +34,7 @@ import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:pa
 
 import { execGit, gitTrustForWorkspace, type GitTrust } from "./git-safe.js";
 import { gitLineCount } from "./git-status.js";
-import { normalizePath } from "./git-utils.js";
+import { normalizePath } from "./path-utils.js";
 import { resolveHostPath } from "./host.js";
 import type { Session, SessionWorktreeChangeStats, Workspace } from "./types.js";
 import {

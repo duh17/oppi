@@ -1059,6 +1059,38 @@ describe("skills module", () => {
     }
   });
 
+  it("reads a skill file whose name starts with two dots", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-skill-route-dotdot-"));
+    const skillDir = join(cwd, ".pi", "skills", "dotdot-route-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: dotdot-route-skill\ndescription: S.\n---\n",
+    );
+    writeFileSync(join(skillDir, "..notes.md"), "dotted notes");
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const fileRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/skills/dotdot-route-skill/file",
+        url: new URL(
+          `http://localhost/skills/dotdot-route-skill/file?cwd=${encodeURIComponent(cwd)}&path=..notes.md`,
+        ),
+        req: {} as never,
+        res: fileRes as never,
+      });
+      expect(fileRes.statusCode).toBe(200);
+      expect(fileRes.body).toContain("dotted notes");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("does not read oversized cwd-local skill files", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-skill-route-large-"));
     const skillDir = join(cwd, ".pi", "skills", "large-route-skill");

@@ -42,6 +42,11 @@ describe("toGuestPath", () => {
     );
   });
 
+  it("keeps a workspace file whose name starts with two dots", () => {
+    expect(toGuestPath(cwd, `${cwd}/..cache/x`)).toBe("/workspace/..cache/x");
+    expect(() => toGuestPath(cwd, `${cwd}/../x`)).toThrow(/outside the sandbox workspace/);
+  });
+
   it("handles trailing slashes in cwd", () => {
     // resolve() normalizes trailing slashes
     expect(toGuestPath(`${cwd}/`, `${cwd}/file.txt`)).toBe("/workspace/file.txt");

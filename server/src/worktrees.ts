@@ -11,6 +11,7 @@ import {
 } from "./git-safe.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { resolveHostPath } from "./host.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import { DEFAULT_DATA_DIR } from "./storage/config-store.js";
 import type {
   CreateWorkspaceWorktreeRequest,
@@ -242,14 +243,12 @@ function projectManagedWorktreesRoot(workspaceRoot: string): string {
 }
 
 function isPathWithin(parent: string, child: string): boolean {
-  const resolvedParent = safeRealpath(parent);
-  const resolvedChild = safeRealpath(child);
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(`${resolvedParent}${sep}`);
+  return isPathWithinRoot(safeRealpath(child), safeRealpath(parent));
 }
 
 function directChildName(parent: string, child: string): string | undefined {
   const rel = relative(safeRealpath(parent), safeRealpath(child));
-  if (!rel || rel === "." || rel.startsWith("..") || rel.split(sep).length !== 1) {
+  if (!rel || rel === "." || rel === ".." || rel.split(sep).length !== 1) {
     return undefined;
   }
   return rel;

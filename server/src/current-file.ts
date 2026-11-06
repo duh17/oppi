@@ -4,7 +4,6 @@ import { access, open, opendir, realpath, stat, type FileHandle } from "node:fs/
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 
 import {
   getContentType,
@@ -15,7 +14,7 @@ import {
   MAX_BROWSE_IMAGE_FILE_SIZE,
   MAX_BROWSE_TEXT_FILE_SIZE,
 } from "./file-serving-policy.js";
-import { isPathWithinRoot } from "./git-utils.js";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "./host-file-path.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { workspaceMountRoot } from "./session-work-root.js";
@@ -359,10 +358,8 @@ function resolveHostWorkspacePath(requestedPath: string, workspaceRoot: string):
       return null;
     }
   }
-  if (requestedPath === "~" || requestedPath.startsWith("~/")) {
-    return resolve(requestedPath.replace(/^~(?=\/|$)/, homedir()));
-  }
-  return isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
+  const expanded = expandHome(requestedPath);
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(workspaceRoot, expanded);
 }
 
 const TIMED_TEXT_EXTENSIONS = "vtt|srt|ass|ssa|lrc";

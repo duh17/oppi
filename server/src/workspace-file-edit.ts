@@ -35,7 +35,7 @@ import type { IncomingMessage } from "node:http";
 import { dirname, isAbsolute, join, resolve, basename } from "node:path";
 
 import { isWorkspaceEditorTextPath, MAX_WORKSPACE_FILE_EDIT_BYTES } from "./file-serving-policy.js";
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import { KeyedMutex } from "./keyed-mutex.js";
 import type { Workspace, WorkspaceFileEditWriteResponse } from "./types.js";
 import { resolveWorkspaceUserPath } from "./workspace-user-path.js";

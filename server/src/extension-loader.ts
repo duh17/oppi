@@ -7,6 +7,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { expandHome } from "./path-utils.js";
 
 import {
   DefaultPackageManager,
@@ -276,8 +277,7 @@ function resolveWorkspaceCwd(cwd: string | undefined, fallback?: string): string
     return fallback ?? null;
   }
 
-  const expanded = raw === "~" || raw.startsWith("~/") ? raw.replace(/^~(?=\/|$)/, homedir()) : raw;
-  return resolve(expanded);
+  return resolve(expandHome(raw));
 }
 
 function detectKind(absPath: string): "file" | "directory" | null {

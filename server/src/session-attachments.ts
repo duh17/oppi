@@ -16,7 +16,8 @@ import {
   writeSync,
 } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, join, relative } from "node:path";
+import { basename, extname, join } from "node:path";
+import { isPathWithinRoot } from "./path-utils.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
@@ -275,11 +276,6 @@ function safeFileName(
   return `${raw}${ext}`;
 }
 
-function isPathInsideRoot(path: string, root: string): boolean {
-  const relation = relative(root, path);
-  return relation === "" || (!!relation && !relation.startsWith("..") && !isAbsolute(relation));
-}
-
 function bytesFromTrustedPath(
   path: string,
   trustedSourceRoots: string[] | undefined,
@@ -290,7 +286,7 @@ function bytesFromTrustedPath(
     const realPath = realpathSync(path);
     const allowed = trustedSourceRoots.some((root) => {
       try {
-        return isPathInsideRoot(realPath, realpathSync(root));
+        return isPathWithinRoot(realPath, realpathSync(root));
       } catch {
         return false;
       }

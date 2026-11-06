@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -76,6 +76,7 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import { hostFolderClaimsHome } from "./host.js";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import type { Storage } from "./storage.js";
 import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
@@ -371,15 +372,8 @@ function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
   return record as unknown as PiBridgeHelloMessage;
 }
 
-function expandHomePath(path: string): string {
-  const trimmed = path.trim();
-  if (trimmed === "~") return homedir();
-  if (trimmed.startsWith("~/")) return resolve(homedir(), trimmed.slice(2));
-  return trimmed;
-}
-
 function normalizePath(path: string): string {
-  return resolve(expandHomePath(path));
+  return resolve(expandHome(path.trim()));
 }
 
 function canonicalSessionFilePath(path: string | undefined): string | undefined {
@@ -395,9 +389,7 @@ function canonicalSessionFilePath(path: string | undefined): string | undefined 
 }
 
 function pathContains(parent: string, child: string): boolean {
-  const resolvedParent = normalizePath(parent);
-  const resolvedChild = normalizePath(child);
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(`${resolvedParent}/`);
+  return isPathWithinRoot(normalizePath(child), normalizePath(parent));
 }
 
 function requireExistingDirectory(path: string): string {

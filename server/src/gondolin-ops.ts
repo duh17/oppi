@@ -22,6 +22,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { ClassicParams } from "../plugins/classic-params.js";
+import { isPathWithinRoot } from "./path-utils.js";
 
 /**
  * Minimal VM interface consumed by the operations layer.
@@ -176,13 +177,13 @@ export function toGuestPath(
   guestWorkspace: string = GUEST_WORKSPACE,
 ): string {
   const resolved = resolve(localPath);
-  const rel = relative(localCwd, resolved);
+  const root = resolve(localCwd);
 
-  if (rel.startsWith("..") || resolve(localCwd, rel) !== resolved) {
+  if (!isPathWithinRoot(resolved, root)) {
     throw new Error(`Path is outside the sandbox workspace: ${localPath}`);
   }
 
-  return posix.join(guestWorkspace, rel.split(/[\\/]/).join("/"));
+  return posix.join(guestWorkspace, relative(root, resolved).split(/[\\/]/).join("/"));
 }
 
 /**
@@ -375,10 +376,10 @@ export function createGondolinEditOps(
 // ─── Ls ───
 
 function guestPosixRelative(guestPath: string, guestWorkspace: string): string {
-  const rel = posix.relative(guestWorkspace, guestPath);
-  if (rel.startsWith("..")) {
+  if (!isPathWithinRoot(guestPath, guestWorkspace)) {
     throw new Error(`Path is outside the sandbox workspace: ${guestPath}`);
   }
+  const rel = posix.relative(guestWorkspace, guestPath);
   return posix.join("/", rel === "" ? "" : rel);
 }
 

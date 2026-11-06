@@ -10,9 +10,9 @@
  */
 
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { createLogger } from "./logger.js";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import { AgentDefinitionStore } from "./agent-definitions.js";
 import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
@@ -60,18 +60,8 @@ export type { ConfigValidationResult };
 
 const log = createLogger({ base: { component: "storage_migration" } });
 
-function expandHome(path: string): string {
-  return path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-}
-
 function normalizedPath(path: string): string {
   return resolve(expandHome(path));
-}
-
-function pathContains(parent: string, child: string): boolean {
-  const resolvedParent = normalizedPath(parent);
-  const resolvedChild = normalizedPath(child);
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(resolvedParent + "/");
 }
 
 function readJsonlSessionCwd(filePath: string | undefined): string | null {
@@ -167,7 +157,9 @@ export class Storage {
       if (!cwd) continue;
 
       const candidates = workspaces
-        .filter((candidate) => pathContains(candidate.hostMount, cwd))
+        .filter((candidate) =>
+          isPathWithinRoot(normalizedPath(cwd), normalizedPath(candidate.hostMount)),
+        )
         .sort((a, b) => normalizedPath(b.hostMount).length - normalizedPath(a.hostMount).length);
       const workspace = candidates[0];
       const workspaceMountLength = workspace ? normalizedPath(workspace.hostMount).length : 0;

@@ -31,7 +31,7 @@ import * as piDurableTools from "@earendil-works/pi-durable/tools";
 import * as piSchema from "@earendil-works/pi-schema";
 import { createJiti } from "jiti";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, join } from "node:path";
 import {
   pluginToolDefinitions,
   promptSections,
@@ -42,6 +42,7 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import * as oppiV1 from "./oppi-v1.js";
 import { Extensions } from "./oppi-v1.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 import * as oppiV1Schema from "./oppi-v1-schema.js";
 import {
@@ -520,7 +521,7 @@ export class PluginHost {
       if (seen.has(old.loaded.name)) continue;
       const unread =
         (old.loaded.source === "built-in" ? !builtIns : !owners) ||
-        problemPaths.some((path) => path === old.loaded.dir || isInside(path, old.loaded.dir));
+        problemPaths.some((path) => isPathWithinRoot(old.loaded.dir, path));
       if (unread || old.loaded.required) {
         if (!unread)
           errors.push({
@@ -679,7 +680,7 @@ export class PluginHost {
       for (const old of previous.values())
         if (
           !found.some((plugin) => plugin.name === old.loaded.name) &&
-          (issue.path === old.loaded.dir || isInside(issue.path, old.loaded.dir))
+          isPathWithinRoot(old.loaded.dir, issue.path)
         )
           add(old.loaded, issue.message);
     }
@@ -785,12 +786,6 @@ type Composition = {
   readonly order: ReadonlyMap<string, number>;
   readonly builtIns: ReadonlySet<string>;
 };
-
-/** Whether `dir` lies inside `path`. */
-function isInside(path: string, dir: string): boolean {
-  const rest = relative(path, dir);
-  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
-}
 
 function issueOf(problem: DiscoveryProblem): PluginIssue {
   return { path: problem.path, message: problem.error };

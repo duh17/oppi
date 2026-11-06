@@ -118,6 +118,12 @@ describe("validateCwdAlignment", () => {
     const home = homedir();
     expect(validateCwdAlignment(`${home}/workspace`, "~/workspace")).toBe(true);
   });
+
+  it("does not expand ~user into the current user's home", () => {
+    const home = homedir();
+    expect(validateCwdAlignment(`~bob/code`, `${home}bob`)).toBe(false);
+    expect(validateCwdAlignment(`${home}bob/code`, "~bob")).toBe(false);
+  });
 });
 
 describe("isControlSessionLocalArtifact", () => {

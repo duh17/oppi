@@ -9,7 +9,8 @@ import {
   readdirSync,
   realpathSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isPathWithinRoot } from "./path-utils.js";
 
 export const MAX_SKILL_FILE_BYTES = 1024 * 1024;
 export const MAX_SKILL_LISTED_FILES = 500;
@@ -41,11 +42,6 @@ export interface SkillFileSnapshot {
 export interface SkillFileRaceHooks {
   /** Test seam for deterministic path-substitution coverage. */
   beforeOpen?: () => void;
-}
-
-function isWithin(base: string, candidate: string): boolean {
-  const rel = relative(base, candidate);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
 function realSkillBase(baseDir: string): string {
@@ -106,7 +102,7 @@ export function listSkillFiles(baseDir: string): string[] {
         const stat = lstatSync(fullPath);
         if (stat.isSymbolicLink()) continue;
         const realPath = realpathSync(fullPath);
-        if (!isWithin(realBase, realPath)) continue;
+        if (!isPathWithinRoot(realPath, realBase)) continue;
         if (stat.isDirectory()) {
           if (!SKIPPED_DIRECTORIES.has(entry.name)) visit(relativePath);
           continue;
@@ -160,11 +156,11 @@ function resolveExistingSkillFile(baseDir: string, relativePath: string): Resolv
   const safePath = safeRelativePath(relativePath);
   const realBase = realSkillBase(baseDir);
   const requested = resolve(baseDir, safePath);
-  if (!isWithin(resolve(baseDir), requested) || pathHasSymlink(baseDir, safePath)) {
+  if (!isPathWithinRoot(requested, resolve(baseDir)) || pathHasSymlink(baseDir, safePath)) {
     throw new SkillFileNotFoundError();
   }
   const realPath = realpathSync(requested);
-  if (!isWithin(realBase, realPath)) throw new SkillFileNotFoundError();
+  if (!isPathWithinRoot(realPath, realBase)) throw new SkillFileNotFoundError();
   const target = lstatSync(realPath, { bigint: true });
   if (!target.isFile() || target.isSymbolicLink()) throw new SkillFileNotFoundError();
   return {
@@ -180,7 +176,7 @@ function readResolvedSkillFile(resolved: ResolvedSkillFile): {
   identity: FileIdentity;
   mode: number;
 } {
-  if (!isWithin(resolved.realBase, resolved.realPath)) throw new SkillFileNotFoundError();
+  if (!isPathWithinRoot(resolved.realPath, resolved.realBase)) throw new SkillFileNotFoundError();
   assertParentIdentities(resolved);
 
   const descriptor = openSync(resolved.realPath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -213,7 +209,7 @@ function collectParentIdentities(
   const identities: Array<{ path: string; identity: FileIdentity }> = [];
   let current = dirname(realPath);
   while (true) {
-    if (!isWithin(realBase, current)) throw new SkillFileNotFoundError();
+    if (!isPathWithinRoot(current, realBase)) throw new SkillFileNotFoundError();
     const stat = lstatSync(current, { bigint: true });
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new SkillFileNotFoundError();
     identities.push({ path: current, identity: fileIdentity(stat) });

@@ -17,6 +17,7 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { join } from "node:path";
+import { isPathWithinRoot } from "./path-utils.js";
 import { homedir } from "node:os";
 import { EventEmitter } from "node:events";
 import {
@@ -333,7 +334,7 @@ export class SkillRegistry extends EventEmitter {
       return undefined;
     }
 
-    if (!resolved.startsWith(realBase + "/") && resolved !== realBase) {
+    if (!isPathWithinRoot(resolved, realBase)) {
       return undefined;
     }
 

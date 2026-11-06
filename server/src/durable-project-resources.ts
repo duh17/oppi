@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   DefaultResourceLoader,
@@ -16,6 +16,7 @@ import type { DurableAgentResources } from "./durable-agent.js";
 import type { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { SANDBOX_CONTEXT_FILE_NAMES, SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
 import { createLogger } from "./logger.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import {
   assertSelectedAgentResourcesAvailable,
   assertSelectedAgentSkillsLoaded,
@@ -113,7 +114,7 @@ async function loadSandboxProjectResources(options: {
   const workspaceRoot = realPath(hostCwd);
   const savedAgentFiles = (resources?.agentsFiles ?? []).flatMap((file) => {
     const hostPath = resolve(hostCwd, file.path);
-    const path = isWithin(workspaceRoot, realPath(hostPath))
+    const path = isPathWithinRoot(realPath(hostPath), workspaceRoot)
       ? hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath)
       : null;
     return path ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }] : [];
@@ -166,9 +167,9 @@ export async function loadSandboxSkills(
 /** `assertSelectedAgentSkillsLoaded`'s match: the path is the Skill, holds it, or is in it. */
 function selects(selectedPath: string, skill: Skill): boolean {
   return (
-    isWithinGuest(selectedPath, skill.filePath) ||
-    isWithinGuest(selectedPath, skill.baseDir) ||
-    isWithinGuest(skill.baseDir, selectedPath)
+    isPathWithinRoot(skill.filePath, selectedPath) ||
+    isPathWithinRoot(skill.baseDir, selectedPath) ||
+    isPathWithinRoot(selectedPath, skill.baseDir)
   );
 }
 
@@ -322,16 +323,6 @@ function realPath(path: string): string {
     const parent = dirname(resolved);
     return parent === resolved ? resolved : join(realPath(parent), basename(resolved));
   }
-}
-
-function isWithin(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
-function isWithinGuest(root: string, path: string): boolean {
-  const rel = posix.relative(root, path);
-  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
 }
 
 /** Pi's `project_context` section body. */

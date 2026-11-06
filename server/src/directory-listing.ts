@@ -2,18 +2,10 @@ import type { Dirent, Stats } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { isPathWithinRoot } from "./git-utils.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import type { FileEntry } from "./types.js";
 
 const MAX_DIR_ENTRIES = 1000;
-
-function isLexicallyInsideRoot(candidate: string, root: string): boolean {
-  const resolvedRoot = resolve(root);
-  const resolvedCandidate = resolve(candidate);
-  if (resolvedCandidate === resolvedRoot) return true;
-  const normalizedRoot = resolvedRoot.endsWith("/") ? resolvedRoot : `${resolvedRoot}/`;
-  return resolvedCandidate.startsWith(normalizedRoot);
-}
 
 export interface ContainedPathOptions {
   /** Sandbox mounts: the realpath must also stay inside the root's realpath. */
@@ -45,7 +37,7 @@ export async function resolveContainedPath(
         ? requestedPath
         : join(root, requestedPath);
 
-  if (!isLexicallyInsideRoot(joined, root)) {
+  if (!isPathWithinRoot(resolve(joined), resolve(root))) {
     return null;
   }
 

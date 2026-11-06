@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, realpathSync, statSync, readdirSync } from "no
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { expandHome, isPathWithinRoot } from "../path-utils.js";
 
 import {
   CONFIG_DIR_NAME,
@@ -59,8 +60,7 @@ function errorMessage(err: unknown, fallback: string): string {
 function resolveResourceCwd(cwd: string | undefined): string {
   const raw = cwd?.trim();
   if (!raw) return homedir();
-  const expanded = raw === "~" || raw.startsWith("~/") ? raw.replace(/^~(?=\/|$)/, homedir()) : raw;
-  return resolve(expanded);
+  return resolve(expandHome(raw));
 }
 
 function sdkSkillToInfo(skill: Skill, resource?: ResolvedResource): SkillRouteInfo {
@@ -78,9 +78,8 @@ function sdkSkillToInfo(skill: Skill, resource?: ResolvedResource): SkillRouteIn
 
 function skillMatchesResource(skill: Skill, resource: ResolvedResource): boolean {
   return (
-    resource.path === skill.filePath ||
+    isPathWithinRoot(skill.filePath, resource.path) ||
     resource.path === skill.baseDir ||
-    skill.filePath.startsWith(`${resource.path}/`) ||
     (resource.path.endsWith("/SKILL.md") && dirname(resource.path) === skill.baseDir)
   );
 }
@@ -138,11 +137,6 @@ async function listConfiguredHostSkills(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function isWithinDirectory(path: string, baseDir: string): boolean {
-  const rel = relative(baseDir, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 function safeRealSkillBase(skillPath: string): string | undefined {
   try {
     const realBase = realpathSync(skillPath);
@@ -195,7 +189,7 @@ function listFilesRecursive(
       }
 
       const real = realpathSync(full);
-      if (!isWithinDirectory(real, realBase)) {
+      if (!isPathWithinRoot(real, realBase)) {
         continue;
       }
 
@@ -227,7 +221,7 @@ function resolveSkillFilePath(skillPath: string, relPath: string): string | unde
       return undefined;
     }
     const resolved = realpathSync(requested);
-    if (!isWithinDirectory(resolved, realBase)) {
+    if (!isPathWithinRoot(resolved, realBase)) {
       return undefined;
     }
 
@@ -366,9 +360,7 @@ function topLevelResourcePattern(
 }
 
 function expandSettingsPathPattern(pattern: string): string {
-  return pattern === "~" || pattern.startsWith("~/")
-    ? pattern.replace(/^~(?=\/|$)/, homedir())
-    : pattern;
+  return expandHome(pattern);
 }
 
 function resolveSettingsPath(path: string, baseDir: string): string {
@@ -546,11 +538,7 @@ function writePackageResourceSettings(
 
 function normalizeClientResourcePath(path: string): string {
   const trimmed = path.trim().replace(/\/+$/, "");
-  const expanded =
-    trimmed === "~" || trimmed.startsWith("~/")
-      ? trimmed.replace(/^~(?=\/|$)/, homedir())
-      : trimmed;
-  return resolve(expanded);
+  return resolve(expandHome(trimmed));
 }
 
 function resourceMatchesClientPath(

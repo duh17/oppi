@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 
+import { expandHome, isPathWithinRoot } from "../path-utils.js";
 import { localApiRequest, type LocalApiConnection } from "./local-api-client.js";
 
 export type CliWorkspace = {
@@ -219,7 +219,7 @@ async function listWorkspaceWorktreePathMatches(
     for (const worktree of result.worktrees ?? []) {
       if (!worktree.path) continue;
       const root = normalizeWorkspacePath(worktree.path);
-      if (isPathWithin(root, currentPath)) matches.push({ workspace, root });
+      if (isPathWithinRoot(currentPath, root)) matches.push({ workspace, root });
     }
   }
   return matches.sort((left, right) => right.root.length - left.root.length);
@@ -234,18 +234,14 @@ function listWorkspacePathMatches(
       const hostMount = typeof workspace.hostMount === "string" ? workspace.hostMount : undefined;
       if (!hostMount) return [];
       const root = normalizeWorkspacePath(hostMount);
-      return isPathWithin(root, currentPath) ? [{ workspace, root }] : [];
+      return isPathWithinRoot(currentPath, root) ? [{ workspace, root }] : [];
     })
     .sort((left, right) => right.root.length - left.root.length);
 }
 
 function normalizeWorkspacePath(path: string): string {
-  const expanded = path.startsWith(`~${sep}`) ? resolve(homedir(), path.slice(2)) : resolve(path);
+  const expanded = resolve(expandHome(path));
   return existsSync(expanded) ? realpathSync(expanded) : expanded;
-}
-
-function isPathWithin(root: string, candidate: string): boolean {
-  return candidate === root || candidate.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
 export function apiStatus(error: unknown): number | undefined {

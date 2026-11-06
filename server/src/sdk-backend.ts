@@ -12,6 +12,7 @@ import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
+import { isPathWithinRoot } from "./path-utils.js";
 
 import {
   createAgentSession,
@@ -522,10 +523,7 @@ function assertSelectedAgentExtensionsLoaded(
 }
 
 function isPathWithin(parent: string, child: string): boolean {
-  const resolvedParent = resolvePath(parent);
-  const resolvedChild = resolvePath(child);
-  const rel = relative(resolvedParent, resolvedChild);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return isPathWithinRoot(resolvePath(child), resolvePath(parent));
 }
 
 /** Real path when it exists (symlinks followed), else the lexical path; like Pi's canonicalizePath. */

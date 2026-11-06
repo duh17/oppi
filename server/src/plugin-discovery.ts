@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { isPathWithinRoot } from "./path-utils.js";
 
 /**
  * Plugin discovery in upstream Chord's documented layout (`packages/chord/docs/next/plugin-authoring.md`),
@@ -145,9 +146,8 @@ export function piPackageRoot(
   if (metadata?.packageRoot) return metadata.packageRoot;
   if (!metadata?.baseDir) return undefined;
   const extensionsDir = join(metadata.baseDir, "extensions");
-  const inside = relative(extensionsDir, path);
-  if (!inside || inside.startsWith("..") || isAbsolute(inside)) return undefined;
-  const [first, ...rest] = inside.split(sep);
+  if (!isPathWithinRoot(path, extensionsDir)) return undefined;
+  const [first, ...rest] = relative(extensionsDir, path).split(sep);
   return first && rest.length > 0 ? join(extensionsDir, first) : undefined;
 }
 
@@ -241,16 +241,15 @@ async function manifestPlugins(dir: string, listed: unknown): Promise<Found[]> {
       ? await globFolders(dir, posix(entry))
       : [resolve(dir, entry)];
     for (const folder of matched) {
+      if (!isPathWithinRoot(folder, dir)) return problem(`"${entry}" leaves the package`);
       const rest = relative(dir, folder);
-      if (rest.startsWith("..") || isAbsolute(rest))
-        return problem(`"${entry}" leaves the package`);
       const excluded = excludes.some((exclude) => matchesGlob(posix(rest) || ".", exclude));
       if (!excluded && !folders.includes(folder)) folders.push(folder);
     }
   }
   // One plugin inside another's directory would make the outer one's imports of it its own files.
   for (const inner of folders) {
-    const outer = folders.find((folder) => insideDir(folder, inner));
+    const outer = folders.find((folder) => folder !== inner && isPathWithinRoot(inner, folder));
     if (outer !== undefined) {
       const shown = (folder: string): string => posix(relative(dir, folder)) || ".";
       return problem(`lists "${shown(inner)}" inside the listed "${shown(outer)}"`);
@@ -265,8 +264,7 @@ async function manifestPlugins(dir: string, listed: unknown): Promise<Found[]> {
       continue;
     }
     const real = await realpath(folder);
-    const rest = relative(dir, real);
-    if (rest.startsWith("..") || isAbsolute(rest)) {
+    if (!isPathWithinRoot(real, dir)) {
       found.push({ path: folder, error: "listed in chord.plugins, links out of the package" });
       continue;
     }
@@ -309,11 +307,6 @@ function singleFileName(file: string): string | undefined {
 
 function posix(path: string): string {
   return path.split(sep).join("/").replace(/^\.\//, "");
-}
-
-function insideDir(dir: string, path: string): boolean {
-  const rest = relative(dir, path);
-  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
 }
 
 /** `*` and `?` within one segment, `**` across segments; anything else literal. */

@@ -25,6 +25,7 @@ import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
+import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import type { LocalSession, Session } from "./types.js";
@@ -88,7 +89,7 @@ export function validateLocalSessionPath(filePath: string): { path: string } | {
   const realRoot = getPiSessionsRoot();
 
   // Must be under pi sessions root
-  if (!realPath.startsWith(realRoot + "/") && realPath !== realRoot) {
+  if (!isPathWithinRoot(realPath, realRoot)) {
     return { error: "Path must be under ~/.pi/agent/sessions/" };
   }
 
@@ -106,10 +107,7 @@ export function validateLocalSessionPath(filePath: string): { path: string } | {
  * The session CWD must equal or be a subdirectory of the workspace mount.
  */
 export function validateCwdAlignment(sessionCwd: string, workspaceHostMount: string): boolean {
-  const resolvedCwd = resolve(sessionCwd.replace(/^~/, homedir()));
-  const resolvedMount = resolve(workspaceHostMount.replace(/^~/, homedir()));
-
-  return resolvedCwd === resolvedMount || resolvedCwd.startsWith(resolvedMount + "/");
+  return isPathWithinRoot(resolve(expandHome(sessionCwd)), resolve(expandHome(workspaceHostMount)));
 }
 
 /**
@@ -126,9 +124,10 @@ export function isControlSessionLocalArtifact(
   const dataDir = options.dataDir?.trim();
   if (!dataDir) return false;
 
-  const resolvedCwd = resolve(trimmed.replace(/^~/, homedir()));
-  const controlRoot = resolve(dataDir.replace(/^~/, homedir()), "control-sessions");
-  return resolvedCwd === controlRoot || resolvedCwd.startsWith(`${controlRoot}/`);
+  return isPathWithinRoot(
+    resolve(expandHome(trimmed)),
+    resolve(expandHome(dataDir), "control-sessions"),
+  );
 }
 
 /** Minimal session header from first line of JSONL. */
