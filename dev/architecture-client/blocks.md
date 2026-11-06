@@ -45,6 +45,7 @@ Render protocol metadata only ([boundary rules](../architecture-client.md#client
 
 - `ServerConnection+Ask.swift` answers over the focused stream, or over HTTP when the focused WebSocket is not bound to the target session.
 - `ExtensionNativeBlockViews.swift` keeps block views by id so a replacement snapshot preserves view state; `ExtensionNativeBlockPresentation.swift` holds the framework-free rules.
+- `ElapsedLabelTicker` (`ExtensionSurfaceBlockNodeViews.swift`) is the one 1 Hz clock for every surface `elapsed` label. A label attaches while it is in a window, and the timer exists only while one is attached; never give a label its own timer.
 
 ## Shared Apple client core
 

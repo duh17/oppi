@@ -549,7 +549,21 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     /// The drawer's own tap target. While the pill's tap sends an action, this stays the only
     /// control that opens the drawer, so the chevron's promise and the pill's tap agree.
     private let drawerButton = UIButton(type: .custom)
+    /// What the pill says, read each time VoiceOver asks (`applyAccessibility`).
+    private var spokenLabel: (() -> String?)?
+    private var spokenValue: (() -> String?)?
     var onTap: (() -> Void)?
+
+    override var accessibilityLabel: String? {
+        get { spokenLabel.map { $0() } ?? super.accessibilityLabel }
+        set { super.accessibilityLabel = newValue }
+    }
+
+    override var accessibilityValue: String? {
+        get { spokenValue.map { $0() } ?? super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
+    }
+
     /// Set while the surface's pill sends its own action, where a tap would otherwise open the
     /// drawer.
     private var onPillAction: (() -> Void)?
@@ -647,14 +661,23 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         pill: ExtensionSurfacePillContent?,
         media: String?
     ) {
-        let bodyWords = [content.words, entry.kindLabel].compactMap(\.self).joined(separator: ", ")
+        // The content row's words are read again whenever VoiceOver asks: an elapsed count in the
+        // row moves on its own, and words captured here would keep the count it had then.
+        // Weak: the closures are stored on the pill and on the content row itself.
+        let kindLabel = entry.kindLabel
+        let subtitle = entry.subtitle?.trimmedNonEmpty
+        let bodyWords = { [weak content] in
+            [content?.words, kindLabel].compactMap(\.self).joined(separator: ", ")
+        }
         let drawerWords = "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
-        let parts = [showsContent ? content.words : entry.subtitle?.trimmedNonEmpty, media].compactMap(\.self)
-        let value = parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
+        let value = { [weak content] in
+            let parts = [showsContent ? content?.words : subtitle, media].compactMap(\.self)
+            return parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
+        }
         let sendsAction = onPillAction != nil
         isAccessibilityElement = !sendsAction
-        accessibilityLabel = sendsAction ? bodyWords : drawerWords
-        accessibilityValue = value
+        spokenLabel = sendsAction ? { bodyWords() } : { drawerWords }
+        spokenValue = { value() }
         drawerButton.isUserInteractionEnabled = sendsAction
         drawerButton.isAccessibilityElement = sendsAction
         drawerButton.accessibilityLabel = drawerWords
@@ -662,7 +685,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         drawerButton.accessibilityTraits = .button
         content.isAccessibilityElement = sendsAction
         content.onActivate = onPillAction
-        content.accessibilityLabel = bodyWords
+        content.spokenLabel = bodyWords
         content.accessibilityValue = nil
         content.accessibilityTraits = .button
         content.accessibilityHint = actionWords(pill).map {

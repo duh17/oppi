@@ -1053,12 +1053,12 @@ struct ExtensionSurfaceBlocksViewsTests {
         }
     }
 
-    /// Runs the main loop for `seconds`, so the shared display link gets to fire.
+    /// Runs the main loop for `seconds`, so the shared clock gets to fire.
     private func spin(_ seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    @Test func anElapsedLabelAdvancesWhileItIsOnScreenAndSpeaksAStableName() throws {
+    @Test func anElapsedLabelAdvancesWhileItIsOnScreenAndSpeaksTheCountAsItStands() throws {
         let panel = makePanel(try elapsedSurface(startedSecondsAgo: 58))
         let pill = try testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2delapsed", in: panel) as? UIControl
@@ -1072,15 +1072,18 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(widths.count == 1, "the timer's digits differ in width: \(widths)")
         let name = timer.accessibilityLabel
         #expect(name == BlocksElapsedView.spokenName)
+        // VoiceOver reads the pill's words when it lands there: the count as it stands, in words.
+        let spokenAtFirst = try #require(pill.accessibilityValue)
+        #expect(spokenAtFirst.contains("seconds") && !spokenAtFirst.contains("minute"), "\(spokenAtFirst)")
 
         spin(2.3)
         let later = try #require(label.text)
         #expect(later != first, "the label did not advance: \(first) → \(later)")
         #expect(timer.accessibilityLabel == name, "the name stays put while the count moves")
-        #expect(timer.accessibilityValue?.isEmpty == false)
-        // The pill's own words carry the stable name, never the digits.
-        #expect(pill.accessibilityValue?.contains(first) != true)
-        #expect(pill.accessibilityValue?.contains(later) != true)
+        #expect(timer.accessibilityValue?.contains("minute") == true)
+        // Past a minute now: the pill speaks the count it has reached, not the one it was drawn with.
+        let spokenLater = try #require(pill.accessibilityValue)
+        #expect(spokenLater.contains("minute"), "\(spokenLater)")
     }
 
     @Test func theSharedClockRunsOnlyWhileAnElapsedLabelIsInAWindow() throws {

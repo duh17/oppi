@@ -11,6 +11,13 @@ import UIKit
 /// inside it stay elements of their own.
 class BlocksTapControl: UIControl {
     private var onTap: (() -> Void)?
+    /// The region's words, read each time VoiceOver asks; nil while the region is no button.
+    private var spokenLabel: (() -> String?)?
+
+    override var accessibilityLabel: String? {
+        get { spokenLabel.map { $0() } ?? super.accessibilityLabel }
+        set { super.accessibilityLabel = newValue }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -24,9 +31,12 @@ class BlocksTapControl: UIControl {
     /// Make this region a button, or a plain container when `tap` is nil. A region whose action is
     /// waiting, or whose node is published disabled, sends nothing and says so — by touch and by
     /// assistive activation alike — and dims, because a control nobody may use looks that way.
+    ///
+    /// `label` is read again whenever VoiceOver lands on the region, so words that move on their
+    /// own (an elapsed count inside it) are spoken as they stand then.
     func applyTap(
         _ tap: (() -> Void)?,
-        label: String?,
+        label: @escaping @autoclosure () -> String?,
         identifier: String?,
         hint: String?,
         enabled: Bool = true,
@@ -41,6 +51,7 @@ class BlocksTapControl: UIControl {
         // dropped, because a `UIControl` that is not selected is not selected.
         self.isSelected = selected
         guard tap != nil else {
+            spokenLabel = nil
             accessibilityLabel = nil
             accessibilityHint = nil
             // A region nobody can tap is still — or is not — the active item of a set, and that
@@ -48,7 +59,7 @@ class BlocksTapControl: UIControl {
             accessibilityTraits = selected ? .selected : .none
             return
         }
-        accessibilityLabel = label
+        spokenLabel = label
         accessibilityHint = hint
         var traits: UIAccessibilityTraits = .button
         if !enabled { traits.insert(.notEnabled) }
@@ -431,36 +442,41 @@ final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
     }
 }
 
-/// The one clock every elapsed label shares: a display link that fires once a second while at
-/// least one label is on screen, and is gone when none is. Nothing a label shows crosses the wire
-/// after the first frame, so a live timer costs the server no traffic.
+/// The one clock every elapsed label shares: a 1 Hz timer that runs while at least one label is in
+/// a window, and is gone when none is. Nothing a label shows crosses the wire after the first
+/// frame, so a live timer costs the server no traffic.
+///
+/// A `Timer`, not a display link: a count that changes once a second is no animation, and a
+/// tolerant timer lets the system coalesce its wakeups. A suspended app's run loop does not run,
+/// so the clock costs nothing in the background, and the first tick after it returns repaints.
 @MainActor
 final class ElapsedLabelTicker: NSObject {
     static let shared = ElapsedLabelTicker()
 
     private let labels = NSHashTable<BlocksElapsedView>.weakObjects()
-    private var link: CADisplayLink?
+    private var timer: Timer?
 
-    /// Whether the display link is running: it exists only while a label is attached to a window.
-    var isRunning: Bool { link != nil }
+    /// Whether the clock is running: it exists only while a label is attached to a window.
+    var isRunning: Bool { timer != nil }
 
     func attach(_ label: BlocksElapsedView) {
         labels.add(label)
-        guard link == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(tick))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 1, maximum: 1, preferred: 1)
-        link.add(to: .main, forMode: .common)
-        self.link = link
+        guard timer == nil else { return }
+        let timer = Timer(timeInterval: 1, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        timer.tolerance = 0.1
+        // `.common`, so the count keeps moving while the timeline scrolls.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     func detach(_ label: BlocksElapsedView) {
         labels.remove(label)
-        if labels.count == 0 { stop() }
+        if labels.allObjects.isEmpty { stop() }
     }
 
     private func stop() {
-        link?.invalidate()
-        link = nil
+        timer?.invalidate()
+        timer = nil
     }
 
     @objc private func tick() {
@@ -475,16 +491,15 @@ final class ElapsedLabelTicker: NSObject {
 }
 
 /// An `elapsed` node: a count from `since` that the client advances itself, in digits that keep
-/// their width so the line does not shift as they change. It ticks only while on screen, through
+/// their width so the line does not shift as they change. It ticks only while in a window, through
 /// the shared ``ElapsedLabelTicker``.
 final class BlocksElapsedView: UIView {
-    /// What VoiceOver calls the element when the extension names none. The digits are the value,
-    /// so the name stays put as the count moves and no announcement is made per second.
+    /// What VoiceOver calls the element when the extension names none. The count is the value,
+    /// so the name stays put as the count moves.
     static let spokenName = String(localized: "Elapsed time")
 
     private let label = UILabel()
     private var node: ExtensionUISurfaceElapsedNode?
-    private var inline = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -514,7 +529,6 @@ final class BlocksElapsedView: UIView {
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
         self.node = node
-        inline = environment.inline
         label.font = ExtensionSurfaceBlockMetrics.font(node.style, inline: environment.inline, monospacedDigits: true)
         label.textColor = ExtensionSurfaceBlockMetrics.textColor(node.tone, style: node.style, environment.palette)
         accessibilityLabel = node.base.accessibility?.label ?? Self.spokenName
@@ -522,8 +536,14 @@ final class BlocksElapsedView: UIView {
         refresh(at: Date())
     }
 
-    /// Repaint for `now`. The accessibility value changes silently: no notification is posted, so
-    /// VoiceOver reads the current count when the element is focused and never per second.
+    /// Read when VoiceOver lands on the element, so it speaks the count as it stands then. The
+    /// tick posts nothing, so nobody hears it change every second.
+    override var accessibilityValue: String? {
+        get { node.map { $0.base.accessibility?.value ?? $0.spokenText(at: Date()) } }
+        set { super.accessibilityValue = newValue }
+    }
+
+    /// Repaint for `now`.
     func refresh(at now: Date) {
         guard let node else { return }
         let text = node.text(at: now)
@@ -531,7 +551,6 @@ final class BlocksElapsedView: UIView {
             label.text = text
             invalidateIntrinsicContentSize()
         }
-        accessibilityValue = node.base.accessibility?.value ?? node.spokenText(at: now)
     }
 
     override func didMoveToWindow() {

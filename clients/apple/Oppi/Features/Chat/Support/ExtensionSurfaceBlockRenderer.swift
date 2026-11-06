@@ -473,16 +473,18 @@ final class BlocksRenderer {
 // MARK: - Words
 
 /// Every string a node and its children paint, so one button element can speak for the words
-/// inside it.
+/// inside it. An elapsed count is spoken as it stands at `now`, so a caller that holds these words
+/// reads them again when VoiceOver asks rather than keeping a count that has moved on.
 enum ExtensionSurfaceBlockWords {
-    static func words(of node: ExtensionUISurfaceNode) -> String? {
+    static func words(of node: ExtensionUISurfaceNode, at now: Date = Date()) -> String? {
         var parts: [String] = []
         func walk(_ node: ExtensionUISurfaceNode) {
             switch node {
             case .text(let value): parts.append(value.text)
             case .badge(let value): parts.append(value.text)
-            // The count changes every second: the words carry its stable name, never the digits.
-            case .elapsed(let value): parts.append(value.base.accessibility?.label ?? BlocksElapsedView.spokenName)
+            case .elapsed(let value):
+                parts.append(value.base.accessibility?.label ?? "")
+                parts.append(value.base.accessibility?.value ?? value.spokenText(at: now))
             case .progress(let value): parts.append(value.label ?? "")
             case .button(let value): parts.append(value.title)
             case .toggle(let value): parts.append(value.title)
@@ -874,11 +876,20 @@ struct ExtensionSurfacePillContent {
 final class ExtensionSurfacePillContentView: UIView, BlocksColumnFillable {
     private let renderer = BlocksRenderer()
     private var root: UIView?
-    private(set) var words: String?
+    private var node: ExtensionUISurfaceNode?
+    /// What the row says, as it stands now: an elapsed count in it is read at the moment asked.
+    var words: String? { node.flatMap { ExtensionSurfaceBlockWords.words(of: $0) } }
     /// Whether the row starts with an icon, which already says what the strip's tone dot would.
     private(set) var startsWithIcon = false
     /// VoiceOver's activation while the pill's tap is an action, where the content row is the body.
     var onActivate: (() -> Void)?
+    /// The row's spoken name while it is the pill's body, read each time VoiceOver asks.
+    var spokenLabel: (() -> String?)?
+
+    override var accessibilityLabel: String? {
+        get { spokenLabel.map { $0() } ?? super.accessibilityLabel }
+        set { super.accessibilityLabel = newValue }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -917,7 +928,7 @@ final class ExtensionSurfacePillContentView: UIView, BlocksColumnFillable {
             ])
             root = view
         }
-        words = ExtensionSurfaceBlockWords.words(of: node)
+        self.node = node
         startsWithIcon = Self.leadsWithIcon(node)
     }
 
