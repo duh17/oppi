@@ -82,6 +82,8 @@ function candidateToModelInfo(
 
 export class ModelCatalog {
   private catalog: ModelInfo[] = [];
+  /** Per model id, until the catalog changes: every session row asks, and few ids exist. */
+  private readonly contextWindowByModelId = new Map<string, number>();
   private updatedAt = 0;
   private refreshInFlight?: Promise<void>;
   constructor(
@@ -148,6 +150,7 @@ export class ModelCatalog {
     this.catalog = modelCandidatesFromRegistry(this.registry, this.getAllowlist()).map(
       (candidate) => candidateToModelInfo(candidate, defaultModel),
     );
+    this.contextWindowByModelId.clear();
     this.updatedAt = Date.now();
 
     if (this.catalog.length > 0) {
@@ -182,6 +185,14 @@ export class ModelCatalog {
    * Falls back to parsing "...NNNk" suffixes, then 200k default.
    */
   getContextWindow(modelId: string): number {
+    const cached = this.contextWindowByModelId.get(modelId);
+    if (cached !== undefined) return cached;
+    const resolved = this.resolveContextWindow(modelId);
+    this.contextWindowByModelId.set(modelId, resolved);
+    return resolved;
+  }
+
+  private resolveContextWindow(modelId: string): number {
     const trimmed = modelId.trim();
     const tail = trimmed.includes("/") ? trimmed.substring(trimmed.lastIndexOf("/") + 1) : trimmed;
 

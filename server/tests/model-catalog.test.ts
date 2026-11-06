@@ -484,6 +484,17 @@ describe("ModelCatalog", () => {
       expect(c.getContextWindow("  gpt-5.3-codex  ")).toBe(272000);
     });
 
+    it("follows the catalog when a refresh changes a model's window", () => {
+      const models = [{ ...GPT }];
+      const c = new ModelCatalog(makeRegistry(models), makeStorage());
+      c.refresh();
+      expect(c.getContextWindow("gpt-5.3-codex")).toBe(272000);
+
+      models[0]!.contextWindow = 400000;
+      c.refresh();
+      expect(c.getContextWindow("gpt-5.3-codex")).toBe(400000);
+    });
+
     it("matches large context windows correctly", () => {
       const c = catalogWith(GEMINI);
       expect(c.getContextWindow("gemini-3.0-pro")).toBe(2000000);
