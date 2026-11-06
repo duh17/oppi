@@ -1255,163 +1255,6 @@
       }
     },
     {
-      "title": "Catch-up Replay",
-      "description": "Events replayed during catch-up (server.catchup result=replayed) and ring misses requiring a full reload (result=miss).",
-      "type": "timeseries",
-      "datasource": {
-        "uid": "oppi-telemetry-sqlite",
-        "type": "frser-sqlite-datasource"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 72
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "count",
-            "drawStyle": "points",
-            "lineWidth": 0,
-            "fillOpacity": 0,
-            "pointSize": 5,
-            "showPoints": "always",
-            "spanNulls": false
-          },
-          "unit": "short",
-          "min": 0,
-          "decimals": 0
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "events"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Catchup Events"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "misses"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Ring Miss"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "targets": [
-        {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN json_extract(tags_json, '$.result') = 'replayed' THEN json_extract(fields_json, '$.events') END AS events, CASE WHEN json_extract(tags_json, '$.result') = 'miss' THEN 1 END AS misses FROM events WHERE name = 'server.catchup' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
-          "queryType": "table",
-          "timeColumns": ["time"],
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "title": "Broadcast Fanout",
-      "description": "MAX(subscribers) of max-aggregated server.broadcast_fanout: the peak subscriber count in each flush window, kept as the peak in each Grafana interval.",
-      "type": "timeseries",
-      "datasource": {
-        "uid": "oppi-telemetry-sqlite",
-        "type": "frser-sqlite-datasource"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 80
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "blue",
-            "mode": "fixed"
-          },
-          "custom": {
-            "axisLabel": "subscribers",
-            "drawStyle": "points",
-            "lineWidth": 0,
-            "fillOpacity": 0,
-            "pointSize": 5,
-            "showPoints": "always",
-            "spanNulls": false
-          },
-          "unit": "short",
-          "min": 0,
-          "decimals": 0
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "value"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Fanout Count"
-              }
-            ]
-          }
-        ]
-      },
-      "targets": [
-        {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, MAX(json_extract(fields_json, '$.subscribers')) AS value FROM events WHERE name = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
-          "queryType": "table",
-          "timeColumns": ["time"],
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
       "title": "HTTP Request Latency (ms)",
       "description": "Raw server.http_request duration_ms, not aggregated. Fast successful routine routes are omitted, so this is not request volume. Use HTTP by route for p50/p90/p99 and error rate.",
       "type": "timeseries",
@@ -1423,7 +1266,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 80
+        "y": 72
       },
       "fieldConfig": {
         "defaults": {
@@ -2594,5 +2437,5 @@
   "title": "Oppi Server Health",
   "uid": "oppi-server-health",
   "version": 4,
-  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, MCP connect, schedule runs, and dictation. Everything reads the telemetry catalog's `events` table (server.* events; fields in fields_json, tags in tags_json). Event-loop p99 is the ungated trend; max is the stall gate. Events with catalog storage aggregation (server.turn_usage, server.ws_message_*, server.broadcast_fanout) hold a flush-window sum or peak per record: SUM or MAX them, and do not count rows. HTTP timings and response bytes are raw events."
+  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, MCP connect, schedule runs, and dictation. Everything reads the telemetry catalog's `events` table (server.* events; fields in fields_json, tags in tags_json). Event-loop p99 is the ungated trend; max is the stall gate. Events with catalog storage aggregation (server.turn_usage, server.ws_message_*) hold a flush-window sum per record: SUM them, and do not count rows. HTTP timings and response bytes are raw events."
 }

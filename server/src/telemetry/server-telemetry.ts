@@ -41,12 +41,11 @@ function aggregateKey(record: TelemetryEventRecord): string {
 
 function fold(into: TelemetryEventRecord, next: TelemetryEventRecord, storage: StorageSpec): void {
   into.ts = next.ts;
-  for (const [field, op] of Object.entries(storage.aggregate)) {
+  for (const field of Object.keys(storage.aggregate)) {
     const value = next.fields[field];
     if (value === undefined) continue;
     const current = into.fields[field];
-    if (current === undefined) into.fields[field] = value;
-    else into.fields[field] = op === "sum" ? current + value : Math.max(current, value);
+    into.fields[field] = current === undefined ? value : current + value;
   }
 }
 

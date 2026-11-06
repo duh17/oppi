@@ -36,9 +36,6 @@ describe("ServerTelemetry", () => {
     usage(100, 10, 1_000, "s1");
     usage(40, 5, 500, "s1");
     usage(7, 1, 70, "s2");
-    telemetry.record("server.broadcast_fanout", { subscribers: 2 }, { message_type: "text_delta" });
-    telemetry.record("server.broadcast_fanout", { subscribers: 5 }, { message_type: "text_delta" });
-    telemetry.record("server.broadcast_fanout", { subscribers: 3 }, { message_type: "text_delta" });
     // Tag key order does not split a window.
     telemetry.record(
       "server.ws_message_received",
@@ -56,7 +53,7 @@ describe("ServerTelemetry", () => {
         stream: "dictation",
       },
     );
-    expect(telemetry.bufferedCount).toBe(4);
+    expect(telemetry.bufferedCount).toBe(3);
     telemetry.flush();
 
     const byKey = new Map(
@@ -68,7 +65,6 @@ describe("ServerTelemetry", () => {
       cost_usd_micros: 1_500,
     });
     expect(byKey.get("server.turn_usage:s2")?.fields.input_tokens).toBe(7);
-    expect(byKey.get("server.broadcast_fanout:")?.fields).toEqual({ subscribers: 5 });
     expect(byKey.get("server.ws_message_received:")?.fields).toEqual({
       messages: 2,
       binary_bytes: 960,

@@ -75,7 +75,7 @@ Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narr
 
 - An upload is `{ generatedAt, client, events: [{ ts, name, fields, tags?, sessionId?, workspaceId? }] }`, at most 500 events (extras dropped as `over_batch_limit`); the response counts drops by reason (`malformed`, `unknown_event`, `invalid_tag_value`, `emit_policy`, …). A dropped event cannot succeed on retry.
 - `protocol/telemetry-events-upload.json` is a golden upload encoded by the generated Swift: server ingest must accept every event, and `TelemetryEventsUploadContractTests` fails on any byte difference.
-- Each stored event is one JSONL line `{ v: 2, ts, origin, name, fields, tags, sessionId?, workspaceId?, client? }`. An aggregated record stores the window's sum or max and no event count, so an event that needs one declares a count field.
+- Each stored event is one JSONL line `{ v: 2, ts, origin, name, fields, tags, sessionId?, workspaceId?, client? }`. An aggregated record stores the window's sum and no event count, so an event that needs one declares a count field.
 
 ### Apple client recording
 
@@ -244,8 +244,6 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 | `server.ws_session` | How long did a WebSocket connection live, how busy was it, and how did it close? | `duration_ms` ms<br>`messages_sent` count<br>`messages_received` count | `stream`*<br>`close_code`* | none |
 | `server.ws_message_sent` | How many frames did the server send, by stream and message type? | `messages` count | `stream`*<br>`message_type`* | aggregate per 60 s: sum `messages` |
 | `server.ws_message_received` | How many frames and binary bytes did the server receive, by stream and type? | `messages` count<br>`binary_bytes` bytes | `stream`*<br>`message_type`* | aggregate per 60 s: sum `messages`, sum `binary_bytes` |
-| `server.catchup` | Did the session event ring serve a catch-up, and how many events did it replay? | `events` count | `result`*: `replayed`, `miss` | none |
-| `server.broadcast_fanout` | What was the peak subscriber count for durable broadcasts, by message type? | `subscribers` count | `message_type`* | aggregate per 60 s: max `subscribers` |
 | `server.session_create` | How long did creating a session runtime take? | `duration_ms` ms | none | none |
 | `server.sdk_session_setup` | How did classic SDK session creation split between SDK setup and extension bind? | `sdk_ms` ms<br>`bind_ms` ms | none | none |
 | `server.session_end` | Why did sessions end? | none | `reason`*: `completed`, `stopped`, `error`, `idle_timeout`, `server_restart`, `store_failed`, `other` | none |
@@ -260,7 +258,7 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 
 - Front-page events (catalog `group`) answer a user-visible question with a unit, owner, bounded tags, and a threshold or trend; drill-down events explain them and never define product health alone.
 - `server.turn.duration_ms` is workload, not latency: a long turn matters only alongside missing progress, high TTFT, stuck tools, errors, blocked asks, or disconnected clients. Turn and tool events carry a required `runtime` tag and the configured route; `server.tool_call` pairs calls by `toolCallId`, and `status=ok` means no mechanical error, not a correct task. Neither carries tool arguments, output, or paths.
-- `storage.aggregate` events store one row per flush window: `SUM` a `sum` field, `MAX` a `max` field, never count rows as events. `server.http_request` omits fast successful routine routes, so its count is not request volume. Filter optional fields `IS NOT NULL` before averaging.
+- `storage.aggregate` events store one row per flush window: `SUM` its fields, never count rows as events. `server.http_request` omits fast successful routine routes, so its count is not request volume. Filter optional fields `IS NOT NULL` before averaging.
 - Release gates: `app.workspace_load` TM99 1000 ms, `app.session_switch` TM99 600 ms, and `server.resources.event_loop_max_ms` TM99 100 ms (`event_loop_p99_ms` is a trend, not a second gate).
 
 ## Lifecycle and hang correlation

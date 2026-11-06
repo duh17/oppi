@@ -177,7 +177,7 @@ export interface EmitRule {
   readonly where?: Readonly<Record<string, readonly string[]>>;
 }
 
-export type AggregateOp = "sum" | "max";
+export type AggregateOp = "sum";
 
 /**
  * Server only. `aggregate` folds every event with the same tag set, session,
@@ -311,9 +311,6 @@ const TAGS = {
       "answered",
       "empty",
       "ignored",
-      // server.catchup
-      "replayed",
-      "miss",
       // server.dictation_finalize
       "transcribed",
       "no_audio",
@@ -1446,19 +1443,6 @@ const EVENTS = {
     },
     tags: { status: { required: true, values: ["ok", "error"] } },
     slo: [{ field: "duration_ms", tm99: 300, label: "Server session subscribe" }],
-  },
-  "server.catchup": {
-    description: "Did the session event ring serve a catch-up, and how many events did it replay?",
-    group: "server_ops",
-    fields: { events: "count" },
-    tags: { result: { required: true, values: ["replayed", "miss"] } },
-  },
-  "server.broadcast_fanout": {
-    description: "What was the peak subscriber count for durable broadcasts, by message type?",
-    group: "server_ops",
-    fields: { subscribers: "count" },
-    tags: { message_type: { required: true } },
-    storage: { aggregate: { subscribers: "max" } },
   },
 
   // ─── Server: session lifecycle ───

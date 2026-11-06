@@ -2,7 +2,6 @@ import { safeErrorMessage } from "./log-utils.js";
 import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
 import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import type { EventRing, SequencedMessage } from "./event-ring.js";
-import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
 import {
@@ -39,7 +38,6 @@ export interface SessionBroadcasterDeps {
   saveSession: (session: Session) => void;
   /** Called when a sync here changes the session's program status. */
   onProgramStatusChange?: ProgramStatusChangeListener;
-  metrics?: ServerTelemetry;
 }
 
 export class SessionBroadcaster {
@@ -109,17 +107,6 @@ export class SessionBroadcaster {
 
     const canServe = active.eventRing.canServe(sinceSeq);
     const events = canServe ? active.eventRing.since(sinceSeq) : [];
-
-    const metrics = this.deps.metrics;
-    if (metrics) {
-      const ids = { sessionId: active.session.id };
-      if (canServe && events.length > 0) {
-        metrics.record("server.catchup", { events: events.length }, { result: "replayed" }, ids);
-      }
-      if (!canServe) {
-        metrics.record("server.catchup", { events: 0 }, { result: "miss" }, ids);
-      }
-    }
 
     return {
       events,
@@ -213,12 +200,6 @@ export class SessionBroadcaster {
       sessionId: active.session.id,
       event: sequenced,
     });
-
-    this.deps.metrics?.record(
-      "server.broadcast_fanout",
-      { subscribers: active.subscribers.size },
-      { message_type: sequenced.type },
-    );
 
     for (const cb of active.subscribers) {
       try {

@@ -217,8 +217,6 @@ enum TelemetryTag {
         case answered
         case empty
         case ignored
-        case replayed
-        case miss
         case transcribed
         case noAudio = "no_audio"
     }
