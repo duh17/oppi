@@ -55,6 +55,7 @@ export {
   code,
   dataTable,
   divider,
+  elapsed,
   group,
   icon,
   keyValue,

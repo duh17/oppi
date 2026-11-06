@@ -7,6 +7,7 @@ import type {
   ExtensionUISurfaceActionAnswer,
   ExtensionUISurfaceActionDefinition,
   ExtensionUISurfaceAtom,
+  ExtensionUISurfaceElapsedFormat,
   ExtensionUISurfaceHeader,
   ExtensionUISurfaceItemState,
   ExtensionUISurfaceNode,
@@ -208,7 +209,7 @@ export interface MenuNodeFields {
 
 /** What a pill shows: one line of inline facts, in the order it lists them. */
 export interface PillFields {
-  /** Text, badges, icons, and rings: the builders above return one node type, and the host's validator rejects the rest. */
+  /** Text, badges, icons, elapsed counts, and progress: the builders above return one node type, and the host's validator rejects the rest. */
   content: ExtensionUISurfaceNode[];
   /** `drawer` (the default) opens the panel; an action sends that action instead. */
   tap?: "drawer" | NodeActionFields;
@@ -453,6 +454,28 @@ export function icon(fields: {
     ...(fields.id ? { id: fields.id } : {}),
     name: fields.name,
     ...(fields.tone ? { tone: fields.tone } : {}),
+  };
+}
+
+/**
+ * A live count from `since` (epoch milliseconds) that the client ticks once a second, so a
+ * running timer needs no republish. `clock` (the default) reads 4:05 or 1:02:05; `short` reads
+ * 42s, 5m, or 1h 5m.
+ */
+export function elapsed(fields: {
+  id?: string;
+  since: number;
+  format?: ExtensionUISurfaceElapsedFormat;
+  style?: ExtensionUISurfaceTextStyle;
+  tone?: ExtensionUISurfaceTone;
+}): ExtensionUISurfaceNode {
+  return {
+    type: "elapsed",
+    ...(fields.id ? { id: fields.id } : {}),
+    since: fields.since,
+    ...(fields.style ? { style: fields.style } : {}),
+    ...(fields.tone ? { tone: fields.tone } : {}),
+    ...(fields.format ? { format: fields.format } : {}),
   };
 }
 
