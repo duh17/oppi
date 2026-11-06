@@ -1901,6 +1901,50 @@ describe("SearchIndex turn-end indexing", () => {
     }
   });
 
+  it("indexes a line that was half-written at the last index once it completes", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-partial-line-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const half = (line: string) => line.slice(0, line.length / 2);
+    const rest = (line: string) => line.slice(line.length / 2);
+    const answer = transcriptLine("a1", "u1", "assistant", "partial answer token kappa");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "partial base token") + half(answer),
+    );
+    const session = makeSession({ id: "sess-partial", piSessionFile: jsonlPath });
+    let index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      // The cursor lands mid-line. Re-checking the unchanged file must not
+      // index the fragment.
+      await index.indexSession(session.id);
+      await index.indexSession(session.id);
+      expect(index.search("kappa", "ws-1")).toEqual([]);
+
+      // Growth from a mid-line cursor cannot merge a tail: the completed line
+      // starts before the cursor.
+      appendFileSync(jsonlPath, rest(answer));
+      await index.indexSession(session.id);
+      expect(index.search("kappa", "ws-1")).toHaveLength(1);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+
+      // The startup sync reads the same way.
+      const followUp = transcriptLine("u2", "a1", "user", "partial followup token lambda");
+      appendFileSync(jsonlPath, half(followUp));
+      await index.indexSession(session.id);
+      index.close();
+      appendFileSync(jsonlPath, rest(followUp));
+      index = new SearchIndex(dataDir, () => session);
+      index.sync([session]);
+      expect(index.search("lambda", "ws-1")).toHaveLength(1);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+    } finally {
+      index.close();
+    }
+  });
+
   it("does not commit a same-size rewrite that lands during a full read", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-same-size-"));
     cleanupPaths.add(dataDir);
