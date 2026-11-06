@@ -295,17 +295,6 @@ export class VoiceCallController {
     return { state: this.snapshot(call.callId), replay };
   }
 
-  detachCall(
-    input: { callId: string; controllerLeaseEpoch: number },
-    frontend: Pick<VoiceCallFrontendConnection, "connectionId" | "authenticatedDeviceId">,
-  ): VoiceCallStateSnapshot {
-    const call = this.requireActiveCall(input.callId);
-    this.assertController(call, input.controllerLeaseEpoch, frontend);
-    this.detach(call);
-    this.persist();
-    return this.snapshot(call.callId);
-  }
-
   keepAlive(
     input: { callId: string; controllerLeaseEpoch: number },
     frontend: Pick<VoiceCallFrontendConnection, "connectionId" | "authenticatedDeviceId">,

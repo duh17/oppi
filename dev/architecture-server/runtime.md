@@ -92,8 +92,7 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 
 - `DurableNotSupportedError` (`server_durable_not_supported`) for `sessionTree`/`navigateTree` (navigating would fork, drop later turns, and strand background work; fork-from-a-message is the way back), `abortBash`, `appendAssistantMessage`, and classic queued-turn replacement. Incognito and Extension selections without a plugin are rejected.
 - Fork uses `conversation.fork(entryId)` at the entry before the chosen user message; `SessionHost.forkConversation` decides what a fork carries, so it launches as its source. A durable source never falls back to a Pi JSONL fork. Share exports through a temporary JSONL (`durable-export.ts`).
-- Run-policy setters write the global `SettingsManager`, not per session.
-- `abortRetry` marks the generation task only while its checkpoint is in a retry backoff, via `Tx.setTask` (failing loudly if pi-durable drops it). After an aborted run, queued inputs wait for the next message; after a failed run, `DurableAgentController.continueAfterFailedRun` submits a `continue` after the failure card's commit (a continue places the queued inputs in its own commit, so it cannot share the card's), and the session settles once. Older stores keep hidden `oppi.continue` writes.
+- After an aborted run, queued inputs wait for the next message; after a failed run, `DurableAgentController.continueAfterFailedRun` submits a `continue` after the failure card's commit (a continue places the queued inputs in its own commit, so it cannot share the card's), and the session settles once. Older stores keep hidden `oppi.continue` writes.
 
 ## Saved Agents and schedules
 

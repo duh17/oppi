@@ -3382,8 +3382,8 @@ enum TimelineClientRow: Equatable, Sendable {
             return .error("\(command) failed: \(UserFacingErrorText.normalize(error))")
         }
         switch command {
-        case "set_model", "cycle_model": return .system(String(localized: "Model changed"))
-        case "set_thinking_level", "cycle_thinking_level": return .system(String(localized: "Thinking level changed"))
+        case "set_model": return .system(String(localized: "Model changed"))
+        case "set_thinking_level": return .system(String(localized: "Thinking level changed"))
         default: return nil
         }
     }

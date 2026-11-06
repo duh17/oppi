@@ -1725,9 +1725,8 @@ export class DurableHarness {
   }
 
   /**
-   * Classic `set_auto_retry`, `set_auto_compaction`, and the queue modes write global user
-   * settings. The Harness reads the same getters at every use, so writing here is the same
-   * scope: it reaches every durable conversation, and no per-session copy exists.
+   * The Harness's run policy: the global user settings it reads at every use, the same ones a
+   * classic session reads. No per-session copy exists.
    */
   get runPolicySettings(): SettingsManager {
     if (!this.runPolicy) throw new Error("Server durable runtime is not open");

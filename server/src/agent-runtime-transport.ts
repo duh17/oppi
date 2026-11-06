@@ -27,20 +27,12 @@ export type RuntimeClientCommand = Extract<
       | "get_commands"
       | "share_session"
       | "set_model"
-      | "cycle_model"
       | "set_thinking_level"
-      | "cycle_thinking_level"
       | "reload"
       | "new_session"
       | "set_session_name"
       | "compact"
-      | "set_auto_compaction"
-      | "fork"
-      | "set_steering_mode"
-      | "set_follow_up_mode"
-      | "set_auto_retry"
-      | "abort_retry"
-      | "abort_bash";
+      | "fork";
   }
 >;
 
@@ -133,13 +125,7 @@ export interface ForwardedCommandResultApplication {
   shouldBroadcastState: boolean;
 }
 
-const STATE_BROADCAST_COMMANDS = new Set([
-  "set_model",
-  "cycle_model",
-  "set_thinking_level",
-  "cycle_thinking_level",
-  "set_session_name",
-]);
+const STATE_BROADCAST_COMMANDS = new Set(["set_model", "set_thinking_level", "set_session_name"]);
 
 export function applyForwardedCommandResultToSession(options: {
   session: Session;
@@ -166,7 +152,7 @@ export function applyForwardedCommandResultToSession(options: {
     if (nextName) setSessionField("name", nextName);
   }
 
-  if (commandType === "set_thinking_level" || commandType === "cycle_thinking_level") {
+  if (commandType === "set_thinking_level") {
     const responseLevel = asNonEmptyString(response.level);
     const requestedLevel =
       request.type === "set_thinking_level" ? asNonEmptyString(request.level) : undefined;
@@ -174,10 +160,9 @@ export function applyForwardedCommandResultToSession(options: {
     if (nextLevel) setSessionField("thinkingLevel", nextLevel);
   }
 
-  if (commandType === "set_model" || commandType === "cycle_model") {
-    const modelData = commandType === "cycle_model" ? asRecord(response.model) : response;
-    const provider = asNonEmptyString(modelData?.provider);
-    const modelId = asNonEmptyString(modelData?.id) ?? asNonEmptyString(modelData?.modelId);
+  if (commandType === "set_model") {
+    const provider = asNonEmptyString(response.provider);
+    const modelId = asNonEmptyString(response.id) ?? asNonEmptyString(response.modelId);
     if (provider && modelId) {
       const fullId = composeModelId(provider, modelId);
       setSessionField("model", fullId);

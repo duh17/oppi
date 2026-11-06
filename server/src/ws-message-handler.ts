@@ -251,7 +251,6 @@ export class WsMessageHandler {
 
       case "voice_call_start":
       case "voice_call_attach":
-      case "voice_call_detach":
       case "voice_call_keepalive":
       case "voice_call_end":
       case "voice_call_barge_in":
@@ -267,20 +266,12 @@ export class WsMessageHandler {
       case "get_commands":
       case "share_session":
       case "set_model":
-      case "cycle_model":
       case "set_thinking_level":
-      case "cycle_thinking_level":
       case "reload":
       case "new_session":
       case "set_session_name":
       case "compact":
-      case "set_auto_compaction":
-      case "fork":
-      case "set_steering_mode":
-      case "set_follow_up_mode":
-      case "set_auto_retry":
-      case "abort_retry":
-      case "abort_bash": {
+      case "fork": {
         if (msg.type === "set_model" && (await this.setInactiveSessionModel(session, msg, send))) {
           return;
         }
@@ -381,7 +372,6 @@ export class WsMessageHandler {
         type:
           | "voice_call_start"
           | "voice_call_attach"
-          | "voice_call_detach"
           | "voice_call_keepalive"
           | "voice_call_end"
           | "voice_call_barge_in";
@@ -471,12 +461,10 @@ export class WsMessageHandler {
       }
 
       const state =
-        msg.type === "voice_call_detach"
-          ? voiceCalls.detachCall(msg, frontend)
-          : msg.type === "voice_call_keepalive"
-            ? voiceCalls.keepAlive(msg, frontend)
-            : voiceCalls.endCall(msg, frontend);
-      if (msg.type === "voice_call_detach" || msg.type === "voice_call_end") {
+        msg.type === "voice_call_keepalive"
+          ? voiceCalls.keepAlive(msg, frontend)
+          : voiceCalls.endCall(msg, frontend);
+      if (msg.type === "voice_call_end") {
         await this.deps.voiceMedia?.detach(frontend.connectionId);
       }
       send({ type: "voice_call_state", ...state });

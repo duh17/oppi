@@ -26,18 +26,15 @@ enum ClientMessage: Sendable {
 
     // ── Model ──
     case setModel(provider: String, modelId: String, requestId: String? = nil, persist: Bool? = nil)
-    case cycleModel(requestId: String? = nil)
 
     // ── Thinking ──
     case setThinkingLevel(level: ThinkingLevel, requestId: String? = nil, persist: Bool? = nil)
-    case cycleThinkingLevel(requestId: String? = nil)
 
     // ── Session ──
     case reload(requestId: String? = nil)
     case newSession(requestId: String? = nil)
     case setSessionName(name: String, requestId: String? = nil)
     case compact(customInstructions: String? = nil, requestId: String? = nil)
-    case setAutoCompaction(enabled: Bool, requestId: String? = nil)
     case fork(entryId: String, requestId: String? = nil)
     case getForkMessages(requestId: String? = nil)
     case getSessionTree(filterMode: SessionTreeFilterMode? = nil, requestId: String? = nil)
@@ -49,17 +46,6 @@ enum ClientMessage: Sendable {
         label: String? = nil,
         requestId: String? = nil
     )
-
-    // ── Queue modes ──
-    case setSteeringMode(mode: QueueMode, requestId: String? = nil)
-    case setFollowUpMode(mode: QueueMode, requestId: String? = nil)
-
-    // ── Retry ──
-    case setAutoRetry(enabled: Bool, requestId: String? = nil)
-    case abortRetry(requestId: String? = nil)
-
-    // ── Bash ──
-    case abortBash(requestId: String? = nil)
 
     // ── Commands ──
     case getCommands(requestId: String? = nil)
@@ -95,7 +81,6 @@ enum ClientMessage: Sendable {
     // ── Continuous voice control (focused session stream) ──
     case voiceCallStart(clientCallId: String, requestId: String? = nil)
     case voiceCallAttach(callId: String, lastEventSeq: Int? = nil, requestId: String? = nil)
-    case voiceCallDetach(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
     case voiceCallKeepAlive(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
     case voiceCallEnd(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
     /// The phone heard the caller over the agent and stopped playback. The server drops the
@@ -189,24 +174,6 @@ enum ThinkingLevel: String, Codable, Sendable, CaseIterable, Identifiable {
         case .max: "max"
         }
     }
-
-    /// Next level in the standard cycle: off → low → medium → high → off.
-    var next: Self {
-        switch self {
-        case .off: return .low
-        case .minimal: return .low
-        case .low: return .medium
-        case .medium: return .high
-        case .high: return .off
-        case .xhigh: return .off
-        case .max: return .off
-        }
-    }
-}
-
-enum QueueMode: String, Codable, Sendable {
-    case all
-    case oneAtATime = "one-at-a-time"
 }
 
 enum ShareSessionAction: String, Codable, Sendable {
@@ -334,10 +301,6 @@ extension ClientMessage: Encodable {
                 try c.encode(true, forKey: .persist)
             }
 
-        case .cycleModel(let reqId):
-            try c.encode("cycle_model", forKey: .type)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         // ── Thinking ──
         case .setThinkingLevel(let level, let reqId, let persist):
             try c.encode("set_thinking_level", forKey: .type)
@@ -346,10 +309,6 @@ extension ClientMessage: Encodable {
             if persist == true {
                 try c.encode(true, forKey: .persist)
             }
-
-        case .cycleThinkingLevel(let reqId):
-            try c.encode("cycle_thinking_level", forKey: .type)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Session ──
         case .reload(let reqId):
@@ -368,11 +327,6 @@ extension ClientMessage: Encodable {
         case .compact(let instructions, let reqId):
             try c.encode("compact", forKey: .type)
             try c.encodeIfPresent(instructions, forKey: .customInstructions)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        case .setAutoCompaction(let enabled, let reqId):
-            try c.encode("set_auto_compaction", forKey: .type)
-            try c.encode(enabled, forKey: .enabled)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         case .fork(let entryId, let reqId):
@@ -403,32 +357,6 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(customInstructions, forKey: .customInstructions)
             try c.encodeIfPresent(replaceInstructions, forKey: .replaceInstructions)
             try c.encodeIfPresent(label, forKey: .label)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        // ── Queue modes ──
-        case .setSteeringMode(let mode, let reqId):
-            try c.encode("set_steering_mode", forKey: .type)
-            try c.encode(mode, forKey: .mode)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        case .setFollowUpMode(let mode, let reqId):
-            try c.encode("set_follow_up_mode", forKey: .type)
-            try c.encode(mode, forKey: .mode)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        // ── Retry ──
-        case .setAutoRetry(let enabled, let reqId):
-            try c.encode("set_auto_retry", forKey: .type)
-            try c.encode(enabled, forKey: .enabled)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        case .abortRetry(let reqId):
-            try c.encode("abort_retry", forKey: .type)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        // ── Bash ──
-        case .abortBash(let reqId):
-            try c.encode("abort_bash", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Commands ──
@@ -479,11 +407,6 @@ extension ClientMessage: Encodable {
             try c.encode(callId, forKey: .callId)
             try c.encodeIfPresent(lastEventSeq, forKey: .lastEventSeq)
             try c.encodeIfPresent(reqId, forKey: .requestId)
-        case .voiceCallDetach(let callId, let leaseEpoch, let reqId):
-            try c.encode("voice_call_detach", forKey: .type)
-            try c.encode(callId, forKey: .callId)
-            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
         case .voiceCallKeepAlive(let callId, let leaseEpoch, let reqId):
             try c.encode("voice_call_keepalive", forKey: .type)
             try c.encode(callId, forKey: .callId)
@@ -518,7 +441,7 @@ extension ClientMessage: Encodable {
         case type, message, attachments, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
         case contextualStrings
-        case provider, modelId, persist, level, name, mode, enabled
+        case provider, modelId, persist, level, name
         case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
         case itemId
@@ -547,23 +470,15 @@ extension ClientMessage {
         case .removeQueuedMessage: return "remove_queued_message"
         case .takeQueue: return "take_queue"
         case .setModel: return "set_model"
-        case .cycleModel: return "cycle_model"
         case .setThinkingLevel: return "set_thinking_level"
-        case .cycleThinkingLevel: return "cycle_thinking_level"
         case .newSession: return "new_session"
         case .setSessionName: return "set_session_name"
         case .reload: return "reload"
         case .compact: return "compact"
-        case .setAutoCompaction: return "set_auto_compaction"
         case .fork: return "fork"
         case .getForkMessages: return "get_fork_messages"
         case .getSessionTree: return "get_session_tree"
         case .navigateTree: return "navigate_tree"
-        case .setSteeringMode: return "set_steering_mode"
-        case .setFollowUpMode: return "set_follow_up_mode"
-        case .setAutoRetry: return "set_auto_retry"
-        case .abortRetry: return "abort_retry"
-        case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
         case .extensionUIResponse: return "extension_ui_response"
@@ -571,7 +486,6 @@ extension ClientMessage {
         case .extensionUIAction: return "extension_ui_action"
         case .voiceCallStart: return "voice_call_start"
         case .voiceCallAttach: return "voice_call_attach"
-        case .voiceCallDetach: return "voice_call_detach"
         case .voiceCallKeepAlive: return "voice_call_keepalive"
         case .voiceCallEnd: return "voice_call_end"
         case .voiceCallBargeIn: return "voice_call_barge_in"

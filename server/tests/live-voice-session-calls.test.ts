@@ -48,7 +48,7 @@ describe("Live Voice calls on ordinary sessions", () => {
     expect(authenticatedVoiceDeviceId({ kind: "owner" })).toBeUndefined();
   });
 
-  it("starts, detaches, and reattaches a call on the workspace session it was started from", async () => {
+  it("starts, loses its socket, and reattaches a call on the workspace session it was started from", async () => {
     const harness = makeHandler(makeSession());
 
     await harness.dispatch({ type: "voice_call_start", clientCallId: "client-1", requestId: "s" });
@@ -63,16 +63,14 @@ describe("Live Voice calls on ordinary sessions", () => {
     );
 
     const started = harness.voiceCalls.snapshot("call-1");
-    harness.sent.length = 0;
-    await harness.dispatch({
-      type: "voice_call_detach",
-      callId: "call-1",
-      controllerLeaseEpoch: started.controllerLeaseEpoch,
-      requestId: "d",
+    // The phone's socket closes (server.ts calls this on disconnect).
+    harness.voiceCalls.disconnectConnection("connection-1");
+    expect(harness.voiceCalls.snapshot("call-1")).toMatchObject({
+      lifecycle: "active",
+      frontend: "detached",
     });
-    expect(harness.sent).toContainEqual(
-      expect.objectContaining({ type: "voice_call_state", frontend: "detached" }),
-    );
+
+    harness.sent.length = 0;
 
     harness.sent.length = 0;
     await harness.dispatch(

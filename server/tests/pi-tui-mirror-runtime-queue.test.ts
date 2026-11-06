@@ -1823,26 +1823,26 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     const commandPromise = runtime.forwardClientCommand(
       sessionId,
-      { type: "set_auto_retry", enabled: false },
-      "req-retry-mode",
+      { type: "set_session_name", name: "Planning" },
+      "req-rename",
     );
     const command = latestCommand(ws);
-    expect(command.command).toEqual({ type: "set_auto_retry", enabled: false });
+    expect(command.command).toEqual({ type: "set_session_name", name: "Planning" });
 
     ws.receive({
       type: "command_result",
       id: command.id,
       success: true,
-      data: { enabled: false },
+      data: { name: "Planning" },
     });
 
     await expect(commandPromise).resolves.toBeUndefined();
     expect(received).toContainEqual({
       type: "command_result",
-      command: "set_auto_retry",
-      requestId: "req-retry-mode",
+      command: "set_session_name",
+      requestId: "req-rename",
       success: true,
-      data: { enabled: false },
+      data: { name: "Planning" },
     });
   });
 

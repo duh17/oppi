@@ -1767,17 +1767,9 @@ export class SdkBackend implements AgentBackend {
     return this.piSession.getUserMessagesForForking();
   }
 
-  cycleModel(direction?: "forward" | "backward"): ReturnType<AgentBackend["cycleModel"]> {
-    return this.piSession.cycleModel(direction);
-  }
-
   setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void {
     if (options?.persist === true) this.piSession.setThinkingLevel(level, { persist: true });
     else this.piSession.setThinkingLevel(level);
-  }
-
-  cycleThinkingLevel(): ThinkingLevel | undefined {
-    return this.piSession.cycleThinkingLevel();
   }
 
   setSessionName(name: string): void {
@@ -1813,26 +1805,6 @@ export class SdkBackend implements AgentBackend {
 
   compact(customInstructions?: string): ReturnType<AgentBackend["compact"]> {
     return this.piSession.compact(customInstructions);
-  }
-
-  setAutoCompactionEnabled(enabled: boolean): void {
-    this.piSession.setAutoCompactionEnabled(enabled);
-  }
-
-  setSteeringMode(mode: "all" | "one-at-a-time"): void {
-    this.piSession.setSteeringMode(mode);
-  }
-
-  setFollowUpMode(mode: "all" | "one-at-a-time"): void {
-    this.piSession.setFollowUpMode(mode);
-  }
-
-  setAutoRetryEnabled(enabled: boolean): void {
-    this.piSession.setAutoRetryEnabled(enabled);
-  }
-
-  abortRetry(): void {
-    this.piSession.abortRetry();
   }
 
   appendAssistantMessage(content: string, fallbackModel?: string): void {

@@ -1314,16 +1314,8 @@ export class DurableBackend implements AgentBackend {
       ? { success: true, ...selected }
       : { success: false, error: `Model unavailable: ${modelId}` };
   }
-  async cycleModel(
-    direction: "forward" | "backward" = "forward",
-  ): Promise<Awaited<ReturnType<AgentBackend["cycleModel"]>>> {
-    return (await this.models()).cycleModel(direction);
-  }
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
     await (await this.models()).selectThinking(level);
-  }
-  async cycleThinkingLevel(): Promise<ThinkingLevel> {
-    return (await this.models()).cycleThinking();
   }
   setSessionName(name: string): void {
     this.session.name = name;
@@ -1501,29 +1493,6 @@ export class DurableBackend implements AgentBackend {
       outputPath,
       themeName: this.host.runtime.runPolicySettings.getTheme(),
     });
-  }
-  // The four settings below are the Harness's run policy: global user settings it reads at every
-  // use, written exactly as a classic session writes them. They apply to every durable
-  // conversation from its next boundary or attempt, not to this session alone.
-  setAutoCompactionEnabled(enabled: boolean): void {
-    this.assertOpen();
-    this.host.runtime.runPolicySettings.setCompactionEnabled(enabled);
-  }
-  setSteeringMode(mode: "all" | "one-at-a-time"): void {
-    this.assertOpen();
-    this.host.runtime.runPolicySettings.setSteeringMode(mode);
-  }
-  setFollowUpMode(mode: "all" | "one-at-a-time"): void {
-    this.assertOpen();
-    this.host.runtime.runPolicySettings.setFollowUpMode(mode);
-  }
-  setAutoRetryEnabled(enabled: boolean): void {
-    this.assertOpen();
-    this.host.runtime.runPolicySettings.setRetryEnabled(enabled);
-  }
-  async abortRetry(): Promise<void> {
-    this.assertOpen();
-    await (await this.controller()).abortRetry();
   }
   getEntryRenderers(): undefined {
     return undefined;

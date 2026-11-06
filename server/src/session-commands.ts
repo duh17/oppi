@@ -17,8 +17,6 @@ import {
 import {
   readOptionalBoolean,
   readOptionalString,
-  readQueueMode,
-  readRequiredBoolean,
   readRequiredString,
   readShareSessionAction,
   readShareSessionRedactionPolicy,
@@ -122,12 +120,6 @@ export class SessionCommandCoordinator {
     ],
 
     [
-      "cycle_model",
-      (backend) =>
-        backend.withRuntimeLifecycleTransaction("cycle_model", async () => backend.cycleModel()),
-    ],
-
-    [
       "set_thinking_level",
       async (backend, cmd) => {
         const level = readThinkingLevel(cmd.level);
@@ -139,8 +131,6 @@ export class SessionCommandCoordinator {
         return { level };
       },
     ],
-
-    ["cycle_thinking_level", async (backend) => ({ level: await backend.cycleThinkingLevel() })],
 
     ["reload", (backend) => backend.reloadResources()],
 
@@ -187,58 +177,6 @@ export class SessionCommandCoordinator {
     ],
 
     ["compact", (session, cmd) => session.compact(readOptionalString(cmd.customInstructions))],
-
-    [
-      "set_auto_compaction",
-      (session, cmd) => {
-        const enabled = readRequiredBoolean(cmd.enabled, "enabled");
-        session.setAutoCompactionEnabled(enabled);
-        return { enabled };
-      },
-    ],
-
-    [
-      "set_steering_mode",
-      (session, cmd) => {
-        const mode = readQueueMode(cmd.mode);
-        session.setSteeringMode(mode);
-        return { mode };
-      },
-    ],
-
-    [
-      "set_follow_up_mode",
-      (session, cmd) => {
-        const mode = readQueueMode(cmd.mode);
-        session.setFollowUpMode(mode);
-        return { mode };
-      },
-    ],
-
-    [
-      "set_auto_retry",
-      (session, cmd) => {
-        const enabled = readRequiredBoolean(cmd.enabled, "enabled");
-        session.setAutoRetryEnabled(enabled);
-        return { enabled };
-      },
-    ],
-
-    [
-      "abort_retry",
-      async (session) => {
-        await session.abortRetry();
-        return { success: true };
-      },
-    ],
-
-    [
-      "abort_bash",
-      (session) => {
-        session.abortBash();
-        return { success: true };
-      },
-    ],
   ]);
 
   private static readonly ALLOWED_COMMANDS = new Set<string>([

@@ -211,7 +211,6 @@ export type ClientMessage =
         persist?: boolean;
         requestId?: string;
       }
-    | { type: "cycle_model"; requestId?: string }
     // ── Thinking ──
     | {
         type: "set_thinking_level";
@@ -219,13 +218,11 @@ export type ClientMessage =
         persist?: boolean;
         requestId?: string;
       }
-    | { type: "cycle_thinking_level"; requestId?: string }
     // ── Session ──
     | { type: "reload"; requestId?: string }
     | { type: "new_session"; requestId?: string }
     | { type: "set_session_name"; name: string; requestId?: string }
     | { type: "compact"; customInstructions?: string; requestId?: string }
-    | { type: "set_auto_compaction"; enabled: boolean; requestId?: string }
     | { type: "fork"; entryId: string; requestId?: string }
     | { type: "get_fork_messages"; requestId?: string }
     | {
@@ -242,14 +239,6 @@ export type ClientMessage =
         label?: string;
         requestId?: string;
       }
-    // ── Queue modes ──
-    | { type: "set_steering_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
-    | { type: "set_follow_up_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
-    // ── Retry ──
-    | { type: "set_auto_retry"; enabled: boolean; requestId?: string }
-    | { type: "abort_retry"; requestId?: string }
-    // ── Bash ──
-    | { type: "abort_bash"; requestId?: string }
     // ── Commands ──
     | { type: "get_commands"; requestId?: string }
     | {
@@ -293,7 +282,7 @@ export type ClientMessage =
         requestId?: string;
       }
     | {
-        type: "voice_call_detach" | "voice_call_keepalive" | "voice_call_end";
+        type: "voice_call_keepalive" | "voice_call_end";
         callId: string;
         controllerLeaseEpoch: number;
         requestId?: string;

@@ -28,21 +28,6 @@ export function readOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-/** A toggle must be a real boolean: `!!"false"` would turn it on. */
-export function readRequiredBoolean(value: unknown, fieldName: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new Error(`Invalid payload: expected ${fieldName}`);
-  }
-  return value;
-}
-
-export function readQueueMode(value: unknown): "all" | "one-at-a-time" {
-  if (value !== "all" && value !== "one-at-a-time") {
-    throw new Error("Invalid payload: expected mode");
-  }
-  return value;
-}
-
 export function readThinkingLevel(value: unknown): ThinkingLevel {
   const level = readRequiredString(value, "level");
   if (!isThinkingLevel(level)) {
@@ -146,14 +131,6 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "set_thinking_level":
       readThinkingLevel(command.level);
       return;
-    case "set_auto_compaction":
-    case "set_auto_retry":
-      readRequiredBoolean(command.enabled, "enabled");
-      return;
-    case "set_steering_mode":
-    case "set_follow_up_mode":
-      readQueueMode(command.mode);
-      return;
     case "set_session_name":
       readRequiredString(command.name, "name");
       return;
@@ -181,7 +158,6 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "voice_call_attach":
       readRequiredString(command.callId, "callId");
       return;
-    case "voice_call_detach":
     case "voice_call_keepalive":
     case "voice_call_end":
       readRequiredString(command.callId, "callId");
@@ -201,15 +177,11 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "get_session_stats":
     case "get_queue":
     case "take_queue":
-    case "cycle_model":
-    case "cycle_thinking_level":
     case "reload":
     case "new_session":
     case "compact":
     case "get_fork_messages":
     case "get_session_tree":
-    case "abort_retry":
-    case "abort_bash":
     case "get_commands":
     case "share_session":
     case "dictation_start":

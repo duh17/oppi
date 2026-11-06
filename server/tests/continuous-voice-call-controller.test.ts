@@ -379,13 +379,8 @@ describe("continuous voice call controller", () => {
       harness.controller.attachCall({ callId: started.state.callId }, otherDevice.connection),
     ).toThrow("Voice call belongs to a different paired device");
 
-    const detached = harness.controller.detachCall(
-      {
-        callId: started.state.callId,
-        controllerLeaseEpoch: attached.state.controllerLeaseEpoch,
-      },
-      replacement.connection,
-    );
+    harness.controller.disconnectConnection(replacement.connection.connectionId);
+    const detached = harness.controller.snapshot(started.state.callId);
     expect(detached).toMatchObject({ lifecycle: "active", frontend: "detached" });
 
     const finalFrontend = harness.frontend("connection-4");
@@ -648,7 +643,7 @@ describe("continuous voice call controller", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     expect(() =>
-      restarted.detachCall(
+      restarted.keepAlive(
         {
           callId: "call-persisted",
           controllerLeaseEpoch: beforeRestart.controllerLeaseEpoch,

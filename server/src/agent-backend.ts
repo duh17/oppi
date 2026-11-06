@@ -118,11 +118,7 @@ export interface AgentBackend {
     thinkingLevel?: string;
     error?: string;
   }>;
-  cycleModel(
-    direction?: "forward" | "backward",
-  ): Promise<{ model: { provider: string; id: string }; thinkingLevel: ThinkingLevel } | undefined>;
   setThinkingLevel(level: ThinkingLevel, options?: { persist?: boolean }): void | Promise<void>;
-  cycleThinkingLevel(): ThinkingLevel | undefined | Promise<ThinkingLevel | undefined>;
   setSessionName(name: string): void;
   getStateSnapshot(): PiStateSnapshot;
   getSessionStats():
@@ -158,11 +154,6 @@ export interface AgentBackend {
   };
   exportToHtml(outputPath: string): Promise<string>;
   compact(customInstructions?: string): Promise<CompactionResult>;
-  setAutoCompactionEnabled(enabled: boolean): void;
-  setSteeringMode(mode: "all" | "one-at-a-time"): void;
-  setFollowUpMode(mode: "all" | "one-at-a-time"): void;
-  setAutoRetryEnabled(enabled: boolean): void;
-  abortRetry(): void | Promise<void>;
   getEntryRenderers(): LiveEntryRendererSet | undefined;
   appendAssistantMessage(content: string, fallbackModel?: string): void;
 }

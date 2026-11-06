@@ -85,9 +85,8 @@ describe("runtime command result helpers", () => {
     });
   });
 
-  it("applies managed and mirror model response shapes to session metadata", () => {
+  it("applies a model response to session metadata", () => {
     const managed = makeSession();
-    const mirror = makeSession();
 
     const managedResult = applyForwardedCommandResultToSession({
       session: managed,
@@ -96,22 +95,9 @@ describe("runtime command result helpers", () => {
       data: { provider: "openai", id: "gpt-5.5", thinkingLevel: "high" },
       contextWindowResolver: () => 272000,
     });
-    const mirrorResult = applyForwardedCommandResultToSession({
-      session: mirror,
-      commandType: "cycle_model",
-      request: { type: "cycle_model" },
-      data: { model: { provider: "openai", modelId: "gpt-5.5" }, thinkingLevel: "high" },
-      contextWindowResolver: () => 272000,
-    });
 
     expect(managedResult).toEqual({ changed: true, shouldBroadcastState: true });
-    expect(mirrorResult).toEqual({ changed: true, shouldBroadcastState: true });
     expect(managed).toMatchObject({
-      model: "openai/gpt-5.5",
-      thinkingLevel: "high",
-      contextWindow: 272000,
-    });
-    expect(mirror).toMatchObject({
       model: "openai/gpt-5.5",
       thinkingLevel: "high",
       contextWindow: 272000,

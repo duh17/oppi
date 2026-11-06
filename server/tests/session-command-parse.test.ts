@@ -45,38 +45,6 @@ describe("parseClientCommand", () => {
       requestId: "req-model",
     },
     {
-      name: "set_auto_compaction string enabled",
-      body: { type: "set_auto_compaction", enabled: "false", requestId: "req-compact" },
-      code: "invalid_field",
-      error: "Invalid payload: expected enabled",
-      command: "set_auto_compaction",
-      requestId: "req-compact",
-    },
-    {
-      name: "set_auto_retry missing enabled",
-      body: { type: "set_auto_retry", requestId: "req-retry" },
-      code: "invalid_field",
-      error: "Invalid payload: expected enabled",
-      command: "set_auto_retry",
-      requestId: "req-retry",
-    },
-    {
-      name: "set_steering_mode unknown mode",
-      body: { type: "set_steering_mode", mode: "some", requestId: "req-mode" },
-      code: "invalid_field",
-      error: "Invalid payload: expected mode",
-      command: "set_steering_mode",
-      requestId: "req-mode",
-    },
-    {
-      name: "set_follow_up_mode missing mode",
-      body: { type: "set_follow_up_mode", requestId: "req-mode" },
-      code: "invalid_field",
-      error: "Invalid payload: expected mode",
-      command: "set_follow_up_mode",
-      requestId: "req-mode",
-    },
-    {
       name: "set_thinking_level unknown level",
       body: { type: "set_thinking_level", level: "turbo", requestId: "req-think" },
       code: "invalid_field",
@@ -292,14 +260,6 @@ describe("parseClientCommand", () => {
     {
       name: "set_thinking_level persist true",
       body: { type: "set_thinking_level", level: "high", persist: true },
-    },
-    {
-      name: "set_auto_compaction off",
-      body: { type: "set_auto_compaction", enabled: false },
-    },
-    {
-      name: "set_follow_up_mode one-at-a-time",
-      body: { type: "set_follow_up_mode", mode: "one-at-a-time" },
     },
     {
       name: "fork",

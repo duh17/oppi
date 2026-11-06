@@ -152,11 +152,6 @@ struct ClientMessageTests {
         #expect(sessionJSON["persist"] == nil)
     }
 
-    @Test func encodesCycleModel() throws {
-        let json = try decode(ClientMessage.cycleModel())
-        #expect(json["type"] as? String == "cycle_model")
-    }
-
     @Test func encodesSetThinkingLevel() throws {
         let msg = ClientMessage.setThinkingLevel(level: .high)
         let json = try decode(msg)
@@ -263,13 +258,6 @@ struct ClientMessageTests {
         #expect(json["name"] as? String == "my-feature")
     }
 
-    @Test func encodesSetSteeringMode() throws {
-        let msg = ClientMessage.setSteeringMode(mode: .oneAtATime)
-        let json = try decode(msg)
-        #expect(json["type"] as? String == "set_steering_mode")
-        #expect(json["mode"] as? String == "one-at-a-time")
-    }
-
     @Test func encodesShareSessionWithRedactionPolicy() throws {
         let policy = ShareSessionRedactionPolicy(
             secrets: false,
@@ -308,10 +296,6 @@ struct ClientMessageTests {
         #expect(attach["type"] as? String == "voice_call_attach")
         #expect(attach["callId"] as? String == "call-1")
         #expect(attach["lastEventSeq"] as? Int == 7)
-
-        let detach = try decode(.voiceCallDetach(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-3"))
-        #expect(detach["type"] as? String == "voice_call_detach")
-        #expect(detach["controllerLeaseEpoch"] as? Int == 3)
 
         let bargeIn = try decode(.voiceCallBargeIn(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-4"))
         #expect(bargeIn["type"] as? String == "voice_call_barge_in")

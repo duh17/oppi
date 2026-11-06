@@ -24,7 +24,7 @@ struct LiveVoiceCallLifetimeTests {
         // Back to the list: the chat leaves the window and is released.
         first.unmount()
         try await Task.sleep(for: .milliseconds(150))
-        #expect(!fixture.channel.sent.contains { ["voice_call_detach", "voice_call_end"].contains($0.typeLabel) },
+        #expect(!fixture.channel.sent.contains { $0.typeLabel == "voice_call_end" },
                 "Leaving the chat sent \(fixture.channel.sent.map(\.typeLabel))")
         #expect(!fixture.channel.closed)
         #expect(call.isLive)

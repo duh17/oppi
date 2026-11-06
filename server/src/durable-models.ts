@@ -7,7 +7,7 @@ import {
   type Harness,
 } from "@earendil-works/pi-durable";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
-import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-levels.js";
+import { type ThinkingLevel } from "./thinking-levels.js";
 
 /**
  * Model and thinking choice of one conversation, persisted through `configure()`.
@@ -46,40 +46,5 @@ export class DurableModels {
 
   async selectThinking(level: ThinkingLevel): Promise<void> {
     await this.conversation.configure({ thinkingLevel: level }, BACKGROUND_CONTEXT);
-  }
-
-  /** The next (or previous) available model, wrapping; undefined when none is available. */
-  async cycleModel(
-    direction: "forward" | "backward" = "forward",
-  ): Promise<
-    { model: { provider: string; id: string }; thinkingLevel: ThinkingLevel } | undefined
-  > {
-    const models = this.registry.getAvailable();
-    if (!models.length) return undefined;
-    const current = await this.current();
-    const index = models.findIndex(
-      (model) => model.provider === current.model?.provider && model.id === current.model?.modelId,
-    );
-    const next =
-      models[(index + (direction === "forward" ? 1 : -1) + models.length) % models.length];
-    if (!next) return undefined;
-    const selected = await this.select(`${next.provider}/${next.id}`);
-    return {
-      model: { provider: next.provider, id: next.id },
-      thinkingLevel:
-        selected?.thinkingLevel !== undefined && isThinkingLevel(selected.thinkingLevel)
-          ? selected.thinkingLevel
-          : "off",
-    };
-  }
-
-  async cycleThinking(): Promise<ThinkingLevel> {
-    const { thinkingLevel } = await this.current();
-    const next =
-      THINKING_LEVELS[
-        (THINKING_LEVELS.indexOf(thinkingLevel as ThinkingLevel) + 1) % THINKING_LEVELS.length
-      ] ?? "off";
-    await this.selectThinking(next);
-    return next;
   }
 }

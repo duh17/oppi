@@ -221,7 +221,7 @@ struct ServerConnectionModelCommandsTests {
         #expect(connection.sessionStreamCoordinator.hasSessionBootstrap(sessionId: "s1"))
     }
 
-    @Test func thinkingCommandsSendCorrectClientMessages() async throws {
+    @Test func setThinkingLevelSendsClientMessage() async throws {
         let (connection, _) = await makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
@@ -231,29 +231,19 @@ struct ServerConnectionModelCommandsTests {
         }
 
         try await connection.setThinkingLevel(.high)
-        try await connection.cycleThinkingLevel()
 
         let messages = await sink.messages
         let thinkingMessages = messages.filter { message in
-            switch message {
-            case .setThinkingLevel, .cycleThinkingLevel:
-                return true
-            default:
-                return false
-            }
+            if case .setThinkingLevel = message { return true }
+            return false
         }
-        #expect(thinkingMessages.count == 2)
+        #expect(thinkingMessages.count == 1)
 
         guard case .setThinkingLevel(let level, _, _) = thinkingMessages[0] else {
             Issue.record("Expected setThinkingLevel client message")
             return
         }
         #expect(level == .high)
-
-        guard case .cycleThinkingLevel = thinkingMessages[1] else {
-            Issue.record("Expected cycleThinkingLevel client message")
-            return
-        }
     }
 
     @Test func sessionCommandsSendCorrectClientMessages() async throws {

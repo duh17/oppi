@@ -385,16 +385,13 @@ extension ServerConnection {
     }
 
     func syncThinkingLevelFromCommand(command: String, success: Bool, data: JSONValue?) {
-        guard success, command == "cycle_thinking_level" || command == "set_thinking_level" else {
+        guard success, command == "set_thinking_level" else {
             return
         }
 
         if let levelStr = data?.objectValue?["level"]?.stringValue,
            let level = ThinkingLevel(rawValue: levelStr) {
             chatState.thinkingLevel = level
-        } else if command == "cycle_thinking_level" {
-            // Server didn't return data — cycle locally
-            chatState.thinkingLevel = chatState.thinkingLevel.next
         }
     }
 

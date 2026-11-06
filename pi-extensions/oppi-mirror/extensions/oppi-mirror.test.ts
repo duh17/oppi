@@ -97,12 +97,6 @@ const piAgentMock = vi.hoisted(() => {
 
     readonly promptCalls: PendingPrompt[] = [];
     readonly reload = vi.fn(async () => {});
-    readonly getAvailableThinkingLevels = vi.fn(() => [
-      "off",
-      "low",
-      "medium",
-      "high",
-    ]);
     sessionId = "pi-session-1";
     sessionManager = { getSessionId: () => this.sessionId };
     _steeringMessages: string[] = [];
@@ -985,37 +979,6 @@ describe("oppi mirror input preflight", () => {
           success: false,
           error: "Pi did not start the session-tree navigation command",
         }),
-      ]);
-    });
-  });
-
-  it("cycles thinking levels through the attached AgentSession", async () => {
-    await withInteractiveTerminal(async () => {
-      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
-      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
-      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
-      const pi = createMockPi();
-      await oppiPiMirror(pi as never);
-      const ctx = createMockContext();
-      await startSession(pi, ctx);
-      const agentSession = new piAgentMock.FakeAgentSession();
-      agentSession.bindExtensions();
-      const socket = await startMirror(pi, ctx);
-      socket.sent.length = 0;
-
-      socket.receive(
-        JSON.stringify({
-          type: "command",
-          id: "cycle-thinking",
-          command: { type: "cycle_thinking_level" },
-        }),
-      );
-      await drainMicrotasks();
-
-      expect(agentSession.getAvailableThinkingLevels).toHaveBeenCalledOnce();
-      expect(pi.setThinkingLevel).toHaveBeenCalledWith("high");
-      expect(sentCommandResults(socket, "cycle-thinking")).toEqual([
-        expect.objectContaining({ success: true, data: { level: "high" } }),
       ]);
     });
   });

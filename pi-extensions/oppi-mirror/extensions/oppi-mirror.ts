@@ -145,13 +145,6 @@ interface EditableAgentSession {
   abortCompaction?: () => void;
   abortRetry?: () => void;
   abortBash?: () => void;
-  setAutoCompactionEnabled?: (enabled: boolean) => void;
-  setAutoRetryEnabled?: (enabled: boolean) => void;
-  setSteeringMode?: (mode: "all" | "one-at-a-time") => void;
-  setFollowUpMode?: (mode: "all" | "one-at-a-time") => void;
-  getAvailableThinkingLevels?: () => Array<
-    ReturnType<ExtensionAPI["getThinkingLevel"]>
-  >;
   getUserMessagesForForking?: () => Array<{ entryId: string; text: string }>;
 }
 
@@ -4990,19 +4983,6 @@ async function createTuiMirrorRuntime(
         return model;
       }
 
-      case "cycle_model": {
-        const models = await ctx.modelRegistry.getAvailable();
-        if (!ctx.model || models.length === 0) return null;
-        const index = models.findIndex(
-          (candidate) =>
-            candidate.provider === ctx.model?.provider &&
-            candidate.id === ctx.model?.id,
-        );
-        const next = models[(index + 1 + models.length) % models.length];
-        await pi.setModel(next);
-        return { model: next };
-      }
-
       case "set_thinking_level":
         if (command.persist === true) {
           throw new Error("Mirrored Pi sessions cannot save a global default.");
@@ -5013,23 +4993,6 @@ async function createTuiMirrorRuntime(
           >[0],
         );
         return { level: pi.getThinkingLevel() };
-
-      case "cycle_thinking_level": {
-        const session = requireEditableAgentSession(ctx);
-        if (!session.getAvailableThinkingLevels) {
-          throw new Error(
-            "Terminal Pi runtime thinking-level control is not attached yet",
-          );
-        }
-        const levels = session.getAvailableThinkingLevels();
-        const current = pi.getThinkingLevel();
-        if (levels.length === 0) return { level: current };
-        const currentIndex = levels.indexOf(current);
-        const next = levels[(currentIndex + 1) % levels.length];
-        if (next === undefined) return { level: current };
-        pi.setThinkingLevel(next);
-        return { level: pi.getThinkingLevel() };
-      }
 
       case "set_session_name": {
         const name = String(command.name ?? "").trim();
@@ -5046,84 +5009,6 @@ async function createTuiMirrorRuntime(
               : undefined,
         });
         return { compacting: true };
-
-      case "set_auto_compaction": {
-        const enabled = !!command.enabled;
-        const session = requireEditableAgentSession(ctx);
-        if (!session.setAutoCompactionEnabled) {
-          throw new Error(
-            "Terminal Pi runtime auto-compaction control is not attached yet",
-          );
-        }
-        session.setAutoCompactionEnabled(enabled);
-        return { enabled };
-      }
-
-      case "set_steering_mode": {
-        const mode = String(command.mode ?? "");
-        if (mode !== "all" && mode !== "one-at-a-time") {
-          throw new Error(
-            "Invalid set_steering_mode payload: expected all or one-at-a-time",
-          );
-        }
-        const session = requireEditableAgentSession(ctx);
-        if (!session.setSteeringMode) {
-          throw new Error(
-            "Terminal Pi runtime steering mode control is not attached yet",
-          );
-        }
-        session.setSteeringMode(mode);
-        return { mode };
-      }
-
-      case "set_follow_up_mode": {
-        const mode = String(command.mode ?? "");
-        if (mode !== "all" && mode !== "one-at-a-time") {
-          throw new Error(
-            "Invalid set_follow_up_mode payload: expected all or one-at-a-time",
-          );
-        }
-        const session = requireEditableAgentSession(ctx);
-        if (!session.setFollowUpMode) {
-          throw new Error(
-            "Terminal Pi runtime follow-up mode control is not attached yet",
-          );
-        }
-        session.setFollowUpMode(mode);
-        return { mode };
-      }
-
-      case "set_auto_retry": {
-        const enabled = !!command.enabled;
-        const session = requireEditableAgentSession(ctx);
-        if (!session.setAutoRetryEnabled) {
-          throw new Error(
-            "Terminal Pi runtime auto-retry control is not attached yet",
-          );
-        }
-        session.setAutoRetryEnabled(enabled);
-        return { enabled };
-      }
-
-      case "abort_retry": {
-        const session = requireEditableAgentSession(ctx);
-        if (!session.abortRetry) {
-          throw new Error(
-            "Terminal Pi runtime retry abort is not attached yet",
-          );
-        }
-        session.abortRetry();
-        return { success: true };
-      }
-
-      case "abort_bash": {
-        const session = requireEditableAgentSession(ctx);
-        if (!session.abortBash) {
-          throw new Error("Terminal Pi runtime bash abort is not attached yet");
-        }
-        session.abortBash();
-        return { success: true };
-      }
 
       default:
         return type satisfies never;

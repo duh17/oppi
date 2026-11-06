@@ -110,11 +110,6 @@ extension ServerConnection {
         try await send(.setThinkingLevel(level: level, persist: persist ? true : nil))
     }
 
-    // periphery:ignore - used by ChatActionHandler; false positive from extension file split
-    func cycleThinkingLevel() async throws {
-        try await send(.cycleThinkingLevel())
-    }
-
     /// Sync thinking level from a session state update (connected/state messages).
     func syncThinkingLevel(from session: Session) {
         guard let levelStr = session.thinkingLevel,

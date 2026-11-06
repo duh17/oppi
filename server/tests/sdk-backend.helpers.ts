@@ -36,17 +36,10 @@ export function makeSdkBackendStub(): {
 
   const session = {
     setThinkingLevel: vi.fn(),
-    cycleModel: vi.fn(async () => undefined),
-    cycleThinkingLevel: vi.fn(() => "high"),
     setSessionName: vi.fn(),
     messages: [],
     getSessionStats: vi.fn(() => ({})),
     compact: vi.fn(async () => ({})),
-    setAutoCompactionEnabled: vi.fn(),
-    setSteeringMode: vi.fn(),
-    setFollowUpMode: vi.fn(),
-    setAutoRetryEnabled: vi.fn(),
-    abortRetry: vi.fn(),
     abortBash: vi.fn(),
     dispose: vi.fn(),
     steer: vi.fn(async (text: string, images?: unknown[]) => {
@@ -114,18 +107,11 @@ export function makeSdkBackendStub(): {
     leafId: () => null,
     sessionTree: () => undefined,
     toolDefinition: () => undefined,
-    cycleModel: session.cycleModel,
     setThinkingLevel: session.setThinkingLevel,
-    cycleThinkingLevel: session.cycleThinkingLevel,
     setSessionName: session.setSessionName,
     messages: () => session.messages,
     getSessionStats: session.getSessionStats,
     compact: session.compact,
-    setAutoCompactionEnabled: session.setAutoCompactionEnabled,
-    setSteeringMode: session.setSteeringMode,
-    setFollowUpMode: session.setFollowUpMode,
-    setAutoRetryEnabled: session.setAutoRetryEnabled,
-    abortRetry: session.abortRetry,
     respondToExtensionUIRequest: vi.fn(() => true),
     onShutdownCleanupComplete: vi.fn((listener: () => void) => {
       if ((sdkBackend as { isDisposed: boolean }).isDisposed) {
