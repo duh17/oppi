@@ -9,6 +9,7 @@ import {
 import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
+import { isRecord } from "../json-shape.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
@@ -282,15 +283,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, { ok: true });
   }
 
-  function isObjectBody(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-  }
-
   function rejectNonObjectBody(
     value: unknown,
     res: ServerResponse,
   ): value is Record<string, unknown> {
-    if (isObjectBody(value)) return true;
+    if (isRecord(value)) return true;
     helpers.error(res, 400, "Request body must be an object");
     return false;
   }

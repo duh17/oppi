@@ -85,6 +85,18 @@ describe("normalizePiUsage", () => {
     });
   });
 
+  it("treats array usage as no usage and skips an array details block", () => {
+    expect(normalizePiUsage([])).toBeNull();
+
+    const usage = normalizePiUsage({
+      input_tokens: 1400,
+      output_tokens: 70,
+      prompt_tokens_details: [],
+      input_tokens_details: { cached_tokens: 1100 },
+    });
+    expect(usage?.cacheRead).toBe(1100);
+  });
+
   it("normalizes OpenAI Responses usage fields", () => {
     const usage = normalizePiUsage({
       input_tokens: 1400,

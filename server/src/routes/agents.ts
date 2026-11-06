@@ -29,6 +29,7 @@ import type { ChatAttachmentRef, Session } from "../types.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { isRecord } from "../json-shape.js";
 
 const log = createLogger({ base: { component: "agent_routes" } });
 
@@ -606,10 +607,6 @@ function applyOverrides(
     },
   };
   return validateAgentDefinition(merged);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildReceipt(

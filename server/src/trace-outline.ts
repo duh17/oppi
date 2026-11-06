@@ -7,6 +7,7 @@ import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-render
 import { projectAssistantTimelineBlocks } from "./session-protocol.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
 import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 export type TraceOutlineEntryKind =
   "user" | "assistant" | "thinking" | "tool" | "system" | "compaction" | "custom";
@@ -198,7 +199,7 @@ export function readSessionTraceOutlineFromEntries(
     let entry: OutlineSourceEntry = original;
     if (original.message?.role === "toolResult") {
       const result = retainResultDetails(
-        asRecord(original.message.details) ?? undefined,
+        asRecord(original.message.details),
         metadataBudget,
         options.mobileRenderers,
       );
@@ -310,7 +311,7 @@ function parseOutlineEntryLine(
     // budget here; whitespace must not bypass the lightweight outline contract.
     if (entry.message?.role === "toolResult") {
       const result = retainResultDetails(
-        asRecord(entry.message.details) ?? undefined,
+        asRecord(entry.message.details),
         metadataBudget,
         mobileRenderers,
       );
@@ -586,7 +587,7 @@ function projectMessageEntry(
           row.tool ?? "",
           entry.resultHints,
         );
-        row.details = asRecord(message.details) ?? undefined;
+        row.details = asRecord(message.details);
         row.display = resolveToolDisplay(row.tool ?? "", undefined, entry.resultHints);
       }
       return;
@@ -679,12 +680,6 @@ function projectAssistantEntry(
       toolRowsByCallId.set(id, row);
     }
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function isTextBlock(record: Record<string, unknown>): record is { type: string; text: string } {

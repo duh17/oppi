@@ -11,6 +11,7 @@ import {
 import { basename, dirname, join } from "node:path";
 
 import { generateId } from "../id.js";
+import { isRecord } from "../json-shape.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
@@ -561,7 +562,7 @@ function isStoredWorkspaceRecord(
   file: string,
 ): value is Record<string, unknown> & { id: string } {
   return (
-    isWorkspaceRecord(value) &&
+    isRecord(value) &&
     typeof value.id === "string" &&
     value.id.length > 0 &&
     file === `${value.id}.json`
@@ -576,10 +577,6 @@ function pathEntryExists(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isWorkspaceRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function workspaceTopLevelType(value: unknown): string {

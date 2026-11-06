@@ -28,6 +28,7 @@ import type {
   ServerMessage,
   Session,
 } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 const log = createLogger({ base: { component: "ws_message_handler" } });
 
@@ -99,12 +100,6 @@ export interface WsCommandMeta {
   captureRuntimeResult?: boolean;
   authenticatedDeviceId?: string;
   sendAudio?: (pcm: Buffer) => void;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function legacyImageCount(value: unknown): number {

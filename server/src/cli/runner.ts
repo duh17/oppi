@@ -32,6 +32,7 @@ import {
   writeJsonEnvelope,
 } from "./output.js";
 import { cmdStatus } from "./status.js";
+import { isRecord } from "../json-shape.js";
 
 export type CliRunOptions = Readonly<{
   dataDir?: string;
@@ -251,8 +252,4 @@ function parseCliJsonEnvelope(stdout: string): CliJsonEnvelope | undefined {
     }
   } catch {}
   return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

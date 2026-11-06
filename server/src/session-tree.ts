@@ -1,3 +1,5 @@
+import { asRecord } from "./json-shape.js";
+
 export type SessionTreeFilterMode = "default" | "no-tools" | "user-only" | "labeled-only" | "all";
 
 export interface SessionTreeNodeSnapshot {
@@ -55,10 +57,6 @@ const TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
   "thinking_level_change",
   "session_info",
 ]);
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
 
 function readOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -159,7 +157,7 @@ function extractDisplayTextFromMessageContent(content: unknown): string {
 
   const parts: string[] = [];
   for (const block of content) {
-    const record = toRecord(block);
+    const record = asRecord(block) ?? {};
 
     if (
       (record.type === "text" || record.type === "output_text") &&
@@ -256,10 +254,10 @@ function collectTreeToolCalls(tree: SessionTreeNode[]): Map<string, TreeToolCall
 
     const entry = current.entry;
     if (entry.type === "message") {
-      const message = toRecord(entry.message);
+      const message = asRecord(entry.message) ?? {};
       if (message.role === "assistant" && Array.isArray(message.content)) {
         for (const block of message.content) {
-          const record = toRecord(block);
+          const record = asRecord(block) ?? {};
           if (
             record.type === "toolCall" &&
             typeof record.id === "string" &&
@@ -267,7 +265,7 @@ function collectTreeToolCalls(tree: SessionTreeNode[]): Map<string, TreeToolCall
           ) {
             toolCalls.set(record.id, {
               name: record.name,
-              arguments: toRecord(record.arguments),
+              arguments: asRecord(record.arguments) ?? {},
             });
           }
         }
@@ -287,7 +285,7 @@ function isTreeEntryEligibleForFilters(entry: SessionTreeEntry, leafId: string |
     return true;
   }
 
-  const message = toRecord(entry.message);
+  const message = asRecord(entry.message) ?? {};
   if (message.role !== "assistant") {
     return true;
   }
@@ -320,12 +318,12 @@ function matchesSessionTreeFilter(
 
   switch (filterMode) {
     case "user-only":
-      return entry.type === "message" && toRecord(entry.message).role === "user";
+      return entry.type === "message" && asRecord(entry.message)?.role === "user";
 
     case "no-tools":
       return (
         !isSettingsEntry &&
-        !(entry.type === "message" && toRecord(entry.message).role === "toolResult")
+        !(entry.type === "message" && asRecord(entry.message)?.role === "toolResult")
       );
 
     case "labeled-only":
@@ -349,7 +347,7 @@ function extractTreeNodeSnapshot(
 
   switch (entry.type) {
     case "message": {
-      const message = toRecord(entry.message);
+      const message = asRecord(entry.message) ?? {};
       const role = typeof message.role === "string" ? message.role : undefined;
       let textPreview: string | undefined;
 
@@ -513,8 +511,8 @@ export function serializeSessionTree(
 }
 
 function parseSessionTreeNode(value: unknown): SessionTreeNode {
-  const nodeRecord = toRecord(value);
-  const entryRecord = toRecord(nodeRecord.entry);
+  const nodeRecord = asRecord(value) ?? {};
+  const entryRecord = asRecord(nodeRecord.entry) ?? {};
 
   if (
     typeof entryRecord.id !== "string" ||
@@ -579,7 +577,7 @@ export function serializeRawSessionTreePayload(
   leafId: string | null;
   nodes: SessionTreeNodeSnapshot[];
 } {
-  const record = toRecord(payload);
+  const record = asRecord(payload) ?? {};
   const leafId = typeof record.leafId === "string" ? record.leafId : null;
   const tree = parseSessionTreeNodes(record.tree);
   return serializeSessionTree(sessionTreeManagerFromTree(tree, leafId), filterMode);

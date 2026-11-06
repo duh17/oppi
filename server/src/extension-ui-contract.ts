@@ -8,6 +8,7 @@ import type {
   ServerMessage,
 } from "./types.js";
 import { terminalLineToTextSpans, terminalLineVisibleText } from "./ansi.js";
+import { isRecord } from "./json-shape.js";
 
 export const EXTENSION_UI_FIRE_AND_FORGET_METHODS = new Set([
   "notify",
@@ -155,10 +156,6 @@ export interface ExtensionUIResponsePayload {
 export interface ExtensionUIAskResult {
   answers: Record<string, string | string[]>;
   allIgnored: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isTableCell(value: unknown): value is string | number | null {

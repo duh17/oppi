@@ -16,11 +16,7 @@ export function resolveToolArguments(
   return parseJsonObject(block.partialJson);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
+import { asRecord } from "./json-shape.js";
 
 function parseJsonObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "string") return undefined;

@@ -167,4 +167,11 @@ describe("auth.module", () => {
     expect(await networkGet("/health")).toEqual({ status: 403, body: { error: "Forbidden" } });
     expect(await upgradeStatus()).toBe(403);
   }, 30_000);
+
+  it("refuses a gate answer that is an array, even one carrying allow", async () => {
+    await startWithModule({
+      source: `export function gate() { return Object.assign([], { allow: true }); }`,
+    });
+    expect(await networkGet("/health")).toEqual({ status: 403, body: { error: "Forbidden" } });
+  }, 30_000);
 });

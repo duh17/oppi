@@ -23,6 +23,7 @@ import { isDeepStrictEqual } from "node:util";
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { generateId } from "./id.js";
 import { writeFileAtomic } from "./storage/atomic-file.js";
+import { asRecord } from "./json-shape.js";
 
 const MANIFEST_VERSION = 1;
 const MAX_SESSION_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -99,12 +100,6 @@ export interface AddSessionAttachmentFileOptions {
   height?: number;
   text?: string;
   deleteSource?: boolean;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function attachmentsRoot(dataDir: string): string {

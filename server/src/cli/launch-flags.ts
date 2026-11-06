@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from "../thinking-levels.js";
+import { isRecord } from "../json-shape.js";
 
 export type ResolvedCliModel = {
   canonicalId: string;
@@ -104,8 +105,4 @@ export function applySessionDefaultFlags(
   if (policy.excludeTools !== undefined) current.excludeTools = policy.excludeTools;
   if (policy.noTools !== undefined) current.noTools = policy.noTools;
   return { ...definition, sessionDefaults: current };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }

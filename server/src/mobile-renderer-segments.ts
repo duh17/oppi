@@ -1,15 +1,12 @@
 import type { StyledSegment } from "./types.js";
 import type { MobileToolRenderer } from "./mobile-renderer.js";
+import { asRecord } from "./json-shape.js";
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
 function num(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
-}
-
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
 }
 
 function recordField(

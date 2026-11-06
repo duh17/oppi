@@ -1,3 +1,4 @@
+import { asRecord } from "../../json-shape.js";
 import { safeErrorMessage } from "../../log-utils.js";
 import type {
   FetchProviderQuotasOptions,
@@ -6,7 +7,6 @@ import type {
   ProviderQuotaWindow,
 } from "../types.js";
 import {
-  asRecord,
   credentialType,
   emptyProviderQuota,
   finalizeProviderQuota,

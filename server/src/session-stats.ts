@@ -1,6 +1,6 @@
 /** Session stats helpers shared by the SDK and durable backends. */
 
-import { toRecord } from "./session-command-parse.js";
+import { asRecord } from "./json-shape.js";
 
 export interface SessionModelUsageSnapshot {
   provider?: string;
@@ -67,8 +67,8 @@ export function addUsageToModelBreakdown(
   provider: string | undefined,
   value: unknown,
 ): void {
-  const usage = toRecord(value);
-  const cost = toRecord(usage.cost);
+  const usage = asRecord(value) ?? {};
+  const cost = asRecord(usage.cost) ?? {};
   const current = byModel.get(key) ?? {
     ...(provider ? { provider } : {}),
     model,

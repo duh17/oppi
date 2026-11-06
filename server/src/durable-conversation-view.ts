@@ -39,6 +39,7 @@ import type {
   NestedToolCalls,
 } from "./types.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
+import { asRecord } from "./json-shape.js";
 
 /**
  * Visibility metadata: a conversation document clients replicate. Every other
@@ -104,12 +105,6 @@ export const CONVERSATION_CLIENT_DOCS: readonly ClientDocSpec[] = [
   clientDoc({ doc: UsageDoc, client: true }),
   clientDoc(DurableUIClientDoc),
 ];
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
 
 function argsRecord(args: unknown): Record<string, unknown> {
   return asRecord(args) ?? {};

@@ -5,12 +5,7 @@ import {
   materializeToolMediaDetails,
 } from "./session-attachments.js";
 import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
+import { asRecord } from "./json-shape.js";
 
 export function hasToolMediaDetails(details: unknown): boolean {
   if (!details || typeof details !== "object" || Array.isArray(details)) {

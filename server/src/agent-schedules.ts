@@ -8,6 +8,7 @@ import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
+import { isRecord } from "./json-shape.js";
 
 export const SCHEDULE_IDEMPOTENCY_CONFLICT_CODE = "SCHEDULE_IDEMPOTENCY_CONFLICT";
 export const SCHEDULE_VERSION_CONFLICT_CODE = "SCHEDULE_VERSION_CONFLICT";
@@ -1066,10 +1067,6 @@ function assertAllowedKeys(
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) throw new Error(`${label} has unexpected field: ${key}`);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function dropRemovedActionFields(action: AgentScheduleAction): AgentScheduleAction {

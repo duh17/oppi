@@ -8,6 +8,7 @@ import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import type { AgentDefinition } from "./agent-launch-service.js";
+import { isRecord } from "./json-shape.js";
 
 export type AgentDefinitionStatus = "active" | "archived";
 
@@ -732,10 +733,6 @@ function validateBoolean(value: unknown, label: string): boolean {
 function validateStringArray(value: unknown, label: string): string[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
   return value.map((entry, index) => requireString(entry, `${label}[${index}]`));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function assertAllowedKeys(

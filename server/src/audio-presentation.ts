@@ -1,6 +1,4 @@
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
-}
+import { asRecord } from "./json-shape.js";
 
 function audioPresentationText(root: Record<string, unknown>): string | undefined {
   const candidates = [root.text, root.message, root.transcript];
@@ -14,11 +12,11 @@ function audioPresentationText(root: Record<string, unknown>): string | undefine
 
 export function normalizeAudioPresentationDetails(details: unknown): unknown {
   const root = asRecord(details);
-  if (!root || Array.isArray(root)) return details;
+  if (!root) return details;
   if (root.kind === "audio_presentation") return details;
 
   const audio = asRecord(root.audio);
-  if (!audio || Array.isArray(audio) || audio.kind !== "audio") return details;
+  if (audio?.kind !== "audio") return details;
 
   const text = audioPresentationText(root);
   return {

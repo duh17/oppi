@@ -2,6 +2,7 @@ import { calculateCost, type KnownProvider, type Usage } from "@earendil-works/p
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { splitCanonicalModelId } from "./model-resolution.js";
 import type { PiMessageUsage } from "./pi-events.js";
+import { asRecord } from "./json-shape.js";
 
 export interface NormalizedUsage {
   input: number;
@@ -120,11 +121,10 @@ function estimateUncachedInputWhenCacheReadPresent(tokens: TokenCounts): number 
   return tokens.input;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
-}
-
-function readFiniteNumber(record: Record<string, unknown> | null, key: string): number | undefined {
+function readFiniteNumber(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
   if (!record) {
     return undefined;
   }

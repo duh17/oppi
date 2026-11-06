@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
+import { isRecord } from "../src/json-shape.ts";
 
 export const EVALUATION_SCENARIOS = [
   "session-orientation",
@@ -750,10 +751,6 @@ function timestampValue(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isSanitizedRowsDocument(value: unknown): value is { rows: SanitizedRow[] } {

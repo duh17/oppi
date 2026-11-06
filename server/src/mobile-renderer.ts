@@ -33,6 +33,7 @@ import {
   resolveOutputPresentation,
 } from "./mobile-renderer-facts.js";
 import { outputAvailability } from "./mobile-renderer-availability.js";
+import { asRecord } from "./json-shape.js";
 export { resolveToolDisplay } from "./mobile-renderer-display.js";
 export type { StyledSegment } from "./types.js";
 export interface MobileToolRenderer {
@@ -42,9 +43,6 @@ export interface MobileToolRenderer {
   renderResult(details: unknown, isError: boolean): StyledSegment[];
 }
 
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
-}
 export class MobileRendererRegistry {
   private readonly log = createLogger();
   private readonly invalidWarnings = new Set<string>();

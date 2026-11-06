@@ -10,6 +10,7 @@ import {
   type TraceEvent,
 } from "./trace.js";
 import type { CacheMissNoticeSource } from "./cache-miss.js";
+import { asRecord } from "./json-shape.js";
 
 export interface TracePageOptions {
   cursor?: string;
@@ -1274,12 +1275,6 @@ function toolEvidenceCallId(entry: SessionEntry): string | undefined {
     return undefined;
   }
   return typeof data.toolCallId === "string" ? data.toolCallId : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function formatEntries(

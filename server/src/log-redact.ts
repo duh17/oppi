@@ -1,4 +1,5 @@
 import { SECRET_PATTERNS } from "./secret-patterns.js";
+import { isRecord } from "./json-shape.js";
 
 const DEFAULT_MAX_DEPTH = 6;
 const DEFAULT_MAX_STRING_LENGTH = 2_048;
@@ -141,10 +142,6 @@ export function redactLogString(
 
   const truncatedChars = output.length - maxStringLength;
   return `${output.slice(0, maxStringLength)}…${TRUNCATED}(${truncatedChars} chars)`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function sanitizeError(error: Error, options: ResolvedLogRedactOptions): Record<string, unknown> {

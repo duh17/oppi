@@ -88,6 +88,7 @@ import type {
   Session,
   Workspace,
 } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 
@@ -226,12 +227,6 @@ interface BridgeConnection extends MirrorBridgeCommandConnection {
   lastSeenAt: number;
   stopRequestedAt?: number;
   fireAndForgetCommandIds: Set<string>;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function rawDataToText(data: RawData): string {

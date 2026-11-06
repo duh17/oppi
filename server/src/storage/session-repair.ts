@@ -2,6 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 
 import { estimateUsageCostFromModel, normalizePiUsage } from "../token-usage.js";
 import type { Session } from "../types.js";
+import { isRecord } from "../json-shape.js";
 
 const TRACE_TAIL_INITIAL_BYTES = 256 * 1024;
 const TRACE_TAIL_MAX_BYTES = 2 * 1024 * 1024;
@@ -13,10 +14,6 @@ export function normalizeSessionTokens(tokens: Session["tokens"] | undefined): S
     cacheRead: tokens?.cacheRead ?? 0,
     cacheWrite: tokens?.cacheWrite ?? 0,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function totalTokenUsage(tokens: Session["tokens"]): number {

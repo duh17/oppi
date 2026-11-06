@@ -11,6 +11,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 
 import { extractQueuedUserText } from "./session-queue-utils.js";
 import { composeModelId } from "./session-state.js";
+import { asRecord } from "./json-shape.js";
 
 /** Default head budget for catalog/import. Mirror uses a larger caller budget. */
 export const DEFAULT_SESSION_JSONL_META_READ_BYTES = 16_384;
@@ -42,12 +43,6 @@ export interface ParseSessionJsonlHeadOptions {
 export interface ReadSessionJsonlMetaOptions extends ParseSessionJsonlHeadOptions {
   /** Read budget in bytes. Callers choose 16KB vs 1MB; this helper never reads past it. */
   maxBytes: number;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function maybeTruncate(text: string, maxChars: number | undefined): string {

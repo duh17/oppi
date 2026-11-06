@@ -15,6 +15,7 @@ import {
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { resolveWorkspaceIdForCli } from "../resources.js";
 import { resolveSessionIdTargets } from "../session-id-target.js";
+import { isRecord } from "../../json-shape.js";
 
 function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
@@ -106,10 +107,6 @@ function savedAgentReference(agent: string | undefined): string | undefined {
     return undefined;
   }
   return normalized;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 async function resolveOneSessionId(

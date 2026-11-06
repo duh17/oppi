@@ -17,6 +17,7 @@ import {
 } from "../extension-ui-contract.js";
 import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
 import { validateIconChoice } from "../icon-choice.js";
+import { asRecord } from "../json-shape.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { splitCanonicalModelId } from "../model-resolution.js";
@@ -910,7 +911,7 @@ function normalizeExtensionUINotification(body: Record<string, unknown>): Server
     widgetPlacement: stringField(body.widgetPlacement),
     extensionScopeId: stringField(body.extensionScopeId),
     extensionDisplayName: stringField(body.extensionDisplayName),
-    workingIndicator: recordField(body.workingIndicator),
+    workingIndicator: asRecord(body.workingIndicator),
     workingVisible: booleanField(body.workingVisible),
     hiddenThinkingLabel: stringField(body.hiddenThinkingLabel),
     toolsExpanded: booleanField(body.toolsExpanded),
@@ -946,7 +947,7 @@ function normalizeToolStart(body: Record<string, unknown>): ServerMessage | null
   return {
     type: "tool_start",
     tool,
-    args: recordField(body.args) ?? {},
+    args: asRecord(body.args) ?? {},
     toolCallId: stringField(body.toolCallId),
     ...(callSegments ? { callSegments } : {}),
   };
@@ -964,7 +965,7 @@ function normalizeToolOutput(body: Record<string, unknown>): ServerMessage | nul
     mode: mode === "replace" ? "replace" : mode === "append" ? "append" : undefined,
     truncated: booleanField(body.truncated),
     totalBytes: numberField(body.totalBytes),
-    details: recordField(body.details),
+    details: asRecord(body.details),
   };
 }
 
@@ -976,7 +977,7 @@ function normalizeToolEnd(body: Record<string, unknown>): ServerMessage | null {
     type: "tool_end",
     tool,
     toolCallId: stringField(body.toolCallId),
-    details: recordField(body.details),
+    details: asRecord(body.details),
     isError: booleanField(body.isError),
     ...(resultSegments ? { resultSegments } : {}),
   };
@@ -994,7 +995,7 @@ function styledSegmentsField(value: unknown): StyledSegment[] | undefined {
     "error",
   ]);
   const segments = value.flatMap((item): StyledSegment[] => {
-    const record = recordField(item);
+    const record = asRecord(item);
     const text = stringField(record?.text);
     if (text === undefined) return [];
     const style = stringField(record?.style);
@@ -1041,12 +1042,6 @@ function numberField(value: unknown): number | undefined {
 
 function booleanField(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
-}
-
-function recordField(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function askQuestionsField(value: unknown): AskQuestion[] | undefined {

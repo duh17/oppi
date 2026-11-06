@@ -1,6 +1,7 @@
 import type { McpAddServerRequest, McpExposure, McpPatchServerRequest } from "./types/mcp.js";
 import type { ProviderAuthLaunchMode } from "./provider-auth/types.js";
-import { isRecord, McpError, MCP_EXPOSURES } from "./mcp-config.js";
+import { isRecord } from "./json-shape.js";
+import { McpError, MCP_EXPOSURES } from "./mcp-config.js";
 
 function object(value: unknown, allowed: string[]): Record<string, unknown> {
   if (!isRecord(value)) throw new McpError(400, "Expected a JSON object");

@@ -9,6 +9,7 @@ import { createLocalApiCommandContext } from "./command-support.js";
 import type { LocalApiConnection } from "./local-api-client.js";
 import { exitCli, setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "./output.js";
 import { apiStatus } from "./resources.js";
+import { isRecord } from "../json-shape.js";
 
 export async function cmdQuota(
   storage: LocalApiConnection,
@@ -252,8 +253,4 @@ function isNullableFiniteNumber(value: unknown): value is number | null {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

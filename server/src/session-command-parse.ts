@@ -6,17 +6,7 @@ import type {
   ConversationStreamDetach,
   ConversationStreamOlder,
 } from "./types.js";
-
-export function toRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
+import { asRecord } from "./json-shape.js";
 
 export function readOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -68,7 +58,7 @@ export function readShareSessionAction(command: Record<string, unknown>): ShareS
 export function readShareSessionRedactionPolicy(
   command: Record<string, unknown>,
 ): ShareSessionRedactionPolicyInput | undefined {
-  const raw = toRecord(command.redactionPolicy);
+  const raw = asRecord(command.redactionPolicy) ?? {};
   if (Object.keys(raw).length === 0) {
     return undefined;
   }

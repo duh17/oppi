@@ -25,6 +25,7 @@ import {
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus } from "../resources.js";
+import { isRecord } from "../../json-shape.js";
 
 const AGENT_VERSION_CONFLICT_CODE = "AGENT_VERSION_CONFLICT";
 const AGENT_IDEMPOTENCY_CONFLICT_CODE = "AGENT_IDEMPOTENCY_CONFLICT";
@@ -234,10 +235,6 @@ function agentErrorDetails(error: unknown): AgentErrorDetails {
 
 function positiveVersion(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [

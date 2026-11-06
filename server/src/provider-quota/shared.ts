@@ -1,5 +1,6 @@
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import type { AuthResult, Credential } from "@earendil-works/pi-ai";
+import { asRecord } from "../json-shape.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type {
   FetchProviderQuotasOptions,
@@ -12,12 +13,6 @@ import type {
 
 export const UPSTREAM_TIMEOUT_MS = 10_000;
 const ERROR_MESSAGE_MAX_CHARS = 200;
-
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 export function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;

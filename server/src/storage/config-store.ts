@@ -32,6 +32,7 @@ import type {
   PushRegistration,
   ServerConfig,
 } from "../types.js";
+import { isRecord } from "../json-shape.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -43,10 +44,6 @@ export interface ConfigValidationResult {
   errors: string[];
   warnings: string[];
   config?: ServerConfig;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {

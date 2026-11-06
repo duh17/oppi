@@ -59,6 +59,7 @@ import {
   type WaitProgressSnapshot,
 } from "./session-watch.js";
 import { ProgramStatusEmitter, type ProgramStatusStream } from "../program-status-osc.js";
+import { isRecord } from "../../json-shape.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
@@ -70,10 +71,6 @@ export interface SessionCliCallerContext {
   signal?: AbortSignal;
   /** UI-only wait snapshots. Not printed on the human CLI. */
   onLiveSnapshot?: (text: string) => void;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 export async function cmdSession(

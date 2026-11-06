@@ -2,6 +2,7 @@ import type { Session } from "../../types.js";
 import type { LocalApiRequestOptions } from "../local-api-client.js";
 import { printList } from "../output.js";
 import { clipListCell } from "./session-list.js";
+import { isRecord } from "../../json-shape.js";
 
 export type SessionTraceEvent = {
   id?: string;
@@ -437,10 +438,6 @@ function renderInspectTools(turns: SessionInspectTurn[], selectedSet: Set<number
     lines.push("");
   }
   return lines.join("\n").trimEnd();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function parseTraceOutlineEntries(result: Record<string, unknown>): SessionTraceOutlineEntry[] {

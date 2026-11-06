@@ -11,6 +11,7 @@ import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
+import { isRecord } from "../json-shape.js";
 
 /** A write the setting refuses. Routes answer 400 with the message. */
 export class SettingValidationError extends Error {
@@ -41,9 +42,6 @@ export interface EnabledPatch {
 }
 
 export type WorkspaceWriteKind = "create" | "update";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function fail(message: string): never {
   throw new SettingValidationError(message);

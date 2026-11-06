@@ -1,8 +1,4 @@
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
+import { asRecord } from "./json-shape.js";
 
 export function stripImageMediaFromDetails(details: unknown): unknown | undefined {
   const root = asRecord(details);

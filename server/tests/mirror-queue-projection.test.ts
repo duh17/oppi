@@ -426,6 +426,51 @@ describe("mirror session tree serialization", () => {
     expect(JSON.stringify(snapshot)).not.toContain("internal");
   });
 
+  it("previews a tool call whose arguments are an array as having no arguments", () => {
+    const entries = new Map([
+      [
+        "assistant-1",
+        {
+          id: "assistant-1",
+          parentId: null,
+          type: "message",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "tc-1", name: "custom", arguments: ["x"] }],
+          },
+        },
+      ],
+      [
+        "result-1",
+        {
+          id: "result-1",
+          parentId: "assistant-1",
+          type: "message",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: { role: "toolResult", toolCallId: "tc-1", toolName: "custom", content: "ok" },
+        },
+      ],
+    ]);
+    const tree = [
+      {
+        entry: entries.get("assistant-1")!,
+        children: [{ entry: entries.get("result-1")!, children: [] }],
+      },
+    ];
+
+    const snapshot = serializeSessionTree(
+      {
+        getTree: () => tree,
+        getLeafId: () => "result-1",
+        getEntry: (id: string) => entries.get(id),
+      },
+      "all",
+    );
+
+    expect(snapshot.nodes.find((node) => node.id === "result-1")?.textPreview).toBe("[custom: {}]");
+  });
+
   it("serializes terminal session trees into mobile outline snapshots", () => {
     const entries = new Map([
       [

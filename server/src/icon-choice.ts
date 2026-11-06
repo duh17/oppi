@@ -1,4 +1,5 @@
 import type { IconChoice } from "./types/icon.js";
+import { isRecord } from "./json-shape.js";
 
 export const DEFAULT_ICON_CHOICE: IconChoice = Object.freeze({ kind: "default" });
 export const ICON_ASSET_ID_PATTERN = /^ia_[A-Za-z0-9_-]{43}$/;
@@ -187,10 +188,6 @@ export function isSingleEmojiSequence(scalars: string[]): boolean {
     if (index === undefined) return false;
   }
   return true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function assertAllowedKeys(

@@ -3,6 +3,7 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 
 import { localApiSocketPath } from "../local-api-socket.js";
 import type { ServerConfig } from "../types.js";
+import { isRecord } from "../json-shape.js";
 
 export type LocalApiRequestOptions = {
   method?: string;
@@ -176,8 +177,4 @@ function validatedApiErrorFields(value: unknown): {
 
 function positiveVersion(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }

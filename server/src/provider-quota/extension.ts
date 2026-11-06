@@ -1,5 +1,6 @@
 import type { ModelAuth } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { asRecord } from "../json-shape.js";
 import { emptyProviderQuota, makeProviderQuotaWindow, UPSTREAM_TIMEOUT_MS } from "./shared.js";
 import type { ProviderQuota, ProviderQuotaAdapter, ProviderQuotaWindow } from "./types.js";
 
@@ -13,12 +14,6 @@ export interface ExtensionQuotaSource {
     signal: AbortSignal;
     getAuth(): Promise<ModelAuth | undefined>;
   }): Promise<unknown>;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function boundedString(value: unknown, max = 80): string {
@@ -37,7 +32,7 @@ function integerOrNull(value: unknown): number | null {
 }
 
 function parseWindow(value: unknown): ProviderQuotaWindow {
-  const window = record(value);
+  const window = asRecord(value);
   if (
     !window ||
     typeof window.usedPercent !== "number" ||
@@ -65,7 +60,7 @@ export function parseExtensionQuota(
   source: ExtensionQuotaSource,
   fetchedAt: number,
 ): ProviderQuota {
-  const result = record(value);
+  const result = asRecord(value);
   const windows = result?.windows;
   if (
     !result ||
@@ -76,7 +71,7 @@ export function parseExtensionQuota(
     throw new Error("Invalid extension quota response");
   }
   const credits =
-    result.credits === null || result.credits === undefined ? null : record(result.credits);
+    result.credits === null || result.credits === undefined ? null : asRecord(result.credits);
   if (
     (result.credits !== null && result.credits !== undefined && !credits) ||
     (credits && (typeof credits.hasCredits !== "boolean" || typeof credits.unlimited !== "boolean"))
@@ -112,7 +107,7 @@ export function parseExtensionQuota(
 
 export function parseExtensionQuotaSource(value: unknown): ExtensionQuotaSource | undefined {
   try {
-    const source = record(value);
+    const source = asRecord(value);
     if (!source) return undefined;
     const providerId = source.providerId;
     const fetcher = source.fetch;

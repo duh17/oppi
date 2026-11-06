@@ -19,6 +19,7 @@ import {
   type TelemetryEventUploadResponse,
 } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { isRecord } from "../json-shape.js";
 
 const TELEMETRY_DIR = "telemetry";
 
@@ -66,10 +67,6 @@ function toValidTimestamp(value: unknown, fallback: number): number | null {
 
   const timestamp = Math.trunc(value);
   return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function sanitizePayloadValue(

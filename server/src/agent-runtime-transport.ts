@@ -9,6 +9,7 @@ import type {
   ServerMessage,
   Session,
 } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 /**
  * RPC passthrough commands forwarded through AgentRuntimeTransport.
@@ -194,12 +195,6 @@ export function applyForwardedCommandResultToSession(options: {
     changed,
     shouldBroadcastState: STATE_BROADCAST_COMMANDS.has(commandType),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function asNonEmptyString(value: unknown): string | undefined {

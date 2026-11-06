@@ -24,6 +24,7 @@ import {
   backfillCostFromTokens,
   normalizeSessionTokens,
 } from "./session-repair.js";
+import { isRecord } from "../json-shape.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
 const SCHEMA_VERSION = "10";
@@ -1129,10 +1130,6 @@ function migrateDurableLaunchIcon(value: unknown): unknown {
     }
   }
   return migrateIconChoice(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function sortSessions(sessions: Session[]): Session[] {

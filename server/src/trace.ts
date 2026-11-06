@@ -56,6 +56,7 @@ import {
   replayCacheMissHistory,
   type CacheMissNoticeSource,
 } from "./cache-miss.js";
+import { asRecord } from "./json-shape.js";
 
 export type TraceViewMode = "context" | "full";
 
@@ -87,12 +88,6 @@ export interface LiveEntryRendererSet {
 }
 
 const log = createLogger({ base: { component: "trace" } });
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 const RESERVED_CUSTOM_TYPE_PREFIX = "oppi-";
 

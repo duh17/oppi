@@ -3,6 +3,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIProtocolRequest } from "./extension-ui-contract.js";
 import type { ExtensionUINotifyType, ExtensionUIWidgetPlacement } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 export interface PiMessageUsage {
   input?: number;
@@ -132,12 +133,6 @@ export function parsePiStateSnapshot(raw: unknown): PiStateSnapshot | null {
     isCompacting: asBoolean(record.isCompacting),
     autoCompaction: asBoolean(record.autoCompaction),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function asString(value: unknown): string | undefined {

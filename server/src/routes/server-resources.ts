@@ -7,6 +7,7 @@ import { httpStatusForPiResourceError } from "../settings/pi-resource-errors.js"
 import { isRevision } from "../settings/revision.js";
 import { SettingValidationError, validateSetting, type SettingKey } from "../settings/registry.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { isRecord } from "../json-shape.js";
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 const MAX_CAUSAL_MESSAGE_CHARS = 512;
@@ -78,10 +79,6 @@ function acceptsJson(req: IncomingMessage): boolean {
   const contentType = req.headers?.["content-type"];
   const value = Array.isArray(contentType) ? contentType[0] : contentType;
   return value?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

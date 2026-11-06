@@ -23,6 +23,7 @@ import type {
   ExtensionUINativeSurface,
   ExtensionUITextSpan,
 } from "./types.js";
+import { isRecord } from "./json-shape.js";
 
 /**
  * Composable extension surfaces, version 2: validation, patch merge, and the v1 projection.
@@ -141,10 +142,6 @@ const NODE_ROLES = ["primary", "secondary", "destructive"] as const;
 const PILL_NODE_TYPES = ["icon", "text", "badge", "elapsed", "progress"] as const;
 /** Stable ids become accessibility identifiers on the device: no spaces, no separators we own. */
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function text(value: unknown, maxChars: number, required: true): string;
 function text(value: unknown, maxChars: number, required?: false): string | undefined;

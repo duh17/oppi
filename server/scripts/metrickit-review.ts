@@ -9,6 +9,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { asRecord } from "../src/json-shape.ts";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -162,7 +163,10 @@ function listFiles(dir: string): string[] {
 function parseJsonLine(line: string): MetricKitRecord | null {
   try {
     const parsed = JSON.parse(line) as MetricKitRecord;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.payloads)
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Array.isArray(parsed.payloads)
       ? parsed
       : null;
   } catch {
@@ -202,12 +206,6 @@ function diagnosticCount(payload: MetricKitPayload, summaryKey: string, rawField
   const raw = parseRawPayload(payload.raw);
   const value = raw[rawField];
   return Array.isArray(value) ? value.length : 0;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
@@ -471,7 +469,8 @@ export function buildMetricKitReview(options: {
   const days = Math.max(0, options.days ?? 7);
   const hours = options.hours == null ? undefined : Math.max(0, options.hours);
   const explicitSinceMs = safeNumber(options.sinceMs);
-  const cutoffMs = explicitSinceMs ?? Date.now() - (hours != null ? hours * HOUR_MS : days * DAY_MS);
+  const cutoffMs =
+    explicitSinceMs ?? Date.now() - (hours != null ? hours * HOUR_MS : days * DAY_MS);
   const windowLabel =
     explicitSinceMs != null
       ? `since ${formatTs(explicitSinceMs)}`
@@ -532,13 +531,14 @@ export function buildMetricKitReview(options: {
     requestedSinceMs: cutoffMs,
     telemetryDir: dir,
     telemetryAvailable,
-    evidenceState: !telemetryAvailable || filesRead === 0
-      ? "unavailable"
-      : records === 0
-        ? "invalid"
-        : payloads === 0
-          ? "stale"
-          : "available",
+    evidenceState:
+      !telemetryAvailable || filesRead === 0
+        ? "unavailable"
+        : records === 0
+          ? "invalid"
+          : payloads === 0
+            ? "stale"
+            : "available",
     filesRead,
     malformedRecords,
     records,
@@ -656,7 +656,9 @@ function requiredArg(argv: string[], index: number, flag: string): string {
 function patternArg(argv: string[], index: number, flag: string): string {
   const value = argv[index];
   if (value === undefined || value.length === 0 || value.startsWith("--")) {
-    throw new Error(`${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`);
+    throw new Error(
+      `${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`,
+    );
   }
   return value;
 }

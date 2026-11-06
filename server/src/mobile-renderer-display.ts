@@ -1,7 +1,5 @@
 import type { ToolDisplay } from "./types.js";
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
-}
+import { asRecord } from "./json-shape.js";
 /** One producer-only name rule. Pi's public definitions drop raw MCP titles,
  * icons and serverInfo; do not guess titles from description or serverInfo.name.
  * See createMcpToolDefinition/createMcpToolName in Pi's MCP adapter.

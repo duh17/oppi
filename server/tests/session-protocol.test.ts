@@ -722,6 +722,25 @@ describe("translatePiEvent", () => {
     });
   });
 
+  describe("message_update: array tool arguments", () => {
+    it("treats a tool call's array arguments like empty arguments", () => {
+      const endEvent = (args: unknown) =>
+        ({
+          type: "message_update",
+          message: { content: [] },
+          assistantMessageEvent: {
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: { type: "toolCall", id: "tc-arr", name: "read", arguments: args },
+          },
+        }) as unknown as AgentSessionEvent;
+
+      expect(translatePiEvent(endEvent(["/c.ts"]), makeCtx())).toEqual(
+        translatePiEvent(endEvent({}), makeCtx()),
+      );
+    });
+  });
+
   describe("message_update: streamed tool args", () => {
     it("does not duplicate large string args as tool output", () => {
       const ctx = makeCtx();

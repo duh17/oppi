@@ -11,8 +11,8 @@ import type {
 import type { ProviderAuthLaunchMode } from "./provider-auth/types.js";
 import { McpCli, type McpCliProcess } from "./mcp-cli.js";
 import { McpAuthManager } from "./mcp-auth.js";
+import { isRecord } from "./json-shape.js";
 import {
-  isRecord,
   McpError,
   MCP_EXPOSURES,
   patchMcpConfig,

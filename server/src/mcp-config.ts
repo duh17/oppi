@@ -1,12 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { HttpStatusError } from "./http-status-error.js";
+import { isRecord } from "./json-shape.js";
 import type { McpPatchServerRequest, McpServerConfig } from "./types/mcp.js";
 
 export class McpError extends HttpStatusError {}
 export const MCP_EXPOSURES = ["codemode", "deferred", "direct", "hidden"] as const;
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 export function readMcpDocument(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   let document: unknown;

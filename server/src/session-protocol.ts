@@ -30,6 +30,7 @@ import { normalizePiUsage, type NormalizedUsage } from "./token-usage.js";
 import { createLogger } from "./logger.js";
 import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
 import { extractToolMutations, normalizeMutationToolName } from "./tool-mutations.js";
+import { asRecord } from "./json-shape.js";
 
 const log = createLogger({ base: { component: "session_protocol" } });
 
@@ -94,10 +95,6 @@ function shellPreviewClock(ctx: TranslationContext): Map<string, number> {
 }
 
 // ─── Text Helpers ───
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
-}
 
 interface NormalizedErrorDetails {
   message?: string;
@@ -335,7 +332,7 @@ export function projectAssistantContentRuns(
   for (const [contentIndex, part] of (content as unknown[]).entries()) {
     const block = asRecord(part);
     const isText =
-      block !== null &&
+      block !== undefined &&
       (block.type === "text" || block.type === "output_text") &&
       typeof block.text === "string";
     if (isText) {
@@ -750,7 +747,7 @@ function extractStreamingToolCallUpdate(
     return null;
   }
 
-  let toolCall = evt.type === "toolcall_end" ? asRecord(evt.toolCall) : null;
+  let toolCall = evt.type === "toolcall_end" ? asRecord(evt.toolCall) : undefined;
 
   const messageRecord = asRecord(event.message);
   const messageContent = Array.isArray(messageRecord?.content)

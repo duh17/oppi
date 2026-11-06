@@ -9,6 +9,7 @@ import {
   writeHumanLineRaw,
   writeJsonEnvelope,
 } from "../output.js";
+import { isRecord } from "../../json-shape.js";
 
 type ConfigValueType = "string" | "number" | "boolean" | "json";
 
@@ -346,10 +347,6 @@ function coerceValue(raw: string, type: ConfigValueType): unknown {
       }
     }
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function splitConfigPath(path: string): string[] {

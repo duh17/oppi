@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { isRecord } from "../src/json-shape.ts";
 import { EVENT_DEFS, GROUPS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
 import { tagsMatch } from "../src/telemetry/validate.ts";
 import { buildLabel } from "./build-label.ts";
@@ -298,10 +299,6 @@ function pushValue(
   values[metric].vals.push(value);
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 /** A v2 record of a catalog event, or undefined for anything else. */
 function parseRecord(line: string): LoadedRecord | undefined {
   let raw: unknown;
@@ -310,18 +307,18 @@ function parseRecord(line: string): LoadedRecord | undefined {
   } catch {
     return undefined;
   }
-  if (!isObject(raw) || raw.v !== 2 || typeof raw.name !== "string") return undefined;
-  if (typeof raw.ts !== "number" || !isObject(raw.fields)) return undefined;
+  if (!isRecord(raw) || raw.v !== 2 || typeof raw.name !== "string") return undefined;
+  if (typeof raw.ts !== "number" || !isRecord(raw.fields)) return undefined;
   if (!eventDef(raw.name)) return undefined;
   const fields: Record<string, number> = {};
   for (const [key, value] of Object.entries(raw.fields)) {
     if (typeof value === "number" && Number.isFinite(value)) fields[key] = value;
   }
   const tags: Record<string, string> = {};
-  for (const [key, value] of Object.entries(isObject(raw.tags) ? raw.tags : {})) {
+  for (const [key, value] of Object.entries(isRecord(raw.tags) ? raw.tags : {})) {
     if (typeof value === "string") tags[key] = value;
   }
-  const client = isObject(raw.client) ? raw.client : undefined;
+  const client = isRecord(raw.client) ? raw.client : undefined;
   return {
     ts: raw.ts,
     name: raw.name,

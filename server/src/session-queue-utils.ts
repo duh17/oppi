@@ -11,6 +11,7 @@ import type {
   ServerMessage,
   Session,
 } from "./types.js";
+import { asRecord } from "./json-shape.js";
 
 export interface QueueImageContent {
   type: "image";
@@ -172,12 +173,6 @@ function parseQueueItems(value: unknown): MessageQueueItem[] | undefined {
     );
   }
   return items;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 export function queueImagesFromPromptImages(

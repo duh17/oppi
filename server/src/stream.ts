@@ -50,6 +50,7 @@ import {
   WS_CLOSE_AUTH_EXPIRED,
   WS_CLOSE_REASON_AUTH_EXPIRED,
 } from "./storage/device-auth.js";
+import { asRecord } from "./json-shape.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -157,13 +158,6 @@ function streamConnectedMessage(ctx: StreamContext, userName: string): ServerMes
     userName,
     serverDictationAvailable: Boolean(ctx.serverDictationAvailable),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
 }
 
 function rawDataToText(data: RawData | string): string {

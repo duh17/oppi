@@ -1,7 +1,5 @@
 import type { ToolInputPresentation, ToolOutputPresentation } from "./types.js";
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
-}
+import { asRecord } from "./json-shape.js";
 export const BUILTIN_INPUT_PRESENTATIONS: Record<string, ToolInputPresentation> = {
   codemode: { fields: { code: { role: "code", language: "javascript" } } },
   bash: { fields: { command: { role: "command", language: "shell" } } },

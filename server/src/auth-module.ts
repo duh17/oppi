@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import type { DevicePublicKey } from "./types.js";
+import { isRecord } from "./json-shape.js";
 
 const log = createLogger({ base: { component: "auth_module" } });
 
@@ -50,10 +51,6 @@ type AuthModuleState =
   | { kind: "loaded"; path: string; approvePairing?: ModuleFunction; gate?: ModuleFunction };
 
 const UNAVAILABLE: AuthGateResult = { allow: false, status: 503, error: "auth_module_unavailable" };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 export class AuthModule {
   private state: AuthModuleState;

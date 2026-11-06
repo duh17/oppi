@@ -36,6 +36,11 @@ describe("pi state snapshot parser", () => {
   it("returns null for non-object snapshots", () => {
     expect(parsePiStateSnapshot(null)).toBeNull();
     expect(parsePiStateSnapshot("nope")).toBeNull();
+    expect(parsePiStateSnapshot([])).toBeNull();
+  });
+
+  it("drops a model that is an array", () => {
+    expect(parsePiStateSnapshot({ sessionId: "s3", model: [] })?.model).toBeUndefined();
   });
 
   it("drops invalid nested model shapes", () => {

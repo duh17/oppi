@@ -1,7 +1,5 @@
 import type { ToolOutputAvailability } from "./types.js";
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
-}
+import { asRecord } from "./json-shape.js";
 export function outputAvailability(details: unknown): ToolOutputAvailability {
   const payload = asRecord(details);
   const truncation = asRecord(payload?.truncation);
