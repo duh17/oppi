@@ -2,9 +2,12 @@
  * Maps the error text of a failed turn to the closed `error_kind` vocabulary of `server.turn`.
  *
  * The text is read here and never leaves: only the returned enum value becomes a tag. Order
- * matters. A cause the user or Oppi chose (a stop, a crashed worker) and a request too large to
- * ever succeed win over the provider's HTTP status, a specific status wins over wording, and
- * generic wording wins over a bare status class.
+ * matters. A crashed worker and a request too large to ever succeed win over the provider's HTTP
+ * status, a specific status wins over wording (an abort included), and wording wins over a bare
+ * status class.
+ *
+ * Error text can be a whole provider HTML page, so every pattern here must stay linear: no
+ * unbounded gap (`.*`) between two terms and no two adjacent quantifiers over the same class.
  */
 
 import type { EventTags } from "./catalog.js";
@@ -18,7 +21,7 @@ export type TurnErrorKind = NonNullable<EventTags<"server.turn">["error_kind"]>;
  */
 const STATUS_PATTERNS = [
   /^\s*(?:error:?\s*)?([45]\d\d)\b/,
-  /\bstatus(?:\s*code)?["']?\s*[:=]?\s*([45]\d\d)\b/,
+  /\bstatus(?:\s*code)?["']?\s*(?:[:=]\s*)?([45]\d\d)\b/,
   /\bhttp\s*([45]\d\d)\b/,
 ];
 
@@ -60,12 +63,16 @@ function kindFromWording(message: string): TurnErrorKind {
       "overloaded",
       "service_unavailable",
       "service unavailable",
+      "temporarily unavailable",
       "server is busy",
+      "at capacity",
     ])
   ) {
     return "overloaded";
   }
-  if (includesAny(message, ["rate_limit", "rate limit", "resource_exhausted", "quota"])) {
+  if (
+    includesAny(message, ["rate_limit", "rate limit", "resource_exhausted", "quota", "usage limit"])
+  ) {
     return "rate_limit";
   }
   if (
@@ -101,10 +108,11 @@ function kindFromWording(message: string): TurnErrorKind {
 
 /**
  * The agent runtime process behind the turn died or never started; no provider was involved.
- * Matches the runtime's own messages (`worker exited early`, `worker failed`) and a signal kill.
+ * Matches the runtime's own messages (`worker exited early`, `worker failed`), at most two words
+ * apart, and a signal kill.
  */
 const RUNTIME_CRASH =
-  /\bworker\b.*\b(?:exited|failed|crash(?:ed)?|died)\b|exited early|\bsig(?:kill|segv|abrt)\b/;
+  /\bworker(?:\s+\w+){0,2}?\s+(?:exited|failed|crash(?:ed)?|died)\b|exited early|\bsig(?:kill|segv|abrt)\b/;
 
 const CONTEXT_OVERFLOW = [
   "request_too_large",
