@@ -502,6 +502,10 @@ enum AppPreferences {
             AppPreferenceStore.Appearance.setSpinnerStyle(style)
         }
 
+        static var piIconStyle: PiIconStyle {
+            AppPreferenceStore.Appearance.piIconStyle
+        }
+
         static var dictationIndicatorStyle: DictationIndicatorStyle {
             AppPreferenceStore.Appearance.dictationIndicatorStyle
         }

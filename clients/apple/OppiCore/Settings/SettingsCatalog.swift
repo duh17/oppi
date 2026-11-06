@@ -178,6 +178,21 @@ enum SettingsCatalog {
         copy: SettingCopy(title: String(localized: "Open Links"))
     )
 
+    // MARK: - Appearance (this device)
+
+    /// How the Pi mark is drawn everywhere: the official colors, or the theme
+    /// foreground. A device setting on the `AppPreferenceStore` key the renderer reads.
+    static let piIcon = SettingDeclaration<PiIconStyle>(
+        id: "settings.appearance.piIcon",
+        key: AppPreferenceStore.Appearance.piIconStyleKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Appearance.piIconStyleDefault,
+        copy: SettingCopy(
+            title: String(localized: "Pi Icon"),
+            footer: String(localized: "Color uses the official Pi logo. Monochrome uses your theme's text color.")
+        )
+    )
+
     // MARK: - Editor
 
     /// Whether the editor writes a document as you type. Off (the default), nothing
@@ -310,6 +325,7 @@ enum SettingsCatalog {
         hapticFeedback.descriptor,
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
+        piIcon.descriptor,
         terminalPageMode.descriptor,
         experimentRex.descriptor,
         experimentHerdr.descriptor,

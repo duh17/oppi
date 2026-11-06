@@ -143,6 +143,8 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     override func failureTitle() -> String? { String(localized: "Couldn't Load Agents") }
 
     override func inputs(of item: Item) -> AnyHashable {
+        // The Pi row draws the Pi mark, which follows the style and the theme.
+        if case .pi = item { return AnyHashable(AppPreferences.Appearance.piIconStyle.rawValue) }
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
         // The row draws the age as text ("2h ago"), which changes without the
         // agent changing: the string is the input, so a pass redraws it. The icon's
@@ -168,7 +170,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
                 Self.row(
-                    icon: Self.tile(PiAvatarRenderer.render(size: 22), size: 22, padding: 8, radius: 10, palette: palette),
+                    icon: Self.tile(EntityIcon.image(.pi, size: 22), size: 22, padding: 8, radius: 10, palette: palette),
                     title: "Pi",
                     badge: nil,
                     subtitle: "Global Pi configuration",

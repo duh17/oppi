@@ -52,6 +52,10 @@ extension SettingsStore {
             switch id {
             case SettingsCatalog.keepAwakeAfterActivity.id:
                 screenAwake.refreshFromPreferences()
+            case SettingsCatalog.piIcon.id:
+                // The Pi mark is drawn by the shared renderer: open screens
+                // redraw on the signal a theme change sends.
+                NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
             case SettingsCatalog.autoSave.id:
                 // The editor reads the value from the defaults, which a stored
                 // write changes without telling anyone: the editors that are

@@ -4,6 +4,14 @@ import UIKit
 struct SettingChoice<Value: Equatable & Sendable> {
     var value: Value
     var title: String
+    /// A small preview drawn in the menu row.
+    var image: UIImage?
+
+    init(value: Value, title: String, image: UIImage? = nil) {
+        self.value = value
+        self.title = title
+        self.image = image
+    }
 }
 
 /// Rows drawn from a `SettingDeclaration`: the title, the identifier, the
@@ -91,7 +99,7 @@ extension ListScreenController {
             value: shown,
             menu: {
                 choices.map { choice in
-                    SettingsMenuOption(title: choice.title, selected: choice.value == current) { [weak self] in
+                    SettingsMenuOption(title: choice.title, image: choice.image, selected: choice.value == current) { [weak self] in
                         self?.settings?.set(declaration, choice.value)
                     }
                 }

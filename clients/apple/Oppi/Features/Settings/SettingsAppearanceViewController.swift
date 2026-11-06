@@ -5,9 +5,10 @@ import UIKit
 /// The values are `ThemeStore`, which is observable, so a change from the
 /// gallery or from the system's light/dark switch redraws the page.
 final class SettingsAppearanceViewController: ListScreenController<SettingsAppearanceViewController.Section, SettingsAppearanceViewController.Item> {
-    enum Section: Hashable, Sendable { case source, themes, custom }
+    enum Section: Hashable, Sendable { case source, themes, piIcon, custom }
     enum Item: Hashable, Sendable {
         case source
+        case piIcon
         case theme(ThemeSlot)
         case customThemes
     }
@@ -17,7 +18,7 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
 
     init(root: AppRootEnvironment) {
         self.root = root
-        super.init(title: String(localized: "Appearance"), listIdentifier: "settings.appearance.list", scope: .device, footers: true)
+        super.init(title: String(localized: "Appearance"), listIdentifier: "settings.appearance.list", scope: .device, settings: root.settings, footers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -36,6 +37,11 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
                 items: manual ? [.theme(.manual)] : [.theme(.light), .theme(.dark)]
             ),
             ListSection(
+                .piIcon,
+                footer: SettingsCatalog.piIcon.copy.footer,
+                items: [.piIcon]
+            ),
+            ListSection(
                 .custom,
                 footer: String(localized: "Import themes from your server, or describe a new one and Oppi writes it. Themes are JSON files in the Oppi data directory (usually ~/.config/oppi/themes); Pi TUI themes in ~/.pi/agent/themes are converted automatically."),
                 items: [.customThemes]
@@ -46,13 +52,26 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .source: AnyHashable(themeStore.mode)
+        case .piIcon: AnyHashable([settingInputs(SettingsCatalog.piIcon), AnyHashable(themeStore.activeThemeID.rawValue)])
         case .theme(let slot): AnyHashable(slot.themeID(in: themeStore).rawValue)
         case .customThemes: AnyHashable(0)
         }
     }
 
-    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
+        if item == .piIcon {
+            // Each choice previews the mark as it will draw, in the current theme.
+            let themeID = themeStore.activeThemeID
+            settingChoiceRow(cell, SettingsCatalog.piIcon, choices: PiIconStyle.allCases.map {
+                SettingChoice(
+                    value: $0,
+                    title: $0.displayName,
+                    image: PiAvatarRenderer.render(size: 22, style: $0, themeID: themeID).withRenderingMode(.alwaysOriginal)
+                )
+            })
+            return
+        }
         let shown = themeStore.mode
         cell.configure(
             title: String(localized: "Theme Source"),
@@ -85,7 +104,7 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
                 value: nil,
                 identifier: "settings.appearance.customThemes"
             ) { [weak self] in self?.openCustomThemes() }
-        case .source:
+        case .source, .piIcon:
             break
         }
     }
@@ -95,7 +114,7 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        item == .source
+        item == .source || item == .piIcon
             ? collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
             : collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
     }

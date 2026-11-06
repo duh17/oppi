@@ -334,7 +334,7 @@ enum AppPreferenceStore {
 
     // MARK: - Appearance
 
-    /// Spinner and dictation indicator styles. Spinner key matches iOS
+    /// Spinner, dictation indicator, and Pi icon styles. Spinner key matches iOS
     /// `AppPreferences.Appearance`.
     enum Appearance {
         static let spinnerStyleKey = "spinnerStyle"
@@ -346,6 +346,16 @@ enum AppPreferenceStore {
         static let dictationIndicatorDidChangeNotification = Notification.Name(
             "\(AppIdentifiers.subsystem).appearance.dictationIndicatorStyleDidChange"
         )
+        static let piIconStyleKey = "\(AppIdentifiers.subsystem).appearance.piIconStyle"
+
+        /// What nothing stored means; `SettingsCatalog.piIcon` uses this same constant.
+        static let piIconStyleDefault = PiIconStyle.color
+
+        static var piIconStyle: PiIconStyle { piIconStyle(in: .standard) }
+
+        static func piIconStyle(in defaults: UserDefaults) -> PiIconStyle {
+            defaults.string(forKey: piIconStyleKey).flatMap(PiIconStyle.init(rawValue:)) ?? piIconStyleDefault
+        }
 
         static var spinnerStyle: SpinnerStyle { spinnerStyle(in: .standard) }
 

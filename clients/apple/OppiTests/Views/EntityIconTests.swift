@@ -108,6 +108,28 @@ struct EntityIconTests {
         #expect(png(rowSandbox) != png(narrower), "a row's content box is what draws")
     }
 
+    // MARK: - Pi mark
+
+    /// The cached Pi mark is the style chosen now: switching Color to Monochrome
+    /// and back never serves the other style's raster.
+    @Test func piMarkFollowsTheChosenStyleThroughTheCache() {
+        let defaults = UserDefaults.standard
+        let key = AppPreferenceStore.Appearance.piIconStyleKey
+        let saved = defaults.object(forKey: key)
+        defer {
+            if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+
+        defaults.set(PiIconStyle.color.rawValue, forKey: key)
+        let color = EntityIcon.image(.pi, size: 22)
+        defaults.set(PiIconStyle.monochrome.rawValue, forKey: key)
+        let monochrome = EntityIcon.image(.pi, size: 22)
+        #expect(png(monochrome) != png(color))
+        #expect(png(monochrome) == png(PiAvatarRenderer.render(size: 22, style: .monochrome)))
+        defaults.set(PiIconStyle.color.rawValue, forKey: key)
+        #expect(png(EntityIcon.image(.pi, size: 22)) == png(color))
+    }
+
     // MARK: - Genmoji
 
     @Test func genmojiDrawsTheFallbackUntilTheArtworkArrives() async throws {

@@ -323,7 +323,7 @@ enum EntityIcon {
         assets: IconAssetCache?
     ) -> String {
         let cache = assets.map { "\(ObjectIdentifier($0))" } ?? "none"
-        return "\(entity)|\(size)|\(content)|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)"
+        return "\(entity)|\(size)|\(content)|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)|\(AppPreferences.Appearance.piIconStyle.rawValue)"
     }
 }
 
