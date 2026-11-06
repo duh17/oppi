@@ -28,6 +28,7 @@
 
 import { isControlConversation } from "./control-session.js";
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
+import { durableStoreLockStaleInMs } from "./durable-store-lock.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { syncProgramStatus } from "./program-status.js";
@@ -357,7 +358,7 @@ async function continueAfterRestart(
  * stale window), not a live one; abandoning would stop a session that only had to wait.
  */
 export async function openQueuedStores(
-  runtime: Pick<DurableHarness, "host" | "openHost" | "openHosts" | "lockStaleInMs">,
+  runtime: Pick<DurableHarness, "host" | "openHost" | "openHosts">,
   storeIds: Iterable<string>,
   fence: (hosts: readonly SessionHost[]) => Promise<void>,
 ): Promise<Map<string, unknown>> {
@@ -369,18 +370,20 @@ export async function openQueuedStores(
       ?.close()
       .catch(() => undefined);
   };
-  const locked: string[] = [];
+  const locked = new Map<string, string>();
   for (const storeId of storeIds) {
     try {
       await runtime.openHost(storeId);
     } catch (error) {
-      if ((error as { code?: unknown }).code === "durable_store_locked") locked.push(storeId);
+      const { code, lockPath } = error as { code?: unknown; lockPath?: unknown };
+      if (code === "durable_store_locked" && typeof lockPath === "string")
+        locked.set(storeId, lockPath);
       else await drop(storeId, error);
     }
   }
-  for (const storeId of locked) {
+  for (const [storeId, lockPath] of locked) {
     // proper-lockfile takes a lock strictly older than the stale window: wait just past it.
-    const staleInMs = runtime.lockStaleInMs(storeId);
+    const staleInMs = durableStoreLockStaleInMs(lockPath);
     if (staleInMs > 0) await new Promise((resolve) => setTimeout(resolve, staleInMs + 50));
     try {
       await runtime.openHost(storeId);
