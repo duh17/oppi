@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getCommitDetail, getCommitFileDiff } from "../src/git-commits.js";
+import { getCommitDetail, getCommitFileDiff, getCommitGraph } from "../src/git-commits.js";
 import {
   execGit,
   gitTrustForWorkspace,
@@ -197,6 +197,10 @@ describe("sandbox git: repository-controlled execution", () => {
       [" M", "a.txt"],
       ["??", "b.md"],
     ]);
+
+    const graph = await getCommitGraph(mount, trust, 0, 10);
+    expect(graph.hasMore).toBe(false);
+    expect(graph.commits.map((commit) => commit.message)).toEqual(["second", "first"]);
 
     const detail = await getCommitDetail(mount, trust, commitSha);
     expect(detail.files).toEqual([{ path: "a.txt", status: "M", addedLines: 1, removedLines: 1 }]);
@@ -405,6 +409,7 @@ describe("sandbox git: confinement to the mount", () => {
       behind: null,
     });
     expect((await getGitStatus(mount, trust)).isGitRepo).toBe(false);
+    await expect(getCommitGraph(mount, trust, 0, 10)).rejects.toThrow("Commit graph unavailable");
     const result = await execGit(trust, mount, ["rev-parse", "HEAD"]);
     expect(result.error).toBeInstanceOf(SandboxGitRefusedError);
     expect(markerLines(outside.marker)).toEqual([]);
