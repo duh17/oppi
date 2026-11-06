@@ -35,18 +35,37 @@ generic input presentation metadata shared by live and history projections.
 The job pill in a durable session is a surface (`panel.ts`), not the classic
 widget. It shows while a backgrounded job runs or its result waits for delivery,
 and clears once every result is delivered. The pill counts the jobs ("1 job
-running", "2 jobs · 1 running") and shows how long the oldest running job has
-run; it never repeats a command. In the drawer, each job is one row: a status
-glyph, a short title (the program and its first plain arguments, without a
-leading `cd … &&`, options, pipes, or redirects), and the job id with its age in
-whole minutes or how it ended (`Exit 1`, `Stopped`, `Timed out`). The age is
-redrawn each minute. A running job has a **Stop** button, which kills it as
-`background_job cancel` does. **Details**, folded by default, holds the full
-command and, once the job has finished, the end of its output. The panel is
-drawn from the saved job list, so it returns after a server restart once a
-job's runner resumes, and within a second when a Session stops and starts again
-while a job runs. A client that cannot draw surfaces sees the same jobs without
-buttons.
+running", "2 jobs · 1 running"); it never repeats a command. While a job runs,
+the pill also shows a spinner, how long the oldest running job has run, and the
+last line the newest running job printed, cut to 40 characters. When a listed
+job failed or was interrupted, a red badge counts it ("2 failed").
+
+In the drawer, each job is one row: a status glyph, a short title (the program
+and its first plain arguments, without a leading `cd … &&`, options, pipes, or
+redirects), and the job id with its age in whole minutes or how it ended
+(`Exit 1`, `Stopped`, `Timed out`). The age is redrawn each minute. A running
+job has a **Stop** button, which kills it as `background_job cancel` does.
+Under the title, a running job shows its folder, the time left before its
+timeout if it has one, and its live output: the last 12 lines, at most 480
+characters, with escape codes removed and a progress line that redraws itself
+with a carriage return shown at its latest state. When the output passes the
+64,000 characters the result keeps, the row says "Output truncated".
+**Details**, folded by default, holds the full command, with the full working
+directory while the job runs or the end of its output once it has finished.
+
+New output redraws the panel at most once every 2 seconds, and only when a
+running row's lines would change. Several jobs printing at once share that
+pace, and a command still in the foreground does not redraw the panel. The
+live output is read from the output the job's runner already holds in memory.
+It is never saved, and it does not reach the transcript or the model. A job's
+output is still saved once, when the job ends, and the model reads it once, in
+the result.
+
+The panel is drawn from the saved job list, so it returns after a server
+restart once a job's runner resumes, and within a second when a Session stops
+and starts again while a job runs. The runner outlives the Session, so the live
+output continues in the new panel. A client that cannot draw surfaces sees the
+same jobs without buttons.
 
 The classic extension above is unchanged. It can publish only Pi's widget, which
 has no buttons, so it offers no Stop. See
