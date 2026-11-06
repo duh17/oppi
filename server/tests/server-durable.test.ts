@@ -2179,9 +2179,12 @@ describe("server durable managed runtime", () => {
     expect(sdk).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "real startup fences user-stopped background jobs and resumes idle live ones (stopped=%s)",
-    async (stopped) => {
+  it.each(["live", "stopped", "workspace-gone"] as const)(
+    "real startup fences user-stopped background jobs and resumes idle live ones (%s)",
+    async (mode) => {
+      // A queued session whose workspace is gone is fenced like a stopped one.
+      const stopped = mode === "stopped";
+      const fenced = mode !== "live";
       const f = await fixture([
         fauxAssistantMessage(
           [fauxToolCall("background_job", { action: "start", command: "controlled startup job" })],
@@ -2240,6 +2243,7 @@ describe("server durable managed runtime", () => {
       expect(storage.listRestartResume().map((entry) => entry.sessionId)).toEqual(
         stopped ? [] : [f.session.id],
       );
+      if (mode === "workspace-gone") storage.deleteWorkspace(f.workspace.id);
       const restarted = new SessionManager(storage);
       managers.push(restarted);
       await restarted.resumeDurableSessions();
@@ -2256,9 +2260,9 @@ describe("server durable managed runtime", () => {
           JSON.stringify(message.content).includes("Background job bash-1 was interrupted"),
       );
       expect(executions).toBe(1);
-      expect(restarted.isActive(f.session.id)).toBe(!stopped);
-      expect(reports).toHaveLength(stopped ? 0 : 1);
-      expect(f.faux.state.callCount).toBe(stopped ? 2 : 3);
+      expect(restarted.isActive(f.session.id)).toBe(!fenced);
+      expect(reports).toHaveLength(fenced ? 0 : 1);
+      expect(f.faux.state.callCount).toBe(fenced ? 2 : 3);
       // Same JSON-decoding oracle as the live smoke, over real native SQLite.
       const db = new DatabaseSync(join(f.dir, "restart.sqlite"), { readOnly: true });
       try {
@@ -2268,12 +2272,12 @@ describe("server durable managed runtime", () => {
           )
           .all();
         expect(receipts).toEqual(
-          stopped ? [] : [{ request_id: "background-job:bash-1", status: "done" }],
+          fenced ? [] : [{ request_id: "background-job:bash-1", status: "done" }],
         );
       } finally {
         db.close();
       }
-      if (!stopped) {
+      if (!fenced) {
         expect(JSON.stringify(reports)).toContain(
           "Do not start it again until it is confirmed dead",
         );
@@ -2289,7 +2293,7 @@ describe("server durable managed runtime", () => {
       managers.push(again);
       await again.resumeDurableSessions();
       await harness.waitForIdle(context);
-      expect(f.faux.state.callCount).toBe(stopped ? 2 : 3);
+      expect(f.faux.state.callCount).toBe(fenced ? 2 : 3);
       expect(executions).toBe(1);
       expect(again.isActive(f.session.id)).toBe(false);
     },
