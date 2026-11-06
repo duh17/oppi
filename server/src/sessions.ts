@@ -73,6 +73,8 @@ import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
 const log = createLogger({ base: { component: "sessions" } });
+/** A store-open fence at least this slow logs at info; faster ones log at debug. */
+const FENCE_SLOW_MS = 50;
 
 // ─── Types ───
 
@@ -1262,7 +1264,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       const started = Date.now();
       await host.abortConversations(ids, { background: true });
       const elapsedMs = Date.now() - started;
-      log.info("sessions.fence_stopped", { storeId: host.storeId, count: ids.size, elapsedMs });
+      // A first start after an upgrade opens every store; only a slow fence is worth an info line.
+      (elapsedMs >= FENCE_SLOW_MS ? log.info : log.debug)("sessions.fence_stopped", {
+        storeId: host.storeId,
+        count: ids.size,
+        elapsedMs,
+      });
     }
   }
 
