@@ -71,6 +71,12 @@ export interface DurableSearchSource {
 /** `fts_schema` key holding when a durable store's last complete catch-up began (epoch ms). */
 const durableStoreSyncedKey = (storeId: string): string => `durable_store_synced:${storeId}`;
 
+/**
+ * How far a file's mtime may trail the clock at the write: Linux stamps files from a coarse clock
+ * (up to a scheduler tick behind), HFS+ keeps whole seconds, FAT and exFAT two.
+ */
+const STORE_MTIME_SLACK_MS = 2_000;
+
 export interface SearchIndexSyncResult {
   reindexed: number;
   added: number;
@@ -1547,7 +1553,7 @@ export class SearchIndex {
       }
     }
     const modifiedAt = await this.durableSource?.storeModifiedAtMs(storeId).catch(() => Infinity);
-    return modifiedAt !== undefined && modifiedAt < syncedAt;
+    return modifiedAt !== undefined && modifiedAt < syncedAt - STORE_MTIME_SLACK_MS;
   }
 
   private isIndexedFromDurable(session: Session): boolean {
@@ -2308,6 +2314,10 @@ export class SearchIndex {
     }
 
     const startedAt = performance.now();
+    // Every store's catch-up mark. The caller listed `sessions` in this same turn, so a session
+    // missing from the list (forked into a store mid-sync) wrote its store after this time, and
+    // the next start checks that store.
+    const syncStartedAt = Date.now();
     const indexableSessions = sessions.filter((s) => !s.ephemeral);
     const sessionIds = new Set(indexableSessions.map((s) => s.id));
     const durableSessions = indexableSessions.filter((s) => this.isIndexedFromDurable(s));
@@ -2377,9 +2387,8 @@ export class SearchIndex {
     for (const storeSessionIds of this.groupByDurableStore(durableIds)) {
       const first = this.getSession(storeSessionIds[0]);
       const storeId = first && durableStoreId(first);
-      // The mark is taken before the pass and written only after a clean one, so a crash, a
-      // failed session, or a write landing during the pass leaves the store due next time.
-      const passStartedAt = Date.now();
+      // The mark predates the pass and is written only after a clean one, so a crash, a failed
+      // session, or a write landing during the pass leaves the store due next time.
       if (storeId && (await this.durableStoreUnchanged(storeId, storeSessionIds, ftsIds))) {
         result.skipped += storeSessionIds.length;
         sessionsChecked += storeSessionIds.filter((id) => snapshotDurableIds.has(id)).length;
@@ -2426,7 +2435,7 @@ export class SearchIndex {
       if (clean && storeId) {
         this.db
           .prepare("INSERT OR REPLACE INTO fts_schema VALUES (?, ?)")
-          .run(durableStoreSyncedKey(storeId), String(passStartedAt));
+          .run(durableStoreSyncedKey(storeId), String(syncStartedAt));
       }
     }
 

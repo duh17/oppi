@@ -372,6 +372,61 @@ describe("SearchIndex durable sessions", () => {
       expect((await s.boot()).result).toMatchObject({ reindexed: 1, skipped: 2 });
       expect(s.holds).toEqual(["B"]);
     });
+
+    it("checks a store again when a session joined it after the sync listed sessions", async () => {
+      // A fork lands in store A while catch-up works through store B: it is not in this sync, its
+      // first turn is indexed live, and its second turn reaches the store before A's pass starts
+      // but never ends (the server crashes). Nothing writes A again before the next start.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      cleanups.push(() => vi.useRealTimers());
+      vi.setSystemTime(1_000);
+      const f = await durableFixture();
+      const g = await durableFixture();
+      await f.turn("okapi prompt", "dikdik reply");
+      const listed = [
+        makeSession(f.id, { id: "b0", serverDurable: { storeId: "B", conversationId: f.id } }),
+        makeSession(f.id, { id: "a0", serverDurable: { storeId: "A", conversationId: f.id } }),
+      ];
+      const fork = makeSession(g.id, {
+        id: "a1",
+        serverDurable: { storeId: "A", conversationId: g.id },
+      });
+      const modifiedAt: Record<string, number> = { A: 0, B: 0 };
+      const dir = mkdtempSync(join(tmpdir(), "oppi-durable-search-index-"));
+      cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+      const sourceOf = (id: string) => (id === fork.id ? g.source : f.source);
+      const boot = async (sessions: Session[], during?: (index: SearchIndex) => Promise<void>) => {
+        const index = new SearchIndex(dir, (id) => [...listed, fork].find((x) => x.id === id));
+        index.durableSource = {
+          readTipEntryId: async (id) => {
+            const hook = during;
+            during = undefined;
+            await hook?.(index);
+            return sourceOf(id).readTipEntryId(id);
+          },
+          readTranscript: (id) => sourceOf(id).readTranscript(id),
+          holdStore: async () => () => {},
+          storeModifiedAtMs: async (storeId) => modifiedAt[storeId]!,
+        };
+        await index.startBackgroundSync(sessions, { budgetMs: 0 });
+        const hits = index.search("pangolin").map((hit) => hit.sessionId);
+        index.close();
+        return hits;
+      };
+
+      await boot(listed, async (index) => {
+        vi.setSystemTime(2_000);
+        await g.turn("first prompt", "first reply");
+        await index.syncDurableSession(fork.id);
+        vi.setSystemTime(5_000);
+        await g.turn("pangolin prompt", "pangolin reply");
+        modifiedAt.A = Date.now();
+        vi.setSystemTime(10_000);
+      });
+
+      vi.setSystemTime(60_000);
+      expect(await boot([...listed, fork])).toEqual(["a1"]);
+    });
   });
 
   it("does not index ephemeral durable sessions", async () => {
