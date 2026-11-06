@@ -75,6 +75,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     case markdown(ExtensionUISurfaceMarkdownNode)
     case badge(ExtensionUISurfaceBadgeNode)
     case icon(ExtensionUISurfaceIconNode)
+    /// A count the client ticks itself from `since`, so a live timer costs no server traffic.
+    case elapsed(ExtensionUISurfaceElapsedNode)
     case progress(ExtensionUISurfaceProgressNode)
     case keyValue(ExtensionUISurfaceKeyValueNode)
     case table(ExtensionUISurfaceTableNode)
@@ -98,6 +100,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         case .markdown: return "markdown"
         case .badge: return "badge"
         case .icon: return "icon"
+        case .elapsed: return "elapsed"
         case .progress: return "progress"
         case .keyValue: return "keyValue"
         case .table: return "table"
@@ -120,6 +123,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         case .markdown(let value): return value.base
         case .badge(let value): return value.base
         case .icon(let value): return value.base
+        case .elapsed(let value): return value.base
         case .progress(let value): return value.base
         case .keyValue(let value): return value.base
         case .table(let value): return value.base
@@ -247,6 +251,16 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     base: base,
                     name: (try? c.decode(String.self, forKey: .name)) ?? "",
                     tone: try? c.decodeIfPresent(String.self, forKey: .tone)
+                )
+            )
+        case "elapsed":
+            self = .elapsed(
+                ExtensionUISurfaceElapsedNode(
+                    base: base,
+                    since: (try? c.decode(Double.self, forKey: .since)) ?? 0,
+                    style: try? c.decodeIfPresent(String.self, forKey: .style),
+                    tone: try? c.decodeIfPresent(String.self, forKey: .tone),
+                    format: try? c.decodeIfPresent(String.self, forKey: .format)
                 )
             )
         case "progress":
@@ -391,6 +405,12 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.name, forKey: .name)
             try c.encodeIfPresent(value.tone, forKey: .tone)
+        case .elapsed(let value):
+            try encodeNodeBase(value.base, into: &c)
+            try c.encode(value.since, forKey: .since)
+            try c.encodeIfPresent(value.style, forKey: .style)
+            try c.encodeIfPresent(value.tone, forKey: .tone)
+            try c.encodeIfPresent(value.format, forKey: .format)
         case .progress(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encodeIfPresent(value.label, forKey: .label)
@@ -456,6 +476,7 @@ enum ExtensionUISurfaceNodeCodingKeys: String, CodingKey {
     case language
     case size, role, icon, items
     case selected, disabled, collapsed
+    case since, format
 }
 
 private func encodeNodeBase(
@@ -516,6 +537,44 @@ struct ExtensionUISurfaceIconNode: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceNodeBase
     let name: String
     let tone: String?
+}
+
+struct ExtensionUISurfaceElapsedNode: Sendable, Equatable, Codable {
+    let base: ExtensionUISurfaceNodeBase
+    /// Epoch milliseconds the count starts from.
+    let since: Double
+    let style: String?
+    let tone: String?
+    /// `clock` (0:42, 1:05:10, the default) or `short` (42s, 5m, 1h 5m).
+    let format: String?
+
+    var date: Date { Date(timeIntervalSince1970: since / 1000) }
+    var isShort: Bool { format == "short" }
+
+    /// The count at `now`, whole seconds, never negative: `clock` reads 0:42 or 1:05:10, `short`
+    /// reads 42s, 5m, or 1h 5m. A `since` in the future reads as zero.
+    func text(at now: Date) -> String {
+        let total = max(0, Int(now.timeIntervalSince(date).rounded(.down)))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if isShort {
+            if hours > 0 { return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h" }
+            return minutes > 0 ? "\(minutes)m" : "\(seconds)s"
+        }
+        if hours > 0 { return String(format: "%d:%02d:%02d", hours, minutes, seconds) }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    /// The same count in words, for the value VoiceOver reads when the element is focused.
+    func spokenText(at now: Date) -> String {
+        let total = max(0, Int(now.timeIntervalSince(date).rounded(.down)))
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .full
+        formatter.allowedUnits = total >= 3600 ? [.hour, .minute] : (total >= 60 ? [.minute, .second] : [.second])
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter.string(from: TimeInterval(total)) ?? ""
+    }
 }
 
 struct ExtensionUISurfaceProgressNode: Sendable, Equatable, Codable {

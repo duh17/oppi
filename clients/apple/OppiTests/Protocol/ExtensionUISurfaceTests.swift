@@ -412,6 +412,39 @@ struct ExtensionUISurfaceTests {
         #expect(blocks.fallback.text == "A panel this build cannot draw")
     }
 
+    @Test func decodesAnElapsedNodeInThePillAndTheBodyAndCountsFromItsStart() throws {
+        let surface = try surface("blocks-elapsed.json")
+        let pill = try #require(surface.pill)
+        guard case .elapsed(let ticking) = try #require(pill.children.last) else {
+            Issue.record("Expected an elapsed node in the pill")
+            return
+        }
+        #expect(ticking.since == 1_790_000_000_000)
+        #expect(ticking.style == "mono")
+        #expect(ticking.tone == "warning")
+        guard case .blocks(let blocks) = try #require(surface.sections.first),
+              case .elapsed(let short) = try #require(blocks.body.children.last)
+        else {
+            Issue.record("Expected an elapsed node in the body")
+            return
+        }
+        #expect(short.base.id == "job-elapsed")
+        #expect(short.isShort)
+
+        let start = ticking.date
+        #expect(ticking.text(at: start.addingTimeInterval(42)) == "0:42")
+        #expect(ticking.text(at: start.addingTimeInterval(65)) == "1:05")
+        #expect(ticking.text(at: start.addingTimeInterval(3600 + 5 * 60 + 10)) == "1:05:10")
+        #expect(ticking.text(at: start.addingTimeInterval(-30)) == "0:00", "a start in the future reads zero")
+        #expect(short.text(at: start.addingTimeInterval(42)) == "42s")
+        #expect(short.text(at: start.addingTimeInterval(5 * 60 + 59)) == "5m")
+        #expect(short.text(at: start.addingTimeInterval(3600 + 5 * 60)) == "1h 5m")
+        #expect(short.text(at: start.addingTimeInterval(7200)) == "2h")
+
+        let again = try JSONDecoder().decode(ExtensionUISurface.self, from: JSONEncoder().encode(surface))
+        #expect(again == surface)
+    }
+
     @Test func roundTripsATreeThroughEncoding() throws {
         // The patch applier re-encodes a surface and decodes it again, so encoding has to be
         // as complete as decoding: a field the wire carries must survive the round trip.

@@ -57,6 +57,44 @@ describe("blocks validation", () => {
     }
   });
 
+  it("accepts an elapsed node in the body and the pill, and keeps its fields", () => {
+    const surface = surfaceOf(fixtures["blocks-elapsed.json"]) as ExtensionUISurface;
+    expect(surface.pill?.content.children[2]).toEqual({
+      type: "elapsed",
+      since: 1_790_000_000_000,
+      style: "mono",
+      tone: "warning",
+    });
+    const section = surface.sections[0];
+    if (section.composite !== "blocks") throw new Error("expected a blocks section");
+    expect(section.body.children[1]).toMatchObject({
+      type: "elapsed",
+      id: "job-elapsed",
+      format: "short",
+    });
+  });
+
+  it.each([
+    ["a missing since", { type: "elapsed" }],
+    ["a string since", { type: "elapsed", since: "yesterday" }],
+    ["a negative since", { type: "elapsed", since: -1 }],
+    ["a non-finite since", { type: "elapsed", since: Number.POSITIVE_INFINITY }],
+    ["an unknown format", { type: "elapsed", since: 1, format: "words" }],
+    ["an unknown style", { type: "elapsed", since: 1, style: "huge" }],
+    ["a tap of its own", { type: "elapsed", since: 1, action: { id: "refresh" } }],
+  ])("refuses an elapsed node with %s", (_name, node) => {
+    expect(problemOf(withBody(node))).toBeDefined();
+  });
+
+  it("projects an elapsed node to the words an older client draws", () => {
+    const surface = surfaceOf(fixtures["blocks-elapsed.json"]) as ExtensionUISurface;
+    const projected = projectExtensionUISurfaceToV1(surface);
+    const subtitle = (projected as { presentation: { subtitle?: string } }).presentation.subtitle;
+    // The pill's elapsed joins its words as a snapshot such as "1 job · 4:02".
+    expect(subtitle).toMatch(/^1 job · \d+:\d{2}(:\d{2})?$/);
+    expect(JSON.stringify(projected)).toMatch(/"text":"npm test · \d+[smh]/);
+  });
+
   it("keeps a node's selection, disabled state, icon, and progress tone", () => {
     const surface = surfaceOf(fixtures["blocks-filters.json"]) as ExtensionUISurface;
     const section = surface.sections[0];

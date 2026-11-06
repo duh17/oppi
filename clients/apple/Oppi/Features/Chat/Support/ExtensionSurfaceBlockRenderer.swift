@@ -155,18 +155,19 @@ enum ExtensionSurfaceBlockMetrics {
     /// semibold) and `caption` its secondary line (footnote). Inside a strip pill the same three
     /// steps drop to the strip's own labels, so a composed pill reads like the ones the host
     /// derives from a header.
-    static func font(_ raw: String?, inline: Bool = false) -> UIFont {
+    static func font(_ raw: String?, inline: Bool = false, monospacedDigits: Bool = false) -> UIFont {
         switch (raw ?? "").lowercased() {
         case "headline":
             return inline
-                ? ExtensionNativeBlockStyle.font(.caption1, weight: .semibold)
-                : ExtensionNativeBlockStyle.font(.headline, weight: .semibold)
+                ? ExtensionNativeBlockStyle.font(.caption1, weight: .semibold, monospacedDigits: monospacedDigits)
+                : ExtensionNativeBlockStyle.font(.headline, weight: .semibold, monospacedDigits: monospacedDigits)
         case "caption":
             return inline
-                ? ExtensionNativeBlockStyle.font(.caption2, weight: .semibold)
-                : ExtensionNativeBlockStyle.font(.footnote)
+                ? ExtensionNativeBlockStyle.font(.caption2, weight: .semibold, monospacedDigits: monospacedDigits)
+                : ExtensionNativeBlockStyle.font(.footnote, monospacedDigits: monospacedDigits)
         case "mono": return ExtensionNativeBlockStyle.font(inline ? .caption2 : .footnote, monospaced: true)
-        default: return ExtensionNativeBlockStyle.font(inline ? .caption1 : .body)
+        default:
+            return ExtensionNativeBlockStyle.font(inline ? .caption1 : .body, monospacedDigits: monospacedDigits)
         }
     }
 
@@ -312,6 +313,10 @@ final class BlocksRenderer {
         case .icon(let icon):
             let view: BlocksIconView = cached(key, BlocksIconView())
             view.apply(icon: icon, node: node, environment: environment)
+            return view
+        case .elapsed(let elapsed):
+            let view: BlocksElapsedView = cached(key, BlocksElapsedView())
+            view.apply(elapsed: elapsed, node: node, environment: environment)
             return view
         case .progress(let progress):
             if progress.isRing {
@@ -476,6 +481,8 @@ enum ExtensionSurfaceBlockWords {
             switch node {
             case .text(let value): parts.append(value.text)
             case .badge(let value): parts.append(value.text)
+            // The count changes every second: the words carry its stable name, never the digits.
+            case .elapsed(let value): parts.append(value.base.accessibility?.label ?? BlocksElapsedView.spokenName)
             case .progress(let value): parts.append(value.label ?? "")
             case .button(let value): parts.append(value.title)
             case .toggle(let value): parts.append(value.title)

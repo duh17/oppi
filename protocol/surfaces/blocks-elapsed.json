@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "id": "blocks-elapsed",
+  "title": "Jobs",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Jobs",
+    "subtitle": "1 running"
+  },
+  "actions": {
+    "refresh": {
+      "title": "Refresh"
+    }
+  },
+  "fallback": {
+    "text": "1 job running"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "pill": {
+    "content": {
+      "type": "row",
+      "spacing": "tight",
+      "children": [
+        {
+          "type": "icon",
+          "name": "hammer",
+          "tone": "accent"
+        },
+        {
+          "type": "text",
+          "text": "1 job",
+          "style": "caption"
+        },
+        {
+          "type": "elapsed",
+          "since": 1790000000000,
+          "style": "mono",
+          "tone": "warning"
+        }
+      ]
+    },
+    "tap": "drawer"
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "jobs",
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "1 job running"
+      },
+      "body": {
+        "type": "row",
+        "spacing": "normal",
+        "align": "spread",
+        "children": [
+          {
+            "type": "text",
+            "text": "npm test"
+          },
+          {
+            "type": "elapsed",
+            "id": "job-elapsed",
+            "since": 1790000000000,
+            "format": "short"
+          }
+        ]
+      }
+    }
+  ]
+}

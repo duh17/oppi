@@ -25,6 +25,7 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "blocks-panel.json": blocksPanelSurface(),
     "blocks-filters.json": blocksFiltersSurface(),
     "blocks-status.json": blocksStatusSurface(),
+    "blocks-elapsed.json": blocksElapsedSurface(),
     "blocks-action.json": blocksActionMessage(),
     "blocks-patch.json": blocksPatchMessage(),
     "blocks-unknown-node.json": blocksUnknownNodeSurface(),
@@ -583,6 +584,46 @@ function blocksStatusSurface(): unknown {
               role: "primary",
               action: { id: "approve" },
             },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/** A live timer: the client ticks `elapsed` itself, so the pill and the body cost no traffic. */
+function blocksElapsedSurface(): unknown {
+  return baseSurface({
+    id: "blocks-elapsed",
+    title: "Jobs",
+    header: { title: "Jobs", subtitle: "1 running" },
+    actions: { refresh: { title: "Refresh" } },
+    fallback: { text: "1 job running" },
+    pill: {
+      content: {
+        type: "row",
+        spacing: "tight",
+        children: [
+          { type: "icon", name: "hammer", tone: "accent" },
+          { type: "text", text: "1 job", style: "caption" },
+          { type: "elapsed", since: 1_790_000_000_000, style: "mono", tone: "warning" },
+        ],
+      },
+      tap: "drawer",
+    },
+    sections: [
+      {
+        composite: "blocks",
+        id: "jobs",
+        state: { kind: "content" },
+        fallback: { text: "1 job running" },
+        body: {
+          type: "row",
+          spacing: "normal",
+          align: "spread",
+          children: [
+            { type: "text", text: "npm test" },
+            { type: "elapsed", id: "job-elapsed", since: 1_790_000_000_000, format: "short" },
           ],
         },
       },

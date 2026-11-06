@@ -1037,6 +1037,66 @@ struct ExtensionSurfaceBlocksViewsTests {
         try data.write(to: testArtifactURL(name), options: .atomic)
     }
 
+    // MARK: - Elapsed
+
+    /// The elapsed fixture with its pill and body timers started `seconds` ago.
+    private func elapsedSurface(startedSecondsAgo seconds: TimeInterval) throws -> ExtensionUISurface {
+        let since = (Date().timeIntervalSince1970 - seconds) * 1000
+        return try surface("blocks-elapsed.json") { object in
+            var pill = testUnwrap(object["pill"] as? [String: Any])
+            var content = testUnwrap(pill["content"] as? [String: Any])
+            var children = testUnwrap(content["children"] as? [[String: Any]])
+            children[2]["since"] = since
+            content["children"] = children
+            pill["content"] = content
+            object["pill"] = pill
+        }
+    }
+
+    /// Runs the main loop for `seconds`, so the shared display link gets to fire.
+    private func spin(_ seconds: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    @Test func anElapsedLabelAdvancesWhileItIsOnScreenAndSpeaksAStableName() throws {
+        let panel = makePanel(try elapsedSurface(startedSecondsAgo: 58))
+        let pill = try testUnwrap(
+            control("extension-strip-aboveEditor-pill-surface-blocks_2delapsed", in: panel) as? UIControl
+        )
+        let timer = try testUnwrap(subviews(of: BlocksElapsedView.self, in: pill).first)
+        let label = try testUnwrap(subviews(of: UILabel.self, in: timer).first)
+        let first = try #require(label.text)
+        #expect(first == "0:58" || first == "0:59", "the timer starts from its since: \(first)")
+        // Digits keep their width: every digit measures the same, so the line does not shift.
+        let widths = Set(["0:11", "0:88", "0:00"].map { ($0 as NSString).size(withAttributes: [.font: label.font]).width })
+        #expect(widths.count == 1, "the timer's digits differ in width: \(widths)")
+        let name = timer.accessibilityLabel
+        #expect(name == BlocksElapsedView.spokenName)
+
+        spin(2.3)
+        let later = try #require(label.text)
+        #expect(later != first, "the label did not advance: \(first) → \(later)")
+        #expect(timer.accessibilityLabel == name, "the name stays put while the count moves")
+        #expect(timer.accessibilityValue?.isEmpty == false)
+        // The pill's own words carry the stable name, never the digits.
+        #expect(pill.accessibilityValue?.contains(first) != true)
+        #expect(pill.accessibilityValue?.contains(later) != true)
+    }
+
+    @Test func theSharedClockRunsOnlyWhileAnElapsedLabelIsInAWindow() throws {
+        // An earlier test's window may still hold its timer: take every window down first.
+        for window in Self.windows {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        Self.windows.removeAll()
+        #expect(!ElapsedLabelTicker.shared.isRunning)
+        let panel = makePanel(try elapsedSurface(startedSecondsAgo: 5))
+        #expect(ElapsedLabelTicker.shared.isRunning)
+        panel.removeFromSuperview()
+        #expect(!ElapsedLabelTicker.shared.isRunning, "no label is on screen, so the clock stops")
+    }
+
     // MARK: - Helpers
 
     private func composites(

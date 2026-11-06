@@ -86,6 +86,9 @@ const TONES: readonly ExtensionUISurfaceTone[] = [
 const STATES: readonly ExtensionUISurfaceStateKind[] = ["loading", "empty", "failure", "content"];
 const ITEM_STATES = ["queued", "running", "success", "warning", "error", "inactive"] as const;
 const ATOM_TYPES = ["text", "markdown", "progress", "divider", "spacer"] as const;
+const ELAPSED_FORMATS = ["clock", "short"] as const;
+/** The latest instant a JS Date holds: a `since` past it is not a time. */
+const MAX_EPOCH_MS = 8.64e15;
 const NODE_TYPES = [
   "row",
   "stack",
@@ -94,6 +97,7 @@ const NODE_TYPES = [
   "markdown",
   "badge",
   "icon",
+  "elapsed",
   "progress",
   "keyValue",
   "table",
@@ -110,7 +114,13 @@ const CONTROL_NODE_TYPES: ReadonlySet<string> = new Set(["button", "toggle", "me
 /** The primitives that are a tap target as a whole, through their own `action`. */
 const TAPPABLE_NODE_TYPES: ReadonlySet<string> = new Set(["row", "stack", "text", "badge"]);
 /** The primitives whose look carries a `tone`; every other kind has no colour of its own. */
-const TONED_NODE_TYPES: ReadonlySet<string> = new Set(["text", "badge", "icon", "progress"]);
+const TONED_NODE_TYPES: ReadonlySet<string> = new Set([
+  "text",
+  "badge",
+  "icon",
+  "progress",
+  "elapsed",
+]);
 /** The primitives that can be drawn as unusable: a control, or a tappable region. */
 const DISABLEABLE_NODE_TYPES: ReadonlySet<string> = new Set([
   "row",
@@ -128,7 +138,7 @@ const NODE_ALIGNS = ["leading", "center", "trailing", "spread"] as const;
 const TEXT_STYLES = ["body", "headline", "caption", "mono"] as const;
 const NODE_ROLES = ["primary", "secondary", "destructive"] as const;
 /** What a pill may hold: one line of inline facts, never a control. */
-const PILL_NODE_TYPES = ["icon", "text", "badge", "progress"] as const;
+const PILL_NODE_TYPES = ["icon", "text", "badge", "elapsed", "progress"] as const;
 /** Stable ids become accessibility identifiers on the device: no spaces, no separators we own. */
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -489,6 +499,23 @@ function node(
       };
     case "icon":
       return { ...base, type, name: iconName(value.name), ...tone };
+    case "elapsed": {
+      if (
+        typeof value.since !== "number" ||
+        !Number.isFinite(value.since) ||
+        value.since < 0 ||
+        value.since > MAX_EPOCH_MS
+      )
+        throw new SurfaceShapeError("an elapsed since is not an epoch in milliseconds");
+      return {
+        ...base,
+        type,
+        since: value.since,
+        ...(value.style === undefined ? {} : { style: oneOf(TEXT_STYLES, value.style) }),
+        ...tone,
+        ...(value.format === undefined ? {} : { format: oneOf(ELAPSED_FORMATS, value.format) }),
+      };
+    }
     case "progress": {
       let progressValue: number | undefined;
       if (value.value !== undefined) {

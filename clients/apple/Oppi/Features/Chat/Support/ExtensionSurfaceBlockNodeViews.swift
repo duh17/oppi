@@ -431,6 +431,122 @@ final class BlocksTextView: BlocksTapControl, BlocksColumnFillable {
     }
 }
 
+/// The one clock every elapsed label shares: a display link that fires once a second while at
+/// least one label is on screen, and is gone when none is. Nothing a label shows crosses the wire
+/// after the first frame, so a live timer costs the server no traffic.
+@MainActor
+final class ElapsedLabelTicker: NSObject {
+    static let shared = ElapsedLabelTicker()
+
+    private let labels = NSHashTable<BlocksElapsedView>.weakObjects()
+    private var link: CADisplayLink?
+
+    /// Whether the display link is running: it exists only while a label is attached to a window.
+    var isRunning: Bool { link != nil }
+
+    func attach(_ label: BlocksElapsedView) {
+        labels.add(label)
+        guard link == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 1, maximum: 1, preferred: 1)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func detach(_ label: BlocksElapsedView) {
+        labels.remove(label)
+        if labels.count == 0 { stop() }
+    }
+
+    private func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick() {
+        let attached = labels.allObjects
+        guard !attached.isEmpty else {
+            stop()
+            return
+        }
+        let now = Date()
+        for label in attached { label.refresh(at: now) }
+    }
+}
+
+/// An `elapsed` node: a count from `since` that the client advances itself, in digits that keep
+/// their width so the line does not shift as they change. It ticks only while on screen, through
+/// the shared ``ElapsedLabelTicker``.
+final class BlocksElapsedView: UIView {
+    /// What VoiceOver calls the element when the extension names none. The digits are the value,
+    /// so the name stays put as the count moves and no announcement is made per second.
+    static let spokenName = String(localized: "Elapsed time")
+
+    private let label = UILabel()
+    private var node: ExtensionUISurfaceElapsedNode?
+    private var inline = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        isAccessibilityElement = true
+        accessibilityTraits = .staticText
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(
+        elapsed node: ExtensionUISurfaceElapsedNode,
+        node surfaceNode: ExtensionUISurfaceNode,
+        environment: ExtensionSurfaceBlocksEnvironment
+    ) {
+        self.node = node
+        inline = environment.inline
+        label.font = ExtensionSurfaceBlockMetrics.font(node.style, inline: environment.inline, monospacedDigits: true)
+        label.textColor = ExtensionSurfaceBlockMetrics.textColor(node.tone, style: node.style, environment.palette)
+        accessibilityLabel = node.base.accessibility?.label ?? Self.spokenName
+        accessibilityIdentifier = environment.identifier(for: surfaceNode)
+        refresh(at: Date())
+    }
+
+    /// Repaint for `now`. The accessibility value changes silently: no notification is posted, so
+    /// VoiceOver reads the current count when the element is focused and never per second.
+    func refresh(at now: Date) {
+        guard let node else { return }
+        let text = node.text(at: now)
+        if label.text != text {
+            label.text = text
+            invalidateIntrinsicContentSize()
+        }
+        accessibilityValue = node.base.accessibility?.value ?? node.spokenText(at: now)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            ElapsedLabelTicker.shared.detach(self)
+        } else {
+            refresh(at: Date())
+            ElapsedLabelTicker.shared.attach(self)
+        }
+    }
+
+    override var intrinsicContentSize: CGSize { label.intrinsicContentSize }
+}
+
 /// A badge: a capsule in the tone's colour, with the extension's words inside it. Its words wrap
 /// rather than run past the card, so a long badge at an accessibility size grows taller instead.
 final class BlocksBadgeView: BlocksTapControl {

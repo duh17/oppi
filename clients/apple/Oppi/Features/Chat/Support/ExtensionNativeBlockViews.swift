@@ -76,6 +76,7 @@ enum ExtensionNativeBlockStyle {
         _ style: UIFont.TextStyle,
         weight: UIFont.Weight = .regular,
         monospaced: Bool = false,
+        monospacedDigits: Bool = false,
         traits: UIFontDescriptor.SymbolicTraits = []
     ) -> UIFont {
         let size = UIFont.preferredFont(
@@ -84,7 +85,9 @@ enum ExtensionNativeBlockStyle {
         ).pointSize
         var font = monospaced
             ? UIFont.monospacedSystemFont(ofSize: size, weight: weight)
-            : UIFont.systemFont(ofSize: size, weight: weight)
+            : monospacedDigits
+                ? UIFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+                : UIFont.systemFont(ofSize: size, weight: weight)
         if !traits.isEmpty,
            let descriptor = font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(traits)) {
             font = UIFont(descriptor: descriptor, size: size)

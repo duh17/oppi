@@ -12,16 +12,39 @@ import type {
  * projected surface never loses a verb the surface offered.
  */
 
+/**
+ * The words a client without the elapsed node shows: the span as it stands when the surface is
+ * projected. It is a snapshot, refreshed whenever the surface republishes; the live tick is the
+ * client's. Same shapes the client draws, so both read alike.
+ */
+export function v1ElapsedText(
+  node: { since: number; format?: "clock" | "short" },
+  now: number = Date.now(),
+): string {
+  const total = Math.max(0, Math.floor((now - node.since) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (node.format === "short") {
+    if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return m > 0 ? `${m}m` : `${sec}s`;
+  }
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
+}
+
 /** The line a v1 panel shows under its title: the pill's own words when the surface has one. */
 export function v1PillSubtitle(surface: ExtensionUISurface): string | undefined {
   if (!surface.pill) return surface.header.subtitle;
-  const parts = surface.pill.content.children.map((child) => {
+  const parts = surface.pill.content.children.map((child): string | undefined => {
     switch (child.type) {
       case "text":
       case "badge":
         return child.text;
       case "icon":
         return undefined;
+      case "elapsed":
+        return v1ElapsedText(child);
       case "progress":
         return child.label;
       default:
@@ -41,7 +64,7 @@ function v1SpanRole(tone: ExtensionUISurfaceTone | undefined): string | undefine
 }
 
 /** The primitives a row reads as a single line: everything else keeps its own block. */
-const V1_INLINE_NODE_TYPES = new Set(["text", "badge", "icon"]);
+const V1_INLINE_NODE_TYPES = new Set(["text", "badge", "icon", "elapsed"]);
 
 function v1InlineText(node: ExtensionUISurfaceNode): string | undefined {
   switch (node.type) {
@@ -50,6 +73,8 @@ function v1InlineText(node: ExtensionUISurfaceNode): string | undefined {
       return node.text;
     case "icon":
       return node.name;
+    case "elapsed":
+      return v1ElapsedText(node);
     default:
       return undefined;
   }
@@ -143,6 +168,23 @@ export function projectNodeToV1(
     case "icon":
       // v1 has no icon: its name is the only honest text it can show.
       return [v1TextBlock(id, node.name)];
+    case "elapsed":
+      return [
+        {
+          type: "text",
+          ...(id === undefined ? {} : { id }),
+          spans: [
+            {
+              text: v1ElapsedText(node),
+              ...(node.style === "mono"
+                ? { role: "code" }
+                : v1SpanRole(node.tone) === undefined
+                  ? {}
+                  : { role: v1SpanRole(node.tone) }),
+            },
+          ],
+        },
+      ];
     case "progress":
       return [
         {

@@ -584,6 +584,7 @@ export type ExtensionUISurfaceNodeAlign = "leading" | "center" | "trailing" | "s
 /** The whole type ramp: a node never names a font, a size, or a colour. */
 export type ExtensionUISurfaceTextStyle = "body" | "headline" | "caption" | "mono";
 export type ExtensionUISurfaceNodeRole = "primary" | "secondary" | "destructive";
+export type ExtensionUISurfaceElapsedFormat = "clock" | "short";
 
 interface ExtensionUISurfaceNodeBase {
   /**
@@ -594,6 +595,19 @@ interface ExtensionUISurfaceNodeBase {
    */
   id?: string;
   accessibility?: ExtensionUIAccessibility;
+}
+
+/**
+ * A count the client ticks itself from `since` (epoch milliseconds), so a live timer costs the
+ * server no traffic. A time in the future reads 0:00. `clock` is 0:42 / 1:05:10, the default;
+ * `short` is 42s / 5m / 1h 5m.
+ */
+export interface ExtensionUISurfaceElapsedNode extends ExtensionUISurfaceNodeBase {
+  type: "elapsed";
+  since: number;
+  style?: ExtensionUISurfaceTextStyle;
+  tone?: ExtensionUISurfaceTone;
+  format?: ExtensionUISurfaceElapsedFormat;
 }
 
 /** A blocks node: a primitive the host draws with views it already ships. */
@@ -632,6 +646,7 @@ export type ExtensionUISurfaceNode =
       disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
     })
+  | ExtensionUISurfaceElapsedNode
   | (ExtensionUISurfaceNodeBase & { type: "markdown"; markdown: string })
   | (ExtensionUISurfaceNodeBase & {
       type: "badge";
@@ -731,6 +746,7 @@ export type ExtensionUISurfacePillNode =
     })
   | (ExtensionUISurfaceNodeBase & { type: "badge"; text: string; tone?: ExtensionUISurfaceTone })
   | (ExtensionUISurfaceNodeBase & { type: "icon"; name: string; tone?: ExtensionUISurfaceTone })
+  | ExtensionUISurfaceElapsedNode
   | (ExtensionUISurfaceNodeBase & {
       type: "progress";
       value?: number;
