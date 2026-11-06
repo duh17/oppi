@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -360,20 +369,25 @@ describe("POST /telemetry/metrickit", () => {
     expect(existsSync(telemetryDir())).toBe(false);
   });
 
-  it("accepts but does not append past the daily file cap", async () => {
-    setEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES", "32");
-    mkdirSync(telemetryDir(), { recursive: true });
-    const dayFile = join(telemetryDir(), `metrickit-${today()}.jsonl`);
-    writeFileSync(dayFile, '{"existing":true}\n');
-
-    const { status } = await post("/telemetry/metrickit", {
-      generatedAt: Date.now(),
+  it("accepts but does not append past the daily cap, counting what the file holds", async () => {
+    const generatedAt = Date.now();
+    const upload = {
+      generatedAt,
       client: CLIENT,
       payloads: [{ kind: "metric", windowStartMs: 1, windowEndMs: 2, summary: {}, raw: {} }],
-    });
+    };
+    const dayFile = join(
+      telemetryDir(),
+      `metrickit-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+    );
+    expect((await post("/telemetry/metrickit", upload)).status).toBe(200);
+    const recordBytes = statSync(dayFile).size;
 
-    expect(status).toBe(200);
-    expect(readFileSync(dayFile, "utf8")).toBe('{"existing":true}\n');
+    // One more record fits the cap alone but not beside the one on disk.
+    setEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES", String(2 * recordBytes - 1));
+    expect((await post("/telemetry/metrickit", upload)).status).toBe(200);
+
+    expect(statSync(dayFile).size).toBe(recordBytes);
   });
 
   it("prunes old MetricKit files on its retention", async () => {
