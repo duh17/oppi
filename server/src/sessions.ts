@@ -1280,14 +1280,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         const workspaceGone = (): boolean =>
           Boolean(session.workspaceId && !this.storage.getWorkspace(session.workspaceId));
         if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
-        // `startSession` opens the store after writing "starting". Keep a live
-        // session's work; still fence a stopped session being reopened so leftover
-        // jobs stay aborted.
+        // `startSession` opens the store after writing "starting": keep a live session's work, but
+        // still fence a stopped one being reopened so leftover jobs stay aborted.
         const prior = this.startingIds.get(session.id);
         if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
         ids.add(conversationId);
       }
-      if (ids.size) await host.abortConversations(ids, { background: true });
+      if (!ids.size) continue;
+      const started = Date.now();
+      await host.abortConversations(ids, { background: true });
+      const elapsedMs = Date.now() - started;
+      log.info("sessions.fence_stopped", { storeId: host.storeId, count: ids.size, elapsedMs });
     }
   }
 

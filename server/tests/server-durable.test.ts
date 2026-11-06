@@ -2629,6 +2629,27 @@ describe("server durable managed runtime", () => {
     expect(crashed.effects).toEqual([a.serverDurable!.conversationId]);
   });
 
+  it("reads background jobs for a foreground stop but not for the store-open fence", async () => {
+    const f = await fixture([]);
+    const crashed = await crashedQueuedTools(f);
+    const owner = await attachHost(
+      new DurableHarness(f.dir),
+      crashed.harness,
+      f.models,
+      crashed.sessions[0]!.serverDurable?.storeId ?? crashed.sessions[0]!.id,
+    );
+    const ids = new Set(
+      crashed.sessions.map((session) => session.serverDurable!.conversationId as ConversationId),
+    );
+    const snapshot = vi.spyOn(crashed.harness, "snapshot");
+    const jobReads = () => snapshot.mock.calls.filter(([doc]) => doc === DurableJobs).length;
+    await owner.abortConversations(ids, { background: true });
+    expect(jobReads()).toBe(0);
+    await owner.abortConversations(ids);
+    expect(jobReads()).toBe(ids.size);
+    await owner.releaseResume();
+  });
+
   it.each(["stop", "agent-launch prompt"])(
     "keeps shared scheduling paused during an attached %s while the next workspace disappears",
     async (action) => {

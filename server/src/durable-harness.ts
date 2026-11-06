@@ -1308,12 +1308,12 @@ export class SessionHost {
       )
         await harness.abortSubmission(submission.id, BACKGROUND_CONTEXT);
     }
+    // Only a foreground stop reads jobs: the store-open fence aborts every task, and its hundreds
+    // of job reads ran in one macrotask.
     const foreground = new Set<number>();
-    for (const id of ids) {
-      const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
-      for (const job of jobs?.jobs ?? [])
+    for (const id of background ? [] : ids)
+      for (const job of (await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT))?.jobs ?? [])
         if (job.decision === "waiting" && !job.delivered) foreground.add(job.taskId);
-    }
     for (const { record } of live.tasks) {
       if (
         ids.has(record.conversationId) &&
