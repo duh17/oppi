@@ -1861,6 +1861,46 @@ describe("SearchIndex turn-end indexing", () => {
     }
   });
 
+  it("records a title change at shutdown when the file ends without a newline", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-shutdown-eof-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    // The cursor lands at EOF, which is not a line boundary. Nothing is left to
+    // merge, so an unchanged file must still count as a cursor hit.
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "eof cursor token") +
+        transcriptLine("a1", "u1", "assistant", "eof cursor answer").trimEnd(),
+    );
+    const session = makeSession({ id: "sess-eof", name: "old title", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    let closed = false;
+    try {
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)?.title).toBe("old title");
+      session.name = "new title";
+      let release!: () => void;
+      let reached!: () => void;
+      const atGate = new Promise<void>((resolve) => (reached = resolve));
+      index.fileIndexGate = () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          reached();
+        });
+      const pending = index.indexSession(session.id);
+      await atGate;
+      index.close();
+      closed = true;
+      release();
+      await pending.catch(() => undefined);
+      expect(indexedTranscriptFields(dataDir, session.id)?.title).toBe("new title");
+    } finally {
+      if (!closed) index.close();
+    }
+  });
+
   it("does not commit a same-size rewrite that lands during a full read", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-same-size-"));
     cleanupPaths.add(dataDir);

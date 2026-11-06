@@ -244,13 +244,58 @@ function fileStatFrom(st: {
   };
 }
 
+function statFileSync(path: string): FileStat | null {
+  try {
+    return fileStatFrom(statSync(path, { bigint: true }));
+  } catch {
+    return null;
+  }
+}
+
+async function statFile(path: string): Promise<FileStat | null> {
+  try {
+    return fileStatFrom(await stat(path, { bigint: true }));
+  } catch {
+    return null;
+  }
+}
+
+/** An empty window is the boundary at offset 0. */
 function boundaryHash(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return bytes.length === 0 ? "" : createHash("sha256").update(bytes).digest("hex");
+}
+
+/** The bytes that identify a cursor: the boundary window ending at `offset`. */
+function readCursorWindowSync(path: string, offset: number): Buffer {
+  return readByteRangeSync(path, Math.max(0, offset - FILE_BOUNDARY_BYTES), offset);
+}
+
+async function readCursorWindow(path: string, offset: number): Promise<Buffer> {
+  return readByteRange(path, Math.max(0, offset - FILE_BOUNDARY_BYTES), offset);
 }
 
 function readBoundarySync(path: string, offset: number): string {
-  if (offset <= 0) return "";
-  return boundaryHash(readByteRangeSync(path, Math.max(0, offset - FILE_BOUNDARY_BYTES), offset));
+  return boundaryHash(readCursorWindowSync(path, offset));
+}
+
+async function readBoundary(path: string, offset: number): Promise<string> {
+  return boundaryHash(await readCursorWindow(path, offset));
+}
+
+/**
+ * Does a stored cursor still describe the file? `window` is the boundary
+ * window at `stored.offset`. "same": nothing was appended. "grew": the stored
+ * prefix is intact and ends on a line, so the tail merges. Everything else is
+ * "stale" and needs a full read. "same" ignores the line boundary because
+ * there is no tail to split.
+ */
+type CursorState = "stale" | "same" | "grew";
+
+function classifyCursor(stored: FileCursor, st: FileStat, window: Buffer): CursorState {
+  if (st.dev !== stored.dev || st.ino !== stored.ino || st.size < stored.offset) return "stale";
+  if (boundaryHash(window) !== stored.boundary) return "stale";
+  if (st.size === stored.offset) return "same";
+  return stored.offset === 0 || window[window.length - 1] === 0x0a ? "grew" : "stale";
 }
 
 function readByteRangeSync(path: string, start: number, end: number): Buffer {
@@ -269,12 +314,6 @@ function readByteRangeSync(path: string, start: number, end: number): Buffer {
   } finally {
     closeSync(fd);
   }
-}
-
-/** Incremental merge is only valid when the stored offset is a line boundary. */
-function offsetIsLineBoundarySync(path: string, offset: number): boolean {
-  if (offset <= 0) return true;
-  return readByteRangeSync(path, offset - 1, offset)[0] === 0x0a;
 }
 
 /**
@@ -317,12 +356,6 @@ async function readByteRange(path: string, start: number, end: number): Promise<
   } finally {
     await handle.close();
   }
-}
-
-async function readBoundary(path: string, offset: number): Promise<string> {
-  if (offset <= 0) return "";
-  const start = Math.max(0, offset - FILE_BOUNDARY_BYTES);
-  return boundaryHash(await readByteRange(path, start, offset));
 }
 
 function cursorFromMeta(meta: FtsMetaRow): FileCursor | null {
@@ -1051,12 +1084,7 @@ export class SearchIndex {
       return;
     }
 
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(await stat(jsonlPath, { bigint: true }));
-    } catch {
-      fileStat = null;
-    }
+    const fileStat = await statFile(jsonlPath);
     if (this.closed) return;
     if (!fileStat) {
       await this.commitFileSnapshot(sessionId, null, emptyTranscript(), null);
@@ -1066,78 +1094,49 @@ export class SearchIndex {
     const meta = this.getMeta(sessionId);
     const cursor = meta ? cursorFromMeta(meta) : null;
     const indexed = this.indexedTranscript(sessionId);
-    if (
-      cursor &&
-      indexed &&
-      meta?.jsonl_path === jsonlPath &&
-      cursor.dev === fileStat.dev &&
-      cursor.ino === fileStat.ino &&
-      fileStat.size >= cursor.offset
-    ) {
-      const boundary = await readBoundary(jsonlPath, cursor.offset);
+    if (meta && cursor && indexed && meta.jsonl_path === jsonlPath) {
+      const state = classifyCursor(
+        cursor,
+        fileStat,
+        await readCursorWindow(jsonlPath, cursor.offset),
+      );
       if (this.closed) return;
-      if (boundary === cursor.boundary) {
-        const lineBoundary =
-          cursor.offset === 0 ||
-          (await readByteRange(jsonlPath, cursor.offset - 1, cursor.offset))[0] === 0x0a;
-        if (!lineBoundary) {
-          // Fall through to a full reindex. The stored offset splits a line.
-        } else if (fileStat.size === cursor.offset) {
-          const title = extractSessionTitle(session);
-          const workspaceId = session.workspaceId ?? "";
-          const unchanged =
-            meta.title === title &&
-            meta.workspace_id === workspaceId &&
-            meta.jsonl_mtime_ms === Math.floor(fileStat.mtimeMs);
-          // Still confirm the snapshot when nothing else changed, so a delete
-          // during the stat cannot be ignored.
-          if (!unchanged) {
-            await this.commitFileSnapshot(
-              sessionId,
-              {
-                path: jsonlPath,
-                stat: fileStat,
-                boundaryAtOffset: boundary,
-                offset: cursor.offset,
-              },
-              indexed,
-              cursor,
-            );
-          } else {
-            await this.commitFileSnapshot(
-              sessionId,
-              {
-                path: jsonlPath,
-                stat: fileStat,
-                boundaryAtOffset: boundary,
-                offset: cursor.offset,
-              },
-              indexed,
-              cursor,
-              { skipUnchangedWrite: true },
-            );
-          }
-          return;
-        } else {
-          const tail = await readByteRange(jsonlPath, cursor.offset, fileStat.size);
+      const snapshot = {
+        path: jsonlPath,
+        stat: fileStat,
+        boundaryAtOffset: cursor.boundary,
+        offset: cursor.offset,
+      };
+      if (state === "same") {
+        const unchanged =
+          meta.title === extractSessionTitle(session) &&
+          meta.workspace_id === (session.workspaceId ?? "") &&
+          meta.jsonl_mtime_ms === Math.floor(fileStat.mtimeMs);
+        // Still confirm the snapshot when nothing else changed, so a delete
+        // during the stat cannot be ignored.
+        await this.commitFileSnapshot(
+          sessionId,
+          snapshot,
+          indexed,
+          cursor,
+          unchanged ? { skipUnchangedWrite: true } : undefined,
+        );
+        return;
+      }
+      if (state === "grew") {
+        const tail = await readByteRange(jsonlPath, cursor.offset, fileStat.size);
+        if (this.closed) return;
+        const merged = mergeTail(indexed, tail.toString("utf8"), cursor.leafId);
+        if (merged) {
+          const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
           if (this.closed) return;
-          const merged = mergeTail(indexed, tail.toString("utf8"), cursor.leafId);
-          if (merged) {
-            const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
-            if (this.closed) return;
-            await this.commitFileSnapshot(
-              sessionId,
-              {
-                path: jsonlPath,
-                stat: fileStat,
-                boundaryAtOffset: boundary,
-                offset: cursor.offset,
-              },
-              merged.content,
-              cursorForFile(fileStat, boundaryNow, merged.leafId),
-            );
-            return;
-          }
+          await this.commitFileSnapshot(
+            sessionId,
+            snapshot,
+            merged.content,
+            cursorForFile(fileStat, boundaryNow, merged.leafId),
+          );
+          return;
         }
       }
     }
@@ -1177,31 +1176,17 @@ export class SearchIndex {
       this.writeFileTranscript(session, emptyTranscript(), null);
       return;
     }
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
-    } catch {
-      fileStat = null;
-    }
+    const fileStat = statFileSync(jsonlPath);
     if (!fileStat) {
       this.writeFileTranscript(session, emptyTranscript(), null);
       return;
     }
 
-    const meta = this.getMeta(sessionId);
-    const cursor = meta ? cursorFromMeta(meta) : null;
+    const probe = this.probeFileCursorSync(sessionId, jsonlPath, fileStat);
     const indexed = this.indexedTranscript(sessionId);
-    if (
-      cursor &&
-      indexed &&
-      meta?.jsonl_path === jsonlPath &&
-      cursor.dev === fileStat.dev &&
-      cursor.ino === fileStat.ino &&
-      fileStat.size >= cursor.offset &&
-      readBoundarySync(jsonlPath, cursor.offset) === cursor.boundary &&
-      offsetIsLineBoundarySync(jsonlPath, cursor.offset)
-    ) {
-      if (fileStat.size === cursor.offset) {
+    if (probe && indexed && probe.state !== "stale") {
+      const { cursor } = probe;
+      if (probe.state === "same") {
         this.writeFileTranscript(session, indexed, { path: jsonlPath, stat: fileStat, cursor });
         return;
       }
@@ -1286,6 +1271,22 @@ export class SearchIndex {
     return this.stmtGetMeta.get(sessionId) as FtsMetaRow | undefined;
   }
 
+  /**
+   * The stored cursor against the file as stat'd now. Null when the session has
+   * no cursor for this path.
+   */
+  private probeFileCursorSync(
+    sessionId: string,
+    jsonlPath: string,
+    fileStat: FileStat,
+  ): { cursor: FileCursor; state: CursorState } | null {
+    const meta = this.getMeta(sessionId);
+    const cursor = meta?.jsonl_path === jsonlPath ? cursorFromMeta(meta) : null;
+    if (!cursor) return null;
+    const window = readCursorWindowSync(jsonlPath, cursor.offset);
+    return { cursor, state: classifyCursor(cursor, fileStat, window) };
+  }
+
   private cursorForIndexedFile(path: string, leafId: string | null): FileCursor | null {
     try {
       const fileStat = fileStatFrom(statSync(path, { bigint: true }));
@@ -1309,22 +1310,12 @@ export class SearchIndex {
     cursor: FileCursor;
     bytesRead: number;
   } | null {
-    const meta = this.getMeta(sessionId);
-    const stored = meta ? cursorFromMeta(meta) : null;
+    const fileStat = statFileSync(jsonlPath);
+    const probe = fileStat && this.probeFileCursorSync(sessionId, jsonlPath, fileStat);
     const indexed = this.indexedTranscript(sessionId);
-    if (!stored || !indexed || meta?.jsonl_path !== jsonlPath) return null;
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
-    } catch {
-      return null;
-    }
-    if (!fileStat || fileStat.size <= stored.offset) return null;
-    if (fileStat.dev !== stored.dev || fileStat.ino !== stored.ino) return null;
-    if (readBoundarySync(jsonlPath, stored.offset) !== stored.boundary) return null;
-    if (!offsetIsLineBoundarySync(jsonlPath, stored.offset)) return null;
-    const tail = readByteRangeSync(jsonlPath, stored.offset, fileStat.size);
-    const merged = mergeTail(indexed, tail.toString("utf8"), stored.leafId);
+    if (!fileStat || probe?.state !== "grew" || !indexed) return null;
+    const tail = readByteRangeSync(jsonlPath, probe.cursor.offset, fileStat.size);
+    const merged = mergeTail(indexed, tail.toString("utf8"), probe.cursor.leafId);
     if (!merged) return null;
     return {
       content: merged.content,
@@ -1355,12 +1346,7 @@ export class SearchIndex {
     offset: number,
     boundary: string,
   ): Promise<boolean> {
-    let after: FileStat | null;
-    try {
-      after = fileStatFrom(await stat(path, { bigint: true }));
-    } catch {
-      return false;
-    }
+    const after = await statFile(path);
     if (
       !after ||
       after.dev !== snapshot.dev ||
@@ -1723,12 +1709,7 @@ export class SearchIndex {
   private ensureFileCursor(sessionId: string, jsonlPath: string): void {
     const meta = this.getMeta(sessionId);
     if (!meta || cursorFromMeta(meta)) return;
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
-    } catch {
-      return;
-    }
+    const fileStat = statFileSync(jsonlPath);
     if (!fileStat) return;
     this.upsertMeta(
       sessionId,
@@ -1814,24 +1795,9 @@ export class SearchIndex {
     ) {
       return false;
     }
-    return !this.incrementalCursorHolds(live.id, jsonlPath);
-  }
-
-  private incrementalCursorHolds(sessionId: string, jsonlPath: string): boolean {
-    const meta = this.getMeta(sessionId);
-    const stored = meta ? cursorFromMeta(meta) : null;
-    if (!stored || !this.indexedTranscript(sessionId) || meta?.jsonl_path !== jsonlPath)
-      return false;
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
-    } catch {
-      return false;
-    }
-    if (!fileStat || fileStat.size <= stored.offset) return false;
-    if (fileStat.dev !== stored.dev || fileStat.ino !== stored.ino) return false;
-    if (readBoundarySync(jsonlPath, stored.offset) !== stored.boundary) return false;
-    return offsetIsLineBoundarySync(jsonlPath, stored.offset);
+    const fileStat = statFileSync(jsonlPath);
+    const probe = fileStat && this.probeFileCursorSync(live.id, jsonlPath, fileStat);
+    return !(probe?.state === "grew" && this.indexedTranscript(live.id));
   }
 
   /** True when the stored cursor names this file's current dev, ino, size, and tail. */
@@ -1840,18 +1806,8 @@ export class SearchIndex {
     if (!live || live.ephemeral || this.isIndexedFromDurable(live)) return false;
     const jsonlPath = live.piSessionFile;
     if (!jsonlPath) return false;
-    const meta = this.getMeta(sessionId);
-    const stored = meta && meta.jsonl_path === jsonlPath ? cursorFromMeta(meta) : null;
-    if (!stored) return false;
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
-    } catch {
-      return false;
-    }
-    if (!fileStat || stored.dev !== fileStat.dev || stored.ino !== fileStat.ino) return false;
-    if (stored.offset !== fileStat.size) return false;
-    return readBoundarySync(jsonlPath, fileStat.size) === stored.boundary;
+    const fileStat = statFileSync(jsonlPath);
+    return !!fileStat && this.probeFileCursorSync(sessionId, jsonlPath, fileStat)?.state === "same";
   }
 
   /**
@@ -1906,12 +1862,7 @@ export class SearchIndex {
     }
     const jsonlPath = live.piSessionFile;
     if (!jsonlPath) return this.syncSession(live, new Set());
-    let fileStat: FileStat | null;
-    try {
-      fileStat = fileStatFrom(await stat(jsonlPath, { bigint: true }));
-    } catch {
-      fileStat = null;
-    }
+    const fileStat = await statFile(jsonlPath);
     if (!fileStat) return this.syncSession(live, new Set());
     const hadRow = this.getMeta(live.id) !== undefined;
     const parkedAfterStat = await this.followSkippedFileIndex(live, followedUp);
