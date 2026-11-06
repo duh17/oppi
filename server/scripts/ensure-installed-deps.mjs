@@ -8,12 +8,18 @@
 //
 // Sync is judged by comparing package-lock.json with npm's hidden lockfile
 // (node_modules/.package-lock.json), which covers transitive drift too.
+//
+// `npm ci` empties node_modules before it fills it. A server run from a build in
+// dist/.builds/<id> that has no node_modules of its own imports its packages from
+// server/node_modules, so the install refuses while such a build exists. The dev
+// server-restart script gives each build its own copy.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -158,6 +164,21 @@ async function acquireLock() {
   }
 }
 
+/** Builds in dist/.builds that import packages from server/node_modules, which `npm ci` replaces. */
+function buildsSharingNodeModules() {
+  const builds = join(serverRoot, "dist", ".builds");
+  if (!existsSync(nodeModules)) return []; // nothing to pull away
+  try {
+    return readdirSync(builds, { withFileTypes: true })
+      .filter(
+        (entry) => entry.isDirectory() && !existsSync(join(builds, entry.name, "node_modules")),
+      )
+      .map((entry) => entry.name);
+  } catch {
+    return []; // no versioned builds here
+  }
+}
+
 function install(reason) {
   console.error(`Installing server dependencies (${reason}): npm ci in server/`);
   if (isSymlink(nodeModules)) unlinkSync(nodeModules); // the link only, never its target
@@ -176,6 +197,17 @@ if (checkOnly) {
   report(initial);
   console.error(
     "Run `node scripts/ensure-installed-deps.mjs` in server/ (or `npm test` / `npm run check`) and retry.",
+  );
+  process.exit(1);
+}
+
+const sharing = buildsSharingNodeModules();
+if (sharing.length > 0) {
+  console.error(
+    `Not reinstalling: dist/.builds/${sharing.join(", dist/.builds/")} import packages from server/node_modules, and a server running one would lose them mid-install.`,
+  );
+  console.error(
+    "Give each its own copy first (cp -cR node_modules dist/.builds/<id>/node_modules; the dev server-restart script does it on every run), or delete a build no server runs.",
   );
   process.exit(1);
 }
