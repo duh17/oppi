@@ -3,7 +3,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getCommitDetail, getCommitFileDiff, getCommitGraph } from "../git-commits.js";
 import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
-import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
 import { isRecord } from "../json-shape.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
@@ -75,14 +74,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       if (error instanceof SettingValidationError) return error.message;
       throw error;
     }
-  }
-
-  async function handleListLocalSessions(res: ServerResponse): Promise<void> {
-    const knownPiSessionIdentities = collectKnownLocalSessionIdentities(ctx.storage.listSessions());
-    const localSessions = await discoverLocalSessions(knownPiSessionIdentities, {
-      dataDir: ctx.storage.getDataDir(),
-    });
-    helpers.json(res, { sessions: localSessions });
   }
 
   function pendingUIRequestProvider(): PendingUIRequestProvider {
@@ -939,11 +930,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    if (path === "/local-sessions" && method === "GET") {
-      await handleListLocalSessions(res);
-      return true;
-    }
-
     if (path === "/workspaces" && method === "GET") {
       await handleListWorkspaces(url, res);
       return true;

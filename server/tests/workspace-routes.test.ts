@@ -14,7 +14,6 @@ import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
@@ -1250,104 +1249,6 @@ describe("workspaces module", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body)).toEqual({ error: "Workspace not found" });
-  });
-
-  it("handles GET /local-sessions as the global local session list", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-session-route-"));
-    const testDir = join(getPiSessionsRoot(), "--test-route-local-sessions--");
-    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-local.jsonl");
-
-    try {
-      mkdirSync(testDir, { recursive: true });
-      writeFileSync(
-        filePath,
-        [
-          JSON.stringify({
-            type: "session",
-            id: "route-local",
-            cwd: "/tmp/project",
-            timestamp: "2026-02-20T00:00:00.000Z",
-          }),
-          JSON.stringify({
-            type: "session_info",
-            name: "Route Local Session",
-          }),
-        ].join("\n") + "\n",
-      );
-
-      const ctx = {
-        storage: {
-          listSessions: vi.fn(() => []),
-          getDataDir: vi.fn(() => dataDir),
-        },
-      } as unknown as RouteContext;
-
-      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
-
-      const handled = await dispatch({
-        method: "GET",
-        path: "/local-sessions",
-        url: new URL("http://localhost/local-sessions"),
-        req: {} as never,
-        res: res as never,
-      });
-
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { sessions: Array<{ piSessionId: string }> };
-      expect(body.sessions.some((session) => session.piSessionId === "route-local")).toBe(true);
-    } finally {
-      rmSync(testDir, { recursive: true, force: true });
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  it("filters GET /local-sessions by canonical Pi session identities", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-session-known-route-"));
-    const testDir = join(getPiSessionsRoot(), "--test-route-local-sessions-known--");
-    const filePath = join(testDir, "2026-02-20T00-00-00-000Z_route-known.jsonl");
-
-    try {
-      mkdirSync(testDir, { recursive: true });
-      writeFileSync(
-        filePath,
-        [
-          JSON.stringify({
-            type: "session",
-            id: "route-known",
-            cwd: "/tmp/project",
-            timestamp: "2026-02-20T00:00:00.000Z",
-          }),
-        ].join("\n") + "\n",
-      );
-
-      const ctx = {
-        storage: {
-          listSessions: vi.fn(() => [{ id: "route-known" }]),
-          getDataDir: vi.fn(() => dataDir),
-        },
-      } as unknown as RouteContext;
-
-      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
-
-      const handled = await dispatch({
-        method: "GET",
-        path: "/local-sessions",
-        url: new URL("http://localhost/local-sessions"),
-        req: {} as never,
-        res: res as never,
-      });
-
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as { sessions: Array<{ piSessionId: string }> };
-      expect(body.sessions.some((session) => session.piSessionId === "route-known")).toBe(false);
-    } finally {
-      rmSync(testDir, { recursive: true, force: true });
-      rmSync(dataDir, { recursive: true, force: true });
-    }
   });
 
   it.each([

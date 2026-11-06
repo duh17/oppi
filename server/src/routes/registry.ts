@@ -896,14 +896,6 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
-    method: "GET",
-    path: "/local-sessions",
-    operationId: "listLocalSessions",
-    surface: "internal",
-    auth: "owner",
-  },
-
-  {
     method: "POST",
     path: "/icon-assets",
     operationId: "createIconAsset",

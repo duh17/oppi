@@ -51,9 +51,6 @@ final class SessionHistoryE2ETests: E2ETestCase {
     func testLocalPiSessionImportOpensImportedChat() throws {
         let workspaceId = try e2eWorkspaceId()
         let fixture = try XCTUnwrap(localImportFixture, "Local import fixture was not seeded")
-        let localSessions = try e2eLabAPIJSON(method: "GET", path: "/local-sessions")
-        let discovered = localSessions["sessions"] as? [[String: Any]] ?? []
-        XCTAssertTrue(discovered.contains { $0["path"] as? String == fixture.path }, "Local Pi fixture was not discovered")
 
         let searchField = revealSessionSearchField(context: "local import")
         tap(searchField, named: "session search field", timeout: 1)
