@@ -1,3 +1,4 @@
+import { SECRET_PATTERNS as CATALOG_SECRET_PATTERNS } from "./secret-patterns.js";
 import type {
   ShareRedactionFinding,
   ShareSecretFinding,
@@ -51,46 +52,14 @@ const ENV_KEY_EXCLUDE_HINTS = [
   "DISPLAY",
 ];
 
+// Vendor key shapes live in the shared catalog; `Bearer` stays here because
+// the logger needs a broader rule than an export scan that must leave prose alone.
 const SECRET_PATTERNS: ReadonlyArray<ShareSecretPattern> = [
-  {
-    kind: "openai_api_key",
-    regex: /\bsk-[A-Za-z0-9]{20,}\b/g,
-    replacement: "[REDACTED_OPENAI_API_KEY]",
-  },
-  {
-    kind: "anthropic_api_key",
-    regex: /\bsk-ant-[A-Za-z0-9-]{20,}\b/g,
-    replacement: "[REDACTED_ANTHROPIC_API_KEY]",
-  },
-  {
-    kind: "github_pat",
-    regex: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g,
-    replacement: "[REDACTED_GITHUB_TOKEN]",
-  },
-  {
-    kind: "aws_access_key",
-    regex: /\bAKIA[0-9A-Z]{16}\b/g,
-    replacement: "[REDACTED_AWS_ACCESS_KEY]",
-  },
-  {
-    kind: "private_key_header",
-    regex: /-----BEGIN (?:RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----/g,
-    replacement: "[REDACTED_PRIVATE_KEY_HEADER]",
-  },
+  ...CATALOG_SECRET_PATTERNS.map(({ kind, regex, label }) => ({ kind, regex, replacement: label })),
   {
     kind: "bearer_token",
     regex: /\bBearer\s+[A-Za-z0-9_.-]{20,}\b/gi,
     replacement: "Bearer [REDACTED_BEARER_TOKEN]",
-  },
-  {
-    kind: "slack_token",
-    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-    replacement: "[REDACTED_SLACK_TOKEN]",
-  },
-  {
-    kind: "stripe_live_key",
-    regex: /\b[spr]k_live_[A-Za-z0-9]{20,}\b/g,
-    replacement: "[REDACTED_STRIPE_KEY]",
   },
 ];
 

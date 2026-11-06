@@ -1,3 +1,5 @@
+import { SECRET_PATTERNS } from "./secret-patterns.js";
+
 const DEFAULT_MAX_DEPTH = 6;
 const DEFAULT_MAX_STRING_LENGTH = 2_048;
 const DEFAULT_MAX_ARRAY_LENGTH = 64;
@@ -72,35 +74,10 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
     pattern: /\b(?:sk|pt|dt|at)_[A-Za-z0-9_-]{8,}\b/g,
     replacement: REDACTED,
   },
-  {
-    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
-    replacement: "[REDACTED_PRIVATE_KEY]",
-  },
-  {
-    pattern: /\bsk_(?:live|test|proj)-[A-Za-z0-9]{8,}\b/g,
-    replacement: REDACTED,
-  },
-  {
-    // Anthropic (`sk-ant-api03-…`) and OpenAI project (`sk-proj-…`) keys.
-    pattern: /\bsk-(?:ant|proj)-[A-Za-z0-9_-]{8,}/g,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\bgh[opusr]_[A-Za-z0-9]{20,}\b/g,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\bAKIA[0-9A-Z]{16}\b/g,
-    replacement: REDACTED,
-  },
+  ...SECRET_PATTERNS.map(({ regex, logLabel }) => ({
+    pattern: regex,
+    replacement: logLabel ?? REDACTED,
+  })),
   {
     pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\.[A-Za-z0-9._-]{8,}\b/g,
     replacement: REDACTED,

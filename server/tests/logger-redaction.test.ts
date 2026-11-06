@@ -129,12 +129,57 @@ describe("log-redact", () => {
     expect(redacted).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 
-  it("redacts Anthropic and OpenAI project keys in free-form text", () => {
-    const anthropic = "sk-ant-api03-AbCdEf0123456789_xYz-0123";
-    const openai = "sk-proj-AbCdEf0123456789_xYz-456789";
+  // Fake keys are assembled at runtime so secret scanners do not flag this file.
+  const tail = (n: number) => "Ab3dEf9h".repeat(Math.ceil(n / 8)).slice(0, n);
+  const keyShapes: Record<string, string> = {
+    anthropic: ["sk", "ant", `api03-${tail(40)}`].join("-"),
+    project: ["sk", "proj", tail(40)].join("-"),
+    serviceAccount: ["sk", "svcacct", tail(40)].join("-"),
+    admin: ["sk", "admin", tail(40)].join("-"),
+    legacy: `sk-${tail(48)}`,
+  };
 
-    const redacted = redactLogString(`upstream said key=${anthropic} and ${openai} rejected`, 4_096);
-    expect(redacted).toBe("upstream said key=[REDACTED] and [REDACTED] rejected");
+  for (const [name, key] of Object.entries(keyShapes)) {
+    it(`redacts ${name} keys standing alone, glued to a word, and after Bearer`, () => {
+      expect(redactLogString(`upstream said key=${key} rejected`, 4_096)).toBe(
+        "upstream said key=[REDACTED] rejected",
+      );
+      expect(redactLogString(`token=${key}`, 4_096)).toBe("token=[REDACTED]");
+      expect(redactLogString(`{"key${key}"}`, 4_096)).toBe('{"key[REDACTED]"}');
+      expect(redactLogString(`Bearer${key}`, 4_096)).toBe("Bearer[REDACTED]");
+      expect(redactLogString(`Authorization: Bearer ${key}`, 4_096)).toBe(
+        "Authorization: Bearer [REDACTED]",
+      );
+    });
+  }
+
+  it("leaves near-miss non-secrets alone", () => {
+    const inputs = [
+      "run the task-sk- prefix check",
+      "sk-learn and sk-short words",
+      "desk-admin-console and disk-ant-farmhouse settings",
+      "task-sk-proj-ects",
+      "commit 3f786850e387550fdab836ed7e6dc881de23001b merged",
+      "request 123e4567-e89b-12d3-a456-426614174000 done",
+      "sk-Ab3dEf9hAb3d",
+      "git checkout task-proj-1234-fix-login-redirect",
+      "pod flask-admin-deployment-7d9f8c6b5-x2k4p restarted",
+      "kiosk-admin-123e4567-e89b-12d3-a456-426614174000",
+    ];
+    for (const input of inputs) expect(redactLogString(input, 4_096)).toBe(input);
+  });
+
+  it("scans a 1 MB run of key-prefix near-misses in linear time", () => {
+    // A quadratic scan of this input takes about a minute and times the test out.
+    const cases: Array<[string, string]> = [
+      ["xsk-proj-", "xsk-proj-"],
+      ["-----BEGIN RSA PRIVATE KEY-----\n", "[REDACTED_PRIVATE_KEY]\n"],
+    ];
+    for (const [unit, expected] of cases) {
+      const count = Math.ceil(1_048_576 / unit.length);
+      const input = unit.repeat(count);
+      expect(redactLogString(input, input.length * 2)).toBe(expected.repeat(count));
+    }
   });
 
   it("redacts encoded oppi://connect invites", () => {

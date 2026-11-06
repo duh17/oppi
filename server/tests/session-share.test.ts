@@ -691,6 +691,20 @@ describe("shareSession helper parsing", () => {
     expect(findings.some((finding) => finding.kind === "openai_api_key")).toBe(true);
   });
 
+  it("redacts whole private keys and new OpenAI key shapes but keeps look-alike code", () => {
+    const body = ["MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "BKcwggSjAgEAAoIBAQC7"].join("\n");
+    const pem = ["-----BEGIN PRIVATE KEY-----", body, "-----END PRIVATE KEY-----"].join("\n");
+    const serviceKey = ["sk", "svcacct", "Ab3dEf9h".repeat(6)].join("-");
+    const code =
+      "const risk = risk-adjusted(desk-admin, ask-proj); // flask-admin-deployment-7d9f8c6b5-x2k4p";
+    const result = __shareSessionTestUtils.defaultRedactHtmlForShare(
+      `${pem}\nkey${serviceKey}\n${code}`,
+      __shareSessionTestUtils.normalizeRedactionPolicy(undefined),
+    );
+
+    expect(result.html).toBe(`[REDACTED_PRIVATE_KEY]\nkey[REDACTED_OPENAI_API_KEY]\n${code}`);
+  });
+
   it("redacts personal identifiers and returns examples", () => {
     const result = __shareSessionTestUtils.defaultRedactHtmlForShare(
       "alice@example.com /Users/alice/workspace/oppi",

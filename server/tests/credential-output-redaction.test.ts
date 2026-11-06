@@ -80,4 +80,30 @@ describe("credential output redaction", () => {
     });
   });
 
+  it("redacts every API key shape in CLI output text and JSON envelopes", async () => {
+    const t = "Zk4mQ7rT".repeat(6);
+    const keys = [
+      ["sk", "ant", `api03-${t}`].join("-"),
+      ["sk", "proj", t].join("-"),
+      ["sk", "svcacct", t].join("-"),
+      ["sk", "admin", t].join("-"),
+      `sk-${t.slice(0, 48)}`,
+    ];
+    for (const key of keys) {
+      expect(redactCredentialString(`failed: token=${key}`)).toBe("failed: token=[REDACTED]");
+      expect(redactCredentialString(`failed: ${key}`)).toBe("failed: [REDACTED]");
+      expect(redactCredentialString(`failed: Bearer${key}`)).toBe("failed: Bearer[REDACTED]");
+      const captured = await captureCliOutput(async () => {
+        writeJsonEnvelope({ ok: false, error: { message: `rejected ${key}` } });
+      });
+      expect(captured.stdout).not.toContain(key);
+      expect(captured.stdout).toContain("rejected [REDACTED]");
+    }
+  });
+
+  it("leaves non-secret words and ids in CLI output alone", () => {
+    const input =
+      "task-sk- desk-admin-console 3f786850e387550fdab836ed7e6dc881de23001b 123e4567-e89b-12d3-a456-426614174000";
+    expect(redactCredentialString(input)).toBe(input);
+  });
 });
