@@ -1,6 +1,6 @@
 import * as c from "../ansi.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { parseCliArgs } from "./args.js";
+import { parseCliArgs, RUNNER_COMMANDS } from "./args.js";
 import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdControl } from "./commands/control.js";
@@ -108,23 +108,6 @@ export async function runCli(
     ...(error ? { error } : {}),
   };
 }
-
-/** The commands `runCli` dispatches; the CLI entry point hands these over unparsed. */
-export const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
-  "status",
-  "quota",
-  "models",
-  "agent",
-  "dictionary",
-  "workspace",
-  "worktree",
-  "session",
-  "control",
-  "extensions",
-  "schedule",
-  "wait",
-  "config",
-]);
 
 async function executeCliCommand(args: readonly string[], options: CliRunOptions): Promise<void> {
   const parsed = parseCliArgs([...args]);

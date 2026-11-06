@@ -7,7 +7,8 @@ import {
   unsupportedFlagsMessage,
 } from "../src/cli/help.js";
 import { localApiRequest } from "../src/cli/local-api-client.js";
-import { RUNNER_COMMANDS, runCli } from "../src/cli/runner.js";
+import { RUNNER_COMMANDS } from "../src/cli/args.js";
+import { runCli } from "../src/cli/runner.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/local-api-client.js")>();

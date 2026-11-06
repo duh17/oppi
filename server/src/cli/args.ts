@@ -1,3 +1,23 @@
+/**
+ * The commands `runCli` dispatches; the CLI entry point hands these over unparsed. They live
+ * here, not in runner.ts, so the entry point can route without loading the runner's commands.
+ */
+export const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
+  "status",
+  "quota",
+  "models",
+  "agent",
+  "dictionary",
+  "workspace",
+  "worktree",
+  "session",
+  "control",
+  "extensions",
+  "schedule",
+  "wait",
+  "config",
+]);
+
 export type ParsedCliArgs = {
   command: string;
   flags: Record<string, string>;

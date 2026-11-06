@@ -14,7 +14,6 @@ import { isLoopbackHostname } from "./request-trust.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join, resolve } from "node:path";
-import { RUNNER_COMMANDS, runCli } from "./cli/runner.js";
 import {
   getLocalHostname,
   getLocalIp,
@@ -22,11 +21,10 @@ import {
   getTailscaleIp,
   lookUpHostNames,
 } from "./cli/status.js";
-import { Storage } from "./storage.js";
+import type { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
-import { setUpAutoNamePackage } from "./auto-name-package.js";
 import { SHORT_INVITE_MAX_TTL_MS } from "./device-pairing.js";
-import { Server } from "./server.js";
+import type { Server } from "./server.js";
 import {
   applyHostEnv,
   prependPathEntry,
@@ -49,7 +47,6 @@ import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
-import { listAuthenticatedModelProviders } from "./cli/model-providers.js";
 import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
@@ -61,7 +58,7 @@ import {
 } from "./launchd.js";
 import * as systemd from "./systemd.js";
 import { doctorServiceManager, inspectService } from "./cli/doctor-service.js";
-import { parseCliArgs } from "./cli/args.js";
+import { parseCliArgs, RUNNER_COMMANDS } from "./cli/args.js";
 import { hasPendingPairingInvite } from "./cli/pairing-invite.js";
 import {
   createCliConfigStorage,
@@ -87,6 +84,10 @@ import {
 import type { ServerRestartMode } from "./types/server-update.js";
 import { parseDurationMs } from "./cli/commands/wait.js";
 import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "./cli/output.js";
+
+// Startup cost is dominated by module loading, so the server, storage, and model-provider
+// graphs (~1,800 modules between them) and the runner commands are imported inside the
+// commands that need them. `oppi --version`, `help`, and the other light commands never load them.
 
 const cliLog = createLogger({ base: { component: "cli" } });
 
@@ -231,6 +232,7 @@ function chooseFirstRunTlsMode(
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
+  const { Server: ServerClass } = await import("./server.js");
   // An owner token only means first-run setup ran; "paired" needs an enrolled device.
   const hasOwnerToken = storage.hasOwnerToken();
   const wasPaired = storage.isPaired();
@@ -282,7 +284,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       () => stopServing(server),
       async () => {
         // stop() is terminal for a Server; replace it rather than calling start twice.
-        server = new Server(storage, {
+        server = new ServerClass(storage, {
           onRestartAfterUpdate,
           restartNeededVersion: targetVersion,
         });
@@ -294,7 +296,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       process.exit(1);
     });
   };
-  let server = new Server(storage, { onRestartAfterUpdate });
+  let server = new ServerClass(storage, { onRestartAfterUpdate });
 
   async function shutdown(code: number, reason?: string): Promise<void> {
     await stopServing(server, reason);
@@ -613,6 +615,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
   const serviceInstalled = service?.installed === true;
 
   try {
+    const { listAuthenticatedModelProviders } = await import("./cli/model-providers.js");
     const providers = await listAuthenticatedModelProviders(config, serviceInstalled);
     const unchecked = "extension-registered providers are not checked";
     if (providers.length > 0) {
@@ -1382,6 +1385,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
   }
   // `runCli` checks the flags of the commands it runs; it also runs in-process for Oppi Control.
   if (RUNNER_COMMANDS.has(command)) {
+    const { runCli } = await import("./cli/runner.js");
     await runCli(invocationArgs);
     return;
   }
@@ -1421,7 +1425,11 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
         // its value so every reader in this process and the sessions it starts agrees.
         const dataDirFlag = flags["data-dir"];
         if (dataDirFlag) process.env.OPPI_DATA_DIR = resolve(dataDirFlag);
-        const storage = new Storage(process.env.OPPI_DATA_DIR || undefined, {
+        const [{ Storage: StorageClass }, { setUpAutoNamePackage }] = await Promise.all([
+          import("./storage.js"),
+          import("./auto-name-package.js"),
+        ]);
+        const storage = new StorageClass(process.env.OPPI_DATA_DIR || undefined, {
           migrateWorkspaceFolders: true,
         });
         await setUpAutoNamePackage({
