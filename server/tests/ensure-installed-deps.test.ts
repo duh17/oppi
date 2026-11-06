@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,32 +57,54 @@ function ensure(root: string) {
   });
 }
 
+/** Adds dist/.builds/<id>, with its own node_modules when `ownDeps`. */
+function addBuild(root: string, id: string, ownDeps: boolean): void {
+  mkdirSync(join(root, "dist", ".builds", id, ownDeps ? "node_modules" : "src"), {
+    recursive: true,
+  });
+}
+
+const OLD = "20260101-000000-000000000";
+const NEW = "20260102-000000-000000000";
+
 describe("ensure-installed-deps", () => {
-  it("does not reinstall while a build imports packages from server/node_modules", () => {
+  it("does not reinstall while dist/current imports packages from server/node_modules", () => {
     const root = staleServer();
-    mkdirSync(join(root, "dist", ".builds", "20260101-000000-000000000", "src"), {
-      recursive: true,
-    });
+    addBuild(root, OLD, false);
+    symlinkSync(`.builds/${OLD}`, join(root, "dist", "current"));
 
     const result = ensure(root);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("dist/.builds/20260101-000000-000000000");
+    expect(result.stderr).toContain(`dist/.builds/${OLD}`);
     expect(existsSync(join(root, "node_modules", ".package-lock.json"))).toBe(true);
   });
 
-  it("reinstalls once every build has its own node_modules", () => {
+  it("does not reinstall while a live PID is pinned to a build without node_modules", () => {
     const root = staleServer();
-    mkdirSync(join(root, "dist", ".builds", "20260101-000000-000000000", "node_modules"), {
-      recursive: true,
-    });
+    addBuild(root, OLD, false);
+    addBuild(root, NEW, true);
+    symlinkSync(`.builds/${NEW}`, join(root, "dist", "current"));
+    writeFileSync(join(root, "dist", ".builds", `${OLD}.pin`), `${process.pid}\n`);
+
+    const result = ensure(root);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`dist/.builds/${OLD}`);
+  });
+
+  it("reinstalls when only builds no server runs lack node_modules", () => {
+    const root = staleServer();
+    addBuild(root, OLD, false);
+    addBuild(root, NEW, true);
+    symlinkSync(`.builds/${NEW}`, join(root, "dist", "current"));
+    // A pin whose PID has exited, as dist_prune leaves it until its next run.
+    writeFileSync(join(root, "dist", ".builds", `${OLD}.pin`), "999999\n");
 
     const result = ensure(root);
 
     expect(result.stderr).toContain("npm ci in server/");
     expect(result.status).toBe(0);
-    expect(
-      existsSync(join(root, "dist", ".builds", "20260101-000000-000000000", "node_modules")),
-    ).toBe(true);
+    expect(existsSync(join(root, "dist", ".builds", NEW, "node_modules"))).toBe(true);
   });
 });

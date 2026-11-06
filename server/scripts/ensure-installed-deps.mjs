@@ -11,8 +11,12 @@
 //
 // `npm ci` empties node_modules before it fills it. A server run from a build in
 // dist/.builds/<id> that has no node_modules of its own imports its packages from
-// server/node_modules, so the install refuses while such a build exists. The dev
-// server-restart script gives each build its own copy.
+// server/node_modules, so the install refuses while a build a server may be
+// running (dist/current, or one a live PID is pinned to in <id>.pin) has none.
+// The dev server-restart script clones node_modules into each new build before
+// it first runs, taking the lock below so the clone never sees a half install;
+// it never adds one to a build already running, whose later lazy imports would
+// then load second copies of packages already loaded.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -21,6 +25,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -164,19 +169,37 @@ async function acquireLock() {
   }
 }
 
-/** Builds in dist/.builds that import packages from server/node_modules, which `npm ci` replaces. */
+/** Builds a server may be running that import packages from server/node_modules, which `npm ci` replaces. */
 function buildsSharingNodeModules() {
   const builds = join(serverRoot, "dist", ".builds");
   if (!existsSync(nodeModules)) return []; // nothing to pull away
+  let names;
   try {
-    return readdirSync(builds, { withFileTypes: true })
-      .filter(
-        (entry) => entry.isDirectory() && !existsSync(join(builds, entry.name, "node_modules")),
-      )
-      .map((entry) => entry.name);
+    names = readdirSync(builds);
   } catch {
     return []; // no versioned builds here
   }
+  const running = new Set();
+  try {
+    running.add(readlinkSync(join(serverRoot, "dist", "current")).replace(/^\.builds\//, ""));
+  } catch {
+    // no dist/current link
+  }
+  for (const name of names) {
+    if (!name.endsWith(".pin")) continue;
+    let pids;
+    try {
+      pids = readFileSync(join(builds, name), "utf8").split(/\s+/);
+    } catch {
+      continue; // pruned meanwhile
+    }
+    if (pids.some((pid) => /^\d+$/.test(pid) && pidAlive(Number(pid)))) {
+      running.add(name.slice(0, -".pin".length));
+    }
+  }
+  return [...running].filter(
+    (id) => existsSync(join(builds, id)) && !existsSync(join(builds, id, "node_modules")),
+  );
 }
 
 function install(reason) {
@@ -204,10 +227,10 @@ if (checkOnly) {
 const sharing = buildsSharingNodeModules();
 if (sharing.length > 0) {
   console.error(
-    `Not reinstalling: dist/.builds/${sharing.join(", dist/.builds/")} import packages from server/node_modules, and a server running one would lose them mid-install.`,
+    `Not reinstalling: a server may be running dist/.builds/${sharing.join(", dist/.builds/")}, which imports packages from server/node_modules and would lose them mid-install.`,
   );
   console.error(
-    "Give each its own copy first (cp -cR node_modules dist/.builds/<id>/node_modules; the dev server-restart script does it on every run), or delete a build no server runs.",
+    "Restart the server onto a new build first; the dev server-restart script gives each new build its own node_modules. A .pin whose PID no longer runs that build can be deleted.",
   );
   process.exit(1);
 }
