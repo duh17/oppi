@@ -29,6 +29,7 @@ import type {
   WorkspaceSystemPromptMode,
 } from "../types.js";
 import {
+  EXTENSION_ID,
   MCP_SERVER_NAME,
   parseSandboxConfig,
   validateWorkspaceWrite,
@@ -119,7 +120,31 @@ function readSandboxConfig(raw: unknown): WorkspaceSandboxConfig | undefined {
     if (names.length > 0) result.mcpServers = [...new Set(names)];
   }
 
-  return result.allowedHosts || result.env || result.mcpServers ? result : undefined;
+  if (Array.isArray(obj.hostExtensions)) {
+    const ids = obj.hostExtensions.filter(
+      (id): id is string => typeof id === "string" && EXTENSION_ID.test(id),
+    );
+    if (ids.length > 0) result.hostExtensions = [...new Set(ids)];
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * An update's sandbox config, keeping the saved `hostExtensions` when the sent object has no such
+ * key: clients that predate the field replace `sandboxConfig` whole when they edit Allowed Hosts
+ * or MCP servers, and must not silently undo the owner's host-extension opt-in. `[]` clears the
+ * list, and a `null` config clears everything.
+ */
+function keepHostExtensions(
+  parsed: WorkspaceSandboxConfig | undefined | null,
+  sent: unknown,
+  saved: WorkspaceSandboxConfig | undefined,
+): WorkspaceSandboxConfig | undefined {
+  if (parsed === null) return undefined;
+  const omitted = typeof sent === "object" && sent !== null && !("hostExtensions" in sent);
+  if (!omitted || !saved?.hostExtensions?.length) return parsed;
+  return { ...parsed, hostExtensions: saved.hostExtensions };
 }
 
 function normalizeSystemPromptMode(_value: unknown): WorkspaceSystemPromptMode {
@@ -447,7 +472,11 @@ export class WorkspaceStore {
       undo = folder.undo;
     }
     if (updates.sandboxConfig !== undefined)
-      workspace.sandboxConfig = parseSandboxConfig(updates.sandboxConfig, "update") ?? undefined;
+      workspace.sandboxConfig = keepHostExtensions(
+        parseSandboxConfig(updates.sandboxConfig, "update"),
+        updates.sandboxConfig,
+        workspace.sandboxConfig,
+      );
 
     workspace.updatedAt = Date.now();
 

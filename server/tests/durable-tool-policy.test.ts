@@ -252,6 +252,57 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(toolAllowed(doc.tools, "mcp_echo_run", EVERY_PI_TOOL)).toBe(true);
   });
 
+  it("gives a sandbox a host-only package only by an Agent's selection or the workspace's opt-in", () => {
+    const hostTool = { name: "host_only" } as unknown as ToolRegistration;
+    const pkg = defineExtension({ name: "host-pkg", tools: [hostTool] });
+    const extensionId = "host-pkg.ext";
+    const packagesOf = (
+      runtime: "host" | "sandbox",
+      extensionIds?: string[],
+      hostExtensionIds?: string[],
+    ) =>
+      resolveDurableAgent({
+        saved: {
+          id: "agent-1",
+          version: 1,
+          definition: {
+            name: "Agent",
+            ...(extensionIds ? { resources: { extensionIds } } : {}),
+          },
+        },
+        runtime,
+        base: [CodingTools],
+        loaded: [
+          {
+            extension: pkg,
+            // Host only: it acts on the host, outside any VM.
+            runtimes: ["host"],
+            root: "/tmp/pkg",
+            entry: "/tmp/pkg/server.ts",
+            extensionIds: [extensionId],
+          } as never,
+        ],
+        ...(hostExtensionIds ? { hostExtensionIds } : {}),
+        classic: { bundled: new Set(), names: new Map() },
+        enabled: () => true,
+        piTools: EVERY_PI_TOOL,
+        codemode: Codemode,
+        sessions: defineExtension({ name: "oppi.sessions" }),
+        spawn: false,
+        grant: false,
+        notify: defineExtension({ name: "oppi.notify" }),
+        notifies: false,
+      }).change.tools.map((tool) => tool.name);
+
+    expect(packagesOf("host")).toContain("host_only");
+    expect(packagesOf("sandbox")).not.toContain("host_only");
+    expect(packagesOf("sandbox", undefined, ["other.ext"])).not.toContain("host_only");
+    expect(packagesOf("sandbox", undefined, [extensionId])).toContain("host_only");
+    expect(packagesOf("sandbox", [extensionId])).toContain("host_only");
+    // An exact selection is exact: the workspace's opt-in does not add to it.
+    expect(packagesOf("sandbox", [], [extensionId])).not.toContain("host_only");
+  });
+
   it("caps a narrowed child at its parent's Pi tools, so an attach with the Pi Tools setting cannot add one back", () => {
     // The parent offers no bash (its own Agent excluded it); the child spawns with another Agent.
     const parentTools = ["read", "edit", "write"];

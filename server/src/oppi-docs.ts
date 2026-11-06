@@ -83,6 +83,8 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
  * - The guide follows its setting in every managed session, Oppi Control included, but never
  *   after a saved Agent's replacement prompt. A terminal-owned session gets only the workspace
  *   prompt.
+ * - A sandbox session that offers host-side tools (an opted-in host extension's) is told first
+ *   which of its tools run on the host.
  */
 export function oppiAppendSystemPrompt(options: {
   target: "host" | "sandbox" | "control" | "terminal";
@@ -92,9 +94,13 @@ export function oppiAppendSystemPrompt(options: {
   mobileOutputGuide: boolean;
   /** A saved Agent's instructions replace the system prompt. */
   replace: boolean;
+  /** A sandbox session's tools that run on the host, outside its VM. */
+  hostTools?: readonly string[];
 }): string[] {
   const { target, serverConfig, workspacePrompt } = options;
   const prompts: string[] = [];
+  if (target === "sandbox" && options.hostTools?.length)
+    prompts.push(sandboxHostToolsNote(options.hostTools));
   const docs =
     target === "host" && serverConfig?.oppiDocsPrompt?.enabled !== false
       ? buildOppiSystemPromptAppend()
@@ -106,4 +112,12 @@ export function oppiAppendSystemPrompt(options: {
   if (options.mobileOutputGuide && target !== "terminal" && !options.replace)
     prompts.push(buildMobileOutputGuide());
   return prompts;
+}
+
+function sandboxHostToolsNote(tools: readonly string[]): string {
+  const names = [...new Set(tools)].map((tool) => `\`${tool}\``).join(", ");
+  return [
+    "## Host tools",
+    `These tools run on the server host, outside this sandbox VM: ${names}. The VM's workspace mount and Allowed Hosts do not limit them.`,
+  ].join("\n");
 }

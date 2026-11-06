@@ -23,6 +23,7 @@ import {
   type InboxState,
   type UsageState,
   type EntryRecord,
+  type Extension,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
@@ -339,9 +340,40 @@ export class DurableBackend implements AgentBackend {
       projectTrusted: projectTrusted && !sandbox,
     });
     const piTools = piDefaultTools(piSettings);
+    // Host-only owner plugins a sandbox workspace opted into; a host session needs none.
+    const hostExtensionIds = sandbox ? (workspace.sandboxConfig?.hostExtensions ?? []) : [];
     const launched = control
       ? undefined
-      : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox, piTools });
+      : await DurableBackend.launchedAs(options, {
+          hostCwd,
+          cwd,
+          sandbox,
+          piTools,
+          hostExtensionIds,
+        });
+    // Owner plugins' extensions allowed in this runtime, or the exact selection the session
+    // launched with; never on control.
+    const exact = launched?.doc?.extensions?.packages;
+    const packageExtensions = control
+      ? []
+      : exact
+        ? host.runtime.loadedPackages
+            .filter(
+              (loaded) =>
+                exact.includes(loaded.extension.name) &&
+                host.runtime.isExtensionEnabled(loaded.extension.name),
+            )
+            .map((loaded) => loaded.extension)
+        : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host", hostExtensionIds);
+    // Of those, the opted-in host-only ones run on the host: the sandbox prompt names their tools.
+    const hostTools = host.runtime.loadedPackages
+      .filter(
+        (loaded) =>
+          sandbox &&
+          !loaded.runtimes.includes("sandbox") &&
+          packageExtensions.includes(loaded.extension),
+      )
+      .flatMap((loaded) => (loaded.extension.tools ?? []).map((tool) => tool.name));
     const skipped = launched?.doc?.extensions?.skipped;
     if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
     // A sandbox's workspace VM comes first: its Skills and context files are what this VM
@@ -363,6 +395,7 @@ export class DurableBackend implements AgentBackend {
           options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS
         ).enabled,
         replace: launched?.doc?.projectContext === false,
+        hostTools,
       });
       if (control) return { contextFiles: [], skills: [], appends };
       const files = await loadDurableProjectResources({
@@ -421,6 +454,7 @@ export class DurableBackend implements AgentBackend {
         piTools,
         piSettings,
         launched,
+        packageExtensions,
         sandboxEnv,
         resources,
         loadResources,
@@ -438,7 +472,13 @@ export class DurableBackend implements AgentBackend {
    */
   private static async launchedAs(
     options: DurableBackendOptions,
-    target: { hostCwd: string; cwd: string; sandbox: boolean; piTools: ReadonlySet<string> },
+    target: {
+      hostCwd: string;
+      cwd: string;
+      sandbox: boolean;
+      piTools: ReadonlySet<string>;
+      hostExtensionIds: readonly string[];
+    },
   ): Promise<LaunchedAs> {
     const { harness, session, host } = options;
     const id = session.serverDurable?.conversationId as ConversationId | undefined;
@@ -461,8 +501,12 @@ export class DurableBackend implements AgentBackend {
       ...seedModel(options.models, target.hostCwd, session),
       ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
       runtime,
-      base: [...host.runtime.builtInsFor(runtime), ...host.runtime.packageExtensionsFor(runtime)],
+      base: [
+        ...host.runtime.builtInsFor(runtime),
+        ...host.runtime.packageExtensionsFor(runtime, target.hostExtensionIds),
+      ],
       loaded: host.runtime.loadedPackages,
+      hostExtensionIds: target.hostExtensionIds,
       classic: host.runtime.classicExtensions,
       enabled: (name) => host.runtime.isExtensionEnabled(name),
       piTools: target.piTools,
@@ -487,31 +531,19 @@ export class DurableBackend implements AgentBackend {
       /** The session's effective Pi settings, as its Pi Tools setting is read. */
       piSettings: SettingsManager;
       launched: LaunchedAs | undefined;
+      /** The owner plugins' extensions this attach selects; none on control. */
+      packageExtensions: readonly Extension[];
       sandboxEnv: GondolinExecutionEnv | undefined;
       resources: PresentedResources;
       loadResources: () => Promise<PresentedResources>;
     },
   ): Promise<DurableBackend> {
     const { harness, models, session, host } = options;
-    const { hostCwd, cwd, mcp, resources, launched } = target;
+    const { hostCwd, cwd, mcp, resources, launched, packageExtensions } = target;
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
     const control = isControlConversation(session);
-    // Owner plugins' extensions allowed in this runtime, or the exact
-    // selection the session launched with; never on control.
-    const exact = launched?.doc?.extensions?.packages;
-    const packageExtensions = control
-      ? []
-      : exact
-        ? host.runtime.loadedPackages
-            .filter(
-              (loaded) =>
-                exact.includes(loaded.extension.name) &&
-                host.runtime.isExtensionEnabled(loaded.extension.name),
-            )
-            .map((loaded) => loaded.extension)
-        : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
     // A child without the `allowNestedDelegation` grant has no `subagent` tool.
     const spawn = launched?.spawn === true;
     // Asked again on every attach: push may have turned on or off since the last one.

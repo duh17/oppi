@@ -173,9 +173,9 @@
       "key": "workspace.sandboxConfig",
       "scope": "workspace",
       "storage": "workspace",
-      "type": "{ allowedHosts?: string[], env?: Record<string, string>, mcpServers?: string[] } | null",
+      "type": "{ allowedHosts?: string[], env?: Record<string, string>, mcpServers?: string[], hostExtensions?: string[] } | null",
       "default": null,
-      "validation": "An object with only allowedHosts (strings), env (string values) and mcpServers (names of letters, digits, _ and -); null clears it on update.",
+      "validation": "An object with only allowedHosts (strings), env (string values), mcpServers (names of letters, digits, _ and -) and hostExtensions (extension IDs, extension_<64 hex>); null clears it on update. An update without hostExtensions keeps the saved list.",
       "revisioned": false
     }
   ]

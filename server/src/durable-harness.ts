@@ -58,7 +58,7 @@ import {
 } from "./plugin-host.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
-import { OppiAgentDoc, type ClassicExtensionIndex } from "./durable-agent.js";
+import { OppiAgentDoc, pluginAllowedIn, type ClassicExtensionIndex } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -1734,13 +1734,18 @@ export class DurableHarness {
 
   /**
    * Extensions loaded from Pi packages that a session of this runtime selects next to the
-   * built-ins. Oppi Control sessions select none of them.
+   * built-ins: those allowed in it (`pluginAllowedIn`), with a sandbox workspace's opted-in
+   * `hostExtensions`. Oppi Control sessions select none of them.
    */
-  packageExtensionsFor(runtime: PluginRuntime): Extension[] {
+  packageExtensionsFor(
+    runtime: PluginRuntime,
+    hostExtensionIds: readonly string[] = [],
+  ): Extension[] {
     return this.packageExtensions
       .filter(
         (loaded) =>
-          loaded.runtimes.includes(runtime) && this.isExtensionEnabled(loaded.extension.name),
+          pluginAllowedIn(loaded, runtime, hostExtensionIds) &&
+          this.isExtensionEnabled(loaded.extension.name),
       )
       .map((loaded) => loaded.extension);
   }

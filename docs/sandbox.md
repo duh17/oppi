@@ -22,7 +22,7 @@ In the app: **Workspaces → +**, turn on **Sandbox**, pick a project path (or l
 - **`bash`** runs in the VM with its cwd in the mount. Host paths are unavailable unless mounted.
 - **Secrets:** model API calls run on the host, so the VM needs no provider keys. Provider keys and per-command host environment variables are not forwarded. Pi passes only `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, and `PI_SESSION_ID`. Use the workspace's `sandboxConfig.env` for non-secret guest config such as `PATH` and `LANG`, never credentials.
 - **Skills and context:** the model sees the workspace's `AGENTS.md` and `CLAUDE.md` (rewritten to sandbox paths), the Oppi workspace prompt from **Workspace Settings → Instructions**, the workspace's `.agents/skills`, and each directory (or symlink to one) in its `.pi/skills`, mounted read-only at `/workspace/<slug>/.pi/skills/<name>/`. Global host files (`~/.pi/agent/AGENTS.md`, global skills, the owner's `SYSTEM.md`) and loose `.md` files in `.pi/skills` are not exposed; sandbox sessions use a sandbox-specific base prompt instead. Skill and context-file bytes are read through the VM, never the host, so an `.agents/skills` entry or context file that links out of the workspace or to a hidden file such as `.env` yields nothing. Skill mounts hide the same secret files as the workspace mount. A saved Agent that selects any other skill fails to start with `agent_skills_unavailable`. Skills and context files over 1 MiB are skipped, and project `.pi/settings.json` skill filters are not applied. Put sandbox instructions in `AGENTS.md` or the workspace prompt, not global host files.
-- **Host extensions** (including an installed `ask`) run in the trusted host process, not the VM, unless they explicitly delegate into the sandbox. Enable them deliberately.
+- **Host extensions** run in the host process, not the VM, so a sandbox session loads them only when you opt in ([Host extensions](#host-extensions)).
 
 Running sessions keep their cwd and VM until stopped, so start a new session after changing settings that affect cwd, hosts, or environment (a server restart is not needed). Skill mounts are read when the VM boots, so a skill added to `.pi/skills` appears at the next boot. The VM stops 15 minutes after the workspace's last sandbox session stops, and a ready session keeps it running.
 
@@ -37,6 +37,7 @@ Running sessions keep their cwd and VM until stopped, so start a new session aft
 | Network egress | Omitted `allowedHosts` allows all HTTP/TLS egress | **Allowed Hosts** in Workspace Settings; an empty list denies all |
 | Provider secrets | Not injected into the VM | Do not use env |
 | Tools | VM-backed `read`, `bash`, `edit`, `write`, `ls`, `find`, `grep`; host `rg` and `fd` are not registered | See below |
+| Host extensions | Only those that declare the sandbox runtime, such as `ask` | `sandboxConfig.hostExtensions`, or a saved Agent's Extensions |
 
 ## Network access
 
@@ -59,7 +60,32 @@ Allowed hosts can receive any data the guest can read, so treat each one as an e
 
 ## Tools and extensions
 
-When neither an Agent nor a launch allowlist is set, `workspace.tools` is the fallback allowlist, intersected with the sandbox set (other names are dropped). If it is unset too, all sandbox file tools are active. An Agent or launch allowlist replaces that fallback: file builtins stay guest-backed, selected host-side extension tools stay registered and run on the host, and unknown or stale names are dropped with a session warning. `grep` and `find` are guest versions (Alpine `find`; guest `rg` when present, otherwise `grep`), never host ones. Installed Pi package tools run in the host process.
+When neither an Agent nor a launch allowlist is set, `workspace.tools` is the fallback allowlist, intersected with the sandbox set (other names are dropped). If it is unset too, all sandbox file tools and the tools of the loaded extensions are active. An Agent or launch allowlist replaces that fallback: file builtins stay guest-backed, selected host-side extension tools stay registered and run on the host, and unknown or stale names are dropped with a session warning. `grep` and `find` are guest versions (Alpine `find`; guest `rg` when present, otherwise `grep`), never host ones.
+
+### Host extensions
+
+Pi extensions and Oppi plugins run in the server process on the host. A tool of theirs reaches host files, commands, and the network without the VM's mount or Allowed Hosts, so a sandbox session loads one only in these cases:
+
+| Extension | Loads in a sandbox session when |
+| --- | --- |
+| A Pi extension whose package declares `"oppi": { "classicRuntimes": ["host", "sandbox"] }`, such as `ask` | It is enabled ([Extensions](extensions.md#what-oppi-loads)) |
+| A plugin whose extension lists `"sandbox"` in `runtimes` (its commands and file access go through the VM) | It is enabled ([Plugins](extensions.md#plugins)) |
+| Any other enabled extension or plugin | The workspace's `sandboxConfig.hostExtensions` lists its extension ID |
+| An extension a saved Agent selects | The Agent's session starts: its selection is exact and replaces the rules above |
+
+The rules cover extensions without tools too, such as a hook that gates tool calls: opt one in to keep it in sandbox sessions. A classic session treats the workspace's own `.pi/extensions` the same way. The session's prompt names each tool of an opted-in host extension as a host tool. Children of a durable sandbox session get the same plugins.
+
+To opt in, take the extension's `id` from `oppi extensions list --json`. Then send the whole sandbox config with `hostExtensions` added:
+
+```bash
+oppi workspace get research --json        # copy the saved sandboxConfig
+cat > /tmp/sandbox.json <<'EOF'
+{ "sandboxConfig": { "allowedHosts": ["*"], "hostExtensions": ["extension_3f9c…"] } }
+EOF
+oppi workspace update research --definition /tmp/sandbox.json
+```
+
+The server refuses a value that is not a list of `extension_<64 hex>` IDs. A classic session shows a warning for an ID that names no installed, enabled extension. A write without `hostExtensions` keeps the saved list, so an app edit of Allowed Hosts or MCP servers keeps it. Send `"hostExtensions": []` to clear it. Start a new session after a change; a durable session picks it up the next time it attaches.
 
 ## MCP servers in a sandbox
 
@@ -79,7 +105,7 @@ Trust you take on when you pick a server:
 - An HTTP server acts with your authority on that service, even though the token stays on the host.
 - Allowed Hosts is checked against the configured URL only. The host-side client follows redirects, and OAuth discovery and refresh contact the provider's authorization server, without rechecking those hosts. A name that resolves to a private address is not caught.
 - Large or binary results are saved to the host's temporary folder (owner-only), and the model gets a host path its VM tools cannot open.
-- Host extensions you install still run on the host; one that exposes its own code-running tool would bring host code execution back.
+- A host extension you opt into still runs on the host; one that exposes its own code-running tool brings host code execution back.
 - A stdio server the agent can modify in the VM feeds the host MCP client. Its log lines go to `sandbox-mcp-logs/<workspace id>.log` in the Oppi data folder, never the shared `~/.pi/agent/mcp.log` that host agents read.
 
 ## Security boundary

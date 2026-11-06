@@ -40,5 +40,11 @@
     "extensions": [
       "./extensions/ask.ts"
     ]
+  },
+  "oppi": {
+    "classicRuntimes": [
+      "host",
+      "sandbox"
+    ]
   }
 }

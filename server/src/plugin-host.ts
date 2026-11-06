@@ -41,7 +41,8 @@ import {
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import * as oppiV1 from "./oppi-v1.js";
-import { Extensions, pluginRuntimes, type PluginRuntime } from "./oppi-v1.js";
+import { Extensions } from "./oppi-v1.js";
+import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 import * as oppiV1Schema from "./oppi-v1-schema.js";
 import {
   discoverPackage,

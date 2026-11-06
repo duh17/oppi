@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import {
   fauxProvider,
   fauxAssistantMessage,
@@ -26,6 +27,8 @@ import {
   type ServerExtensionSummary,
 } from "../src/server-resource-service.js";
 import { serverResourceId } from "../src/server-resource-id.js";
+import type { GondolinVm } from "../src/gondolin-ops.js";
+import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -710,6 +713,86 @@ describe("plugins from Pi packages", () => {
       kinds: ["plugin"],
       source: "built-in",
     });
+  });
+});
+
+/** A VM that only answers the calls attaching a sandbox session makes. */
+const vm: GondolinVm = {
+  fs: {
+    mkdir: async () => {},
+    access: async () => {},
+    readFile: async () => {
+      throw new Error("ENOENT");
+    },
+    writeFile: async () => {},
+  },
+  exec: (argv) =>
+    Object.assign(
+      Promise.resolve({
+        ok: true,
+        exitCode: 0,
+        stdout: argv.includes("oppi-realpath") ? `${argv.at(-1)}\0` : "",
+        stdoutBuffer: argv.includes("oppi-realpath")
+          ? Buffer.from(`${argv.at(-1)}\0`)
+          : Buffer.alloc(0),
+      }),
+      { async *output() {}, write() {}, end() {} },
+    ),
+};
+
+describe("plugins in a sandbox workspace", () => {
+  it("selects a host-only plugin only after the workspace opts in, and names its tools as host tools", async () => {
+    const hostOnly = writePackage("hostpkg");
+    // Declares the sandbox runtime: every effect goes through the session's env (the VM).
+    writeEntry(
+      "vmpkg",
+      probeFacet("vmpkg").map((line) =>
+        line.startsWith("  name:") ? `${line}\n  runtimes: ["host", "sandbox"],` : line,
+      ),
+    );
+    const prompts: string[] = [];
+    const f = await fixture(
+      Array.from({ length: 4 }, () => (request) => {
+        prompts.push(getCurrentSystemPrompt(request.messages));
+        return fauxAssistantMessage("ok");
+      }),
+    );
+    vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    const sandbox = f.storage.updateWorkspace(f.workspace.id, { runtime: "sandbox" })!;
+    const tools = async (sessionId: string): Promise<string[]> => {
+      const id = f.storage.getSession(sessionId)!.serverDurable!.conversationId as ConversationId;
+      const agent = await (await (await f.harness()).conversation(id, context))!.agent(context);
+      return agent.tools.map((tool) => tool.name);
+    };
+
+    await f.manager.startSession(f.session.id, sandbox);
+    expect(await tools(f.session.id)).toContain("vmpkg_version");
+    expect(await tools(f.session.id)).not.toContain("hostpkg_version");
+    await prompt(f.manager, f.session.id, "hello");
+    expect(prompts.at(-1)).not.toContain("## Host tools");
+    await f.manager.stopSession(f.session.id);
+
+    const optedIn = f.storage.updateWorkspace(f.workspace.id, {
+      sandboxConfig: {
+        hostExtensions: [serverResourceId("extension", join(hostOnly, "index.ts"))],
+      },
+    })!;
+    // A new session gets it, and so does the earlier one at its next attach.
+    const fresh = f.storage.createSession("Opted in", "faux/faux-1");
+    fresh.serverDurable = { storeId: fresh.id };
+    fresh.workspaceId = optedIn.id;
+    f.storage.saveSession(fresh);
+    for (const sessionId of [fresh.id, f.session.id]) {
+      await f.manager.startSession(sessionId, optedIn);
+      expect(await tools(sessionId)).toEqual(
+        expect.arrayContaining(["hostpkg_version", "vmpkg_version"]),
+      );
+      await prompt(f.manager, sessionId, "hello");
+      expect(prompts.at(-1)).toContain(
+        "These tools run on the server host, outside this sandbox VM: `hostpkg_version`.",
+      );
+      await f.manager.stopSession(sessionId);
+    }
   });
 });
 

@@ -1,5 +1,6 @@
 import { defineRegistry } from "@earendil-works/chord/next";
 import type { Extension, RegistrySnapshot, ToolRegistration } from "@earendil-works/pi-durable";
+import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 
 /**
  * `oppi/v1`: Oppi's plugin API, version 1. A plugin's `server.ts` default-exports a facet that
@@ -38,10 +39,7 @@ export * from "@earendil-works/pi-durable";
 /** What only Oppi provides: its host (`oppiHost()`), extension UI dialogs and cards. */
 export * from "./durable-extension-api.js";
 
-/** Where a session runs its tools: on the server's host, or in a workspace's sandbox VM. */
-export type PluginRuntime = "host" | "sandbox";
-
-const RUNTIMES: readonly PluginRuntime[] = ["host", "sandbox"];
+export type { PluginRuntime } from "./plugin-runtimes.js";
 
 /** A durable extension with the runtimes whose sessions may select it. */
 export interface PluginExtension<
@@ -60,19 +58,6 @@ export function defineExtension<Tool extends ToolRegistration = ToolRegistration
   extension: Extension<Tool> & { readonly runtimes?: readonly PluginRuntime[] },
 ): PluginExtension<Tool> {
   return { ...extension, runtimes: pluginRuntimes(extension.runtimes) };
-}
-
-/** `runtimes` checked, `["host"]` when unset. Throws for an empty, unknown, or repeated runtime. */
-export function pluginRuntimes(runtimes: unknown): readonly PluginRuntime[] {
-  if (runtimes === undefined) return ["host"];
-  if (
-    !Array.isArray(runtimes) ||
-    runtimes.length === 0 ||
-    runtimes.some((runtime) => !RUNTIMES.includes(runtime as PluginRuntime)) ||
-    new Set(runtimes).size !== runtimes.length
-  )
-    throw new Error('`runtimes` must list "host", "sandbox", or both, once each');
-  return runtimes as PluginRuntime[];
 }
 
 /**

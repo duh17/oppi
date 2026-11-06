@@ -247,6 +247,9 @@ export class DurableThreads {
       runtime,
       base: agent.extensions,
       loaded: this.deps.runtime.loadedPackages,
+      ...(runtime === "sandbox"
+        ? { hostExtensionIds: workspace.sandboxConfig?.hostExtensions ?? [] }
+        : {}),
       classic: this.deps.runtime.classicExtensions,
       enabled: (name) => this.deps.runtime.isExtensionEnabled(name),
       // A child gets the Pi Tools setting's tools its parent offers.

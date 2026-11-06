@@ -106,9 +106,11 @@ const WORKSPACE_WRITE_FIELDS: ReadonlySet<string> = new Set([
   "runtime",
   "sandboxConfig",
 ]);
-const SANDBOX_CONFIG_FIELDS = ["allowedHosts", "env", "mcpServers"];
+const SANDBOX_CONFIG_FIELDS = ["allowedHosts", "env", "mcpServers", "hostExtensions"];
 /** Pi server names: letters, digits, `_` and `-`. */
 export const MCP_SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+/** An extension's server resource ID (`serverResourceId("extension", path)`). */
+export const EXTENSION_ID = /^extension_[0-9a-f]{64}$/;
 
 /** `null` clears a field on update; a create has nothing to clear. */
 const clearable = (value: unknown, kind: WorkspaceWriteKind): boolean =>
@@ -171,7 +173,7 @@ export function parseSandboxConfig(
     }
   }
   const result: WorkspaceSandboxConfig = {};
-  const { allowedHosts, env, mcpServers } = raw;
+  const { allowedHosts, env, mcpServers, hostExtensions } = raw;
   if (allowedHosts !== undefined) {
     if (!Array.isArray(allowedHosts) || allowedHosts.some((host) => typeof host !== "string")) {
       return fail("sandboxConfig.allowedHosts must be an array of strings");
@@ -194,6 +196,17 @@ export function parseSandboxConfig(
       );
     }
     result.mcpServers = [...mcpServers];
+  }
+  if (hostExtensions !== undefined) {
+    if (
+      !Array.isArray(hostExtensions) ||
+      hostExtensions.some((id) => typeof id !== "string" || !EXTENSION_ID.test(id))
+    ) {
+      return fail(
+        "sandboxConfig.hostExtensions must be an array of extension IDs (extension_<64 hex>, as `oppi extensions list --json` shows them)",
+      );
+    }
+    result.hostExtensions = [...(hostExtensions as string[])];
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

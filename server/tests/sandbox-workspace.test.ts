@@ -171,6 +171,34 @@ describe("Sandbox workspace CRUD", () => {
     expect(storage.getWorkspace(ws.id)!.sandboxConfig).toEqual({ mcpServers: ["echo", "kypu-2"] });
   });
 
+  it("stores host extension IDs, refuses anything else, and keeps them through a write that omits them", () => {
+    const id = `extension_${"a".repeat(64)}`;
+    const ws = storage.createWorkspace({
+      name: "host-extensions",
+      runtime: "sandbox",
+    } as CreateWorkspaceRequest);
+    for (const bad of [["web_search"], [`extension_${"A".repeat(64)}`], "extension", [5]])
+      expect(() =>
+        storage.updateWorkspace(ws.id, { sandboxConfig: { hostExtensions: bad } as never }),
+      ).toThrow(/hostExtensions must be an array of extension IDs/);
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toBeUndefined();
+
+    storage.updateWorkspace(ws.id, {
+      sandboxConfig: { allowedHosts: ["*"], hostExtensions: [id] },
+    });
+    // A client that predates the field replaces the config without it (an Allowed Hosts edit).
+    storage.updateWorkspace(ws.id, { sandboxConfig: { allowedHosts: [], mcpServers: [] } });
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toEqual({
+      allowedHosts: [],
+      hostExtensions: [id],
+    });
+    storage.updateWorkspace(ws.id, { sandboxConfig: { allowedHosts: [], hostExtensions: [] } });
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toEqual({ allowedHosts: [] });
+    storage.updateWorkspace(ws.id, { sandboxConfig: { hostExtensions: [id] } });
+    storage.updateWorkspace(ws.id, { sandboxConfig: null });
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toBeUndefined();
+  });
+
   it("updates runtime from host to sandbox", () => {
     const ws = storage.createWorkspace({
       name: "upgrade-test",

@@ -21,6 +21,12 @@ export interface WorkspaceSandboxConfig {
    * owner. Stored here, outside the VM, so the agent cannot add servers.
    */
   mcpServers?: string[];
+  /**
+   * Extension IDs (`oppi extensions list`, as a saved Agent's `resources.extensionIds`) whose
+   * host-side tools this sandbox's sessions may use. Without one, a sandbox session loads only
+   * extensions that declare they run nothing on the host.
+   */
+  hostExtensions?: string[];
 }
 
 export interface WorkspaceMutableConfig {

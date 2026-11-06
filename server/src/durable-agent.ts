@@ -173,12 +173,28 @@ const CODEMODE_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}codemode`;
 const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
 
 /**
+ * Whether a session of `runtime` may select the owner plugin `loaded`: it declares the runtime
+ * (`runtimes`), or the session is a sandbox one that opted into it (`optedIn`, Extension IDs of
+ * a saved Agent's selection or the workspace's `sandboxConfig.hostExtensions`). A plugin that
+ * does not declare `sandbox` acts on the host, past the VM, so a sandbox gets it only by opt-in.
+ */
+export function pluginAllowedIn(
+  loaded: LoadedPlugin,
+  runtime: "host" | "sandbox",
+  optedIn: readonly string[],
+): boolean {
+  if (loaded.runtimes.includes(runtime)) return true;
+  return runtime === "sandbox" && loaded.extensionIds.some((id) => optedIn.includes(id));
+}
+
+/**
  * The durable extensions a saved Agent's exact Extension selection names. `builtin:mcp` is the
  * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
  * `builtin:tool-search` needs `builtin:mcp`), and `builtin:codemode` is pi-durable's codemode, as
  * in classic. An ID whose durable version Oppi bundles is in every session already. Any other ID
- * must belong to a Pi package whose plugin is loaded for this runtime and enabled. The rest
- * are `skipped` by name: the session starts without them and warns.
+ * must belong to a Pi package whose plugin is loaded, enabled, and allowed in this runtime (the
+ * selection is a sandbox's opt-in, `pluginAllowedIn`). The rest are `skipped` by name: the
+ * session starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
   extensionIds: readonly string[],
@@ -202,7 +218,7 @@ export function resolveDurableExtensionSelection(
       continue;
     if (classic.bundled.has(id)) continue;
     const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
-    if (found?.runtimes.includes(runtime) && enabled(found.extension.name)) {
+    if (found && pluginAllowedIn(found, runtime, [id]) && enabled(found.extension.name)) {
       if (!packages.includes(found)) packages.push(found);
       continue;
     }
@@ -313,6 +329,8 @@ interface DurableAgentInput {
   base: readonly Extension[];
   /** Every loaded owner plugin. */
   loaded: readonly LoadedPlugin[];
+  /** A sandbox workspace's `sandboxConfig.hostExtensions`: host-only plugins it opted into. */
+  hostExtensionIds?: readonly string[];
   classic: ClassicExtensionIndex;
   /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
   enabled: (name: string) => boolean;
@@ -382,9 +400,10 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       : kept;
   const packages = !saved
     ? []
-    : (selection?.packages ?? loaded.filter((entry) => entry.runtimes.includes(runtime))).map(
-        (entry) => entry.extension,
-      );
+    : (
+        selection?.packages ??
+        loaded.filter((entry) => pluginAllowedIn(entry, runtime, input.hostExtensionIds ?? []))
+      ).map((entry) => entry.extension);
   // A disabled extension leaves every selection, a child's copy of its parent's included.
   const extensions = [
     ...base,

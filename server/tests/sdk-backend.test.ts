@@ -1444,6 +1444,145 @@ describe("SdkBackend sandbox", () => {
         rmSync(agentDir, { recursive: true, force: true });
       }
     });
+
+    describe("global host extensions", () => {
+      /** A global extension registering `tool`; a package declaring `classicRuntimes` when given. */
+      function writeGlobalExtension(
+        agentDir: string,
+        name: string,
+        tool: string,
+        classicRuntimes?: string[],
+      ): string {
+        const source = `export default function (pi) { pi.registerTool({ name: '${tool}', label: '${tool}', description: '${tool}', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: '${tool}-ran-on-host' }] }) }); }`;
+        const extensions = join(agentDir, "extensions");
+        if (!classicRuntimes) {
+          mkdirSync(extensions, { recursive: true });
+          writeFileSync(join(extensions, `${name}.ts`), source);
+          return join(extensions, `${name}.ts`);
+        }
+        const root = join(extensions, name);
+        mkdirSync(root, { recursive: true });
+        writeFileSync(
+          join(root, "package.json"),
+          JSON.stringify({ name, pi: { extensions: ["./index.ts"] }, oppi: { classicRuntimes } }),
+        );
+        writeFileSync(join(root, "index.ts"), source);
+        return join(root, "index.ts");
+      }
+
+      /** A session of the workspace `setup` returns, with the global extensions it wrote. */
+      async function start(
+        setup: (agentDir: string) => Partial<Workspace>,
+      ): Promise<{ backend: SdkBackend; session: Session; cleanup: () => Promise<void> }> {
+        const cwd = makeTempDir("oppi-sandbox-global-ext-");
+        const agentDir = makeTempDir("oppi-sandbox-global-ext-agent-");
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        writeFileSync(join(agentDir, "auth.json"), "{}");
+        const workspace = setup(agentDir);
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+        const { vm } = createGuestSearchVm();
+        const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+        const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+        const previousManager = sdkBackendType._gondolinManager;
+        sdkBackendType._gondolinManager = manager;
+        const cleanup = async () => {
+          sdkBackendType._gondolinManager = previousManager;
+          qemuSpy.mockRestore();
+          if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+          else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+          rmSync(cwd, { recursive: true, force: true });
+          rmSync(agentDir, { recursive: true, force: true });
+        };
+        const session = makeSession({ ephemeral: true });
+        try {
+          const backend = await SdkBackend.create({
+            session,
+            workspace: {
+              id: "w1",
+              name: "Sandbox Global Extensions",
+              hostMount: cwd,
+              ...workspace,
+            } as Workspace,
+            onEvent: vi.fn(),
+            onEnd: vi.fn(),
+          });
+          return {
+            backend,
+            session,
+            cleanup: async () => {
+              await backend.dispose();
+              await cleanup();
+            },
+          };
+        } catch (error) {
+          await cleanup();
+          throw error;
+        }
+      }
+
+      it("loads no host extension into a sandbox session without an opt-in", async () => {
+        const { backend, cleanup } = await start((agentDir) => {
+          writeGlobalExtension(agentDir, "host-shell", "host_shell");
+          writeGlobalExtension(agentDir, "user-only", "user_only", ["host", "sandbox"]);
+          return { runtime: "sandbox" };
+        });
+        try {
+          const active = backend.session.getActiveToolNames();
+          expect(active).toEqual(expect.arrayContaining(["read", "bash", "edit", "write"]));
+          // Not merely inactive: its code never loads, so it cannot run on the host.
+          expect(backend.session.getToolDefinition("host_shell")).toBeUndefined();
+          // A package that declares the sandbox runtime still loads.
+          expect(active).toContain("user_only");
+          expect(backend.session.systemPrompt).not.toContain("## Host tools");
+        } finally {
+          await cleanup();
+        }
+      });
+
+      it("loads a workspace's opted-in host extension and names its tools as host tools", async () => {
+        const missing = serverResourceId("extension", "/nonexistent/extension.ts");
+        const { backend, session, cleanup } = await start((agentDir) => {
+          const hostFetch = writeGlobalExtension(agentDir, "host-fetch", "host_fetch");
+          writeGlobalExtension(agentDir, "host-shell", "host_shell");
+          return {
+            runtime: "sandbox",
+            sandboxConfig: {
+              hostExtensions: [serverResourceId("extension", hostFetch), missing],
+            },
+          };
+        });
+        try {
+          const active = backend.session.getActiveToolNames();
+          expect(active).toContain("host_fetch");
+          expect(backend.session.getToolDefinition("host_shell")).toBeUndefined();
+          const result = await backend.session
+            .getToolDefinition("host_fetch")!
+            .execute("host-fetch", {}, undefined, undefined, {} as never);
+          expect(toolText(result)).toContain("host_fetch-ran-on-host");
+          expect(backend.session.systemPrompt).toMatch(
+            /## Host tools\nThese tools run on the server host, outside this sandbox VM: `host_fetch`\./,
+          );
+          // An opt-in that names nothing installed is reported, not silently dropped.
+          expect(session.warnings?.join("\n")).toContain(missing);
+        } finally {
+          await cleanup();
+        }
+      });
+
+      it("leaves a host session's global extensions as Pi loads them", async () => {
+        const { backend, cleanup } = await start((agentDir) => {
+          writeGlobalExtension(agentDir, "host-shell", "host_shell");
+          return { runtime: "host" };
+        });
+        try {
+          expect(backend.session.getActiveToolNames()).toContain("host_shell");
+          expect(backend.session.systemPrompt).not.toContain("## Host tools");
+        } finally {
+          await cleanup();
+        }
+      });
+    });
   });
 });
 

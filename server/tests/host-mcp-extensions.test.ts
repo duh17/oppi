@@ -403,6 +403,10 @@ export default function (pi) {
           sandboxConfig: {
             allowedHosts: [],
             mcpServers: ["echo", "searchable", "secretive", "gone"],
+            // The observer hook runs on the host, so a sandbox loads it only by opt-in.
+            hostExtensions: [
+              serverResourceId("extension", join(agentDir, "extensions", "observer.ts")),
+            ],
           },
         } as Workspace,
         onEvent: vi.fn(),

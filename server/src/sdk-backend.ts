@@ -94,6 +94,8 @@ import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
+import { keepAutoDiscoveryOffHost, resolveSandboxExtensions } from "./sandbox-host-extensions.js";
+import { canonicalServerResourcePath } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
@@ -590,33 +592,13 @@ export function hostWorkspacePathToGuest(
   return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
 }
 
-type PiAutoDiscovery = { cwd: string; addAutoDiscoveredResources: (...args: unknown[]) => void };
-
 /**
  * Keep a classic sandbox loader's Pi from walking the guest's `.agents/skills` on the host.
- * `noSkills` stops Pi loading Skills, not discovering them: on every reload its package
- * manager walks `.agents/skills` from its cwd up to the git root (`addAutoDiscoveredResources`,
- * synchronously, with no cycle guard), so two `loop -> .` links block the server. That walk
- * is the method's only use of `cwd`, so it runs from `/`, which no guest can write; project
- * `.pi` resources keep the workspace's base dir. Extension-provided Skill paths are dropped
- * for the same reason. Throws if Pi no longer has this shape, rather than walk silently.
+ * `noSkills` stops Pi loading Skills, not discovering them: its package manager still walks
+ * (`keepAutoDiscoveryOffHost`). Extension-provided Skill paths are dropped for the same reason.
  */
 function keepSandboxSkillDiscoveryOffHost(loader: DefaultResourceLoader): void {
-  const packageManager = (loader as unknown as { packageManager?: Partial<PiAutoDiscovery> })
-    .packageManager;
-  const discover = packageManager?.addAutoDiscoveredResources;
-  if (typeof discover !== "function" || typeof packageManager?.cwd !== "string")
-    throw new Error("Cannot keep sandbox Skill discovery off the host with this Pi version");
-  const manager = packageManager as PiAutoDiscovery;
-  manager.addAutoDiscoveredResources = (...args) => {
-    const cwd = manager.cwd;
-    manager.cwd = "/";
-    try {
-      discover.apply(manager, args);
-    } finally {
-      manager.cwd = cwd;
-    }
-  };
+  keepAutoDiscoveryOffHost((loader as unknown as { packageManager?: unknown }).packageManager);
   const extendResources = loader.extendResources.bind(loader);
   loader.extendResources = (paths) => extendResources({ ...paths, skillPaths: [] });
 }
@@ -1247,6 +1229,23 @@ export class SdkBackend implements AgentBackend {
         settingsManager,
         mcpBuiltinNames,
       );
+      // A sandbox loads host extensions only by opt-in: its Agent's selection or the
+      // workspace's `hostExtensions`. Their tools run in this process, past the VM.
+      const sandboxExtensions = sandboxMode
+        ? await resolveSandboxExtensions({
+            cwd: hostCwd,
+            agentDir: runtimeAgentDir,
+            settingsManager,
+            selectedPaths: selectedAgentExtensionPaths,
+            hostExtensionIds: workspace?.sandboxConfig?.hostExtensions ?? [],
+            builtinNames: mcpBuiltinNames,
+          })
+        : undefined;
+      if (sandboxExtensions?.unavailable.length) {
+        const warning = `This sandbox's host extensions are not installed or are turned off: ${sandboxExtensions.unavailable.join(", ")}. Fix the workspace's sandboxConfig.hostExtensions.`;
+        session.warnings = [...new Set([...(session.warnings ?? []), warning])];
+      }
+      const loadedExtensionPaths = sandboxExtensions?.paths ?? selectedAgentExtensionPaths;
       // A sandbox gets only the global servers its owner picked, with stdio servers
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
@@ -1292,6 +1291,7 @@ export class SdkBackend implements AgentBackend {
           workspacePrompt: workspace?.systemPrompt,
           mobileOutputGuide: mobileOutputGuideSettingsHolder.snapshot.enabled,
           replace,
+          hostTools: sandboxHostTools(),
         });
         // The control prompt is the whole setup: ignore Pi's discovered APPEND_SYSTEM.md.
         if (controlMetadata) return oppi;
@@ -1364,6 +1364,17 @@ export class SdkBackend implements AgentBackend {
           ),
         );
       }
+      // The loaded host-side extensions' tools, which a sandbox's prompt names as host tools.
+      const sandboxHostTools = (): string[] => {
+        const hostSide = sandboxExtensions?.hostSide;
+        if (!hostSide?.size) return [];
+        return loader
+          .getExtensions()
+          .extensions.filter((extension) =>
+            hostSide.has(canonicalServerResourcePath(extension.path)),
+          )
+          .flatMap((extension) => [...extension.tools.keys()]);
+      };
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -1391,8 +1402,8 @@ export class SdkBackend implements AgentBackend {
             : config.skillPaths
               ? { additionalSkillPaths: config.skillPaths }
               : {}),
-        ...(selectedAgentExtensionPaths !== undefined
-          ? { noExtensions: true, additionalExtensionPaths: selectedAgentExtensionPaths }
+        ...(loadedExtensionPaths !== undefined
+          ? { noExtensions: true, additionalExtensionPaths: loadedExtensionPaths }
           : {}),
         ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
