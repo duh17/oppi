@@ -47,7 +47,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
 import { recordMcpConnect } from "./mcp-connect-metrics.js";
-import { mcpToolCacheKey, type McpServerSnapshot, type McpToolCache } from "./mcp-tool-cache.js";
+import type { McpServerSnapshot, McpToolCache } from "./mcp-tool-cache.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   loadPiMcpInternals,
@@ -86,7 +86,7 @@ interface Server {
   connection?: McpServerConnection;
   /** Settles when the first connection attempt connected or failed; not set for a lazy server. */
   ready?: Promise<void>;
-  /** When the first connection attempt began; undefined before it and once it is recorded. */
+  /** When the first connection attempt began; undefined before it. */
   connectStartedAt?: number;
   connectRecorded: boolean;
 }
@@ -114,11 +114,11 @@ export interface DurableMcpOptions {
   /** The Pi Tools setting's tools (`piDefaultTools`), which can turn `tool_search` on. */
   piTools: ReadonlySet<string>;
   providerToken: (provider: string) => Promise<string | undefined>;
-  /** Last-known tool lists, shared by every session of this server. */
+  /** Last-known tool lists, shared by the sessions of this one scope: the host or one sandbox. */
   toolCache: McpToolCache;
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
-  /** This session's connected servers as codemode namespaces; undefined once it closes. */
+  /** This session's servers with tools (connected or cached) as codemode namespaces; undefined once it closes. */
   namespaces: (namespaces: readonly CodemodeNamespace[] | undefined) => void;
   metrics?: ServerTelemetry;
 }
@@ -286,7 +286,7 @@ export class DurableMcp {
   private readonly configErrors: string[];
   /** Tool names the conversation offers once it attaches: codemode and tool search as needed. */
   private readonly discoveryTools: string[];
-  /** Connected servers by name, as codemode namespaces. */
+  /** Servers with tools, connected or cached, by name, as codemode namespaces. */
   private readonly namespaces = new Map<string, CodemodeNamespace>();
   private conversation?: Conversation;
   private startup?: Promise<void>;
@@ -353,7 +353,7 @@ export class DurableMcp {
       ? options.toolCache.load()
       : new Map<string, McpServerSnapshot>();
     this.servers = entries.map((entry) => {
-      const key = mcpToolCacheKey(entry, options.sandbox !== undefined);
+      const key = options.toolCache.key(entry);
       const cacheable = reachedOnlyByCodemode(entry);
       const snapshot = cacheable ? cached.get(key) : undefined;
       return { entry, key, cacheable, connectRecorded: false, ...(snapshot ? { snapshot } : {}) };

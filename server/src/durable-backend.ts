@@ -442,7 +442,10 @@ export class DurableBackend implements AgentBackend {
               policy: session.launch?.tools,
               piTools,
               providerToken: (provider) => registry.getApiKeyForProvider(provider),
-              toolCache: new McpToolCache(mcpToolCachePath(options.dataDir)),
+              toolCache: new McpToolCache(
+                mcpToolCachePath(options.dataDir),
+                sandbox ? `sandbox:${workspace.id}` : "host",
+              ),
               install: (extension) => host.runtime.installExtension(extension),
               uninstall: (extension) => host.runtime.uninstallExtension(extension),
               namespaces: (namespaces) => host.runtime.setMcpNamespaces(session.id, namespaces),

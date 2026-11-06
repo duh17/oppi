@@ -1494,7 +1494,7 @@ export class DurableHarness {
       };
     },
   });
-  /** Each open session's connected MCP servers, as codemode namespaces (`setMcpNamespaces`). */
+  /** Each open session's MCP servers with tools, as codemode namespaces (`setMcpNamespaces`). */
   private readonly mcpNamespaces = new Map<string, readonly CodemodeNamespace[]>();
   /**
    * pi-durable's own `codemode`, one extension for every durable session: scripts call the
@@ -1502,7 +1502,7 @@ export class DurableHarness {
    * calls again. The script VM has no host access; every effect is a nested tool call, which runs
    * in the session's execution env (the Gondolin VM for a sandbox session). No `models.*`, as
    * classic Pi's codemode. MCP servers are namespaces (`describeNamespace()`), read at each script
-   * start and prompt render from the servers the open sessions connect (`codemodeNamespaces`).
+   * start and prompt render from the open sessions' servers (`codemodeNamespaces`).
    * Every workspace session
    * selects it; whether it offers the tool is the Pi Tools setting's and MCP's, and its prompt
    * section, which declares the tools scripts can call, renders only in a request that offers it.
@@ -1512,7 +1512,7 @@ export class DurableHarness {
     CODEMODE_TOOL_NAME,
   );
 
-  /** `sessionId`'s connected MCP servers as codemode namespaces; undefined when its MCP closes. */
+  /** `sessionId`'s MCP servers with tools as codemode namespaces; undefined when its MCP closes. */
   setMcpNamespaces(sessionId: string, namespaces: readonly CodemodeNamespace[] | undefined): void {
     if (namespaces) this.mcpNamespaces.set(sessionId, namespaces);
     else this.mcpNamespaces.delete(sessionId);

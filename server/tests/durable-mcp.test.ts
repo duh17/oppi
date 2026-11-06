@@ -18,8 +18,8 @@ import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gon
 import { DurableBackend } from "../src/durable-backend.js";
 import { DurableHarness, SessionHost } from "../src/durable-harness.js";
 import { DurableMcp } from "../src/durable-mcp.js";
-import { McpToolCache, mcpToolCacheKey, mcpToolCachePath } from "../src/mcp-tool-cache.js";
-import { loadPiMcpInternals } from "../src/pi-mcp-internals.js";
+import { McpToolCache, mcpToolCachePath } from "../src/mcp-tool-cache.js";
+import { loadPiMcpInternals, type McpTool } from "../src/pi-mcp-internals.js";
 import { collected } from "./helpers/collected.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
 import { SdkBackend } from "../src/sdk-backend.js";
@@ -146,6 +146,18 @@ async function toolResults(manager: SessionManager, sessionId: string): Promise<
 }
 
 const read = (path: string): string => (existsSync(path) ? readFileSync(path, "utf8") : "");
+
+/** Cache `tools` as the list the one configured server last reported to a host session. */
+async function seedToolCache(dataDir: string, tools: McpTool[]): Promise<void> {
+  const internals = await loadPiMcpInternals();
+  const [entry] = internals.loadMcpConfig({
+    agentDir,
+    cwd: dataDir,
+    projectTrusted: false,
+  }).servers;
+  const cache = new McpToolCache(mcpToolCachePath(dataDir), "host");
+  cache.save(cache.key(entry!), { tools, hasResources: false, instructions: undefined });
+}
 
 /**
  * A stand-in workspace VM that records every exec. Long-lived stdio peers run as local
@@ -486,6 +498,37 @@ describe("server durable MCP (host)", () => {
     expect(read(marker)).not.toContain("never");
   });
 
+  it("refreshes a stale cached list at the first call, which concurrent calls share", async () => {
+    const marker = join(agentDir, "echo.marker");
+    writeMcpJson(agentDir, { echo: echoServer(marker) });
+    const spawns = () =>
+      read(marker)
+        .split("\n")
+        .filter((line) => line.startsWith("spawn ")).length;
+    const script = (code: string) =>
+      fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" });
+    const f = await fixture([
+      // Declared from the cache: the server has since renamed its tool.
+      script("await Promise.all([1, 2, 3].map((x) => tools.mcp__echo__old({ x })));"),
+      script("console.log(await tools.mcp__echo__echo({ text: 'renamed' }));"),
+      fauxAssistantMessage("REFRESHED_DONE"),
+    ]);
+    await seedToolCache(f.dir, [{ name: "old", inputSchema: { type: "object" } }]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    expect(spawns()).toBe(0);
+
+    await prompt(f.manager, f.session.id, "use it");
+    // Three first calls at once: one connect.
+    expect(spawns()).toBe(1);
+    expect(read(marker).match(/^call old /gm)).toHaveLength(3);
+    // The connect replaced the cached list, so the next script has the server's current tool.
+    expect((await toolResults(f.manager, f.session.id)).at(-1)).toContain("echo:renamed");
+    const cache = new McpToolCache(mcpToolCachePath(f.dir), "host");
+    expect(
+      [...cache.load().values()].map((snapshot) => snapshot.tools.map((tool) => tool.name)),
+    ).toEqual([["echo"]]);
+  });
+
   it("fails a call to a cached OAuth server that needs sign-in with a pointer to Oppi's MCP settings", async () => {
     const remote = createServer((_req, res) => {
       res.writeHead(401, { "WWW-Authenticate": 'Bearer realm="mcp"' });
@@ -510,23 +553,13 @@ describe("server durable MCP (host)", () => {
         fauxAssistantMessage("AUTH_DONE"),
       ]);
       // The list a connect once reported; the server has since lost its sign-in.
-      const internals = await loadPiMcpInternals();
-      const [entry] = internals.loadMcpConfig({
-        agentDir,
-        cwd: f.dir,
-        projectTrusted: false,
-      }).servers;
-      new McpToolCache(mcpToolCachePath(f.dir)).save(mcpToolCacheKey(entry!, false), {
-        tools: [
-          {
-            name: "echo",
-            description: "Echo the given text back.",
-            inputSchema: { type: "object", properties: { text: { type: "string" } } },
-          },
-        ],
-        hasResources: false,
-        instructions: undefined,
-      });
+      await seedToolCache(f.dir, [
+        {
+          name: "echo",
+          description: "Echo the given text back.",
+          inputSchema: { type: "object", properties: { text: { type: "string" } } },
+        },
+      ]);
       await f.manager.startSession(f.session.id, f.workspace);
       await prompt(f.manager, f.session.id, "Echo hi");
       const failed = (await toolResults(f.manager, f.session.id)).at(-1)!;

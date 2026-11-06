@@ -370,7 +370,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         policy,
         piTools: EVERY_PI_TOOL,
         providerToken: async () => undefined,
-        toolCache: new McpToolCache(mcpToolCachePath(agentDir)),
+        toolCache: new McpToolCache(mcpToolCachePath(agentDir), "host"),
         install: () => {},
         uninstall: () => {},
         namespaces: () => {},

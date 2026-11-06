@@ -26,16 +26,6 @@ export function mcpToolCachePath(dataDir: string): string {
   return join(dataDir, "mcp-tool-cache.json");
 }
 
-/**
- * Identity of a cached list: the server's name and config, and whether it runs in a sandbox
- * VM. A changed config reads as a server never seen, so a stale list never outlives an edit.
- */
-export function mcpToolCacheKey(entry: McpServerEntry, sandbox: boolean): string {
-  return createHash("sha256")
-    .update(JSON.stringify([entry.name, entry.config, sandbox]))
-    .digest("hex");
-}
-
 function isSnapshot(value: unknown): value is McpServerSnapshot {
   return (
     isRecord(value) &&
@@ -55,7 +45,26 @@ function isSnapshot(value: unknown): value is McpServerSnapshot {
  * file is an empty cache and a failed write costs one more connect, never a session.
  */
 export class McpToolCache {
-  constructor(private readonly path: string) {}
+  /**
+   * @param scope Which sessions share a list: `host`, or one sandbox workspace
+   *   (`sandbox:<workspaceId>`). A sandbox server runs in its workspace's VM, so its tools and
+   *   instructions are guest-written text that no other workspace's session may read.
+   */
+  constructor(
+    private readonly path: string,
+    private readonly scope: string,
+  ) {}
+
+  /**
+   * Identity of a cached list: the scope, the file that defined the server, and its name and
+   * config. A changed config reads as a server never seen, so a stale list never outlives an
+   * edit, and one project's `.pi/mcp.json` server never borrows another project's list.
+   */
+  key(entry: McpServerEntry): string {
+    return createHash("sha256")
+      .update(JSON.stringify([this.scope, entry.source, entry.name, entry.config]))
+      .digest("hex");
+  }
 
   /** Entries by key; read per call, as sessions of one server share the file. */
   load(): Map<string, McpServerSnapshot> {
