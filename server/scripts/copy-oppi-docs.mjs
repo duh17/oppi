@@ -19,6 +19,10 @@ if (!existsSync(sourceDocs)) {
 
 const PUBLIC_DOC_EXTENSIONS = new Set([".md", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4"]);
 
+// docs/demo holds the README screenshots and clips (~95% of the npm tarball). Agents
+// read only the markdown, and nothing at runtime opens the media, so it stays in the repo.
+const EXCLUDED_TOP_LEVEL_DIRS = new Set(["demo"]);
+
 rmSync(targetDocs, { recursive: true, force: true });
 copyPublicDocs(sourceDocs, targetDocs);
 
@@ -30,6 +34,7 @@ function copyPublicDocs(sourceDir, targetDir) {
     const targetPath = join(targetDir, entry.name);
 
     if (entry.isDirectory()) {
+      if (sourceDir === sourceDocs && EXCLUDED_TOP_LEVEL_DIRS.has(entry.name)) continue;
       copyPublicDocs(sourcePath, targetPath);
       continue;
     }
