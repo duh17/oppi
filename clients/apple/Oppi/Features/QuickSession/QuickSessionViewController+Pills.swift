@@ -133,7 +133,7 @@ extension QuickSessionViewController {
         agentPill.apply(QuickSessionPillButton.Content(
             icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,
             iconAssetCache: model.selectedServerIconAssetCache,
-            title: agent?.name ?? "Pi",
+            title: agent?.name,
             titleColor: colors.fg,
             trailingSymbol: "chevron.down"
         ), colors: colors)

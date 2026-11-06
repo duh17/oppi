@@ -392,13 +392,17 @@ final class ComposerToolbarPillButton: UIButton {
     ) {
         captionLabel.text = title
         captionLabel.textColor = tint
+        // An empty title makes an icon-only pill (Pi in the agent picker), and
+        // its mark steps up so it carries the pill on its own.
+        captionLabel.isHidden = title.isEmpty
+        let iconSide: CGFloat = icon == nil ? 0 : (title.isEmpty ? 15 : 11)
         chevronView.tintColor = tint
         chevronView.isHidden = !showsChevron
         iconView.image = icon
         iconView.tintColor = tint
         iconView.isHidden = icon == nil
-        iconWidthConstraint?.constant = icon == nil ? 0 : 11
-        iconHeightConstraint?.constant = icon == nil ? 0 : 11
+        iconWidthConstraint?.constant = iconSide
+        iconHeightConstraint?.constant = iconSide
         glassView.backgroundColor = colors.floatingFill.withAlphaComponent(0.001)
         invalidateIntrinsicContentSize()
     }

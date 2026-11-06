@@ -140,8 +140,9 @@ extension ComposerAction {
         )
     }
 
+    /// `agentName` nil is Pi: the pill shows only the Pi mark.
     static func agent(
-        title: String,
+        agentName: String?,
         icon: UIImage,
         colors: ComposerThemeColors,
         rows: [ComposerOptionRow],
@@ -151,12 +152,11 @@ extension ComposerAction {
         ComposerAction(
             id: "quickSession.agentPicker",
             icon: .image(icon),
-            title: title,
+            title: agentName ?? "",
             tint: colors.fg,
-            accessibilityLabel: title == "Pi"
-                ? "Agent picker, Pi with no agent"
-                : "Agent picker, current agent \(title)",
-            accessibilityValue: title,
+            accessibilityLabel: agentName.map { "Agent picker, current agent \($0)" }
+                ?? "Agent picker, Pi with no agent",
+            accessibilityValue: agentName ?? "Pi",
             showsChevron: true,
             chrome: .toolbar,
             kind: .picker(ComposerActionPopover(

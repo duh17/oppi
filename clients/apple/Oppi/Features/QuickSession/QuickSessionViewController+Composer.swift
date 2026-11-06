@@ -64,9 +64,9 @@ extension QuickSessionViewController: ChatComposerSource {
         )
         let agent = model.selectedAgent
         let agentAction = ComposerAction.agent(
-            title: agent?.name ?? "Pi",
+            agentName: agent?.name,
             icon: EntityIcon.image(
-                .agent(agent?.icon),
+                agent.map { IconEntity.agent($0.icon) } ?? .pi,
                 size: 16,
                 assets: model.selectedServerIconAssetCache
             ),
