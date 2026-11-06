@@ -71,7 +71,7 @@ function makeDeps(
     resumed,
     lifecycle: {
       resumeWorkspaceSession: ({ session }) => resume(session),
-      resumeControlSession: (session) => resume(session),
+      resumeControlConversation: (session) => resume(session),
     },
     sendPrompt: vi.fn(async () => undefined),
     sendFollowUp: vi.fn(async () => undefined),
@@ -107,7 +107,7 @@ describe("session restart resume", () => {
     saveSession(storage, "mirror", { ...ws, status: "busy", runtime: "pi-tui" });
     saveSession(storage, "control", {
       status: "ready",
-      control: { domain: "server", intent: "inspect" } as Session["control"],
+      serverDurable: { storeId: "control", role: "control" },
     });
     saveSession(storage, "done", { ...ws, status: "stopped" });
     saveSession(storage, "failed", { ...ws, status: "error" });
@@ -308,7 +308,7 @@ describe("session restart resume", () => {
       saveSession(storage, "busy-on-its-own", { ...ws, status: "busy" }),
       saveSession(storage, "control", {
         status: "busy",
-        control: { domain: "server", intent: "inspect" } as Session["control"],
+        serverDurable: { storeId: "control", role: "control" },
       }),
       saveSession(storage, "incognito", { ...ws, status: "busy", ephemeral: true }),
     ];

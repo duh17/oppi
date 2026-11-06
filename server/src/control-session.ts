@@ -1,19 +1,11 @@
 import { mintSessionId } from "./id.js";
 import type { Session, SessionLaunchMetadata } from "./types.js";
 
-export function isDeclaredControlSession(
-  session: Pick<Session, "workspaceId" | "control">,
-): boolean {
-  return session.workspaceId === undefined && session.control !== undefined;
-}
-
 /**
- * A durable Oppi Control session: a workspace-less server durable session marked by
- * `serverDurable.role`, one that `POST /control-sessions` creates per request. It is not a
- * declared control session (no `control` metadata; those are classic Pi Control rows created
- * before control moved to the durable engine). It uses the same `/control-sessions` routes and
- * global recent list as declared control sessions, never enters a workspace catalog or count, and
- * is the only kind of conversation the `oppi` CLI host serves.
+ * An Oppi Control session: a workspace-less server durable session marked by
+ * `serverDurable.role`, one that `POST /control-sessions` creates per request. The `/control-sessions`
+ * routes admit only these. They list on the global recent list, never enter a workspace catalog
+ * or count, and are the only kind of conversation the `oppi` CLI host serves.
  */
 export function isControlConversation(session: Pick<Session, "serverDurable">): boolean {
   return session.serverDurable?.role === "control";
@@ -54,14 +46,4 @@ export function newControlSessionRow(params: {
       ...params.launch,
     },
   };
-}
-
-/**
- * Admitted by `/control-sessions` routes: a declared Pi Control session, or the durable
- * control conversation. Callers still require the same owner or paired-device auth.
- */
-export function isControlRouteSession(
-  session: Pick<Session, "workspaceId" | "control" | "serverDurable">,
-): boolean {
-  return isDeclaredControlSession(session) || isControlConversation(session);
 }

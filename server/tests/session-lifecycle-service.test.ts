@@ -806,13 +806,13 @@ describe("SessionLifecycleService", () => {
       expect(summary.agentIcon).toBeUndefined();
     });
 
-    it("resumes declared control sessions without a workspace", async () => {
+    it("resumes Oppi Control sessions without a workspace, and refuses any other session", async () => {
       const controlSession = makeSession({
         id: "control-1",
         workspaceId: undefined,
         status: "stopped",
         runtime: "oppi",
-        control: { domain: "workspaces", intent: "create" },
+        serverDurable: { storeId: "control-1", role: "control" },
       });
       const started = makeSession({
         ...controlSession,
@@ -820,16 +820,18 @@ describe("SessionLifecycleService", () => {
       });
       const { service, startSession } = makeService({ started });
 
-      const result = await service.resumeControlSession(controlSession);
+      const result = await service.resumeControlConversation(controlSession);
 
       expect(startSession).toHaveBeenCalledWith("control-1", undefined);
       expect(result).toMatchObject({ owner: "oppi", startedSession: true });
       expect(result.session).toMatchObject({
         id: "control-1",
         workspaceId: undefined,
-        control: { domain: "workspaces", intent: "create" },
         status: "ready",
       });
+      await expect(
+        service.resumeControlConversation(makeSession({ workspaceId: undefined })),
+      ).rejects.toMatchObject({ status: 400 });
     });
   });
 
@@ -2066,13 +2068,13 @@ describe("SessionLifecycleService", () => {
       const session = makeSession({
         id: "control-delete-1",
         workspaceId: undefined,
-        control: { domain: "agents", intent: "create" },
+        serverDurable: { role: "control" },
       });
       const { service } = makeService({ dataDir });
 
       try {
         await service.deleteSession(session);
-        expect(existsSync(join(dataDir, "control-sessions"))).toBe(false);
+        expect(existsSync(join(dataDir, "control-conversation"))).toBe(false);
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }

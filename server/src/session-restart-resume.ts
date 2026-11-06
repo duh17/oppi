@@ -26,7 +26,6 @@
  * app reopens on reconnect still gets its continuation.
  */
 
-import { isControlConversation } from "./control-session.js";
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
 import { durableStoreLockStaleInMs } from "./durable-store-lock.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -129,10 +128,7 @@ export function queueOrphanedSessionsForRestart(
 
 export interface RestartResumeDeps {
   storage: RestartStorage;
-  lifecycle: Pick<
-    SessionLifecycleService,
-    "resumeControlConversation" | "resumeControlSession" | "resumeWorkspaceSession"
-  >;
+  lifecycle: Pick<SessionLifecycleService, "resumeControlConversation" | "resumeWorkspaceSession">;
   sendPrompt: (sessionId: string, text: string) => Promise<unknown>;
   sendFollowUp: (sessionId: string, text: string) => Promise<unknown>;
   /** The resumed session holds a notice about work an earlier process lost. */
@@ -186,14 +182,9 @@ async function resumeStoredSession(
 ): Promise<{ resumed: Session } | { outcome: "skipped" | "failed"; reason: string }> {
   if (!canResumeAfterRestart(session)) return { outcome: "skipped", reason: "not resumable" };
   try {
+    // Only an Oppi Control session resumes without a workspace (`canResumeAfterRestart`).
     if (session.workspaceId === undefined) {
-      // The control conversation is durable, not a declared control session.
-      return {
-        resumed: (isControlConversation(session)
-          ? await deps.lifecycle.resumeControlConversation(session)
-          : await deps.lifecycle.resumeControlSession(session)
-        ).session,
-      };
+      return { resumed: (await deps.lifecycle.resumeControlConversation(session)).session };
     }
     const workspace = deps.storage.getWorkspace(session.workspaceId);
     if (!workspace) return { outcome: "skipped", reason: "workspace deleted" };

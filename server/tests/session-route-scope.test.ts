@@ -62,11 +62,6 @@ describe("admitSessionRoute", () => {
   const ws = workspace("ws-1");
   const owned = session({ id: "sess-1", workspaceId: "ws-1" });
   const foreign = session({ id: "sess-2", workspaceId: "ws-2" });
-  const declared = session({
-    id: "control-1",
-    workspaceId: undefined,
-    control: { domain: "agents", intent: "create" },
-  });
   const conversation = session({
     id: "control-conversation",
     workspaceId: undefined,
@@ -116,20 +111,15 @@ describe("admitSessionRoute", () => {
     ).toEqual({ kind: "wrong-workspace" });
   });
 
-  it("admits declared control sessions and the control conversation, not other sessions", () => {
+  it("admits Oppi Control sessions, not other sessions", () => {
     const lookup = store({
       sessions: {
-        "control-1": declared,
         "control-conversation": conversation,
         "sess-1": owned,
         stray: undeclared,
       },
     });
 
-    expect(admitSessionRoute(lookup, { scope: "control", sessionId: "control-1" })).toEqual({
-      kind: "ok",
-      session: declared,
-    });
     expect(
       admitSessionRoute(lookup, { scope: "control", sessionId: "control-conversation" }),
     ).toEqual({ kind: "ok", session: conversation });
@@ -144,8 +134,8 @@ describe("admitSessionRoute", () => {
     });
   });
 
-  it("admits any existing session on the generic family, including declared control", () => {
-    const lookup = store({ sessions: { "control-1": declared, "sess-1": owned } });
+  it("admits any existing session on the generic family, including Oppi Control", () => {
+    const lookup = store({ sessions: { "control-1": conversation, "sess-1": owned } });
 
     expect(admitSessionRoute(lookup, { scope: "generic", sessionId: "sess-1" })).toEqual({
       kind: "ok",
@@ -153,7 +143,7 @@ describe("admitSessionRoute", () => {
     });
     expect(admitSessionRoute(lookup, { scope: "generic", sessionId: "control-1" })).toEqual({
       kind: "ok",
-      session: declared,
+      session: conversation,
     });
     expect(admitSessionRoute(lookup, { scope: "generic", sessionId: "missing" })).toEqual({
       kind: "session-missing",

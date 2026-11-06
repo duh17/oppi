@@ -587,12 +587,12 @@ describe("control session route scope", () => {
     }
   });
 
-  it("admits generic stop for a declared control session", async () => {
+  it("admits generic stop for an Oppi Control session", async () => {
     const mock = createMockContext();
     const session = makeSession({
       id: "control-1",
       workspaceId: undefined,
-      control: { domain: "agents", intent: "create" },
+      serverDurable: { storeId: "control-1", role: "control" },
     });
     mock.storage.getSession.mockReturnValue(session);
     const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
@@ -723,14 +723,14 @@ describe("control session route scope", () => {
     ]);
   });
 
-  it("resumes a declared stopped control session without resolving a workspace", async () => {
+  it("resumes a stopped Oppi Control session without resolving a workspace", async () => {
     const mock = createMockContext();
     const session = makeSession({
       id: "control-1",
       workspaceId: undefined,
       status: "stopped",
       runtime: "oppi",
-      control: { domain: "workspaces", intent: "revise", targetId: "ws-1" },
+      serverDurable: { storeId: "control-1", role: "control" },
     });
     mock.storage.getSession.mockReturnValue(session);
     mock.sessions.startSession.mockResolvedValue({ ...session, status: "ready" });
@@ -1579,7 +1579,7 @@ describe("workspace-scoped session route ownership", () => {
           ? makeSession({
               id: "foreign-session",
               workspaceId: undefined,
-              control: { domain: "agents", intent: "create" },
+              serverDurable: { storeId: "foreign-session", role: "control" },
             })
           : makeSession({ id: "foreign-session", workspaceId: "ws-2" }),
       );

@@ -43,7 +43,7 @@ describe("control session uploads", () => {
     roots.push(root);
     const session = makeSession({
       workspaceId: undefined,
-      control: { domain: "agents", intent: "revise", targetId: "agent-1" },
+      serverDurable: { storeId: "control-1", role: "control" },
     });
     const responses: Array<{ data: unknown; status: number }> = [];
     const errors: Array<{ status: number; message: string }> = [];

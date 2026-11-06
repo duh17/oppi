@@ -113,29 +113,6 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   parentSessionId: TEST_SESSION.launch?.parentSessionId,
 };
 
-const TEST_CONTROL_SESSION: Session = {
-  ...TEST_SESSION,
-  id: "control-session-1",
-  workspaceId: undefined,
-  workspaceName: undefined,
-  name: "Oppi Control",
-  control: {
-    domain: "skills",
-    intent: "revise",
-    targetId: "skill-reviewer",
-    targetName: "Reviewer Skill",
-  },
-};
-
-const TEST_CONTROL_SESSION_SUMMARY: SessionSummary = {
-  ...TEST_SESSION_SUMMARY,
-  id: TEST_CONTROL_SESSION.id,
-  workspaceId: undefined,
-  workspaceName: undefined,
-  name: TEST_CONTROL_SESSION.name,
-  control: TEST_CONTROL_SESSION.control,
-};
-
 /**
  * The typed canonical set must contain at least one example for every server
  * discriminator. Compatibility-only malformed and future examples are kept
@@ -162,14 +139,6 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "session_summary",
     summary: TEST_SESSION_SUMMARY,
   },
-  state_control: {
-    type: "state",
-    session: TEST_CONTROL_SESSION,
-  },
-  session_summary_control: {
-    type: "session_summary",
-    summary: TEST_CONTROL_SESSION_SUMMARY,
-  },
   // Full sessions mark the durable engine with `serverDurable`; summaries with `engine`.
   state_durable: {
     type: "state",
@@ -184,7 +153,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "session_summary",
     summary: { ...TEST_SESSION_SUMMARY, engine: "durable" },
   },
-  // A durable Oppi Control session: workspace-less, marked by its role, no `control` metadata.
+  // An Oppi Control session: workspace-less, marked by its role.
   state_control_durable: {
     type: "state",
     session: {
@@ -868,8 +837,6 @@ const SERVER_MESSAGE_ORDER = [
   "stream_connected",
   "state",
   "session_summary",
-  "state_control",
-  "session_summary_control",
   "state_durable",
   "session_summary_durable",
   "state_control_durable",
@@ -1016,19 +983,6 @@ const appEventSessionBase = {
   workspaceId: appEventSession.workspaceId,
   emittedAt: appEventEmittedAt,
 };
-const appEventControlSummary: SessionSummary = {
-  ...appEventSummary,
-  id: "control-session-1",
-  workspaceId: undefined,
-  workspaceName: undefined,
-  name: "Oppi Control",
-  control: {
-    domain: "schedules",
-    intent: "create",
-    targetName: "Nightly review",
-  },
-};
-
 const APP_EVENT_CANONICAL_EXAMPLES = {
   app_events_connected: {
     type: "app_events_connected",
@@ -1043,12 +997,6 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     summary: appEventSummary,
   },
   session_summary: { type: "session_summary", ...appEventSessionBase, summary: appEventSummary },
-  session_summary_control: {
-    type: "session_summary",
-    sessionId: appEventControlSummary.id,
-    emittedAt: appEventEmittedAt,
-    summary: appEventControlSummary,
-  },
   session_created_durable: {
     type: "session_created",
     ...appEventSessionBase,
@@ -1201,7 +1149,6 @@ const APP_EVENT_MESSAGE_ORDER = [
   "session_imported",
   "session_discovered",
   "session_summary",
-  "session_summary_control",
   "session_created_durable",
   "session_summary_icon_default",
   "session_summary_icon_emoji",

@@ -445,10 +445,10 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected")).toHaveLength(0);
   });
 
-  it("opens declared control streams and rejects both workspace and undeclared sessions", async () => {
+  it("opens Oppi Control streams and rejects both workspace and other workspace-less sessions", async () => {
     const control = {
       ...makeSession("control-session"),
-      control: { domain: "agents" as const, intent: "create" as const },
+      serverDurable: { storeId: "control-session", role: "control" as const },
     };
     const workspace = makeSession("workspace-session", "w1");
     const undeclared = makeSession("workspace-less-session");
@@ -689,24 +689,19 @@ describe("BoundSessionStreamMux", () => {
     }
   });
 
-  it("opens a control stream after the declared session is reloaded from SQLite", async () => {
+  it("opens a control stream after the Oppi Control session is reloaded from SQLite", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-control-stream-store-"));
 
     try {
       const writer = new Storage(dir);
       const control = writer.createSession("Persisted control session");
-      control.control = {
-        domain: "schedules",
-        intent: "revise",
-        targetId: "schedule-1",
-        targetName: "Nightly",
-      };
+      control.serverDurable = { storeId: control.id, role: "control" };
       writer.saveSession(control);
 
       const reader = new Storage(dir);
       const persisted = reader.getSession(control.id);
       if (!persisted) throw new Error("Expected the control session to survive SQLite reload");
-      expect(persisted.control).toEqual(control.control);
+      expect(persisted.serverDurable).toEqual(control.serverDurable);
       expect(persisted.workspaceId).toBeUndefined();
 
       const { ctx } = createMockContext([persisted]);

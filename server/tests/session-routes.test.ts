@@ -1418,7 +1418,7 @@ describe("sessions module", () => {
       messageCount: 4,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
-      control: { domain: "agents", intent: "create" },
+      serverDurable: { storeId: "control-1", role: "control" },
     };
     let wake = true;
     const awaitsNextTurn = vi.fn(async () => wake);
@@ -1566,7 +1566,7 @@ describe("sessions module", () => {
       lastMessage: "done",
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
-      control: { domain: "agents", intent: "create" },
+      serverDurable: { storeId: "control-1", role: "control" },
     };
     const getCatchUp = vi.fn(() => null);
     const ensureSessionContextWindow = vi.fn((session: typeof stored) => ({

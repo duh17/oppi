@@ -168,8 +168,8 @@ function seed(): Fixture & { hostRoot: string; sandboxMount: string; outside: st
   writeFileSync(join(outside, "secret.txt"), "host-secret");
   symlinkSync(join(outside, "secret.txt"), join(sandboxMount, "escape.txt"));
   symlinkSync(outside, join(sandboxMount, "escape-dir"));
-  mkdirSync(join(dataDir, "control-sessions", "cwd"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(dataDir, "control-sessions", "cwd", "plan.md"), "control plan\n");
+  mkdirSync(join(dataDir, "control-conversation", "cwd"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(dataDir, "control-conversation", "cwd", "plan.md"), "control plan\n");
 
   const workspaces: Workspace[] = [
     { id: "ws-host", name: "host", hostMount: hostRoot, createdAt: 1, updatedAt: 1 } as Workspace,
@@ -183,7 +183,7 @@ function seed(): Fixture & { hostRoot: string; sandboxMount: string; outside: st
     } as Workspace,
   ];
   const sessions = [
-    session({ id: "control-1", control: { domain: "skills", intent: "create" } }),
+    session({ id: "control-1", serverDurable: { role: "control" } }),
     session({ id: "host-session", workspaceId: "ws-host" }),
     session({ id: "sandbox-session", workspaceId: "ws-sandbox" }),
   ];
@@ -371,7 +371,7 @@ describe("GET/HEAD /files/current", () => {
     expect(control.statusCode).toBe(200);
     expect(control.text()).toBe("control plan\n");
     expect(control.headers["X-Oppi-Resolved-Path"]).toBe(
-      join(fixture.dataDir, "control-sessions", "cwd", "plan.md"),
+      join(fixture.dataDir, "control-conversation", "cwd", "plan.md"),
     );
 
     const hostSession = await request(

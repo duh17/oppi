@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 25
+    "messageCount": 24
   },
   "messages": {
     "app_events_connected": {
@@ -152,44 +152,6 @@
           "since": 1791650009000
         },
         "pendingAskCount": 0
-      }
-    },
-    "session_summary_control": {
-      "type": "session_summary",
-      "sessionId": "control-session-1",
-      "emittedAt": 1791650100000,
-      "summary": {
-        "id": "control-session-1",
-        "name": "Oppi Control",
-        "status": "ready",
-        "createdAt": 1791650000000,
-        "lastActivity": 1791650010000,
-        "model": "anthropic/claude-sonnet-4-20250514",
-        "messageCount": 1,
-        "tokens": {
-          "input": 10,
-          "output": 5,
-          "cacheRead": 0,
-          "cacheWrite": 0
-        },
-        "cost": 0.001,
-        "firstMessage": "Hello",
-        "agentId": "agent-reviewer",
-        "agentIcon": {
-          "kind": "symbol",
-          "name": "checkmark.shield"
-        },
-        "programStatus": {
-          "state": "done",
-          "message": "Test session",
-          "since": 1791650009000
-        },
-        "pendingAskCount": 0,
-        "control": {
-          "domain": "schedules",
-          "intent": "create",
-          "targetName": "Nightly review"
-        }
       }
     },
     "session_created_durable": {

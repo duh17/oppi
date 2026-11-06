@@ -100,9 +100,9 @@ function makeContext(
       getDataDir: () => options.dataDir ?? tmpdir(),
       getSession: (id: string) =>
         options.controlSessionIds?.includes(id)
-          ? { id, control: { domain: "skills", intent: "create" } }
+          ? { id, serverDurable: { role: "control" } }
           : options.workspaceSessionIds?.includes(id)
-            ? { id, workspaceId: "workspace-1", control: { domain: "skills", intent: "create" } }
+            ? { id, workspaceId: "workspace-1" }
             : undefined,
     },
   } as unknown as RouteContext;
@@ -247,9 +247,9 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     expect(JSON.stringify(logs)).not.toContain(filePath);
   });
 
-  it("resolves relative paths only from a declared control-session cwd", async () => {
+  it("resolves relative paths only from an Oppi Control session cwd", async () => {
     const dataDir = tempRoot("oppi-control-hostfile-");
-    const controlCwd = join(dataDir, "control-sessions", "cwd");
+    const controlCwd = join(dataDir, "control-conversation", "cwd");
     mkdirSync(controlCwd, { recursive: true });
     writeFileSync(join(controlCwd, "note.md"), "control current bytes\n", "utf8");
 
@@ -279,7 +279,7 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     "answers 500 without host paths when the control root cannot be inspected",
     async () => {
       const dataDir = tempRoot("oppi-control-hostfile-");
-      const parent = join(dataDir, "control-sessions");
+      const parent = join(dataDir, "control-conversation");
       mkdirSync(join(parent, "cwd"), { recursive: true });
       chmodSync(parent, 0o000);
       const logs: HostFileLogLine[] = [];
@@ -303,9 +303,9 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     },
   );
 
-  it("rejects relative paths from workspace sessions even with control metadata", async () => {
+  it("rejects relative paths from workspace sessions", async () => {
     const dataDir = tempRoot("oppi-control-hostfile-");
-    const controlCwd = join(dataDir, "control-sessions", "cwd");
+    const controlCwd = join(dataDir, "control-conversation", "cwd");
     mkdirSync(controlCwd, { recursive: true });
     writeFileSync(join(controlCwd, "note.md"), "must not serve\n");
     const response = await dispatchHost(
@@ -328,10 +328,10 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
       writeFileSync(join(alternate, "note.md"), "wrong root\n");
       writeFileSync(join(alternate, "cwd", "note.md"), "wrong parent\n");
       if (symlinkAt === "parent") {
-        symlinkSync(alternate, join(dataDir, "control-sessions"));
+        symlinkSync(alternate, join(dataDir, "control-conversation"));
       } else {
-        mkdirSync(join(dataDir, "control-sessions"));
-        symlinkSync(alternate, join(dataDir, "control-sessions", "cwd"));
+        mkdirSync(join(dataDir, "control-conversation"));
+        symlinkSync(alternate, join(dataDir, "control-conversation", "cwd"));
       }
       const response = await dispatchHost(
         "GET",

@@ -24,7 +24,6 @@ import { createSessionListRouteHandlers } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
-import { isControlConversation } from "../control-session.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
@@ -578,9 +577,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       const session = requireControlSession(controlResumeMatch[1], res);
       if (!session) return true;
       try {
-        const result = isControlConversation(session)
-          ? await lifecycle.resumeControlConversation(session)
-          : await lifecycle.resumeControlSession(session);
+        const result = await lifecycle.resumeControlConversation(session);
         helpers.json(res, { session: result.session });
       } catch (error: unknown) {
         const status = error instanceof HttpStatusError ? error.status : 500;

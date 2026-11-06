@@ -235,9 +235,6 @@ describe("server drain admission", () => {
       const lifecycle = {
         resumeWorkspaceSession: async ({ session }: { session: Session }) =>
           ({ session: await after.manager.startSession(session.id, workspace) }) as never,
-        resumeControlSession: async () => {
-          throw new Error("not a control session");
-        },
         resumeControlConversation: async () => {
           throw new Error("not a control conversation");
         },
@@ -329,9 +326,6 @@ describe("server drain admission", () => {
       lifecycle: {
         resumeWorkspaceSession: async ({ session }) =>
           ({ session: await manager.startSession(session.id, workspace) }) as never,
-        resumeControlSession: async () => {
-          throw new Error("not a control session");
-        },
         resumeControlConversation: async () => {
           throw new Error("not a control conversation");
         },

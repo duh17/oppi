@@ -38,7 +38,8 @@ const DROPPED_COLUMNS = [
   "change_stats_json",
 ];
 
-const CONTROL_SESSION: Session = {
+/** A classic Pi Control row as an old server stored it: `control` is no longer a Session field. */
+const CONTROL_SESSION: Session & { control: object } = {
   id: "sess-control",
   name: "Revise Sensei",
   status: "stopped",
@@ -152,9 +153,10 @@ describe("session_state_sessions columns-only migration", () => {
         expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
       }
       expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
-      expect(store.findSessionByDurableConversation("store-control", 9)?.control).toEqual(
-        CONTROL_SESSION.control,
-      );
+      // The old `$.control` reached the column the classic-control removal reads and backs up.
+      const classic = store.listClassicControlSessions();
+      expect(classic.map((row) => row.id)).toEqual(["sess-control"]);
+      expect(JSON.parse(classic[0]!.controlJson)).toEqual(CONTROL_SESSION.control);
       expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
     } finally {
       store.close();
@@ -217,9 +219,7 @@ describe("session_state_sessions columns-only migration", () => {
         "sess-classic",
       ]);
       expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
-      expect(store.findSessionByDurableConversation("store-control", 9)?.control).toEqual(
-        CONTROL_SESSION.control,
-      );
+      expect(store.listClassicControlSessions().map((row) => row.id)).toEqual(["sess-control"]);
       expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
     } finally {
       store.close();
@@ -300,7 +300,7 @@ describe("session_state_sessions columns-only migration", () => {
     }
     const store = new SessionSqliteStore(dataDir);
     try {
-      expect(store.getSession("sess-control")?.control).toEqual(CONTROL_SESSION.control);
+      expect(store.listClassicControlSessions().map((row) => row.id)).toEqual(["sess-control"]);
     } finally {
       store.close();
     }
@@ -390,8 +390,8 @@ describe("session_state_sessions columns-only migration", () => {
  * What a full read returned before, minus the stored workspace name. Pre-0.53 line counts
  * and their bookkeeping are dropped.
  */
-function expectedAfterMigration(legacy: Session): Session {
-  const { workspaceName: _, ...session } = legacy;
+function expectedAfterMigration(legacy: Session & { control?: object }): Session {
+  const { workspaceName: _, control: __, ...session } = legacy;
   if (!session.changeStats) return session;
   const { mutatingToolCalls, filesChanged, changedFiles } = session.changeStats;
   return {

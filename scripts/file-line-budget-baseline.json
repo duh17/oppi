@@ -196,7 +196,7 @@
       "reason": "Bridge protocol and runtime in one module; low churn, keep for now."
     },
     "server/src/sdk-backend.ts": {
-      "budget": 2800,
+      "budget": 2700,
       "owner": "SV3 SDK backend modules",
       "reason": "Context collectors, resource policy, and a 640-line create(); the modules come out with SV3a and SV3b."
     },

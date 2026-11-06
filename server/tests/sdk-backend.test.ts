@@ -1,20 +1,11 @@
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
-import { buildControlSystemPrompt } from "../src/control-prompt.js";
 import { hostMountValidationError } from "../src/host.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import {
@@ -46,41 +37,6 @@ afterEach(() => {
 });
 
 describe("resolveSdkSessionCwdAsync", () => {
-  it("uses an owner-only internal cwd for declared control sessions", async () => {
-    const dataDir = makeTempDir("oppi-control-cwd-");
-    const session = {
-      control: { domain: "agents", intent: "create" },
-    } as Pick<Session, "worktreeId" | "control">;
-
-    try {
-      const cwd = await resolveSdkSessionCwdAsync(undefined, session, { dataDir });
-      expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
-      expect(lstatSync(cwd).isDirectory()).toBe(true);
-      expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects a symlinked control-session parent before creating the cwd", async () => {
-    const dataDir = makeTempDir("oppi-control-cwd-link-");
-    const outside = makeTempDir("oppi-control-cwd-outside-");
-    const session = {
-      control: { domain: "schedules", intent: "revise" },
-    } as Pick<Session, "worktreeId" | "control">;
-    symlinkSync(outside, join(dataDir, "control-sessions"));
-
-    try {
-      await expect(resolveSdkSessionCwdAsync(undefined, session, { dataDir })).rejects.toThrow(
-        "Control session cwd parent must be a real directory",
-      );
-      expect(() => lstatSync(join(outside, "cwd"))).toThrow();
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-      rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
   it("never falls back to main when a session worktree is unavailable", async () => {
     const mount = makeTempDir("oppi-removed-worktree-cwd-");
     const workspace = { id: "ws-1", hostMount: mount } as Workspace;
@@ -184,158 +140,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     ...overrides,
   };
 }
-
-describe("SdkBackend control sessions", () => {
-  it("runs a focused setup prompt and minimal tools, ignoring global Pi configuration", async () => {
-    const dataDir = makeTempDir("oppi-control-pi-runtime-");
-    const agentDir = makeTempDir("oppi-control-pi-agent-dir-");
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    writeFileSync(join(agentDir, "auth.json"), "{}");
-    writeFileSync(join(agentDir, "SYSTEM.md"), "Global Pi replacement prompt");
-    writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Global Pi append prompt");
-    writeFileSync(join(agentDir, "AGENTS.md"), "Global agents instructions");
-    mkdirSync(join(agentDir, "skills", "global-skill"), { recursive: true });
-    writeFileSync(
-      join(agentDir, "skills", "global-skill", "SKILL.md"),
-      "---\nname: global-skill\ndescription: Global test skill\n---\nDo it.\n",
-    );
-    mkdirSync(join(agentDir, "extensions"), { recursive: true });
-    const tool = (name: string) =>
-      `pi.registerTool({ name: '${name}', label: '${name}', description: '${name}', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) });`;
-    writeFileSync(
-      join(agentDir, "extensions", "control-test.js"),
-      `export default function (pi) { ${tool("global_control_tool")} ${tool("ask")} }\n`,
-    );
-    const session = makeSession({
-      workspaceId: undefined,
-      control: { domain: "agents", intent: "revise", targetName: "Reviewer" },
-    });
-    let snapshot: RevisionedEnabled = { enabled: true, revision: 1 };
-    const getMobileOutputGuideSettings = vi.fn(() => snapshot);
-    let backend: SdkBackend | undefined;
-
-    try {
-      backend = await SdkBackend.create({
-        session,
-        dataDir,
-        getMobileOutputGuideSettings,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-
-      const loader = backend.session.resourceLoader;
-      expect(loader.getSystemPrompt()).toBe(buildControlSystemPrompt(session.control!));
-      expect(loader.getSystemPrompt()).toContain("Revise saved Agent “Reviewer”");
-      expect(loader.getAgentsFiles().agentsFiles).toEqual([]);
-      expect(loader.getSkills().skills).toEqual([]);
-      expect(loader.getAppendSystemPrompt()).toEqual([buildMobileOutputGuide()]);
-      expect(backend.session.systemPrompt).not.toContain("Global");
-      expect(backend.session.systemPrompt).not.toContain("global-skill");
-
-      // Pi's allowlist keeps the extension's other tool out of the registry, so no
-      // extension (or `pi.setActiveTools`) can bring it into the session.
-      expect(backend.session.getAllTools().map((t) => t.name)).not.toContain("global_control_tool");
-      const activeTools = () => backend!.session.agent.state.tools.map((t) => t.name).sort();
-      expect(activeTools()).toEqual(["ask", "bash", "edit", "read", "write"]);
-
-      snapshot = { enabled: false, revision: 2 };
-      await backend.reloadResources();
-      expect(loader.getAppendSystemPrompt()).toEqual([]);
-      expect(backend.session.systemPrompt).not.toContain("Global");
-      expect(activeTools()).toEqual(["ask", "bash", "edit", "read", "write"]);
-
-      snapshot = { enabled: true, revision: 3 };
-      await backend.reloadResources();
-      expect(loader.getAppendSystemPrompt()).toEqual([buildMobileOutputGuide()]);
-      expect(getMobileOutputGuideSettings).toHaveBeenCalled();
-    } finally {
-      await backend?.dispose();
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      rmSync(dataDir, { recursive: true, force: true });
-      rmSync(agentDir, { recursive: true, force: true });
-    }
-  });
-
-  it("omits ask when no extension provides it", async () => {
-    const dataDir = makeTempDir("oppi-control-no-ask-");
-    const agentDir = makeTempDir("oppi-control-no-ask-agent-");
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    writeFileSync(join(agentDir, "auth.json"), "{}");
-    let backend: SdkBackend | undefined;
-    try {
-      backend = await SdkBackend.create({
-        session: makeSession({
-          workspaceId: undefined,
-          control: { domain: "themes", intent: "create" },
-        }),
-        dataDir,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-      expect(backend.session.agent.state.tools.map((t) => t.name).sort()).toEqual([
-        "bash",
-        "edit",
-        "read",
-        "write",
-      ]);
-    } finally {
-      await backend?.dispose();
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      rmSync(dataDir, { recursive: true, force: true });
-      rmSync(agentDir, { recursive: true, force: true });
-    }
-  });
-
-  it("reopens a current Pi Control session through its private cwd", async () => {
-    const dataDir = makeTempDir("oppi-control-reopen-");
-    const session = makeSession({
-      workspaceId: undefined,
-      control: { domain: "schedules", intent: "revise" },
-      launch: {
-        source: "human",
-        target: { server: true, displayCwd: "Pi Control" },
-        status: "accepted",
-        requestedAt: 1,
-      },
-    });
-    let first: SdkBackend | undefined;
-    let reopened: SdkBackend | undefined;
-
-    try {
-      const controlCwd = join(dataDir, "control-sessions", "cwd");
-      first = await SdkBackend.create({
-        session,
-        dataDir,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-      expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(first.session.getToolDefinition("bash")).toBeDefined();
-      expect(first.session.getToolDefinition("oppi")).toBeUndefined();
-      expect(session.piSessionFile).toBeDefined();
-      expect(session.piSessionFile).not.toContain("Pi Control");
-
-      await first.dispose();
-      reopened = await SdkBackend.create({
-        session,
-        dataDir,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-
-      expect(reopened.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(reopened.session.getToolDefinition("bash")).toBeDefined();
-    } finally {
-      await reopened?.dispose();
-      await first?.dispose();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-});
 
 /** A Live Voice sink that drops what the agent says. */
 const unheard = { speak() {}, speakSentence() {}, openingWritten() {}, runEnded() {} };

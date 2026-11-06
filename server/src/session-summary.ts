@@ -45,12 +45,11 @@ export function buildSessionSummary(session: Session): SessionSummary {
     ...(session.launch?.agentId && session.launch.agentIcon
       ? { agentIcon: session.launch.agentIcon }
       : {}),
-    control: session.control,
     ephemeral: session.ephemeral,
     ...(session.launch?.parentSessionId ? { parentSessionId: session.launch.parentSessionId } : {}),
     ...(isServerDurableSession(session) ? { engine: "durable" as const } : {}),
-    // Role only: the conversation id stays off the cold list. The phone uses it to
-    // route the control conversation without declared `control` metadata.
+    // Role only: the conversation id stays off the cold list. The phone uses it to route
+    // an Oppi Control session.
     ...(session.serverDurable?.role === "control"
       ? { serverDurable: { role: "control" as const } }
       : {}),

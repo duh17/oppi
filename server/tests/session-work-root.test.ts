@@ -41,8 +41,6 @@ function sessionOf(overrides: Partial<Session> = {}): Session {
   return { id: "sess-1", workspaceId: "ws-1", ...overrides } as Session;
 }
 
-const declaredControl = { control: { domain: "agents", intent: "create" } } as const;
-
 describe("sessionWorkRoot", () => {
   describe("workspace sessions", () => {
     it("resolves the host mount and returns the workspace", async () => {
@@ -144,20 +142,7 @@ describe("sessionWorkRoot", () => {
   });
 
   describe("control-route sessions", () => {
-    it("resolves the declared Pi Control directory without a workspace", async () => {
-      const dataDir = tempDir("data");
-      const result = await sessionWorkRoot(
-        sessionOf({ workspaceId: undefined, ...declaredControl }),
-        storeOf(dataDir),
-        { create: true },
-      );
-      const root = join(dataDir, "control-sessions", "cwd");
-      expect(result).toEqual({ kind: "ok", root });
-      expect(lstatSync(root).mode & 0o777).toBe(0o700);
-      expect(lstatSync(join(dataDir, "control-sessions")).mode & 0o777).toBe(0o700);
-    });
-
-    it("resolves the durable control conversation directory", async () => {
+    it("resolves the Oppi Control directory without a workspace", async () => {
       const dataDir = tempDir("data");
       const result = await sessionWorkRoot(
         sessionOf({ workspaceId: undefined, serverDurable: { role: "control" } }),
@@ -169,27 +154,21 @@ describe("sessionWorkRoot", () => {
       expect(lstatSync(root).mode & 0o777).toBe(0o700);
     });
 
-    it("never creates control directories when create is false", async () => {
+    it("never creates the control directory when create is false", async () => {
       const dataDir = tempDir("data");
-      const store = storeOf(dataDir);
-      for (const session of [
-        sessionOf({ workspaceId: undefined, ...declaredControl }),
-        sessionOf({ workspaceId: undefined, serverDurable: { role: "control" } }),
-      ]) {
-        expect(await sessionWorkRoot(session, store, { create: false })).toEqual({
-          kind: "root-missing",
-        });
-      }
-      expect(existsSync(join(dataDir, "control-sessions"))).toBe(false);
+      const session = sessionOf({ workspaceId: undefined, serverDurable: { role: "control" } });
+      expect(await sessionWorkRoot(session, storeOf(dataDir), { create: false })).toEqual({
+        kind: "root-missing",
+      });
       expect(existsSync(join(dataDir, "control-conversation"))).toBe(false);
     });
 
     it("finds an existing control directory without changing it", async () => {
       const dataDir = tempDir("data");
-      const root = join(dataDir, "control-sessions", "cwd");
+      const root = join(dataDir, "control-conversation", "cwd");
       mkdirSync(root, { recursive: true });
       const result = await sessionWorkRoot(
-        sessionOf({ workspaceId: undefined, ...declaredControl }),
+        sessionOf({ workspaceId: undefined, serverDurable: { role: "control" } }),
         storeOf(dataDir),
         { create: false },
       );
@@ -199,13 +178,13 @@ describe("sessionWorkRoot", () => {
     it("refuses a symlinked control parent or cwd and never follows it", async () => {
       const dataDir = tempDir("data");
       const outside = tempDir("outside");
-      symlinkSync(outside, join(dataDir, "control-sessions"));
-      const session = sessionOf({ workspaceId: undefined, ...declaredControl });
+      symlinkSync(outside, join(dataDir, "control-conversation"));
+      const session = sessionOf({ workspaceId: undefined, serverDurable: { role: "control" } });
 
       for (const create of [false, true]) {
         expect(await sessionWorkRoot(session, storeOf(dataDir), { create })).toEqual({
           kind: "invalid-root",
-          message: "Control session cwd parent must be a real directory",
+          message: "Control conversation cwd parent must be a real directory",
         });
       }
       expect(existsSync(join(outside, "cwd"))).toBe(false);

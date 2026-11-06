@@ -525,7 +525,7 @@ describe("workspace session list routes", () => {
     expect(response.sessions[1]).not.toHaveProperty("warnings");
   });
 
-  it("includes declared control sessions and the control conversation in the global recent list", async () => {
+  it("includes Oppi Control sessions in the global recent list", async () => {
     const mock = createMockContext();
     const now = Date.parse("2026-05-13T12:00:00Z");
     mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
@@ -533,12 +533,6 @@ describe("workspace session list routes", () => {
     ]);
     mock.storage.listSessions.mockReturnValue([
       makeSession({ id: "workspace-row", lastActivity: now - 1_000 }),
-      makeSession({
-        id: "control-row",
-        workspaceId: undefined,
-        lastActivity: now,
-        control: { domain: "schedules", intent: "create" },
-      }),
       makeSession({
         id: "undeclared-workspace-less",
         workspaceId: undefined,
@@ -563,7 +557,6 @@ describe("workspace session list routes", () => {
     const response = mock.responses[0]?.data as { sessions: Array<Session> };
     expect(response.sessions.map((session) => session.id)).toEqual([
       "control-conversation",
-      "control-row",
       "workspace-row",
     ]);
     expect(response.sessions[0]).toMatchObject({
@@ -572,35 +565,10 @@ describe("workspace session list routes", () => {
       serverDurable: { role: "control" },
     });
     expect(response.sessions[0]?.workspaceId).toBeUndefined();
-    expect(response.sessions[0]?.control).toBeUndefined();
     expect(response.sessions[0]).not.toHaveProperty("conversationId");
-    expect(response.sessions[1]?.control).toEqual({ domain: "schedules", intent: "create" });
-    expect(response.sessions[1]).not.toHaveProperty("serverDurable");
   });
 
-  it("does not leak active control sessions into workspace session collections", async () => {
-    const mock = createMockContext();
-    const control = makeSession({
-      id: "control-row",
-      workspaceId: undefined,
-      status: "busy",
-      control: { domain: "agents", intent: "create" },
-    });
-    mock.sessions.getActiveSessionIds.mockReturnValue([control.id]);
-    mock.sessions.getActiveSession.mockReturnValue(control);
-    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([]);
-
-    await dispatch(
-      mock,
-      "/workspaces/ws-1/sessions",
-      "https://localhost/workspaces/ws-1/sessions?status=active",
-    );
-
-    const response = mock.responses[0]?.data as { active: Session[] };
-    expect(response.active).toEqual([]);
-  });
-
-  it("does not leak the control conversation into workspace session collections", async () => {
+  it("does not leak Oppi Control sessions into workspace session collections", async () => {
     const mock = createMockContext();
     const conversation = makeSession({
       id: "control-conversation",
@@ -640,7 +608,7 @@ describe("workspace session list routes", () => {
         id: "control-row",
         workspaceId: undefined,
         lastActivity: now + 1_000,
-        control: { domain: "schedules", intent: "create" },
+        serverDurable: { role: "control", conversationId: 9 },
       }),
     ]);
 

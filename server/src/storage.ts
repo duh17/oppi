@@ -320,6 +320,11 @@ export class Storage {
     return this.withWorkspaceNames(this.sessionStore.listDurableStoreSessions(storeId));
   }
 
+  /** Classic Pi Control rows still stored; see `deleteClassicControlSessions`. */
+  listClassicControlSessions(): Array<{ id: string; controlJson: string }> {
+    return this.sessionStore.listClassicControlSessions();
+  }
+
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
   hasDurableStoreSessions(storeId: string): boolean {
     return this.sessionStore.hasDurableStoreSessions(storeId);

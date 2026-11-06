@@ -124,7 +124,7 @@ describe("session targeting uses Pi-native Session.id", () => {
     it("GET /control-sessions/:id looks up Session.id only", async () => {
       const session = makeSession({
         workspaceId: undefined,
-        control: { domain: "agents", intent: "create" },
+        serverDurable: { storeId: "control-1", role: "control" },
       });
       const getSession = vi.fn((id: string) => (id === session.id ? session : undefined));
       const ctx = {

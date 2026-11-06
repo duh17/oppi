@@ -16,7 +16,7 @@ import { makeTempDir } from "./harness/temp-dir.js";
 /**
  * Every client gets the current shapes: a real server on its owner socket, queried with no
  * capability header, both without a user agent and with an Apple URLSession one. Builds 55 and
- * older, which needed inline images and four control domains, are not supported.
+ * older, which needed inline images, are not supported.
  */
 
 const IMAGE_BASE64 = Buffer.from("not-really-a-png-but-valid-base64-bytes").toString("base64");
@@ -52,14 +52,9 @@ interface TraceEventBody {
   text?: string;
   media?: Array<Record<string, unknown>>;
 }
-interface SessionBody {
-  control?: { domain: string; intent: string };
-}
-
 interface Fixture {
   workspaceId: string;
   workspaceSessionId: string;
-  controlSessionId: string;
   /** A durable session, not yet bound to a conversation; `bindDurableConversation` binds it. */
   durableSession: Session;
 }
@@ -205,21 +200,17 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
   }
 
   it("returns user images as stored media refs on every classic history route", async () => {
-    const { workspaceId, workspaceSessionId, controlSessionId } = fixture;
+    const { workspaceId, workspaceSessionId } = fixture;
     const routes = [
       `/workspaces/${workspaceId}/sessions/${workspaceSessionId}/trace-page`,
       `/workspaces/${workspaceId}/sessions/${workspaceSessionId}`,
-      `/control-sessions/${controlSessionId}/trace-page`,
-      `/control-sessions/${controlSessionId}`,
     ];
     for (const path of routes) {
       expectStoredImageRef((await get<{ trace: TraceEventBody[] }>(path)).trace, path);
     }
-    for (const sessionId of [workspaceSessionId, controlSessionId]) {
-      expect(storedAttachments(sessionId), sessionId).toMatchObject([
-        { kind: "image", mimeType: "image/png" },
-      ]);
-    }
+    expect(storedAttachments(workspaceSessionId), workspaceSessionId).toMatchObject([
+      { kind: "image", mimeType: "image/png" },
+    ]);
   });
 
   it("returns a durable session's user images as stored media refs", async () => {
@@ -235,19 +226,10 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
       { kind: "image", mimeType: "image/png" },
     ]);
   }, 30_000);
-
-  it("keeps a control session's domain unchanged in the session list", async () => {
-    const listed = await get<{ sessions: SessionBody[] }>("/sessions/recent");
-    const domains = listed.sessions.flatMap((session) =>
-      session.control ? [session.control.domain] : [],
-    );
-    expect(domains).toEqual(["extensions"]);
-  });
 });
 
 /**
- * A workspace session whose JSONL sits in the canonical trace directory, and an `extensions`
- * control session (no workspace) whose JSONL is its Pi session file. Both open on a user
+ * A workspace session whose JSONL sits in the canonical trace directory, opening on a user
  * message with one image.
  */
 function seed(storage: Storage, dataDir: string): Fixture {
@@ -271,23 +253,6 @@ function seed(storage: Storage, dataDir: string): Fixture {
   mkdirSync(traceDir, { recursive: true });
   writeFileSync(join(traceDir, "20260101T000000Z-photo.jsonl"), traceLines);
 
-  const controlFile = join(dataDir, "control-session.jsonl");
-  const header = JSON.stringify({
-    type: "session",
-    version: 3,
-    id: "control-pi-session",
-    timestamp,
-    cwd: dataDir,
-  });
-  writeFileSync(controlFile, `${header}\n${traceLines}\n`);
-  const controlSession: Session = {
-    ...storage.createSession("Edit with Oppi"),
-    status: "stopped",
-    control: { domain: "extensions", intent: "revise", targetId: "ext-1" },
-    piSessionFile: controlFile,
-  };
-  storage.saveSession(controlSession);
-
   const durableSession: Session = {
     ...storage.createSession("Durable photo chat", "faux/faux-1"),
     workspaceId: workspace.id,
@@ -299,7 +264,6 @@ function seed(storage: Storage, dataDir: string): Fixture {
   return {
     workspaceId: workspace.id,
     workspaceSessionId: workspaceSession.id,
-    controlSessionId: controlSession.id,
     durableSession,
   };
 }

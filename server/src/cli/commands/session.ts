@@ -21,7 +21,7 @@ import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../reso
 import { resolveThinkingFromFlags, resolveToolPolicyFromFlags } from "../launch-flags.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
-import { isControlRouteSession } from "../../control-session.js";
+import { isControlConversation } from "../../control-session.js";
 import {
   assertNotSelfTargetingSession,
   callerSessionIdFromEnvironment,
@@ -779,14 +779,7 @@ async function resolveSessionScopedPath(
   if (workspaceId) {
     return `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}${suffix}`;
   }
-  if (
-    session &&
-    isControlRouteSession({
-      workspaceId: session.workspaceId,
-      control: session.control,
-      serverDurable: session.serverDurable,
-    })
-  ) {
+  if (session && isControlConversation({ serverDurable: session.serverDurable })) {
     return `/control-sessions/${encodeURIComponent(id)}${suffix}`;
   }
   throw new Error("Session has no workspaceId");

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { lstat, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { isControlConversation, isControlRouteSession } from "./control-session.js";
+import { isControlConversation } from "./control-session.js";
 import { resolveHostPath } from "./host.js";
 import { ensureOwnerOnlyRealDirectory } from "./owner-directory.js";
 import type { Session, Workspace } from "./types.js";
@@ -17,8 +17,7 @@ import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.
  *   Sandbox confinement is not decided here: the result carries the
  *   `workspace`, and `workspace.runtime === "sandbox"` is the one signal that
  *   current-file resolution confines reads to the mount.
- * - control-route session (declared Pi Control, or the durable control
- *   conversation): a server-owned owner-only directory under the data dir.
+ * - Oppi Control session: a server-owned owner-only directory under the data dir.
  * - any other workspace-less session: no directory (`no-workspace`).
  *
  * `create: false` never touches the filesystem except to look (reads, cleanup).
@@ -34,7 +33,7 @@ export interface SessionWorkRootStore {
   getDataDir(): string;
 }
 
-type WorkRootSession = Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">;
+type WorkRootSession = Pick<Session, "workspaceId" | "worktreeId" | "serverDurable">;
 
 export type SessionWorkRoot =
   | {
@@ -98,13 +97,7 @@ export async function resolveSessionWorkRoot(
   dataDir: string | undefined,
   { create }: { create: boolean },
 ): Promise<SessionWorkRoot> {
-  if (isControlRouteSession(session)) {
-    return controlRoot(
-      isControlConversation(session) ? "conversation" : "session",
-      dataDir,
-      create,
-    );
-  }
+  if (isControlConversation(session)) return controlRoot(dataDir, create);
   if (!workspace) {
     return session.workspaceId ? { kind: "workspace-missing" } : { kind: "no-workspace" };
   }
@@ -177,31 +170,14 @@ async function inspectDirectory(path: string): Promise<DirectoryState> {
   }
 }
 
-const CONTROL_ROOTS = {
-  conversation: {
-    dir: "control-conversation",
-    label: "Control conversation",
-    noDataDir: "The control conversation requires an Oppi data directory",
-  },
-  session: {
-    dir: "control-sessions",
-    label: "Control session",
-    noDataDir: "Control sessions require an Oppi data directory",
-  },
-} as const;
-
-async function controlRoot(
-  kind: keyof typeof CONTROL_ROOTS,
-  dataDir: string | undefined,
-  create: boolean,
-): Promise<SessionWorkRoot> {
-  const { dir, label, noDataDir } = CONTROL_ROOTS[kind];
-  if (!dataDir) throw new Error(noDataDir);
-  const parent = join(dataDir, dir);
+/** The one owner-only directory every Oppi Control session runs in. */
+async function controlRoot(dataDir: string | undefined, create: boolean): Promise<SessionWorkRoot> {
+  if (!dataDir) throw new Error("The control conversation requires an Oppi data directory");
+  const parent = join(dataDir, "control-conversation");
   const root = join(parent, "cwd");
   const levels: Array<[path: string, message: string]> = [
-    [parent, `${label} cwd parent must be a real directory`],
-    [root, `${label} cwd must be a real directory`],
+    [parent, "Control conversation cwd parent must be a real directory"],
+    [root, "Control conversation cwd must be a real directory"],
   ];
   for (const [path, message] of levels) {
     const state = await inspectDirectory(path);

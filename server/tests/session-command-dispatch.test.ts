@@ -696,7 +696,7 @@ describe("session command dispatch and output boundaries", () => {
           sessions: [
             {
               id: "control-1",
-              control: { domain: "agents", intent: "create" },
+              serverDurable: { role: "control" },
             },
           ],
         };
@@ -705,7 +705,7 @@ describe("session command dispatch and output boundaries", () => {
         return {
           session: {
             id: "control-1",
-            control: { domain: "agents", intent: "create" },
+            serverDurable: { role: "control" },
           },
         };
       }

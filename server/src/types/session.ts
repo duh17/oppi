@@ -90,17 +90,6 @@ export interface PiTuiMirrorSessionMetadata {
   protocolVersion?: number;
 }
 
-export type ControlSessionDomain =
-  "agents" | "extensions" | "schedules" | "skills" | "themes" | "workspaces";
-export type ControlSessionIntent = "create" | "revise";
-
-export interface ControlSessionMetadata {
-  domain: ControlSessionDomain;
-  intent: ControlSessionIntent;
-  targetId?: string;
-  targetName?: string;
-}
-
 export type AgentConfigurationFailureCode =
   | "agent_workspace_incompatible"
   | "agent_workspace_unavailable"
@@ -246,9 +235,6 @@ export interface Session {
   // separate launch record table.
   launch?: SessionLaunchMetadata;
 
-  // Server-scoped Oppi configuration session. Never infer this from a missing workspace.
-  control?: ControlSessionMetadata;
-
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)
 }
@@ -288,14 +274,13 @@ export interface SessionSummary {
   agentId?: string;
   /** Immutable launch-time icon snapshot; malformed values remain decode-safe. */
   agentIcon?: IconChoice;
-  control?: ControlSessionMetadata;
   ephemeral?: boolean;
   /** Launching session; clients build session threads from this edge. */
   parentSessionId?: string;
   /** Present only for durable-engine sessions; omitted means classic. */
   engine?: "durable";
   /**
-   * Control-conversation marker on list rows. Omitted for every other session;
+   * Oppi Control marker on list rows. Omitted for every other session;
    * the conversation id is not projected.
    */
   serverDurable?: { role: "control" };

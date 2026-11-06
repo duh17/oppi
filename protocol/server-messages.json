@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 74
+    "messageCount": 72
   },
   "messages": {
     "connected": {
@@ -204,138 +204,6 @@
           "name": "checkmark.shield"
         },
         "parentSessionId": "parent-session-1"
-      }
-    },
-    "state_control": {
-      "type": "state",
-      "session": {
-        "id": "control-session-1",
-        "name": "Oppi Control",
-        "status": "ready",
-        "createdAt": 1739750400000,
-        "lastActivity": 1739750460000,
-        "programStatus": {
-          "state": "blocked",
-          "kind": "question",
-          "message": "Which database?",
-          "since": 1739750455000
-        },
-        "model": "anthropic/claude-sonnet-4-20250514",
-        "messageCount": 5,
-        "tokens": {
-          "input": 1500,
-          "output": 800,
-          "cacheRead": 250,
-          "cacheWrite": 100
-        },
-        "cost": 0.012,
-        "changeStats": {
-          "mutatingToolCalls": 3,
-          "filesChanged": 6,
-          "changedFiles": [
-            "src/main.ts",
-            "README.md"
-          ],
-          "changedFilesOverflow": 4,
-          "worktree": {
-            "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
-            "addedLines": 42,
-            "removedLines": 7,
-            "baseSha": "0123456789abcdef0123456789abcdef01234567",
-            "headSha": "89abcdef0123456789abcdef0123456789abcdef",
-            "computedAt": 1700000000000
-          }
-        },
-        "contextTokens": 2300,
-        "contextWindow": 200000,
-        "lastMessage": "I've updated the README with the new API docs.",
-        "thinkingLevel": "high",
-        "launch": {
-          "source": "agent",
-          "agentId": "agent-reviewer",
-          "agentVersion": 4,
-          "agentIcon": {
-            "kind": "symbol",
-            "name": "checkmark.shield"
-          },
-          "parentSessionId": "parent-session-1",
-          "status": "accepted",
-          "requestedAt": 1739750399000,
-          "completedAt": 1739750400000
-        },
-        "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
-        "piSessionFiles": [
-          "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "control": {
-          "domain": "skills",
-          "intent": "revise",
-          "targetId": "skill-reviewer",
-          "targetName": "Reviewer Skill"
-        }
-      }
-    },
-    "session_summary_control": {
-      "type": "session_summary",
-      "summary": {
-        "id": "control-session-1",
-        "name": "Oppi Control",
-        "status": "ready",
-        "createdAt": 1739750400000,
-        "lastActivity": 1739750460000,
-        "programStatus": {
-          "state": "blocked",
-          "kind": "question",
-          "message": "Which database?",
-          "since": 1739750455000
-        },
-        "model": "anthropic/claude-sonnet-4-20250514",
-        "messageCount": 5,
-        "tokens": {
-          "input": 1500,
-          "output": 800,
-          "cacheRead": 250,
-          "cacheWrite": 100
-        },
-        "cost": 0.012,
-        "changeStats": {
-          "mutatingToolCalls": 3,
-          "filesChanged": 6,
-          "changedFiles": [
-            "src/main.ts",
-            "README.md"
-          ],
-          "changedFilesOverflow": 4,
-          "worktree": {
-            "filesChanged": 3,
-            "addedLines": 42,
-            "removedLines": 7,
-            "baseSha": "0123456789abcdef0123456789abcdef01234567",
-            "headSha": "89abcdef0123456789abcdef0123456789abcdef",
-            "computedAt": 1700000000000
-          }
-        },
-        "contextTokens": 2300,
-        "contextWindow": 200000,
-        "lastMessage": "I've updated the README with the new API docs.",
-        "thinkingLevel": "high",
-        "agentId": "agent-reviewer",
-        "agentIcon": {
-          "kind": "symbol",
-          "name": "checkmark.shield"
-        },
-        "parentSessionId": "parent-session-1",
-        "control": {
-          "domain": "skills",
-          "intent": "revise",
-          "targetId": "skill-reviewer",
-          "targetName": "Reviewer Skill"
-        }
       }
     },
     "state_durable": {

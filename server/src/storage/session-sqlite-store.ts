@@ -48,7 +48,6 @@ interface SessionRow {
   durable_store_id: string | null;
   durable_conversation_id: number | null;
   durable_role: string | null;
-  control_json: string | null;
   program_status_json: string | null;
   summary_json: string;
 }
@@ -127,7 +126,6 @@ const SESSION_COLUMNS = `
   durable_store_id,
   durable_conversation_id,
   durable_role,
-  control_json,
   program_status_json,
   summary_json
 `;
@@ -230,6 +228,20 @@ export class SessionSqliteStore {
   listDurableStoreSessions(storeId: string): Session[] {
     const rows = this.stmtListDurableStore.all(storeId) as Array<{ id: string }>;
     return rows.flatMap((row) => this.getSession(row.id) ?? []);
+  }
+
+  /**
+   * Workspace-less rows with `control_json`: the classic Pi Control sessions of servers that
+   * predate durable Oppi Control. No Session field carries it any more, and no write touches
+   * the column, so only `deleteClassicControlSessions` reads it.
+   */
+  listClassicControlSessions(): Array<{ id: string; controlJson: string }> {
+    return this.db
+      .prepare(
+        `SELECT id, control_json AS controlJson FROM session_state_sessions
+         WHERE control_json IS NOT NULL AND workspace_id IS NULL`,
+      )
+      .all() as Array<{ id: string; controlJson: string }>;
   }
 
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
@@ -819,9 +831,6 @@ function buildSession(row: SessionRow): Session {
     };
   }
 
-  const control = parseJsonValue<Session["control"]>(row.control_json, row.id, "control");
-  if (control) session.control = control;
-
   const programStatus = parseJsonValue<Session["programStatus"]>(
     row.program_status_json,
     row.id,
@@ -881,7 +890,6 @@ const SESSION_WRITE_COLUMNS = [
   "durable_store_id",
   "durable_conversation_id",
   "durable_role",
-  "control_json",
   "program_status_json",
   "summary_json",
 ] as const;
@@ -909,7 +917,6 @@ function sessionRowValues(session: Session): unknown[] {
     session.serverDurable?.storeId ?? null,
     session.serverDurable?.conversationId ?? null,
     session.serverDurable?.role ?? null,
-    session.control ? JSON.stringify(session.control) : null,
     session.programStatus ? JSON.stringify(session.programStatus) : null,
     encodeSummaryCache(session),
   ];
@@ -1043,9 +1050,6 @@ function normalizeDeclaredSession(session: Session): Session {
       ...(id === undefined ? {} : { conversationId: id }),
       ...(session.serverDurable.role === "control" ? { role: "control" as const } : {}),
     };
-  }
-  if (session.control !== undefined && session.control !== null) {
-    normalized.control = { ...session.control };
   }
   if (session.mirror !== undefined && session.mirror !== null) {
     normalized.mirror = session.mirror;

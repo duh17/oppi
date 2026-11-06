@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  cpSync,
   createReadStream,
   existsSync,
   mkdirSync,
@@ -1370,6 +1371,18 @@ function pipeAttachmentStream(
     res.destroy(error);
   });
   stream.pipe(res as NodeJS.WritableStream);
+}
+
+/** Copies the session's stored attachments to `destination`; false when it has none. */
+export function copySessionAttachments(
+  dataDir: string,
+  sessionId: string,
+  destination: string,
+): boolean {
+  const dir = sessionDir(dataDir, sessionId);
+  if (!existsSync(dir)) return false;
+  cpSync(dir, destination, { recursive: true, errorOnExist: true, force: false });
+  return true;
 }
 
 export function deleteSessionAttachments(dataDir: string, sessionId: string): boolean {

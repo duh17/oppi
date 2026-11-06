@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
 
-import { isControlConversation, isDeclaredControlSession } from "../src/control-session.js";
+import { isControlConversation } from "../src/control-session.js";
 import { createCliConfigStorage } from "../src/cli/connection-config.js";
 import { controlConversationTools } from "../src/durable-control-conversation.js";
 import type { DurableHarness } from "../src/durable-harness.js";
@@ -64,10 +64,9 @@ describe("control conversation marker gates", () => {
     dir = makeTempDir("oppi-control-conversation-gates-");
   });
 
-  it("is a durable row with no workspace and no declared-control metadata", () => {
+  it("is a durable row with no workspace", () => {
     const row = controlRow();
     expect(isControlConversation(row)).toBe(true);
-    expect(isDeclaredControlSession(row)).toBe(false);
     expect(isControlConversation(makeSession({ serverDurable: { conversationId: 4 } }))).toBe(
       false,
     );
@@ -100,11 +99,10 @@ describe("control conversation marker gates", () => {
     expect(crashed).toEqual([{ sessionId: "control", wasBusy: false }]);
   });
 
-  it("resumes through the durable start path, never as a declared control session", async () => {
+  it("resumes through the durable start path", async () => {
     const control = controlRow();
     const lifecycle = {
       resumeControlConversation: vi.fn(async (session: Session) => ({ session })),
-      resumeControlSession: vi.fn(),
       resumeWorkspaceSession: vi.fn(),
     };
     const clears: string[] = [];
@@ -129,7 +127,6 @@ describe("control conversation marker gates", () => {
     });
     expect(results).toEqual([{ sessionId: "control", outcome: "resumed" }]);
     expect(lifecycle.resumeControlConversation).toHaveBeenCalledOnce();
-    expect(lifecycle.resumeControlSession).not.toHaveBeenCalled();
     expect(clears).toEqual(["control"]);
   });
 
@@ -138,14 +135,6 @@ describe("control conversation marker gates", () => {
     expect(cwd).toBe(join(dir, "control-conversation", "cwd"));
     expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
     expect(lstatSync(join(dir, "control-conversation")).mode & 0o777).toBe(0o700);
-    // Classic control sessions keep their own directory.
-    expect(
-      await resolveSdkSessionCwdAsync(
-        undefined,
-        makeSession({ control: { domain: "agents", intent: "create" } }),
-        { dataDir: dir },
-      ),
-    ).toBe(join(dir, "control-sessions", "cwd"));
   });
 
   it("refuses a symlinked cwd root", async () => {
@@ -239,7 +228,6 @@ describe("control conversation lifecycle on the durable harness", () => {
         resumeControlConversation: async (session) => ({
           session: await second.manager.startSession(session.id),
         }),
-        resumeControlSession: vi.fn(async (session) => ({ session })),
         resumeWorkspaceSession: vi.fn(async ({ session }) => ({ session })),
       },
       sendPrompt: vi.fn(),
@@ -308,7 +296,6 @@ describe("control conversation lifecycle on the durable harness", () => {
       serverDurable: { role: "control" },
     });
     expect(listed.find((row) => row.id === sessionId)?.workspaceId).toBeUndefined();
-    expect(listed.find((row) => row.id === sessionId)?.control).toBeUndefined();
 
     // Graceful restart with the conversation idle: it comes back with no client asking.
     const live = [first.manager.getActiveSession(sessionId)!];
@@ -491,10 +478,9 @@ describe("control conversation lifecycle on the durable harness", () => {
         const booted = await boot(storage);
         const opened = await booted.open({ model: "faux/faux-1" });
         const sessionId = opened.session.id;
-        // The row the phone lists as control: no workspace, no control metadata.
+        // The row the phone lists as control: no workspace.
         expect(storage.getSession(sessionId)).toMatchObject({ serverDurable: { role: "control" } });
         expect(storage.getSession(sessionId)?.workspaceId).toBeUndefined();
-        expect(storage.getSession(sessionId)?.control).toBeUndefined();
         const store = storage.getAgentDefinitionStore();
         const before = store.listAgents().length;
 
@@ -530,7 +516,7 @@ describe("control conversation lifecycle on the durable harness", () => {
       },
     );
 
-    it("still refuses a workspace-less durable session that is neither declared control nor the control conversation", async () => {
+    it("still refuses a workspace-less durable session that is not an Oppi Control session", async () => {
       const { storage } = await setup();
       const booted = await boot(storage);
       const stray = storage.createSession("Stray");

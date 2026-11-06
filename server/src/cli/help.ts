@@ -1522,7 +1522,7 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "resume"],
     title: "Resume session",
-    summary: "Resume a stopped workspace or Pi Control session through the local API.",
+    summary: "Resume a stopped workspace or Oppi Control session through the local API.",
     usage: "oppi session resume <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],

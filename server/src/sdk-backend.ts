@@ -101,8 +101,6 @@ import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
-import { buildControlSystemPrompt, CONTROL_SESSION_TOOLS } from "./control-prompt.js";
-import { isDeclaredControlSession } from "./control-session.js";
 import { oppiAppendSystemPrompt } from "./oppi-docs.js";
 import type { GondolinManager } from "./gondolin-manager.js";
 import {
@@ -420,7 +418,7 @@ export function resolveSessionSeedModel(
  */
 export async function resolveSdkSessionCwdAsync(
   workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "serverDurable">,
   options: { dataDir?: string } = {},
 ): Promise<string> {
   const result = await resolveSessionWorkRoot(session ?? {}, workspace, options.dataDir, {
@@ -1115,10 +1113,7 @@ export class SdkBackend implements AgentBackend {
     const sandboxMode = workspace?.runtime === "sandbox";
     const displayCwd = sandboxMode ? resolveSandboxGuestCwd(workspace) : initialHostCwd;
     // Sandboxes persist a guest/display cwd in Pi session state and need a real
-    // host path only for Pi's existence check. Control sessions are not a guest
-    // filesystem: "Pi Control" is display metadata only. Persisting that label
-    // as SessionManager cwd materializes JSONLs under process.cwd()/Pi Control
-    // and leaks them into workspace importable-local discovery.
+    // host path only for Pi's existence check.
     const piSessionCwd = sandboxMode ? displayCwd : initialHostCwd;
     const cwdExistsOverride = sandboxMode ? initialHostCwd : piSessionCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);
@@ -1135,10 +1130,6 @@ export class SdkBackend implements AgentBackend {
 
     const agentDefinition = config.agentDefinition;
     const managedSession = (session.runtime ?? "oppi") !== "pi-tui";
-    // A declared Pi Control session ("Edit with Oppi") runs a focused setup assistant, not
-    // the owner's coding setup: its own system prompt, no global prompt files, context
-    // files, or Skills, and a minimal tool set. Extensions still load.
-    const controlMetadata = isDeclaredControlSession(session) ? session.control : undefined;
     const getMobileOutputGuideSettings =
       config.getMobileOutputGuideSettings ?? (() => DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS);
     const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
@@ -1278,21 +1269,13 @@ export class SdkBackend implements AgentBackend {
       const replace = agentDefinition?.instructions?.mode === "replace";
       const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
         const oppi = oppiAppendSystemPrompt({
-          target: !managedSession
-            ? "terminal"
-            : controlMetadata
-              ? "control"
-              : sandboxMode
-                ? "sandbox"
-                : "host",
+          target: !managedSession ? "terminal" : sandboxMode ? "sandbox" : "host",
           serverConfig: config.serverConfig,
           workspacePrompt: workspace?.systemPrompt,
           mobileOutputGuide: mobileOutputGuideSettingsHolder.snapshot.enabled,
           replace,
           hostTools: sandboxHostTools(),
         });
-        // The control prompt is the whole setup: ignore Pi's discovered APPEND_SYSTEM.md.
-        if (controlMetadata) return oppi;
         // A saved-Agent replacement remains authoritative: Oppi's appends, when there are
         // any, stand in for Pi's discovered APPEND_SYSTEM.md.
         if (replace) return oppi.length > 0 ? oppi : [...base];
@@ -1386,14 +1369,7 @@ export class SdkBackend implements AgentBackend {
           ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],
-        ...(controlMetadata
-          ? {
-              noContextFiles: true,
-              noSkills: true,
-              systemPromptOverride: () => buildControlSystemPrompt(controlMetadata),
-            }
-          : {}),
-        ...(sandboxMode || controlMetadata
+        ...(sandboxMode
           ? {}
           : selectedAgentSkillPaths !== undefined
             ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
@@ -1595,12 +1571,10 @@ export class SdkBackend implements AgentBackend {
           "This sandbox's Tools list hides its MCP servers. Clear the workspace Tools list to use them.";
         session.warnings = [...new Set([...(session.warnings ?? []), warning])];
       }
-      const effectiveToolPolicy = controlMetadata
-        ? { allowed: [...CONTROL_SESSION_TOOLS], excluded: undefined, noTools: undefined }
-        : {
-            ...configuredToolPolicy,
-            ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
-          };
+      const effectiveToolPolicy = {
+        ...configuredToolPolicy,
+        ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
+      };
       const scoped = await resolveEnabledScopedModels(
         settingsManager.getEnabledModels(),
         (patterns) => resolveModelScopeWithDiagnostics(patterns, modelRuntime),

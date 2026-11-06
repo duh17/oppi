@@ -12,12 +12,7 @@ import {
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
-import {
-  isControlConversation,
-  isControlRouteSession,
-  isDeclaredControlSession,
-  newControlSessionRow,
-} from "./control-session.js";
+import { isControlConversation, newControlSessionRow } from "./control-session.js";
 import { isPathWithinRoot } from "./path-utils.js";
 import {
   canResumeStoppedMirrorAsOppi,
@@ -123,11 +118,7 @@ export interface CreateWorkspaceSessionResult {
 export function canResumeAfterServerRestart(session: Session): boolean {
   if (session.ephemeral) return false;
   if (session.runtime === "pi-tui") return false;
-  return (
-    session.workspaceId !== undefined ||
-    isDeclaredControlSession(session) ||
-    isControlConversation(session)
-  );
+  return session.workspaceId !== undefined || isControlConversation(session);
 }
 
 export class SessionLifecycleError extends HttpStatusError {
@@ -324,8 +315,7 @@ export class SessionLifecycleService {
     existing: Session,
     requestedPrompt: string | undefined,
   ): Promise<CreateWorkspaceSessionResult> {
-    // A classic row created under this key before control moved to durable still answers it.
-    if (!isControlRouteSession(existing)) {
+    if (!isControlConversation(existing)) {
       throw new SessionLifecycleError(
         "Control-session idempotency key belongs to a different session scope",
         409,
@@ -496,30 +486,7 @@ export class SessionLifecycleService {
     };
   }
 
-  async resumeControlSession(session: Session): Promise<OpenSessionResult> {
-    if (session.workspaceId !== undefined || !session.control) {
-      throw new SessionLifecycleError("Session is not a control session", 400);
-    }
-    if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
-      const active = this.deps.sessionRuntimes.getActiveSession(session.id);
-      return {
-        session: active ? this.deps.ensureSessionContextWindow(active) : session,
-        owner: "oppi",
-        startedSession: false,
-        rebound: false,
-      };
-    }
-
-    const started = await this.startManagedSession(session, undefined);
-    return {
-      session: this.deps.ensureSessionContextWindow(started),
-      owner: "oppi",
-      startedSession: true,
-      rebound: false,
-    };
-  }
-
-  /** Attach a durable Oppi Control session to a runtime: no workspace, no `control` metadata. */
+  /** Attach a durable Oppi Control session to a runtime. It has no workspace. */
   async resumeControlConversation(session: Session): Promise<OpenSessionResult> {
     if (session.workspaceId !== undefined || !isControlConversation(session)) {
       throw new SessionLifecycleError("Session is not a durable control session", 400);
@@ -1179,9 +1146,13 @@ export class SessionLifecycleService {
     return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
   }
 
-  private async deleteReferencedLocalPiSessionJsonlFiles(session: Session): Promise<string[]> {
+  /**
+   * The session's Pi JSONL trace files that `deleteSession` unlinks: the referenced ones that
+   * exist and are local Pi session files. Other referenced paths are never deleted.
+   */
+  async localPiTraceFiles(session: Session): Promise<string[]> {
     const existingPaths = await this.collectExistingSessionJsonlPaths(session);
-    const deleteTargets = new Set<string>();
+    const traces = new Set<string>();
 
     for (const candidate of existingPaths) {
       const validation = validateLocalSessionPath(candidate);
@@ -1195,10 +1166,13 @@ export class SessionLifecycleService {
         });
         continue;
       }
-      deleteTargets.add(validation.path);
+      traces.add(validation.path);
     }
+    return Array.from(traces);
+  }
 
-    const deletedPaths = Array.from(deleteTargets);
+  private async deleteReferencedLocalPiSessionJsonlFiles(session: Session): Promise<string[]> {
+    const deletedPaths = await this.localPiTraceFiles(session);
     if (deletedPaths.length > 0) {
       deleteCatalogedLocalSessionPaths(deletedPaths, { dataDir: this.deps.storage.getDataDir() });
     }
