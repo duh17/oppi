@@ -1,3 +1,5 @@
+import { asRecord } from "./json-shape.js";
+
 /**
  * Validation + sanitization for structured tool result details.
  *
@@ -10,8 +12,6 @@ interface ToolResultDetailsSanitization {
   details: unknown;
   warnings: string[];
 }
-
-import { asRecord } from "./json-shape.js";
 
 /**
  * Sanitize tool result details before they are broadcast to clients.

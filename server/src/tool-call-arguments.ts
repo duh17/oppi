@@ -1,3 +1,5 @@
+import { asRecord } from "./json-shape.js";
+
 /**
  * A tool call's arguments as the server reads them off Pi's message blocks, the rule Pi's
  * providers and the classic trace use (`arguments || tryParseJson(partialJson)`):
@@ -15,8 +17,6 @@ export function resolveToolArguments(
   if (block.arguments) return asRecord(block.arguments);
   return parseJsonObject(block.partialJson);
 }
-
-import { asRecord } from "./json-shape.js";
 
 function parseJsonObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "string") return undefined;
