@@ -55,8 +55,12 @@ import {
   type PendingUIRequestProvider,
 } from "../session-attention.js";
 
-/** Git probes in flight at once while building the catalog. */
-const GIT_SUMMARY_CONCURRENCY = 12;
+/**
+ * Git probes in flight at once while building the catalog. The response waits on its slowest
+ * repository, so past a handful of probes the wall time stops dropping and more `git status`
+ * processes (each threading its own index preload) only contend with each other for CPU and disk.
+ */
+const GIT_SUMMARY_CONCURRENCY = 6;
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const removedDefaultModelError =
