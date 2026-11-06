@@ -1,3 +1,17 @@
+# Build stage: dev dependencies (~136 MB) exist only here. Pruning inside the runtime stage would
+# not shrink the image, because the `npm ci` layer that installed them would still be shipped.
+FROM node:24-bookworm AS build
+
+WORKDIR /opt/server
+
+COPY server/package.json server/package-lock.json ./
+RUN npm ci --no-audit --no-fund --ignore-scripts
+
+COPY server/ ./
+# The built-in plugins are real files under server/plugins; the build needs nothing else.
+RUN npm run build \
+    && npm prune --omit=dev --no-audit --no-fund
+
 FROM node:24-bookworm
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -30,13 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv
 
-COPY server/package.json server/package-lock.json ./
-RUN npm ci --no-audit --no-fund --ignore-scripts
-
-COPY server/ ./
-# The built-in plugins are real files under server/plugins; the build needs nothing else.
-RUN npm run build \
-    && ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
+COPY --from=build /opt/server/ ./
+RUN ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
 
 COPY server/docker/entrypoint.sh /usr/local/bin/oppi-entrypoint.sh
 RUN chmod +x /usr/local/bin/oppi-entrypoint.sh
