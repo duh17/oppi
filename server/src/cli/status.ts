@@ -1,5 +1,6 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFile, execFileSync, execSync } from "node:child_process";
 import { hostname as osHostname, networkInterfaces } from "node:os";
+import { promisify } from "node:util";
 
 import * as c from "../ansi.js";
 import { tailscaleBinary, tlsSchemeForConfig } from "../tls.js";
@@ -7,13 +8,11 @@ import type { CliConnectionConfig } from "./connection-config.js";
 import { hasPendingPairingInvite } from "./pairing-invite.js";
 import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
 
-export function getTailscaleHostname(): string | null {
+const execFileAsync = promisify(execFile);
+
+function parseTailscaleHostname(statusJson: string): string | null {
   try {
-    const result = execFileSync(tailscaleBinary(), ["status", "--json"], {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const status = JSON.parse(result) as { Self?: { DNSName?: unknown } };
+    const status = JSON.parse(statusJson) as { Self?: { DNSName?: unknown } };
     if (typeof status.Self?.DNSName === "string" && status.Self.DNSName) {
       return status.Self.DNSName.replace(/\.$/, "");
     }
@@ -21,28 +20,14 @@ export function getTailscaleHostname(): string | null {
   return null;
 }
 
-export function getTailscaleIp(): string | null {
-  try {
-    return (
-      execFileSync(tailscaleBinary(), ["ip", "-4"], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      })
-        .trim()
-        .split("\n")[0] ?? null
-    );
-  } catch {}
-  return null;
+function parseTailscaleIp(output: string): string | null {
+  return output.trim().split("\n")[0] ?? null;
 }
 
-export function getLocalHostname(): string | null {
-  try {
-    const localHostName = execSync("scutil --get LocalHostName", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (localHostName) return `${localHostName}.local`;
-  } catch {}
+/** `scutil` output when it names this Mac, else the OS hostname as a `.local` name. */
+function localHostnameFrom(scutilOutput: string | null): string | null {
+  const localHostName = scutilOutput?.trim();
+  if (localHostName) return `${localHostName}.local`;
 
   try {
     const host = osHostname().trim();
@@ -52,6 +37,73 @@ export function getLocalHostname(): string | null {
   } catch {}
 
   return null;
+}
+
+export function getTailscaleHostname(): string | null {
+  try {
+    return parseTailscaleHostname(
+      execFileSync(tailscaleBinary(), ["status", "--json"], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  } catch {}
+  return null;
+}
+
+export function getTailscaleIp(): string | null {
+  try {
+    return parseTailscaleIp(
+      execFileSync(tailscaleBinary(), ["ip", "-4"], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  } catch {}
+  return null;
+}
+
+export function getLocalHostname(): string | null {
+  try {
+    return localHostnameFrom(
+      execSync("scutil --get LocalHostName", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  } catch {}
+  return localHostnameFrom(null);
+}
+
+/**
+ * Network identity of this host, looked up without blocking the event loop so `oppi serve`
+ * can answer `/health` while `tailscale` and `scutil` run. The three lookups run in parallel;
+ * a failed lookup is null, same as the synchronous getters.
+ */
+export async function lookUpHostNames(): Promise<{
+  tailscaleHostname: string | null;
+  tailscaleIp: string | null;
+  localHostname: string | null;
+}> {
+  const [tailscaleStatus, tailscaleIp, scutil] = await Promise.all([
+    execFileAsync(tailscaleBinary(), ["status", "--json"]).then(
+      (r) => r.stdout,
+      () => null,
+    ),
+    execFileAsync(tailscaleBinary(), ["ip", "-4"]).then(
+      (r) => r.stdout,
+      () => null,
+    ),
+    execFileAsync("scutil", ["--get", "LocalHostName"]).then(
+      (r) => r.stdout,
+      () => null,
+    ),
+  ]);
+  return {
+    tailscaleHostname: tailscaleStatus === null ? null : parseTailscaleHostname(tailscaleStatus),
+    tailscaleIp: tailscaleIp === null ? null : parseTailscaleIp(tailscaleIp),
+    localHostname: localHostnameFrom(scutil),
+  };
 }
 
 export function getLocalIp(): string | null {

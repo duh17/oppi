@@ -2,10 +2,19 @@
  * GET /server/info endpoint contract tests.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Server } from "../src/server.js";
 
 function readImportedPiCodingAgentVersion(): string {
@@ -34,9 +43,49 @@ describe("GET /server/info", () => {
     expect(Server.VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("detectPiVersion returns 'unknown' for bad executable", () => {
-    const version = Server.detectPiVersion("/nonexistent/pi");
-    expect(version).toBe("unknown");
+  describe("readPiCliVersion", () => {
+    let root: string;
+
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), "oppi-pi-cli-version-"));
+    });
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    function installPi(packageName: string, version: string): string {
+      const pkg = join(root, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+      mkdirSync(join(pkg, "dist", "bundle"), { recursive: true });
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: packageName, version }));
+      writeFileSync(join(pkg, "dist", "bundle", "cli.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+      mkdirSync(join(root, "bin"), { recursive: true });
+      const bin = join(root, "bin", "pi");
+      symlinkSync(join(pkg, "dist", "bundle", "cli.js"), bin);
+      return bin;
+    }
+
+    it("reads the version of the package behind a symlinked pi binary without running it", () => {
+      const bin = installPi("@earendil-works/pi-coding-agent", "9.8.7");
+      expect(Server.readPiCliVersion(bin)).toBe("9.8.7");
+    });
+
+    it("finds a bare pi name on PATH", () => {
+      const bin = installPi("@earendil-works/pi-coding-agent", "9.8.7");
+      const previous = process.env.PATH;
+      process.env.PATH = `${dirname(bin)}:${previous ?? ""}`;
+      try {
+        expect(Server.readPiCliVersion("pi")).toBe("9.8.7");
+      } finally {
+        process.env.PATH = previous;
+      }
+    });
+
+    it("returns 'unknown' for a missing executable or a different package", () => {
+      expect(Server.readPiCliVersion("/nonexistent/pi")).toBe("unknown");
+      const bin = installPi("some-other-cli", "1.0.0");
+      expect(Server.readPiCliVersion(bin)).toBe("unknown");
+    });
   });
 
   it("readEmbeddedPiAgentVersion returns the imported package version, not a CLI spawn", () => {

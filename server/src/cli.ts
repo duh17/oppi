@@ -20,6 +20,7 @@ import {
   getLocalIp,
   getTailscaleHostname,
   getTailscaleIp,
+  lookUpHostNames,
 } from "./cli/status.js";
 import { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
@@ -251,15 +252,6 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
   const config = storage.getConfig();
-  const tailscaleHostname = getTailscaleHostname();
-  const tailscaleIp = getTailscaleIp();
-  const localHostname = getLocalHostname();
-  const localIp = getLocalIp();
-
-  if (tailscaleHostname || tailscaleIp) {
-    console.log(c.dim("  Tailscale detected — remote access available"));
-    console.log("");
-  }
 
   let shuttingDown = false;
 
@@ -332,6 +324,14 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   });
 
   await server.start();
+
+  // Only the banner reads these. The `tailscale` and `scutil` lookups run after the listener is
+  // up (so /health answers meanwhile) and the banner prints once they have resolved.
+  const { tailscaleHostname, tailscaleIp, localHostname } = await lookUpHostNames();
+  const localIp = getLocalIp();
+  if (tailscaleHostname || tailscaleIp) {
+    console.log(c.dim("  Tailscale detected — remote access available"));
+  }
 
   console.log("");
   const scheme = server.scheme;
@@ -602,7 +602,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
         : "runtime PATH is empty (configure runtimePathEntries in config)",
   });
 
-  // The `pi` CLI is optional: the server embeds the Pi SDK and only reads `pi --version`.
+  // The `pi` CLI is optional: the server embeds the Pi SDK and only reads the installed CLI's version.
   const piPath = resolveExecutableOnPath("pi", runtimePath);
   if (piPath) {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });

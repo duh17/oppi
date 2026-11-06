@@ -9,12 +9,12 @@ import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse }
 import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { spawnSync } from "node:child_process";
+import { resolveExecutableOnPath } from "./host-env.js";
 import { createPrivateKey, randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Storage } from "./storage.js";
@@ -389,21 +389,19 @@ export class Server {
   static readonly VERSION = getPackageInfo().version;
 
   /**
-   * Installed Pi TUI/CLI version via `pi --version`.
-   * Pi SDK (`piVersion`) is readEmbeddedPiAgentVersion() — never this PATH/Homebrew spawn.
+   * Installed Pi TUI/CLI version, read from the package.json that owns the `pi` binary
+   * (symlinks resolved) instead of spawning `pi --version`, which cost ~170 ms of startup.
+   * "unknown" when the binary is missing or is not an npm install of Pi (for example a
+   * single-file build), and the identity route then omits `piCliVersion`.
+   * Pi SDK (`piVersion`) is readEmbeddedPiAgentVersion() — never this PATH/Homebrew lookup.
    */
-  static detectPiVersion(piExecutable: string): string {
+  static readPiCliVersion(piExecutable: string): string {
     try {
-      // pi --version writes to stderr (not stdout), so capture both.
-      const result = spawnSync(piExecutable, ["--version"], {
-        encoding: "utf-8",
-        timeout: 5000,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const output = result.stdout?.trim() || result.stderr?.trim() || "";
-      // Output may be "pi 0.8.0" or just "0.8.0"
-      const match = output.match(/(\d+\.\d+\.\d+)/);
-      return match ? match[1] : output || "unknown";
+      const resolved = piExecutable.includes("/")
+        ? piExecutable
+        : resolveExecutableOnPath(piExecutable);
+      if (!resolved) return "unknown";
+      return Server.readPiPackageVersionNear(realpathSync(resolved));
     } catch {
       return "unknown";
     }
@@ -413,7 +411,16 @@ export class Server {
   static readEmbeddedPiAgentVersion(): string {
     try {
       const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-      let dir = dirname(entry);
+      return Server.readPiPackageVersionNear(entry);
+    } catch {
+      return "unknown";
+    }
+  }
+
+  /** Walk up from a file inside `@earendil-works/pi-coding-agent` to its package.json version. */
+  private static readPiPackageVersionNear(file: string): string {
+    try {
+      let dir = dirname(file);
       for (let i = 0; i < 8; i++) {
         const candidate = join(dir, "package.json");
         if (existsSync(candidate)) {
@@ -954,7 +961,7 @@ export class Server {
       serverVersion: Server.VERSION,
       networkListener: () => ({ port: this.port, listening: this.httpServer?.listening === true }),
       piVersion: Server.readEmbeddedPiAgentVersion(),
-      piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
+      piCliVersion: optionalPiCliVersion(Server.readPiCliVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
       endLiveActivityCard: (deviceId) =>
