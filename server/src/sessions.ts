@@ -16,6 +16,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type { HeldTurnInput } from "./agent-runtime-transport.js";
 import { SessionRestartHold } from "./session-restart-hold.js";
+import { abandonQueuedResume, openQueuedStores } from "./session-restart-resume.js";
 import type {
   ChatAttachmentRef,
   ConversationStreamAttach,
@@ -1307,8 +1308,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       await runtime.finishStartup();
       return;
     }
-    for (const storeId of storeIds) await runtime.openHost(storeId);
-    await this.fenceStopped(runtime.openHosts());
+    const unusable = await openQueuedStores(runtime, storeIds, (hosts) => this.fenceStopped(hosts));
     for (const session of bound) {
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(session.workspaceId)
@@ -1316,17 +1316,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (session.workspaceId && !workspace) continue;
       if (!this.storage.listRestartResume().some((entry) => entry.sessionId === session.id))
         continue;
+      const storeFailure = unusable.get(durableStoreId(session) ?? "");
+      if (storeFailure !== undefined) {
+        abandonQueuedResume(this.storage, session.id, storeFailure);
+        continue;
+      }
       try {
         await this.startSession(session.id, workspace);
       } catch (error) {
-        // One session that cannot come back (its worktree was removed while the server was
-        // down) must not stop the server from starting. Unqueued, the next fence aborts its
-        // interrupted work like a stopped session's.
-        log.error("sessions.durable_resume_failed", {
-          sessionId: session.id,
-          error: safeErrorMessage(error),
-        });
-        this.storage.clearRestartResume(session.id);
+        abandonQueuedResume(this.storage, session.id, error);
       }
     }
     for (;;) {

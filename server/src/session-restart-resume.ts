@@ -27,6 +27,7 @@
  */
 
 import { isControlConversation } from "./control-session.js";
+import type { DurableHarness, SessionHost } from "./durable-harness.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { syncProgramStatus } from "./program-status.js";
@@ -343,4 +344,63 @@ async function continueAfterRestart(
   } catch (error: unknown) {
     return { outcome: "failed", reason: `continuation: ${safeErrorMessage(error)}` };
   }
+}
+
+/**
+ * Open the stores of queued sessions and run `fence` on each. A store that cannot open
+ * (corrupt, locked, missing) or fence must not stop the server from starting; it is returned
+ * with its error so its sessions can be abandoned. A store whose fence failed is closed, never
+ * left to run its interrupted work unfenced.
+ */
+export async function openQueuedStores(
+  runtime: Pick<DurableHarness, "host" | "openHost" | "openHosts">,
+  storeIds: Iterable<string>,
+  fence: (hosts: readonly SessionHost[]) => Promise<void>,
+): Promise<Map<string, unknown>> {
+  const unusable = new Map<string, unknown>();
+  const drop = async (storeId: string, error: unknown): Promise<void> => {
+    unusable.set(storeId, error);
+    await runtime
+      .host(storeId)
+      ?.close()
+      .catch(() => undefined);
+  };
+  for (const storeId of storeIds) {
+    try {
+      await runtime.openHost(storeId);
+    } catch (error) {
+      await drop(storeId, error);
+    }
+  }
+  for (const host of runtime.openHosts()) {
+    try {
+      await fence([host]);
+    } catch (error) {
+      await drop(host.storeId, error);
+    }
+  }
+  return unusable;
+}
+
+/**
+ * One queued session that cannot come back (its worktree was removed, or its store cannot open,
+ * while the server was down) must not stop the server from starting. It stays stopped, with the
+ * reason as its latest warning; unqueued, the next fence aborts its interrupted work like any
+ * stopped session's.
+ */
+export function abandonQueuedResume(
+  storage: RestartStorage,
+  sessionId: string,
+  error: unknown,
+): void {
+  const reason = safeErrorMessage(error);
+  log.error("sessions.durable_resume_failed", { sessionId, error: reason });
+  storage.clearRestartResume(sessionId);
+  const stored = storage.getSession(sessionId);
+  if (!stored) return;
+  stored.warnings = [
+    ...(stored.warnings ?? []),
+    `This session could not resume after the server restarted: ${reason}`,
+  ];
+  storage.saveSession(stored);
 }

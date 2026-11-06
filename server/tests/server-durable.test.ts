@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -47,7 +47,12 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
-import { DurableHarness, DurableRuntime, SessionHost } from "../src/durable-harness.js";
+import {
+  DurableHarness,
+  DurableRuntime,
+  SessionHost,
+  durableStoreDir,
+} from "../src/durable-harness.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
@@ -2674,6 +2679,80 @@ describe("server durable managed runtime", () => {
     // A's interrupted tool resumes; B's stays aborted, as for a session whose workspace is gone.
     expect(crashed.effects).toEqual([a!.serverDurable!.conversationId]);
     expect(f.storage.listRestartResume()).toEqual([]);
+  });
+
+  it.each([
+    [
+      "corrupt",
+      (storeDir: string) => writeFileSync(join(storeDir, "session.sqlite"), "not a sqlite file"),
+    ],
+    ["missing", (storeDir: string) => rmSync(storeDir, { recursive: true, force: true })],
+  ])(
+    "starts when a queued session's %s store cannot open, stopping only that session",
+    async (_damage, damage) => {
+      const f = await fixture([]);
+      const broken = createDurableSession(f.storage, "Unopenable store");
+      broken.workspaceId = f.workspace.id;
+      f.storage.saveSession(broken);
+      await f.manager.startSession(f.session.id, f.workspace);
+      await f.manager.startSession(broken.id, f.workspace);
+      recordLiveSessionsForRestart(f.storage, [
+        f.manager.getActiveSession(f.session.id)!,
+        f.manager.getActiveSession(broken.id)!,
+      ]);
+      await f.manager.close();
+      managers.splice(managers.indexOf(f.manager), 1);
+      damage(durableStoreDir(f.dir, broken.id));
+
+      const storage = new Storage(f.dir);
+      const restarted = new SessionManager(storage);
+      managers.push(restarted);
+      await restarted.resumeDurableSessions();
+
+      expect(restarted.isActive(f.session.id)).toBe(true);
+      expect(restarted.isActive(broken.id)).toBe(false);
+      expect(storage.listRestartResume()).toEqual([]);
+      const row = storage.getSession(broken.id)!;
+      expect(row.status).toBe("stopped");
+      expect(row.warnings?.join("\n")).toContain("could not resume after the server restarted");
+    },
+  );
+
+  it("starts when a queued session's store opens but its startup fence fails", async () => {
+    const f = await fixture([]);
+    const broken = createDurableSession(f.storage, "Unfenceable store");
+    broken.workspaceId = f.workspace.id;
+    f.storage.saveSession(broken);
+    await f.manager.startSession(f.session.id, f.workspace);
+    await f.manager.startSession(broken.id, f.workspace);
+    // A stopped session of the same store: the fence has work to abort there.
+    const leftover = createDurableSession(f.storage, "Stopped in the same store");
+    leftover.serverDurable = { storeId: broken.id, conversationId: 99 };
+    f.storage.saveSession(leftover);
+    recordLiveSessionsForRestart(f.storage, [
+      f.manager.getActiveSession(f.session.id)!,
+      f.manager.getActiveSession(broken.id)!,
+    ]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+
+    const abort = SessionHost.prototype.abortConversations;
+    vi.spyOn(SessionHost.prototype, "abortConversations").mockImplementation(function (
+      this: SessionHost,
+      ...args
+    ) {
+      if (this.storeId === broken.id) return Promise.reject(new Error("fence failed"));
+      return abort.apply(this, args);
+    });
+    const storage = new Storage(f.dir);
+    const restarted = new SessionManager(storage);
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+
+    expect(restarted.isActive(f.session.id)).toBe(true);
+    expect(restarted.isActive(broken.id)).toBe(false);
+    expect(storage.listRestartResume()).toEqual([]);
+    expect(storage.getSession(broken.id)?.warnings?.join("\n")).toContain("fence failed");
   });
 
   it.each(["prompt", "steer", "follow-up"])(

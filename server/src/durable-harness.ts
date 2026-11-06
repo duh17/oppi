@@ -1962,7 +1962,11 @@ export class DurableHarness {
     }
     const host = new SessionHost(this, storeId, directory, stored, this.startupHeld);
     this.hosts.set(storeId, host);
-    await host.open();
+    await host.open().catch((error: unknown) => {
+      // Never opened: not a store the runtime serves (a fence or close would retry it).
+      this.forgetHost(host);
+      throw error;
+    });
     await this.onHostOpened?.(host);
     return host;
   }
