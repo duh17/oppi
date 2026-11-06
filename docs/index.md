@@ -18,7 +18,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 - [Provider quotas](provider-quotas.md): remaining quota and pace
 - [Deep links](deeplinks.md): `oppi://` links
 - [Support](support.md) and [Privacy](privacy.md)
-- [Screenshots](demo/README.md)
+- [Screenshots](https://github.com/duh17/oppi/tree/main/docs/demo)
 
 ## Extension authoring
 
