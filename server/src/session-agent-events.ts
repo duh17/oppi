@@ -84,7 +84,8 @@ function sameCustomContent(entry: { content?: unknown }, message: object): boole
 }
 
 export class SessionAgentEventCoordinator {
-  private static readonly INFO_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
+  // Debug only: turn telemetry (`server.turn`) already records each turn at info.
+  private static readonly DEBUG_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
     "agent_settled",
@@ -92,9 +93,6 @@ export class SessionAgentEventCoordinator {
     "compaction_end",
     "auto_retry_start",
     "auto_retry_end",
-  ]);
-
-  private static readonly DEBUG_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "turn_start",
     "turn_end",
     "message_end",
@@ -248,10 +246,8 @@ export class SessionAgentEventCoordinator {
       }
     }
 
-    if (SessionAgentEventCoordinator.INFO_LOGGED_EVENT_TYPES.has(event.type)) {
-      this.logPiEvent("info", active, event);
-    } else if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
-      this.logPiEvent("debug", active, event);
+    if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
+      this.logPiEvent(active, event);
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
@@ -552,14 +548,10 @@ export class SessionAgentEventCoordinator {
     return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
   }
 
-  private logPiEvent(
-    level: "debug" | "info",
-    active: SessionAgentEventState,
-    event: AgentSessionEvent,
-  ): void {
+  private logPiEvent(active: SessionAgentEventState, event: AgentSessionEvent): void {
     const toolName =
       "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
-    log[level]("session_agent_events.pi_event", {
+    log.debug("session_agent_events.pi_event", {
       sessionId: active.session.id,
       eventType: event.type,
       toolName,
@@ -592,7 +584,7 @@ export class SessionAgentEventCoordinator {
     summary: SessionSummary,
     reason: AgentSessionEvent["type"],
   ): void {
-    log.info("session_agent_events.summary_update", {
+    log.debug("session_agent_events.summary_update", {
       sessionId: active.session.id,
       status: summary.status,
       reason,

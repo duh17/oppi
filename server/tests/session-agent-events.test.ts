@@ -525,7 +525,7 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toHaveLength(0);
   });
 
-  it("keeps structural turn lifecycle events out of info logs", () => {
+  it("keeps lifecycle events and summary updates out of info logs", () => {
     const active = makeActiveSession({ status: "busy" });
     const { coordinator } = makeCoordinator(active);
     const writes: string[] = [];
@@ -537,6 +537,9 @@ describe("SessionAgentEventCoordinator", () => {
     }) as typeof process.stderr.write);
 
     try {
+      coordinator.handlePiEvent(active.session.id, {
+        type: "agent_start",
+      } as unknown as SessionBackendEvent);
       coordinator.handlePiEvent(active.session.id, {
         type: "turn_start",
       } as unknown as SessionBackendEvent);
@@ -551,6 +554,7 @@ describe("SessionAgentEventCoordinator", () => {
 
     const output = writes.join("");
     expect(output).not.toContain('"event":"session_agent_events.pi_event"');
+    expect(output).not.toContain('"event":"session_agent_events.summary_update"');
     expect(output).not.toContain('"eventType":"turn_start"');
     expect(output).not.toContain('"eventType":"turn_end"');
   });
