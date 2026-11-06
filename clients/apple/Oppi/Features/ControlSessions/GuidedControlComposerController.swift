@@ -28,7 +28,9 @@ final class GuidedControlComposerController: UIViewController {
     private let screenErrorRow = UIView()
     private var screenError: String?
     /// The staged-comment pill and, while open, its drawer.
-    private let reviewStrip = UIStackView()
+    /// The pill row draws at the pill's height; its touch band reaches into the stack's top margin
+    /// and the spacing below.
+    private let reviewStrip: UIStackView = ExtensionStripPillHitBandStackView()
     private let reviewPill = ReviewCommentStripPillView()
     private let reviewDrawer = ReviewCommentStashDrawerView()
     private let stackedPanel = UIStackView()
@@ -273,11 +275,9 @@ final class GuidedControlComposerController: UIViewController {
         reviewStrip.spacing = 8
         reviewStrip.isLayoutMarginsRelativeArrangement = true
         reviewStrip.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
-        let pillRow = UIStackView(arrangedSubviews: [reviewPill, UIView()])
+        let pillRow: UIStackView = ExtensionStripPillHitBandStackView(arrangedSubviews: [reviewPill, UIView()])
         pillRow.axis = .horizontal
         pillRow.alignment = .center
-        // Tall enough to hold the pill's whole touch band: hit-testing stops at the row's bounds.
-        pillRow.heightAnchor.constraint(greaterThanOrEqualToConstant: ExtensionStripPillMetrics.hitHeight).isActive = true
         reviewStrip.addArrangedSubview(pillRow)
         reviewStrip.addArrangedSubview(reviewDrawer)
         reviewPill.onToggle = { [weak model] in model?.toggleReviewCommentDrawer() }

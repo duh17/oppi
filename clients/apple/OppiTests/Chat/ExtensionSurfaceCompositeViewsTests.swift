@@ -452,6 +452,58 @@ struct ExtensionSurfaceCompositeViewsTests {
         #expect(isShown(card, in: footer), "the pill opens the surface's cards")
     }
 
+    /// A chat in a scene window with one strip surface above its composer, and that strip's pill.
+    private func chatWithStripPill(_ sessionId: String) async throws -> (ChatViewController, UIWindow, UIControl, () -> Void) {
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
+        connection.extensionSurfaces.apply(try surface("status-card.json"), sessionId: sessionId)
+        let window = makeSceneWindow()
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = chat
+        window.makeKeyAndVisible()
+        let teardown = {
+            window.rootViewController = UIViewController()
+            window.isHidden = true
+            chat.sessionManager.cleanup()
+            connection.disconnectStream()
+        }
+        let id = "extension-strip-aboveEditor-pill-surface-deploy"
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) {
+            chat.view.layoutIfNeeded()
+            return control(id, in: chat.view).map { isShown($0, in: chat.view) } ?? false
+        }
+        let pill = try testUnwrap(control(id, in: chat.view) as? UIControl)
+        return (chat, window, pill, teardown)
+    }
+
+    @Test func aStripPillTakesTouchesAcrossA44ptBandThoughItsRowDrawsShorter() async throws {
+        let (_, window, pill, teardown) = try await chatWithStripPill("strip-hit-band")
+        defer { teardown() }
+        let frame = pill.convert(pill.bounds, to: window)
+        let row = try testUnwrap(pill.superview)
+        #expect(row.bounds.height < ExtensionStripPillMetrics.hitHeight, "the strip row grew to the band: \(row.bounds.height)")
+        let band = (ExtensionStripPillMetrics.hitHeight - frame.height) / 2 - 1
+        #expect(band >= 7, "the pill draws close to its band: \(frame.height)")
+        for y in [frame.minY - band, frame.maxY + band] {
+            let hit = window.hitTest(CGPoint(x: frame.midX, y: y), with: nil)
+            #expect(hit?.isDescendant(of: pill) == true, "a touch at y \(y) missed the pill at \(frame): \(String(describing: hit))")
+        }
+    }
+
+    @Test func aTouchOnTheComposerTextJustBelowTheStripReachesTheText() async throws {
+        let (chat, window, pill, teardown) = try await chatWithStripPill("strip-hit-composer")
+        defer { teardown() }
+        let pillFrame = pill.convert(pill.bounds, to: window)
+        let textView = chat.composer.bar.textView
+        let textFrame = textView.convert(textView.bounds, to: window)
+        #expect(textFrame.minY > pillFrame.maxY, "the text field sits below the strip")
+        let point = CGPoint(x: min(max(pillFrame.midX, textFrame.minX + 4), textFrame.maxX - 4), y: textFrame.minY + 1)
+        let hit = window.hitTest(point, with: nil)
+        #expect(hit?.isDescendant(of: textView) == true, "a touch on the text field went to \(String(describing: hit))")
+    }
+
     @Test func aBelowComposerSurfaceShowsUnderTheComposer() async throws {
         let sessionId = "composable-below"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)

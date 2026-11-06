@@ -6,10 +6,56 @@ enum ExtensionStripPillMetrics {
     static let visualHeight: CGFloat = 28
     static let horizontalPadding: CGFloat = 10
     static let verticalPadding: CGFloat = 5
-    /// The touch band every strip pill answers across, however short it draws. A row that holds
-    /// strip pills is at least this tall: a superview's bounds clip hit-testing, so a band that
-    /// overhangs the row it sits in takes no touches.
+    /// The touch band every strip pill answers across, however short it draws. The row stays as
+    /// short as the pills, so the band overhangs it; see `ExtensionStripPillHitBand`.
     static let hitHeight: CGFloat = 44
+}
+
+/// Hit-testing for every view between a strip pill and the first ancestor whose bounds already
+/// hold the pill's touch band. A superview's bounds stop hit-testing, so a band that overhangs a
+/// short row would take no touches unless each view on that path answers through `hitTest`.
+enum ExtensionStripPillHitBand {
+    /// How far a pill's band reaches past the row it sits in.
+    static let overhang = (ExtensionStripPillMetrics.hitHeight - ExtensionStripPillMetrics.visualHeight) / 2
+
+    /// UIKit's hit-test with two changes. A point up to `overhang` above or below `view` still
+    /// reaches a descendant that claims it, but never `view` itself, so the band takes no touch
+    /// from what lies around it. And a subview whose own bounds hold the point is asked before one
+    /// whose band only reaches it: where a band overlaps another view, the nearer view wins.
+    static func hitTest(_ point: CGPoint, in view: UIView, with event: UIEvent?) -> UIView? {
+        guard view.isUserInteractionEnabled, !view.isHidden, view.alpha >= 0.01 else { return nil }
+        let inside = view.point(inside: point, with: event)
+        guard inside || view.bounds.insetBy(dx: 0, dy: -overhang).contains(point) else { return nil }
+        let subviews = view.subviews.reversed().map { ($0, $0.convert(point, from: view)) }
+        for (subview, local) in subviews where subview.bounds.contains(local) {
+            if let hit = subview.hitTest(local, with: event) { return hit }
+        }
+        for (subview, local) in subviews where !subview.bounds.contains(local) {
+            if let hit = subview.hitTest(local, with: event) { return hit }
+        }
+        return inside ? view : nil
+    }
+}
+
+/// A stack on the path from strip pills to the view that holds their band.
+final class ExtensionStripPillHitBandStackView: UIStackView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
+}
+
+/// A plain container on the path from strip pills to the view that holds their band.
+final class ExtensionStripPillHitBandView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
+}
+
+/// The strip's horizontal scroller, on the path from its pills to the view that holds their band.
+private final class ExtensionStripPillHitBandScrollView: UIScrollView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
 }
 
 enum ExtensionNativeSurfaceLayout {
@@ -1026,9 +1072,9 @@ final class ExtensionSurfacePanelView: UIView {
     /// An entry expanded (true) or collapsed (false).
     var onExpandedEntryChange: ((Bool) -> Void)?
 
-    private let stripScroll = UIScrollView()
-    private let stripRow = UIStackView()
-    private let stack = UIStackView()
+    private let stripScroll: UIScrollView = ExtensionStripPillHitBandScrollView()
+    private let stripRow: UIStackView = ExtensionStripPillHitBandStackView()
+    private let stack: UIStackView = ExtensionStripPillHitBandStackView()
     private var leadingViews: [UIView] = []
     private var trailingViews: [UIView] = []
     private var pills: [String: ExtensionSurfaceStripPill] = [:]
@@ -1067,13 +1113,16 @@ final class ExtensionSurfacePanelView: UIView {
             stripRow.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor),
             stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
             stripScroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stripRow.heightAnchor),
-            // The pills draw shorter; the row keeps their whole touch band inside the scroll view.
-            stripRow.heightAnchor.constraint(greaterThanOrEqualToConstant: ExtensionStripPillMetrics.hitHeight),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The strip is as short as its pills; their touch bands reach past it.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
 
     /// Views the strip shows before its entries (chat pills) and after them.
     func setStripAccessories(leading: [UIView], trailing: [UIView]) {

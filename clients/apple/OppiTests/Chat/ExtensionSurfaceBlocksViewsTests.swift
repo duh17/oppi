@@ -1086,21 +1086,6 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(spokenLater.contains("minute"), "\(spokenLater)")
     }
 
-    @Test func aStripPillTakesTouchesAcrossA44ptBandThoughItDrawsShorter() throws {
-        let panel = makePanel(try elapsedSurface(startedSecondsAgo: 5))
-        let pill = try testUnwrap(
-            control("extension-strip-aboveEditor-pill-surface-blocks_2delapsed", in: panel) as? UIControl
-        )
-        let window = try #require(panel.window)
-        let frame = pill.convert(pill.bounds, to: window)
-        #expect(frame.height < 44, "the pill draws shorter than its band: \(frame.height)")
-        let band = (44 - frame.height) / 2 - 1
-        for y in [frame.minY - band, frame.maxY + band] {
-            let hit = window.hitTest(CGPoint(x: frame.midX, y: y), with: nil)
-            #expect(hit?.isDescendant(of: pill) == true, "a touch at y \(y) missed the pill at \(frame)")
-        }
-    }
-
     @Test func theSharedClockRunsOnlyWhileAnElapsedLabelIsInAWindow() throws {
         // An earlier test's window may still hold its timer: take every window down first.
         for window in Self.windows {

@@ -39,8 +39,7 @@ private extension ChatViewController {
 
 /// A view inset 16pt from the chat's safe edges, as the footer rows are.
 @MainActor
-private func footerInset(_ view: UIView, top: CGFloat = 0) -> UIView {
-    let box = UIView()
+private func footerInset(_ view: UIView, top: CGFloat = 0, box: UIView = UIView()) -> UIView {
     view.translatesAutoresizingMaskIntoConstraints = false
     box.addSubview(view)
     NSLayoutConstraint.activate([
@@ -61,7 +60,7 @@ private func footerInset(_ view: UIView, top: CGFloat = 0) -> UIView {
 final class ChatFooterAboveView: UIView {
     weak var chat: ChatViewController?
 
-    private let stack = UIStackView()
+    private let stack: UIStackView = ExtensionStripPillHitBandStackView()
     private let panel: ExtensionSurfacePanelView
     private let reviewPill = ReviewCommentStripPillView()
     private let nowPlayingPill: InAppNowPlayingPillView
@@ -71,7 +70,7 @@ final class ChatFooterAboveView: UIView {
     private let notifyDrawer = ExtensionNotifyDrawerView()
     private let noticeStack = UIStackView()
     private var shownNotices: Notices?
-    private lazy var panelRow = footerInset(panel)
+    private lazy var panelRow = footerInset(panel, box: ExtensionStripPillHitBandView())
     private lazy var reviewDrawerRow = footerInset(reviewDrawer)
     private lazy var nowPlayingDrawerRow = footerInset(nowPlayingDrawer)
     private lazy var notifyDrawerRow = footerInset(notifyDrawer)
@@ -131,6 +130,11 @@ final class ChatFooterAboveView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The strip's pills draw short at the top of this view; their touch bands reach above it.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
 
     private func animated(_ change: () -> Void) {
         change()
@@ -415,7 +419,7 @@ final class ChatFooterBelowView: UIView {
         self.chat = chat
         panel = ExtensionSurfacePanelView(placement: .belowEditor, actions: chat.extensionDrawerActions())
         super.init(frame: .zero)
-        let row = footerInset(panel, top: 8)
+        let row = footerInset(panel, top: 8, box: ExtensionStripPillHitBandView())
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
@@ -429,6 +433,11 @@ final class ChatFooterBelowView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The strip's pills draw short at the bottom of this view; their touch bands reach below it.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        ExtensionStripPillHitBand.hitTest(point, in: self, with: event)
+    }
 
     override func updateProperties() {
         super.updateProperties()

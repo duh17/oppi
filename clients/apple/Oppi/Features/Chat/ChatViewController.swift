@@ -127,7 +127,9 @@ final class ChatViewController: UIViewController {
     let timeline = ChatTimelineController()
     var timelineView: UICollectionView?
     let composer = ChatComposerOwner()
-    let footerStack = UIStackView()
+    /// The strip's pill bands reach past the footer's edges, over the timeline (see
+    /// `ExtensionStripPillHitBand`); the composer still wins inside its own bounds.
+    let footerStack: UIStackView = ExtensionStripPillHitBandStackView()
     /// The one-time "Chat tools are in the menu" hint under the bar, for a chat on the
     /// default bar (`updateTopBarTip`).
     let topBarTip = FeatureEducationTipHostView(
