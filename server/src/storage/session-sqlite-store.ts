@@ -141,6 +141,7 @@ export class SessionSqliteStore {
   private stmtGet!: SqliteStatement;
   private stmtList!: SqliteStatement;
   private stmtFindDurable!: SqliteStatement;
+  private stmtListDurableStore!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
@@ -219,6 +220,15 @@ export class SessionSqliteStore {
   findSessionByDurableConversation(storeId: string, conversationId: number): Session | undefined {
     const row = this.stmtFindDurable.get(storeId, conversationId) as { id: string } | undefined;
     return row ? this.getSession(row.id) : undefined;
+  }
+
+  /**
+   * Sessions bound to a conversation of durable store `storeId`: the store's rows by the
+   * `(durable_store_id, durable_conversation_id)` index, not a sorted copy of every session.
+   */
+  listDurableStoreSessions(storeId: string): Session[] {
+    const rows = this.stmtListDurableStore.all(storeId) as Array<{ id: string }>;
+    return rows.flatMap((row) => this.getSession(row.id) ?? []);
   }
 
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
@@ -586,6 +596,11 @@ export class SessionSqliteStore {
       WHERE durable_store_id = ? AND durable_conversation_id = ?
       ORDER BY created_at ASC, id ASC
       LIMIT 1
+    `);
+    this.stmtListDurableStore = this.db.prepare(`
+      SELECT id
+      FROM session_state_sessions
+      WHERE durable_store_id = ? AND durable_conversation_id IS NOT NULL
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
   }

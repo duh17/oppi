@@ -1222,19 +1222,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     log.info("sessions.durable_models_bound");
   }
 
-  private conversationsByStore(sessions: readonly Session[]): Map<string, Set<ConversationId>> {
-    const byStore = new Map<string, Set<ConversationId>>();
-    for (const session of sessions) {
-      const storeId = durableStoreId(session);
-      const id = session.serverDurable?.conversationId as ConversationId | undefined;
-      if (storeId === undefined || id === undefined) continue;
-      const ids = byStore.get(storeId) ?? new Set<ConversationId>();
-      ids.add(id);
-      byStore.set(storeId, ids);
-    }
-    return byStore;
-  }
-
   /**
    * A storage error closed a store's Harness. Recovered: move each running session of that
    * tree onto the reopened Harness and say so once. Given up: end those sessions with the error,
@@ -1281,24 +1268,25 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private async fenceStopped(hosts: readonly SessionHost[]): Promise<void> {
     if (!hosts.length) return;
     const queued = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
-    const stopped: Session[] = [];
-    for (const session of this.storage.listSessions()) {
-      if (session.serverDurable?.conversationId === undefined || !durableStoreId(session)) continue;
-      // Only a queued session needs its workspace read (a file read per session per open).
-      const workspaceGone = (): boolean =>
-        Boolean(session.workspaceId && !this.storage.getWorkspace(session.workspaceId));
-      if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
-      // `startSession` opens the store after writing "starting". Keep a live
-      // session's work; still fence a stopped session being reopened so leftover
-      // jobs stay aborted.
-      const prior = this.startingIds.get(session.id);
-      if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
-      stopped.push(session);
-    }
-    const byStore = this.conversationsByStore(stopped);
     for (const host of hosts) {
-      const ids = byStore.get(host.storeId);
-      if (ids?.size) await host.abortConversations(ids, { background: true });
+      // Each store open fences, and a startup opens hundreds of stores: read only this store's
+      // sessions, not a sorted copy of every session on the server.
+      const ids = new Set<ConversationId>();
+      for (const session of this.storage.listDurableStoreSessions(host.storeId)) {
+        const conversationId = session.serverDurable?.conversationId as ConversationId | undefined;
+        if (conversationId === undefined) continue;
+        // Only a queued session needs its workspace read (a file read per session per open).
+        const workspaceGone = (): boolean =>
+          Boolean(session.workspaceId && !this.storage.getWorkspace(session.workspaceId));
+        if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
+        // `startSession` opens the store after writing "starting". Keep a live
+        // session's work; still fence a stopped session being reopened so leftover
+        // jobs stay aborted.
+        const prior = this.startingIds.get(session.id);
+        if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
+        ids.add(conversationId);
+      }
+      if (ids.size) await host.abortConversations(ids, { background: true });
     }
   }
 

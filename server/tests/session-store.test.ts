@@ -445,6 +445,43 @@ describe("session sqlite store", () => {
   });
 });
 
+describe("durable store sessions", () => {
+  it("lists the sessions bound to a store's conversations, and no other", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-durable-store-"));
+    const sqliteStore = new SessionSqliteStore(dataDir);
+
+    try {
+      const session = (id: string, serverDurable?: Session["serverDurable"]): Session => ({
+        id,
+        status: "stopped",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        ...(serverDurable ? { serverDurable } : {}),
+      });
+      sqliteStore.upsertSession(session("in-store-a", { storeId: "store-1", conversationId: 1 }));
+      sqliteStore.upsertSession(session("in-store-b", { storeId: "store-1", conversationId: 2 }));
+      sqliteStore.upsertSession(session("other-store", { storeId: "store-2", conversationId: 1 }));
+      // Named a store but never bound to one of its conversations: there is nothing to fence.
+      sqliteStore.upsertSession(session("unbound", { storeId: "store-1" }));
+      sqliteStore.upsertSession(session("classic"));
+
+      expect(
+        sqliteStore
+          .listDurableStoreSessions("store-1")
+          .map((found) => found.id)
+          .sort(),
+      ).toEqual(["in-store-a", "in-store-b"]);
+      expect(sqliteStore.listDurableStoreSessions("missing")).toEqual([]);
+    } finally {
+      sqliteStore.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("workspace session snapshots", () => {
   function baseSession(id: string, workspaceId: string, lastActivity: number): Session {
     return {
