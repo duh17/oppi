@@ -263,18 +263,6 @@ export class SessionSqliteStore {
     return assetIds;
   }
 
-  listSessionsWithoutWorkspace(): Session[] {
-    const rows = this.db
-      .prepare(
-        `SELECT ${SESSION_COLUMNS}
-         FROM session_state_sessions
-         WHERE workspace_id IS NULL
-         ORDER BY last_activity DESC, id ASC`,
-      )
-      .all() as SessionRow[];
-    return this.decodeRows(rows);
-  }
-
   listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
     return this.queryWorkspaceProjectedSessions(workspaceId, { worktreeId });
   }

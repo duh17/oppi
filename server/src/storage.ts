@@ -9,10 +9,7 @@
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
 
-import { closeSync, existsSync, openSync, readSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { createLogger } from "./logger.js";
-import { expandHome, isPathWithinRoot } from "./path-utils.js";
+import { dirname } from "node:path";
 import { AgentDefinitionStore } from "./agent-definitions.js";
 import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
@@ -58,34 +55,6 @@ import type {
 
 export type { ConfigValidationResult };
 
-const log = createLogger({ base: { component: "storage_migration" } });
-
-function normalizedPath(path: string): string {
-  return resolve(expandHome(path));
-}
-
-function readJsonlSessionCwd(filePath: string | undefined): string | null {
-  if (!filePath || !existsSync(filePath)) return null;
-
-  let fd: number | undefined;
-  try {
-    fd = openSync(filePath, "r");
-    const buffer = Buffer.alloc(8192);
-    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
-    const firstLine = buffer.toString("utf8", 0, bytesRead).split("\n")[0];
-    if (!firstLine) return null;
-
-    const parsed = JSON.parse(firstLine) as unknown;
-    if (!parsed || typeof parsed !== "object") return null;
-    const cwd = (parsed as { cwd?: unknown }).cwd;
-    return typeof cwd === "string" && cwd.trim().length > 0 ? cwd : null;
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
 export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
@@ -121,7 +90,6 @@ export class Storage {
     if (options.migrateWorkspaceFolders) {
       this.workspaceStore.migrateMissingHostMounts();
     }
-    this.migrateLegacyWorkspaceSessions();
     // Reconcile only after Agent current/version history, workspaces, and
     // immutable session launch snapshots are all available.
     this.cleanupUnreferencedIconAssets(undefined, {
@@ -133,58 +101,6 @@ export class Storage {
   /** Runs `run` once per data directory, recorded in the migration ledger of session-state.db. */
   runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
     return this.sessionStore.runMigrationOnce(key, run);
-  }
-
-  /**
-   * Legacy workspace migration: older sessions could exist without workspaceId.
-   * Workspace-scoped iOS/server flows require workspace-backed sessions for
-   * attachments, file browsing, review comments, and routing. Recover the
-   * workspace from the pi JSONL header CWD only when it unambiguously fits an
-   * existing hostMount. This avoids inventing workspaces or guessing wrong.
-   */
-  private migrateLegacyWorkspaceSessions(): void {
-    const sessions = this.sessionStore.listSessionsWithoutWorkspace();
-    if (sessions.length === 0) return;
-
-    const workspaces = this.workspaceStore.listWorkspaces();
-    let migrated = 0;
-    let skipped = 0;
-
-    for (const session of sessions) {
-      const cwd =
-        readJsonlSessionCwd(session.piSessionFile) ??
-        session.piSessionFiles?.map(readJsonlSessionCwd).find((value): value is string => !!value);
-      if (!cwd) continue;
-
-      const candidates = workspaces
-        .filter((candidate) =>
-          isPathWithinRoot(normalizedPath(cwd), normalizedPath(candidate.hostMount)),
-        )
-        .sort((a, b) => normalizedPath(b.hostMount).length - normalizedPath(a.hostMount).length);
-      const workspace = candidates[0];
-      const workspaceMountLength = workspace ? normalizedPath(workspace.hostMount).length : 0;
-      const hasAmbiguousTie =
-        candidates.length > 1 &&
-        normalizedPath(candidates[1]?.hostMount ?? "").length === workspaceMountLength;
-
-      if (!workspace || hasAmbiguousTie) {
-        skipped += 1;
-        continue;
-      }
-
-      session.workspaceId = workspace.id;
-      this.sessionStore.saveSession(session);
-      migrated += 1;
-    }
-
-    if (migrated > 0) {
-      log.info("legacy_workspace_sessions.migrated", {
-        migratedSessions: migrated,
-        skippedSessions: skipped,
-      });
-    } else if (skipped > 0) {
-      log.info("legacy_workspace_sessions.skipped", { skippedSessions: skipped });
-    }
   }
 
   // ─── Config ───

@@ -291,27 +291,6 @@ describe("startup migration of records from before every workspace had a folder"
 });
 
 describe("what an empty-created host workspace now takes part in", () => {
-  it("claims legacy sessions whose Pi cwd is inside its folder, and nothing under home", () => {
-    const ws = storage.createWorkspace({ name: "Claims" });
-    const inside = storage.createSession("inside");
-    const outside = storage.createSession("outside");
-    const files = [
-      [inside, join(ws.hostMount, "sub")],
-      [outside, homedir()],
-    ] as const;
-    for (const [session, cwd] of files) {
-      const file = join(dataDir, `${session.id}.jsonl`);
-      writeFileSync(file, `${JSON.stringify({ type: "session", id: session.id, cwd })}\n`);
-      session.piSessionFile = file;
-      storage.saveSession(session);
-    }
-
-    const reopened = new Storage(dataDir);
-
-    expect(reopened.getSession(inside.id)?.workspaceId).toBe(ws.id);
-    expect(reopened.getSession(outside.id)?.workspaceId).toBeUndefined();
-  });
-
   it("reports a Git summary once its folder becomes a repository", async () => {
     const ws = storage.createWorkspace({ name: "Becomes Repo" });
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: ws.hostMount });
