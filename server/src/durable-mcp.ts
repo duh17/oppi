@@ -63,7 +63,7 @@ import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "durable_mcp" } });
 
-/** How long the first prompt waits for servers with direct tools, like Pi's MCP extension. */
+/** How long the first prompt waits for the servers whose tools it offers, like Pi's MCP extension. */
 export const DURABLE_MCP_STARTUP_WAIT_MS = 10_000;
 export const DURABLE_TOOL_SEARCH_NAME = "tool_search";
 /** Per-session MCP extension names start with this; a child conversation must not keep its parent's. */
@@ -614,7 +614,8 @@ export class DurableMcp {
   /** A connection reported its tools: a new list rebuilds the server's tools, and a cacheable one is saved. */
   private onTools(server: Server, connection: McpServerConnection): void {
     const snapshot = snapshotOf(connection);
-    // A first connect after a cached list, or a refresh, that changed nothing leaves the tools as built.
+    // A first connect after a cached list, or a refresh, that changed nothing leaves the tools as
+    // built: rebuilding would reinstall the published extension mid-run for nothing.
     if (JSON.stringify(snapshot) === JSON.stringify(server.snapshot)) return;
     server.snapshot = snapshot;
     if (server.cacheable) this.options.toolCache.save(server.key, snapshot);

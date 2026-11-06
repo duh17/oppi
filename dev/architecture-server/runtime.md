@@ -52,9 +52,9 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 
 ### MCP in durable sessions
 
-- `durable-mcp.ts` reuses Pi's MCP loader, connections, and conversion (`pi-mcp-internals.ts`); each attachment owns one `oppi.mcp/<sessionId>` extension. Registry snapshots outlive an uninstall, so its tools reach the session only through a cell `close()` empties: a stale snapshot holds no connection, conversation, or backend. The Harness default selection is pinned to base extensions, so `{ add }` never picks up another session's MCP.
-- A project `.pi/mcp.json` loads only after `resolveManagedProjectTrust`. MCP tools replay after a crash only with `readOnlyHint` or `idempotentHint`. The first prompt waits up to 10 s for the servers it offers.
-- A server whose tools only codemode reaches connects at its first call: `mcp-tool-cache.ts` (`<dataDir>/mcp-tool-cache.json`, keyed by scope (host or one sandbox workspace, whose servers report guest-written text), defining file, name, and config) holds the list the session builds its tools, namespace, resource tools, and `mcp_servers` line from. Without an entry, or with a `direct` or `deferred` tool, the server connects at attach as before. Every connect writes back a changed list; an unchanged one rebuilds nothing, since a published extension reinstalls mid-run.
+- `durable-mcp.ts` reuses Pi's MCP loader, connections, and conversion (`pi-mcp-internals.ts`); each attachment owns one `oppi.mcp/<sessionId>` extension, which reaches its session only through a `LiveCell` that `close()` empties, as registry snapshots outlive an uninstall. The Harness default selection is pinned to base extensions, so `{ add }` never picks up another session's MCP.
+- A project `.pi/mcp.json` loads only after `resolveManagedProjectTrust`. MCP tools replay after a crash only with `readOnlyHint` or `idempotentHint`.
+- Codemode-only servers connect at first call; their tools come from `mcp-tool-cache.ts`, keyed per sandbox workspace (lists are guest-written).
 - Sandbox sessions use `sandboxMcpForWorkspace` (`sandbox-mcp.ts`): only owner-picked global servers load, HTTP servers connect only to Allowed Hosts, and stdio servers run in the workspace VM through `VmStdioTransport`, never a second VM.
 
 ### Durable extensions
