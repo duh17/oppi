@@ -169,18 +169,21 @@ function durableTool(definition: ToolDefinition, exposure: McpExposure): ToolReg
     replay: replayOf(definition),
     ...(exposure === "direct" ? {} : { deferred: true }),
     async execute(args, api, context) {
-      const result = await definition.execute(
-        api.callId,
-        args,
+      const result = await untilAborted(
+        definition.execute(
+          api.callId,
+          args,
+          context.abortSignal,
+          (partial) => {
+            const text = partial.content
+              .flatMap((block) => (block.type === "text" ? [block.text] : []))
+              .join("");
+            if (text) api.output(`${text}\n`);
+          },
+          // Pi's MCP tool and resource definitions never read the extension context.
+          undefined as never,
+        ),
         context.abortSignal,
-        (partial) => {
-          const text = partial.content
-            .flatMap((block) => (block.type === "text" ? [block.text] : []))
-            .join("");
-          if (text) api.output(`${text}\n`);
-        },
-        // Pi's MCP tool and resource definitions never read the extension context.
-        undefined as never,
       );
       const isError = (result as { isError?: boolean }).isError === true;
       return {
@@ -190,6 +193,21 @@ function durableTool(definition: ToolDefinition, exposure: McpExposure): ToolReg
       };
     },
   };
+}
+
+/**
+ * Settle on abort. Pi passes the signal to the request but not to the connect before it, and a
+ * server that connects at its first call can hang there for its whole timeout, so Stop would wait
+ * it out. The connect goes on and serves the next call.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason ?? new Error("aborted"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 type ToolSearchArgs = { query: string; limit?: number };

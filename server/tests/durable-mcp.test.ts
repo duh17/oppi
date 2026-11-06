@@ -529,6 +529,36 @@ describe("server durable MCP (host)", () => {
     ).toEqual([["echo"]]);
   });
 
+  it("ends a call waiting on a cached server's hung first connect at Stop, not at its timeout", async () => {
+    const pidFile = join(agentDir, "hang.pid");
+    writeMcpJson(agentDir, {
+      // Never answers initialize; Pi's default timeout is 60 s.
+      hang: {
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./fixtures/mcp-hang.cjs", import.meta.url)), pidFile],
+      },
+    });
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("codemode", { code: "await tools.mcp__hang__echo({});" })],
+        {
+          stopReason: "toolUse",
+        },
+      ),
+    ]);
+    await seedToolCache(f.dir, [{ name: "echo", inputSchema: { type: "object" } }]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    await f.manager.sendPrompt(f.session.id, "use it");
+    await waitFor(() => existsSync(pidFile), "the first connect");
+    await f.manager.sendAbort(f.session.id);
+    await waitFor(
+      () => projection.messages.some((message) => message.type === "agent_end"),
+      "agent_end after Stop",
+    );
+    projection.unsubscribe();
+  });
+
   it("fails a call to a cached OAuth server that needs sign-in with a pointer to Oppi's MCP settings", async () => {
     const remote = createServer((_req, res) => {
       res.writeHead(401, { "WWW-Authenticate": 'Bearer realm="mcp"' });
