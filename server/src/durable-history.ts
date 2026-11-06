@@ -313,6 +313,34 @@ async function allEntries(harness: Harness, id: ConversationId): Promise<EntryRe
   return records.reverse();
 }
 
+/** Entries per page while `visibleEntries` walks back to a compaction's kept entry. */
+const VISIBLE_SCAN_PAGE = 100;
+
+/**
+ * The entries a trace shows by default, oldest first: from the entry the newest compaction keeps
+ * (all of them without one) through the tip. Reads newest-first and stops there, so the history a
+ * compaction hides is never loaded. Same selection as `selectVisibleSessionContext` makes over
+ * `allEntries`: a compaction names its first kept entry in `head`, and an unnamed one keeps only
+ * what follows it.
+ */
+async function visibleEntries(harness: Harness, id: ConversationId): Promise<EntryRecord[]> {
+  const conversation = await harness.conversation(id, context);
+  if (!conversation) return [];
+  const newestFirst: EntryRecord[] = [];
+  let keptFrom: number | undefined;
+  let cursor;
+  scan: do {
+    const page = await conversation.entries({}, VISIBLE_SCAN_PAGE, cursor, context);
+    for (const entry of page.items) {
+      if (keptFrom === undefined && CompactionEntry.is(entry)) keptFrom = entry.head ?? entry.id;
+      newestFirst.push(entry);
+      if (keptFrom !== undefined && entry.id <= keptFrom) break scan;
+    }
+    cursor = page.next;
+  } while (cursor !== undefined);
+  return newestFirst.reverse();
+}
+
 /** Every entry of the conversation as Pi session entries, oldest first: what traces and exports read. */
 export async function readDurableSessionEntries(
   harness: Harness,
@@ -353,7 +381,7 @@ export async function readDurableSearchTranscript(
   id: ConversationId,
 ): Promise<SearchTranscriptContent> {
   return extractSearchTranscriptFromEntries(
-    await projectEntries(harness, await allEntries(harness, id)),
+    await projectEntries(harness, await visibleEntries(harness, id)),
   );
 }
 

@@ -15,6 +15,7 @@ import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+  readDurableSearchTranscript,
   readDurableTrace,
   readDurableTracePage,
   readDurableTraceOutline,
@@ -86,6 +87,8 @@ async function history(options: {
   prefix?: number;
   card?: boolean;
   image?: boolean;
+  /** A compaction after "between two" that keeps the history from "between one" on. */
+  compact?: boolean;
 }) {
   const dir = makeTempDir("oppi-durable-history-");
   const storage = await openNodeSqliteStorage(join(dir, "history.sqlite"));
@@ -136,6 +139,15 @@ async function history(options: {
     ]);
   await append([{ role: "user", content: "between one", timestamp: 3 }]);
   await append([{ role: "user", content: "between two", timestamp: 4 }]);
+  if (options.compact)
+    records.push({
+      id: await storage.mintId<EntryId>(),
+      conversationId: id,
+      kind: "pi.compaction",
+      head: records.at(-2)!.id,
+      model: [{ role: "user", content: "<summary>earlier work</summary>", timestamp: 5 }],
+      data: { reason: "manual" },
+    });
   if (options.card)
     records.push({
       id: await storage.mintId<EntryId>(),
@@ -253,6 +265,38 @@ it("retains a hidden stub's tool result without scanning the whole newest histor
   expect(result).toMatchObject({ toolCallId: "stub-tool", output: "retained result" });
   expect(await pages(f)).toEqual(full);
   expect(f.resume).not.toHaveBeenCalled();
+});
+
+async function rowsRead(f: Awaited<ReturnType<typeof history>>): Promise<number> {
+  const pages = await Promise.all(f.reads.mock.results.map(async (result) => await result.value));
+  return pages.reduce((total, page) => total + page.items.length, 0);
+}
+
+// Turn-end indexing reads this for every durable session, so it must not grow with the history a
+// compaction already hides.
+it("reads a search transcript back only to the entry the newest compaction keeps", async () => {
+  const f = await history({ stopped: false, prefix: 250, compact: true });
+  const transcript = await readDurableSearchTranscript(f.harness, f.id);
+  expect(transcript).toEqual({
+    userMessages: "between one\nbetween two",
+    assistantMessages: "retry",
+    toolNames: "",
+  });
+  // 250 older entries, the crash stub and the compaction's kept entries make 255 records.
+  expect(await rowsRead(f)).toBeLessThanOrEqual(100);
+  expect(f.resume).not.toHaveBeenCalled();
+});
+
+it("reads the whole history for a search transcript when no compaction hides any of it", async () => {
+  const f = await history({ stopped: false, prefix: 250 });
+  const transcript = await readDurableSearchTranscript(f.harness, f.id);
+  expect(transcript.userMessages.split("\n")).toEqual([
+    ...Array.from({ length: 250 }, (_, index) => `older ${index}`),
+    "between one",
+    "between two",
+  ]);
+  expect(transcript.assistantMessages).toBe("retry");
+  expect(await rowsRead(f)).toBe(254);
 });
 
 it("never replays a tool result's model-only diagnostics, and keeps its warn note", async () => {
