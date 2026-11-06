@@ -20,7 +20,7 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
-import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { durableStoreId, isServerDurableSession } from "./session-runtime-capabilities.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
 import {
   extractSearchTranscriptFromEntries,
@@ -62,6 +62,8 @@ export interface DurableSearchSource {
   /** Newest entry id for the conversation ("" when it has no entries). */
   readTipEntryId(sessionId: string): Promise<string>;
   readTranscript(sessionId: string): Promise<SearchTranscriptContent>;
+  /** Keep the session's store open until the returned release runs. */
+  holdStore(sessionId: string): Promise<() => void>;
 }
 
 export interface SearchIndexSyncResult {
@@ -1512,6 +1514,19 @@ export class SearchIndex {
   // Server-durable sessions (async; content comes from the Harness)
   // -------------------------------------------------------------------------
 
+  /** Session ids grouped by durable store, in first-seen order. A session without a store is its own group. */
+  private groupByDurableStore(sessionIds: Iterable<string>): string[][] {
+    const groups = new Map<string, string[]>();
+    for (const sessionId of sessionIds) {
+      const session = this.getSession(sessionId);
+      const key = (session && durableStoreId(session)) ?? `session:${sessionId}`;
+      const group = groups.get(key);
+      if (group) group.push(sessionId);
+      else groups.set(key, [sessionId]);
+    }
+    return [...groups.values()];
+  }
+
   private isIndexedFromDurable(session: Session): boolean {
     return (
       this.durableSource !== undefined &&
@@ -2371,23 +2386,41 @@ export class SearchIndex {
     for (const id of this.lateDurableSessionIds) durableIds.add(id);
     this.lateDurableSessionIds.clear();
     let turnStartedAt = performance.now();
-    for (const sessionId of durableIds) {
-      if (this.closed) {
-        return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
-      }
+    for (const storeSessionIds of this.groupByDurableStore(durableIds)) {
+      // Every store open fences all of the store's stopped conversations. Letting
+      // the store idle-close between its sessions reopened it once per session,
+      // which made startup catch-up quadratic in a store's conversation count.
+      const release = await this.durableSource
+        ?.holdStore(storeSessionIds[0])
+        .catch(() => undefined);
       try {
-        mergeSyncResults(result, await this.syncDurableSession(sessionId));
-      } catch (err: unknown) {
-        log.error("search_index.durable_index.failed", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-      // Late ids were already counted by the file walk that deferred them.
-      if (snapshotDurableIds.has(sessionId)) sessionsChecked++;
-      if (performance.now() - turnStartedAt >= budgetMs) {
-        await yieldBetweenBatches();
-        turnStartedAt = performance.now();
+        for (const sessionId of storeSessionIds) {
+          if (this.closed) {
+            return this.completeBackgroundSync(
+              startedAt,
+              result,
+              sessionsChecked,
+              maxBatchMs,
+              true,
+            );
+          }
+          try {
+            mergeSyncResults(result, await this.syncDurableSession(sessionId));
+          } catch (err: unknown) {
+            log.error("search_index.durable_index.failed", {
+              sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          // Late ids were already counted by the file walk that deferred them.
+          if (snapshotDurableIds.has(sessionId)) sessionsChecked++;
+          if (performance.now() - turnStartedAt >= budgetMs) {
+            await yieldBetweenBatches();
+            turnStartedAt = performance.now();
+          }
+        }
+      } finally {
+        release?.();
       }
     }
 

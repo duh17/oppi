@@ -794,6 +794,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         const { readDurableSearchTranscript } = await import("./durable-history.js");
         return withConversation(sessionId, readDurableSearchTranscript);
       },
+      holdStore: async (sessionId) => {
+        const session = this.storage.getSession(sessionId);
+        if (!session) throw new Error(DURABLE_STORE_MISSING);
+        const host = await (await runtime).openHost(requireDurableStoreId(session));
+        return host.retain("search-index");
+      },
     };
   }
 
@@ -1261,10 +1267,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const stopped: Session[] = [];
     for (const session of this.storage.listSessions()) {
       if (session.serverDurable?.conversationId === undefined || !durableStoreId(session)) continue;
-      const workspaceGone = Boolean(
-        session.workspaceId && !this.storage.getWorkspace(session.workspaceId),
-      );
-      if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone)) continue;
+      // Only a queued session needs its workspace read (a file read per session per open).
+      const workspaceGone = (): boolean =>
+        Boolean(session.workspaceId && !this.storage.getWorkspace(session.workspaceId));
+      if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
       // `startSession` opens the store after writing "starting". Keep a live
       // session's work; still fence a stopped session being reopened so leftover
       // jobs stay aborted.

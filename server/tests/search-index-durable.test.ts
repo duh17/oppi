@@ -110,6 +110,7 @@ async function durableFixture() {
   const source: DurableSearchSource = {
     readTipEntryId: () => readDurableTipEntryId(harness, id),
     readTranscript: () => readTranscript(id as number),
+    holdStore: async () => () => {},
   };
   return { id: id as number, turn, source, readTranscript, resume };
 }
@@ -219,12 +220,52 @@ describe("SearchIndex durable sessions", () => {
         id === broken.id ? Promise.reject(lockError) : f.source.readTipEntryId(id),
       readTranscript: (id) =>
         id === broken.id ? Promise.reject(lockError) : f.source.readTranscript(id),
+      holdStore: (id) => (id === broken.id ? Promise.reject(lockError) : f.source.holdStore(id)),
     });
 
     const result = await index.startBackgroundSync([broken, good]);
 
     expect(result).toMatchObject({ cancelled: false, sessionsChecked: 2, added: 1 });
     expect(index.search("saola").map((hit) => hit.sessionId)).toEqual([good.id]);
+  });
+
+  it("opens each store once in startup sync and reads its sessions while it is held", async () => {
+    const f = await durableFixture();
+    await f.turn("ibex prompt", "tarsier reply");
+    // Interleaved stores: each store open fences all of its conversations, so a
+    // reopen per session made catch-up quadratic in the store's size.
+    const sessions = [
+      makeSession(f.id, { id: "a1", serverDurable: { storeId: "A", conversationId: f.id } }),
+      makeSession(f.id, { id: "b1", serverDurable: { storeId: "B", conversationId: f.id } }),
+      makeSession(f.id, { id: "a2", serverDurable: { storeId: "A", conversationId: f.id } }),
+      makeSession(f.id, { id: "b2", serverDurable: { storeId: "B", conversationId: f.id } }),
+      makeSession(f.id, { id: "a3", serverDurable: { storeId: "A", conversationId: f.id } }),
+    ];
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    const storeOf = (id: string) => byId.get(id)?.serverDurable?.storeId ?? "";
+    const held = new Set<string>();
+    const holds: string[] = [];
+    const readOutsideHold: string[] = [];
+    const index = openIndex((id) => byId.get(id), {
+      readTipEntryId: (id) => {
+        if (!held.has(storeOf(id))) readOutsideHold.push(id);
+        return f.source.readTipEntryId(id);
+      },
+      readTranscript: (id) => f.source.readTranscript(id),
+      holdStore: async (id) => {
+        holds.push(storeOf(id));
+        held.add(storeOf(id));
+        return () => held.delete(storeOf(id));
+      },
+    });
+
+    const result = await index.startBackgroundSync(sessions, { budgetMs: 0 });
+
+    expect(result).toMatchObject({ cancelled: false, sessionsChecked: 5, added: 5 });
+    expect(holds.sort()).toEqual(["A", "B"]);
+    expect(readOutsideHold).toEqual([]);
+    expect(held.size).toBe(0);
+    expect(index.search("tarsier")).toHaveLength(5);
   });
 
   it("does not index ephemeral durable sessions", async () => {
