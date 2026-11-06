@@ -10,8 +10,6 @@
   "files": [
     "dist/",
     "!dist/**/*.test.js",
-    "!dist/**/*.test.d.ts",
-    "!dist/**/*.d.ts",
     "themes/",
     "docs/",
     "LICENSE",
