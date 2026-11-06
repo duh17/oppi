@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
@@ -220,6 +221,55 @@ describe("SessionSurfaces", () => {
     ]);
   });
 
+  it("rewrites an elapsed node only for a connected client that predates it", async () => {
+    const h = harness();
+    const value = JSON.parse(JSON.stringify(fixtures["blocks-elapsed.json"]));
+    const since = Date.now() - 3_725_000;
+    value.pill.content.children[2].since = since;
+    value.sections[0].body.children[1].since = since;
+    value.sections[0].actions = ["refresh"];
+    const read = readExtensionUISurface(value);
+    if ("problem" in read) throw new Error(read.problem);
+    h.surfaces.declare("new-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+    ]);
+    expect(h.surfaces.audience("new-phone")).toBe("elapsed");
+    h.surfaces.publisher.publish(read.surface, async () => ({
+      patch: { "sections.0.body.children.1.since": since + 3_600_000 },
+    }));
+
+    // Nobody draws trees without elapsed, so no static copy is built.
+    expect(h.of("extension_ui_surface", "elapsed")).toHaveLength(1);
+    expect(h.of("extension_ui_surface", "blocks")).toEqual([]);
+
+    // A build that predates the node joins: it is handed the surface with the span as text.
+    const joined = h.surfaces.declare("old-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+    ]);
+    const handed = joined.find((message) => message.type === "extension_ui_surface");
+    expect(handed?.surface.pill?.content.children[2]).toMatchObject({
+      type: "text",
+      text: "1:02:05",
+    });
+
+    // A patch into the node cannot land on text: that client is sent the whole surface again,
+    // while the client that ticks the node gets the patch.
+    await h.surfaces.act(
+      tap({ surfaceId: "blocks-elapsed", compositeId: "jobs", actionId: "refresh" }),
+      "new-phone",
+    );
+    expect(h.of("extension_ui_patch", "elapsed")).toHaveLength(1);
+    expect(h.of("extension_ui_patch", "blocks")).toEqual([]);
+    const resent = h.of("extension_ui_surface", "blocks").at(-1);
+    expect(resent?.surface.revision).toBe(2);
+    const section = resent?.surface.sections[0];
+    if (section?.composite !== "blocks") throw new Error("expected a blocks section");
+    expect(section.body.children[1]).toMatchObject({ type: "text", text: "2m" });
+  });
+
   it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);
@@ -278,8 +328,8 @@ describe("SessionSurfaces", () => {
     );
     const before = h.frames.length;
     h.surfaces.stop();
-    // Every shape a client could hold is cleared: both v2 audiences and the v1 widget slot.
-    for (const audience of ["blocks", "composites"] as const) {
+    // Every shape a client could hold is cleared: each v2 audience and the v1 widget slot.
+    for (const audience of ["elapsed", "blocks", "composites"] as const) {
       expect(h.of("extension_ui_patch", audience)).toEqual([
         expect.objectContaining({ removed: true }),
       ]);
@@ -291,10 +341,10 @@ describe("SessionSurfaces", () => {
 
     // Nothing is left to fire: the deadline took its timer with it.
     vi.advanceTimersByTime(60_000);
-    expect(h.frames).toHaveLength(before + 3);
+    expect(h.frames).toHaveLength(before + 4);
     expect(h.surfaces.messages("phone")).toEqual([]);
     h.surfaces.publisher.publish(surfaceOf(), undefined);
-    expect(h.frames).toHaveLength(before + 3);
+    expect(h.frames).toHaveLength(before + 4);
     expect(h.surfaces.audience("phone")).toBe("v1-projection");
   });
 

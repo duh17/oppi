@@ -64,6 +64,11 @@ export const EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY = "extension-native-ui:v2
  * that uses a tree, because one frame cannot mix the two shapes.
  */
 export const EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY = "extension-native-ui:v2:blocks";
+/**
+ * v2 elapsed: the client ticks an `elapsed` node itself. A blocks client without it decodes the
+ * node as unsupported, so it is sent each one as static text of the span at send time.
+ */
+export const EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY = "extension-native-ui:v2:elapsed";
 export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
   EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY,
@@ -71,6 +76,7 @@ export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_OSC8_LINKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,

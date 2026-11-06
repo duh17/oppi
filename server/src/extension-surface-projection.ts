@@ -1,6 +1,8 @@
 import type {
   ExtensionUISurface,
+  ExtensionUISurfaceElapsedNode,
   ExtensionUISurfaceNode,
+  ExtensionUISurfacePillNode,
   ExtensionUISurfaceTone,
 } from "./types.js";
 
@@ -14,10 +16,10 @@ import type {
 
 /**
  * The words a client without the elapsed node shows: the span as it stands when the surface is
- * projected. It is a snapshot, refreshed whenever the surface republishes; the live tick is the
+ * sent. It is a snapshot, refreshed whenever the surface republishes; the live tick is the
  * client's. Same shapes the client draws, so both read alike.
  */
-export function v1ElapsedText(
+export function elapsedSnapshotText(
   node: { since: number; format?: "clock" | "short" },
   now: number = Date.now(),
 ): string {
@@ -33,6 +35,52 @@ export function v1ElapsedText(
   return h > 0 ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
 }
 
+/** Does any tree or the pill hold an elapsed node? */
+export function extensionUISurfaceUsesElapsed(surface: ExtensionUISurface): boolean {
+  const holds = (node: ExtensionUISurfaceNode | ExtensionUISurfacePillNode): boolean =>
+    node.type === "elapsed" || ("children" in node && node.children.some(holds));
+  return (
+    (surface.pill?.content.children.some(holds) ?? false) ||
+    surface.sections.some((section) => section.composite === "blocks" && holds(section.body))
+  );
+}
+
+/**
+ * The surface for a client that draws trees but declared no `v2:elapsed`: every elapsed node is a
+ * text node of its span at `now`. Such a build decodes a node kind it does not know as
+ * "Unsupported block", so it is never sent one. Call only when `extensionUISurfaceUsesElapsed`.
+ */
+export function withStaticElapsed(surface: ExtensionUISurface, now: number): ExtensionUISurface {
+  const rewrite = <T extends ExtensionUISurfaceNode | ExtensionUISurfacePillNode>(node: T): T => {
+    if (node.type === "elapsed") return elapsedAsText(node, now) as T;
+    if (!("children" in node)) return node;
+    return { ...node, children: node.children.map(rewrite) };
+  };
+  return {
+    ...surface,
+    ...(surface.pill === undefined
+      ? {}
+      : { pill: { ...surface.pill, content: rewrite(surface.pill.content) } }),
+    sections: surface.sections.map((section) =>
+      section.composite === "blocks" ? { ...section, body: rewrite(section.body) } : section,
+    ),
+  };
+}
+
+function elapsedAsText(
+  node: ExtensionUISurfaceElapsedNode,
+  now: number,
+): ExtensionUISurfaceNode & ExtensionUISurfacePillNode {
+  return {
+    type: "text",
+    ...(node.id === undefined ? {} : { id: node.id }),
+    ...(node.accessibility === undefined ? {} : { accessibility: node.accessibility }),
+    text: elapsedSnapshotText(node, now),
+    ...(node.style === undefined ? {} : { style: node.style }),
+    ...(node.tone === undefined ? {} : { tone: node.tone }),
+  };
+}
+
 /** The line a v1 panel shows under its title: the pill's own words when the surface has one. */
 export function v1PillSubtitle(surface: ExtensionUISurface): string | undefined {
   if (!surface.pill) return surface.header.subtitle;
@@ -44,7 +92,7 @@ export function v1PillSubtitle(surface: ExtensionUISurface): string | undefined 
       case "icon":
         return undefined;
       case "elapsed":
-        return v1ElapsedText(child);
+        return elapsedSnapshotText(child);
       case "progress":
         return child.label;
       default:
@@ -74,7 +122,7 @@ function v1InlineText(node: ExtensionUISurfaceNode): string | undefined {
     case "icon":
       return node.name;
     case "elapsed":
-      return v1ElapsedText(node);
+      return elapsedSnapshotText(node);
     default:
       return undefined;
   }
@@ -175,7 +223,7 @@ export function projectNodeToV1(
           ...(id === undefined ? {} : { id }),
           spans: [
             {
-              text: v1ElapsedText(node),
+              text: elapsedSnapshotText(node),
               ...(node.style === "mono"
                 ? { role: "code" }
                 : v1SpanRole(node.tone) === undefined

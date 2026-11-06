@@ -1357,6 +1357,7 @@ struct ServerConnectionStreamTests {
             advertised: [
                 ClientCapability.extensionNativeUIComposites,
                 ClientCapability.extensionNativeUIBlocks,
+                ClientCapability.extensionNativeUIElapsed,
             ]
         )
         defer { conn.disconnectStream() }
@@ -1370,7 +1371,8 @@ struct ServerConnectionStreamTests {
         #expect(sent.capabilityDeclarations == [[
             ClientCapability.extensionNativeUIComposites,
             ClientCapability.extensionNativeUIBlocks,
-        ]], "Both shapes in one declaration; the server ranks the stronger")
+            ClientCapability.extensionNativeUIElapsed,
+        ]], "Every shape in one declaration; the server ranks the strongest")
     }
 
     @Test func aServerThatListsOnlyCompositesIsNotToldAboutBlocks() async {

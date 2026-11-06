@@ -22,4 +22,9 @@ enum ClientCapability {
     /// primitives and a composed pill. A client that names only `composites` is sent the v1
     /// projection of any surface that uses a tree, because one frame cannot mix the two shapes.
     static let extensionNativeUIBlocks = "extension-native-ui:v2:blocks"
+
+    /// `extension-native-ui:v2:elapsed`: this build ticks an `elapsed` node itself. A client that
+    /// names `blocks` without it is sent each elapsed node as static text, because a build that
+    /// predates the node draws it as unsupported.
+    static let extensionNativeUIElapsed = "extension-native-ui:v2:elapsed"
 }

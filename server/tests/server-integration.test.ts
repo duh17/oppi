@@ -393,6 +393,7 @@ describe("GET /server/info", () => {
         "extension-native-ui:v1:osc8-links",
         "extension-native-ui:v2:composites",
         "extension-native-ui:v2:blocks",
+        "extension-native-ui:v2:elapsed",
       ],
     });
   });

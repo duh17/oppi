@@ -3,6 +3,7 @@ import {
   buildExtensionUISurfaceMessage,
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
 } from "./extension-ui-contract.js";
 import {
   extensionUISurfaceProjectionClearRequest,
@@ -10,7 +11,9 @@ import {
   extensionUISurfaceUsesBlocks,
 } from "./extension-surface.js";
 import {
+  audienceDrawsTrees,
   ExtensionSurfaceRuntime,
+  surfaceForAudience,
   type ExtensionUISurfaceAudience,
   type ExtensionSurfaceActionRequest,
 } from "./extension-surface-runtime.js";
@@ -24,7 +27,8 @@ import type {
 
 /** What a capability list says this client draws: the strongest shape it names. */
 function declaredAudience(capabilities: readonly string[]): ExtensionUISurfaceAudience {
-  if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY)) return "blocks";
+  if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY))
+    return capabilities.includes(EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY) ? "elapsed" : "blocks";
   if (capabilities.includes(EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY)) return "composites";
   return "v1-projection";
 }
@@ -34,6 +38,7 @@ const AUDIENCE_RANK: Record<ExtensionUISurfaceAudience, number> = {
   "v1-projection": 0,
   composites: 1,
   blocks: 2,
+  elapsed: 3,
 };
 
 /**
@@ -125,12 +130,16 @@ export class SessionSurfaces {
   messages(clientId: string): ServerMessage[] {
     if (!this.runtime) return [];
     const audience = this.audience(clientId);
+    const now = Date.now();
     return this.runtime
       .snapshot()
       .map((surface) =>
         audience !== "v1-projection" &&
-        (audience === "blocks" || !extensionUISurfaceUsesBlocks(surface))
-          ? buildExtensionUISurfaceMessage(this.options.sessionId, surface)
+        (audienceDrawsTrees(audience) || !extensionUISurfaceUsesBlocks(surface))
+          ? buildExtensionUISurfaceMessage(
+              this.options.sessionId,
+              surfaceForAudience(surface, audience, now),
+            )
           : buildExtensionUINotificationMessage(extensionUISurfaceProjectionRequest(surface)),
       );
   }
@@ -178,7 +187,7 @@ export class SessionSurfaces {
     if (!this.runtime) return [];
     return this.runtime
       .snapshot()
-      .filter((surface) => audience === "blocks" || !extensionUISurfaceUsesBlocks(surface))
+      .filter((surface) => audienceDrawsTrees(audience) || !extensionUISurfaceUsesBlocks(surface))
       .map((surface) =>
         buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surface.id)),
       );
@@ -188,6 +197,7 @@ export class SessionSurfaces {
     this.runtime ??= new ExtensionSurfaceRuntime({
       sessionId: this.options.sessionId,
       emit: this.options.emit,
+      hasAudience: (audience) => [...this.audiences.values()].includes(audience),
       runAction: (request) => this.runAction(request),
       // A surface the runtime settles without the panel asking (its deadline, or teardown) takes
       // its handler with it; a re-publish binds one again.

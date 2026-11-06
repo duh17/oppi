@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
 import { describe, expect, it, vi } from "vitest";
 
-import { EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY } from "../src/extension-ui-contract.js";
+import {
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+} from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
 import { SessionSurfaces } from "../src/session-surfaces.js";
@@ -336,5 +340,63 @@ describe("session stream surfaces", () => {
     await flush();
     expect(surfaces.audience(compositesId ?? "")).toBe("v1-projection");
     v1.close();
+  });
+
+  it("sends an elapsed node only to a socket that declared it, and static text to the other", async () => {
+    const session = makeSession("sess-elapsed", "w1");
+    const { ctx, surfaces, start } = streamHarness(session);
+    const mux = new BoundSessionStreamMux(ctx);
+
+    const current = new FakeWebSocket();
+    const older = new FakeWebSocket();
+    const opening = [
+      mux.handleWebSocket("w1", session.id, current as unknown as WebSocket),
+      mux.handleWebSocket("w1", session.id, older as unknown as WebSocket),
+    ];
+    start.resolve(session);
+    await Promise.all(opening);
+    current.receive({
+      type: "client_capabilities",
+      capabilities: [
+        EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+        EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+        EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+      ],
+    });
+    // A build that draws trees but predates the elapsed node.
+    older.receive({
+      type: "client_capabilities",
+      capabilities: [
+        EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+        EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      ],
+    });
+    await flush();
+
+    const since = Date.now() - 65_000;
+    const value = JSON.parse(JSON.stringify(fixtures["blocks-elapsed.json"]));
+    value.pill.content.children[2].since = since;
+    value.sections[0].body.children[1].since = since;
+    const read = readExtensionUISurface(value);
+    if ("problem" in read) throw new Error(read.problem);
+    surfaces.publisher.publish(read.surface, undefined);
+    await flush();
+
+    const [live] = current.sentOfType("extension_ui_surface");
+    expect(live?.surface.pill?.content.children[2]).toMatchObject({ type: "elapsed", since });
+    const [fixed] = older.sentOfType("extension_ui_surface");
+    // The span as it stood when sent, in the node's own format and look.
+    expect(fixed?.surface.pill?.content.children[2]).toEqual({
+      type: "text",
+      text: "1:05",
+      style: "mono",
+      tone: "warning",
+    });
+    const body = fixed?.surface.sections[0];
+    if (body?.composite !== "blocks") throw new Error("expected a blocks section");
+    expect(body.body.children[1]).toEqual({ type: "text", id: "job-elapsed", text: "1m" });
+    expect(JSON.stringify(older.sent)).not.toContain('"elapsed"');
+    current.close();
+    older.close();
   });
 });

@@ -83,6 +83,7 @@ Server protocol types live in `server/src/types/protocol.ts`; `server/src/types.
 3. Update `protocol/*.json` when the wire shape changes. Ordinary tests compare canonical bytes and never write tracked fixtures; regenerate with `cd server && npm run protocol:fixtures:update`.
 4. Run server protocol tests, then Apple Codable tests.
 5. Keep a setting's `protocol/settings.json` row and its [registry](#settings-registry) entry in step.
+6. A new composable-surface node kind needs its own `extension-native-ui:v2:<kind>` capability (`extension-ui-contract.ts`, Apple `ClientCapability`, declared by `ServerConnection.surfaceCapabilities`), a rung in `ExtensionUISurfaceAudience`, and a static stand-in for the rungs below it in `surfaceForAudience` (`extension-surface-runtime.ts`): a build that predates a node kind draws it as "Unsupported block".
 
 The durable conversation stream types sit outside the `ServerMessage`/`ClientMessage` unions (fixtures `protocol/conversation-stream.json`, `protocol/conversation-stream-golden.json`; Apple `OppiCore/Models/ConversationStream.swift`). See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
 

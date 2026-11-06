@@ -18,6 +18,10 @@ import {
   EXTENSION_UI_SURFACE_MAX_ACTION_VALUES,
   EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID,
 } from "./extension-surface.js";
+import {
+  extensionUISurfaceUsesElapsed,
+  withStaticElapsed,
+} from "./extension-surface-projection.js";
 import type {
   ExtensionUIBlocksComposite,
   ExtensionUIDataTableComposite,
@@ -42,11 +46,34 @@ import type {
  */
 
 /**
- * What a client draws. `blocks` draws the closed composites and a tree of primitives; `composites`
- * draws only the closed set, so it gets the v1 projection of a surface that uses a tree; and a
- * client that has said nothing draws v1 widgets, as every client did before surfaces existed.
+ * What a client draws, named by the newest capability it declared. `elapsed` draws every node
+ * kind; `blocks` draws a tree but predates the elapsed node, so it is sent each one as static text
+ * (`surfaceForAudience`); `composites` draws only the closed set, so it gets the v1 projection of
+ * a surface that uses a tree; and a client that has said nothing draws v1 widgets, as every client
+ * did before surfaces existed.
  */
-export type ExtensionUISurfaceAudience = "blocks" | "composites" | "v1-projection";
+export type ExtensionUISurfaceAudience = "elapsed" | "blocks" | "composites" | "v1-projection";
+
+/** The audiences that draw a tree of primitives. */
+const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["elapsed", "blocks"];
+
+export function audienceDrawsTrees(audience: ExtensionUISurfaceAudience): boolean {
+  return TREE_AUDIENCES.includes(audience);
+}
+
+/**
+ * A surface in the node kinds this audience draws. Only `blocks` needs a copy: a node kind newer
+ * than its build becomes the static shape it can draw, formatted at `now`.
+ */
+export function surfaceForAudience(
+  surface: ExtensionUISurface,
+  audience: ExtensionUISurfaceAudience,
+  now: number,
+): ExtensionUISurface {
+  return audience === "blocks" && extensionUISurfaceUsesElapsed(surface)
+    ? withStaticElapsed(surface, now)
+    : surface;
+}
 
 export const EXTENSION_UI_SURFACE_COALESCE_MS = 250;
 
@@ -75,6 +102,12 @@ export interface ExtensionSurfaceRuntimeOptions {
    * shape they can draw, and one of them never downgrades the other.
    */
   emit: (message: ServerMessage, audience: ExtensionUISurfaceAudience) => void;
+  /**
+   * Whether any connected client draws this audience. A frame that needs a rewritten copy for one
+   * audience is built only while someone draws it; a client that declares later is handed the
+   * live surfaces in its own shape. Absent: every audience counts as connected.
+   */
+  hasAudience?: (audience: ExtensionUISurfaceAudience) => boolean;
   /** The extension's action handler; required to accept actions. */
   runAction?: (request: ExtensionSurfaceActionRequest) => Promise<ExtensionUISurfaceActionAnswer>;
   /**
@@ -475,9 +508,36 @@ export class ExtensionSurfaceRuntime {
   }
 
   private emitSurface(surface: ExtensionUISurface): void {
-    const message = buildExtensionUISurfaceMessage(this.options.sessionId, surface);
-    for (const audience of this.v2Audiences(surface)) this.options.emit(message, audience);
+    for (const audience of this.v2Audiences(surface)) this.emitWhole(surface, audience);
     this.emitProjection(surface);
+  }
+
+  /**
+   * One whole surface to one v2 audience, in the node kinds it draws. A copy rewritten for an
+   * audience nobody draws is skipped rather than built: no one would receive it, and sending the
+   * original there instead could reach a socket that declares that audience mid-bootstrap.
+   */
+  private emitWhole(surface: ExtensionUISurface, audience: ExtensionUISurfaceAudience): void {
+    const shaped = surfaceForAudience(surface, audience, this.now());
+    if (shaped !== surface && !(this.options.hasAudience?.(audience) ?? true)) return;
+    this.options.emit(buildExtensionUISurfaceMessage(this.options.sessionId, shaped), audience);
+  }
+
+  /**
+   * Whether a patch can reach this audience as it is. A client that holds an elapsed node as
+   * static text cannot apply a patch written against the node: its `since` would land on a text
+   * node and change nothing. Such a client is sent the whole surface again instead.
+   */
+  private patchReaches(
+    audience: ExtensionUISurfaceAudience,
+    previous: ExtensionUISurface | undefined,
+    next: ExtensionUISurface,
+  ): boolean {
+    if (audience !== "blocks") return true;
+    return !(
+      extensionUISurfaceUsesElapsed(next) ||
+      (previous !== undefined && extensionUISurfaceUsesElapsed(previous))
+    );
   }
 
   /**
@@ -500,7 +560,7 @@ export class ExtensionSurfaceRuntime {
     );
     if (!next) {
       // Removed: whichever shape a client drew is cleared, and its widget slot is emptied.
-      this.options.emit(message, "blocks");
+      for (const audience of TREE_AUDIENCES) this.options.emit(message, audience);
       this.options.emit(message, "composites");
       const clear = buildExtensionUINotificationMessage(
         extensionUISurfaceProjectionClearRequest(surfaceId),
@@ -517,8 +577,10 @@ export class ExtensionSurfaceRuntime {
     const usesBlocks = extensionUISurfaceUsesBlocks(next);
     // Only a client that held the card is patched; one that held a projection gets the shape it
     // can draw now: a whole surface, or a cleared widget while the tree is its projection.
-    for (const audience of wasBlocks ? ["blocks" as const] : this.v2Audiences(next))
-      this.options.emit(message, audience);
+    for (const audience of wasBlocks ? TREE_AUDIENCES : this.v2Audiences(next)) {
+      if (this.patchReaches(audience, previous, next)) this.options.emit(message, audience);
+      else this.emitWhole(next, audience);
+    }
     if (wasBlocks && !usesBlocks) {
       this.options.emit(
         buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surfaceId)),
@@ -551,8 +613,10 @@ export class ExtensionSurfaceRuntime {
   }
 
   /** The v2 audiences that can draw this surface whole. */
-  private v2Audiences(surface: ExtensionUISurface): ExtensionUISurfaceAudience[] {
-    return extensionUISurfaceUsesBlocks(surface) ? ["blocks"] : ["blocks", "composites"];
+  private v2Audiences(surface: ExtensionUISurface): readonly ExtensionUISurfaceAudience[] {
+    return extensionUISurfaceUsesBlocks(surface)
+      ? TREE_AUDIENCES
+      : [...TREE_AUDIENCES, "composites"];
   }
 
   /** The audiences that can only draw this surface's v1 projection. */

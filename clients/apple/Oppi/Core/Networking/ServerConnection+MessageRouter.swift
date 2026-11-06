@@ -464,11 +464,14 @@ extension ServerConnection {
     }
 
     /// What this build draws, in the order the server wants it named: the closed composites on
-    /// every v2 socket, and the block trees beside them when the server lists that capability too.
+    /// every v2 socket, the block trees beside them when the server lists that capability too, and
+    /// each node kind added since blocks that the server lists.
     static func surfaceCapabilities(advertisedBy advertised: [String]) -> [String] {
         var capabilities = [ClientCapability.extensionNativeUIComposites]
-        if advertised.contains(ClientCapability.extensionNativeUIBlocks) {
-            capabilities.append(ClientCapability.extensionNativeUIBlocks)
+        guard advertised.contains(ClientCapability.extensionNativeUIBlocks) else { return capabilities }
+        capabilities.append(ClientCapability.extensionNativeUIBlocks)
+        if advertised.contains(ClientCapability.extensionNativeUIElapsed) {
+            capabilities.append(ClientCapability.extensionNativeUIElapsed)
         }
         return capabilities
     }
