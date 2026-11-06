@@ -10,12 +10,10 @@ import {
   type ConversationId,
   type DocumentObserver,
   type DocumentReader,
-  type Extension,
   type TaskId,
   type TaskOutcome,
   type ToolExecutionApi,
   type ToolExecutionResult,
-  type ToolRegistration,
   type Tx,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
@@ -760,142 +758,134 @@ function backgrounded(job: Job): ToolExecutionResult {
     structuredOutput: { jobId: job.id, backgrounded: true },
   };
 }
-const bashTool = (thresholdMs?: number): ToolRegistration =>
-  defineTool({
-    name: "bash",
-    description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ${POLL_RULE}`,
-    parameters: obj(
-      {
-        command: str({ description: "Bash command to execute" }),
-        timeout: opt(
-          num({
-            description:
-              "Timeout in seconds. A timeout of 1 second or less stays in the foreground.",
-          }),
-        ),
-      },
-      // Open: models carry other harnesses' flags (`run_in_background`, `background`) into
-      // bash calls, and such a call still runs, under this tool's own backgrounding rules.
-      { open: true },
-    ),
-    structuredOutputSchema: bashStructuredOutput,
-    replay: "safe",
-    executionMode: "parallel",
-    async execute(args, api, context) {
-      if (!args.command.trim()) throw new Error("bash requires command.");
-      const jobs = await api.snapshot(DurableJobs, api.conversationId, context);
-      const advice = bashBackgroundAdvice(
-        args.command,
-        jobs?.jobs.some((job) => job.status === "running" && job.starter !== api.taskId) ?? false,
-      );
-      if (advice) throw new Error(advice);
-      const disposition = backgroundDisposition(args.command, {
-        timeoutSeconds: args.timeout,
-        thresholdMs,
-      });
-      const job = await start(
-        api,
-        disposition.command,
-        args.timeout,
-        disposition.waitMs,
-        disposition.mode === "immediate",
-        context,
-        disposition.mode === "foreground-only" ? "only" : "fallback",
-      );
-      if (job.decision === "background") return backgrounded(job);
-      await waitForJob(
-        api,
-        api.conversationId,
-        job.id,
-        (item) => item.status !== "running",
-        context,
-        job.foregroundOnly ? undefined : job.deadline,
-      );
-      const selected = await api.commit(async (tx) => {
-        const current = jobById((await tx.doc(DurableJobs, api.conversationId)).jobs, job.id);
-        // Decide against committed completion, not a stale watcher frame at the deadline.
-        current.decision = current.status === "running" ? "background" : "foreground";
-        await retireLegacyPill(tx, api.conversationId);
-        return { ...current };
-      }, context);
-      if (selected.decision === "background") {
-        await syncPanel(api, api.conversationId, api.env, context);
-        return backgrounded(selected);
-      }
-      // The runner's report phase waits for this tool task before it settles, so
-      // its JobOutput is still current here.
-      const output = await jobOutput(api, selected.taskId, context);
-      const formatted =
-        selected.status === "interrupted"
-          ? {
-              text: `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
-              isError: true,
-            }
-          : formatForegroundResult(output, {
-              status: selected.status === "running" ? "failed" : selected.status,
-              exitCode: selected.exitCode,
-              timeoutSeconds: selected.timeout,
-            });
-      // As pi-durable's `bash`: a command that exited is an error result only for a nonzero
-      // code, with an `exit_code` diagnostic, and programs get its output and code either way.
-      const exitCode =
-        selected.status === "completed" || selected.status === "failed" ? selected.exitCode : null;
-      const diagnostics =
-        selected.status === "interrupted"
+const bash = defineTool({
+  name: "bash",
+  description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ${POLL_RULE}`,
+  parameters: obj(
+    {
+      command: str({ description: "Bash command to execute" }),
+      timeout: opt(
+        num({
+          description: "Timeout in seconds. A timeout of 1 second or less stays in the foreground.",
+        }),
+      ),
+    },
+    // Open: models carry other harnesses' flags (`run_in_background`, `background`) into
+    // bash calls, and such a call still runs, under this tool's own backgrounding rules.
+    { open: true },
+  ),
+  structuredOutputSchema: bashStructuredOutput,
+  replay: "safe",
+  executionMode: "parallel",
+  async execute(args, api, context) {
+    if (!args.command.trim()) throw new Error("bash requires command.");
+    const jobs = await api.snapshot(DurableJobs, api.conversationId, context);
+    const advice = bashBackgroundAdvice(
+      args.command,
+      jobs?.jobs.some((job) => job.status === "running" && job.starter !== api.taskId) ?? false,
+    );
+    if (advice) throw new Error(advice);
+    const disposition = backgroundDisposition(args.command, {
+      timeoutSeconds: args.timeout,
+    });
+    const job = await start(
+      api,
+      disposition.command,
+      args.timeout,
+      disposition.waitMs,
+      disposition.mode === "immediate",
+      context,
+      disposition.mode === "foreground-only" ? "only" : "fallback",
+    );
+    if (job.decision === "background") return backgrounded(job);
+    await waitForJob(
+      api,
+      api.conversationId,
+      job.id,
+      (item) => item.status !== "running",
+      context,
+      job.foregroundOnly ? undefined : job.deadline,
+    );
+    const selected = await api.commit(async (tx) => {
+      const current = jobById((await tx.doc(DurableJobs, api.conversationId)).jobs, job.id);
+      // Decide against committed completion, not a stale watcher frame at the deadline.
+      current.decision = current.status === "running" ? "background" : "foreground";
+      await retireLegacyPill(tx, api.conversationId);
+      return { ...current };
+    }, context);
+    if (selected.decision === "background") {
+      await syncPanel(api, api.conversationId, api.env, context);
+      return backgrounded(selected);
+    }
+    // The runner's report phase waits for this tool task before it settles, so
+    // its JobOutput is still current here.
+    const output = await jobOutput(api, selected.taskId, context);
+    const formatted =
+      selected.status === "interrupted"
+        ? {
+            text: `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
+            isError: true,
+          }
+        : formatForegroundResult(output, {
+            status: selected.status === "running" ? "failed" : selected.status,
+            exitCode: selected.exitCode,
+            timeoutSeconds: selected.timeout,
+          });
+    // As pi-durable's `bash`: a command that exited is an error result only for a nonzero
+    // code, with an `exit_code` diagnostic, and programs get its output and code either way.
+    const exitCode =
+      selected.status === "completed" || selected.status === "failed" ? selected.exitCode : null;
+    const diagnostics =
+      selected.status === "interrupted"
+        ? [
+            {
+              severity: "error" as const,
+              code: "interrupted",
+              message: formatted.text,
+            },
+          ]
+        : exitCode !== null && exitCode !== 0
           ? [
               {
                 severity: "error" as const,
-                code: "interrupted",
-                message: formatted.text,
+                code: "exit_code",
+                message: `Command exited with code ${exitCode}`,
               },
             ]
-          : exitCode !== null && exitCode !== 0
-            ? [
-                {
-                  severity: "error" as const,
-                  code: "exit_code",
-                  message: `Command exited with code ${exitCode}`,
-                },
-              ]
-            : [];
-      return {
-        output: [{ type: "text" as const, text: formatted.text }],
-        isError: formatted.isError,
-        details: { jobId: selected.id, backgrounded: false },
-        ...(exitCode === null
-          ? {}
-          : {
-              structuredOutput: {
-                output: output.output,
-                truncated: output.truncated,
-                exitCode,
-              },
-            }),
-        ...(diagnostics.length ? { diagnostics } : {}),
-      };
-    },
-  });
-/** `foregroundWaitMs` replaces how long bash waits before backgrounding; tests shorten it. */
-export const createDurableBackgroundJobs = (
-  options: { foregroundWaitMs?: number } = {},
-): Extension =>
-  defineExtension({
-    name: "background-jobs",
-    runtimes: ["host", "sandbox"],
-    tools: [backgroundJob, bashTool(options.foregroundWaitMs)],
-    tasks: [JobRunner],
-    sections: [
-      section(
-        "background-jobs",
-        () =>
-          `${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ` +
-          "background_job start backgrounds immediately. cancel only stops a job. Finished output is delivered as a follow-up. " +
-          POLL_RULE +
-          " Do not use bash or background_job for commands that read or print secrets. Use secret_run.",
-      ),
-    ],
-  });
-export const DurableBackgroundJobs = createDurableBackgroundJobs();
+          : [];
+    return {
+      output: [{ type: "text" as const, text: formatted.text }],
+      isError: formatted.isError,
+      details: { jobId: selected.id, backgrounded: false },
+      ...(exitCode === null
+        ? {}
+        : {
+            structuredOutput: {
+              output: output.output,
+              truncated: output.truncated,
+              exitCode,
+            },
+          }),
+      ...(diagnostics.length ? { diagnostics } : {}),
+    };
+  },
+});
+export const DurableBackgroundJobs = defineExtension({
+  name: "background-jobs",
+  runtimes: ["host", "sandbox"],
+  tools: [backgroundJob, bash],
+  tasks: [JobRunner],
+  sections: [
+    section(
+      "background-jobs",
+      () =>
+        `${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ` +
+        "background_job start backgrounds immediately. cancel only stops a job. Finished output is delivered as a follow-up. " +
+        POLL_RULE +
+        " Do not use bash or background_job for commands that read or print secrets. Use secret_run.",
+    ),
+  ],
+});
 
 /**
  * The plugin facet. A built-in: the plugin host skips the owner's copy of this package (a link
