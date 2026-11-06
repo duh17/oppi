@@ -60,6 +60,7 @@ import { exportDurableToHtml } from "./durable-export.js";
 import {
   durableCacheMissHistory,
   isRecoveredPartial,
+  readCacheMissSeed,
   readDurableSessionEntries,
 } from "./durable-history.js";
 import { splitCanonicalModelId } from "./model-resolution.js";
@@ -964,6 +965,13 @@ export class DurableBackend implements AgentBackend {
   }
   async cacheMissHistory(): Promise<readonly unknown[]> {
     return durableCacheMissHistory(await this.historyEntries()).history;
+  }
+  /** Reads back to the newest answer that reported cache use, not the whole conversation. */
+  async cacheMissSeed(): Promise<readonly unknown[]> {
+    const latest = await this.conversation.entries({}, 1, undefined, BACKGROUND_CONTEXT);
+    const tip = latest.items[0]?.id;
+    if (tip === undefined) return [];
+    return durableCacheMissHistory(await readCacheMissSeed(this.conversation, tip + 1)).history;
   }
   /** Read per event, as an SDK session reads its runtime's settings, not pinned at attach. */
   get showCacheMissNotices(): boolean {

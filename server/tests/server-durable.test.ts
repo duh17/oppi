@@ -1759,6 +1759,70 @@ describe("server durable managed runtime", () => {
     },
   );
 
+  it("restarts a session with a long saved history without reading all of it", async () => {
+    const f = await fixture([], { settings: { showCacheMissNotices: true } });
+    // Counts the rows every Conversation hands out once `counting` is set, whichever Harness a
+    // restart opens.
+    let counting = false;
+    let rowsRead = 0;
+    const counted = new WeakSet<object>();
+    const openHost = SessionHost.prototype.open;
+    const opening = vi.spyOn(SessionHost.prototype, "open").mockImplementation(async function (
+      this: SessionHost,
+    ) {
+      const opened = await openHost.call(this);
+      if (!counted.has(opened.harness)) {
+        counted.add(opened.harness);
+        const conversationOf = opened.harness.conversation.bind(opened.harness);
+        opened.harness.conversation = async (...args: Parameters<typeof conversationOf>) => {
+          const found = await conversationOf(...args);
+          if (found) {
+            const entries = found.entries.bind(found);
+            found.entries = async (...query: Parameters<typeof entries>) => {
+              const page = await entries(...query);
+              if (counting) rowsRead += page.items.length;
+              return page;
+            };
+          }
+          return found;
+        };
+      }
+      return opened;
+    });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const { harness } = await opening.mock.results[0]!.value;
+    const conversation = (await harness.conversation(
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId! as ConversationId,
+      context,
+    ))!;
+    // Answers that each report cache use: the newest one alone is what a restart compares against.
+    const answerCount = 300;
+    await conversation.commit(async (tx) => {
+      for (let index = 0; index < answerCount; index++)
+        await tx.appendEntry(AssistantEntry, conversation.id, {
+          model: [
+            {
+              ...fauxAssistantMessage(`answer ${index}`),
+              timestamp: 1_000 + index,
+              usage: {
+                input: 10,
+                output: 0,
+                cacheRead: 100_000,
+                cacheWrite: 0,
+                totalTokens: 100_010,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+            },
+          ],
+        });
+    }, context);
+    await f.manager.stopSession(f.session.id);
+
+    counting = true;
+    await f.manager.startSession(f.session.id, f.workspace);
+    expect(rowsRead).toBeLessThan(answerCount / 2);
+  }, 20_000);
+
   it("suppresses recoverable overflow errors and projects compact-and-retry", async () => {
     const flush = vi.spyOn(
       SessionMessageQueueCoordinator.prototype,

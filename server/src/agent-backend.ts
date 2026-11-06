@@ -36,6 +36,11 @@ export interface AgentBackend {
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
   /** Saved history in `replayCacheMissHistory` form: answers, with compaction and branch summaries as resets. */
   cacheMissHistory(): Promise<readonly unknown[]>;
+  /**
+   * The tail of `cacheMissHistory` that leaves a fresh tracker where a replay of all of it
+   * would. A store-backed history reads only that tail; a session file is already in memory.
+   */
+  cacheMissSeed(): Promise<readonly unknown[]>;
 
   /**
    * Whether work this session started will wake it later: a running background job, or a

@@ -1901,6 +1901,10 @@ export class SdkBackend implements AgentBackend {
     return Promise.resolve(this.piSession.sessionManager.getEntries());
   }
 
+  cacheMissSeed(): Promise<readonly unknown[]> {
+    return this.cacheMissHistory();
+  }
+
   private subscribeToCurrentSession(): void {
     this.unsub?.();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {

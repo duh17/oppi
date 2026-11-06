@@ -185,7 +185,7 @@ export class SessionStartCoordinator {
           try {
             replayCacheMissHistory(
               activeSession.cacheMissTracker,
-              await sdkBackend.cacheMissHistory(),
+              await sdkBackend.cacheMissSeed(),
               sdkBackend.cacheMissModelPriceSource,
             );
           } catch (error) {
