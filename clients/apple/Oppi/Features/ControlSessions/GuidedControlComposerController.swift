@@ -276,6 +276,8 @@ final class GuidedControlComposerController: UIViewController {
         let pillRow = UIStackView(arrangedSubviews: [reviewPill, UIView()])
         pillRow.axis = .horizontal
         pillRow.alignment = .center
+        // Tall enough to hold the pill's whole touch band: hit-testing stops at the row's bounds.
+        pillRow.heightAnchor.constraint(greaterThanOrEqualToConstant: ExtensionStripPillMetrics.hitHeight).isActive = true
         reviewStrip.addArrangedSubview(pillRow)
         reviewStrip.addArrangedSubview(reviewDrawer)
         reviewPill.onToggle = { [weak model] in model?.toggleReviewCommentDrawer() }

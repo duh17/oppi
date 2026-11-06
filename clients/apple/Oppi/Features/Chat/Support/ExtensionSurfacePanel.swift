@@ -6,7 +6,9 @@ enum ExtensionStripPillMetrics {
     static let visualHeight: CGFloat = 28
     static let horizontalPadding: CGFloat = 10
     static let verticalPadding: CGFloat = 5
-    /// The touch band every strip pill answers across, however short it draws.
+    /// The touch band every strip pill answers across, however short it draws. A row that holds
+    /// strip pills is at least this tall: a superview's bounds clip hit-testing, so a band that
+    /// overhangs the row it sits in takes no touches.
     static let hitHeight: CGFloat = 44
 }
 
@@ -1065,6 +1067,8 @@ final class ExtensionSurfacePanelView: UIView {
             stripRow.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor),
             stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
             stripScroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stripRow.heightAnchor),
+            // The pills draw shorter; the row keeps their whole touch band inside the scroll view.
+            stripRow.heightAnchor.constraint(greaterThanOrEqualToConstant: ExtensionStripPillMetrics.hitHeight),
         ])
     }
 
