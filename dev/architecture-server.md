@@ -87,6 +87,8 @@ Server protocol types live in `server/src/types/protocol.ts`; `server/src/types.
 
 The durable conversation stream types sit outside the `ServerMessage`/`ClientMessage` unions (fixtures `protocol/conversation-stream.json`, `protocol/conversation-stream-golden.json`; Apple `OppiCore/Models/ConversationStream.swift`). See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
 
+Untrusted JSON (parsed files, wire payloads, Pi and provider events) narrows through `isRecord` / `asRecord` in `server/src/json-shape.ts`: an array is never a record, and `asRecord` misses with `undefined`. Import them; do not keep a local copy.
+
 ### Settings registry
 
 `server/src/settings/registry.ts` declares every server-owned setting (key, scope, storage, default, `revisioned`, `validate`). Routes and stores validate through the definition; `validate` throws `SettingValidationError` (400). `server/tests/settings-registry.test.ts` holds `protocol/settings.json` to the registry; a new setting adds both together.
