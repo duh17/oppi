@@ -12,6 +12,20 @@ export const DRAIN_UNSUPPORTED_EXIT_CODE = 4;
 const WAIT_GRACE_MS = 5 * 60_000;
 const WAIT_POLL_MS = 2_000;
 
+const MODE_FLAGS = ["drain", "status", "cancel"] as const;
+
+/**
+ * Whether `oppi server restart` names a drain flag. A drain-only option without `--drain`
+ * (`--max-wait 30m`) lands here too, so it is refused instead of restarting at once.
+ */
+export function usesDrainRestartFlags(flags: Record<string, string>): boolean {
+  return (
+    MODE_FLAGS.some((flag) => flags[flag] === "true") ||
+    flags.wait !== undefined ||
+    flags["max-wait"] !== undefined
+  );
+}
+
 /**
  * `oppi server restart --drain [--max-wait <duration>] [--wait]`, `--cancel`, and `--status`:
  * ask the server that owns this data directory to restart itself once running turns finish,
@@ -19,7 +33,14 @@ const WAIT_POLL_MS = 2_000;
  */
 export async function cmdServerRestartDrain(flags: Record<string, string>): Promise<void> {
   const json = flags.json === "true";
-  const mode = flags.cancel === "true" ? "cancel" : flags.status === "true" ? "status" : "drain";
+  const modes = MODE_FLAGS.filter((flag) => flags[flag] === "true");
+  if (modes.length !== 1) {
+    return fail(json, "Pass exactly one of --drain, --status, or --cancel", 1);
+  }
+  const mode = modes[0];
+  if (mode !== "drain" && (flags.wait !== undefined || flags["max-wait"] !== undefined)) {
+    return fail(json, "--wait and --max-wait go with --drain", 1);
+  }
   let maxWaitMs: number | undefined;
   if (mode === "drain" && flags["max-wait"] !== undefined) {
     try {

@@ -1085,13 +1085,12 @@ async function ownerSocketServer(): Promise<{
 async function cmdServer(action: string | undefined, flags: Record<string, string>): Promise<void> {
   const mode = action || "status";
   // Drain restarts go to the server that owns this data directory, whatever runs it.
-  if (
-    mode === "restart" &&
-    (flags.drain === "true" || flags.cancel === "true" || flags.status === "true")
-  ) {
-    const { cmdServerRestartDrain } = await import("./cli/server-restart-drain.js");
-    await cmdServerRestartDrain(flags);
-    return;
+  if (mode === "restart") {
+    const drain = await import("./cli/server-restart-drain.js");
+    if (drain.usesDrainRestartFlags(flags)) {
+      await drain.cmdServerRestartDrain(flags);
+      return;
+    }
   }
   // macOS: per-user LaunchAgent. Linux: systemd user service. Same verbs on both.
   const linux = process.platform === "linux";
