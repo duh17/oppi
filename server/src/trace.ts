@@ -1317,14 +1317,6 @@ export function readSearchTranscriptFile(jsonlPath: string): {
   }
 }
 
-/**
- * Read a JSONL session file and extract search transcript fields.
- * Still whole-file I/O; this only skips mobile TraceEvent construction.
- */
-export function extractSearchTranscriptFromFile(jsonlPath: string): SearchTranscriptContent | null {
-  return readSearchTranscriptFile(jsonlPath)?.transcript ?? null;
-}
-
 // ─── JSONL File Readers ───
 
 /**

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SearchIndex } from "../src/search-index.js";
 import { openDatabase } from "../src/sqlite-compat.js";
-import { extractSearchTranscriptFromFile, readSessionTraceFromFile } from "../src/trace.js";
+import { readSearchTranscriptFile, readSessionTraceFromFile } from "../src/trace.js";
 import type { Session } from "../src/types.js";
 
 const USER_MESSAGE_CAP = 50_000;
@@ -309,7 +309,7 @@ describe("search transcript extraction fields", () => {
     expect(oracle).not.toBeNull();
     if (!oracle) return;
 
-    expect(extractSearchTranscriptFromFile(jsonlPath)).toEqual(oracle);
+    expect(readSearchTranscriptFile(jsonlPath)?.transcript ?? null).toEqual(oracle);
 
     const session = makeSession({ piSessionFile: jsonlPath });
     const sessions = new Map([[session.id, session]]);
@@ -407,7 +407,7 @@ describe("search transcript extraction fields", () => {
     expect(oracle.userMessages.length).toBe(USER_MESSAGE_CAP);
     expect(oracle.assistantMessages.length).toBe(ASSISTANT_MESSAGE_CAP);
     expect(oracle.toolNames).toBe("late_tool_token");
-    expect(extractSearchTranscriptFromFile(jsonlPath)).toEqual(oracle);
+    expect(readSearchTranscriptFile(jsonlPath)?.transcript ?? null).toEqual(oracle);
 
     const session = makeSession({ id: "sess-cap", piSessionFile: jsonlPath });
     const sessions = new Map([[session.id, session]]);
@@ -461,7 +461,7 @@ describe("search transcript extraction fields", () => {
       },
     ]);
 
-    const extracted = extractSearchTranscriptFromFile(jsonlPath);
+    const extracted = readSearchTranscriptFile(jsonlPath)?.transcript ?? null;
     expect(extracted?.userMessages).toBe("see screenshot\nafterscreenshottoken follow-up");
     expect(extracted?.assistantMessages).toMatch(/^pasted\s+inline$/);
   });
@@ -469,7 +469,7 @@ describe("search transcript extraction fields", () => {
   it("returns null for a missing session file", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-extract-missing-"));
     cleanupPaths.add(dataDir);
-    expect(extractSearchTranscriptFromFile(join(dataDir, "missing.jsonl"))).toBeNull();
+    expect(readSearchTranscriptFile(join(dataDir, "missing.jsonl"))?.transcript ?? null).toBeNull();
   });
 
   it("returns null for an unreadable session path", () => {
@@ -477,7 +477,7 @@ describe("search transcript extraction fields", () => {
     cleanupPaths.add(dataDir);
     const unreadablePath = join(dataDir, "not-a-file");
     mkdirSync(unreadablePath);
-    expect(extractSearchTranscriptFromFile(unreadablePath)).toBeNull();
+    expect(readSearchTranscriptFile(unreadablePath)?.transcript ?? null).toBeNull();
   });
 
   it("indexes title with empty transcript fields when the jsonl is missing", () => {
@@ -571,7 +571,7 @@ describe("search transcript extraction fields", () => {
 
     expect(readSessionTraceFromFile(jsonlPath)).toBeNull();
     expect(searchableFieldsFromMobileTrace(jsonlPath)).toBeNull();
-    expect(extractSearchTranscriptFromFile(jsonlPath)).toEqual({
+    expect(readSearchTranscriptFile(jsonlPath)?.transcript ?? null).toEqual({
       userMessages: "kept-user-after-bad-toolresult",
       assistantMessages: "kept-assistant-after-bad-toolresult",
       toolNames: "bash",
@@ -628,6 +628,6 @@ describe("search transcript extraction fields", () => {
     expect(oracle.toolNames).toBe(
       ["unknown", "grep\uFFFD", "42", "[object Object]", "ba\uFFFDsh"].join(" "),
     );
-    expect(extractSearchTranscriptFromFile(jsonlPath)).toEqual(oracle);
+    expect(readSearchTranscriptFile(jsonlPath)?.transcript ?? null).toEqual(oracle);
   });
 });

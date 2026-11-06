@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { readSessionTraceOutlineFromFiles } from "../src/trace-outline.js";
-import { readSessionTracePageFromFile } from "../src/trace-paging.js";
+import { readSessionTracePageFromFiles } from "../src/trace-paging.js";
 import {
   buildSessionContext,
   createLiveEntryRendererLookup,
@@ -147,7 +147,7 @@ describe("custom entry timeline projection", () => {
       }),
     ];
     const full = buildSessionContext(entries);
-    const page = readSessionTracePageFromFile(writeJsonl(entries), { targetEvents: 10 });
+    const page = readSessionTracePageFromFiles([writeJsonl(entries)], { targetEvents: 10 });
     expect(cardEvent(full)).toEqual({
       id: "c1",
       type: "system",
@@ -454,8 +454,8 @@ describe("custom entry timeline projection", () => {
 
   it("counts a visible projection as 1 and a hidden custom entry as 0", () => {
     const path = writeJsonl(fixtureEntries());
-    const hidden = readSessionTracePageFromFile(path, { targetEvents: 10 });
-    const visible = readSessionTracePageFromFile(path, {
+    const hidden = readSessionTracePageFromFiles([path], { targetEvents: 10 });
+    const visible = readSessionTracePageFromFiles([path], {
       targetEvents: 10,
       entryRenderers: liveRenderers({ "demo:card": titleRenderer("Visible card") }),
     });
@@ -475,7 +475,7 @@ describe("custom entry timeline projection", () => {
       entryRenderers: renderers,
       view: "full",
     });
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 10,
       entryRenderers: renderers,
     });
@@ -483,7 +483,7 @@ describe("custom entry timeline projection", () => {
       entryRenderers: renderers,
       mobileRenderers: new MobileRendererRegistry(),
     });
-    const around = readSessionTracePageFromFile(path, {
+    const around = readSessionTracePageFromFiles([path], {
       aroundEntryId: "c1",
       targetEvents: 10,
       entryRenderers: renderers,
@@ -512,11 +512,11 @@ describe("custom entry timeline projection", () => {
 
   it("treats aroundEntryId on a hidden custom entry like an unknown id", () => {
     const path = writeJsonl(fixtureEntries());
-    const hidden = readSessionTracePageFromFile(path, {
+    const hidden = readSessionTracePageFromFiles([path], {
       aroundEntryId: "c1",
       targetEvents: 10,
     });
-    const unknown = readSessionTracePageFromFile(path, {
+    const unknown = readSessionTracePageFromFiles([path], {
       aroundEntryId: "missing-id",
       targetEvents: 10,
     });
@@ -534,20 +534,20 @@ describe("custom entry timeline projection", () => {
       "other:card": titleRenderer("B"),
     });
 
-    const withA = readSessionTracePageFromFile(path, {
+    const withA = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       entryRenderers: renderersA,
     });
-    const withB = readSessionTracePageFromFile(path, {
+    const withB = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       entryRenderers: renderersB,
     });
-    const reused = readSessionTracePageFromFile(path, {
+    const reused = readSessionTracePageFromFiles([path], {
       cursor: withA.page.olderCursor ?? undefined,
       targetEvents: 1,
       entryRenderers: renderersB,
     });
-    const sameSet = readSessionTracePageFromFile(path, {
+    const sameSet = readSessionTracePageFromFiles([path], {
       cursor: withA.page.olderCursor ?? undefined,
       targetEvents: 1,
       entryRenderers: renderersA,
@@ -568,20 +568,20 @@ describe("custom entry timeline projection", () => {
       ["demo:card", renderersA.get("demo:card") as CollapsedEntryRenderer],
     ]);
 
-    const withA = readSessionTracePageFromFile(path, {
+    const withA = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       entryRenderers: renderersA,
     });
-    const withB = readSessionTracePageFromFile(path, {
+    const withB = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       entryRenderers: renderersB,
     });
-    const reused = readSessionTracePageFromFile(path, {
+    const reused = readSessionTracePageFromFiles([path], {
       cursor: withA.page.olderCursor ?? undefined,
       targetEvents: 1,
       entryRenderers: renderersB,
     });
-    const sameGeneration = readSessionTracePageFromFile(path, {
+    const sameGeneration = readSessionTracePageFromFiles([path], {
       cursor: withA.page.olderCursor ?? undefined,
       targetEvents: 1,
       entryRenderers: sameSnapshot,
@@ -603,7 +603,7 @@ describe("custom entry timeline projection", () => {
       entryRenderers: renderers,
       view: "full",
     });
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 5,
       entryRenderers: renderers,
     });
@@ -611,17 +611,17 @@ describe("custom entry timeline projection", () => {
       entryRenderers: renderers,
       mobileRenderers: new MobileRendererRegistry(),
     });
-    const aroundCurrent = readSessionTracePageFromFile(path, {
+    const aroundCurrent = readSessionTracePageFromFiles([path], {
       aroundEntryId: "current-c",
       targetEvents: 10,
       entryRenderers: renderers,
     });
-    const aroundAbandoned = readSessionTracePageFromFile(path, {
+    const aroundAbandoned = readSessionTracePageFromFiles([path], {
       aroundEntryId: "abandoned-c",
       targetEvents: 10,
       entryRenderers: renderers,
     });
-    const aroundUnknown = readSessionTracePageFromFile(path, {
+    const aroundUnknown = readSessionTracePageFromFiles([path], {
       aroundEntryId: "missing-id",
       targetEvents: 10,
       entryRenderers: renderers,
@@ -692,7 +692,7 @@ describe("custom entry timeline projection", () => {
       },
     });
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 10,
       entryRenderers: renderers,
     });

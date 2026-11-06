@@ -896,10 +896,6 @@ export function storeUserMessageImages(options: {
   return stored;
 }
 
-export function materializeToolAudioDetails(options: MaterializeToolAudioOptions): unknown {
-  return materializeToolMediaDetails(options);
-}
-
 export function materializeToolMediaDetails({
   dataDir,
   sessionId,

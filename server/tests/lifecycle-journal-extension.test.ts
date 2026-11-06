@@ -6,7 +6,7 @@ import {
   createLifecycleJournalExtension,
   OPPI_LIFECYCLE_CUSTOM_TYPE,
 } from "../src/lifecycle-journal-extension.js";
-import { readSessionTracePageFromFile } from "../src/trace-paging.js";
+import { readSessionTracePageFromFiles } from "../src/trace-paging.js";
 import { buildSessionContext, type SessionEntry } from "../src/trace.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
@@ -162,7 +162,7 @@ describe("lifecycle journal extension", () => {
     ];
     await writeFile(tracePath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 
-    const page = readSessionTracePageFromFile(tracePath, { targetEvents: 1 });
+    const page = readSessionTracePageFromFiles([tracePath], { targetEvents: 1 });
 
     expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
     expect(page.trace[1]?.lifecycleBefore?.map((event) => event.event)).toEqual([

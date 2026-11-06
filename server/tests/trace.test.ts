@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   getSessionAttachment,
-  materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
+  materializeToolMediaDetails,
 } from "../src/session-attachments.js";
 import {
   parseJsonl,
@@ -978,7 +978,7 @@ describe("trace media replay", () => {
     const sessionId = "session-voice";
     const toolCallId = "tool-voice";
     const wavBase64 = Buffer.from("fixture audio").toString("base64");
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir,
       sessionId,
       toolCallId,

@@ -13,7 +13,6 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import {
   addSessionAttachmentFile,
   getSessionAttachment,
-  materializeToolAudioDetails,
   materializeToolMediaContentBlocks,
   materializeToolMediaDetails,
   sessionAttachmentDetailsForToolCall,
@@ -65,7 +64,7 @@ describe("session attachments", () => {
     const bytes = Buffer.from("RIFFtest-audio");
     await writeFile(sourcePath, bytes);
 
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s1",
       toolCallId: "tool-1",
@@ -98,7 +97,7 @@ describe("session attachments", () => {
 
   it("streams audio attachment byte ranges", async () => {
     const bytes = Buffer.from("0123456789");
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s-range",
       toolCallId: "tool-range",
@@ -134,7 +133,7 @@ describe("session attachments", () => {
 
   it("handles audio attachment HEAD requests without a body", async () => {
     const bytes = Buffer.from("0123456789");
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s-head",
       toolCallId: "tool-head",
@@ -167,7 +166,7 @@ describe("session attachments", () => {
     const sourcePath = join(root, "secret.wav");
     await writeFile(sourcePath, Buffer.from("RIFFsecret-audio"));
 
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s-audio-path",
       toolCallId: "tool-audio-path",
@@ -194,7 +193,7 @@ describe("session attachments", () => {
     const bytes = Buffer.from("RIFFbase64-audio");
     await writeFile(sourcePath, Buffer.from("RIFFignored-audio"));
 
-    const details = materializeToolAudioDetails({
+    const details = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s-audio-base64",
       toolCallId: "tool-audio-base64",
@@ -218,7 +217,7 @@ describe("session attachments", () => {
   });
 
   it("replays sanitized attachment details from the manifest", () => {
-    const materialized = materializeToolAudioDetails({
+    const materialized = materializeToolMediaDetails({
       dataDir: root,
       sessionId: "s2",
       toolCallId: "tool-2",

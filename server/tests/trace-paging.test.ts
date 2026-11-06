@@ -4,10 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { parseJsonl } from "../src/trace.js";
-import {
-  readSessionTracePageFromFile,
-  readSessionTracePageFromFiles,
-} from "../src/trace-paging.js";
+import { readSessionTracePageFromFiles } from "../src/trace-paging.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
 const timestamp = "2026-01-01T00:00:00.000Z";
@@ -88,7 +85,7 @@ describe("trace paging", () => {
       messageEntry("2", "1", "assistant", textBlock("Got it.")),
     ]);
 
-    const result = readSessionTracePageFromFile(path, {
+    const result = readSessionTracePageFromFiles([path], {
       attachmentDataDir: dataDir,
       attachmentSessionId: "s-page",
     });
@@ -103,7 +100,7 @@ describe("trace paging", () => {
   it("returns a latest page in chronological order without orphaning tool results", () => {
     const path = tempJsonl(fixtureEntries());
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 2,
       previewBytes: 8,
     });
@@ -134,7 +131,7 @@ describe("trace paging", () => {
       ...abandonedBranch,
     ]);
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       leafId: "a1",
       targetEvents: 10,
       previewBytes: 8,
@@ -157,12 +154,12 @@ describe("trace paging", () => {
       messageEntry("current-a3", "current-u3", "assistant", textBlock("latest answer")),
     ]);
 
-    const latest = readSessionTracePageFromFile(path, {
+    const latest = readSessionTracePageFromFiles([path], {
       leafId: "current-a3",
       targetEvents: 2,
       previewBytes: 8,
     });
-    const older = readSessionTracePageFromFile(path, {
+    const older = readSessionTracePageFromFiles([path], {
       cursor: latest.page.olderCursor ?? undefined,
       targetEvents: 2,
       previewBytes: 8,
@@ -176,7 +173,7 @@ describe("trace paging", () => {
   it("marks a missing explicit leaf stale instead of returning a successful empty page", () => {
     const path = tempJsonl(fixtureEntries());
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       leafId: "missing-leaf",
       targetEvents: 2,
       previewBytes: 8,
@@ -189,7 +186,7 @@ describe("trace paging", () => {
   it("uses the default target size when targetEvents is omitted", () => {
     const path = tempJsonl(fixtureEntries());
 
-    const page = readSessionTracePageFromFile(path, { previewBytes: 8 });
+    const page = readSessionTracePageFromFiles([path], { previewBytes: 8 });
 
     expect(page.trace.map((event) => event.id)).toContain("result-r1");
     expect(page.page.previewBytes).toBe(8);
@@ -207,7 +204,7 @@ describe("trace paging", () => {
     );
     const path = tempJsonl([...padding, ...fixtureEntries()]);
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       previewBytes: 8,
       maxInitialReadBytes: 1024,
@@ -247,9 +244,9 @@ describe("trace paging", () => {
 
   it("uses the older cursor to return the previous chronological page", () => {
     const path = tempJsonl(fixtureEntries());
-    const latest = readSessionTracePageFromFile(path, { targetEvents: 2, previewBytes: 8 });
+    const latest = readSessionTracePageFromFiles([path], { targetEvents: 2, previewBytes: 8 });
 
-    const older = readSessionTracePageFromFile(path, {
+    const older = readSessionTracePageFromFiles([path], {
       cursor: latest.page.olderCursor ?? undefined,
       targetEvents: 2,
       previewBytes: 8,
@@ -264,7 +261,7 @@ describe("trace paging", () => {
   it("returns a bounded page around an outline entry id", () => {
     const path = tempJsonl(fixtureEntries());
 
-    const around = readSessionTracePageFromFile(path, {
+    const around = readSessionTracePageFromFiles([path], {
       aroundEntryId: "u2",
       targetEvents: 3,
       previewBytes: 8,
@@ -280,14 +277,14 @@ describe("trace paging", () => {
   it("resolves synthetic outline ids and tool call ids to their raw JSONL entries", () => {
     const path = tempJsonl(fixtureEntries());
 
-    const textPage = readSessionTracePageFromFile(path, {
+    const textPage = readSessionTracePageFromFiles([path], {
       aroundEntryId: "a1-text-0",
       targetEvents: 1,
       previewBytes: 8,
     });
     expect(textPage.trace.map((event) => event.id)).toEqual(["a1-text-0"]);
 
-    const toolPage = readSessionTracePageFromFile(path, {
+    const toolPage = readSessionTracePageFromFiles([path], {
       aroundEntryId: "tc-1",
       targetEvents: 3,
       previewBytes: 8,
@@ -297,7 +294,7 @@ describe("trace paging", () => {
 
   it("marks a cursor stale when the boundary entry no longer matches", () => {
     const path = tempJsonl(fixtureEntries());
-    const latest = readSessionTracePageFromFile(path, { targetEvents: 2, previewBytes: 8 });
+    const latest = readSessionTracePageFromFiles([path], { targetEvents: 2, previewBytes: 8 });
 
     writeFileSync(
       path,
@@ -309,7 +306,7 @@ describe("trace paging", () => {
         .join("\n"),
     );
 
-    const older = readSessionTracePageFromFile(path, {
+    const older = readSessionTracePageFromFiles([path], {
       cursor: latest.page.olderCursor ?? undefined,
       targetEvents: 2,
       previewBytes: 8,
@@ -324,7 +321,7 @@ describe("trace paging", () => {
     const entries = fixtureEntries();
     const path = tempJsonl(entries);
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 2,
       previewBytes: 8,
     });
@@ -361,7 +358,7 @@ describe("trace paging", () => {
       }),
     ]);
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       previewBytes: 8,
       maxInitialReadBytes: 220,
@@ -409,7 +406,7 @@ describe("trace paging", () => {
       }),
     ]);
 
-    const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
+    const page = readSessionTracePageFromFiles([path], { targetEvents: 1 });
 
     expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
     expect(page.trace[1]?.lifecycleBefore).toEqual([
@@ -469,7 +466,7 @@ describe("trace paging", () => {
       }),
     ]);
 
-    const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
+    const page = readSessionTracePageFromFiles([path], { targetEvents: 1 });
 
     expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
     expect(page.trace[1]?.lifecycleBefore).toEqual([
@@ -497,7 +494,7 @@ describe("trace paging", () => {
       }),
     ]);
 
-    const page = readSessionTracePageFromFile(path, {
+    const page = readSessionTracePageFromFiles([path], {
       targetEvents: 1,
       previewBytes: 8,
     });

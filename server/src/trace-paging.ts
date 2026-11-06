@@ -98,13 +98,6 @@ const DEFAULT_PREVIEW_BYTES = 4096;
 const DEFAULT_INITIAL_READ_BYTES = 8 * 1024 * 1024;
 const LINE_READ_CHUNK_BYTES = 64 * 1024;
 
-export function readSessionTracePageFromFile(
-  jsonlPath: string,
-  options: TracePageOptions = {},
-): TracePageResult {
-  return readSessionTracePageFromFiles([jsonlPath], options);
-}
-
 /**
  * What shapes a page beyond its entries, for trace versions and cursors: the renderers, and
  * cache-miss notices, which add events.
