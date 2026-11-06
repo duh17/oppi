@@ -30,15 +30,19 @@ Workspace Settings → Skills and Extensions toggles write Pi resource settings:
 
 ## Oppi Control sessions
 
-An Oppi Control session is the workspace-less session Oppi opens for **Edit with Oppi** and the create composers ([Using Oppi](usage.md#edit-with-oppi)). Each request starts a new one; the target, the request, and any staged review comments are its first message. It runs on the server's durable engine on every server, with or without `experimental.serverDurable`, and opens in the regular chat. A server restart resumes it. The standing control conversation (`oppi control open`, `oppi control send`) is the same kind of session: one per server, created on first use.
+An Oppi Control session is the workspace-less session Oppi opens for **Edit with Oppi** and the create composers ([Using Oppi](usage.md#edit-with-oppi)). Each request starts a new one; the target, the request, and any staged review comments are its first message. It runs on the server's durable engine on every server, with or without `experimental.serverDurable`, and opens in the regular chat. A server restart resumes it.
 
 - **Prompt:** Oppi's own setup prompt, which describes Oppi's surfaces and points at these docs, and the [Mobile Output Guide](#mobile-output-guide) while it is on. It does not load your global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills, and no project context.
 - **Oppi tools:** one tool per Oppi action (`agents_list`, `agents_create`, `schedules_run`, `sessions_send`, `workspaces_get`, …) and `oppi` for any other CLI command. pi-durable's `codemode` runs scripts that call the same tools as `tools.<name>(…)`; a script resumes after a server restart without rerunning finished calls. Read tools only read.
 - **Confirm cards:** every write through the Oppi tools waits for a confirm card that says in plain words what changes: a title with the action and the item by name (`Change Agent “QA reviewer”?`), a one-line summary, each field with its old and new value (long text, and the message a write sends, as a text block or line diff; every value is shown as code, never as formatting; characters a screen cannot show, such as invisible Unicode tag characters, appear as a counted marker like `⟨45 hidden characters⟩`, and a warning says how many it shows that way, while ordinary emoji show whole; a value is never cut short), a plain warning when an update has no expected version or the current record could not be read, and last the method and path. The card comes from the request the server is about to send and the records it read, never from the model's description. A direct call offers the action's own button (**Apply Change**, **Create Agent**, **Run Schedule**, …) or **Cancel**; inside a codemode script the card also offers **Apply All in This Script**. No setting skips it. A cancelled card sends nothing.
-- **Host tools:** `read`, `bash`, `edit`, and `write`, as classic Pi Control had, for Skills, extensions, themes, Pi's global configuration, and `oppi config` and `oppi dictionary`. The session runs as the server's host user. These get no card: the prompt tells the session to say what a file edit changes and to show a command that writes and wait for your yes, which is an instruction to the model, not an enforced confirmation. `bash` can run any command, the `oppi` CLI included.
+- **Host tools:** `read`, `bash`, `edit`, and `write`, for Skills, extensions, themes, Pi's global configuration, and `oppi config` and `oppi dictionary`. The session runs as the server's host user. These get no card: the prompt tells the session to say what a file edit changes and to show a command that writes and wait for your yes, which is an instruction to the model, not an enforced confirmation. `bash` can run any command, the `oppi` CLI included.
 - **Not loaded:** Pi extensions, MCP servers, and your plugins. `ask`, `codemode`, and the tools above are the whole set.
 
-No other session gets the Oppi tools. Pi Control sessions created before this change keep their classic setup: they stay listed and resume on the classic engine with the classic setup prompt and tools (`read`, `bash`, `edit`, `write`, and `ask` when an extension provides it). Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, `intent`, `targetId`, and `targetName` fields and starts an Oppi Control session. An already-installed Mac app must be rebuilt for **Edit with Oppi**: it requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not have.
+No other session gets the Oppi tools.
+
+Pi Control sessions that older servers ran on the classic engine no longer run. At its first start, the server removes them from the session list. Before it removes one, it copies the session's record, Pi session files, and stored attachments to `$OPPI_DATA_DIR/backups/pi-control-sessions-pre-classic_pi_control_sessions_deleted_v1-<time>-<id>/<session id>/` (`session.json`, `traces/`, `attachments/`). If a copy fails, that session stays as it was, and the next start tries again.
+
+Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, `intent`, `targetId`, and `targetName` fields and starts an Oppi Control session. An already-installed Mac app must be rebuilt for **Edit with Oppi**: it requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not have.
 
 ## Mobile Output Guide
 
@@ -278,7 +282,7 @@ These packages are copyable classic Pi extensions; installing Oppi does not enab
 | `auto-name` | none | Names an unnamed session from its first message with a small model, in terminal Pi, classic sessions, and durable sessions. Shipped with Oppi and listed off; see [Auto-Name](#auto-name). |
 | `browser-automation-video` | A browser tool | Records WebM with `agent-browser`, converts it to H.264 MP4, stores it with `ctx.attachments.addFile()` when available, and returns it in `details.media[]`. |
 
-Oppi loads no `ask` tool of its own. Install or enable an extension named `ask` when a workspace or classic Pi Control session needs one.
+Oppi loads no `ask` tool of its own. Install or enable an extension named `ask` when a workspace session needs one.
 
 ## Tool-row rendering
 
