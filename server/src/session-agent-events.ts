@@ -84,15 +84,20 @@ function sameCustomContent(entry: { content?: unknown }, message: object): boole
 }
 
 export class SessionAgentEventCoordinator {
+  // Rare lifecycle events that explain incidents from server.log alone: a few
+  // hundred lines over weeks, against tens of thousands of agent_* lines.
+  private static readonly INFO_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
+    "compaction_start",
+    "compaction_end",
+    "auto_retry_start",
+    "auto_retry_end",
+  ]);
+
   // Debug only: turn telemetry (`server.turn`) already records each turn at info.
   private static readonly DEBUG_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
     "agent_settled",
-    "compaction_start",
-    "compaction_end",
-    "auto_retry_start",
-    "auto_retry_end",
     "turn_start",
     "turn_end",
     "message_end",
@@ -246,8 +251,10 @@ export class SessionAgentEventCoordinator {
       }
     }
 
-    if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
-      this.logPiEvent(active, event);
+    if (SessionAgentEventCoordinator.INFO_LOGGED_EVENT_TYPES.has(event.type)) {
+      this.logPiEvent("info", active, event);
+    } else if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
+      this.logPiEvent("debug", active, event);
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
@@ -548,10 +555,14 @@ export class SessionAgentEventCoordinator {
     return SessionAgentEventCoordinator.CHANGE_SUMMARY_TOOL_NAMES.has(toolName);
   }
 
-  private logPiEvent(active: SessionAgentEventState, event: AgentSessionEvent): void {
+  private logPiEvent(
+    level: "debug" | "info",
+    active: SessionAgentEventState,
+    event: AgentSessionEvent,
+  ): void {
     const toolName =
       "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
-    log.debug("session_agent_events.pi_event", {
+    log[level]("session_agent_events.pi_event", {
       sessionId: active.session.id,
       eventType: event.type,
       toolName,

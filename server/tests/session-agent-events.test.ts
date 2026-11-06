@@ -1,9 +1,17 @@
+import { vi } from "vitest";
+
+// The log-level test reads info lines from stderr. The pre-commit hook runs with
+// OPPI_LOG_LEVEL=error and loggers bind their level at import, so set it before imports.
+vi.hoisted(() => {
+  process.env.OPPI_LOG_LEVEL = "info";
+});
+
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 import {
   SessionAgentEventCoordinator,
@@ -525,7 +533,7 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toHaveLength(0);
   });
 
-  it("keeps lifecycle events and summary updates out of info logs", () => {
+  it("logs only rare diagnostic lifecycle events at info", () => {
     const active = makeActiveSession({ status: "busy" });
     const { coordinator } = makeCoordinator(active);
     const writes: string[] = [];
@@ -548,13 +556,25 @@ describe("SessionAgentEventCoordinator", () => {
         message: {},
         toolResults: [],
       } as unknown as SessionBackendEvent);
+      coordinator.handlePiEvent(active.session.id, {
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        errorMessage: "overloaded",
+      } as unknown as SessionBackendEvent);
     } finally {
       stderrSpy.mockRestore();
     }
 
     const output = writes.join("");
-    expect(output).not.toContain('"event":"session_agent_events.pi_event"');
+    const piEventLines = output
+      .split("\n")
+      .filter((line) => line.includes('"event":"session_agent_events.pi_event"'));
+    expect(piEventLines).toHaveLength(1);
+    expect(piEventLines[0]).toContain('"eventType":"auto_retry_start"');
     expect(output).not.toContain('"event":"session_agent_events.summary_update"');
+    expect(output).not.toContain('"eventType":"agent_start"');
     expect(output).not.toContain('"eventType":"turn_start"');
     expect(output).not.toContain('"eventType":"turn_end"');
   });
