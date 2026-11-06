@@ -192,8 +192,8 @@ export function pluginAllowedIn(
  * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
  * `builtin:tool-search` needs `builtin:mcp`), and `builtin:codemode` is pi-durable's codemode, as
  * in classic. An ID whose durable version Oppi bundles is in every session already. Any other ID
- * must belong to a Pi package whose plugin is loaded, enabled, and allowed in this runtime (the
- * selection is a sandbox's opt-in, `pluginAllowedIn`). The rest are `skipped` by name: the
+ * must belong to a Pi package whose plugin is loaded, enabled, and allowed in this runtime
+ * (`pluginAllowedIn`, with `optedIn` as a sandbox's opt-in). The rest are `skipped` by name: the
  * session starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
@@ -202,6 +202,7 @@ export function resolveDurableExtensionSelection(
   classic: ClassicExtensionIndex,
   runtime: "host" | "sandbox",
   enabled: (name: string) => boolean,
+  optedIn: readonly string[],
 ): { packages: LoadedPlugin[]; mcp: boolean; codemode: boolean; skipped: string[] } {
   const ids = new Set(extensionIds);
   const mcp = ids.has(MCP_EXTENSION_ID);
@@ -218,7 +219,7 @@ export function resolveDurableExtensionSelection(
       continue;
     if (classic.bundled.has(id)) continue;
     const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
-    if (found && pluginAllowedIn(found, runtime, [id]) && enabled(found.extension.name)) {
+    if (found && pluginAllowedIn(found, runtime, optedIn) && enabled(found.extension.name)) {
       if (!packages.includes(found)) packages.push(found);
       continue;
     }
@@ -331,6 +332,12 @@ interface DurableAgentInput {
   loaded: readonly LoadedPlugin[];
   /** A sandbox workspace's `sandboxConfig.hostExtensions`: host-only plugins it opted into. */
   hostExtensionIds?: readonly string[];
+  /**
+   * Whether the saved Agent's exact selection also opts a sandbox into the host-only plugins it
+   * names: an owner's launch does. A sandbox parent's `subagent spawn` does not, because the
+   * sandbox's model picked the Agent; only `hostExtensionIds` admit them for its child.
+   */
+  agentOptsIn?: boolean;
   classic: ClassicExtensionIndex;
   /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
   enabled: (name: string) => boolean;
@@ -392,6 +399,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
           input.classic,
           runtime,
           input.enabled,
+          [...(input.hostExtensionIds ?? []), ...(input.agentOptsIn ? extensionIds : [])],
         );
   // An exact selection without `builtin:codemode` has no codemode, as a classic one loads none.
   const base =

@@ -507,6 +507,8 @@ export class DurableBackend implements AgentBackend {
       ],
       loaded: host.runtime.loadedPackages,
       hostExtensionIds: target.hostExtensionIds,
+      // A launch through Oppi's API: whoever picked the Agent already acts on the host.
+      agentOptsIn: true,
       classic: host.runtime.classicExtensions,
       enabled: (name) => host.runtime.isExtensionEnabled(name),
       piTools: target.piTools,

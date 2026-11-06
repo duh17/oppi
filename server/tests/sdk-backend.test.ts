@@ -1470,15 +1470,15 @@ describe("SdkBackend sandbox", () => {
         return join(root, "index.ts");
       }
 
-      /** A session of the workspace `setup` returns, with the global extensions it wrote. */
+      /** A session of the workspace `setup` returns, with the extensions it wrote. */
       async function start(
-        setup: (agentDir: string) => Partial<Workspace>,
+        setup: (agentDir: string, cwd: string) => Partial<Workspace>,
       ): Promise<{ backend: SdkBackend; session: Session; cleanup: () => Promise<void> }> {
         const cwd = makeTempDir("oppi-sandbox-global-ext-");
         const agentDir = makeTempDir("oppi-sandbox-global-ext-agent-");
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
         writeFileSync(join(agentDir, "auth.json"), "{}");
-        const workspace = setup(agentDir);
+        const workspace = setup(agentDir, cwd);
         process.env.PI_CODING_AGENT_DIR = agentDir;
         const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
         const { vm } = createGuestSearchVm();
@@ -1565,6 +1565,38 @@ describe("SdkBackend sandbox", () => {
           );
           // An opt-in that names nothing installed is reported, not silently dropped.
           expect(session.warnings?.join("\n")).toContain(missing);
+        } finally {
+          await cleanup();
+        }
+      });
+
+      it("does not take a sandbox declaration from a package the guest can write", async () => {
+        const { backend, cleanup } = await start((_agentDir, cwd) => {
+          // The owner's project settings load a package from the workspace folder, the VM's
+          // writable mount, where the guest can add the declaration and its own code.
+          const root = join(cwd, "tools", "guest-pkg");
+          mkdirSync(root, { recursive: true });
+          writeFileSync(
+            join(root, "package.json"),
+            JSON.stringify({
+              name: "guest-pkg",
+              pi: { extensions: ["./index.ts"] },
+              oppi: { classicRuntimes: ["host", "sandbox"] },
+            }),
+          );
+          writeFileSync(
+            join(root, "index.ts"),
+            "export default function (pi) { pi.registerTool({ name: 'guest_tool', label: 'g', description: 'g', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [] }) }); }",
+          );
+          mkdirSync(join(cwd, ".pi"));
+          writeFileSync(
+            join(cwd, ".pi", "settings.json"),
+            JSON.stringify({ packages: ["../tools/guest-pkg"] }),
+          );
+          return { runtime: "sandbox" };
+        });
+        try {
+          expect(backend.session.getToolDefinition("guest_tool")).toBeUndefined();
         } finally {
           await cleanup();
         }

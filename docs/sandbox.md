@@ -71,9 +71,13 @@ Pi extensions and Oppi plugins run in the server process on the host. A tool of 
 | A Pi extension whose package declares `"oppi": { "classicRuntimes": ["host", "sandbox"] }`, such as `ask` | It is enabled ([Extensions](extensions.md#what-oppi-loads)) |
 | A plugin whose extension lists `"sandbox"` in `runtimes` (its commands and file access go through the VM) | It is enabled ([Plugins](extensions.md#plugins)) |
 | Any other enabled extension or plugin | The workspace's `sandboxConfig.hostExtensions` lists its extension ID |
-| An extension a saved Agent selects | The Agent's session starts: its selection is exact and replaces the rules above |
+| An extension a saved Agent selects | You start the Agent's session (from the app, `oppi`, or a host session): its selection is exact and replaces the rules above |
 
-The rules cover extensions without tools too, such as a hook that gates tool calls: opt one in to keep it in sandbox sessions. A classic session treats the workspace's own `.pi/extensions` the same way. The session's prompt names each tool of an opted-in host extension as a host tool. Children of a durable sandbox session get the same plugins.
+The rules cover extensions without tools too, such as a hook that gates tool calls: opt one in to keep it in sandbox sessions. A classic session treats the workspace's own `.pi/extensions` the same way. The session's prompt names each tool of an opted-in host extension as a host tool.
+
+A durable sandbox session's `subagent` children get the same plugins. When the sandbox session spawns a child as a saved Agent, that Agent's selection is not an opt-in, because the sandbox's model picked the Agent: the child gets a host-only plugin only when `hostExtensions` lists it.
+
+A package inside the workspace folder never counts as declaring `sandbox`, because the guest can edit its `package.json` and its code. It loads only by opt-in, and then the guest can change code that runs on the host.
 
 To opt in, take the extension's `id` from `oppi extensions list --json`. Then send the whole sandbox config with `hostExtensions` added:
 

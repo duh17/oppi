@@ -794,6 +794,44 @@ describe("plugins in a sandbox workspace", () => {
       await f.manager.stopSession(sessionId);
     }
   });
+
+  it("does not let a sandbox session give its child a host-only plugin by naming a saved Agent", async () => {
+    const hostOnly = writePackage("hostpkg");
+    const step: FauxResponseFactory = (transcript) => {
+      const last = transcript.messages.findLast((message) => message.role !== "system")!;
+      if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+      if (textOf(last).includes("CHILD_TASK")) return fauxAssistantMessage("CHILD_DONE");
+      return fauxAssistantMessage(
+        [
+          fauxToolCall("subagent", {
+            action: "spawn",
+            name: "Kid",
+            task: "CHILD_TASK",
+            agent: "Hosty",
+            wait: true,
+          }),
+        ],
+        { stopReason: "toolUse" },
+      );
+    };
+    const f = await fixture(Array.from({ length: 10 }, () => step));
+    vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    // An Agent made for host work, with no runtime constraint, selecting the host-only package.
+    f.storage.getAgentDefinitionStore().createAgent({
+      name: "Hosty",
+      resources: { extensionIds: [serverResourceId("extension", join(hostOnly, "index.ts"))] },
+    });
+    const sandbox = f.storage.updateWorkspace(f.workspace.id, { runtime: "sandbox" })!;
+
+    await f.manager.startSession(f.session.id, sandbox);
+    await prompt(f.manager, f.session.id, "Delegate");
+    const child = f.storage.listSessions().find((session) => session.name === "Kid")!;
+    const id = child.serverDurable!.conversationId as ConversationId;
+    const agent = await (await (await f.harness()).conversation(id, context))!.agent(context);
+    // The sandbox's model chose the Agent, so its selection is no opt-in; the workspace's is.
+    expect(agent.tools.map((tool) => tool.name)).not.toContain("hostpkg_version");
+    expect(child.warnings?.join("\n")).toContain("hostpkg");
+  });
 });
 
 describe("plugins on the extension list", () => {

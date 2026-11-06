@@ -260,6 +260,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
       runtime: "host" | "sandbox",
       extensionIds?: string[],
       hostExtensionIds?: string[],
+      agentOptsIn = true,
     ) =>
       resolveDurableAgent({
         saved: {
@@ -283,6 +284,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
           } as never,
         ],
         ...(hostExtensionIds ? { hostExtensionIds } : {}),
+        agentOptsIn,
         classic: { bundled: new Set(), names: new Map() },
         enabled: () => true,
         piTools: EVERY_PI_TOOL,
@@ -299,6 +301,9 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(packagesOf("sandbox", undefined, ["other.ext"])).not.toContain("host_only");
     expect(packagesOf("sandbox", undefined, [extensionId])).toContain("host_only");
     expect(packagesOf("sandbox", [extensionId])).toContain("host_only");
+    // An Agent a sandbox's model picked (`subagent spawn`) needs the workspace's opt-in.
+    expect(packagesOf("sandbox", [extensionId], [], false)).not.toContain("host_only");
+    expect(packagesOf("sandbox", [extensionId], [extensionId], false)).toContain("host_only");
     // An exact selection is exact: the workspace's opt-in does not add to it.
     expect(packagesOf("sandbox", [], [extensionId])).not.toContain("host_only");
   });

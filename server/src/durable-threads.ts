@@ -247,9 +247,12 @@ export class DurableThreads {
       runtime,
       base: agent.extensions,
       loaded: this.deps.runtime.loadedPackages,
+      // The parent's model picks `request.agent`: in a sandbox its selection admits no host-only
+      // plugin the workspace did not opt into.
       ...(runtime === "sandbox"
         ? { hostExtensionIds: workspace.sandboxConfig?.hostExtensions ?? [] }
         : {}),
+      agentOptsIn: false,
       classic: this.deps.runtime.classicExtensions,
       enabled: (name) => this.deps.runtime.isExtensionEnabled(name),
       // A child gets the Pi Tools setting's tools its parent offers.

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 import {
   DefaultPackageManager,
@@ -7,6 +7,7 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { shouldShadowSandboxWorkspacePath } from "./gondolin-manager.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX, type McpBuiltinName } from "./host-mcp-extensions.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -43,6 +44,19 @@ export function keepAutoDiscoveryOffHost(packageManager: unknown): void {
   };
 }
 
+/**
+ * Whether the sandbox guest can write `path`: its real path is in the workspace mount
+ * (`mountRoot`, canonical) and not hidden by the mount's shadow, as `.pi` is.
+ */
+function guestWritable(path: string, mountRoot: string): boolean {
+  const inside = relative(mountRoot, canonicalServerResourcePath(path));
+  if (inside.startsWith("..") || isAbsolute(inside)) return false;
+  return !shouldShadowSandboxWorkspacePath({
+    op: "write",
+    path: `/${inside.split(sep).join("/")}`,
+  });
+}
+
 /** Scopes whose extensions a sandbox may load: the owner's and the workspace's `.pi`. */
 const SANDBOX_EXTENSION_SCOPES = new Set(["user", "project"]);
 
@@ -51,11 +65,17 @@ const SANDBOX_EXTENSION_SCOPES = new Set(["user", "project"]);
  * `package.json` `"oppi": { "classicRuntimes": [...] }`, read like a durable extension's
  * `runtimes`. Absent means `["host"]`. A package adds `"sandbox"` only when its classic tools
  * act on nothing of the host (no host commands, files, or network), such as a tool that only
- * asks the user. A single-file extension has no package, so it is host-only.
+ * asks the user. A single-file extension has no package, so it is host-only. So is one whose
+ * package or entry the guest can write (`guestWritable`): the guest could add the declaration
+ * and its own code.
  */
-async function classicRuntimes(resource: ResolvedResource): Promise<readonly PluginRuntime[]> {
+async function classicRuntimes(
+  resource: ResolvedResource,
+  mountRoot: string,
+): Promise<readonly PluginRuntime[]> {
   const root = piPackageRoot(resource.path, resource.metadata);
-  if (!root) return ["host"];
+  if (!root || guestWritable(root, mountRoot) || guestWritable(resource.path, mountRoot))
+    return ["host"];
   let manifest: unknown;
   try {
     manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -112,8 +132,9 @@ export async function resolveSandboxExtensions(input: {
       !resource.path.startsWith(BUILTIN_EXTENSION_PATH_PREFIX),
   );
   const hostSide = new Set<string>();
+  const mountRoot = canonicalServerResourcePath(input.cwd);
   const sandboxSafe = async (resource: ResolvedResource): Promise<boolean> =>
-    (await classicRuntimes(resource)).includes("sandbox");
+    (await classicRuntimes(resource, mountRoot)).includes("sandbox");
 
   if (input.selectedPaths !== undefined) {
     const byPath = new Map(
