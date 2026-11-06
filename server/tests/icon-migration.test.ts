@@ -1,4 +1,12 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,6 +61,7 @@ describe("coordinated icon migration", () => {
     db.close();
 
     store = new AgentDefinitionStore(dataDir);
+    store.migrateStoredIconChoices();
     expect(store.getAgent(agent.id)).toMatchObject({
       version: 1,
       definition: { icon: { kind: "emoji", value: "🧘" } },
@@ -99,6 +108,41 @@ describe("coordinated icon migration", () => {
     });
   });
 
+  it("rewrites stored icons once per data directory", () => {
+    const storage = new Storage(dataDir);
+    const session = storage.createSession("Written after the first start");
+    const historical = JSON.stringify({ agentId: "a", agentIcon: "🧘", status: "accepted" });
+    writeLaunchMetadata(session.id, historical, { rewriteDue: false });
+
+    new Storage(dataDir);
+    expect(readLaunchMetadata(session.id)).toBe(historical);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "retries the rewrite on the next start when a workspace file could not be rewritten",
+    () => {
+      const workspacesDir = new ConfigStore(dataDir).getWorkspacesDir();
+      const path = join(workspacesDir, "locked.json");
+      const record = { id: "locked", name: "Locked", hostMount: dataDir, runtime: "host" };
+      writeFileSync(
+        path,
+        JSON.stringify({ ...record, icon: "terminal", systemPromptMode: "append" }),
+      );
+      const icon = (): unknown => JSON.parse(readFileSync(path, "utf8")).icon;
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      chmodSync(workspacesDir, 0o500);
+      try {
+        new Storage(dataDir);
+      } finally {
+        chmodSync(workspacesDir, 0o700);
+      }
+      expect(icon()).toBe("terminal");
+
+      new Storage(dataDir);
+      expect(icon()).toEqual({ kind: "symbol", name: "terminal" });
+    },
+  );
+
   it.each(["after_temp_write", "after_temp_fsync", "before_rename", "after_rename"] as const)(
     "preserves and restart-migrates a workspace after %s failure",
     (faultPhase) => {
@@ -116,18 +160,19 @@ describe("coordinated icon migration", () => {
       });
       writeFileSync(workspacePath, original, { mode: 0o600 });
 
-      new WorkspaceStore(configStore, undefined, {
+      const faulty = new WorkspaceStore(configStore, undefined, {
         faultInjector(phase: AtomicWriteStep) {
           if (phase === faultPhase) throw new Error(`injected ${phase}`);
         },
       });
+      expect(faulty.migrateStoredIconChoices()).toBe(false);
 
       expect(readFileSync(workspacePath, "utf8")).toBe(original);
       expect(
         readdirSync(configStore.getWorkspacesDir()).filter((name) => name.endsWith(".tmp")),
       ).toEqual([]);
 
-      new WorkspaceStore(configStore);
+      expect(new WorkspaceStore(configStore).migrateStoredIconChoices()).toBe(true);
       expect(JSON.parse(readFileSync(workspacePath, "utf8")).icon).toEqual({
         kind: "symbol",
         name: "terminal",
@@ -158,9 +203,9 @@ describe("coordinated icon migration", () => {
       return true;
     }) as typeof process.stderr.write);
 
-    new WorkspaceStore(configStore);
+    new WorkspaceStore(configStore).migrateStoredIconChoices();
     expect(readFileSync(workspacePath, "utf8")).toBe(bytes);
-    new WorkspaceStore(configStore);
+    new WorkspaceStore(configStore).migrateStoredIconChoices();
     expect(readFileSync(workspacePath, "utf8")).toBe(bytes);
 
     const shapeLogs = writes
@@ -296,13 +341,21 @@ describe("coordinated icon migration", () => {
     expect(restarted.getIconAssetStore().has(malformedParentAsset.assetId)).toBe(true);
   });
 
-  function writeLaunchMetadata(sessionId: string, launchJson: string): void {
+  /** By default the row is as a server from before the icon change left it: the rewrite is due. */
+  function writeLaunchMetadata(
+    sessionId: string,
+    launchJson: string,
+    { rewriteDue = true } = {},
+  ): void {
     const db = openDatabase(join(dataDir, "session-state.db"));
     try {
       db.prepare("UPDATE session_state_sessions SET launch_metadata_json = ? WHERE id = ?").run(
         launchJson,
         sessionId,
       );
+      if (rewriteDue) {
+        db.prepare("DELETE FROM app_state_migrations WHERE key = 'stored-icon-choices'").run();
+      }
     } finally {
       db.close();
     }

@@ -87,6 +87,12 @@ export class Storage {
     this.workspaceStore = new WorkspaceStore(this.configStore, (assetId) =>
       this.iconAssetStore.has(assetId),
     );
+    // The string-to-object icon change of July 2026, once per data directory.
+    this.sessionStore.runMigrationOnceSync("stored-icon-choices", () => {
+      this.sessionStore.migrateStoredIconChoices();
+      this.agentDefinitionStore.migrateStoredIconChoices();
+      return this.workspaceStore.migrateStoredIconChoices();
+    });
     if (options.migrateWorkspaceFolders) {
       this.workspaceStore.migrateMissingHostMounts();
     }

@@ -146,7 +146,6 @@ export class AgentDefinitionStore {
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
     runSessionStateDeadSchemaCleanup(this.db, resolvedDataDir);
-    this.migrateStoredIconChoices();
   }
 
   close(): void {
@@ -351,7 +350,8 @@ export class AgentDefinitionStore {
     return rows.map(agentVersionFromRow);
   }
 
-  private migrateStoredIconChoices(): void {
+  /** Rewrites historical icon values (and a removed resource field) in stored definitions. */
+  migrateStoredIconChoices(): void {
     const currentRows = this.db.prepare("SELECT * FROM agent_definitions").all() as AgentRow[];
     const versionRows = this.db
       .prepare("SELECT * FROM agent_definition_versions")

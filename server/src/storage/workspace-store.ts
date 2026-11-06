@@ -152,9 +152,7 @@ export class WorkspaceStore {
     private readonly configStore: ConfigStore,
     private readonly iconAssetExists?: (assetId: string) => boolean,
     private readonly options: WorkspaceStoreOptions = {},
-  ) {
-    this.migrateStoredIconChoices();
-  }
+  ) {}
 
   private getWorkspacePath(workspaceId: string): string {
     return join(this.configStore.getWorkspacesDir(), `${workspaceId}.json`);
@@ -492,9 +490,11 @@ export class WorkspaceStore {
     return validateIconChoice(value, { assetExists: this.iconAssetExists });
   }
 
-  private migrateStoredIconChoices(): void {
+  /** Rewrites historical icon values in workspace files. False when a file could not be rewritten. */
+  migrateStoredIconChoices(): boolean {
     const dir = this.configStore.getWorkspacesDir();
-    if (!existsSync(dir)) return;
+    if (!existsSync(dir)) return true;
+    let complete = true;
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".json")) continue;
       const path = join(dir, file);
@@ -516,12 +516,14 @@ export class WorkspaceStore {
           "icon",
         );
       } catch (err: unknown) {
+        complete = false;
         log.error("workspace_store.icon_migration.failed", {
           workspaceFilePath: path,
           error: safeErrorMessage(err),
         });
       }
     }
+    return complete;
   }
 
   deleteWorkspace(workspaceId: string): boolean {

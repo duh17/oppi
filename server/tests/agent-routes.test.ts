@@ -816,6 +816,7 @@ describe("agent routes", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
+      store.migrateStoredIconChoices();
       const updated = store.updateAgent(agent.id, { description: "Updated description" });
       expect(updated?.definition).toMatchObject({
         icon: { kind: "default" },
@@ -1308,6 +1309,7 @@ describe("agent routes", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
+      store.migrateStoredIconChoices();
       const sessions: Session[] = [];
       const ctx = {
         storage: {

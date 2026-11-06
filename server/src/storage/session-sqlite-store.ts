@@ -410,6 +410,17 @@ export class SessionSqliteStore {
     return true;
   }
 
+  /**
+   * Synchronous `runMigrationOnce` for rewrites that run while a store is being built. `run`
+   * returns false when it did not finish: that is not recorded, so the next start tries again.
+   */
+  runMigrationOnceSync(key: string, run: () => boolean): boolean {
+    ensureMigrationsTable(this.db);
+    if (hasCompletedMigration(this.db, key) || !run()) return false;
+    recordMigration(this.db, key);
+    return true;
+  }
+
   clearRestartResume(sessionId: string): void {
     this.db.prepare("DELETE FROM session_restart_resume WHERE session_id = ?").run(sessionId);
   }
@@ -486,7 +497,6 @@ export class SessionSqliteStore {
     runSessionColumnsRecordMigration(this.db, this.dataDir);
     runSessionInteractionsDrop(this.db, this.dataDir);
     this.ensureSessionIndexesAndSchemaVersion();
-    this.migrateStoredIconChoices();
   }
 
   private ensureSessionIndexesAndSchemaVersion(): void {
@@ -532,7 +542,7 @@ export class SessionSqliteStore {
   }
 
   /** Normalizes historical icon values inside stored launch metadata. */
-  private migrateStoredIconChoices(): void {
+  migrateStoredIconChoices(): void {
     const rows = this.db
       .prepare(
         "SELECT id, launch_metadata_json FROM session_state_sessions WHERE launch_metadata_json IS NOT NULL",

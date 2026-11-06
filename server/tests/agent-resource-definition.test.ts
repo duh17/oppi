@@ -89,6 +89,7 @@ describe("saved Agent resource definitions", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
+      store.migrateStoredIconChoices();
       const expectedResources = {
         skillPaths: [],
         extensionIds: [],
