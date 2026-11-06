@@ -25,6 +25,7 @@ import { splitCanonicalModelId } from "./model-resolution.js";
 import { buildSessionSummary } from "./session-summary.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { EventTags } from "./telemetry/catalog.js";
+import { classifyTurnError } from "./telemetry/turn-error-kind.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   appendSessionMessage,
@@ -104,42 +105,6 @@ function sanitizeToolName(toolName: unknown): string | undefined {
   const trimmed = toolName.trim();
   if (!SAFE_TOOL_NAME.test(trimmed)) return undefined;
   return trimmed;
-}
-
-type TurnErrorKind = NonNullable<EventTags<"server.turn">["error_kind"]>;
-
-function classifyTurnError(errorMessage: unknown): TurnErrorKind {
-  if (typeof errorMessage !== "string") return "other";
-  const message = errorMessage.toLowerCase();
-  if (message.includes("request_too_large") || message.includes("context_length")) {
-    return "request_too_large";
-  }
-  if (
-    message.includes("overloaded") ||
-    message.includes("service_unavailable") ||
-    message.includes("server is busy")
-  ) {
-    return "overloaded";
-  }
-  if (message.includes("rate_limit") || message.includes("rate limit") || message.includes("429")) {
-    return "rate_limit";
-  }
-  if (
-    message.includes("unauthorized") ||
-    message.includes("authentication") ||
-    message.includes("invalid api key") ||
-    message.includes("401") ||
-    message.includes("403")
-  ) {
-    return "auth";
-  }
-  if (message.includes("timed out") || message.includes("timeout")) return "timeout";
-  if (message.includes("connection") || message.includes("econn") || message.includes("network")) {
-    return "network";
-  }
-  if (message.includes("json") && message.includes("parse")) return "json_parse";
-  if (message.includes("terminated") || message.includes("aborted")) return "terminated";
-  return "other";
 }
 
 /** Session-configured route plus a bounded configured thinking level when known. */
@@ -279,37 +244,7 @@ export class SessionEventProcessor {
         // no more agent work remains.
         session.currentTurnStartedAt = undefined;
 
-        if (metrics) {
-          // An agent_end whose last message stopped with "error" is a failed turn.
-          const lastMsg =
-            "messages" in event && Array.isArray(event.messages)
-              ? event.messages[event.messages.length - 1]
-              : undefined;
-          const failed = Boolean(
-            lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error",
-          );
-          metrics.record(
-            "server.turn",
-            {
-              ...(active.turnStartedAt ? { duration_ms: Date.now() - active.turnStartedAt } : {}),
-              ...(active.turnToolCallCount !== undefined
-                ? { tool_calls: active.turnToolCallCount }
-                : {}),
-            },
-            {
-              ...routingTags(session),
-              status: failed ? "error" : "ok",
-              ...(failed && lastMsg
-                ? {
-                    error_kind: classifyTurnError(
-                      "errorMessage" in lastMsg ? lastMsg.errorMessage : undefined,
-                    ),
-                  }
-                : {}),
-            },
-            sessionIds(session),
-          );
-        }
+        this.recordTurnEnd(session, active, event);
 
         active.turnStartedAt = undefined;
         active.inflightToolStarts = undefined;
@@ -526,6 +461,57 @@ export class SessionEventProcessor {
     }
 
     this.deps.markSessionDirty(key);
+  }
+
+  /**
+   * An agent_end whose last message stopped with "error" is a failed turn. Both runtimes' failed
+   * turns end here, so this is the one place that can say why: the `server.turn` tag carries
+   * only the coarse kind, and the redacted text goes to the log.
+   */
+  private recordTurnEnd(
+    session: Session,
+    active: EventProcessorSessionState,
+    event: Extract<AgentSessionEvent, { type: "agent_end" }>,
+  ): void {
+    const lastMsg =
+      "messages" in event && Array.isArray(event.messages)
+        ? event.messages[event.messages.length - 1]
+        : undefined;
+    const failed = Boolean(lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error");
+    const errorMessage =
+      failed && lastMsg && "errorMessage" in lastMsg ? lastMsg.errorMessage : undefined;
+    const errorKind = failed ? classifyTurnError(errorMessage) : undefined;
+    const durationMs = active.turnStartedAt ? Date.now() - active.turnStartedAt : undefined;
+
+    if (failed) {
+      log.warn("session_events.turn_failed", {
+        sessionId: session.id,
+        ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+        runtime: sessionMetricRuntime(session),
+        ...(session.model ? { model: session.model } : {}),
+        errorKind,
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        ...(active.turnToolCallCount !== undefined ? { toolCalls: active.turnToolCallCount } : {}),
+        error:
+          typeof errorMessage === "string" && errorMessage
+            ? safeErrorMessage(errorMessage)
+            : "no error message",
+      });
+    }
+
+    this.deps.metrics?.record(
+      "server.turn",
+      {
+        ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+        ...(active.turnToolCallCount !== undefined ? { tool_calls: active.turnToolCallCount } : {}),
+      },
+      {
+        ...routingTags(session),
+        status: failed ? "error" : "ok",
+        ...(errorKind ? { error_kind: errorKind } : {}),
+      },
+      sessionIds(session),
+    );
   }
 
   private addEstimatedContextChars(

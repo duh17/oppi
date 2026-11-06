@@ -6,6 +6,23 @@ import { SessionEventProcessor, type EventProcessorSessionState } from "../src/s
 import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
 import type { Session, TelemetryEventRecord } from "../src/types.js";
 
+// The real logger and its redaction, captured at debug level whatever OPPI_LOG_LEVEL says.
+const { logLines } = vi.hoisted(() => ({ logLines: [] as string[] }));
+vi.mock("../src/logger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/logger.js")>();
+  return {
+    ...actual,
+    createLogger: (options: Parameters<typeof actual.createLogger>[0] = {}) =>
+      actual.createLogger({
+        ...options,
+        level: "debug",
+        sink: (_level, line) => {
+          logLines.push(line);
+        },
+      }),
+  };
+});
+
 function makeSession(id = "sess-1"): Session {
   const now = Date.now();
   return {
@@ -182,6 +199,55 @@ describe("SessionEventProcessor", () => {
       );
       expect(metrics.samples.every((sample) => sample.tags?.runtime === runtime)).toBe(true);
     }
+  });
+
+  it("logs why a turn failed, redacted, and logs nothing for a turn that ended well", () => {
+    const lines = logLines;
+    lines.length = 0;
+    const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
+      storage: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+    });
+    const active = makeActiveSession({
+      ...makeSession("sess-1"),
+      workspaceId: "ws-1",
+      model: "anthropic/claude-sonnet-5-5",
+    });
+    const end = (message: Record<string, unknown>) =>
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "agent_end",
+        messages: [message],
+      } as never);
+
+    processor.updateSessionFromEvent("sess-1", active, { type: "agent_start" } as never);
+    end({ stopReason: "stop" });
+    expect(lines.filter((line) => line.includes("turn_failed"))).toEqual([]);
+
+    processor.updateSessionFromEvent("sess-1", active, { type: "agent_start" } as never);
+    end({
+      stopReason: "error",
+      errorMessage: "529 overloaded, retry with Bearer abc123SECRETtoken",
+    });
+    end({ stopReason: "error" });
+
+    const failures = lines
+      .filter((line) => line.includes("session_events.turn_failed"))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toMatchObject({
+      level: "warn",
+      component: "session_events",
+      sessionId: "sess-1",
+      workspaceId: "ws-1",
+      model: "anthropic/claude-sonnet-5-5",
+      errorKind: "overloaded",
+      error: "529 overloaded, retry with Bearer [REDACTED]",
+    });
+    expect(failures[1]).toMatchObject({ errorKind: "other", error: "no error message" });
+    expect(lines.join("")).not.toContain("abc123SECRETtoken");
   });
 
   it("pairs concurrent tool calls by toolCallId and records duration plus result", () => {

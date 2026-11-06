@@ -397,6 +397,10 @@ const TAGS = {
       "config",
       "json_parse",
       "terminated",
+      // server.turn
+      "runtime_crash",
+      "http_4xx",
+      "http_5xx",
       "other",
     ],
     description:
@@ -1497,7 +1501,7 @@ const EVENTS = {
   // ─── Server: agent workload ───
   "server.turn": {
     description:
-      "How long did a full agent turn take, how many tools did it run, and did it end in an error?",
+      "How long did a full agent turn take, how many tools did it run, and did it end in an error? A failed turn's error_kind names the cause: context overflow, provider status class, network, abort, or a crashed agent runtime process.",
     group: "workload",
     fields: { duration_ms: OPT_MS, tool_calls: OPT_COUNT },
     tags: {
@@ -1511,8 +1515,12 @@ const EVENTS = {
           "auth",
           "timeout",
           "network",
+          "cancelled",
           "json_parse",
           "terminated",
+          "runtime_crash",
+          "http_4xx",
+          "http_5xx",
           "other",
         ],
       },

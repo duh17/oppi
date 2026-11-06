@@ -292,6 +292,9 @@ enum TelemetryTag {
         case config
         case jsonParse = "json_parse"
         case terminated
+        case runtimeCrash = "runtime_crash"
+        case http4xx = "http_4xx"
+        case http5xx = "http_5xx"
         case other
     }
 
