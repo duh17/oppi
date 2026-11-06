@@ -24,7 +24,6 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
-  workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
   oppiDocsPrompt: { type: "json", desc: "Oppi docs prompt config JSON object" },

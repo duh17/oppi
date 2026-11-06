@@ -14,7 +14,6 @@ const TEST_CONFIG: ServerConfig = {
   host: "127.0.0.1",
   dataDir: "/tmp/oppi-session-start-tests",
   sessionIdleTimeoutMs: 600_000,
-  workspaceIdleTimeoutMs: 1_800_000,
   maxSessionsPerWorkspace: 10,
   maxSessionsGlobal: 20,
 };
@@ -69,7 +68,6 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
       maxSessionsPerWorkspace: 20,
       maxSessionsGlobal: 40,
       sessionIdleTimeoutMs: 600_000,
-      workspaceIdleTimeoutMs: 1_800_000,
     })),
   } as unknown as WorkspaceRuntime;
 

@@ -24,14 +24,12 @@ export interface RuntimeLimits {
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
   sessionIdleTimeoutMs: number;
-  workspaceIdleTimeoutMs: number;
 }
 
 const DEFAULTS: RuntimeLimits = {
   maxSessionsPerWorkspace: 100,
   maxSessionsGlobal: 200,
   sessionIdleTimeoutMs: 10 * 60_000, // 10 min
-  workspaceIdleTimeoutMs: 30 * 60_000, // 30 min
 };
 
 /** Extract runtime limits from ServerConfig, applying defaults. */
@@ -40,7 +38,6 @@ export function resolveRuntimeLimits(config: ServerConfig): RuntimeLimits {
     maxSessionsPerWorkspace: config.maxSessionsPerWorkspace ?? DEFAULTS.maxSessionsPerWorkspace,
     maxSessionsGlobal: config.maxSessionsGlobal ?? DEFAULTS.maxSessionsGlobal,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs ?? DEFAULTS.sessionIdleTimeoutMs,
-    workspaceIdleTimeoutMs: config.workspaceIdleTimeoutMs ?? DEFAULTS.workspaceIdleTimeoutMs,
   };
 }
 

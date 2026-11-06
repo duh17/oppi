@@ -169,7 +169,6 @@ describe("Storage config validation", () => {
       host: "0.0.0.0",
       dataDir: dir,
       sessionIdleTimeoutMs: 600_000,
-      workspaceIdleTimeoutMs: 1_800_000,
       maxSessionsPerWorkspace: 3,
       maxSessionsGlobal: 5,
     };
@@ -770,6 +769,32 @@ describe("Storage config validation", () => {
     expect(storage.getConfig()).not.toHaveProperty("extensions");
     const onDisk = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
     expect(onDisk).not.toHaveProperty("extensions");
+    expect(onDisk.port).toBe(9123);
+  });
+
+  it("loads a config with the retired workspaceIdleTimeoutMs key and drops it from disk", () => {
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...Storage.getDefaultConfig(dir),
+        port: 9123,
+        workspaceIdleTimeoutMs: 1_800_000,
+      }),
+    );
+
+    // `oppi config validate` is strict; a file written by an older server must still pass it.
+    const strict = Storage.validateConfigFile(configPath, dir);
+    expect(strict.valid).toBe(true);
+    expect(strict.warnings).toContain(
+      "config.workspaceIdleTimeoutMs: ignored; Oppi no longer reads it",
+    );
+
+    const storage = new Storage(dir);
+    expect(storage.getConfig().port).toBe(9123);
+    expect(storage.getConfig()).not.toHaveProperty("workspaceIdleTimeoutMs");
+    const onDisk = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    expect(onDisk).not.toHaveProperty("workspaceIdleTimeoutMs");
     expect(onDisk.port).toBe(9123);
   });
 

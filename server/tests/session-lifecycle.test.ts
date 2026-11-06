@@ -45,7 +45,6 @@ const TEST_CONFIG: ServerConfig = {
   host: "127.0.0.1",
   dataDir: "/tmp/oppi-lifecycle-tests",
   sessionIdleTimeoutMs: 600_000,
-  workspaceIdleTimeoutMs: 1_800_000,
   maxSessionsPerWorkspace: 3,
   maxSessionsGlobal: 5,
 };

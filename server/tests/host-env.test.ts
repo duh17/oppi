@@ -19,7 +19,6 @@ function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     host: "127.0.0.1",
     dataDir: "/tmp/oppi-test",
     sessionIdleTimeoutMs: 1,
-    workspaceIdleTimeoutMs: 1,
     maxSessionsPerWorkspace: 1,
     maxSessionsGlobal: 1,
     runtimePathEntries: [],

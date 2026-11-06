@@ -5,7 +5,6 @@ const LIMITS = {
   maxSessionsPerWorkspace: 3,
   maxSessionsGlobal: 5,
   sessionIdleTimeoutMs: 10 * 60_000,
-  workspaceIdleTimeoutMs: 30 * 60_000,
 };
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

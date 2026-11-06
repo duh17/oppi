@@ -90,7 +90,6 @@ export interface ServerConfig {
   host: string;
   dataDir: string;
   sessionIdleTimeoutMs: number;
-  workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
 

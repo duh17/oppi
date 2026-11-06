@@ -61,7 +61,6 @@ function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     host: "127.0.0.1",
     dataDir: "/tmp/oppi-test",
     sessionIdleTimeoutMs: 600_000,
-    workspaceIdleTimeoutMs: 1_800_000,
     maxSessionsPerWorkspace: 3,
     maxSessionsGlobal: 5,
     ...overrides,
@@ -949,7 +948,7 @@ describe("prepareTlsForServer", () => {
         workerPath,
         `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
           `const dataDir = ${JSON.stringify(tmpDir)};\n` +
-          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
       );
       const env = {
         ...process.env,
@@ -989,7 +988,7 @@ describe("prepareTlsForServer", () => {
         workerPath,
         `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
           `const dataDir = ${JSON.stringify(tmpDir)};\n` +
-          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
       );
       const baseEnv = {
         ...process.env,
@@ -1088,7 +1087,7 @@ describe("prepareTlsForServer", () => {
         workerPath,
         `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
           `const dataDir = ${JSON.stringify(tmpDir)};\n` +
-          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
       );
       const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
       writeFileSync(join(fakeBinDir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
@@ -1135,7 +1134,7 @@ describe("prepareTlsForServer", () => {
         workerPath,
         `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
           `const dataDir = ${JSON.stringify(tmpDir)};\n` +
-          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
       );
       const env = {
         ...process.env,

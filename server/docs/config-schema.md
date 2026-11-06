@@ -43,11 +43,10 @@ Configure the machine-wide fallback in Pi settings, for example in `~/.pi/agent/
 | Setting                   | Type   | Default   | Description                                                                                   |
 | ------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------- |
 | `sessionIdleTimeoutMs`    | number | `600000`  | Stop sessions after this many ms of inactivity. 600000 = 10 min. Min: 1.                      |
-| `workspaceIdleTimeoutMs`  | number | `1800000` | Stop workspace runtimes after this many ms with no active sessions. 1800000 = 30 min. Min: 1. |
 | `maxSessionsPerWorkspace` | number | `100`     | Max concurrent sessions in a single workspace. Min: 1.                                        |
 | `maxSessionsGlobal`       | number | `200`     | Max concurrent sessions across all workspaces. Min: 1.                                        |
 
-Use `sessionIdleTimeoutMs` in config files.
+Use `sessionIdleTimeoutMs` in config files. `workspaceIdleTimeoutMs` is retired: it never stopped anything. A file that still sets it validates, and the server removes the key the next time it loads the file.
 
 ### Oppi docs prompt
 
@@ -184,7 +183,6 @@ Extensions own approval behavior. When a session needs approval before an action
   "host": "0.0.0.0",
   "dataDir": "/Users/you/.config/oppi",
   "sessionIdleTimeoutMs": 600000,
-  "workspaceIdleTimeoutMs": 1800000,
   "maxSessionsPerWorkspace": 100,
   "maxSessionsGlobal": 200,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],

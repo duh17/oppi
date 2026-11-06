@@ -205,7 +205,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     host: "0.0.0.0",
     dataDir,
     sessionIdleTimeoutMs: 10 * 60 * 1000,
-    workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 100,
     maxSessionsGlobal: 200,
 
@@ -270,7 +269,6 @@ function normalizeConfig(
     "host",
     "dataDir",
     "sessionIdleTimeoutMs",
-    "workspaceIdleTimeoutMs",
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
     "runtimePathEntries",
@@ -299,9 +297,10 @@ function normalizeConfig(
     "images",
     "uploadStore",
   ]);
-  // `extensions` held only `voice.defaultVoiceId`, which nothing read. Older
-  // files keep validating, even strictly; load drops the key on rewrite.
-  const retiredTopLevelKeys = new Set(["extensions"]);
+  // `extensions` held only `voice.defaultVoiceId`, and `workspaceIdleTimeoutMs`
+  // was parsed but never read; nothing uses either. Older files keep validating,
+  // even strictly; load drops the key on rewrite.
+  const retiredTopLevelKeys = new Set(["extensions", "workspaceIdleTimeoutMs"]);
 
   for (const key of retiredTopLevelKeys) {
     if (key in obj) {
@@ -451,11 +450,6 @@ function normalizeConfig(
   const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 });
   if (sessionIdleTimeoutMs !== undefined) {
     config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
-  }
-
-  const workspaceIdleTimeoutMs = readNumber("workspaceIdleTimeoutMs", { min: 1 });
-  if (workspaceIdleTimeoutMs !== undefined) {
-    config.workspaceIdleTimeoutMs = workspaceIdleTimeoutMs;
   }
 
   const maxSessionsPerWorkspace = readNumber("maxSessionsPerWorkspace", { min: 1 });

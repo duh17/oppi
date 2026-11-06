@@ -7,7 +7,6 @@ describe("WorkspaceRuntime session limits", () => {
       maxSessionsPerWorkspace: 2,
       maxSessionsGlobal: 10,
       sessionIdleTimeoutMs: 10 * 60_000,
-      workspaceIdleTimeoutMs: 30 * 60_000,
     });
 
     runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s1" });
@@ -29,7 +28,6 @@ describe("WorkspaceRuntime session limits", () => {
       maxSessionsPerWorkspace: 5,
       maxSessionsGlobal: 2,
       sessionIdleTimeoutMs: 10 * 60_000,
-      workspaceIdleTimeoutMs: 30 * 60_000,
     });
 
     runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s1" });
