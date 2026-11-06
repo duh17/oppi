@@ -75,10 +75,12 @@ import {
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import {
+  HeldInputDelivery,
   queueOrphanedSessionsForRestart,
   recordLiveSessionsForRestart,
   resumeSessionsAfterRestart,
 } from "./session-restart-resume.js";
+import { ServerDrain } from "./server-drain.js";
 
 import { PushSender } from "./push/push-sender.js";
 
@@ -530,10 +532,15 @@ export class Server {
   /** The upload GC pass in flight; stop() waits for it so nothing writes after stop(). */
   private uploadGcInFlight: Promise<void> | undefined;
   private scheduleRunner!: AgentScheduleRunner;
+  /** Drain-then-restart (server-drain.ts) and delivery of the input it held. */
+  private readonly drain: ServerDrain;
+  private readonly heldDelivery: HeldInputDelivery;
 
   constructor(
     storage: Storage,
     options?: {
+      /** Restart this process after a drain (`POST /server/restart`). */
+      onDrainedRestart?: (mode: ServerRestartMode) => void;
       onRestartAfterUpdate?: (mode: ServerRestartMode, targetVersion: string) => void;
       restartNeededVersion?: string;
       /** Package directory the update service inspects; defaults to the running package. */
@@ -580,6 +587,20 @@ export class Server {
       state: new FileLiveActivityStateStore(liveActivityStatePath(dataDir)),
     });
     this.sessions = new SessionManager(storage, this.opsMetrics);
+    this.drain = new ServerDrain({
+      busySessions: () => this.sessions.restartHold.drainSessions(),
+      heldInputCount: () => this.storage.listHeldInputs().length,
+      announce: (text) => this.sessions.restartHold.announce(text),
+      restart: options?.onDrainedRestart,
+      onCancelled: () => this.heldDelivery.start(this.restartLifecycle()),
+    });
+    this.sessions.restartHold.drain = this.drain;
+    this.heldDelivery = new HeldInputDelivery({
+      storage,
+      isActive: (sessionId) => this.sessions.isActive(sessionId),
+      deliver: (sessionId) => this.sessions.restartHold.deliver(sessionId),
+      paused: () => this.drain.isDraining,
+    });
     this.serverResources = new ServerResourceService({
       dataDir,
       agentDir: getAgentDir(),
@@ -780,6 +801,7 @@ export class Server {
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       appEvents: this.appEventStreamMux,
       metrics: this.opsMetrics,
+      dispatchPaused: () => this.drain.isDraining,
     });
 
     this.localApiSocket = localApiSocketPath(dataDir);
@@ -963,6 +985,7 @@ export class Server {
       piVersion: Server.readEmbeddedPiAgentVersion(),
       piCliVersion: optionalPiCliVersion(Server.readPiCliVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
+      serverRestart: this.drain,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
       endLiveActivityCard: (deviceId) =>
         this.liveActivityNotifier.endCardOf(deviceId, LIVE_ACTIVITY_REVOKE_END_MS),
@@ -1174,6 +1197,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.drain.dispose();
     this.stopUploadGcLoop();
     this.voiceCallController.dispose();
     this.pairing.dispose();
@@ -1208,11 +1232,12 @@ export class Server {
         clearTimeout(timer);
         if (!settled) log.warn("session_restart.drain_timeout", { ms: RESTART_RESUME_DRAIN_MS });
       }
+      await this.heldDelivery.stop();
       try {
         recordLiveSessionsForRestart(
           this.storage,
           this.liveSessions(),
-          this.sessions.getSessionIdsLosingWorkOnRestart(),
+          this.sessions.restartHold.sessionIdsLosingWork(),
         );
       } catch (error: unknown) {
         // Losing the resume record must not keep sessions running past shutdown.
@@ -1381,24 +1406,30 @@ export class Server {
     return sessions;
   }
 
-  private resumeSessionsAfterRestartInBackground(): void {
-    const lifecycle = new SessionLifecycleService({
+  private restartLifecycle(): SessionLifecycleService {
+    return new SessionLifecycleService({
       storage: this.storage,
       sessions: this.sessions,
       sessionRuntimes: this.sessionRuntimes,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       deleteSearchIndexSession: (sessionId) => this.searchIndex?.deleteSession(sessionId),
     });
+  }
+
+  private resumeSessionsAfterRestartInBackground(): void {
+    const lifecycle = this.restartLifecycle();
     const state = { cancelled: false, done: Promise.resolve() };
     state.done = resumeSessionsAfterRestart({
       storage: this.storage,
       lifecycle,
       sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
       sendFollowUp: (sessionId, text) => this.sessions.sendFollowUp(sessionId, text),
-      reportsLostWork: (sessionId) => this.sessions.reportsLostWork(sessionId),
+      reportsLostWork: (sessionId) => this.sessions.restartHold.reportsLostWork(sessionId),
       cancelled: () => state.cancelled,
     }).then(
-      () => undefined,
+      () => {
+        if (!state.cancelled) this.heldDelivery.start(lifecycle);
+      },
       (err: unknown) => {
         log.error("session_restart.resume_crashed", { error: safeErrorMessage(err) });
       },

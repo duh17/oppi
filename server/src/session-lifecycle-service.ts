@@ -142,6 +142,7 @@ export interface SessionLifecycleServiceDeps {
     | "claimSessionLaunchRecovery"
     | "createSession"
     | "deleteSession"
+    | "clearHeldInputs"
     | "clearRestartResume"
     | "getDataDir"
     | "getSession"
@@ -160,7 +161,7 @@ export interface SessionLifecycleServiceDeps {
         clientTurnId?: string;
         requestId?: string;
       },
-    ): Promise<void>;
+    ): Promise<unknown>;
     runCommand(sessionId: string, command: Record<string, unknown>): Promise<unknown>;
     forkServerDurableConversation(sessionId: string, entryId: string): Promise<number | undefined>;
     deleteUnusedServerDurableStore(storeId: string): Promise<boolean>;
@@ -825,8 +826,9 @@ export class SessionLifecycleService {
 
   async stopSession(session: Session): Promise<StopSessionResult> {
     // An explicit stop outranks a pending post-restart resume, including for
-    // a session that is not running yet.
+    // a session that is not running yet, and withdraws messages held for after it.
     this.deps.storage.clearRestartResume(session.id);
+    this.deps.storage.clearHeldInputs(session.id);
     const hydratedSession = this.deps.ensureSessionContextWindow(session);
     let storedStopOnly = false;
     const markStoredSessionStopped = (reason?: string): void => {

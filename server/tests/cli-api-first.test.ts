@@ -461,10 +461,12 @@ describe("CLI app-state API boundary", () => {
         const commandBodies = requests
           .filter((request) => request.path === "/sessions/sess-1/command")
           .map((request) => request.body);
+        const anyId = expect.any(String) as unknown as string;
         expect(commandBodies).toEqual([
-          { type: "prompt", message: "default", streamingBehavior: "steer" },
-          { type: "prompt", message: "hi", streamingBehavior: "steer" },
-          { type: "prompt", message: "later", streamingBehavior: "followUp" },
+          // Without --turn-id each send still carries a request id, so its result comes back.
+          { type: "prompt", message: "default", requestId: anyId, streamingBehavior: "steer" },
+          { type: "prompt", message: "hi", requestId: anyId, streamingBehavior: "steer" },
+          { type: "prompt", message: "later", requestId: anyId, streamingBehavior: "followUp" },
           {
             type: "prompt",
             message: "again",
@@ -654,6 +656,7 @@ describe("CLI app-state API boundary", () => {
         ).toEqual({
           type: "prompt",
           message: "message piped over stdin\n",
+          requestId: expect.any(String),
           streamingBehavior: "steer",
         });
       },

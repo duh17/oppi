@@ -5,6 +5,7 @@ import {
   runtimeCommandSuccess,
   type AgentRuntimeCommandTransport,
   type AgentRuntimeEventTransport,
+  type HeldTurnInput,
 } from "./agent-runtime-transport.js";
 import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
 import { buildExtensionUISettledMessage } from "./extension-ui-contract.js";
@@ -614,7 +615,7 @@ export class WsMessageHandler {
         clientTurnId?: string;
         requestId?: string;
       },
-    ) => Promise<void>,
+    ) => Promise<void | HeldTurnInput>,
     meta: WsCommandMeta,
   ): Promise<void> {
     const startedAt = Date.now();
@@ -657,14 +658,14 @@ export class WsMessageHandler {
     });
 
     try {
-      await handler(session.id, msg.message, {
+      const held = await handler(session.id, msg.message, {
         attachments,
         clientTurnId: msg.clientTurnId,
         requestId,
       });
 
       if (requestId) {
-        send(runtimeCommandSuccess(command, requestId));
+        send(runtimeCommandSuccess(command, requestId, held ?? undefined));
       }
 
       log.info("ws.turn_command.completed", {

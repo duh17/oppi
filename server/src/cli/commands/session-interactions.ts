@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { LocalApiRequestOptions } from "../local-api-client.js";
 import { writeHumanLine } from "../output.js";
 
@@ -47,7 +49,9 @@ export async function sendSessionInput(
     body: {
       type: "prompt",
       message: text,
-      ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
+      // A request id makes the server answer with the command's result, held or refused.
+      requestId: turnId ?? randomUUID(),
+      ...(turnId ? { clientTurnId: turnId } : {}),
       streamingBehavior: STREAMING_BEHAVIOR[commandType],
     },
   });
@@ -64,5 +68,26 @@ export function assertNoCommandError(result: Record<string, unknown>): void {
       const errorText = (message as { error?: unknown }).error;
       throw new Error(typeof errorText === "string" ? errorText : "Session command was rejected");
     }
+    if (
+      message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "command_result" &&
+      (message as { success?: unknown }).success === false
+    ) {
+      const errorText = (message as { error?: unknown }).error;
+      throw new Error(typeof errorText === "string" ? errorText : "Session command was rejected");
+    }
   }
+}
+
+/** Whether the server held the input for after a pending restart (`oppi server restart --drain`). */
+export function heldForRestart(result: Record<string, unknown>): boolean {
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return messages.some(
+    (message) =>
+      message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "command_result" &&
+      ((message as { data?: { held?: unknown } }).data?.held ?? undefined) === "server_restart",
+  );
 }

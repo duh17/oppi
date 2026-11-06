@@ -312,6 +312,7 @@ describe("sessions module", () => {
         getSession: vi.fn(() => session),
         saveSession,
         clearRestartResume: vi.fn(),
+        clearHeldInputs: vi.fn(() => 0),
       },
       sessionRuntimes: {
         isSessionConnected: vi.fn(() => false),
@@ -1817,6 +1818,7 @@ describe("sessions module", () => {
       storage: {
         getSession: vi.fn(() => session),
         clearRestartResume: vi.fn(),
+        clearHeldInputs: vi.fn(() => 0),
       },
       sessionRuntimes: {
         sendSteer,

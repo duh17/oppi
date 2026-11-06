@@ -14,6 +14,8 @@ import { EventEmitter } from "node:events";
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
+import type { HeldTurnInput } from "./agent-runtime-transport.js";
+import { SessionRestartHold } from "./session-restart-hold.js";
 import type {
   ChatAttachmentRef,
   ConversationStreamAttach,
@@ -126,6 +128,16 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server: the agent side of Live Voice calls (the `speak` tool). */
   liveVoiceSpeech: LiveVoiceSpeech | null = null;
+
+  /** The session side of server restarts (session-restart-hold.ts). */
+  readonly restartHold = new SessionRestartHold({
+    storage: () => this.storage,
+    liveSessions: () => this.active.values(),
+    liveSession: (sessionId) => this.active.get(this.sessionKey(sessionId)),
+    emit: (sessionId, event) => this.handlePiEvent(this.sessionKey(sessionId), event),
+    broadcast: (sessionId, message) => this.broadcast(this.sessionKey(sessionId), message),
+    sendPrompt: (sessionId, message, opts) => this.sendPrompt(sessionId, message, opts),
+  });
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
@@ -478,7 +490,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       requestId?: string;
       timestamp?: number;
     },
-  ): Promise<void> {
+  ): Promise<void | HeldTurnInput> {
+    const held = this.restartHold.hold(sessionId, message, opts);
+    if (held) return held;
     const key = this.sessionKey(sessionId);
     await this.inputCoordinator.sendPrompt(key, message, {
       ...opts,
@@ -530,7 +544,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       clientTurnId?: string;
       requestId?: string;
     },
-  ): Promise<void> {
+  ): Promise<void | HeldTurnInput> {
+    const held = this.restartHold.hold(sessionId, message, opts, true);
+    if (held) return held;
     const key = this.sessionKey(sessionId);
     await this.inputCoordinator.sendFollowUp(key, message, opts);
     this.claimFromRestartResume(sessionId);
@@ -883,6 +899,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     requestId?: string,
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
+    if (this.restartHold.refuseCommand(sessionId, message, requestId)) return;
     await this.commandCoordinator.forwardClientCommand(
       key,
       message,
@@ -1381,20 +1398,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(this.sessionKey(sessionId))?.session;
-  }
-
-  /** Live sessions waiting on work that dies with this server process (see restart resume). */
-  getSessionIdsLosingWorkOnRestart(): Set<string> {
-    const ids = new Set<string>();
-    for (const active of this.active.values()) {
-      if (active.sdkBackend.holdsWorkLostOnRestart) ids.add(active.session.id);
-    }
-    return ids;
-  }
-
-  /** Whether a live session holds a notice about work an earlier process lost (see restart resume). */
-  reportsLostWork(sessionId: string): boolean {
-    return this.active.get(this.sessionKey(sessionId))?.sdkBackend.reportsLostWork ?? false;
   }
 
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */

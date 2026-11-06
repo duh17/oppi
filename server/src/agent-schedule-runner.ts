@@ -23,6 +23,11 @@ export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
   limit?: number;
   ownerId?: string;
   metrics?: ServerTelemetry;
+  /**
+   * True while the server drains for a restart: due runs are still recorded, and the first
+   * tick after the restart dispatches them.
+   */
+  dispatchPaused?: () => boolean;
 }
 
 export class AgentScheduleRunner {
@@ -67,6 +72,7 @@ export class AgentScheduleRunner {
       try {
         const now = this.nowMs();
         this.materializeDueRuns(now);
+        if (this.deps.dispatchPaused?.()) return;
         await this.dispatchReadyRuns();
       } catch (error) {
         log.error("agent_schedule_runner.tick.failed", { error: safeErrorMessage(error) });

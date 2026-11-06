@@ -149,6 +149,35 @@ describe("agent schedule runner", () => {
     expect(store.listRuns(schedule.id)).toHaveLength(1);
   });
 
+  it("records a due run during a restart drain and dispatches it after", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Morning check",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: action(),
+      },
+      500,
+    );
+    let draining = true;
+    const deps = {
+      storage: storage(),
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session: Session) => session,
+      nowMs: () => 2_000,
+      dispatchPaused: () => draining,
+    };
+
+    await new AgentScheduleRunner(deps).runOnce();
+    expect(startSession).not.toHaveBeenCalled();
+    expect(store.listRuns(schedule.id).map((run) => run.status)).toEqual(["pending"]);
+
+    // The restarted server's first tick.
+    draining = false;
+    await new AgentScheduleRunner(deps).runOnce();
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(store.listRuns(schedule.id).map((run) => run.status)).toEqual(["completed"]);
+  });
+
   it("drains the active dispatch and starts no more work after stop", async () => {
     const scheduleIds: string[] = [];
     for (const name of ["First", "Second"]) {

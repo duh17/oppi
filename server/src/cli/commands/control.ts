@@ -7,7 +7,7 @@ import type { LocalApiConnection } from "../local-api-client.js";
 import { attributeManagedSessionMessage } from "../managed-session-message.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { codeValue, printDetails, writeHumanLine } from "../output.js";
-import { assertNoCommandError, sendSessionInput } from "./session-interactions.js";
+import { assertNoCommandError, heldForRestart, sendSessionInput } from "./session-interactions.js";
 import { resolvePromptInput } from "./session.js";
 
 export interface ControlCliCallerContext {
@@ -78,8 +78,20 @@ export async function cmdControl(
     const turnId = randomUUID();
     const result = await sendSessionInput(session.id, "prompt", text, call, turnId);
     assertNoCommandError(result);
-    output({ session_id: session.id, conversation_id: conversationId, turn_id: turnId }, () =>
-      writeHumanLine(`prompt sent → ${session.id} (turn ${turnId})`),
+    const held = heldForRestart(result);
+    output(
+      {
+        session_id: session.id,
+        conversation_id: conversationId,
+        turn_id: turnId,
+        ...(held ? { held: "server_restart" } : {}),
+      },
+      () =>
+        writeHumanLine(
+          held
+            ? `prompt held until the server restarts → ${session.id} (turn ${turnId})`
+            : `prompt sent → ${session.id} (turn ${turnId})`,
+        ),
     );
   } catch (err: unknown) {
     if (callerContext.signal?.aborted) throw err;

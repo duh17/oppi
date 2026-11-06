@@ -496,7 +496,10 @@ export class LiveVoiceSessionLink {
   private media: LiveVoiceCallMedia | null = null;
 
   constructor(
-    private readonly sendPrompt: (sessionId: string, delegation: VoiceDelegation) => Promise<void>,
+    private readonly sendPrompt: (
+      sessionId: string,
+      delegation: VoiceDelegation,
+    ) => Promise<unknown>,
   ) {
     this.speech = new LiveVoiceSpeech({
       speak: (sessionId, text) => {

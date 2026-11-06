@@ -64,6 +64,14 @@ export interface RuntimeQueuedInputOptions {
 
 export type RuntimeCommandResultMessage = Extract<ServerMessage, { type: "command_result" }>;
 
+/**
+ * A turn input stored instead of run because the server is draining for a restart. It runs
+ * after the restart; its `command_result` carries this as `data`.
+ */
+export interface HeldTurnInput {
+  held: "server_restart";
+}
+
 export function runtimeCommandSuccess(
   command: string,
   requestId: string | undefined,
@@ -206,9 +214,17 @@ function asNonEmptyString(value: unknown): string | undefined {
  * AgentSession object.
  */
 export interface AgentRuntimeCommandTransport {
-  sendPrompt(sessionId: string, message: string, opts: RuntimePromptOptions): Promise<void>;
+  sendPrompt(
+    sessionId: string,
+    message: string,
+    opts: RuntimePromptOptions,
+  ): Promise<void | HeldTurnInput>;
   sendSteer(sessionId: string, message: string, opts: RuntimeQueuedInputOptions): Promise<void>;
-  sendFollowUp(sessionId: string, message: string, opts: RuntimeQueuedInputOptions): Promise<void>;
+  sendFollowUp(
+    sessionId: string,
+    message: string,
+    opts: RuntimeQueuedInputOptions,
+  ): Promise<void | HeldTurnInput>;
   getMessageQueue(sessionId: string): MessageQueueState | Promise<MessageQueueState>;
   removeQueuedMessage(sessionId: string, itemId: string): Promise<MessageQueueState>;
   takeMessageQueue(sessionId: string): Promise<MessageQueueState>;

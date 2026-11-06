@@ -237,6 +237,31 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/server/restart",
+    operationId: "getServerRestart",
+    surface: "admin",
+    auth: "owner",
+    description: "Read the pending drain-then-restart, if any",
+  },
+  {
+    method: "POST",
+    path: "/server/restart",
+    operationId: "restartServerWhenIdle",
+    surface: "admin",
+    auth: "owner",
+    description:
+      "Restart this server once running turns finish; new prompts are held until after it",
+  },
+  {
+    method: "DELETE",
+    path: "/server/restart",
+    operationId: "cancelServerRestart",
+    surface: "admin",
+    auth: "owner",
+    description: "Cancel a pending drain-then-restart and deliver what it held",
+  },
+  {
+    method: "GET",
     path: "/server/mobile-output-guide",
     operationId: "getMobileOutputGuide",
     surface: "admin",

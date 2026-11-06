@@ -45,6 +45,7 @@ import {
 import { attributeManagedSessionMessage } from "../managed-session-message.js";
 import {
   assertNoCommandError,
+  heldForRestart,
   printSessionNotice,
   resolveSendStreamingKind,
   sendSessionInput,
@@ -168,8 +169,15 @@ export async function cmdSession(
       const commandType = resolveSendStreamingKind(flags) ?? "prompt";
       const result = await sendSessionInput(id, commandType, text, call, flags["turn-id"]);
       assertNoCommandError(result);
-      output({ session_id: id, command: commandType }, () =>
-        printSessionNotice(`${commandType} sent → ${id}`),
+      const held = heldForRestart(result);
+      output(
+        { session_id: id, command: commandType, ...(held ? { held: "server_restart" } : {}) },
+        () =>
+          printSessionNotice(
+            held
+              ? `${commandType} held until the server restarts → ${id}`
+              : `${commandType} sent → ${id}`,
+          ),
       );
       return;
     }

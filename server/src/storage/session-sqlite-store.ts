@@ -5,7 +5,7 @@ import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type { Session } from "../types.js";
+import type { ChatAttachmentRef, Session } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import {
   createSessionStateSessionsTable,
@@ -90,6 +90,20 @@ export interface RestartResumeEntry {
   sessionId: string;
   /** Mid-turn when the previous process ended; the resume sends a continuation. */
   wasBusy: boolean;
+}
+
+/**
+ * A message a session received while the server drained for a restart. It is delivered to the
+ * session after the restart (or when the drain is cancelled), oldest first.
+ */
+export interface HeldInput {
+  id: number;
+  sessionId: string;
+  message: string;
+  attachments?: ChatAttachmentRef[];
+  /** The sender's turn id: a resend of the same turn is held once, and Durable dedupes delivery. */
+  clientTurnId?: string;
+  heldAt: number;
 }
 
 /** Everything `buildSession` decodes. The launch CAS columns are read only by their queries. */
@@ -349,6 +363,7 @@ export class SessionSqliteStore {
   }
 
   deleteSession(sessionId: string): boolean {
+    this.clearHeldInputs(sessionId);
     const result = this.stmtDelete.run(sessionId) as { changes?: number };
     this.cache?.delete(sessionId);
     return (result.changes ?? 0) > 0;
@@ -400,6 +415,63 @@ export class SessionSqliteStore {
     this.db.prepare("DELETE FROM session_restart_resume WHERE session_id = ?").run(sessionId);
   }
 
+  /** Hold one input for after the restart. False when this turn id is already held. */
+  holdInput(input: Omit<HeldInput, "id">): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO session_held_input
+           (session_id, message, attachments_json, client_turn_id, held_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.sessionId,
+        input.message,
+        input.attachments?.length ? JSON.stringify(input.attachments) : null,
+        input.clientTurnId ?? null,
+        input.heldAt,
+      ) as { changes?: number };
+    return (result.changes ?? 0) > 0;
+  }
+
+  /** Held inputs, oldest first; one session's when `sessionId` is given. */
+  listHeldInputs(sessionId?: string): HeldInput[] {
+    const rows = (
+      sessionId === undefined
+        ? this.db.prepare("SELECT * FROM session_held_input ORDER BY id ASC").all()
+        : this.db
+            .prepare("SELECT * FROM session_held_input WHERE session_id = ? ORDER BY id ASC")
+            .all(sessionId)
+    ) as Array<{
+      id: number;
+      session_id: string;
+      message: string;
+      attachments_json: string | null;
+      client_turn_id: string | null;
+      held_at: number;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      message: row.message,
+      ...(row.attachments_json
+        ? { attachments: JSON.parse(row.attachments_json) as ChatAttachmentRef[] }
+        : {}),
+      ...(row.client_turn_id ? { clientTurnId: row.client_turn_id } : {}),
+      heldAt: row.held_at,
+    }));
+  }
+
+  deleteHeldInput(id: number): void {
+    this.db.prepare("DELETE FROM session_held_input WHERE id = ?").run(id);
+  }
+
+  clearHeldInputs(sessionId: string): number {
+    const result = this.db
+      .prepare("DELETE FROM session_held_input WHERE session_id = ?")
+      .run(sessionId) as { changes?: number };
+    return result.changes ?? 0;
+  }
+
   private ensureSchema(): void {
     const hasSessionTable = this.db
       .prepare(
@@ -436,6 +508,19 @@ export class SessionSqliteStore {
         was_busy INTEGER NOT NULL,
         recorded_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS session_held_input (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        attachments_json TEXT,
+        client_turn_id TEXT,
+        held_at INTEGER NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS session_held_input_turn_idx
+        ON session_held_input (session_id, client_turn_id)
+        WHERE client_turn_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS session_state_schema (
         key TEXT PRIMARY KEY,

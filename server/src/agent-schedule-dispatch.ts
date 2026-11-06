@@ -34,7 +34,7 @@ export interface AgentScheduleDispatchDeps {
         streamingBehavior?: "steer" | "followUp";
         requestId?: string;
       },
-    ): Promise<void>;
+    ): Promise<unknown>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   appEvents?: Pick<AppEventEmitter, "emitSessionCreated" | "emitSessionSummary">;

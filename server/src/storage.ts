@@ -37,7 +37,11 @@ import {
   IconAssetStore,
   type IconAssetRecord,
 } from "./storage/icon-asset-store.js";
-import { SessionSqliteStore, type RestartResumeEntry } from "./storage/session-sqlite-store.js";
+import {
+  SessionSqliteStore,
+  type HeldInput,
+  type RestartResumeEntry,
+} from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import { readConfigSetting, type RevisionedEnabled } from "./settings/config-settings.js";
 import type {
@@ -493,6 +497,22 @@ export class Storage {
 
   clearRestartResume(sessionId: string): void {
     this.sessionStore.clearRestartResume(sessionId);
+  }
+
+  holdInput(input: Omit<HeldInput, "id">): boolean {
+    return this.sessionStore.holdInput(input);
+  }
+
+  listHeldInputs(sessionId?: string): HeldInput[] {
+    return this.sessionStore.listHeldInputs(sessionId);
+  }
+
+  deleteHeldInput(id: number): void {
+    this.sessionStore.deleteHeldInput(id);
+  }
+
+  clearHeldInputs(sessionId: string): number {
+    return this.sessionStore.clearHeldInputs(sessionId);
   }
 
   deleteSession(sessionId: string): boolean {

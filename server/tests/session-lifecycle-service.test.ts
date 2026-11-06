@@ -246,6 +246,7 @@ function makeService(
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
       clearRestartResume: vi.fn(),
+      clearHeldInputs: vi.fn(() => 0),
     },
     sessions: {
       runCommand,

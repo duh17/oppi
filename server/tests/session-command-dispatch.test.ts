@@ -443,6 +443,7 @@ describe("session command dispatch and output boundaries", () => {
       body: {
         type: "prompt",
         message: "This is a message from session parent-1: Focus on the failing test",
+        requestId: expect.any(String),
         streamingBehavior: "steer",
       },
     });
@@ -468,6 +469,7 @@ describe("session command dispatch and output boundaries", () => {
       body: {
         type: "prompt",
         message: "Focus on the failing test",
+        requestId: expect.any(String),
         streamingBehavior: "steer",
       },
     });

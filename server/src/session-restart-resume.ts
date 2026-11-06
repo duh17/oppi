@@ -131,8 +131,8 @@ export interface RestartResumeDeps {
     SessionLifecycleService,
     "resumeControlConversation" | "resumeControlSession" | "resumeWorkspaceSession"
   >;
-  sendPrompt: (sessionId: string, text: string) => Promise<void>;
-  sendFollowUp: (sessionId: string, text: string) => Promise<void>;
+  sendPrompt: (sessionId: string, text: string) => Promise<unknown>;
+  sendFollowUp: (sessionId: string, text: string) => Promise<unknown>;
   /** The resumed session holds a notice about work an earlier process lost. */
   reportsLostWork: (sessionId: string) => boolean;
   /** Stop before the next entry; server shutdown sets this. */
@@ -174,31 +174,44 @@ export async function resumeSessionsAfterRestart(
   return results;
 }
 
+/** Start a stored session the way a client's Resume does. */
+async function resumeStoredSession(
+  deps: {
+    storage: Pick<RestartStorage, "getWorkspace">;
+    lifecycle: RestartResumeDeps["lifecycle"];
+  },
+  session: Session,
+): Promise<{ resumed: Session } | { outcome: "skipped" | "failed"; reason: string }> {
+  if (!canResumeAfterRestart(session)) return { outcome: "skipped", reason: "not resumable" };
+  try {
+    if (session.workspaceId === undefined) {
+      // The control conversation is durable, not a declared control session.
+      return {
+        resumed: (isControlConversation(session)
+          ? await deps.lifecycle.resumeControlConversation(session)
+          : await deps.lifecycle.resumeControlSession(session)
+        ).session,
+      };
+    }
+    const workspace = deps.storage.getWorkspace(session.workspaceId);
+    if (!workspace) return { outcome: "skipped", reason: "workspace deleted" };
+    return {
+      resumed: (await deps.lifecycle.resumeWorkspaceSession({ session, workspace })).session,
+    };
+  } catch (error: unknown) {
+    return { outcome: "failed", reason: safeErrorMessage(error) };
+  }
+}
+
 async function resumeOne(
   deps: RestartResumeDeps,
   entry: RestartResumeEntry,
 ): Promise<{ outcome: RestartResumeOutcome; reason?: string }> {
   const session = deps.storage.getSession(entry.sessionId);
   if (!session) return { outcome: "skipped", reason: "session deleted" };
-  if (!canResumeAfterRestart(session)) return { outcome: "skipped", reason: "not resumable" };
-
-  let resumed: Session;
-  try {
-    if (session.workspaceId === undefined) {
-      // The control conversation is durable, not a declared control session.
-      resumed = (
-        isControlConversation(session)
-          ? await deps.lifecycle.resumeControlConversation(session)
-          : await deps.lifecycle.resumeControlSession(session)
-      ).session;
-    } else {
-      const workspace = deps.storage.getWorkspace(session.workspaceId);
-      if (!workspace) return { outcome: "skipped", reason: "workspace deleted" };
-      resumed = (await deps.lifecycle.resumeWorkspaceSession({ session, workspace })).session;
-    }
-  } catch (error: unknown) {
-    return { outcome: "failed", reason: safeErrorMessage(error) };
-  }
+  const start = await resumeStoredSession(deps, session);
+  if (!("resumed" in start)) return start;
+  const resumed = start.resumed;
 
   // Durable continues the original submission: pi-durable retries a request a crash cut
   // off, and a run it ended `interrupted` (no retry left) the attached backend continues
@@ -217,6 +230,90 @@ async function resumeOne(
     return { outcome: "resumed", reason: "taken over during resume" };
   }
   return continueAfterRestart(deps, session.id, resumed.status);
+}
+
+export interface HeldInputDeliveryDeps {
+  storage: Pick<RestartStorage, "getSession" | "getWorkspace"> &
+    Pick<Storage, "clearHeldInputs" | "listHeldInputs">;
+  lifecycle: RestartResumeDeps["lifecycle"];
+  isActive: (sessionId: string) => boolean;
+  /** Send a live session its held inputs; resolves to how many went out. */
+  deliver: (sessionId: string) => Promise<number>;
+  cancelled?: () => boolean;
+}
+
+/**
+ * Messages held while the server drained for a restart (server-drain.ts) go out once the
+ * sessions are back: after the restart resume, or right away when the drain is cancelled. A
+ * session that is not running is resumed first. One that cannot come back (deleted, its
+ * workspace gone, incognito) loses its held messages, and the log says so. Runs on every start,
+ * so messages held before a crash still go out.
+ */
+export async function deliverHeldInputs(deps: HeldInputDeliveryDeps): Promise<void> {
+  const sessionIds = [...new Set(deps.storage.listHeldInputs().map((input) => input.sessionId))];
+  for (const sessionId of sessionIds) {
+    if (deps.cancelled?.()) return;
+    const session = deps.storage.getSession(sessionId);
+    if (!session) {
+      const dropped = deps.storage.clearHeldInputs(sessionId);
+      log.warn("session_restart.held_input_dropped", { sessionId, dropped, reason: "deleted" });
+      continue;
+    }
+    if (!deps.isActive(sessionId)) {
+      const start = await resumeStoredSession(deps, session);
+      if (!("resumed" in start)) {
+        if (start.outcome === "failed") {
+          log.error("session_restart.held_input_resume_failed", {
+            sessionId,
+            reason: start.reason,
+          });
+          continue;
+        }
+        const dropped = deps.storage.clearHeldInputs(sessionId);
+        log.warn("session_restart.held_input_dropped", {
+          sessionId,
+          dropped,
+          reason: start.reason,
+        });
+        continue;
+      }
+    }
+    if (deps.cancelled?.()) return;
+    const delivered = await deps.deliver(sessionId);
+    log.info("session_restart.held_input_delivered", { sessionId, delivered });
+  }
+}
+
+/**
+ * Runs `deliverHeldInputs` passes one at a time in the background. A pass stops between
+ * sessions once `stop()` is called or `paused()` (a new drain) is true.
+ */
+export class HeldInputDelivery {
+  private pass: Promise<void> = Promise.resolve();
+  private stopped = false;
+
+  constructor(
+    private readonly deps: Omit<HeldInputDeliveryDeps, "lifecycle" | "cancelled"> & {
+      paused: () => boolean;
+    },
+  ) {}
+
+  start(lifecycle: RestartResumeDeps["lifecycle"]): void {
+    const cancelled = (): boolean => this.stopped || this.deps.paused();
+    this.pass = this.pass
+      .then(() => deliverHeldInputs({ ...this.deps, lifecycle, cancelled }))
+      .catch((error: unknown) => {
+        log.error("session_restart.held_input_delivery_crashed", {
+          error: safeErrorMessage(error),
+        });
+      });
+  }
+
+  /** Undelivered inputs stay stored; the next start sends them. */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    await this.pass;
+  }
 }
 
 /**

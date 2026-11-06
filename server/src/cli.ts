@@ -272,13 +272,8 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     });
   }
 
-  const onRestartAfterUpdate = (mode: ServerRestartMode, targetVersion: string): void => {
-    console.log("");
-    console.log(
-      mode === "manual"
-        ? c.yellow("  Installed. Restart this Oppi server to use the new version.")
-        : c.dim("  Restarting with the updated Oppi server..."),
-    );
+  // Stop, then re-exec this process. A failed exec brings up a fresh Server instead.
+  const restartProcess = (mode: ServerRestartMode, restartNeededVersion?: string): void => {
     void serveUpdatedProcess(
       mode,
       () => stopServing(server),
@@ -286,17 +281,32 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
         // stop() is terminal for a Server; replace it rather than calling start twice.
         server = new ServerClass(storage, {
           onRestartAfterUpdate,
-          restartNeededVersion: targetVersion,
+          onDrainedRestart,
+          ...(restartNeededVersion ? { restartNeededVersion } : {}),
         });
         await server.start();
         shuttingDown = false;
       },
     ).catch((err: unknown) => {
-      console.error(c.red("Update restart recovery failed:"), safeErrorMessage(err));
+      console.error(c.red("Restart recovery failed:"), safeErrorMessage(err));
       process.exit(1);
     });
   };
-  let server = new ServerClass(storage, { onRestartAfterUpdate });
+  const onRestartAfterUpdate = (mode: ServerRestartMode, targetVersion: string): void => {
+    console.log("");
+    console.log(
+      mode === "manual"
+        ? c.yellow("  Installed. Restart this Oppi server to use the new version.")
+        : c.dim("  Restarting with the updated Oppi server..."),
+    );
+    restartProcess(mode, targetVersion);
+  };
+  const onDrainedRestart = (mode: ServerRestartMode): void => {
+    console.log("");
+    console.log(c.dim("  Running turns finished; restarting the Oppi server..."));
+    restartProcess(mode);
+  };
+  let server = new ServerClass(storage, { onRestartAfterUpdate, onDrainedRestart });
 
   async function shutdown(code: number, reason?: string): Promise<void> {
     await stopServing(server, reason);
@@ -1074,6 +1084,15 @@ async function ownerSocketServer(): Promise<{
 
 async function cmdServer(action: string | undefined, flags: Record<string, string>): Promise<void> {
   const mode = action || "status";
+  // Drain restarts go to the server that owns this data directory, whatever runs it.
+  if (
+    mode === "restart" &&
+    (flags.drain === "true" || flags.cancel === "true" || flags.status === "true")
+  ) {
+    const { cmdServerRestartDrain } = await import("./cli/server-restart-drain.js");
+    await cmdServerRestartDrain(flags);
+    return;
+  }
   // macOS: per-user LaunchAgent. Linux: systemd user service. Same verbs on both.
   const linux = process.platform === "linux";
   if (process.platform !== "darwin" && !linux) {

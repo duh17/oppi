@@ -100,6 +100,7 @@ function makeManagerHarness(
     getWorkspace: vi.fn(() => options.workspace ?? null),
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
     clearRestartResume: vi.fn(),
+    clearHeldInputs: vi.fn(() => 0),
   } as unknown as Storage;
 
   const manager = new SessionManager(storage);
@@ -190,6 +191,7 @@ describe("SessionManager startSession", () => {
       listSessions: vi.fn(() => [session]),
       saveSession: vi.fn(),
       clearRestartResume: vi.fn(),
+      clearHeldInputs: vi.fn(() => 0),
     } as unknown as Storage;
     const { sdkBackend } = makeSdkBackendStub();
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);
@@ -405,6 +407,7 @@ describe("SessionManager extension UI", () => {
       getWorkspace: vi.fn(() => null),
       getSession: vi.fn(() => null),
       clearRestartResume: vi.fn(),
+      clearHeldInputs: vi.fn(() => 0),
     } as unknown as Storage;
     const manager = new SessionManager(storage);
     (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};

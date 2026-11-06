@@ -114,7 +114,8 @@ export interface AgentLaunchServiceDeps {
       sessionId: string,
       message: string,
       opts?: { attachments?: ChatAttachmentRef[] },
-    ): Promise<void>;
+      // Resolves to a hold notice while the server drains for a restart; the prompt runs after it.
+    ): Promise<unknown>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   nowMs?: () => number;

@@ -35,7 +35,7 @@ describe("session interaction command contract", () => {
       expect(result).toEqual({ messages: [] });
       expect(call).toHaveBeenCalledWith("/sessions/session%2Fone/command", {
         method: "POST",
-        body,
+        body: { ...body, requestId: expect.any(String) },
       });
     },
   );

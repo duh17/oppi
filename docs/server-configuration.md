@@ -20,7 +20,7 @@ oppi config set --help
 - Unknown keys are ignored at startup and reported by `oppi config validate`.
 - Keys marked *restart* below take effect only after `oppi server restart` (or stopping and starting a foreground `oppi serve`).
 
-`oppi server restart` interrupts running sessions, which resume afterward ([Running sessions across a restart](#running-sessions-across-a-restart)). An Oppi Control session (Edit with Oppi) runs with host-user authority: inspect the current state before changing configuration, and tell the owner when a restart is required instead of restarting unasked.
+`oppi server restart` interrupts running sessions, which resume afterward ([Running sessions across a restart](#running-sessions-across-a-restart)). `oppi server restart --drain` waits for running turns to finish first ([Restart when turns finish](#restart-when-turns-finish)). An Oppi Control session (Edit with Oppi) runs with host-user authority: inspect the current state before changing configuration, and tell the owner when a restart is required instead of restarting unasked.
 
 Do not put these in config: owner tokens and pairing secrets (use `oppi pair` and `oppi token`), provider credentials (use the app's **Model Providers** screen; a foreground `oppi serve` also reads provider API key environment variables, and a background service reads them only through `runtimeEnv`, which stores them in plain text; see [Onboarding](onboarding.md#connect-a-model-provider)), or per-workspace Agent and Skill content (use Agents, Skills, and workspace flows).
 
@@ -238,6 +238,28 @@ Sessions that were running when the server stopped come back when it starts agai
 - A session that was being stopped stays stopped. Incognito and Pi TUI mirror sessions are not resumed, and a session whose workspace was deleted is skipped.
 
 `server.log` records `session_restart.recorded`, `session_restart.resumed`, `session_restart.resume_failed`, and a `session_restart.resume_complete` summary, logged even when nothing was queued.
+
+### Restart when turns finish
+
+```bash
+oppi server restart --drain                 # restart once running turns finish (waits at most 10 minutes)
+oppi server restart --drain --max-wait 30m  # wait longer
+oppi server restart --cancel                # cancel a pending restart
+```
+
+`--drain` asks the server for this data directory to restart itself once no session is mid-turn. It works however the server runs (background service, Mac app, or a foreground `oppi serve`), and returns at once with the sessions it waits for. Running it again shows the pending restart. The same is `POST /server/restart` (`{ "maxWaitMs": … }`), `GET` to read it and `DELETE` to cancel, with the owner token.
+
+While a restart is pending:
+
+- A busy session finishes its current turn, including its tool calls, the subagents it starts, and the messages it sends to other sessions.
+- Each running session shows the status line "Server restart pending".
+- New prompts and follow-ups wait. The app sends them as usual and shows a note that the message is held; after the restart, they go to their session in the order they were sent, starting the session if it stopped. Cancelling the restart sends them right away. Stopping a session withdraws what was held for it.
+- A steer into a running turn goes through. So does input from a running turn to another session.
+- An incognito session refuses new messages, because it does not come back after a restart. **Compact** and a summarizing tree jump are refused too. The app shows the refusal and keeps your text.
+- Scheduled runs that come due are recorded and start after the restart. **Run now** works and is held like any prompt.
+- Background jobs do not hold the restart, and neither does a session waiting for your answer. They come back as described above.
+
+When no turn is running, the server restarts. At the `--max-wait` deadline (default 10 minutes) it restarts anyway: durable sessions continue their run after the restart, and classic sessions are interrupted and get the continuation message. `server.log` records `server.drain_requested`, `server.drain_input_held`, `server.drain_complete` (with `reason` `idle` or `deadline`, the sessions it cut short, and the held count), `server.drain_cancelled`, and `session_restart.held_input_delivered` after the restart. Exit code 4 means the running server predates `--drain`.
 
 ## Auth module
 

@@ -521,10 +521,45 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["server", "restart"],
     title: "Restart background server",
-    summary: "Restart the background server through launchd or systemd.",
-    usage: "oppi server restart",
-    notes: ["Use this after config or runtime changes when Oppi runs as a background service."],
-    examples: [{ command: "oppi server restart" }],
+    summary:
+      "Restart the background server through launchd or systemd, or once running turns finish with --drain.",
+    usage:
+      "oppi server restart [--drain [--max-wait <duration>] [--wait] | --status | --cancel] [--json]",
+    flags: [
+      {
+        name: "--drain",
+        summary:
+          "restart once busy sessions finish their current turn; new prompts and follow-ups are held and run after the restart",
+      },
+      {
+        name: "--max-wait",
+        summary:
+          "with --drain: longest wait before restarting anyway (default 10m; 30s, 15m, 1h; bare numbers are seconds)",
+      },
+      {
+        name: "--wait",
+        summary:
+          "with --drain: return once the restarted server answers (exit 1 if cancelled or it does not come back)",
+      },
+      { name: "--status", summary: "show the pending --drain restart, if any" },
+      { name: "--cancel", summary: "cancel a pending --drain restart and send what it held" },
+      {
+        name: "--json",
+        summary: "with --drain, --status, or --cancel: write the standard JSON envelope",
+      },
+    ],
+    notes: [
+      "Use this after config or runtime changes when Oppi runs as a background service.",
+      "Without --drain the restart is immediate: busy sessions are interrupted and resume afterward.",
+      "--drain asks the server that owns this data directory (OPPI_DATA_DIR) to re-exec itself, so it also works for a foreground or Mac app server. A steer into a running turn, and messages a running session sends to its children, still go through. A session waiting on your answer does not hold the restart. At the --max-wait deadline the server restarts anyway: durable sessions continue their run, classic sessions are interrupted and continued. Exit code 4 means the running server predates --drain.",
+    ],
+    examples: [
+      { command: "oppi server restart" },
+      { command: "oppi server restart --drain" },
+      { command: "oppi server restart --drain --max-wait 30m" },
+      { command: "oppi server restart --status" },
+      { command: "oppi server restart --cancel" },
+    ],
   },
   {
     path: ["server", "stop"],

@@ -15,6 +15,7 @@ import type { ServerResourceService } from "../server-resource-service.js";
 import type { ConfigSettingResult, RevisionedEnabled } from "../settings/config-settings.js";
 import type { EnabledPatch } from "../settings/registry.js";
 import type { ServerUpdateService } from "../server-update.js";
+import type { ServerDrainStatus } from "../server-drain.js";
 import type { McpService } from "../mcp-service.js";
 import type { ServerTelemetry } from "../telemetry/server-telemetry.js";
 import type { PushSender } from "../push/push-sender.js";
@@ -32,6 +33,16 @@ export interface ServerMetricsControl {
   /** Saves `serverMetrics.enabled` (see `applySetting`) and starts or stops the sampler. */
   apply(patch: EnabledPatch, baseRevision: number | undefined): ConfigSettingResult;
   latestSample(): ServerResourceRecord | null;
+}
+
+/** Drain-then-restart of this server process (server-drain.ts). */
+export interface ServerRestartControl {
+  /** Why this process cannot restart itself, or undefined when it can. */
+  unavailableReason(): string | undefined;
+  status(): ServerDrainStatus;
+  request(options: { maxWaitMs?: number; source: string }): ServerDrainStatus;
+  /** Undefined when no drain was pending. */
+  cancel(source: string): ServerDrainStatus | undefined;
 }
 
 /** Services needed by route handlers — injected by Server. */
@@ -66,6 +77,8 @@ export interface RouteContext {
   piCliVersion?: string;
   /** In-app npm update of this server process. */
   serverUpdate?: ServerUpdateService;
+  /** Drain-then-restart. Optional so route tests can omit it. */
+  serverRestart?: ServerRestartControl;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
   /**
