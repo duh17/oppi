@@ -1316,7 +1316,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (session.workspaceId && !workspace) continue;
       if (!this.storage.listRestartResume().some((entry) => entry.sessionId === session.id))
         continue;
-      await this.startSession(session.id, workspace);
+      try {
+        await this.startSession(session.id, workspace);
+      } catch (error) {
+        // One session that cannot come back (its worktree was removed while the server was
+        // down) must not stop the server from starting. Unqueued, the next fence aborts its
+        // interrupted work like a stopped session's.
+        log.error("sessions.durable_resume_failed", {
+          sessionId: session.id,
+          error: safeErrorMessage(error),
+        });
+        this.storage.clearRestartResume(session.id);
+      }
     }
     for (;;) {
       const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));

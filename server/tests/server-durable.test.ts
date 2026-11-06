@@ -2660,6 +2660,22 @@ describe("server durable managed runtime", () => {
     },
   );
 
+  it("starts when a queued session's worktree is gone, fencing that session's work", async () => {
+    const f = await fixture([]);
+    const crashed = await crashedQueuedTools(f);
+    const [a, b] = crashed.sessions;
+    // B was queued in a worktree that no longer exists (removed while the server was down).
+    f.storage.saveSession({ ...f.storage.getSession(b!.id)!, worktreeId: "wt_removed" });
+
+    await f.manager.resumeDurableSessions();
+    await Promise.all(crashed.tasks.map((id) => crashed.harness.waitForTask(id, context)));
+    expect(f.manager.isActive(a!.id)).toBe(true);
+    expect(f.manager.isActive(b!.id)).toBe(false);
+    // A's interrupted tool resumes; B's stays aborted, as for a session whose workspace is gone.
+    expect(crashed.effects).toEqual([a!.serverDurable!.conversationId]);
+    expect(f.storage.listRestartResume()).toEqual([]);
+  });
+
   it.each(["prompt", "steer", "follow-up"])(
     "preserves restart intent when an inactive startup %s fails admission",
     async (kind) => {
