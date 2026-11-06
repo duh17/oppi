@@ -88,7 +88,7 @@ enum ReviewCommentStripChrome {
 /// The staged-comment pill on the strip: its count over the strip-pill
 /// surface. A tap peeks the drawer, a double tap opens the stash sheet. One
 /// accessibility element, activated like the tap, with Open Full Screen as a
-/// custom action. Touches land across a 44pt band.
+/// custom action. Touches land across the strip pill's 44pt band.
 final class ReviewCommentStripPillView: ExtensionStripPillControl {
     var onToggle: (() -> Void)?
     var onOpenFullScreen: (() -> Void)?
@@ -131,11 +131,6 @@ final class ReviewCommentStripPillView: ExtensionStripPillControl {
         accessibilityHint = isExpanded
             ? "Collapses the staged review comments"
             : "Shows the review comments staged for the next message"
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let band = max(0, (44 - bounds.height) / 2)
-        return bounds.insetBy(dx: 0, dy: -band).contains(point)
     }
 
     override func accessibilityActivate() -> Bool {

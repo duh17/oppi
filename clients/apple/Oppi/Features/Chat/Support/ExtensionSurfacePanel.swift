@@ -1,9 +1,13 @@
 import UIKit
 
 enum ExtensionStripPillMetrics {
-    static let visualHeight: CGFloat = 36
+    /// Close to the composer's toolbar pill (`ComposerToolbarPillButton`, about 21 pt), so a strip
+    /// pill above the composer reads as the same family instead of a second, larger control.
+    static let visualHeight: CGFloat = 28
     static let horizontalPadding: CGFloat = 10
-    static let verticalPadding: CGFloat = 8
+    static let verticalPadding: CGFloat = 5
+    /// The touch band every strip pill answers across, however short it draws.
+    static let hitHeight: CGFloat = 44
 }
 
 enum ExtensionNativeSurfaceLayout {
@@ -227,6 +231,12 @@ class ExtensionStripPillControl: UIControl {
 
     private func dimForPress() {
         alpha = 0.7
+    }
+
+    /// A pill is drawn short, but touches land across a `hitHeight` band centred on it.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let band = max(0, (ExtensionStripPillMetrics.hitHeight - bounds.height) / 2)
+        return bounds.insetBy(dx: 0, dy: -band).contains(point)
     }
 
     override func accessibilityActivate() -> Bool {
@@ -557,6 +567,9 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         }
         drawerButton.translatesAutoresizingMaskIntoConstraints = false
         drawerButton.backgroundColor = .clear
+        // Pinned to the pill's edges, so its own intrinsic height (34 pt) must not set the pill's.
+        drawerButton.setContentCompressionResistancePriority(.fittingSizeLevel, for: .vertical)
+        drawerButton.setContentHuggingPriority(.fittingSizeLevel, for: .vertical)
         drawerButton.isUserInteractionEnabled = false
         drawerButton.isAccessibilityElement = false
         addSubview(drawerButton)
