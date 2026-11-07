@@ -8,6 +8,7 @@
     "tests/route-fixtures.ts",
     "tests/conversation-stream-fixtures.ts",
     "tests/conversation-stream-golden.ts",
+    "tests/session-lifecycle-wire.ts",
     "scripts/update-protocol-fixtures.ts"
   ],
   "include": []

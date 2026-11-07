@@ -137,7 +137,7 @@ export function makeSdkBackendStub(): {
     shutdownCleanupListeners.clear();
     return { disposal: "graceful" as const };
   });
-  (sdkBackend as { dispose: typeof dispose }).dispose = dispose;
+  (sdkBackend as unknown as { dispose: typeof dispose }).dispose = dispose;
 
   return { sdkBackend, abort, dispose, prompt };
 }

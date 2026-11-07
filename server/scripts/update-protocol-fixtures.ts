@@ -9,6 +9,11 @@ import {
   buildConversationStreamGolden,
   CONVERSATION_STREAM_GOLDEN_FILE,
 } from "../tests/conversation-stream-golden.js";
+import {
+  buildSessionLifecycleWire,
+  serializeSessionLifecycleWire,
+  SESSION_LIFECYCLE_WIRE_FILE,
+} from "../tests/session-lifecycle-wire.js";
 import { ROUTES_SNAPSHOT_PATH, serializeRouteFixture } from "../tests/route-fixtures.js";
 import {
   MEDIA_INFO_SNAPSHOT_FILE,
@@ -34,6 +39,12 @@ const fixtures = [
   { path: CONVERSATION_STREAM_SNAPSHOT_FILE, content: serializeConversationStreamFixture() },
   // Runs a real Harness conversation; only this script writes it, never ordinary tests.
   { path: CONVERSATION_STREAM_GOLDEN_FILE, content: await buildConversationStreamGolden() },
+  // Runs the real session lifecycle against each engine; ordinary tests rebuild it in memory and
+  // compare bytes, and only this script writes it.
+  {
+    path: SESSION_LIFECYCLE_WIRE_FILE,
+    content: serializeSessionLifecycleWire(await buildSessionLifecycleWire()),
+  },
   {
     path: SERVER_MESSAGES_SNAPSHOT_FILE,
     content: serializeProtocolFixture(
