@@ -524,11 +524,21 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["BackButton"].firstMatch.tap()
     }
 
-    /// Scrolls the list until `element` can take a tap.
+    /// Scrolls the page's list until `element` can take a tap. The drag runs in
+    /// the right-hand part of the largest list on screen: on an iPad split view
+    /// `app.swipeUp()` can start over the sidebar and scroll that instead, and a
+    /// page that fits the window (the iPad Pro) never showed it. A row below the
+    /// fold is not in the hierarchy yet, so the list is found by size, not by row.
     private func reveal(_ element: XCUIElement) -> XCUIElement {
         _ = element.waitUntilExists(timeout: 5)
         for _ in 0..<8 where !element.isHittable {
-            app.swipeUp()
+            let lists = app.collectionViews.allElementsBoundByIndex.filter(\.exists)
+            guard let list = lists.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+                app.swipeUp()
+                continue
+            }
+            list.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.8))
+                .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.3)))
         }
         XCTAssertTrue(element.isHittable, "\(element) is not reachable")
         return element

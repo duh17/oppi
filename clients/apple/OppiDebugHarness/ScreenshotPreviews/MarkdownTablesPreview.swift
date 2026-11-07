@@ -4,10 +4,11 @@ import UIKit
 // MARK: - Markdown Tables Preview
 
 /// `SCREENSHOT_SCREEN=markdown-tables`: one assistant message with the table
-/// shapes chat meets, drawn by the live markdown renderer at the phone's width:
-/// a prose table that fits by wrapping, a wide table that scrolls sideways (the
-/// "N more columns" cue), a 30-row table folded behind "Show all 30 rows", and
-/// cells with inline code and bold.
+/// shapes chat meets, drawn by the live markdown renderer at the window's width:
+/// a prose table that fits by wrapping, a wide table that scrolls sideways at any
+/// device width, phone to 13-inch iPad (the "N more columns" cue; the planner wraps
+/// prose but never breaks a word, so its long header words force the scroll), a 30-row table
+/// folded behind "Show all 30 rows", and cells with inline code and bold.
 final class MarkdownTablesPreviewController: PreviewRootController {
     init(root: AppRootEnvironment) {
         super.init(root: root, themeStore: root.themeStore, content: MarkdownTablesContentController())
@@ -35,13 +36,13 @@ private final class MarkdownTablesContentController: UIViewController {
         | Fit to width | 8d41e7b | Wraps the long column into the room that is left instead of cutting it off. |
         | Overflow cue | c20b5f6 | Fades the edge and counts the columns that are still off screen. |
 
-        And the wide one, which cannot fit a phone:
+        And the wide one, which cannot fit a phone or an iPad:
 
-        | Endpoint | Method | Latency p50 | Latency p95 | Error budget | Owner team |
-        | --- | --- | --- | --- | --- | --- |
-        | /sessions | GET | 12 ms | 48 ms | 99.95% | Platform runtime |
-        | /sessions/:id | PATCH | 18 ms | 71 ms | 99.90% | Platform runtime |
-        | /extensions | GET | 9 ms | 33 ms | 99.99% | Extensions |
+        | Endpoint | httpMethodVerbName | latencyMedianMillis | latencyNinetyFiveMillis | errorBudgetRemaining | owningTeamDirectory | deploymentRegionName | rolloutWindowStartTime | oncallRotationHandle | lastIncidentTimestamp | runbookDocumentationPath |
+        | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+        | /sessions | GET | 12 ms | 48 ms | 99.95% | Platform | us-west-2 | Tue 09:00 | primary | 2026-09-14 | sessions |
+        | /sessions/:id | PATCH | 18 ms | 71 ms | 99.90% | Platform | eu-central-1 | Thu 14:00 | primary | 2026-10-02 | session-id |
+        | /extensions | GET | 9 ms | 33 ms | 99.99% | Extensions | us-east-1 | Fri 10:30 | secondary | 2026-08-21 | extensions |
 
         A long one:
 
