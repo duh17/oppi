@@ -13,6 +13,9 @@ struct PersistentWebSocketTransport {
     let identity: ObjectIdentifier
     let resume: () -> Void
     let receive: () async throws -> Message
+    /// Production hands the frame to the task before the first suspension, so
+    /// frames from one actor reach the socket in call order. The imported async
+    /// `task.send(_:)` hops off the actor first, and concurrent frames could race.
     let send: (Message) async throws -> Void
     let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
     let cancel: (CloseCode, Data?) -> Void
@@ -24,7 +27,17 @@ struct PersistentWebSocketTransport {
         identity = ObjectIdentifier(task)
         resume = { task.resume() }
         receive = { try await task.receive() }
-        send = { message in try await task.send(message) }
+        send = { message in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                task.send(message) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
         sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
         cancel = { code, reason in task.cancel(with: code, reason: reason) }
         state = { task.state }
