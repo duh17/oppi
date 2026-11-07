@@ -295,6 +295,7 @@ function normalizeConfig(
     "tts",
     "providerQuotas",
     "images",
+    "fileEditing",
     "uploadStore",
   ]);
   // `extensions` held only `voice.defaultVoiceId`, and `workspaceIdleTimeoutMs`
@@ -1050,6 +1051,28 @@ function normalizeConfig(
         ...(config.images ?? {}),
         ...imageConfig,
       };
+    }
+  }
+
+  if ("fileEditing" in obj) {
+    if (!isRecord(obj.fileEditing)) {
+      errors.push("config.fileEditing: expected object");
+      changed = true;
+    } else {
+      const fileEditing = obj.fileEditing;
+      if (strictUnknown) {
+        for (const key of Object.keys(fileEditing)) {
+          if (key !== "hostFiles") errors.push(`config.fileEditing.${key}: unknown key`);
+        }
+      }
+      if ("hostFiles" in fileEditing) {
+        if (typeof fileEditing.hostFiles === "boolean") {
+          config.fileEditing = { hostFiles: fileEditing.hostFiles };
+        } else {
+          errors.push("config.fileEditing.hostFiles: expected boolean");
+          changed = true;
+        }
+      }
     }
   }
 

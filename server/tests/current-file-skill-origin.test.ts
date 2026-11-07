@@ -257,8 +257,9 @@ describe("/files/current?origin=skill", () => {
   });
 
   /// A followed link names a Skill's file by host path; the Skill that owns it
-  /// is the one `/files/current?origin=skill` writes it through.
-  it("finds the editable Skill that owns a canonical host path", async () => {
+  /// is the one `/files/current?origin=skill` writes it through, and a package
+  /// Skill's file is named read-only so no other origin writes it either.
+  it("finds the Skill that owns a canonical host path, and whether it edits", async () => {
     const fixture = seed();
     const skillsDir = join(fixture.agentDir, "skills");
     const dirSkill = writeSkill(skillsDir, "notes");
@@ -287,22 +288,25 @@ describe("/files/current?origin=skill", () => {
 
     const notes = await skillId(fixture, "notes");
     const solo = await skillId(fixture, "solo");
-    expect(
-      await fixture.service.editableSkillContaining(join(dirSkill, "refs", "guide.md")),
-    ).toEqual({ skillId: notes, root: dirSkill, path: "refs/guide.md" });
-    expect(await fixture.service.editableSkillContaining(join(skillsDir, "solo.md"))).toEqual({
+    expect(await fixture.service.skillContaining(join(dirSkill, "refs", "guide.md"))).toEqual({
+      skillId: notes,
+      root: dirSkill,
+      path: "refs/guide.md",
+      editable: true,
+    });
+    expect(await fixture.service.skillContaining(join(skillsDir, "solo.md"))).toEqual({
       skillId: solo,
       root: skillsDir,
       path: "solo.md",
+      editable: true,
     });
-    // Beside a single-file Skill, and inside a read-only package Skill: no owner.
+    // Beside a single-file Skill: no owner.
     expect(
-      await fixture.service.editableSkillContaining(join(skillsDir, "assets", "notes.txt")),
+      await fixture.service.skillContaining(join(skillsDir, "assets", "notes.txt")),
     ).toBeNull();
+    // Inside a package Skill: owned, and read-only.
     expect(
-      await fixture.service.editableSkillContaining(
-        join(packageDir, "skills", "packaged", "SKILL.md"),
-      ),
-    ).toBeNull();
+      await fixture.service.skillContaining(join(packageDir, "skills", "packaged", "SKILL.md")),
+    ).toMatchObject({ path: "SKILL.md", editable: false });
   });
 });

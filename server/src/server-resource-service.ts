@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { expandHome, isPathWithinRoot } from "./path-utils.js";
+import { canonicalRealPath, expandHome, isPathWithinRoot } from "./path-utils.js";
 
 import {
   DefaultPackageManager,
@@ -360,24 +360,25 @@ export class ServerResourceService {
   }
 
   /**
-   * The editable Skill that owns a canonical host file, or null: a directory
-   * Skill owns everything under its directory, a Markdown Skill without one
-   * owns only its file. `/files/current` asks this when it names the origin a
-   * followed link edits through (`file-edit-owner.ts`); the deepest Skill wins
-   * when one sits inside another.
+   * The Skill that owns a canonical host file, or null: a directory Skill owns
+   * everything under its directory, a Markdown Skill without one owns only its
+   * file. `/files/current` asks this when it names the origin a followed link
+   * edits through (`file-edit-owner.ts`): an editable Skill writes the file, a
+   * read-only (package) Skill keeps it read-only through every origin but its
+   * workspace. The deepest Skill wins when one sits inside another.
    */
-  async editableSkillContaining(
+  async skillContaining(
     realPath: string,
-  ): Promise<{ skillId: string; root: string; path: string } | null> {
-    let best: { skillId: string; root: string; path: string } | null = null;
+  ): Promise<{ skillId: string; root: string; path: string; editable: boolean } | null> {
+    let best: { skillId: string; root: string; path: string; editable: boolean } | null = null;
     for (const entry of await this.buildSkillCatalog(await this.resolveContext())) {
-      if (!entry.summary.editable) continue;
-      const root = canonicalPath(entry.baseDir);
-      if (realPath === root || !isPathWithinRoot(realPath, root)) continue;
+      // The kernel's canonical form, which is what `realPath` is.
+      const root = canonicalRealPath(entry.baseDir);
+      if (!root || realPath === root || !isPathWithinRoot(realPath, root)) continue;
       const path = relative(root, realPath).split(sep).join("/");
       if (entry.markdownFileName !== "SKILL.md" && path !== entry.markdownFileName) continue;
       if (!best || root.length > best.root.length) {
-        best = { skillId: entry.summary.id, root, path };
+        best = { skillId: entry.summary.id, root, path, editable: entry.summary.editable };
       }
     }
     return best;

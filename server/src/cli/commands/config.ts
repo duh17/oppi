@@ -104,6 +104,10 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   },
   images: { type: "json", desc: "Image attachment preprocessing config JSON object" },
   "images.autoResize": { type: "boolean", desc: "Resize large image attachments before upload" },
+  "fileEditing.hostFiles": {
+    type: "boolean",
+    desc: "Edit home files outside workspaces from paired devices",
+  },
   uploadStore: { type: "json", desc: "Upload store config JSON object" },
   "uploadStore.mode": { type: "string", desc: "Upload store mode" },
   "uploadStore.path": { type: "string", desc: "Upload store path" },

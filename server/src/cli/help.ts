@@ -420,6 +420,10 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "string; Live Voice media: yuwp, grok-voice, or openrouter",
       },
       { name: "images.autoResize", summary: "boolean; resize large image uploads" },
+      {
+        name: "fileEditing.hostFiles",
+        summary: "boolean; edit home files outside workspaces (default true; restart)",
+      },
     ],
     notes: [
       'JSON-valued keys must receive valid JSON, for example \'{"mode":"self-signed"}\'.',

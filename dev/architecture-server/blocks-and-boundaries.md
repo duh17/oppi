@@ -35,9 +35,9 @@ Part of [Oppi server architecture](../architecture-server.md).
 
 **Current files** (`host-files.ts`, writes in `workspace-file-edit.ts`, owners in `file-edit-owner.ts`):
 
-- `resolveFileEditOwner` alone decides which origin edits a canonical file (Pi, Skill, deepest checkout, then home outside `isProtectedHostPath`); a sandbox read is confined to its workspace. Never decide editability from the request origin.
+- `resolveFileEditOwner` alone decides which origin edits a canonical file (Pi, Skill, deepest checkout, then home outside `isProtectedHostPath`); a sandbox read, or a path through a link inside a sandbox mount, is confined to that workspace. Never decide editability from the request origin.
 - `X-Oppi-Edit-Resolve: 1` reads answer `X-Oppi-Edit-Origin` plus the owner's `ETag`, or `X-Oppi-Edit-Refusal`; reads without it are unchanged for older clients.
-- `PUT ?origin=host` is 403 for a refused file and 409 when a narrower origin owns it; the refusal list is rechecked after symlinks on every inspection.
+- `PUT ?origin=host` is owner or `at_` device only, 403 for a refused file, and 409 when a narrower origin owns it; the refusal list and `allowsHostFile` are rechecked on every inspection.
 
 - Workspace-, skill-, and pi-origin reads advertise a strong `ETag` of the exact bytes. `origin=skill` resolves through `ServerResourceService.skillEditRoot` (editable Skills only, a single-file Skill limited to its file). `origin=pi` is allowlisted in `pi-agent-files.ts` (`SYSTEM.md`, `prompts/*.md`), re-checked on the canonical path so a link cannot reach another agent file.
 - A missing allowlisted pi file answers an empty body, no `ETag`, and `X-Oppi-Creatable: 1`; one `PUT` with `If-None-Match: *` creates it via an fsynced temp `link`ed into place (a file that appeared first is 412). Workspace and Skill files are never created.

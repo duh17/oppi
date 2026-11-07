@@ -1,6 +1,10 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
+  chmodSync,
+  existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,7 +23,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createHostFileRoutes } from "../src/routes/host-files.js";
 import type { RouteContext } from "../src/routes/types.js";
-import type { Session, Workspace } from "../src/types.js";
+import type { RequestPrincipal } from "../src/request-principal.js";
+import type { ServerConfig, Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
 import { makeRawRequest, MockWritableResponse } from "./harness/route-test-helpers.js";
 
@@ -36,10 +41,13 @@ interface Fixture {
   project: string;
   notebook: string;
   skillDir: string;
+  /** A package Skill: read-only on its own page. */
+  packageSkillDir: string;
   sandboxMount: string;
   outside: string;
   workspaces: Workspace[];
   sessions: Session[];
+  config: Partial<ServerConfig>;
 }
 
 const roots: string[] = [];
@@ -70,10 +78,20 @@ function seed(): Fixture {
   const project = join(home, "code", "project");
   const notebook = join(home, "notebook");
   const skillDir = join(home, "skills", "release");
+  const packageSkillDir = join(home, "packages", "tools", "skills", "deploy");
   const sandboxMount = join(home, "sandbox", "research");
-  for (const dir of [dataDir, agentDir, project, notebook, skillDir, sandboxMount]) {
+  for (const dir of [
+    dataDir,
+    agentDir,
+    project,
+    notebook,
+    skillDir,
+    packageSkillDir,
+    sandboxMount,
+  ]) {
     mkdirSync(dir, { recursive: true });
   }
+  writeFileSync(join(packageSkillDir, "SKILL.md"), "# Deploy skill\n");
   writeFileSync(join(project, "README.md"), "# Project\n");
   writeFileSync(join(notebook, "tasks.org"), "* TODO Write the design\n");
   writeFileSync(join(skillDir, "SKILL.md"), "# Release skill\n");
@@ -88,8 +106,10 @@ function seed(): Fixture {
     project,
     notebook,
     skillDir,
+    packageSkillDir,
     sandboxMount,
     outside,
+    config: {},
     workspaces: [
       { id: "ws-project", name: "project", hostMount: project, createdAt: 1, updatedAt: 1 },
       {
@@ -112,27 +132,38 @@ async function call(
   fixture: Fixture,
   method: "GET" | "PUT",
   params: Record<string, string>,
-  options: { body?: string; headers?: Record<string, string>; resolve?: boolean } = {},
+  options: {
+    body?: string;
+    headers?: Record<string, string>;
+    resolve?: boolean;
+    /** Who sent it; the owner unless a test says otherwise. */
+    principal?: RequestPrincipal | null;
+  } = {},
 ): Promise<MockWritableResponse> {
   const dispatch = createHostFileRoutes(
     {
       storage: {
+        getConfig: () => fixture.config,
         getDataDir: () => fixture.dataDir,
         getWorkspace: (id: string) => fixture.workspaces.find((workspace) => workspace.id === id),
         listWorkspaces: () => fixture.workspaces,
         getSession: (id: string) => fixture.sessions.find((candidate) => candidate.id === id),
       },
       serverResources: {
-        // One editable directory Skill, as the catalog would report it.
+        // One editable directory Skill and one package Skill, as the catalog
+        // would report them.
         skillEditRoot: async () => fixture.skillDir,
-        editableSkillContaining: async (realPath: string) =>
-          realPath.startsWith(`${fixture.skillDir}/`)
-            ? {
-                skillId: "skill-release",
-                root: fixture.skillDir,
-                path: realPath.slice(fixture.skillDir.length + 1),
-              }
-            : null,
+        skillContaining: async (realPath: string) => {
+          for (const [root, skillId, editable] of [
+            [fixture.skillDir, "skill-release", true],
+            [fixture.packageSkillDir, "skill-deploy", false],
+          ] as const) {
+            if (realPath.startsWith(`${root}/`)) {
+              return { skillId, root, path: realPath.slice(root.length + 1), editable };
+            }
+          }
+          return null;
+        },
       },
     } as unknown as RouteContext,
     createRouteHelpers(),
@@ -155,6 +186,7 @@ async function call(
     url,
     req,
     res: res as unknown as ServerResponse,
+    ...(options.principal === null ? {} : { principal: options.principal ?? { kind: "owner" } }),
   });
   expect(handled).toBe(true);
   if (!res.writableEnded) await finished;
@@ -497,5 +529,238 @@ describe("/files/current edit origins", () => {
     expect(host.statusCode).toBe(200);
     expect(host.headers.ETag).toBeUndefined();
     expect(host.headers["X-Oppi-Edit-Origin"]).toBeUndefined();
+  });
+});
+
+/** Whether the temp volume ignores case, as macOS volumes usually do. */
+const caseInsensitiveTmp = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "oppi-case-probe-"));
+  try {
+    return existsSync(probe.toUpperCase());
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+/** The tag a read of `file` would carry. */
+function etagOf(file: string): string {
+  return `"sha256-${createHash("sha256").update(readFileSync(file)).digest("hex")}"`;
+}
+
+/** A host write with the file's current tag: refused only by the rule under test. */
+function hostWrite(
+  fixture: Fixture,
+  path: string,
+  body: string,
+  options: { etag?: string; principal?: RequestPrincipal | null } = {},
+) {
+  return call(
+    fixture,
+    "PUT",
+    { origin: "host", path },
+    {
+      body,
+      headers: { "if-match": options.etag ?? etagOf(path) },
+      resolve: false,
+      ...(options.principal !== undefined ? { principal: options.principal } : {}),
+    },
+  );
+}
+
+/** One assertion for "this home file has no editor": the read says why, a write changes nothing. */
+async function expectNotEditable(fixture: Fixture, file: string, refusal: string) {
+  const before = readFileSync(file, "utf8");
+  const read = editAnswer(await call(fixture, "GET", { origin: "host", path: file }));
+  expect(read, file).toEqual({ status: 200, refusal });
+  const write = await hostWrite(fixture, file, "overwritten\n");
+  expect(write.statusCode, file).not.toBe(200);
+  expect(readFileSync(file, "utf8"), file).toBe(before);
+}
+
+describe("home files that run code or hold credentials", () => {
+  it("refuses shell startup, PATH programs, packages, tool hooks, and ~/Library", async () => {
+    const fixture = seed();
+    const files = [
+      ".config/fish/config.fish",
+      ".config/fish/conf.d/aliases.fish",
+      ".oh-my-zsh/custom/aliases.zsh",
+      "bin/deploy.py",
+      ".local/bin/sync.py",
+      ".local/lib/python3.13/site-packages/requests/__init__.py",
+      "Library/Python/3.13/lib/python/site-packages/sitecustomize.py",
+      "notebook/tools/node_modules/left-pad/index.js",
+      "notebook/tools/.venv/pyvenv.cfg",
+      "notebook/sitecustomize.py",
+      ".bun/install/global/node_modules/cli/index.js",
+      ".bunfig.toml",
+      "notebook/bunfig.toml",
+      ".claude/settings.json",
+      ".claude.json",
+      ".codex/config.toml",
+      ".cursor/mcp.json",
+      ".config/nvim/init.lua",
+      ".hammerspoon/init.lua",
+      "Library/Application Support/Code/User/settings.json",
+      "Library/Application Support/Claude/claude_desktop_config.json",
+      "Library/LaunchAgents/local.job.xml",
+      // Credentials by name, anywhere.
+      "notebook/.credentials.json",
+      "notebook/token.json",
+      "notebook/oauth-tokens.json",
+      ".terraform.d/credentials.tfrc.json",
+      // Case-folded: a volume that ignores case reads these as the protected names.
+      ".SSH/notes.md",
+      "notebook/AUTH.JSON",
+      ".Config/Fish/config.fish",
+    ].map((path) => join(fixture.home, path));
+    for (const file of files) {
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, "x = 1\n");
+    }
+    for (const file of files) await expectNotEditable(fixture, file, "protected");
+
+    // iCloud Drive is the owner's documents, not app state.
+    const icloud = join(
+      fixture.home,
+      "Library",
+      "Mobile Documents",
+      "com~apple~CloudDocs",
+      "notes.md",
+    );
+    mkdirSync(join(icloud, ".."), { recursive: true });
+    writeFileSync(icloud, "# Notes\n");
+    const read = editAnswer(await call(fixture, "GET", { origin: "host", path: icloud }));
+    expect(read.origin).toEqual({ origin: "host", path: icloud });
+    expect((await hostWrite(fixture, icloud, "# Edited\n")).statusCode).toBe(200);
+    expect(readFileSync(icloud, "utf8")).toBe("# Edited\n");
+  });
+
+  it("refuses an executable and a file with a second hard link", async () => {
+    const fixture = seed();
+    const script = join(fixture.notebook, "backup.sh");
+    writeFileSync(script, "#!/bin/sh\necho backup\n");
+    chmodSync(script, 0o755);
+    await expectNotEditable(fixture, script, "ineligible");
+
+    // A second name for a protected file is a different path to the same
+    // inode; the editor would also split the link on save.
+    mkdirSync(join(fixture.home, ".ssh"));
+    const secret = join(fixture.home, ".ssh", "keys.md");
+    writeFileSync(secret, "secret\n");
+    const alias = join(fixture.notebook, "keys.md");
+    linkSync(secret, alias);
+    await expectNotEditable(fixture, alias, "ineligible");
+    expect(readFileSync(secret, "utf8")).toBe("secret\n");
+
+    // The same rule holds when the bit appears between the read and the write.
+    const notes = join(fixture.notebook, "tasks.org");
+    const tag = editAnswer(await call(fixture, "GET", { origin: "host", path: notes })).etag;
+    chmodSync(notes, 0o744);
+    expect((await hostWrite(fixture, notes, "x\n", { etag: tag })).statusCode).not.toBe(200);
+    expect(readFileSync(notes, "utf8")).toBe("* TODO Write the design\n");
+  });
+
+  it("keeps a package Skill's files read-only through the home", async () => {
+    const fixture = seed();
+    await expectNotEditable(fixture, join(fixture.packageSkillDir, "SKILL.md"), "protected");
+  });
+
+  it.runIf(caseInsensitiveTmp)(
+    "refuses the data directory when its configured path differs in case",
+    async () => {
+      const fixture = seed();
+      const config = join(fixture.dataDir, "devices.json");
+      writeFileSync(config, "{}\n");
+      // The server was configured with another spelling of the same folder.
+      fixture.dataDir = join(fixture.home, "OPPI-DATA");
+      await expectNotEditable(fixture, config, "protected");
+    },
+  );
+
+  it("refuses a path with `..` after a folder link", async () => {
+    const fixture = seed();
+    // `~/inbox` links to `~/notebook/today`, so the kernel reads
+    // `~/inbox/../tasks.org` as `~/notebook/tasks.org`, while the same text,
+    // normalized, names `~/tasks.org`: two different files.
+    mkdirSync(join(fixture.notebook, "today"));
+    symlinkSync(join(fixture.notebook, "today"), join(fixture.home, "inbox"));
+    const decoy = join(fixture.home, "tasks.org");
+    writeFileSync(decoy, "home copy\n");
+    const path = `${fixture.home}/inbox/../tasks.org`;
+    for (const etag of [etagOf(decoy), etagOf(join(fixture.notebook, "tasks.org"))]) {
+      expect((await hostWrite(fixture, path, "x\n", { etag })).statusCode).toBe(403);
+    }
+    expect(readFileSync(decoy, "utf8")).toBe("home copy\n");
+    expect(readFileSync(join(fixture.notebook, "tasks.org"), "utf8")).toBe(
+      "* TODO Write the design\n",
+    );
+  });
+
+  it("confines a host path through a link planted in a sandbox mount", async () => {
+    const fixture = seed();
+    // The sandbox guest writes its mount, so it chose where these lead.
+    symlinkSync(fixture.notebook, join(fixture.sandboxMount, "notes"));
+    symlinkSync(join(fixture.home, ".config"), join(fixture.sandboxMount, "config"));
+    mkdirSync(join(fixture.home, ".config", "tool"), { recursive: true });
+    writeFileSync(join(fixture.home, ".config", "tool", "settings.json"), "{}\n");
+    // The owner's own link to the sandbox folder does not launder them.
+    symlinkSync(fixture.sandboxMount, join(fixture.home, "research"));
+    for (const path of [
+      join(fixture.sandboxMount, "notes", "tasks.org"),
+      join(fixture.sandboxMount, "config", "tool", "settings.json"),
+      join(fixture.home, "research", "notes", "tasks.org"),
+      "~/research/notes/tasks.org",
+    ]) {
+      const read = editAnswer(await call(fixture, "GET", { origin: "host", path }));
+      expect(read, path).toEqual({ status: 200, refusal: "outside-home" });
+      const write = await hostWrite(fixture, path, "x\n", {
+        etag: etagOf(join(fixture.notebook, "tasks.org")),
+      });
+      expect(write.statusCode, path).toBe(403);
+    }
+    expect(readFileSync(join(fixture.notebook, "tasks.org"), "utf8")).toBe(
+      "* TODO Write the design\n",
+    );
+    // A sandbox file reached through the owner's link is still the sandbox's.
+    expect(
+      editAnswer(await call(fixture, "GET", { origin: "host", path: "~/research/report.md" }))
+        .origin,
+    ).toEqual({ origin: "workspace", workspaceId: "ws-sandbox", path: "report.md" });
+    // The same file by its own path is an ordinary home file.
+    expect(
+      editAnswer(await call(fixture, "GET", { origin: "host", path: "~/notebook/tasks.org" }))
+        .origin,
+    ).toEqual({ origin: "host", path: join(fixture.notebook, "tasks.org") });
+  });
+
+  it("writes a home file only for the owner or a paired device", async () => {
+    const fixture = seed();
+    const notes = join(fixture.notebook, "tasks.org");
+    expect((await hostWrite(fixture, notes, "x\n", { principal: null })).statusCode).toBe(403);
+    expect(readFileSync(notes, "utf8")).toBe("* TODO Write the design\n");
+    const device = await hostWrite(fixture, notes, "from the phone\n", {
+      principal: { kind: "device", deviceId: "dev-1", tokenClass: "at_" },
+    });
+    expect(device.statusCode).toBe(200);
+    expect(readFileSync(notes, "utf8")).toBe("from the phone\n");
+  });
+
+  it("keeps home files read-only when the owner turns host editing off", async () => {
+    const fixture = seed();
+    fixture.config = { fileEditing: { hostFiles: false } };
+    await expectNotEditable(fixture, join(fixture.notebook, "tasks.org"), "disabled");
+    // Every other origin still edits.
+    const read = editAnswer(
+      await call(fixture, "GET", { origin: "host", path: join(fixture.project, "README.md") }),
+    );
+    expect(read.origin).toEqual({
+      origin: "workspace",
+      workspaceId: "ws-project",
+      path: "README.md",
+    });
+    expect(
+      (await put(fixture, read.origin as Record<string, string>, "ok\n", read.etag as string))
+        .statusCode,
+    ).toBe(200);
   });
 });

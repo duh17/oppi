@@ -162,6 +162,12 @@ Controls client-side preprocessing for image attachments before upload.
 | ------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `images.autoResize` | boolean | `true` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget, the same limits Pi applies before a model sees the image. Uploads are smaller and the prompt starts sooner, but the session keeps the resized copy. When `false`, clients upload original image bytes where possible and Pi resizes the model's copy on the server. |
 
+### File editing
+
+| Setting                 | Type    | Default | Description |
+| ----------------------- | ------- | ------- | ----------- |
+| `fileEditing.hostFiles` | boolean | `true`  | When `true`, paired devices edit text files in the server account's home that no workspace, Skill, or Pi owns (`/files/current?origin=host`), outside the refusal list in [Home files](../../docs/document-viewers.md#home-files). When `false`, those files are read-only and their reads answer `X-Oppi-Edit-Refusal: disabled`; workspace, Skill, and Pi files still edit. Read at startup. |
+
 ### Extensions
 
 Oppi has no extension settings. A leftover top-level `extensions` object, which held the retired `extensions.voice.defaultVoiceId`, is ignored and removed from the file the next time the server loads it.

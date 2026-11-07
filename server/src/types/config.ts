@@ -246,6 +246,16 @@ export interface ServerConfig {
     autoResize?: boolean;
   };
 
+  /** The file editor. Read once at startup. */
+  fileEditing?: {
+    /**
+     * Whether a paired device edits home files no workspace, Skill, or Pi owns
+     * (`/files/current?origin=host`). Absent means on; `false` keeps them
+     * read-only and every other origin unchanged.
+     */
+    hostFiles?: boolean;
+  };
+
   /** Local upload store config for chat attachments. */
   uploadStore?: UploadStoreConfig;
 }

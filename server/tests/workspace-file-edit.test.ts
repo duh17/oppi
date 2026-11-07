@@ -204,7 +204,7 @@ function context(fixture: Fixture): RouteContext {
       listWorkspaces: () => fixture.workspaces,
       getSession: (id: string) => fixture.sessions.find((item) => item.id === id),
     },
-    serverResources: { editableSkillContaining: async () => null },
+    serverResources: { skillContaining: async () => null },
   } as unknown as RouteContext;
 }
 
@@ -268,6 +268,7 @@ async function putCurrent(
     url,
     req,
     res: res as unknown as ServerResponse,
+    principal: { kind: "owner" },
   });
   expect(handled).toBe(true);
   return res;

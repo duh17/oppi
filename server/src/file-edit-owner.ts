@@ -16,19 +16,26 @@
  *
  * A read through a sandbox workspace (its own origin, or a sandbox session's)
  * is confined: its only owner is that workspace, so a sandbox context can never
- * name a host file as editable. Every authenticated caller is the owner (the
- * local owner token or a paired device), and both can already run agents on
- * the host; the refusal list keeps a followed link from making a secret or a
- * file that runs code one tap away from a write.
+ * name a host file as editable. A host-context path that passes through a link
+ * inside a sandbox mount is confined the same way: the guest writes its mount,
+ * so a link it planted there never leads to an editable file outside it.
+ *
+ * Every authenticated caller is the owner (the local owner token or a paired
+ * device), and both can already run agents on the host, so the refusal list is
+ * not a boundary against the caller. It keeps a followed link from making a
+ * secret, or a file that runs code or decides who may run it, one tap away
+ * from a write: credentials, shell startup, programs on the PATH and the
+ * packages they load, tools that run commands from their config, `~/Library`,
+ * executables, and hard-linked files. A deny list cannot name every file that
+ * some program executes; it names the places where that is what the file is for.
  */
 
-import { realpathSync } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { lstat, readlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { isWorkspaceEditorTextPath } from "./file-serving-policy.js";
-import { isPathWithinRoot } from "./path-utils.js";
+import { canonicalRealPath, isPathWithinRoot } from "./path-utils.js";
 import { piAgentCreatesIn, piAgentEditablePath } from "./pi-agent-files.js";
 import { workspaceMountRoot } from "./session-work-root.js";
 import type { Workspace } from "./types.js";
@@ -52,12 +59,16 @@ export type FileEditOwner =
 /**
  * Why a file has no editor:
  * - `type`: not an editor text type.
- * - `outside-home`: outside every owner and outside the home directory.
- * - `protected`: a host file on the refusal list.
+ * - `outside-home`: outside every owner and outside the home directory, or
+ *   outside the sandbox the read went through.
+ * - `protected`: a host file on the refusal list, or a read-only Skill's file.
  * - `ineligible`: the name the reader followed is itself a symlink, or the
- *   owner's editor contract refuses the file (size, encoding).
+ *   owner's editor contract refuses the file (size, encoding, an executable or
+ *   hard-linked host file).
+ * - `disabled`: a home file no narrower origin owns, on a server whose owner
+ *   turned host-file editing off (`fileEditing.hostFiles: false`).
  */
-export type FileEditRefusal = "type" | "outside-home" | "protected" | "ineligible";
+export type FileEditRefusal = "type" | "outside-home" | "protected" | "ineligible" | "disabled";
 
 export type FileEditOwnerResult =
   { kind: "owner"; owner: FileEditOwner } | { kind: "refused"; reason: FileEditRefusal };
@@ -68,9 +79,12 @@ export interface FileEditOwnerSources {
   /** Pi's agent directory, or null when it cannot be read. */
   agentDir: () => string | null;
   homeDir?: string;
-  editableSkillContaining: (
+  /** Whether a home file no narrower origin owns edits at all (default on). */
+  hostFilesEnabled?: () => boolean;
+  /** The deepest Skill that owns `realPath`; a read-only one keeps it read-only. */
+  skillContaining: (
     realPath: string,
-  ) => Promise<{ skillId: string; root: string; path: string } | null>;
+  ) => Promise<{ skillId: string; root: string; path: string; editable: boolean } | null>;
 }
 
 /** The sandbox workspace a read went through; its mount is the only owner. */
@@ -82,17 +96,19 @@ export interface FileEditConfinement {
 /**
  * Directories and files under the home that never edit as host files, matched
  * home-relative and case-folded (macOS volumes are usually case-insensitive).
- * The same secret set the sandbox hides from its mount, plus credential stores,
- * keychains, login items, and Oppi's and Pi's own state.
+ * Only editor text types reach this list (`isWorkspaceEditorTextPath`), so
+ * extensionless dotfiles such as `.zshrc` and `.gitconfig` are already
+ * read-only; these are the places where a `.json`, `.toml`, `.sh`, `.py`, or
+ * `.js` file is a credential, or runs code the next time something starts.
  */
 const PROTECTED_HOME_PATHS = [
+  // Credentials, keys, and token stores (the set the sandbox hides, and more).
   ".ssh",
   ".aws",
   ".azure",
   ".gnupg",
   ".kube",
   ".docker",
-  ".pi",
   ".password-store",
   ".git-credentials",
   ".netrc",
@@ -102,18 +118,89 @@ const PROTECTED_HOME_PATHS = [
   ".config/gh",
   ".config/gcloud",
   ".config/op",
-  ".config/oppi",
   ".local/share/keyrings",
-  "library/keychains",
-  "library/launchagents",
+  // Oppi's and Pi's own state: auth, config, extensions, packages.
+  ".pi",
+  ".config/oppi",
+  // Shell startup: sourced by every new shell.
+  ".config/fish",
+  ".config/zsh",
+  ".oh-my-zsh",
+  ".zsh",
+  // Programs on the PATH, and the toolchains and packages they load.
+  "bin",
+  ".bin",
+  ".local/bin",
+  ".local/lib",
+  ".local/pipx",
+  ".local/share/uv",
+  ".local/share/mise",
+  ".bun",
+  ".bunfig.toml",
+  ".config/.bunfig.toml",
+  ".deno",
+  ".nvm",
+  ".volta",
+  ".npm",
+  ".npm-global",
+  ".cargo",
+  ".rustup",
+  ".pyenv",
+  ".rbenv",
+  ".gem",
+  ".asdf",
+  "go/bin",
+  "go/pkg",
+  // Tools that run commands from their config: agent hooks and MCP servers,
+  // editor extensions and init files, automation, git's global config.
+  ".claude",
+  ".claude.json",
+  ".codex",
+  ".cursor",
+  ".gemini",
+  ".vscode",
+  ".vscode-server",
+  ".config/zed",
+  ".config/nvim",
+  ".vim",
+  ".hammerspoon",
+  ".config/karabiner",
+  ".config/git",
+  ".ipython",
+  // App state, keychains, login items, and launch agents. iCloud Drive is the
+  // one part of `~/Library` that holds the owner's documents.
+  "library",
 ];
 
-/** Directory names refused anywhere in the path. */
-const PROTECTED_SEGMENTS = new Set([".ssh", ".gnupg", ".aws", ".git"]);
+/** Under a protected home path, but the owner's own documents. */
+const UNPROTECTED_HOME_PATHS = ["library/mobile documents"];
 
-/** File names refused anywhere: env files, token stores, and key material. */
+/**
+ * Directory names refused anywhere in the path: key stores, git internals
+ * (hooks and config), and installed packages a program imports.
+ */
+const PROTECTED_SEGMENTS = new Set([
+  ".ssh",
+  ".gnupg",
+  ".aws",
+  ".git",
+  "node_modules",
+  "site-packages",
+  "dist-packages",
+  ".venv",
+]);
+
+/**
+ * File names refused anywhere: env files, credential and token stores, key
+ * material, and files a runtime loads on its own (Python's site hooks, Bun's
+ * `preload`).
+ */
 const PROTECTED_FILE_NAME =
-  /^(?:\.env(?:\..*)?|\.envrc|auth\.json|credentials(?:\.[a-z0-9]+)?|secrets?\.[a-z0-9]+|.*\.(?:pem|key|p12|pfx))$/;
+  /^(?:\.env(?:\..*)?|\.envrc|auth\.json|\.?credentials(?:\.[a-z0-9]+)*|secrets?\.[a-z0-9]+|.*tokens?\.json|.*\.(?:pem|key|p12|pfx)|(?:site|user)customize\.py|\.?bunfig\.toml)$/;
+
+function isUnder(rel: string, prefix: string): boolean {
+  return rel === prefix || rel.startsWith(`${prefix}/`);
+}
 
 /** Canonical roots refused as host files besides the fixed list. */
 export interface ProtectedRoots {
@@ -133,20 +220,31 @@ export function isProtectedHostPath(absolutePath: string, roots: ProtectedRoots)
     if (root && isPathWithinRoot(absolutePath, root)) return true;
   }
   const rel = relative(roots.home, absolutePath).split(sep).join("/").toLowerCase();
-  for (const protectedPath of PROTECTED_HOME_PATHS) {
-    if (rel === protectedPath || rel.startsWith(`${protectedPath}/`)) return true;
+  if (
+    PROTECTED_HOME_PATHS.some((path) => isUnder(rel, path)) &&
+    !UNPROTECTED_HOME_PATHS.some((path) => isUnder(rel, path))
+  ) {
+    return true;
   }
   const segments = rel.split("/");
   if (segments.some((segment) => PROTECTED_SEGMENTS.has(segment))) return true;
   return PROTECTED_FILE_NAME.test(segments[segments.length - 1] ?? "");
 }
 
-function realpathOrNull(path: string): string | null {
-  try {
-    return realpathSync(path);
-  } catch {
-    return null;
-  }
+/**
+ * Every root here is compared with a file's kernel realpath, so it takes the
+ * same canonical form: a data directory configured in another case must still
+ * contain its own files.
+ */
+const realpathOrNull = canonicalRealPath;
+
+/**
+ * A host file the editor may write once it is open: not executable (a script
+ * on the PATH, a hook), and its only name. The editor saves by rename, so a
+ * second name, which may be a protected file, would silently keep the old bytes.
+ */
+export function allowsHostFile(file: { mode: number; nlink: number }): boolean {
+  return (file.mode & 0o111) === 0 && file.nlink === 1;
 }
 
 /** The real home and the real directories the refusal list adds to it. */
@@ -242,6 +340,59 @@ async function workspaceOwner(
 }
 
 /**
+ * The sandbox workspace whose mount holds a symlink that resolving
+ * `lexicalPath` follows, or null. The walk resolves the path the way the
+ * kernel does, one component at a time, so `current` is always a physical
+ * directory and each link's own location is known: a link in a sandbox mount
+ * was planted by its guest, wherever it points. A path that cannot be walked
+ * (missing, a loop) is null here; the realpath that served the read already
+ * failed or decided it.
+ */
+async function sandboxLinkOnPath(
+  lexicalPath: string,
+  sources: FileEditOwnerSources,
+): Promise<FileEditConfinement | null> {
+  const sandboxes = sources.workspaces().flatMap((workspace) => {
+    if (workspace.runtime !== "sandbox") return [];
+    const root = workspaceMountRoot(workspace, { create: false });
+    const realRoot = realpathOrNull(root);
+    return realRoot ? [{ workspace, root, realRoot }] : [];
+  });
+  if (sandboxes.length === 0 || !isAbsolute(lexicalPath)) return null;
+
+  const pending = lexicalPath.split("/").filter(Boolean);
+  let current = "/";
+  // The kernel's own limit on links followed while resolving one path.
+  for (let links = 0; pending.length > 0;) {
+    const name = pending.shift() as string;
+    if (name === ".") continue;
+    if (name === "..") {
+      current = dirname(current);
+      continue;
+    }
+    const next = join(current, name);
+    try {
+      if (!(await lstat(next)).isSymbolicLink()) {
+        current = next;
+        continue;
+      }
+      const holder = realpathOrNull(current);
+      const sandbox = holder
+        ? sandboxes.find((candidate) => isPathWithinRoot(holder, candidate.realRoot))
+        : undefined;
+      if (sandbox) return { workspace: sandbox.workspace, root: sandbox.root };
+      if (++links > 32) return null;
+      const target = await readlink(next);
+      if (isAbsolute(target)) current = "/";
+      pending.unshift(...target.split("/").filter(Boolean));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * The origin that edits the canonical file `realPath`. `lexicalPath` is the
  * name the request used before symlinks; a host file is refused when either
  * name is protected.
@@ -267,10 +418,14 @@ export async function resolveFileEditOwner(input: {
     return { kind: "refused", reason: "ineligible" };
   }
 
-  if (input.confinement) {
-    // Sandbox context: the mount or nothing. The read already refused a path
-    // outside it, so this is the same boundary stated again.
-    const realRoot = realpathOrNull(input.confinement.root);
+  // A host-context path through a link a sandbox guest planted is that
+  // sandbox's, as if read in its context: the guest decides where the link
+  // leads, so it never leads to an editable file outside the mount.
+  const confinement = input.confinement ?? (await sandboxLinkOnPath(input.lexicalPath, sources));
+  if (confinement) {
+    // Sandbox context: the mount or nothing. A sandbox read already refused a
+    // path outside it, so there this is the same boundary stated again.
+    const realRoot = realpathOrNull(confinement.root);
     if (!realRoot || realPath === realRoot || !isPathWithinRoot(realPath, realRoot)) {
       return { kind: "refused", reason: "outside-home" };
     }
@@ -278,8 +433,8 @@ export async function resolveFileEditOwner(input: {
       kind: "owner",
       owner: {
         kind: "workspace",
-        workspace: input.confinement.workspace,
-        root: input.confinement.root,
+        workspace: confinement.workspace,
+        root: confinement.root,
         path: toPosix(relative(realRoot, realPath)),
       },
     };
@@ -292,11 +447,18 @@ export async function resolveFileEditOwner(input: {
     if (path) return { kind: "owner", owner: { kind: "pi", agentDir, path } };
   }
 
-  const skill = await sources.editableSkillContaining(realPath);
-  if (skill) return { kind: "owner", owner: { kind: "skill", ...skill } };
+  const skill = await sources.skillContaining(realPath);
+  if (skill?.editable) {
+    const { skillId, root, path } = skill;
+    return { kind: "owner", owner: { kind: "skill", skillId, root, path } };
+  }
 
   const workspace = await workspaceOwner(realPath, sources);
   if (workspace) return { kind: "owner", owner: workspace };
+
+  // A package Skill is read-only through its Skill origin; the home does not
+  // offer a second way in.
+  if (skill) return { kind: "refused", reason: "protected" };
 
   const roots = protectedRoots(sources);
   if (!roots || realPath === roots.home || !isPathWithinRoot(realPath, roots.home)) {
@@ -309,6 +471,7 @@ export async function resolveFileEditOwner(input: {
   ) {
     return { kind: "refused", reason: "protected" };
   }
+  if (sources.hostFilesEnabled?.() === false) return { kind: "refused", reason: "disabled" };
   return { kind: "owner", owner: { kind: "host", root: roots.home, path: realPath } };
 }
 
@@ -375,19 +538,24 @@ export function piFileEditTarget(agentDir: string, path: string): FileEditTarget
 
 /**
  * A host file by absolute path: the root is the real home, so the editor's
- * containment, final-symlink, and canonical rechecks all run against it.
- * Null for a path outside the home.
+ * containment, final-symlink, and canonical rechecks all run against it, and
+ * every inspection also asks `allowsHostFile` of the opened file. Null for a
+ * path outside the home, and for one with `.`, `..`, or repeated separators:
+ * after a folder link the kernel's `..` is not the lexical one, so a
+ * normalized name could be a different file from the one the owner judged.
  */
 export function hostFileEditTarget(
   roots: ProtectedRoots,
   absolutePath: string,
 ): FileEditTarget | null {
   const resolved = resolve(absolutePath);
+  if (resolved !== absolutePath) return null;
   if (resolved === roots.home || !isPathWithinRoot(resolved, roots.home)) return null;
   return {
     root: roots.home,
     requestedPath: toPosix(relative(roots.home, resolved)),
     allowsCanonical: (relativeToRealRoot) =>
       !isProtectedHostPath(join(roots.home, relativeToRealRoot), roots),
+    allowsFile: allowsHostFile,
   };
 }

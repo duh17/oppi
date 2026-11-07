@@ -145,13 +145,20 @@ This needs a server with file edit origins. An older server only edits workspace
 
 ### Home files
 
-A text file under the server account's home folder that no workspace, Skill, or Pi owns is editable from your paired devices, with the same 1 MiB, UTF-8, tag, and **Conflict** rules as a workspace file. A paired device can already run agents with full access to that account, so editing is not new access. These limits stop a tapped link from opening a secret or a file that runs code:
+A text file under the server account's home folder that no workspace, Skill, or Pi owns is editable from your paired devices, with the same 1 MiB, UTF-8, tag, and **Conflict** rules as a workspace file. A paired device can already run agents with full access to that account, so editing is not new access. These limits stop a tapped link from opening a secret, or a file that runs code the next time something starts:
 
-- **Protected paths** are never editable: `.ssh`, `.aws`, `.azure`, `.gnupg`, `.kube`, `.docker`, `.password-store`, `.config/gh`, `.config/gcloud`, `.config/op`, `.local/share/keyrings`, `Library/Keychains`, and `Library/LaunchAgents`. The server's own data directory and `.config/oppi` are protected, and so is Pi's `~/.pi` (its own files edit through Pi). Any `.git` directory is protected. Names such as `.env` and `.env.*`, `.envrc`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `auth.json`, `credentials`, `secrets.*`, and `*.pem`, `*.key`, `*.p12`, `*.pfx` are protected in any folder.
-- The server checks the path you opened and the real path after symlinks. A folder link into a protected folder or out of the home folder is refused. A file that is itself a symlink is read-only through that name, on every origin; open the file it points to by its own path to edit it.
+- **Credentials** are never editable: `.ssh`, `.aws`, `.azure`, `.gnupg`, `.kube`, `.docker`, `.password-store`, `.config/gh`, `.config/gcloud`, `.config/op`, and `.local/share/keyrings`. Names such as `.env` and `.env.*`, `.envrc`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `auth.json`, `credentials` and `.credentials.*`, `secrets.*`, `token.json` and `*tokens.json`, and `*.pem`, `*.key`, `*.p12`, `*.pfx` are protected in any folder.
+- **Oppi and Pi** are protected: the server's data directory, `.config/oppi`, and Pi's `~/.pi` (Pi's own files edit through Pi).
+- **Files that run code** are protected: shell startup (`.config/fish`, `.config/zsh`, `.oh-my-zsh`, `.zsh`); programs on the `PATH` and the toolchains and packages they load (`bin`, `.local/bin`, `.local/lib`, `.bun`, `.cargo`, `.nvm`, `.npm`, `.pyenv`, and similar, plus any `node_modules`, `site-packages`, or `.venv` folder); tools that run commands from their settings (`.claude`, `.claude.json`, `.codex`, `.cursor`, `.gemini`, `.vscode`, `.config/zed`, `.config/nvim`, `.vim`, `.hammerspoon`, `.config/karabiner`, `.config/git`, `.ipython`); any `.git` folder; `bunfig.toml`, `sitecustomize.py`, and `usercustomize.py` in any folder; and a file with an execute permission bit.
+- **`~/Library`** is protected, except iCloud Drive (`Library/Mobile Documents`).
+- A file with a second hard link is read-only: a save replaces the file, so the other name would keep the old text.
+- A file in a package Skill is read-only, as it is on the Skill's own page.
+- The server checks the path you opened and the real path after symlinks. A folder link into a protected folder or out of the home folder is refused. A path that goes through a link inside a sandbox workspace's folder edits only a file in that sandbox, because the sandbox decides where its links lead. A file that is itself a symlink is read-only through that name, on every origin; open the file it points to by its own path to edit it.
 - Only text types the editor opens are editable. Most dotfiles, such as `.zshrc`, are not one of them.
 - The editor never creates a home file.
-- The server logs every save with its path.
+- The server logs every save with its path, and for a home file the real path and the device that saved it. It never logs file contents.
+
+This list cannot name every file that some program runs. To keep every home file read-only, set `fileEditing.hostFiles` to `false` and restart the server (see [Server configuration](server-configuration.md)). Workspace, Skill, and Pi files still edit.
 
 ## Editing Skill files
 

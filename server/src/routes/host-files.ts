@@ -35,6 +35,7 @@ import { expandExactHostPath } from "../host-file-path.js";
 import { createLogger, type Logger } from "../logger.js";
 import { readAudioMediaInfo } from "../media-info.js";
 import { piAgentEditablePath } from "../pi-agent-files.js";
+import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
@@ -135,9 +136,10 @@ export function createHostFileRoutes(
         return isAbsolute(dir) ? dir : null;
       },
       homeDir,
-      editableSkillContaining: async (realPath) => {
+      hostFilesEnabled: () => ctx.storage.getConfig().fileEditing?.hostFiles !== false,
+      skillContaining: async (realPath) => {
         try {
-          return await ctx.serverResources.editableSkillContaining(realPath);
+          return await ctx.serverResources.skillContaining(realPath);
         } catch (error: unknown) {
           // No Skill catalog means no Skill owner; the file falls to the next one.
           log.warn("currentfile.skill_owner_failed", {
@@ -199,9 +201,18 @@ export function createHostFileRoutes(
    */
   async function hostWriteTarget(
     path: string,
+    principal: RequestPrincipal | undefined,
   ): Promise<
-    { kind: "ok"; target: FileEditTarget } | { kind: "error"; status: number; message: string }
+    | { kind: "ok"; target: FileEditTarget; realPath: string }
+    | { kind: "error"; status: number; message: string }
   > {
+    // The owner, locally, or one of the owner's paired devices: the two
+    // principals that may already run agents on this host. Stated here, not
+    // only in the route's auth, so a narrower credential added later does not
+    // inherit writes anywhere in the home.
+    if (principal?.kind !== "owner" && !isDeviceAccessPrincipal(principal)) {
+      return { kind: "error", status: 403, message: "File is not editable" };
+    }
     const lexical = expandExactHostPath(path, { homeDir });
     if (!lexical) return { kind: "error", status: 404, message: "File not found" };
     let real: string;
@@ -226,7 +237,7 @@ export function createHostFileRoutes(
     const roots = protectedRoots(sources);
     const target = roots ? hostFileEditTarget(roots, lexical) : null;
     if (!target) return { kind: "error", status: 403, message: "File is not editable" };
-    return { kind: "ok", target };
+    return { kind: "ok", target, realPath: real };
   }
 
   /**
@@ -510,12 +521,15 @@ export function createHostFileRoutes(
     url: URL,
     req: IncomingMessage,
     res: ServerResponse,
+    principal: RequestPrincipal | undefined,
   ): Promise<void> {
     let status = 404;
     let originKind: string | undefined;
     let workspaceId: string | undefined;
     let skillId: string | undefined;
     let relativePath: string | undefined;
+    // A host write's audit: the file it resolved to and the device that sent it.
+    let realPath: string | undefined;
     let size: number | null = null;
     try {
       const request = await parseCurrentFileRequest(url);
@@ -528,13 +542,14 @@ export function createHostFileRoutes(
       relativePath = request.path;
       let target = editTargetFor(request);
       if (request.originKind === "host") {
-        const host = await hostWriteTarget(request.path);
+        const host = await hostWriteTarget(request.path, principal);
         if (host.kind === "error") {
           status = host.status;
           helpers.error(res, host.status, host.message);
           return;
         }
         target = host.target;
+        realPath = host.realPath;
       }
       if (!target) {
         status = 404;
@@ -555,11 +570,16 @@ export function createHostFileRoutes(
       status = 200;
       helpers.json(res, result.response);
     } finally {
+      // Paths and sizes only, never the bytes.
       log.info("currentfile.write", {
         origin: originKind,
         workspaceId,
         skillId,
         path: relativePath,
+        ...(realPath !== undefined && realPath !== relativePath ? { realPath } : {}),
+        ...(originKind === "host" && principal?.kind === "device"
+          ? { device: principal.deviceId }
+          : {}),
         status,
         ...(size !== null ? { size } : {}),
       });
@@ -617,13 +637,13 @@ export function createHostFileRoutes(
     }
   }
 
-  return async ({ method, path, url, req, res }) => {
+  return async ({ method, path, url, req, res, principal }) => {
     const normalizedMethod = method.toUpperCase();
     const readsBytes = normalizedMethod === "GET" || normalizedMethod === "HEAD";
 
     if (path === "/files/current") {
       if (normalizedMethod === "PUT") {
-        await handleCurrentFilePut(url, req, res);
+        await handleCurrentFilePut(url, req, res, principal);
         return true;
       }
       if (!readsBytes) return false;

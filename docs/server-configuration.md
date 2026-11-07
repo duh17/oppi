@@ -38,6 +38,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
 | `push.mode` / `push.relays` | Push (restart; see [Push notifications](#push-notifications)) |
 | `images.autoResize` | Phones resize images over 2000 px before upload (default `true`; `false` keeps originals and leaves resizing to Pi on the server) |
+| `fileEditing.hostFiles` | Edit home files outside every workspace from paired devices (default `true`; `false` keeps them read-only; restart; see [Home files](document-viewers.md#home-files)) |
 | `providerQuotas.openaiUseCodexPlan` | Opt in to legacy Codex plan-wide usage on the OpenAI row (default `false`; restart; see [Provider quotas](provider-quotas.md)) |
 | `auth.tailscalePairing` | Same-user Tailscale pairing; `false` turns it off (default `true`; restart; see [Onboarding](onboarding.md#turn-off-tailscale-pairing)) |
 | `auth.module` | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |

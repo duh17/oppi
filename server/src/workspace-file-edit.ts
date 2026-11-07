@@ -110,6 +110,12 @@ export interface FileEditTarget {
    */
   allowsCanonical?: (relativeToRealRoot: string) => boolean;
   /**
+   * A rule about the opened file itself, asked on every inspection (and so
+   * again just before the rename). Host files use it to refuse an executable
+   * or a file with a second hard link.
+   */
+  allowsFile?: (file: { mode: number; nlink: number }) => boolean;
+  /**
    * Whether a *missing* file may be created, asked about the parent directory
    * (root-relative, `""` for the root itself). Absent means this target never
    * creates: a workspace file and a Skill file only ever overwrite.
@@ -373,6 +379,7 @@ export async function inspectFileForEdit(input: FileEditTarget): Promise<FileEdi
     const opened = await handle.stat();
     if (!opened.isFile()) return { kind: "not-found" };
     if (opened.size > WORKSPACE_FILE_EDIT_MAX_BYTES) return { kind: "ineligible" };
+    if (input.allowsFile && !input.allowsFile(opened)) return { kind: "ineligible" };
     const bytes = await handle.readFile();
     if (bytes.length > WORKSPACE_FILE_EDIT_MAX_BYTES) return { kind: "ineligible" };
     if (containsNul(bytes) || !isValidUtf8(bytes)) return { kind: "ineligible" };
@@ -592,6 +599,7 @@ async function writeEditedFileAtomic(
       root: input.root,
       requestedPath: input.requestedPath,
       ...(input.allowsCanonical ? { allowsCanonical: input.allowsCanonical } : {}),
+      ...(input.allowsFile ? { allowsFile: input.allowsFile } : {}),
     });
     const recheckError = inspectionError(recheck);
     if (recheckError) return recheckError;
@@ -931,6 +939,7 @@ export async function putEditedFile(
       bytes: input.body,
       mode: inspection.mode,
       ...(input.allowsCanonical ? { allowsCanonical: input.allowsCanonical } : {}),
+      ...(input.allowsFile ? { allowsFile: input.allowsFile } : {}),
     });
   });
 }

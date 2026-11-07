@@ -3,6 +3,7 @@
  * normalization for git-status, workspace-review, and session routes.
  */
 
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
 
@@ -27,6 +28,21 @@ export function isPathWithinRoot(candidate: string, root: string): boolean {
   if (!isAbsolute(candidate) || !isAbsolute(root)) return false;
   const rel = relative(root, candidate);
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * The canonical path of an existing file or directory, or null: symlinks
+ * resolved and, on a case-insensitive volume, the case stored on disk. This is
+ * the kernel's realpath (what `fs/promises` `realpath` returns), not Node's JS
+ * walk (`realpathSync`), which keeps the case it was given: a root canonicalized
+ * one way and a file the other would not compare under `isPathWithinRoot`.
+ */
+export function canonicalRealPath(path: string): string | null {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
 }
 
 /**
