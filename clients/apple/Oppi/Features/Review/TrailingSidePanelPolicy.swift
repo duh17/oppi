@@ -391,6 +391,22 @@ final class TrailingColumnController: UIViewController {
     private var requested: Panel?
     /// True while a removed panel waits for its search to end.
     private var isRemoving = false
+    /// Work waiting for the panel being removed to be gone (`whenClosed`).
+    private var closedWaiters: [() -> Void] = []
+
+    /// Runs `body` once no panel is mounted: now when none is, otherwise
+    /// after the one being removed has slid out and left the host. Close
+    /// the panel (`show(nil, root:)`) first. A push onto the host's stack
+    /// waits for this: the close animates the host's layout and re-parents
+    /// its child, which under a running push transition left the screen's
+    /// view out of the window after Back.
+    func whenClosed(_ body: @escaping () -> Void) {
+        guard container != nil || isRemoving else {
+            body()
+            return
+        }
+        closedWaiters.append(body)
+    }
 
     private func installRequestedPanel() {
         guard let panel = requested, let root, container == nil else { return }
@@ -682,6 +698,9 @@ final class TrailingColumnController: UIViewController {
                 self.panelConstraints = nil
                 self.isFull = false
                 self.isRemoving = false
+                let waiters = self.closedWaiters
+                self.closedWaiters = []
+                for waiter in waiters { waiter() }
                 self.installRequestedPanel()
             }
         }

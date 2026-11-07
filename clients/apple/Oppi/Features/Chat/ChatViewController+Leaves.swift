@@ -49,12 +49,11 @@ extension ChatViewController {
                         .activeSession(self.reviewCommentSelectionRouter),
                         closePanel: closePanel
                     ),
-                    // A session started from the panel opens on this chat's
+                    // A session started from the panel, or from a commit or
+                    // review pushed in its column, opens on this chat's
                     // stack, not inside the sheet or column.
                     pushChat: { [weak self] chat in
-                        guard let self else { return }
-                        closePanel()
-                        Router.push(chat, from: self)
+                        self?.closeSidePanelThenPush(chat)
                     },
                     hostedInPanel: hostedInPanel
                 ),
@@ -63,6 +62,21 @@ extension ChatViewController {
                 navigation: self.appNavigation,
                 onClose: closePanel
             )
+        }
+    }
+
+    /// Closes the Git panel, then pushes `chat` once the trailing column has
+    /// slid out. The column's close lays out and re-parents a child of this
+    /// chat's navigation controller; run under a push, it left this chat's
+    /// view out of the window after Back, so the bar's buttons changed the
+    /// model with no update pass to show a panel again. A sheet (compact
+    /// width) has no column to wait for.
+    private func closeSidePanelThenPush(_ chat: ChatViewController) {
+        model.showGit = false
+        updateSidePanels()
+        trailingColumn.whenClosed { [weak self] in
+            guard let self else { return }
+            Router.push(chat, from: self)
         }
     }
 

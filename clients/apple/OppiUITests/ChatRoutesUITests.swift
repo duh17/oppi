@@ -1219,6 +1219,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(originalTitle.waitUntilExists(timeout: 5), "Back must return to the chat the panel was opened from")
         hold()
         XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
+        // The panel closed cleanly: it opens again.
+        openGitPanel()
+        app.buttons["git.panel.close"].tap()
+        XCTAssertTrue(panel.waitUntilGone(timeout: 5), "Close must close the reopened Git panel")
         assertRunning()
     }
 
