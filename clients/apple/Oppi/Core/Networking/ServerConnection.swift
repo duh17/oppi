@@ -595,26 +595,21 @@ final class ServerConnection {
             wsClient.cancelReconnectBackoff()
             shouldReconnect = true
 
-        case .connected where wasOnLAN:
-            // Connected to a LAN IP that's now unreachable.
-            // Force reconnect rather than waiting 30-60s for the
-            // ping watchdog to detect the zombie TCP connection.
-            shouldReconnect = true
-
         case .disconnected:
             // Dead — try to reconnect with the updated endpoint.
             shouldReconnect = true
 
         default:
-            // Connected via Tailscale or still connecting — leave it.
-            // Tailscale handles network mobility internally.
+            // Connected over a non-LAN route, or still connecting — leave it.
+            // Tailscale handles network mobility internally. A socket that was
+            // on the LAN never reaches here: the `wasOnLAN` branch above
+            // demotes the route and drops that socket at once.
             shouldReconnect = false
         }
 
         guard shouldReconnect else { return }
 
         var pathChangeMetadata: [String: String] = [
-            "wasLAN": wasOnLAN ? "true" : "false",
             "wsStatus": String(describing: statusBeforePathChange),
             "hasFocusedSession": focusedSessionId == nil ? "false" : "true",
         ]
