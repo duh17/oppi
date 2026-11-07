@@ -127,7 +127,7 @@ Command/session readiness and stream health. These are user-blocking when they f
 | `app.app_event_stream_reconnect` | Why and how often did the global app-event stream schedule a reconnect? | `attempt` count<br>`socks_generation` count | `route`<br>`host_kind`<br>`path_type`<br>`transport`: `paired`, `lan`, `unix`<br>`reason`*: `receive_error`, `handshake_http`, `protocol_close`, `recoverable_receive`, `ping_watchdog`, `auth_current_token`, `auth_refresh`<br>`close_code` | none |
 | `app.app_event_stream_decode_error` | Did a global app-event stream frame fail to decode? | none | `error_kind`*: `decode`, `network`, `other` | none |
 | `server.ws_handshake` | How long did a WebSocket upgrade take on the server? | `duration_ms` ms | `stream`* | SLO `duration_ms` TM99 ≤ 100 |
-| `server.ws_auth_renew` | Did a live WebSocket renew its access in band before expiry, and why was a renewal refused? | none | `stream`*<br>`result`*: `renewed`, `rejected`<br>`reason`: `unknown_token`, `expired`, `revoked`, `evicted`, `wrong_device`, `not_renewable`, `past_deadline` | none |
+| `server.ws_auth_renew` | Did a live WebSocket renew its access in band before expiry, and why was a renewal refused? | none | `stream`*<br>`result`*: `renewed`, `rejected`<br>`reason`: `unknown_token`, `expired`, `revoked`, `evicted`, `wrong_device`, `not_renewable`, `past_deadline`, `gate_denied`, `rate_limited` | none |
 | `server.session_subscribe` | How long did the server's session subscribe and catch-up path take? | `duration_ms` ms<br>`catchup_requested` bool<br>`catchup_complete` bool<br>`started_session` bool<br>`pending_ui_requests` count | `status`*: `ok`, `error` | SLO `duration_ms` TM99 ≤ 300 |
 
 #### Rendering Smoothness

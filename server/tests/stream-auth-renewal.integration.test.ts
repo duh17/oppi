@@ -4,7 +4,7 @@
  * and the socket still closes at its old deadline.
  */
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { join } from "node:path";
@@ -114,8 +114,13 @@ class Probe {
   }
 }
 
-async function open(path: string, token: string, readyFrame?: string): Promise<Probe> {
-  const ws = new WebSocket(`${baseUrl.replace(/^https:/, "wss:")}${path}`, {
+async function open(
+  path: string,
+  token: string,
+  readyFrame?: string,
+  url = `${baseUrl.replace(/^https:/, "wss:")}${path}`,
+): Promise<Probe> {
+  const ws = new WebSocket(url, {
     headers: { Authorization: `Bearer ${token}` },
     rejectUnauthorized: false,
   });
@@ -229,6 +234,7 @@ describe("in-band stream access renewal", { timeout: 60_000 }, () => {
     const probe = await open("/app/events/stream", device.token, "app_events_connected");
     const refused = async (token: string): Promise<unknown> => (await probe.renew(token))["reason"];
     expect(await refused(other.token)).toBe("wrong_device");
+    expect(await refused(storage.getToken() ?? "")).toBe("unknown_token");
     expect(await refused(revoked.token)).toBe("unknown_token");
     expect(await refused("at_not_a_token")).toBe("unknown_token");
     // Expire it just before use: the next validation of any token prunes expired records,
@@ -241,6 +247,65 @@ describe("in-band stream access renewal", { timeout: 60_000 }, () => {
     const closed = await probe.closed;
     expect(closed.code).toBe(4001);
     expect(closed.at - connectedAt).toBeLessThan(4_500);
+  });
+
+  it("refuses renewal on an owner socket, whatever the token", async () => {
+    const device = enroll();
+    const probe = await open(
+      "/app/events/stream",
+      storage.getToken() ?? "",
+      "app_events_connected",
+      `ws+unix:${server.socketPath}:/app/events/stream`,
+    );
+    expect((await probe.renew(device.token))["reason"]).toBe("not_renewable");
+    expect((await probe.renew(storage.getToken() ?? ""))["reason"]).toBe("not_renewable");
+  });
+
+  it("refuses past a dozen renewals a minute on one socket without checking the token", async () => {
+    const device = enroll();
+    const probe = await open("/app/events/stream", device.token, "app_events_connected");
+    for (let i = 0; i < 12; i += 1) {
+      expect((await probe.renew("at_not_a_token"))["reason"]).toBe("unknown_token");
+    }
+    expect((await probe.renew(mintToken(device)))["reason"]).toBe("rate_limited");
+
+    // The cap is per socket.
+    const sibling = await open("/app/events/stream", device.token, "app_events_connected");
+    expect((await sibling.renew(mintToken(device)))["ok"]).toBe(true);
+  });
+
+  it("re-runs the auth.module gate with the request the socket opened with", async () => {
+    await server.stop();
+    const modulePath = join(dataDir, "gate.mjs");
+    writeFileSync(
+      modulePath,
+      `export function gate(req) {
+        const denied = globalThis.__oppiRenewGateDenied === true && req.transport === "ws";
+        return denied || req.headers["x-gate"] !== "open" ? { allow: false } : { allow: true };
+      }`,
+    );
+    storage.mutateConfig(() => ({ auth: { module: modulePath } }));
+    server = new Server(storage);
+    await server.start();
+    baseUrl = `https://127.0.0.1:${server.port}`;
+    const device = enroll();
+    const ws = new WebSocket(`${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`, {
+      headers: { Authorization: `Bearer ${device.token}`, "x-gate": "open" },
+      rejectUnauthorized: false,
+    });
+    sockets.push(ws);
+    const probe = new Probe(ws);
+    await probe.next("app_events_connected", 20_000);
+    const globals = globalThis as { __oppiRenewGateDenied?: boolean };
+    try {
+      globals.__oppiRenewGateDenied = true;
+      expect((await probe.renew(mintToken(device)))["reason"]).toBe("gate_denied");
+      globals.__oppiRenewGateDenied = false;
+      // The upgrade's own headers pass again.
+      expect((await probe.renew(mintToken(device)))["ok"]).toBe(true);
+    } finally {
+      delete globals.__oppiRenewGateDenied;
+    }
   });
 
   it("still closes a renewed socket at once when the device is revoked", async () => {

@@ -264,6 +264,8 @@ enum TelemetryTag {
         case wrongDevice = "wrong_device"
         case notRenewable = "not_renewable"
         case pastDeadline = "past_deadline"
+        case gateDenied = "gate_denied"
+        case rateLimited = "rate_limited"
     }
 
     /// Coarse error class, one vocabulary for every event. Never a platform type name, error text, or code.

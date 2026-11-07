@@ -284,6 +284,7 @@ export async function approvePairing(req) {
 ```
 
 - A refused gate answers `status` (default `403`) with `{"error": reason}` (default `Forbidden`). A gate that throws answers `403`.
+- The app keeps its live connections open across access-token refreshes. Each time it does, roughly every ten minutes per connection, the gate runs again with the request that opened the connection. A refusal then closes that connection when its current token expires, and the app reconnects through the gate.
 - An `approvePairing` that throws or does not return `{ allow: true }` denies with `403`. An allowed custom pairing still alerts the other devices and, once another device is paired, waits for approval on one of them ([Onboarding](onboarding.md#approving-a-new-device)).
 - The module loads once at startup; restart to change it. If it cannot load (missing file, import error, a relative path, no `gate` or `approvePairing`, or a non-function export), the server keeps running but every network request answers `503 {"error":"auth_module_unavailable"}` and the log shows `auth.module_load_failed`. It never falls back to running without the module. The owner Unix socket and the `oppi` CLI keep working, so you can fix the path.
 - Device keys, access tokens, refresh, revocation, and owner Unix-socket auth are not pluggable.

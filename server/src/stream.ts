@@ -52,7 +52,11 @@ import {
   WS_CLOSE_REASON_AUTH_EXPIRED,
 } from "./storage/device-auth.js";
 import { asRecord } from "./json-shape.js";
-import { authRenewToken, NOT_RENEWABLE, type RenewStreamAccess } from "./stream-auth-renewal.js";
+import {
+  answerAuthRenew as answerAuthRenewFrame,
+  authRenewToken,
+  type RenewStreamAccess,
+} from "./stream-auth-renewal.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -678,7 +682,7 @@ export class BoundSessionStreamMux {
      */
     const answerAuthRenew = (token: string): void => {
       msgRecv += 1;
-      send(this.ctx.renewAccess?.(ws, token, "session") ?? NOT_RENEWABLE);
+      answerAuthRenewFrame(this.ctx.renewAccess, ws, token, "session", send);
     };
     startupRelay.messageHandler = (data, isBinary) => {
       const decoded = !isBinary ? parseIncomingJsonRecord(data) : undefined;
@@ -1336,7 +1340,7 @@ export class DictationStreamMux {
       const decoded = parseIncomingJsonRecord(data);
       const renewToken = incomingAuthRenewToken(decoded);
       if (renewToken !== undefined) {
-        send(this.ctx.renewAccess?.(ws, renewToken, "dictation") ?? NOT_RENEWABLE);
+        answerAuthRenewFrame(this.ctx.renewAccess, ws, renewToken, "dictation", send);
         return;
       }
       const parsed = parseIncomingDictationMessage(decoded);

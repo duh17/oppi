@@ -126,7 +126,7 @@ import {
   parseHttpRequestTarget,
   requestClientIp,
 } from "./request-trust.js";
-import { AuthModule } from "./auth-module.js";
+import { AuthModule, type AuthGateRequest } from "./auth-module.js";
 import { DevicePairing } from "./device-pairing.js";
 import {
   getPackageInfo,
@@ -687,6 +687,7 @@ export class Server {
     this.socketAccess = new SocketAccessDeadlines({
       principals: this.socketPrincipals,
       validateAccessToken: (token) => this.storage.validateAccessToken(token),
+      gate: (request) => this.authModule.gate(request),
       expire: (ws) => this.closeSocketForAccessExpiry(ws),
       extended: (ws, expiresAt) => this.dictationStreamMux.extendAccess(ws, expiresAt),
       metrics: this.opsMetrics,
@@ -1911,13 +1912,14 @@ export class Server {
     head: Buffer,
     url: URL,
   ): Promise<void> {
-    const gate = await this.authModule.gate({
+    const gateRequest: AuthGateRequest = {
       transport: "ws",
       method: req.method || "GET",
       path: url.pathname,
       headers: req.headers,
       clientIp: this.clientIp(req),
-    });
+    };
+    const gate = await this.authModule.gate(gateRequest);
     if (socket.destroyed) return;
     if (!gate.allow) {
       writeUpgradeErrorResponse(
@@ -1934,7 +1936,15 @@ export class Server {
       });
       return;
     }
-    this.authenticateAndUpgrade(req, socket, head, url, this.wss, this.transportScheme);
+    this.authenticateAndUpgrade(
+      req,
+      socket,
+      head,
+      url,
+      this.wss,
+      this.transportScheme,
+      gateRequest,
+    );
   }
 
   private clientIp(req: IncomingMessage): string | undefined {
@@ -1948,6 +1958,8 @@ export class Server {
     url: URL,
     wss: WebSocketServer,
     originScheme: "http" | "https",
+    /** What `auth.module` admitted a network upgrade with; renewal re-runs it. */
+    gateRequest?: AuthGateRequest,
   ): void {
     (socket as Socket).setNoDelay?.(true);
 
@@ -2016,7 +2028,7 @@ export class Server {
         this.socketPrincipals.delete(ws);
         this.forgetPresenceSocket(ws, code);
       });
-      this.socketAccess.track(ws);
+      this.socketAccess.track(ws, gateRequest);
       this.routeAuthenticatedUpgrade(ws, {
         sessionStreamMatch,
         appEventStreamMatch,

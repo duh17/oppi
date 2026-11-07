@@ -6,8 +6,8 @@
 
 /**
  * Client → server: replace this socket's access token before the server closes it with
- * `4001 auth_expired`. The token is checked exactly as at connect, and must belong to the
- * same device.
+ * `4001 auth_expired`. The socket is admitted exactly as at connect (the `auth.module` gate
+ * with its upgrade request, then the token), and the token must belong to the same device.
  */
 export interface StreamAuthRenewMessage {
   type: "auth_renew";
@@ -16,9 +16,11 @@ export interface StreamAuthRenewMessage {
 
 /**
  * Why a renewal was refused. The token's own reasons come from access-token validation;
- * `wrong_device` is a valid token of another device. Two refusals no newer token fixes:
- * `not_renewable`, a socket without an expiring device token, and `past_deadline`, a socket
- * already past its deadline (held open only to finish a dictation take or a Live Voice call).
+ * `wrong_device` is a valid token of another device, and `rate_limited` a socket that asked
+ * too often this minute. Refusals no newer token fixes: `not_renewable`, a socket without an
+ * expiring device token; `past_deadline`, a socket already past its deadline (held open only
+ * to finish a dictation take or a Live Voice call); and `gate_denied`, the `auth.module` gate
+ * no longer admitting the request the socket opened with.
  */
 export type StreamAuthRenewRejection =
   | "unknown_token"
@@ -27,7 +29,9 @@ export type StreamAuthRenewRejection =
   | "evicted"
   | "wrong_device"
   | "not_renewable"
-  | "past_deadline";
+  | "past_deadline"
+  | "gate_denied"
+  | "rate_limited";
 
 /**
  * Server → client, answering `auth_renew`. `expiresAt` is the token expiry the socket now

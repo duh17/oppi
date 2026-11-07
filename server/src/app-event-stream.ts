@@ -8,7 +8,11 @@ import {
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { isExtensionUISessionStreamOnlyMethod } from "./extension-ui-contract.js";
 import { incomingAuthRenewToken, parseIncomingJsonRecord, startServerPing } from "./stream.js";
-import { NOT_RENEWABLE, type RenewStreamAccess } from "./stream-auth-renewal.js";
+import {
+  answerAuthRenew,
+  MAX_AUTH_RENEW_FRAME_BYTES,
+  type RenewStreamAccess,
+} from "./stream-auth-renewal.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Storage } from "./storage.js";
 import type { PairingApprovalEvents } from "./device-pairing.js";
@@ -237,9 +241,14 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
         );
         return;
       }
-      const renewToken = incomingAuthRenewToken(parseIncomingJsonRecord(data));
+      // The stream reads no other client frame, so only a frame small enough to be
+      // `auth_renew` is parsed.
+      const renewToken =
+        toBuffer(data).byteLength <= MAX_AUTH_RENEW_FRAME_BYTES
+          ? incomingAuthRenewToken(parseIncomingJsonRecord(data))
+          : undefined;
       if (renewToken !== undefined) {
-        send(this.ctx.renewAccess?.(ws, renewToken, "app_events") ?? NOT_RENEWABLE);
+        answerAuthRenew(this.ctx.renewAccess, ws, renewToken, "app_events", send);
         return;
       }
       metrics?.record(
