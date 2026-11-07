@@ -3,7 +3,7 @@ import {
   attentionText,
   cacheWarmingOverride,
   isFailedWaitEnvelope,
-  isSettledStatus,
+  isSettled,
   launchPlan,
   launchReceipt,
   missingModelError,
@@ -81,8 +81,8 @@ describe("subagent cache warming", () => {
       launchReceipt({ name: "scout", id: running.id, supervise: false, link: "oppi://session/x" }),
     ).toContain("Not supervising");
     expect(attentionText({ name: "scout", link: "oppi://session/x" })).toContain("pause");
-    expect(isSettledStatus("ready")).toBe(true);
-    expect(isSettledStatus("busy")).toBe(false);
+    expect(isSettled({ status: "ready" })).toBe(true);
+    expect(isSettled({ status: "busy" })).toBe(false);
     expect(needsAttention(1)).toBe(true);
     expect(needsAttention(0)).toBe(false);
   });
@@ -126,6 +126,30 @@ describe("wait reading", () => {
     const stalled = nextStall(first.state, "busy:working", 30 * 60 * 1000);
     expect(stalled.stalled).toBe(true);
     expect(nextStall(stalled.state, "busy:working", 40 * 60 * 1000).stalled).toBe(false);
+  });
+
+  test("a timed-out wait on a ready child with a pending wake settles nothing", () => {
+    // The child is ready, but a background job will still start its next turn.
+    const reading = readWait({
+      ok: true,
+      data: {
+        timed_out: true,
+        sessions: [{ session_id: running.id, status: "ready", pending_wake: true }],
+      },
+    });
+    expect(reading.settled).toEqual([]);
+    expect(reading.running.map((item) => item.id)).toEqual([running.id]);
+    for (const supervise of [true, false]) {
+      const effect = reduceWait({
+        children: [{ ...running, supervise }],
+        settledIds: new Set(),
+        reading,
+        now: 0,
+        stalls: new Map(),
+      });
+      expect(effect.settle).toEqual([]);
+      expect(effect.widgetSettle).toEqual([]);
+    }
   });
 });
 

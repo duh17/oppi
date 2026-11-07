@@ -16,6 +16,7 @@ import {
   type Subagent,
   type SubagentTerminalStyle,
 } from "./subagents.ts";
+import { readWait } from "./supervise.ts";
 
 describe("subagents", () => {
   test("only a create result from this parent becomes a row", () => {
@@ -198,7 +199,7 @@ describe("subagents", () => {
     expect(settled?.state).toBe("success");
   });
 
-  test("a wait reading with a pending wake keeps running and settled rows Working", () => {
+  test("a wait on a child with a pending wake shows Working until the wake's turn settles", () => {
     const launched = {
       id: "child-1",
       title: "scout",
@@ -206,21 +207,22 @@ describe("subagents", () => {
       link: "oppi://session/child-1",
       state: "running" as const,
     };
-    const stillWaking = applyWaitReading([launched], {
-      timedOut: true,
-      settled: [],
-      attention: [],
-      running: [{ id: "child-1", status: "ready", pendingWake: true }],
-    });
-    expect(stillWaking[0]?.state).toBe("running");
-    const settled = applyWaitReading([launched], {
-      timedOut: false,
-      settled: [{ id: "child-1", status: "ready", pendingWake: true }],
-      attention: [],
-      running: [],
-    });
-    expect(settled[0]?.state).toBe("running");
-    expect(subagentRows(settled)[0]?.subtitle).toBe("Working");
+    const stillWaking = applyWaitReading(
+      [launched],
+      readWait({
+        ok: true,
+        data: {
+          timed_out: true,
+          sessions: [{ session_id: "child-1", status: "ready", pending_wake: true }],
+        },
+      }),
+    );
+    expect(subagentRows(stillWaking)[0]?.subtitle).toBe("Working");
+    const done = applyWaitReading(
+      stillWaking,
+      readWait({ ok: true, data: { session_id: "child-1", reason: "idle", status: "ready" } }),
+    );
+    expect(subagentRows(done)[0]?.subtitle).toBe("Done");
   });
 
   test("applyGet keeps a launched row when the payload has no parent field", () => {

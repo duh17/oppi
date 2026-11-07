@@ -97,10 +97,13 @@ export function attentionText(input: { name: string; link: string }): string {
   return `Subagent needs attention: ${input.name} ${input.link}. Answer it in that session. Supervision pauses for this child until it is busy again. Do not relaunch.`;
 }
 
-export function isSettledStatus(status: string | undefined): boolean {
+export function isSettled(record: { status?: string; pendingWake?: boolean }): boolean {
   // Server wait treats ready, stopped, and error as idle. idle is accepted if a payload uses it.
-  const token = (status ?? "").toLowerCase();
-  return token === "ready" || token === "stopped" || token === "error" || token === "idle";
+  // A ready child a background job or its own child will still wake has not finished, the same
+  // rule `oppi session wait` applies: a timed-out wait reports it ready with `pending_wake`.
+  const token = (record.status ?? "").toLowerCase();
+  if (token === "ready") return !record.pendingWake;
+  return token === "stopped" || token === "error" || token === "idle";
 }
 
 export function needsAttention(pendingDialogs: number | undefined): boolean {
@@ -194,7 +197,7 @@ export function reduceWait(input: {
     const child = input.children.find((item) => item.id === record.id);
     if (!child) continue;
     if (!child.supervise) {
-      if (isSettledStatus(record.status) && !needsAttention(record.pendingDialogs)) {
+      if (isSettled(record) && !needsAttention(record.pendingDialogs)) {
         widgetSettle.push(record.id);
         stalls.delete(record.id);
       } else if (needsAttention(record.pendingDialogs)) {
@@ -204,7 +207,7 @@ export function reduceWait(input: {
       }
       continue;
     }
-    if (isSettledStatus(record.status) && !needsAttention(record.pendingDialogs)) {
+    if (isSettled(record) && !needsAttention(record.pendingDialogs)) {
       settle.push({ id: record.id, status: record.status ?? "stopped", last: record.last });
       stalls.delete(record.id);
       continue;
@@ -256,7 +259,7 @@ export function readWait(payload: unknown): WaitReading {
   const running: WaitRecord[] = [];
   for (const record of records) {
     if (needsAttention(record.pendingDialogs)) attention.push(record);
-    else if (isSettledStatus(record.status)) settled.push(record);
+    else if (isSettled(record)) settled.push(record);
     else running.push(record);
   }
   return { timedOut: data?.timed_out === true, settled, attention, running };
