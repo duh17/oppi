@@ -336,6 +336,44 @@ describe("sim-pool reap", () => {
     expect(readSlotState(sim.lockDir, 33)).toMatchObject({ status: "claimed", claim: { owner: "lead-resumes" } });
   });
 
+  test("clears the symbolication cache of pool simulators it shuts down, and only those", () => {
+    const sim = fakeSimulators(
+      [
+        { name: "Oppi-Pool-0", state: "Booted", type: IPHONE },
+        { name: "Oppi-Pool-1", state: "Booted", type: IPHONE },
+        { name: "Oppi-Pool-2", state: "Booted", type: IPHONE },
+        { name: "Oppi-Pool-31", state: "Booted" },
+        { name: "Alex iPhone", state: "Booted", type: IPHONE },
+      ],
+      { "worker-busy": { status: "busy", ageMinutes: 300 } },
+    );
+    const cacheOf = (name: string) =>
+      join(sim.root, "Library/Developer/CoreSimulator/Devices", `UDID-${name}`, "data/Library/Caches/com.apple.coresymbolicationd");
+    const names = ["Oppi-Pool-0", "Oppi-Pool-1", "Oppi-Pool-2", "Oppi-Pool-31", "Alex iPhone"];
+    for (const name of names) {
+      mkdirSync(join(cacheOf(name), "entry"), { recursive: true });
+      writeFileSync(join(cacheOf(name), "entry", "blob"), "x".repeat(8192));
+    }
+    // A sibling cache directory must survive.
+    const sibling = join(cacheOf("Oppi-Pool-1"), "..", "other");
+    mkdirSync(sibling, { recursive: true });
+    seedSlot(sim.lockDir, 0, 40); // warm: stays booted
+    seedSlot(sim.lockDir, 1, 45);
+    seedSlot(sim.lockDir, 2, 90);
+    seedSlot(sim.lockDir, 31, 60, { owner: "worker-busy", profile: "duo" }); // locked to a busy owner
+
+    const result = sim.pool(["reap"], { OPPI_SIM_POOL_IDLE_MINUTES: "30", OPPI_SIM_POOL_KEEP_WARM: "1" });
+    expectOk(result);
+    expect(sim.shutdowns().sort()).toEqual(["Oppi-Pool-1", "Oppi-Pool-2"]);
+    expect(existsSync(cacheOf("Oppi-Pool-1"))).toBe(false);
+    expect(existsSync(cacheOf("Oppi-Pool-2"))).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+    for (const name of ["Oppi-Pool-0", "Oppi-Pool-31", "Alex iPhone"]) {
+      expect(existsSync(join(cacheOf(name), "entry", "blob"))).toBe(true);
+    }
+    expect(result.stderr).toMatch(/reap: freed \d+ bytes of symbolication cache for UDID-Oppi-Pool-1/);
+  });
+
   test("finishes slots a failed shutdown left uncertain, and release frees its owner's", () => {
     const sim = fakeSimulators(
       [

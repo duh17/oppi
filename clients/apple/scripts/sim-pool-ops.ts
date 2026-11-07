@@ -2804,6 +2804,12 @@ reap applies that idle policy once. There is no background reaper: an idle
 simulator stays booted until the next pool command (a canceled run skips its
 pass). OPPI_SIM_POOL_IDLE_MINUTES=0 turns the reaper off.
 
+Every pool shutdown (reap, shutdown-idle, release) also deletes that
+simulator's data/Library/Caches/com.apple.coresymbolicationd, which grows by
+one entry per installed app binary, once the device is confirmed Shutdown and
+its slot is still leased. Booted, claimed-by-another, and non-pool simulators
+keep theirs. The log line reports the bytes freed.
+
 shutdown-idle acquires each slot with flock and records child process groups.
 Existing live, legacy, claimed, and flock-v1 in-flight slots are skipped. gated-v1
 in-flight/uncertain reclaim when recorded groups are idle or the ledger is

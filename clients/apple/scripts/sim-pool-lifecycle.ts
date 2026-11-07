@@ -9,7 +9,9 @@
  * was started with and then reap the wrong simulators against an empty ledger.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   beginPublishing,
   INTERRUPTED_NOTE,
@@ -252,6 +254,46 @@ type ShutdownMode = {
   confirm?: (previous: SlotState | null) => ClaimVerdict;
 };
 
+/**
+ * CoreSymbolication keeps one cache entry per unique app binary a simulator
+ * ever ran, and every test build installs a new one, so a long-lived pool
+ * simulator grew past 60 GB. The cache is rebuilt on demand.
+ */
+function symbolicationCacheDir(udid: string): string {
+  return join(
+    process.env.HOME ?? homedir(),
+    "Library",
+    "Developer",
+    "CoreSimulator",
+    "Devices",
+    udid,
+    "data",
+    "Library",
+    "Caches",
+    "com.apple.coresymbolicationd",
+  );
+}
+
+/**
+ * Deletes a pool simulator's symbolication cache. Callers hold the slot lease
+ * and have just seen the device Shutdown, so nothing is using the cache.
+ */
+function clearSymbolicationCache(label: string, udid: string): void {
+  const dir = symbolicationCacheDir(udid);
+  if (!existsSync(dir)) {
+    return;
+  }
+  const du = spawnSync("du", ["-sk", dir], { encoding: "utf8" });
+  const kib = Number.parseInt(du.stdout ?? "", 10);
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (error) {
+    log(`[sim-pool] ${label}: failed to clear symbolication cache for ${udid}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  log(`[sim-pool] ${label}: freed ${Number.isFinite(kib) ? kib * 1024 : 0} bytes of symbolication cache for ${udid}`);
+}
+
 type ShutdownOutcome = "shutdown" | "not-booted" | "skipped" | "failed";
 
 /**
@@ -368,6 +410,17 @@ async function shutdownPoolSlot(
       log(`[sim-pool] ${label}: failed to shut down ${udid}`);
       finish("restore");
       return "failed";
+    }
+    // Only a device proven Shutdown under the lease loses its cache.
+    const after = await runXcrun(session, ["simctl", "list", "devices", "-j"]);
+    if (after.stop.quiescent && after.code === 0) {
+      try {
+        if (deviceState(parseDevicesJson(after.stdout), udid) === "Shutdown") {
+          clearSymbolicationCache(label, udid);
+        }
+      } catch {
+        // unparseable list: leave the cache for the next shutdown
+      }
     }
     finish("done");
     return "shutdown";
