@@ -16,8 +16,9 @@ import UIKit
 /// beyond the text, so every ask, select, and confirm renders the same way.
 @MainActor
 final class AskQuestionPreviewView: UIView {
-    /// Trailing room the title keeps clear for the card's expand control.
-    static let controlClearance: CGFloat = 30
+    /// Trailing room the title keeps clear for the card's collapse and expand
+    /// controls, two 44 pt squares side by side.
+    static let controlClearance: CGFloat = 72
 
     private static let preferences = FullScreenReaderPreferences(
         textScale: FullScreenReaderPreferences.minimumTextScale,
@@ -44,8 +45,8 @@ final class AskQuestionPreviewView: UIView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleRow.addSubview(titleLabel)
-        // The 32 pt row height clears the expand control's touch target, which
-        // reaches 32 pt below the card's top padding.
+        // The 32 pt row height clears the controls' touch targets, which
+        // reach 32 pt below the card's top padding.
         let minimumRowHeight = titleRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 32)
         let hugsTitle = titleRow.bottomAnchor.constraint(equalTo: titleLabel.bottomAnchor)
         hugsTitle.priority = .defaultLow

@@ -183,6 +183,61 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         saveScreenshot(name: "ask-intent-ignore-hit")
     }
 
+    /// Fold the pending Ask to its bar, read the transcript, open it again:
+    /// the transcript takes the freed room, the selections survive, and the
+    /// header, the chevron, and the bar are all real controls.
+    func testCollapseFreesTranscriptAndKeepsSelections() {
+        launchPreview(screen: "ask-card-collapse", readyTimeout: 8)
+        let transcript = app.descendants(matching: .any)["ask.collapse.transcript"]
+        let collapse = app.buttons["ask.collapse"]
+        let bar = app.buttons["ask.collapsedBar"]
+        let optionA = app.descendants(matching: .any)["ask.option.a"]
+        let optionC = app.descendants(matching: .any)["ask.option.c"]
+        XCTAssertTrue(optionA.waitUntilExists(timeout: 5), "The multi-select card should open expanded")
+        optionA.tap()
+        optionC.tap()
+        XCTAssertTrue(collapse.exists, "The open card offers the collapse chevron")
+        XCTAssertEqual(collapse.value as? String, "Expanded")
+        XCTAssertGreaterThanOrEqual(collapse.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(collapse.frame.height, 44)
+        let openTranscriptHeight = transcript.frame.height
+        saveScreenshot(name: "ask-collapse-1-expanded")
+
+        collapse.tap()
+        XCTAssertTrue(bar.waitUntilExists(timeout: 3), "Collapsing shows the one-line bar")
+        XCTAssertEqual(bar.value as? String, "Collapsed")
+        XCTAssertGreaterThanOrEqual(bar.frame.height, 44)
+        XCTAssertTrue(bar.label.contains("Which should we pursue?"), "The bar carries the question: \(bar.label)")
+        XCTAssertFalse(optionA.waitForExistence(timeout: 1) && optionA.isHittable, "Options hide while collapsed")
+        XCTAssertGreaterThan(
+            transcript.frame.height,
+            openTranscriptHeight + 100,
+            "The transcript should gain the room the card gave back"
+        )
+        XCTAssertTrue(app.textViews["chat.input"].exists, "The composer stays under the bar")
+        saveScreenshot(name: "ask-collapse-2-collapsed")
+        transcript.swipeUp()
+        saveScreenshot(name: "ask-collapse-2b-transcript-scrolled")
+
+        bar.tap()
+        XCTAssertTrue(collapse.waitUntilExists(timeout: 3), "Tapping the bar opens the card again")
+        XCTAssertEqual(optionA.value as? String, "Selected, multi-select")
+        XCTAssertEqual(optionC.value as? String, "Selected, multi-select")
+        XCTAssertEqual(app.descendants(matching: .any)["ask.option.d"].value as? String, "Not selected, multi-select")
+        XCTAssertTrue(inCardIgnoreStaysReachable, "Ignore is reachable after expanding")
+        saveScreenshot(name: "ask-collapse-3-reexpanded")
+
+        let header = app.staticTexts["Question: Which should we pursue?"]
+        XCTAssertTrue(header.waitUntilExists(timeout: 2), "The question header should be on screen")
+        header.tap()
+        XCTAssertTrue(bar.waitUntilExists(timeout: 3), "Tapping the header collapses the card too")
+        saveScreenshot(name: "ask-collapse-4-header-tap")
+    }
+
+    private var inCardIgnoreStaysReachable: Bool {
+        app.buttons["ask.ignore"].waitUntilExists(timeout: 2)
+    }
+
     private var inCardIgnore: XCUIElement {
         app.buttons["Ignore \u{2192}"]
     }

@@ -259,4 +259,92 @@ final class AskCardTallScrollPreviewController: UIViewController {
         ])
     }
 }
+
+/// A scrollable transcript over the chat composer with a pending multi-select
+/// Ask, to fold the card and read the transcript above it. The transcript ends
+/// where the composer begins, as the chat's timeline does, so the room the
+/// folded card gives back shows as a taller transcript.
+final class AskCardCollapsePreviewController: UIViewController {
+    static let request = AskRequest(
+        id: "ask-collapse-preview",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "pursue",
+                question: "Which should we pursue?",
+                options: [
+                    AskOption(value: "a", label: "A. Search pre-compaction text", description: "Small server fix, both engines"),
+                    AskOption(value: "c", label: "C. .internal/INDEX.md", description: "Map of live docs, no code"),
+                    AskOption(value: "d", label: "D. Expiring rules", description: "Replaces skill edits + cleanup schedules"),
+                    AskOption(value: "e", label: "E. Night shift dreams the notes", description: "Nightly check of handoffs"),
+                ],
+                multiSelect: true
+            ),
+        ],
+        allowCustom: true,
+        timeout: nil
+    )
+
+    private static let transcript = (1...6).map { index in
+        "Option \(index): a paragraph of the agent's reasoning that the owner wants to read before answering, long enough to wrap onto a second line."
+    }.joined(separator: "\n\n") + "\n\nI'd do A, C, D and E. That's one small server fix and no new subsystem."
+
+    private let composer: PreviewComposerController
+    private let transcriptView = UIScrollView()
+    private let transcriptLabel = UILabel()
+
+    init() {
+        composer = PreviewComposerController(values: .init(
+            isBusy: true,
+            askRequest: Self.request,
+            colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
+        ))
+        super.init(nibName: nil, bundle: nil)
+        overrideUserInterfaceStyle = .dark
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let colors = composer.values.colors
+        view.backgroundColor = colors.bg
+        view.accessibilityIdentifier = "screenshot.ready"
+        FeatureEducationTips.markPromptAnswered()
+
+        transcriptLabel.text = Self.transcript
+        transcriptLabel.numberOfLines = 0
+        transcriptLabel.font = .preferredFont(forTextStyle: .body)
+        transcriptLabel.textColor = colors.fg
+        transcriptLabel.translatesAutoresizingMaskIntoConstraints = false
+        transcriptView.addSubview(transcriptLabel)
+        // One element, so a test can read the frame the visible transcript gets.
+        transcriptView.isAccessibilityElement = true
+        transcriptView.accessibilityLabel = Self.transcript
+        transcriptView.accessibilityIdentifier = "ask.collapse.transcript"
+        transcriptView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(transcriptView)
+
+        addChild(composer)
+        composer.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer.view)
+        composer.didMove(toParent: self)
+        let safe = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            transcriptLabel.topAnchor.constraint(equalTo: transcriptView.contentLayoutGuide.topAnchor, constant: 12),
+            transcriptLabel.bottomAnchor.constraint(equalTo: transcriptView.contentLayoutGuide.bottomAnchor, constant: -12),
+            transcriptLabel.leadingAnchor.constraint(equalTo: transcriptView.frameLayoutGuide.leadingAnchor, constant: 16),
+            transcriptLabel.trailingAnchor.constraint(equalTo: transcriptView.frameLayoutGuide.trailingAnchor, constant: -16),
+            transcriptView.topAnchor.constraint(equalTo: safe.topAnchor),
+            transcriptView.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            transcriptView.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+            // The owner's own view is as tall as the bar; the preview's wrapper has no height of its own.
+            transcriptView.bottomAnchor.constraint(equalTo: composer.composer.view.topAnchor),
+            composer.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            composer.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+            composer.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+        ])
+    }
+}
 #endif

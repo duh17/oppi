@@ -2033,6 +2033,226 @@ struct AskSubmissionWiringTests {
 
 }
 
+/// Folding the pending Ask to its bar is a view choice. These run the real
+/// composer bar and card in a window, the way the chat mounts them.
+@Suite("Ask card collapse")
+@MainActor
+struct AskCardCollapseTests {
+    private static func request(id: String = "ask-collapse", extraOption: Bool = false) -> AskRequest {
+        var options = [
+            AskOption(value: "a", label: "A. Search pre-compaction text", description: "Small server fix"),
+            AskOption(value: "c", label: "C. .internal/INDEX.md", description: "Map of live docs"),
+            AskOption(value: "d", label: "D. Expiring rules", description: nil),
+        ]
+        if extraOption { options.append(AskOption(value: "e", label: "E. Dream the notes", description: nil)) }
+        return AskRequest(
+            id: id,
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Which should we pursue?", options: options, multiSelect: true)],
+            allowCustom: true,
+            timeout: nil
+        )
+    }
+
+    private struct Mounted {
+        let window: UIWindow
+        let bar: ComposerBarController
+        let host: ComposerBarTestHost
+    }
+
+    private static func mount(_ request: AskRequest) -> Mounted {
+        let host = ComposerBarTestHost()
+        host.content.askRequest = request
+        host.content.isBusy = true
+        let bar = ComposerBarController()
+        bar.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.rootViewController = bar
+        window.makeKeyAndVisible()
+        bar.apply()
+        bar.view.layoutIfNeeded()
+        return Mounted(window: window, bar: bar, host: host)
+    }
+
+    private static func settle(_ mounted: Mounted) {
+        mounted.bar.view.layoutIfNeeded()
+        mounted.window.layoutIfNeeded()
+    }
+
+    private static func find(_ identifier: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == identifier { return view }
+        for child in view.subviews {
+            if let match = find(identifier, in: child) { return match }
+        }
+        return nil
+    }
+
+    /// On screen: neither it nor an ancestor is hidden.
+    private static func shown(_ identifier: String, in mounted: Mounted) -> UIView? {
+        guard let view = find(identifier, in: mounted.bar.view) else { return nil }
+        var current: UIView? = view
+        while let candidate = current {
+            if candidate.isHidden { return nil }
+            current = candidate.superview
+        }
+        return view
+    }
+
+    private static func tap(_ identifier: String, in mounted: Mounted) throws {
+        let control = try #require(shown(identifier, in: mounted) as? UIControl, "\(identifier) is not on screen")
+        control.sendActions(for: .touchUpInside)
+        settle(mounted)
+    }
+
+    @Test("Collapsing folds the card to a bar, keeps the selections, and answers nothing")
+    func collapseKeepsSelectionsAndAnswersNothing() throws {
+        let mounted = Self.mount(Self.request())
+        let bar = mounted.bar
+        try Self.tap("ask.option.a", in: mounted)
+        try Self.tap("ask.option.c", in: mounted)
+        let selected: [String: AskAnswer] = ["q1": .multi(["a", "c"])]
+        #expect(bar.askDraftAnswers == selected)
+        let openHeight = bar.askNaturalHeight
+        #expect(openHeight > 200)
+
+        try Self.tap("ask.collapse", in: mounted)
+
+        #expect(bar.askClearing.isCollapsed)
+        #expect(Self.shown("ask.collapsedBar", in: mounted) != nil)
+        #expect(Self.shown("ask.option.a", in: mounted) == nil, "the options hide behind the bar")
+        #expect(Self.shown(AskCard.ignoreAccessibilityIdentifier, in: mounted) == nil)
+        #expect(bar.askNaturalHeight < 80, "the folded slot is one bar plus margins, got \(bar.askNaturalHeight)")
+        #expect(bar.askHeightConstraint?.constant == bar.askNaturalHeight, "the slot gives the room back")
+        #expect(bar.askDraftAnswers == selected)
+        #expect(bar.askCurrentPage == 0)
+        #expect(mounted.host.askDeliveries.isEmpty, "folding is not answering")
+        #expect(mounted.host.content.askRequest != nil, "the composer still holds the pending ask")
+
+        try Self.tap("ask.collapsedBar", in: mounted)
+
+        #expect(!bar.askClearing.isCollapsed)
+        #expect(Self.shown("ask.collapse", in: mounted) != nil)
+        #expect(bar.askNaturalHeight == openHeight, "the open card is as tall as before")
+        for value in ["a", "c"] {
+            let row = try #require(Self.shown("ask.option.\(value)", in: mounted))
+            #expect(row.accessibilityTraits.contains(.selected), "\(value) lost its selection")
+        }
+        #expect(try #require(Self.shown("ask.option.d", in: mounted)).accessibilityTraits.contains(.selected) == false)
+        #expect(mounted.host.askDeliveries.isEmpty)
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+    }
+
+    @Test("Typing while folded still answers the pending ask, and Ignore stays reachable after expanding")
+    func foldedAskStillTakesTypedAnswerAndIgnore() throws {
+        let mounted = Self.mount(Self.request())
+        try Self.tap("ask.collapse", in: mounted)
+        #expect(
+            ComposerPolicy.composerPlaceholder(
+                askRequest: mounted.host.content.askRequest,
+                pendingReviewCommentCount: 0,
+                isBusy: true,
+                busyStreamingBehavior: .steer
+            ) == "Select options or type…"
+        )
+
+        mounted.host.text = "A and C"
+        #expect(mounted.bar.handleAskComposerSendIfNeeded())
+        #expect(mounted.host.askDeliveries.count == 1)
+        #expect(mounted.host.askDeliveries.first == ["q1": .custom("A and C")])
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+
+        let second = Self.mount(Self.request(id: "ask-ignore"))
+        try Self.tap("ask.collapse", in: second)
+        try Self.tap("ask.collapsedBar", in: second)
+        try Self.tap(AskCard.ignoreAccessibilityIdentifier, in: second)
+        #expect(second.host.askDeliveries.count == 1)
+        #expect(second.host.askDeliveries == [[String: AskAnswer]()], "Ignore on the last page sends no answers")
+        hideTestWindow(second.window)
+        second.window.rootViewController = nil
+    }
+
+    @Test("A new ask arrives expanded, a same-id update stays folded, and the answered ask clears the fold")
+    func foldScopeFollowsThePendingAsk() throws {
+        let mounted = Self.mount(Self.request())
+        let bar = mounted.bar
+        try Self.tap("ask.collapse", in: mounted)
+
+        mounted.host.content.askRequest = Self.request(extraOption: true)
+        bar.apply()
+        Self.settle(mounted)
+        #expect(bar.askClearing.isCollapsed, "the same ask with new content stays folded")
+        #expect(Self.shown("ask.collapsedBar", in: mounted) != nil)
+
+        mounted.host.content.askRequest = Self.request(id: "ask-next")
+        bar.apply()
+        Self.settle(mounted)
+        #expect(!bar.askClearing.isCollapsed, "a different ask arrives expanded")
+        #expect(Self.shown("ask.collapse", in: mounted) != nil)
+        #expect(Self.shown("ask.collapsedBar", in: mounted) == nil)
+
+        try Self.tap("ask.collapse", in: mounted)
+        #expect(bar.askClearing.isCollapsed)
+        mounted.host.content.askRequest = nil
+        bar.apply()
+        Self.settle(mounted)
+        #expect(!bar.askClearing.isCollapsed, "answering clears the fold")
+        #expect(bar.askCard == nil)
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+    }
+
+    @Test("The fold controls are native buttons with scoped identifiers, 44 pt targets, and a spoken state")
+    func foldControlsAreAccessibleButtons() throws {
+        let mounted = Self.mount(Self.request())
+        let chevron = try #require(Self.shown("ask.collapse", in: mounted) as? UIButton)
+        #expect(chevron.accessibilityValue == "Expanded")
+        #expect(chevron.accessibilityLabel == "Collapse question")
+        #expect(chevron.bounds.width >= 44 && chevron.bounds.height >= 44, "chevron target is \(chevron.bounds.size)")
+        let expand = try #require(Self.shown("ask.expand", in: mounted))
+        let chevronFrame = chevron.convert(chevron.bounds, to: mounted.window)
+        let expandFrame = expand.convert(expand.bounds, to: mounted.window)
+        #expect(!chevronFrame.intersects(expandFrame.insetBy(dx: 1, dy: 1)), "the two header controls overlap")
+
+        try Self.tap("ask.collapse", in: mounted)
+        let bar = try #require(Self.shown("ask.collapsedBar", in: mounted) as? UIButton)
+        #expect(bar.accessibilityValue == "Collapsed")
+        #expect(bar.accessibilityLabel == "Question: Which should we pursue?")
+        #expect(bar.bounds.height >= 44 && bar.bounds.width >= 44, "bar target is \(bar.bounds.size)")
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+    }
+
+    @Test("The bar's line is the title of any dialog, never a name-specific rule")
+    func collapsedTitleReadsEveryDialogTheSame() throws {
+        let select = try #require(ExtensionUIRequest(
+            id: "sel", sessionId: "s", method: "select", title: "Pick **one**\n\nwith a body", options: ["A", "B"]
+        ).askRequest)
+        let titled = try #require(ExtensionUIRequest(
+            id: "ttl", sessionId: "s", method: "select", title: "Pick **one**", options: ["A", "B"], message: "A body."
+        ).askRequest)
+        let confirm = try #require(ExtensionUIRequest(
+            id: "conf", sessionId: "s", method: "confirm", title: "Delete the draft?", message: "This cannot be undone."
+        ).askRequest)
+        let input = try #require(ExtensionUIRequest(
+            id: "inp", sessionId: "s", method: "input", title: "Name the branch", placeholder: "feature/…"
+        ).askRequest)
+        let wrapped = AskQuestion(
+            id: "w", question: "First line wraps\nonto a second line", options: [], multiSelect: false
+        )
+
+        func title(_ request: AskRequest) -> String {
+            AskCard.collapsedTitle(for: request.questions[0], encoding: request.responseEncoding)
+        }
+        #expect(title(confirm) == "Delete the draft?")
+        #expect(title(input) == "Name the branch")
+        #expect(title(select) == "Pick one", "a first paragraph resolves its inline Markdown")
+        #expect(title(titled) == "Pick **one**", "a sender's own title is shown verbatim")
+        #expect(AskCard.collapsedTitle(for: wrapped, encoding: .ask) == "First line wraps onto a second line")
+    }
+}
+
 /// Commenting with dictation from the selection menu, through the chat's own
 /// composer owner: the comment row and then the normal bar must stay laid out.
 @Suite("Composer action row with dictated comments")

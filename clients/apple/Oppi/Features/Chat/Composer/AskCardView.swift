@@ -12,6 +12,9 @@ struct AskCardViewState {
     var responseFailed: Bool
     var colors: ComposerThemeColors
     var reduceMotion: Bool
+    /// Folded to the one-line bar. Only the card's chrome changes: answers,
+    /// page, and every row stay as they were.
+    var isCollapsed = false
 
     var question: AskQuestion? {
         page < request.questions.count ? request.questions[page] : nil
@@ -41,16 +44,23 @@ struct AskCardViewState {
 /// ╰──────────────────────────────────────╯
 /// ```
 ///
+/// Folded (`AskCardViewState.isCollapsed`) it is one 44 pt button over the
+/// composer, so the transcript above gets the room back: a question icon, the
+/// question on one line, and a chevron. The rows are hidden, never rebuilt, so
+/// nothing the person picked is lost.
+///
 /// The card is opaque so the timeline behind the composer's glass cannot show
 /// through, and its frame stays put while its rows scroll, so the scrolling
 /// content always meets a clean rounded edge.
 @MainActor
-final class AskCardView: UIView, UIScrollViewDelegate {
+final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     var onOptionTap: ((AskOption, AskQuestion) -> Void)?
     var onIgnore: (() -> Void)?
     var onSend: (() -> Void)?
     var onDone: (() -> Void)?
     var onExpand: (() -> Void)?
+    /// The header, its chevron, or the folded bar asked to fold or unfold the card.
+    var onToggleCollapse: (() -> Void)?
     var onSelectPage: ((Int) -> Void)?
     /// The card's natural height changed; the slot caps it.
     var onHeightChange: (() -> Void)?
@@ -67,6 +77,13 @@ final class AskCardView: UIView, UIScrollViewDelegate {
     private let questionRow = UIView()
     private let questionPreview = AskQuestionPreviewView()
     private let expandButton = UIButton(type: .system)
+    private let collapseButton = UIButton(type: .system)
+    private let collapsedBar = UIButton(type: .system)
+    private let collapsedContent = UIStackView()
+    private let collapsedIcon = UIImageView()
+    private let collapsedLabel = UILabel()
+    private let collapsedChevron = UIImageView()
+    private var collapsedBarHeight: NSLayoutConstraint?
     private let selectionPill = AskSelectionModePillView()
     private let commandPreview = AskCommandPreviewView()
     private let optionsStack = UIStackView()
@@ -175,6 +192,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
             edge.alpha = 0
             addSubview(edge)
         }
+        buildCollapsedBar()
 
         let insets = Self.contentInsets
         let hairline = 1 / max(traitCollection.displayScale, 1)
@@ -216,11 +234,31 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         return row
     }()
 
-    /// The question with the expand control in the card's top-trailing corner.
-    /// The control's 44 pt square reaches into the card padding so its glyph
-    /// centers on the title's first line.
+    /// The question with the collapse and expand controls in the card's
+    /// top-trailing corner. Each control's 44 pt square reaches into the card
+    /// padding so its glyph centers on the title's first line. A tap anywhere
+    /// else on the header collapses the card too.
     private func buildQuestionRow() {
         questionPreview.translatesAutoresizingMaskIntoConstraints = false
+
+        var collapseConfig = UIButton.Configuration.plain()
+        collapseConfig.image = UIImage(
+            systemName: "chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
+        )
+        collapseConfig.contentInsets = .zero
+        collapseButton.configuration = collapseConfig
+        collapseButton.accessibilityLabel = "Collapse question"
+        collapseButton.accessibilityValue = "Expanded"
+        collapseButton.accessibilityHint = "Shrinks the question to one line so you can read the conversation"
+        collapseButton.accessibilityIdentifier = AskCard.collapseAccessibilityIdentifier
+        collapseButton.addAction(UIAction { [weak self] _ in self?.onToggleCollapse?() }, for: .touchUpInside)
+        collapseButton.translatesAutoresizingMaskIntoConstraints = false
+        questionRow.addSubview(collapseButton)
+
+        let headerTap = UITapGestureRecognizer(target: self, action: #selector(headerTapped))
+        headerTap.delegate = self
+        questionRow.addGestureRecognizer(headerTap)
 
         var config = UIButton.Configuration.plain()
         config.image = UIImage(
@@ -247,6 +285,82 @@ final class AskCardView: UIView, UIScrollViewDelegate {
             expandButton.heightAnchor.constraint(equalToConstant: side),
             expandButton.trailingAnchor.constraint(equalTo: questionRow.trailingAnchor, constant: 12),
             expandButton.topAnchor.constraint(equalTo: questionRow.topAnchor, constant: -12),
+            collapseButton.widthAnchor.constraint(equalToConstant: side),
+            collapseButton.heightAnchor.constraint(equalToConstant: side),
+            collapseButton.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor),
+            collapseButton.topAnchor.constraint(equalTo: expandButton.topAnchor),
+        ])
+    }
+
+    @objc private func headerTapped() {
+        onToggleCollapse?()
+    }
+
+    /// A tap on a control keeps its own meaning; the header takes the rest.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var view = touch.view
+        while let current = view, current !== questionRow {
+            if current is UIControl { return false }
+            view = current.superview
+        }
+        return true
+    }
+
+    /// The folded bar: one native button holding the icon, the question on one
+    /// line, and the chevron. It sits over the whole card while folded.
+    private func buildCollapsedBar() {
+        collapsedBar.configuration = .plain()
+        collapsedBar.configuration?.contentInsets = .zero
+        collapsedBar.configurationUpdateHandler = { [weak self] button in
+            self?.collapsedContent.alpha = button.isHighlighted ? 0.55 : 1
+        }
+        collapsedBar.accessibilityIdentifier = AskCard.collapsedBarAccessibilityIdentifier
+        collapsedBar.accessibilityValue = "Collapsed"
+        collapsedBar.accessibilityHint = "Expands the question and its options"
+        collapsedBar.addAction(UIAction { [weak self] _ in self?.onToggleCollapse?() }, for: .touchUpInside)
+        collapsedBar.isHidden = true
+        collapsedBar.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(collapsedBar)
+
+        collapsedIcon.image = UIImage(
+            systemName: "questionmark.circle",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .subheadline, scale: .medium)
+        )
+        collapsedChevron.image = UIImage(
+            systemName: "chevron.up",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
+        )
+        collapsedLabel.font = UIFont.scaled(.subheadline, .medium)
+        collapsedLabel.adjustsFontForContentSizeCategory = true
+        collapsedLabel.numberOfLines = 1
+        collapsedLabel.lineBreakMode = .byTruncatingTail
+        collapsedLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for glyph in [collapsedIcon, collapsedChevron] {
+            glyph.contentMode = .center
+            glyph.setContentHuggingPriority(.required, for: .horizontal)
+            glyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        collapsedContent.axis = .horizontal
+        collapsedContent.alignment = .center
+        collapsedContent.spacing = 10
+        for view in [collapsedIcon, collapsedLabel, collapsedChevron] as [UIView] {
+            collapsedContent.addArrangedSubview(view)
+        }
+        // The button takes the touch; its content only draws.
+        collapsedContent.isUserInteractionEnabled = false
+        collapsedContent.translatesAutoresizingMaskIntoConstraints = false
+        collapsedBar.addSubview(collapsedContent)
+
+        let height = collapsedBar.heightAnchor.constraint(equalToConstant: AskCard.quietControlMinimumHitSize)
+        collapsedBarHeight = height
+        NSLayoutConstraint.activate([
+            collapsedBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collapsedBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            collapsedBar.topAnchor.constraint(equalTo: topAnchor),
+            height,
+            collapsedContent.leadingAnchor.constraint(equalTo: collapsedBar.leadingAnchor, constant: 14),
+            collapsedContent.trailingAnchor.constraint(equalTo: collapsedBar.trailingAnchor, constant: -14),
+            collapsedContent.centerYAnchor.constraint(equalTo: collapsedBar.centerYAnchor),
         ])
     }
 
@@ -331,6 +445,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
     /// Natural height at `width`: the scrolling content plus the footer.
     func preferredHeight(for width: CGFloat) -> CGFloat {
         guard width > 1 else { return 0 }
+        if state?.isCollapsed == true { return collapsedBarHeight?.constant ?? AskCard.quietControlMinimumHitSize }
         let insets = Self.contentInsets
         let contentWidth = width - insets.leading - insets.trailing
         func contentHeight() -> CGFloat {
@@ -437,8 +552,42 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         }
         applyPager(state)
         applyFooter(state)
+        applyCollapsed(state)
         setNeedsLayout()
         reportHeightIfNeeded()
+    }
+
+    /// Swaps the open card for the folded bar. Nothing is rebuilt: the rows,
+    /// page, and answers sit hidden behind the bar exactly as they were.
+    private func applyCollapsed(_ state: AskCardViewState) {
+        let collapsed = state.isCollapsed
+        let colors = state.colors
+        // Plain `isHidden`, not `setHiddenIfChanged`: the swap rides the
+        // cross-dissolve `AskCardViewController` wraps around a toggle.
+        for view in [scrollView, footer, topEdge, footerEdge] as [UIView] where view.isHidden != collapsed {
+            view.isHidden = collapsed
+        }
+        if collapsedBar.isHidden == collapsed { collapsedBar.isHidden = !collapsed }
+        collapseButton.configuration?.baseForegroundColor = colors.comment
+
+        let title = state.question.map {
+            AskCard.collapsedTitle(for: $0, encoding: state.request.responseEncoding)
+        } ?? "Review this request."
+        collapsedLabel.text = title
+        collapsedLabel.textColor = colors.fg
+        collapsedIcon.tintColor = colors.blue
+        collapsedChevron.tintColor = colors.comment
+        collapsedBar.accessibilityLabel = "Question: \(title)"
+        // One line plus 12 pt above and below, never under the 44 pt target.
+        let height = max(AskCard.quietControlMinimumHitSize, ceil(collapsedLabel.font.lineHeight) + 24)
+        if collapsedBarHeight?.constant != height { collapsedBarHeight?.constant = height }
+    }
+
+    /// Moves VoiceOver to the control the toggle left on screen, which speaks
+    /// the new state ("Collapsed" or "Expanded") as its value.
+    func announceCollapseState() {
+        let target: UIView = collapsedBar.isHidden ? collapseButton : collapsedBar
+        UIAccessibility.post(notification: .layoutChanged, argument: target)
     }
 
     private func applyQuestion(_ question: AskQuestion, state: AskCardViewState) {
@@ -655,6 +804,8 @@ private final class AskCommandPreviewView: UIView {
 final class AskCardViewController: UIViewController {
     var onPageChange: ((Int) -> Void)?
     var onAnswersChange: (([String: AskAnswer]) -> Void)?
+    /// The person folded or unfolded the card; the composer keeps the choice.
+    var onCollapsedChange: ((Bool) -> Void)?
     var onSubmit: (([String: AskAnswer], @escaping AskResponseSubmission.Completion) -> Void)?
     var onIgnoreAll: ((@escaping AskResponseSubmission.Completion) -> Void)?
     /// The card's natural height changed (slot margins included).
@@ -671,6 +822,7 @@ final class AskCardViewController: UIViewController {
     private var answers: [String: AskAnswer] = [:]
     private var submittedRequestID: String?
     private var responseFailed = false
+    private var isCollapsed = false
     private var colors = ComposerThemeColors.placeholder
     private var reduceMotion = false
     private var presentedAtNs: UInt64 = 0
@@ -708,6 +860,7 @@ final class AskCardViewController: UIViewController {
         }
         card.onDone = { [weak self] in self?.confirmMultiSelect() }
         card.onExpand = { [weak self] in self?.presentExpanded() }
+        card.onToggleCollapse = { [weak self] in self?.toggleCollapsed() }
         card.onSelectPage = { [weak self] page in self?.selectPage(page) }
         card.onHeightChange = { [weak self] in self?.reportHeight() }
     }
@@ -745,6 +898,7 @@ final class AskCardViewController: UIViewController {
         answers: [String: AskAnswer],
         submittedRequestID: String?,
         responseFailed: Bool,
+        isCollapsed: Bool,
         colors: ComposerThemeColors,
         reduceMotion: Bool
     ) {
@@ -761,6 +915,7 @@ final class AskCardViewController: UIViewController {
         self.answers = answers
         self.submittedRequestID = submittedRequestID
         self.responseFailed = responseFailed
+        self.isCollapsed = isCollapsed
         self.colors = colors
         self.reduceMotion = reduceMotion
         if previous != request {
@@ -827,8 +982,38 @@ final class AskCardViewController: UIViewController {
             isSubmitted: isAskSubmitted,
             responseFailed: responseFailed || submission.phase == .failed(request.id),
             colors: colors,
-            reduceMotion: reduceMotion
+            reduceMotion: reduceMotion,
+            isCollapsed: isCollapsed
         ))
+    }
+
+    /// Folds the open card to its bar, or opens it again. This is a view
+    /// choice, not an answer: nothing is submitted, no selection or page is
+    /// touched, and a pending auto-advance keeps its place. The composer owns
+    /// the flag (`onCollapsedChange`), so it outlives this card's redraws.
+    ///
+    /// With Reduce Motion the swap is instant; otherwise the card cross-fades
+    /// while the slot's height eases, and the transcript follows the composer.
+    private func toggleCollapsed() {
+        guard request != nil else { return }
+        AppHaptics.impact(style: .light)
+        let change = { [self] in
+            isCollapsed.toggle()
+            onCollapsedChange?(isCollapsed)
+            render()
+        }
+        if reduceMotion {
+            change()
+            view.window?.layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+                UIView.transition(with: self.card, duration: 0.28, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                    change()
+                }
+                self.view.window?.layoutIfNeeded()
+            }
+        }
+        card.announceCollapseState()
     }
 
     private func reportHeight() {

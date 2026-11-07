@@ -42,6 +42,9 @@ extension ComposerBarController {
         card.onAnswersChange = { [weak self] answers in
             self?.askDraftAnswers = answers
         }
+        card.onCollapsedChange = { [weak self] collapsed in
+            self?.askClearing.isCollapsed = collapsed
+        }
         card.onSubmit = { [weak self] answers, complete in
             self?.submitAskResponse(request: request, answers: answers, completion: complete)
         }
@@ -58,6 +61,7 @@ extension ComposerBarController {
             answers: askClearing.draftAnswers,
             submittedRequestID: askClearing.submittedRequestID,
             responseFailed: askFailed(for: request),
+            isCollapsed: askClearing.isCollapsed,
             colors: content.colors,
             reduceMotion: content.reduceMotion
         )

@@ -78,6 +78,7 @@ enum DebugHarnessLaunch {
         switch ScreenshotPreviewConfig.screen {
         case "ask-card-intent-regression": return AskCardIntentRegressionPreviewController()
         case "ask-card-tall-scroll": return AskCardTallScrollPreviewController()
+        case "ask-card-collapse": return AskCardCollapsePreviewController()
         case "settings-sweep": return SettingsSweepPreviewController()
         case "workspace-settings": return WorkspaceSettingsPreviewController()
         case "settings-chat": return SettingsPagePreviewController(themeStore: root.themeStore)

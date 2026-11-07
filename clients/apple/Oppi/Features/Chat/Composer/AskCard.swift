@@ -109,6 +109,25 @@ final class AskResponseSubmission {
 enum AskCard {
     static let quietControlMinimumHitSize: CGFloat = ComposerInputMetrics.controlDiameter
     static let ignoreAccessibilityIdentifier = "ask.ignore"
+    /// The chevron in the open card's header that folds it to the bar.
+    static let collapseAccessibilityIdentifier = "ask.collapse"
+    /// The folded bar; one button that opens the card again.
+    static let collapsedBarAccessibilityIdentifier = "ask.collapsedBar"
+
+    /// The folded bar's one line: the question's title, or its first paragraph
+    /// when no title was sent, with inline Markdown resolved and line breaks
+    /// flattened. Any ask, select, confirm, or input reads the same way.
+    static func collapsedTitle(for question: AskQuestion, encoding: AskResponseEncoding) -> String {
+        let summary = inlineQuestionDisplay(for: question.question, encoding: encoding).summary
+        let parts = inlineQuestionParts(for: summary.isEmpty ? "Review this request." : summary, title: question.title)
+        let source = parts.title ?? parts.body ?? summary
+        let text = parts.titleIsVerbatim
+            ? source
+            : AskQuestionPreviewView.inlineMarkdown(source, font: .preferredFont(forTextStyle: .subheadline), color: .label).string
+        let line = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return line.isEmpty ? "Review this request." : line
+    }
 
     static func pageAccessibilityIdentifier(_ page: Int) -> String {
         "ask.page.\(page)"

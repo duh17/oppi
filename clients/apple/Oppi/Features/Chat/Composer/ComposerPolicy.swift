@@ -7,22 +7,27 @@ enum ComposerPrimaryActionKind: Equatable {
     case stop
 }
 
-/// Owns inline-ask paging, draft answers, and the submitted-request mark
-/// that keeps the composer empty after submit/ignore until a different ask arrives.
+/// Owns inline-ask paging, draft answers, whether the card is folded to its bar,
+/// and the submitted-request mark that keeps the composer empty after
+/// submit/ignore until a different ask arrives.
 @MainActor
 struct AskComposerClearingState {
     var currentPage = 0
     var draftAnswers: [String: AskAnswer] = [:]
+    /// The card is folded to its one-line bar. A view choice, never an answer:
+    /// it lives and dies with the pending ask, so a new ask arrives expanded.
+    var isCollapsed = false
     var textRevision: UInt64 = 0
     var submission = AskResponseSubmission()
     var submittedRequestID: String? { submission.submittedRequestID }
 
-    /// Ask request id changed. Reset page and drafts. Keep the submitted mark
-    /// unless a *different* ask id arrived. Clearing the pending request after
-    /// a successful send must not drop the mark.
+    /// Ask request id changed. Reset page, drafts, and the folded card. Keep the
+    /// submitted mark unless a *different* ask id arrived. Clearing the pending
+    /// request after a successful send must not drop the mark.
     mutating func applyRequestIDChange(_ incomingRequestID: String?) {
         currentPage = 0
         draftAnswers = [:]
+        isCollapsed = false
         submission.applyRequestIDChange(incomingRequestID)
     }
 }
