@@ -100,6 +100,7 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
                 "tool": "read",
                 "toolCallId": toolCallId,
             ])
+            foldToolRow(toolRow)
 
             // The harness does not persist synthetic agent status in the server
             // session snapshot. Reassert its busy event after the foreground
@@ -186,9 +187,31 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
         return element.value as? String == expected
     }
 
+    /// Taps the row header from the row's top edge. An expanded row is much taller
+    /// than a folded one, so a fraction of its height lands on the composer when
+    /// the row starts near the bottom of the viewport.
     private func tapToolRowChrome(_ row: XCUIElement) {
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.16)).tap()
+        revealAboveComposer(row)
+        row.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 100, dy: 8)).tap()
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+
+    /// Expanding a row keeps its header fixed and grows it downward. Once the
+    /// timeline overflows the viewport that detaches it from the live tail on
+    /// purpose, and later tool rows then start below the composer. The user
+    /// scrolls back to the tail; do the same so each cycle starts attached.
+    private func revealAboveComposer(_ row: XCUIElement) {
+        let input = app.textViews["chat.input"]
+        let timeline = app.collectionViews["chat.timeline"]
+        for _ in 0..<4 where input.exists && timeline.exists && row.frame.maxY > input.frame.minY {
+            timeline.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+    }
+
+    /// Folds the expanded row so the timeline grows by one folded row per cycle.
+    private func foldToolRow(_ row: XCUIElement) {
+        tapToolRowChrome(row)
     }
 
     private func reportLifecycleDurations(_ snapshots: [E2ELifecycleDiagnosticSnapshot], scenario: String) {
