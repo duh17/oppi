@@ -47,6 +47,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
+import type { WorkspaceRuntime } from "../src/workspace-runtime.js";
 import {
   DurableHarness,
   DurableRuntime,
@@ -4558,6 +4559,28 @@ describe("server durable managed runtime", () => {
     expect(starts.mock.calls.map(([id]) => id)).toEqual([ordered[0]!.id]);
     expect(f.manager.isActive(stopped.id)).toBe(false);
   });
+
+  it.each(["startEvents", "resume"] as const)(
+    "leaves no live runtime behind when %s fails after the session registered",
+    async (failing) => {
+      const f = await fixture([]);
+      const dispose = vi.spyOn(DurableBackend.prototype, "dispose");
+      const failure = new Error(`${failing} failed`);
+      if (failing === "startEvents")
+        vi.spyOn(DurableBackend.prototype, "startEvents").mockRejectedValueOnce(failure);
+      else vi.spyOn(SessionHost.prototype, "resume").mockRejectedValueOnce(failure);
+
+      await expect(f.manager.startSession(f.session.id, f.workspace)).rejects.toBe(failure);
+
+      // The session is not live, its backend is gone, and its workspace slot is free.
+      expect(f.manager.isActive(f.session.id)).toBe(false);
+      expect(dispose).toHaveBeenCalled();
+      expect((dispose.mock.contexts[0] as DurableBackend).isDisposed).toBe(true);
+      const runtime = (f.manager as unknown as { runtimeManager: WorkspaceRuntime }).runtimeManager;
+      expect(runtime.getWorkspaceSessionCount(f.workspace.id)).toBe(0);
+      expect(f.storage.getSession(f.session.id)?.status).toBe("stopped");
+    },
+  );
 
   it("persists a busy sandbox restart attachment until its original submission settles once", async () => {
     let finishReply!: () => void;

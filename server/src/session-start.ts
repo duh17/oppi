@@ -47,7 +47,8 @@ export interface SessionStartCoordinatorDeps {
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   getNotifyPort: () => SessionNotifyPort | null;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
-  onSessionEnd: (key: string, reason: string) => void;
+  /** Tears the registered runtime down; a start that fails after registering ends through it. */
+  onSessionEnd: (key: string, reason: string) => void | Promise<void>;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
@@ -86,6 +87,7 @@ export class SessionStartCoordinator {
       this.deps.persistSessionNow(key, session);
 
       let abandoned = false;
+      let registered = false;
       try {
         const createStart = Date.now();
         const agentDefinition = this.resolveAgentDefinition(session);
@@ -198,6 +200,7 @@ export class SessionStartCoordinator {
           if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
           if (durableHost) activeSession.releaseDurableHold = durableHost.retain("attach");
           this.deps.registerActiveSession(key, activeSession);
+          registered = true;
           this.deps.runtimeManager.markSessionReady(identity);
 
           session.status = "ready";
@@ -223,7 +226,20 @@ export class SessionStartCoordinator {
           releaseStart?.();
         }
       } catch (err) {
-        if (!abandoned) {
+        if (registered) {
+          // The runtime is registered and its backend runs: end it like any session end so the
+          // failure leaves no live session behind. It saves `stopped`, which stays: the
+          // pre-start status below describes a session with no runtime.
+          try {
+            await this.deps.onSessionEnd(key, "start_error");
+          } catch (endError) {
+            log.warn("session_start.cleanup_failed", {
+              sessionId: session.id,
+              error: safeErrorMessage(endError),
+            });
+          }
+        }
+        if (!abandoned && !registered) {
           session.status = previousStatus;
           session.currentTurnStartedAt = undefined;
           session.lastActivity = Date.now();
