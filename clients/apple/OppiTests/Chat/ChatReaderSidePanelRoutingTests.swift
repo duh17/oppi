@@ -68,6 +68,27 @@ struct ChatReaderSidePanelRoutingTests {
         #expect(detached)
     }
 
+    @Test("narrowing to compact hands an open column reader to the pushed route, payload intact")
+    func narrowingHandsTheColumnReaderToThePushedRoute() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+
+        host.chat.openTimelineReader(.document(content: .fromText("hello", filePath: "notes.md")))
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.chat.trailingColumn.mountedScreenForTesting is ChatReaderViewController
+        }
+        let target = try #require(host.chat.model.sidePanelReaderTarget)
+
+        host.window.traitOverrides.horizontalSizeClass = .compact
+        let pushed = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.appNavigation.containsChatReader(target)
+                && host.chat.trailingColumn.mountedScreenForTesting == nil
+        }
+        #expect(pushed, "the reader neither left the column nor joined the shell's stack")
+        #expect(host.chat.model.sidePanelReaderTarget == nil)
+        #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) != nil, "the pushed reader can still resolve it")
+    }
+
     @Test("regular width mounts Share in the trailing column, not the old full-screen modal")
     func regularWidthMountsShareInTheTrailingColumn() async throws {
         let host = try await makeHost(horizontalSizeClass: .regular)

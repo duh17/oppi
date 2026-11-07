@@ -146,6 +146,13 @@ extension ChatViewController {
     /// timeline, and composer.
     func updateSidePanels() {
         guard let root else { return }
+        if traitCollection.horizontalSizeClass == .compact, let target = model.sidePanelReaderTarget {
+            // Narrow width reads the reader as the pushed route it opens as
+            // there. Pushed first, so the panel reader leaving keeps the
+            // payload the route still names.
+            model.sidePanelReaderTarget = nil
+            appNavigation.openChatReader(target)
+        }
         let panel: ChatSidePanel? = {
             guard usesTrailingSidePanel else { return nil }
             // Share wins: it is a deliberate action from the title menu, not

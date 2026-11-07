@@ -152,12 +152,13 @@ extension ChatViewController {
         // Regular width shows every top-bar destination in the trailing
         // column beside this chat, the reader included; narrow width keeps
         // the pushed `.chatReader` route.
+        // The store keeps only what the shell's stack still names; a panel
+        // reader holds its payload once it resolves it.
+        let target = store.store(readerPayload, retaining: appNavigation.containsChatReader)
         if usesTrailingSidePanel {
-            showSidePanel(.reader(store.store(readerPayload, retaining: { _ in true })))
+            showSidePanel(.reader(target))
         } else {
-            appNavigation.openChatReader(
-                store.store(readerPayload, retaining: appNavigation.containsChatReader)
-            )
+            appNavigation.openChatReader(target)
         }
     }
 

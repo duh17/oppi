@@ -35,6 +35,15 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         /// navigation stack, the way the Files panel's own document pushes
         /// already do.
         case panel(onClose: @MainActor () -> Void)
+        /// A reader opened from a panel reader, pushed on the panel's own
+        /// stack: leaving pops it, and its own nested opens stay in the
+        /// panel too rather than escaping onto the shell's stack.
+        case panelPage
+
+        var staysInPanel: Bool {
+            if case .pushedRoute = self { return false }
+            return true
+        }
     }
 
     let target: ChatReaderNavTarget
@@ -202,7 +211,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
 
     private func leave() {
         switch hosting {
-        case .pushedRoute: Router.finish(self)
+        case .pushedRoute, .panelPage: Router.finish(self)
         case .panel(let onClose): onClose()
         }
     }
@@ -213,22 +222,24 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         let openNested: (ChatReaderPayload) -> Void = { [weak self] nested in
             guard let self else { return }
             let stamped = nested.inheritingDestination(from: payload)
-            switch hosting {
-            case .pushedRoute:
-                // Joins `AppNavigation`'s own route list, exactly as this
-                // reader's own push did, so the nested reader survives a
-                // backgrounding or a stack/split swap the same way.
-                navigation.openChatReader(store.store(stamped, retaining: navigation.containsChatReader))
-            case .panel:
+            let target = store.store(stamped, retaining: navigation.containsChatReader)
+            if hosting.staysInPanel {
                 // Pushes within the panel's own navigation stack, as the
                 // Files panel's document pushes already do: no app-route
                 // bookkeeping, since the column's own open/closed state is
                 // already the source of truth for whether this is on screen.
-                let target = store.store(stamped, retaining: { _ in true })
+                // Each reader holds its payload once resolved, so the store
+                // keeps only what the shell's stack still names.
                 let nestedReader = ChatReaderViewController(
-                    target: target, store: store, navigation: navigation, editBackend: editBackendOverride
+                    target: target, store: store, navigation: navigation,
+                    editBackend: editBackendOverride, hosting: .panelPage
                 )
                 Router.push(nestedReader, from: self)
+            } else {
+                // Joins `AppNavigation`'s own route list, exactly as this
+                // reader's own push did, so the nested reader survives a
+                // backgrounding or a stack/split swap the same way.
+                navigation.openChatReader(target)
             }
         }
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.leave() }
