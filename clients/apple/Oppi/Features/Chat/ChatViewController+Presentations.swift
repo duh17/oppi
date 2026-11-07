@@ -187,7 +187,7 @@ extension ChatViewController {
         switch panel {
         case .files: filePanelController()
         case .outline: outlineController()
-        case .git: gitPanelController()
+        case .git: gitPanelController(hostedInPanel: true)
         case .context: contextController()
         case .share: shareRedactionController()
         case .reader(let target): readerPanelController(target)

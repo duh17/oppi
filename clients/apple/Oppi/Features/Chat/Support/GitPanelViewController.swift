@@ -7,8 +7,11 @@ import UIKit
 /// from its top bar.
 ///
 /// It reads its host's Git status (and a chat's session) live in
-/// `updateProperties()`. The bar presents its file reviews and commit details
-/// from this screen, so they stack over the panel.
+/// `updateProperties()`. The bar opens its file reviews and commit details
+/// from this screen (`Options.hostedInPanel`): pushed inside the trailing
+/// column's own navigation, with a back button to this panel, while the
+/// panel itself is hosted there; a sheet over the panel otherwise (a
+/// compact-width chat panel, or a workspace's own Git sheet).
 final class GitPanelViewController: UIViewController {
     private let readContext: () -> WorkspaceContextBarView.Context?
     private let bar: WorkspaceContextBarView

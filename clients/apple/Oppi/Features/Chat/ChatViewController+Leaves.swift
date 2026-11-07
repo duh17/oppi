@@ -18,16 +18,23 @@ extension ChatViewController {
         phase == .inactive || phase == .background
     }
 
-    /// The Git panel (UIKit), as a sheet or in the trailing column: the
-    /// workspace context bar, on this chat's server and
-    /// navigation. A review staged for this session, or a comment started in a
-    /// file review, closes the panel so it reaches the composer; a session
-    /// started from it closes the panel and pushes onto this chat's stack.
+    /// The Git panel (UIKit), as a sheet in compact width. Regular width
+    /// builds it through `gitPanelController(hostedInPanel: true)` instead
+    /// (`sidePanelController`), so a commit or a review pushes inside the
+    /// column's own navigation rather than a second sheet over it.
     func gitPanelScreen() -> RouterScreen {
-        .controller(gitPanelController())
+        .controller(gitPanelController(hostedInPanel: false))
     }
 
-    func gitPanelController() -> () -> UIViewController {
+    /// `hostedInPanel` matches how this screen itself is about to be shown:
+    /// true only from the trailing column's panel root (`sidePanelController`),
+    /// so a commit, a review, or a touched file's session copy pushes inside
+    /// that column's own navigation, with a back button to this panel,
+    /// instead of presenting as a sheet. A review staged for this session, or
+    /// a comment started in a file review, closes the panel so it reaches the
+    /// composer; a session started from it closes the panel and pushes onto
+    /// this chat's stack.
+    func gitPanelController(hostedInPanel: Bool) -> () -> UIViewController {
         { [weak self] in
             guard let self else { preconditionFailure("The Git panel presents only while its chat is alive") }
             let closePanel: () -> Void = { [weak self] in self?.model.showGit = false }
@@ -48,7 +55,8 @@ extension ChatViewController {
                         guard let self else { return }
                         closePanel()
                         Router.push(chat, from: self)
-                    }
+                    },
+                    hostedInPanel: hostedInPanel
                 ),
                 connection: self.connection,
                 apiClient: self.apiClient,

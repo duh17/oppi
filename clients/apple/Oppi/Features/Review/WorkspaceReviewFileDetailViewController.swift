@@ -62,8 +62,11 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
 
 /// One changed file of a workspace: its header, Changes (the diff) and File
 /// (the current bytes in this checkout, editable) tabs, previous/next across
-/// the review's files, a file list column in regular width, sharing, and
-/// prompt templates that start a session about the file.
+/// the review's files, a file list (a column in regular width, or, hosted in
+/// a trailing column's own panel navigation, pushed there with a back button
+/// to this screen), sharing, and prompt templates that start a session about
+/// the file. Hosted in a panel, there is no overflow menu to start one from:
+/// it would have to push a whole chat into the column's own width.
 ///
 /// A new file shows its current bytes; a deleted one only its diff and is
 /// never recreated. While the File tab's editor is open it owns the bar, the
@@ -112,10 +115,18 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 
     let configuration: Configuration
-    /// The sheet's close control, for a review presented as a sheet.
+    /// The sheet's close control, for a review presented as a sheet. Nil
+    /// while `hostedInPanel`: the panel's navigation draws the back button.
     var onClose: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
+    /// This screen is itself pushed in a trailing column's panel navigation
+    /// (the Git panel's file review at regular width): its file list pushes
+    /// there too, instead of this screen's own column. New Session and the
+    /// prompt templates still push their chat onto this screen, which joins
+    /// the panel's own navigation the same way the Files panel's own
+    /// document pushes already do.
+    private let hostedInPanel: Bool
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
@@ -192,11 +203,36 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         let item = UIBarButtonItem(
             title: String(localized: "Files"),
             image: UIImage(systemName: "list.bullet"),
-            primaryAction: UIAction { [weak self] _ in self?.showsFileListColumn = true }
+            primaryAction: UIAction { [weak self] _ in self?.openFileList() }
         )
         item.accessibilityIdentifier = "review-file.list.show"
         return item
     }()
+
+    /// Shows the file list: hosted in a panel, pushed there with a back
+    /// button to this screen; otherwise this screen's own column.
+    private func openFileList() {
+        guard hostedInPanel else {
+            showsFileListColumn = true
+            return
+        }
+        let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles)
+        var screen: ReviewFileListViewController?
+        let list = ReviewFileListViewController(
+            files: files,
+            currentPath: currentFile.path,
+            hostedInPanel: true,
+            onSelect: { [weak self] file in
+                guard let self else { return }
+                if let screen { Router.finish(screen) }
+                self.selectReviewFile(file)
+            },
+            onHide: {}
+        )
+        screen = list
+        fileList = list
+        Router.push(list, from: self)
+    }
     private var shareItem: UIBarButtonItem?
     private var shareItemKey: ShareKey?
 
@@ -211,12 +247,14 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         configuration: Configuration,
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation
+        navigation: AppNavigation,
+        hostedInPanel: Bool = false
     ) {
         self.configuration = configuration
         self.connection = connection
         self.apiClient = apiClient
         self.appNavigation = navigation
+        self.hostedInPanel = hostedInPanel
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -272,10 +310,19 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         return { [weak self] in self?.navigateBack() }
     }
 
-    private var usesReviewFileColumn: Bool {
+    /// Whether the review offers a file list at all: more than one file to
+    /// switch between, and either a panel to push it into or room for its
+    /// own column.
+    private var showsFileListEntry: Bool {
         configuration.showsFileListInspector
-            && TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: traitCollection.horizontalSizeClass)
             && WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles).count > 1
+            && (hostedInPanel || TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: traitCollection.horizontalSizeClass))
+    }
+
+    /// Whether the file list lays out as this screen's own column: never
+    /// while hosted in a panel, whose own navigation it pushes into instead.
+    private var usesReviewFileColumn: Bool {
+        !hostedInPanel && showsFileListEntry
     }
 
     private var showsReviewFileList: Bool {
@@ -679,7 +726,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             navigationItem.additionalOverflowItems = nil
             return
         }
-        if usesReviewFileColumn, !showsFileListColumn {
+        if hostedInPanel ? showsFileListEntry : (usesReviewFileColumn && !showsFileListColumn) {
             leading.append(showFilesItem)
         }
         var trailing: [UIBarButtonItem] = []
@@ -689,8 +736,12 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         // The viewer's Edit, left of Share.
         trailing.append(contentsOf: viewerBar?.trailingItems ?? [])
         setItems(leading: leading, trailing: trailing)
-        if navigationItem.additionalOverflowItems !== actionMenu {
-            navigationItem.additionalOverflowItems = actionMenu
+        // Hosted in a panel, New Session and the prompt templates would have
+        // to push a whole chat into the column's own width: no overflow menu
+        // to start one from.
+        let overflow = hostedInPanel ? nil : actionMenu
+        if navigationItem.additionalOverflowItems !== overflow {
+            navigationItem.additionalOverflowItems = overflow
         }
     }
 
@@ -945,7 +996,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 }
 
-/// The review's files in its trailing column; the current one is checked.
+/// The review's files: this screen's own trailing column, or, hosted in a
+/// panel (`hostedInPanel`), pushed in the panel's navigation with its native
+/// back button instead of Hide Files. The current file is checked.
 @MainActor
 final class ReviewFileListViewController: UICollectionViewController {
     private var files: [WorkspaceReviewFile]
@@ -957,6 +1010,7 @@ final class ReviewFileListViewController: UICollectionViewController {
     init(
         files: [WorkspaceReviewFile],
         currentPath: String?,
+        hostedInPanel: Bool = false,
         onSelect: @escaping (WorkspaceReviewFile) -> Void,
         onHide: @escaping () -> Void
     ) {
@@ -968,13 +1022,15 @@ final class ReviewFileListViewController: UICollectionViewController {
             using: UICollectionLayoutListConfiguration(appearance: .insetGrouped)
         ))
         title = String(localized: "Files")
-        let hide = UIBarButtonItem(
-            title: String(localized: "Hide Files"),
-            image: UIImage(systemName: "sidebar.trailing"),
-            primaryAction: UIAction { [weak self] _ in self?.onHide() }
-        )
-        hide.accessibilityIdentifier = "review-file.list.hide"
-        navigationItem.leftBarButtonItem = hide
+        if !hostedInPanel {
+            let hide = UIBarButtonItem(
+                title: String(localized: "Hide Files"),
+                image: UIImage(systemName: "sidebar.trailing"),
+                primaryAction: UIAction { [weak self] _ in self?.onHide() }
+            )
+            hide.accessibilityIdentifier = "review-file.list.hide"
+            navigationItem.leftBarButtonItem = hide
+        }
     }
 
     @available(*, unavailable)

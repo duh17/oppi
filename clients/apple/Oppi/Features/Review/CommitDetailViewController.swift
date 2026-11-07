@@ -18,9 +18,15 @@ struct CommitDetailActionMenuState: Equatable {
 /// A commit: its message, author, and line counts, and a tappable list of the
 /// files it changed. A file opens its diff beside the list in regular width
 /// (a trailing column) and in a sheet in compact width; a width change moves
-/// the open diff between the two. New Session and the prompt templates in the
-/// overflow menu start a session about the commit and push its chat onto
-/// this screen's stack.
+/// the open diff between the two. Hosted in a trailing column's own panel
+/// navigation (`hostedInPanel`, the Git panel's commit row), a file instead
+/// pushes its diff there, with a back button to this screen, since the
+/// column's width is already spoken for and its own trait reads compact.
+/// New Session and the prompt templates in the overflow menu start a session
+/// about the commit and push its chat onto this screen's stack; hosted in a
+/// panel, that stack is the one the Git panel's own navigation already owns,
+/// so there is no overflow menu to start one from (it would have to push a
+/// whole chat into the column's own width).
 @MainActor
 final class CommitDetailViewController: UIViewController {
     struct Configuration {
@@ -35,10 +41,18 @@ final class CommitDetailViewController: UIViewController {
     }
 
     let configuration: Configuration
-    /// The modal's close control, for a commit at the root of a modal.
+    /// The modal's close control, for a commit at the root of a modal. Nil
+    /// while `hostedInPanel`: the panel's navigation draws the back button.
     var onClose: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
+    /// This screen is itself pushed in a trailing column's panel navigation
+    /// (the Git panel's commit row at regular width): a selected file pushes
+    /// its diff there too, instead of this screen's own column or sheet.
+    /// New Session and the prompt templates still push their chat onto this
+    /// screen, which joins the panel's own navigation the same way the Files
+    /// panel's own document pushes already do.
+    private let hostedInPanel: Bool
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
@@ -97,16 +111,20 @@ final class CommitDetailViewController: UIViewController {
         configuration: Configuration,
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation
+        navigation: AppNavigation,
+        hostedInPanel: Bool = false
     ) {
         self.configuration = configuration
         self.connection = connection
         self.apiClient = apiClient
         self.appNavigation = navigation
+        self.hostedInPanel = hostedInPanel
         super.init(nibName: nil, bundle: nil)
         title = String(localized: "Commit")
         navigationItem.largeTitleDisplayMode = .never
-        navigationItem.additionalOverflowItems = actionMenu
+        if !hostedInPanel {
+            navigationItem.additionalOverflowItems = actionMenu
+        }
     }
 
     @available(*, unavailable)
@@ -191,7 +209,7 @@ final class CommitDetailViewController: UIViewController {
         if navigationItem.leftBarButtonItem !== leading {
             navigationItem.leftBarButtonItem = leading
         }
-        if let root {
+        if !hostedInPanel, let root {
             updateDiffPanel(root: root)
         }
     }
@@ -217,10 +235,21 @@ final class CommitDetailViewController: UIViewController {
             embed(ReviewPagePlaceholder.unavailable(title: String(localized: "Unable to load commit"), message: message))
         case .loaded(let detail):
             let content = CommitDetailContentView(detail: detail) { [weak self] file in
-                self?.selectedFile = file
+                self?.selectFile(file)
             }
             embed(content)
             loadedContent = content
+        }
+    }
+
+    /// Hosted in a panel, the diff joins this screen's own navigation stack
+    /// (a back button returns here); otherwise `updateDiffPanel` follows
+    /// `selectedFile` into the column or the sheet.
+    private func selectFile(_ file: GitCommitFileInfo) {
+        if hostedInPanel {
+            Router.push(diffController(file)(), from: self)
+        } else {
+            selectedFile = file
         }
     }
 
@@ -277,9 +306,15 @@ final class CommitDetailViewController: UIViewController {
             reviewCommentSelectionScope: self.configuration.reviewCommentSelectionScope
         )
         let apiClient = apiClient
+        let hostedInPanel = hostedInPanel
         return { [weak self] in
-            let diff = CommitFileDiffViewController(configuration: configuration, apiClient: apiClient)
-            diff.onClose = { self?.selectedFile = nil }
+            let diff = CommitFileDiffViewController(configuration: configuration, apiClient: apiClient, hostedInPanel: hostedInPanel)
+            // Pushed in a panel, the navigation controller's own back button
+            // leads back to the commit; a column or sheet root needs this
+            // screen's own close control instead.
+            if !hostedInPanel {
+                diff.onClose = { self?.selectedFile = nil }
+            }
             return diff
         }
     }
@@ -560,7 +595,13 @@ final class CommitFileDiffViewController: UIViewController {
     }
 
     let configuration: Configuration
+    /// The sheet or column root's close control. Nil while `hostedInPanel`:
+    /// the panel's navigation draws the back button instead.
     var onClose: (() -> Void)?
+    /// Pushed in a trailing column's panel navigation (the Git panel's
+    /// commit, at regular width): draws no close control of its own, since
+    /// that navigation's native back button leads back to the commit.
+    private let hostedInPanel: Bool
 
     private let apiClient: APIClient?
     private var diff: WorkspaceReviewDiffResponse? {
@@ -577,12 +618,14 @@ final class CommitFileDiffViewController: UIViewController {
     private var diffReader: DiffReaderView?
     private let stashButton = ReviewCommentStashFloatingButton()
 
-    init(configuration: Configuration, apiClient: APIClient?) {
+    init(configuration: Configuration, apiClient: APIClient?, hostedInPanel: Bool = false) {
         self.configuration = configuration
         self.apiClient = apiClient
+        self.hostedInPanel = hostedInPanel
         super.init(nibName: nil, bundle: nil)
         title = configuration.file.path.lastPathComponentForDisplay
         navigationItem.largeTitleDisplayMode = .never
+        guard !hostedInPanel else { return }
         let mode = FullScreenViewerNavigationChrome.DismissMode.modal
         let close = UIBarButtonItem(
             title: mode.accessibilityLabel,

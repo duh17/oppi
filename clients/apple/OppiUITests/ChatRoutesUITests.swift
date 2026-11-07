@@ -1016,13 +1016,32 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: - Review modals
 
+    /// Compact width presents the commit as a sheet, today's behavior, with
+    /// New Session pushing its chat onto the sheet's own stack. Regular
+    /// width hosts the commit inside the Git panel's own trailing-column
+    /// navigation instead: a native Back leads to Git, and there is no New
+    /// Session there, since it would have to push a whole chat into the
+    /// column's own width.
     func testGitPanelCommitPushesAChatAndShowsTheDiffPanel() {
         launch()
         openGitPanel()
         tapCommitRow()
         let commit = app.navigationBars["Commit"]
-        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit sheet did not open in a router navigation bar")
-        openAndCloseDiff()
+        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit did not open in a router navigation bar")
+        guard usesSheets else {
+            XCTAssertFalse(app.buttons[closeLabel].exists, "A panel-hosted commit must not draw its own Close")
+            openAndCloseDiff(pushed: true)
+            XCTAssertFalse(
+                barButton(commit, NSPredicate(format: "label IN %@", ["More", "Actions"])).exists,
+                "A panel-hosted commit must not offer New Session"
+            )
+            barButton(commit, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+            XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Back must pop the commit")
+            app.buttons["git.panel.close"].tap()
+            assertRunning()
+            return
+        }
+        openAndCloseDiff(pushed: false)
 
         // New Session pushes a chat onto the sheet's own stack.
         // iOS 27 puts the actions in the system overflow menu.
@@ -1134,14 +1153,23 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         ).firstMatch
         fileRow.tap()
         let review = app.navigationBars["App.swift"]
-        XCTAssertTrue(review.waitUntilExists(timeout: 5), "File review sheet did not open")
+        XCTAssertTrue(review.waitUntilExists(timeout: 5), "File review did not open")
         attachScreenshot("git-panel-file-review")
-        app.buttons[closeLabel].firstMatch.tap()
-        XCTAssertTrue(review.waitUntilGone(timeout: 5), "Close must close the file review")
-        fileRow.tap()
-        XCTAssertTrue(review.waitUntilExists(timeout: 5))
-        dragToBottom(review)
-        XCTAssertTrue(review.waitUntilGone(timeout: 5), "Swipe-down must close the file review")
+        if usesSheets {
+            app.buttons[closeLabel].firstMatch.tap()
+            XCTAssertTrue(review.waitUntilGone(timeout: 5), "Close must close the file review")
+            fileRow.tap()
+            XCTAssertTrue(review.waitUntilExists(timeout: 5))
+            dragToBottom(review)
+            XCTAssertTrue(review.waitUntilGone(timeout: 5), "Swipe-down must close the file review")
+        } else {
+            // Regular width hosts the review inside the Git panel's own
+            // trailing-column navigation: a native Back, not a sheet, leads
+            // back to Git.
+            XCTAssertFalse(app.buttons[closeLabel].exists, "A panel-hosted review must not draw its own Close")
+            barButton(review, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+            XCTAssertTrue(review.waitUntilGone(timeout: 5), "Back must pop the review")
+        }
         hold()
         XCTAssertTrue(panel.exists, "Closing the review must leave the Git panel open")
         assertRunning()
@@ -1205,7 +1233,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["chatRoutes.openCommitViewer"].tap()
         let commit = app.navigationBars["Commit"]
         XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit viewer did not open in a router navigation bar")
-        openAndCloseDiff()
+        openAndCloseDiff(pushed: false)
         app.buttons["chat.commit-detail.dismiss"].tap()
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Close must close the commit viewer")
         assertRunning()
@@ -1306,22 +1334,33 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(bar.waitUntilExists(timeout: 5), "\(name) reader's back must pop it")
     }
 
-    private func openAndCloseDiff() {
+    /// `pushed`: the commit itself is hosted in the Git panel's trailing
+    /// column (`testGitPanelCommitPushesAChatAndShowsTheDiffPanel`'s regular
+    /// width), so its own file diff pushes into that same navigation too,
+    /// with a native Back, instead of this screen's own column or sheet.
+    private func openAndCloseDiff(pushed: Bool) {
         let fileRow = app.buttons["commit-detail.file"].firstMatch
         XCTAssertTrue(fileRow.waitUntilExists(timeout: 5), "The commit's file list did not load")
         fileRow.tap()
-        let close = app.buttons["commit-detail.diff.close"]
-        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The diff panel did not open")
-        XCTAssertTrue(app.navigationBars["App.swift"].exists, "The diff panel needs its own navigation bar")
-        attachScreenshot(usesSheets ? "commit-diff-sheet" : "commit-diff-column")
-        close.tap()
-        XCTAssertTrue(close.waitUntilGone(timeout: 5), "Close must close the diff panel")
-        if usesSheets {
-            fileRow.tap()
-            let diff = app.navigationBars["App.swift"]
-            XCTAssertTrue(diff.waitUntilExists(timeout: 5))
-            dragToBottom(diff)
-            XCTAssertTrue(diff.waitUntilGone(timeout: 5), "Swipe-down must close the diff sheet")
+        let diff = app.navigationBars["App.swift"]
+        XCTAssertTrue(diff.waitUntilExists(timeout: 5), "The diff panel did not open")
+        if pushed {
+            XCTAssertFalse(app.buttons["commit-detail.diff.close"].exists, "A panel-hosted diff must not draw its own Close")
+            attachScreenshot("commit-diff-pushed")
+            barButton(diff, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+            XCTAssertTrue(diff.waitUntilGone(timeout: 5), "Back must pop the diff")
+        } else {
+            let close = app.buttons["commit-detail.diff.close"]
+            XCTAssertTrue(close.exists, "The diff panel did not draw its own Close")
+            attachScreenshot(usesSheets ? "commit-diff-sheet" : "commit-diff-column")
+            close.tap()
+            XCTAssertTrue(close.waitUntilGone(timeout: 5), "Close must close the diff panel")
+            if usesSheets {
+                fileRow.tap()
+                XCTAssertTrue(diff.waitUntilExists(timeout: 5))
+                dragToBottom(diff)
+                XCTAssertTrue(diff.waitUntilGone(timeout: 5), "Swipe-down must close the diff sheet")
+            }
         }
         hold()
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")

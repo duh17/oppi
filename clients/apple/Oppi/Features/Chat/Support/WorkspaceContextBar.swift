@@ -176,10 +176,13 @@ enum ContextBarQuickActionRouting {
 /// checkout also gets a This session / All changes switch
 /// (`ContextBarScoping`). It fills the panel with no card or outer padding;
 /// pin its bottom to the panel's below the required height of an empty bar
-/// (0). A file opens its review and a commit its detail, each in a sheet
-/// presented from `presenter`. The sheet belongs to the presenter, not to this
-/// bar, so a transient loss of Git content (the bar empties) leaves an open
-/// review alone.
+/// (0). A file opens its review and a commit its detail, each from
+/// `presenter`: a sheet while the panel itself is a sheet, or, while the
+/// panel is hosted in the chat's trailing column (`Options.hostedInPanel`),
+/// pushed inside that same column's navigation instead, with a back button
+/// to the panel (`presentReview`). The destination belongs to the presenter,
+/// not to this bar, so a transient loss of Git content (the bar empties)
+/// leaves an open review alone.
 ///
 /// Supports swipe-to-select: in select mode, dragging vertically across rows
 /// selects or deselects them (Mail-style — first row touched determines direction).
@@ -210,6 +213,13 @@ final class WorkspaceContextBarView: UIView {
         /// pushes it onto `presenter`'s stack; a panel passes its host's push,
         /// so the new chat does not open inside the panel's sheet or column.
         var pushChat: ((ChatViewController) -> Void)?
+        /// `presenter` is itself the trailing column's panel root (regular
+        /// width): a commit, a review, or a touched file's session copy
+        /// pushes inside that column's own navigation, with a back button to
+        /// the panel, instead of presenting as a sheet. False (the default)
+        /// keeps the sheet: a workspace's own Git panel and a compact-width
+        /// chat panel are never hosted in a column.
+        var hostedInPanel = false
     }
 
     var context: Context {
@@ -1537,9 +1547,14 @@ final class WorkspaceContextBarView: UIView {
             configuration: configuration,
             connection: connection,
             apiClient: apiClient,
-            navigation: navigation
+            navigation: navigation,
+            hostedInPanel: options.hostedInPanel
         )
-        detail.onClose = { [weak self] in self?.dismissReview() }
+        // Pushed in the panel, the navigation controller's own back button
+        // leads to it; only a sheet's root needs this screen's close control.
+        if !options.hostedInPanel {
+            detail.onClose = { [weak self] in self?.dismissReview() }
+        }
         presentReview(detail)
     }
 
@@ -1561,7 +1576,8 @@ final class WorkspaceContextBarView: UIView {
             connection: connection,
             apiClient: apiClient
         )
-        // The reader draws its own bar; its Back closes the sheet.
+        // The reader always draws its own bar (pushed or a sheet alike); its
+        // Back closes whichever one this is.
         viewer.onBackNavigation = { [weak self] in self?.dismissReview() }
         presentReview(viewer)
     }
@@ -1577,9 +1593,12 @@ final class WorkspaceContextBarView: UIView {
             ),
             connection: connection,
             apiClient: apiClient,
-            navigation: navigation
+            navigation: navigation,
+            hostedInPanel: options.hostedInPanel
         )
-        viewer.onClose = { [weak self] in self?.dismissReview() }
+        if !options.hostedInPanel {
+            viewer.onClose = { [weak self] in self?.dismissReview() }
+        }
         presentReview(viewer)
     }
 
@@ -1592,23 +1611,43 @@ final class WorkspaceContextBarView: UIView {
         )
     }
 
-    /// A router sheet with its own navigation: a commit or file review pushes
-    /// its new-session chat there, and that chat its forks.
+    /// Pushed in the panel's own navigation (`Options.hostedInPanel`), with a
+    /// back button to the panel; otherwise a router sheet with its own
+    /// navigation. Either way a commit or file review pushes its new-session
+    /// chat above `presenter` (`Options.pushChat`), never inside this
+    /// destination, and that chat its forks.
     private func presentReview(_ screen: UIViewController) {
-        guard presentedReview == nil, let presenter else { return }
-        presentedReview = screen
-        Router.present(
-            screen,
-            presentation: .sheet.inNavigation(),
-            from: presenter,
-            onDismiss: { [weak self] in self?.presentedReview = nil }
-        )
+        guard let presenter else { return }
+        if options.hostedInPanel {
+            // The panel reads as the top of its own stack only while nothing
+            // is pushed above it, so this alone (not `presentedReview`, which
+            // a native Back pop can leave pointing at a detached screen)
+            // decides whether a tap can push: it is always correct the
+            // instant a pop lands, with no dependency on when the popped
+            // screen's weak reference clears.
+            guard presenter.navigationController?.topViewController === presenter else { return }
+            presentedReview = screen
+            Router.push(screen, from: presenter)
+        } else {
+            guard presentedReview == nil else { return }
+            presentedReview = screen
+            Router.present(
+                screen,
+                presentation: .sheet.inNavigation(),
+                from: presenter,
+                onDismiss: { [weak self] in self?.presentedReview = nil }
+            )
+        }
     }
 
     private func dismissReview() {
         guard let presentedReview else { return }
         self.presentedReview = nil
-        if (presentedReview.navigationController ?? presentedReview).presentingViewController != nil {
+        if options.hostedInPanel {
+            if presentedReview.navigationController != nil {
+                Router.finish(presentedReview)
+            }
+        } else if (presentedReview.navigationController ?? presentedReview).presentingViewController != nil {
             Router.finish(presentedReview)
         }
     }

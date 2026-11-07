@@ -2507,6 +2507,7 @@
 		F2BA1154AFA71AA3D77F8BA2 /* MacSessionTraceStoreStopTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78184F38A4FF282245F0DE1 /* MacSessionTraceStoreStopTests.swift */; };
 		F2BCB33CFE87D3FAB84A21DF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2810372B3C2B96381C2D995C /* SettingsView.swift */; };
 		F2C6C8B8C04CB79C44A432EC /* AppEventListRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71505D8A4AC70F576EF2F85B /* AppEventListRepair.swift */; };
+		F2D5F571C5821BF183C434B2 /* GitPanelSidePanelRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C508082AAEECED0BFB16B8A /* GitPanelSidePanelRoutingTests.swift */; };
 		F2E0FF171CC7492175AA2B44 /* TailnetStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5876DCB01EE02F130900D093 /* TailnetStatus.swift */; };
 		F2FF628150B1DABC3B66A77A /* ReaderTaskEditPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376A43697349D941BC65905E /* ReaderTaskEditPreview.swift */; };
 		F3033CA1443EE23341AD6603 /* ToolCallPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1880D688ECE853047D3181 /* ToolCallPresentation.swift */; };
@@ -4073,6 +4074,7 @@
 		9BC0600EC682018B5F2D087C /* RexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexClient.swift; sourceTree = "<group>"; };
 		9C003C9F5F8C49F87D16B23C /* ToolRowImageViewportE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowImageViewportE2ETests.swift; sourceTree = "<group>"; };
 		9C1E7F01717B694FE4D8C41F /* SessionFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionFormattingTests.swift; sourceTree = "<group>"; };
+		9C508082AAEECED0BFB16B8A /* GitPanelSidePanelRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSidePanelRoutingTests.swift; sourceTree = "<group>"; };
 		9C71479A77955D26DAAB9E10 /* SSHTerminalTextInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalTextInput.swift; sourceTree = "<group>"; };
 		9C7FC651B794DB6F32B3C20E /* WorkspaceReviewDiffPreviewPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReviewDiffPreviewPlan.swift; sourceTree = "<group>"; };
 		9C8A0E778BB5B60D659B8259 /* WorkspaceWorktreeE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWorktreeE2ETests.swift; sourceTree = "<group>"; };
@@ -5692,6 +5694,7 @@
 				9053FD2615A63B0FEF6742AC /* ExtensionSurfaceReducerTests.swift */,
 				226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */,
 				84473A6CD0403E055A6CFFD5 /* FileSuggestionInsertionTests.swift */,
+				9C508082AAEECED0BFB16B8A /* GitPanelSidePanelRoutingTests.swift */,
 				A4DC1FCD6786843DD8EA8F1A /* HardwareKeybindingAdapterTests.swift */,
 				C5F458CBB94D31D7470925BE /* InAppNowPlayingChromeTests.swift */,
 				1CE2448FA9B2217CAEA09AC7 /* KeyboardSuppressionTests.swift */,
@@ -10089,6 +10092,7 @@
 				654AA40BE5EAAA72621472F5 /* GeneratedH264Fixture.swift in Sources */,
 				341458CFAF12DF1F84EC1B19 /* GeoJSONDocumentTests.swift in Sources */,
 				34C06DA73C0365AA915DB511 /* GeoJSONMapUnavailableTests.swift in Sources */,
+				F2D5F571C5821BF183C434B2 /* GitPanelSidePanelRoutingTests.swift in Sources */,
 				4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */,
 				1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */,
 				88542CBD3DFB05D273DF9921 /* GuidedControlComposerModelTests.swift in Sources */,

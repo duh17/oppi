@@ -790,6 +790,9 @@ final class TrailingColumnController: UIViewController {
     /// navigation controller, so a test can assert which destination the
     /// container is actually showing.
     var mountedScreenForTesting: UIViewController? { container?.viewControllers.first }
+    /// Every screen on the column's own navigation controller, root first:
+    /// a test can assert what a push inside the panel landed on top of.
+    var mountedStackForTesting: [UIViewController]? { container?.viewControllers }
     var overlayForTesting: TrailingColumnOverlayView? { overlay }
 
     /// Lands an in-flight open, snap, or close at its end now, completion
