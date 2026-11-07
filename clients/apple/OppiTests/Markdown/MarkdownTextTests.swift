@@ -780,23 +780,29 @@ struct FlatSegmentBuildTests {
         }
     }
 
-    @Test func taskListRendersWithCheckboxCharacters() {
-        let blocks: [MarkdownBlock] = [
-            .taskList([
-                .init(checked: false, content: [.paragraph([.text("Todo")])]),
-                .init(checked: true, content: [.paragraph([.text("Done")])]),
-            ])
-        ]
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(segments.count == 1)
-        if case .text(let attr) = segments[0] {
-            let text = String(attr.characters)
-            #expect(text.contains("\u{25CB}"))
-            #expect(text.contains("\u{25C9}"))
-            #expect(text.contains("Todo"))
-            #expect(text.contains("Done"))
-        } else {
-            Issue.record("Expected .text segment for task list")
+    @MainActor
+    @Test func taskItemsLeadWithASquareCheckboxThatOwnsA44PointBand() throws {
+        let segments = FlatSegment.build(from: parseCommonMark("- [ ] Todo\n- [x] Done"), themeID: .dark)
+        guard segments.count == 1, case .text(let attr) = segments[0] else {
+            Issue.record("Expected one .text segment for the task list, got \(segments)")
+            return
+        }
+        let text = NSAttributedString(attr)
+        var boxes: [(TaskCheckboxAttachment, NSParagraphStyle?)] = []
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let box = value as? TaskCheckboxAttachment else { return }
+            boxes.append((box, text.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle))
+        }
+        #expect(boxes.map(\.0.isChecked) == [false, true])
+        #expect(boxes.map(\.0.accessibilityLabel) == ["checkbox, not checked", "checkbox, checked"])
+        #expect(text.string.contains("Todo") && text.string.contains("Done"))
+        for (_, style) in boxes {
+            let style = try #require(style)
+            // Wrapped text hangs past a column the hit area fits in, and the
+            // first line plus the spacing around it is a 44 pt band.
+            #expect(style.headIndent >= MarkdownTaskCheckbox.hitSize)
+            let band = AppFont.messageBody.lineHeight + style.paragraphSpacingBefore + style.paragraphSpacing
+            #expect(band >= MarkdownTaskCheckbox.hitSize - 0.5)
         }
     }
 

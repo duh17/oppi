@@ -2138,24 +2138,23 @@ enum FlatSegment: Sendable {
             var result = AttributedString()
             for (i, item) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
-                if item.checked {
-                    var check = AttributedString("  \u{25C9} ")
-                    check.uiKit.foregroundColor = palette.ui.green
-                    result.append(check)
-                } else {
-                    var check = AttributedString("  \u{25CB} ")
-                    check.uiKit.foregroundColor = palette.ui.fgDim
-                    result.append(check)
-                }
+                let layout = MarkdownTaskCheckbox.item(checked: item.checked, palette: palette)
+                var paragraph = layout.checkbox
                 for (j, block) in item.content.enumerated() {
-                    if j > 0 { result.append(AttributedString("\n     ")) }
+                    if j > 0 {
+                        paragraph.uiKit.paragraphStyle = j == 1 ? layout.firstParagraph : layout.laterParagraph
+                        result.append(paragraph)
+                        paragraph = AttributedString("\n")
+                    }
                     var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
                     if item.checked {
                         content.uiKit.foregroundColor = palette.ui.comment
                         content.uiKit.strikethroughStyle = .single
                     }
-                    result.append(content)
+                    paragraph.append(content)
                 }
+                paragraph.uiKit.paragraphStyle = item.content.count > 1 ? layout.laterParagraph : layout.firstParagraph
+                result.append(paragraph)
             }
             return result
 
