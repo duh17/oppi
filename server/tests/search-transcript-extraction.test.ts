@@ -11,10 +11,9 @@ import {
   extractSearchTranscriptFromEntries,
   mergeSearchTranscript,
   readSearchTranscriptFile,
-  readSessionTraceFromFile,
   SearchAdditionJoiner,
-  type SessionEntry,
-} from "../src/trace.js";
+} from "../src/search-transcript.js";
+import { readSessionTraceFromFile, type SessionEntry } from "../src/trace.js";
 import type { Session } from "../src/types.js";
 
 const USER_MESSAGE_CAP = 50_000;

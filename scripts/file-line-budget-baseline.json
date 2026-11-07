@@ -201,7 +201,7 @@
       "reason": "Context collectors, resource policy, and a 640-line create(); the modules come out with SV3a and SV3b."
     },
     "server/src/search-index.ts": {
-      "budget": 2600,
+      "budget": 2500,
       "owner": "SI1 search index schema",
       "reason": "One class holding schema, indexing, and durable sync; a move-only split later."
     },
@@ -224,11 +224,6 @@
       "budget": 1800,
       "owner": "server telemetry",
       "reason": "Declared-once event catalog that generates the Swift twin; keep one file."
-    },
-    "server/src/trace.ts": {
-      "budget": 1600,
-      "owner": "server trace",
-      "reason": "One cohesive trace projection; low churn, keep one file."
     }
   }
 }

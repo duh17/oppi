@@ -22,11 +22,8 @@ import {
   readDurableTraceOutline,
 } from "../src/durable-history.js";
 import { readOlderConversationEntries } from "../src/durable-conversation-stream.js";
-import {
-  createLiveEntryRendererSet,
-  SEARCH_USER_MESSAGE_CAP,
-  type TraceEvent,
-} from "../src/trace.js";
+import { SEARCH_USER_MESSAGE_CAP } from "../src/search-transcript.js";
+import { createLiveEntryRendererSet, type TraceEvent } from "../src/trace.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 

@@ -12,17 +12,19 @@ import type { Message, NestedToolCalls as PiNestedToolCalls } from "@earendil-wo
 import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
+  type SessionEntry,
+  type LiveEntryRendererSet,
+  type TraceEvent,
+  type TraceViewMode,
+} from "./trace.js";
+import {
   extractSearchTranscriptAddition,
   extractSearchTranscriptFromEntries,
   hasUnsafeSearchToolName,
   mergeSearchTranscript,
   SearchAdditionJoiner,
   type SearchTranscriptContent,
-  type SessionEntry,
-  type LiveEntryRendererSet,
-  type TraceEvent,
-  type TraceViewMode,
-} from "./trace.js";
+} from "./search-transcript.js";
 import {
   readSessionTracePageFromEntries,
   tracePageCursorEntryId,
