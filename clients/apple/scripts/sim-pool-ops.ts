@@ -1930,7 +1930,7 @@ async function runBuildPhase(input: {
     }
     if (phase.code === 0 && !phase.uncertain && input.cloneFor) {
       try {
-        const products = cloneProducts(derivedData, input.cloneFor.runDir);
+        const products = cloneProducts(derivedData, input.cloneFor.runDir, log);
         if (input.cloneFor.stripUnitTests) {
           const removed = stripUnitTestBundles(products);
           if (removed.length) log(`[sim-pool] UI/E2E run: removed ${removed.length} unit-test bundle entries from the cloned app`);

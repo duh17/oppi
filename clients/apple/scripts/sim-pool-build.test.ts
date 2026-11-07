@@ -1,14 +1,16 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireHeavySlot,
   buildIsCurrent,
   buildKey,
+  cloneProducts,
   completionArgvForXctestrun,
+  findXctestrun,
   forgetBuild,
   markPackagesResolved,
   planRun,
@@ -326,6 +328,42 @@ describe("sharedCacheArguments", () => {
   test("a build opted out of the cache gets no arguments", () => {
     const { appleDir, env, derived } = fixture();
     expect(sharedCacheArguments({ ...env, OPPI_SIM_POOL_COMPILATION_CACHE: "0" }, appleDir, derived)).toEqual([]);
+  });
+});
+
+describe("cloneProducts", () => {
+  test("clones the checkout build's products into the run directory, and logs when it has to copy", () => {
+    const root = mkdtempSync(join(tmpdir(), "clone-products-"));
+    try {
+      const dd = join(root, "dd");
+      const products = join(dd, "Build", "Products");
+      mkdirSync(join(products, "Debug-iphonesimulator"), { recursive: true });
+      writeFileSync(join(products, "OppiUnitTests_iphonesimulator-arm64.xctestrun"), "plist");
+      writeFileSync(join(products, "Debug-iphonesimulator", "Oppi"), "binary");
+      const runDir = join(root, "runs", "one");
+      const logged: string[] = [];
+      const dest = cloneProducts(dd, runDir, (line) => logged.push(line));
+      expect(dest).toBe(join(runDir, "Build", "Products"));
+      expect(findXctestrun(dest, "OppiUnitTests")).toBe(join(dest, "OppiUnitTests_iphonesimulator-arm64.xctestrun"));
+      expect(readFileSync(join(dest, "Debug-iphonesimulator", "Oppi"), "utf8")).toBe("binary");
+      expect(logged).toEqual([]);
+      // The same run directory again: clonefile refuses an existing target, the copy says so and still delivers.
+      cloneProducts(dd, runDir, (line) => logged.push(line));
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain("copying the products file by file");
+      expect(readFileSync(join(dest, "Debug-iphonesimulator", "Oppi"), "utf8")).toBe("binary");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails when the checkout has no build products", () => {
+    const root = mkdtempSync(join(tmpdir(), "clone-products-"));
+    try {
+      expect(() => cloneProducts(join(root, "dd"), join(root, "runs", "one"))).toThrow("no build products");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

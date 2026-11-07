@@ -78,6 +78,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-ops.test.ts
 !clients/apple/scripts/sim-pool-build.ts
 !clients/apple/scripts/sim-pool-build.test.ts
+!clients/apple/scripts/sim-pool-clone.ts
+!clients/apple/scripts/sim-pool-clone.test.ts
 !clients/apple/scripts/unit-shards.ts
 !clients/apple/scripts/unit-shards.test.ts
 !clients/apple/scripts/unit-shard-seconds.json

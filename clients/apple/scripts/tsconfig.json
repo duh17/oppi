@@ -16,6 +16,7 @@
     "sim-pool-simctl.ts",
     "sim-pool-ops.ts",
     "sim-pool-build.ts",
+    "sim-pool-clone.ts",
     "unit-shards.ts",
     "ui-shards.ts",
     "sim-pool-lifecycle.ts",

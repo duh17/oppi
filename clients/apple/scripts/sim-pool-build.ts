@@ -21,6 +21,7 @@ import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, re
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { cloneDirectory } from "./sim-pool-clone";
 import { flockFd, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN } from "./sim-pool-lock";
 
 /** How `sim-pool run` executes an xcodebuild command. */
@@ -624,18 +625,18 @@ export function runDirectory(buildBase: string, stamp: string): string {
   return join(buildBase, "runs", `${stamp}-${process.pid}`);
 }
 
-/** Clone `<dd>/Build/Products` into `<runDir>/Build/Products` (APFS clonefile: no data copy). */
-export function cloneProducts(derivedData: string, runDir: string): string {
+/**
+ * Clone `<dd>/Build/Products` into `<runDir>/Build/Products`: one directory clonefile(2) (APFS, no
+ * data copy, a few file-system events), or a logged file-by-file copy when that fails.
+ */
+export function cloneProducts(derivedData: string, runDir: string, log: (message: string) => void = () => {}): string {
   const products = join(derivedData, "Build", "Products");
   if (!existsSync(products)) {
     throw new Error(`no build products in ${products}`);
   }
   const dest = join(runDir, "Build", "Products");
   mkdirSync(join(runDir, "Build"), { recursive: true });
-  const result = spawnSync("/bin/cp", ["-c", "-R", products, dest], { encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`cloning ${products} failed: ${result.stderr.trim() || result.error?.message || result.status}`);
-  }
+  cloneDirectory(products, dest, log);
   return dest;
 }
 
