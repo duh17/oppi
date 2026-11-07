@@ -308,4 +308,120 @@ struct ReaderTaskControlTests {
         plain.attributedText = NSAttributedString(string: "Read the docs", attributes: [.link: url])
         #expect(!plain.usesSpokenLines)
     }
+
+    // MARK: - Text changes and off-main reads
+
+    /// Every way the text of a text view changes.
+    enum TextChange: CaseIterable, CustomStringConvertible {
+        case attributedText, text, textStorage
+        var description: String {
+            switch self {
+            case .attributedText: "attributedText"
+            case .text: "text"
+            case .textStorage: "textStorage"
+            }
+        }
+    }
+
+    @MainActor
+    private func change(_ view: BaselineSafeTextView, by path: TextChange, to text: NSAttributedString) {
+        switch path {
+        case .attributedText: view.attributedText = text
+        case .text: view.text = text.string
+        case .textStorage: view.textStorage.setAttributedString(text)
+        }
+        view.layoutIfNeeded()
+    }
+
+    /// Same length as `text`, with no attachment in it.
+    private func plain(likeLengthOf text: NSAttributedString) -> NSAttributedString {
+        NSAttributedString(string: String(repeating: "x", count: text.length))
+    }
+
+    @MainActor
+    private func touchesAControl(_ view: BaselineSafeTextView) -> Bool {
+        // The control lookup `hitTest` answers from; the touch target a past touch left in the view is not it.
+        stride(from: CGFloat(0), to: 300, by: 4).contains { view.taskControl(at: CGPoint(x: 20, y: $0)) != nil }
+    }
+
+    @MainActor
+    @Test(arguments: TextChange.allCases)
+    func replacingTheTextWithAnotherOfTheSameLengthEndsItsControls(_ path: TextChange) throws {
+        let source = "* Plan\n- [ ] first task"
+        let handler = Handler()
+        let (view, window) = try textView(source, handler: handler)
+        _ = (window, handler) // the view holds its handler weakly
+        let withControls = try rendered(source)
+        #expect(touchesAControl(view))
+        #expect((view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement })
+
+        change(view, by: path, to: plain(likeLengthOf: withControls))
+        #expect(view.textStorage.length == withControls.length, "the replacement is the same length, so only an invalidation can tell")
+        #expect(!view.allowsTaskControls)
+        #expect(!view.usesSpokenLines)
+        #expect(!touchesAControl(view), "\(path): a control that left the text still answers a touch")
+        #expect(!(view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement }, "\(path)")
+    }
+
+    @MainActor
+    @Test(arguments: [TextChange.attributedText, .textStorage])
+    func replacingTheTextWithAnotherOfTheSameLengthBringsItsControls(_ path: TextChange) throws {
+        let source = "* Plan\n- [ ] first task"
+        let withControls = try rendered(source)
+        let handler = Handler()
+        let (view, window) = try textView("x", handler: handler)
+        _ = (window, handler) // the view holds its handler weakly
+        change(view, by: path, to: plain(likeLengthOf: withControls))
+        #expect(!view.allowsTaskControls)
+        #expect(!view.usesSpokenLines)
+        #expect(!(view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement })
+
+        change(view, by: path, to: withControls)
+        #expect(view.allowsTaskControls)
+        #expect(touchesAControl(view), "\(path)")
+        #expect((view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement }, "\(path)")
+    }
+
+    @MainActor
+    @Test(arguments: [TextChange.attributedText, .textStorage])
+    func spokenLinesFollowTheTextAfterAChangeOfTheSameLength(_ path: TextChange) throws {
+        let handler = Handler()
+        let (view, window) = try textView("- [ ] first task", handler: handler)
+        _ = (window, handler) // the view holds its handler weakly
+        func spoken() -> [String] {
+            (view.accessibilityElements ?? []).compactMap { ($0 as? UIAccessibilityElement)?.accessibilityLabel }
+        }
+        #expect(spoken().contains { $0.hasPrefix("checkbox, not checked") }, "got \(spoken())")
+        let checked = try rendered("- [X] first task")
+        #expect(checked.length == view.textStorage.length)
+        change(view, by: path, to: checked)
+        #expect(spoken().contains { $0.hasPrefix("checkbox, checked") }, "\(path): got \(spoken())")
+    }
+
+    /// UIKit's accessibility (`UITextViewAccessibility`) reads `attributedText`
+    /// from a dispatch worker. A getter pinned to the main actor traps there.
+    /// A regression shows up as a test-host crash in the `attributedText`
+    /// `@objc` getter, not as a recorded issue.
+    @MainActor
+    @Test func readingTheAttributedTextOffTheMainThreadReturnsIt() throws {
+        let handler = Handler()
+        let (view, window) = try textView("* Plan\n- [ ] first task", handler: handler)
+        _ = (window, handler) // the view holds its handler weakly
+        final class Box: @unchecked Sendable {
+            let view: NSObject
+            init(_ view: NSObject) { self.view = view }
+        }
+        let box = Box(view)
+        let expected = view.textStorage.length
+        let finished = DispatchSemaphore(value: 0)
+        final class Result: @unchecked Sendable { var length: Int? }
+        let result = Result()
+        // `value(forKey:)` goes through the Objective-C getter, as UIKit does.
+        DispatchQueue.global().async {
+            result.length = (box.view.value(forKey: "attributedText") as? NSAttributedString)?.length
+            finished.signal()
+        }
+        #expect(finished.wait(timeout: .now() + 10) == .success)
+        #expect(result.length == expected)
+    }
 }

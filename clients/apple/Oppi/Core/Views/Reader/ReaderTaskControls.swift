@@ -127,6 +127,7 @@ extension BaselineSafeTextView {
     }
 
     private func scanTaskAttachments() -> TaskAttachmentScan {
+        observeTextEdits()
         let length = textStorage.length
         if let taskAttachmentScan, taskAttachmentScan.length == length { return taskAttachmentScan }
         var scan = TaskAttachmentScan(length: length)

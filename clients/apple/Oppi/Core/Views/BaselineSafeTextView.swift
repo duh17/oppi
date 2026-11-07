@@ -24,8 +24,36 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
     var taskAccessibilityCache: TaskAccessibilityCache?
     lazy var taskTouchTarget = ReaderTaskTouchTarget()
 
-    override var attributedText: NSAttributedString? {
-        didSet { invalidateTaskControls() }
+    private weak var observedTextStorage: NSTextStorage?
+
+    /// Ends the scan and accessibility cache when the text changes. Every
+    /// change (`attributedText`, `text`, an edit of `textStorage`) ends in the
+    /// storage's `didProcessEditing`, so one observer covers them all. It is
+    /// taken up with the first scan, on the storage the text view has by then,
+    /// because there is nothing to end before one. `attributedText` must stay
+    /// UITextView's own getter: UIKit's accessibility reads it from a worker
+    /// thread, where an override that wraps it is main-actor checked and traps.
+    func observeTextEdits() {
+        guard observedTextStorage !== textStorage else { return }
+        invalidateTaskControls()
+        if let previous = observedTextStorage {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSTextStorage.didProcessEditingNotification,
+                object: previous
+            )
+        }
+        observedTextStorage = textStorage
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(textStorageDidProcessEditing),
+            name: NSTextStorage.didProcessEditingNotification,
+            object: textStorage
+        )
+    }
+
+    @objc private func textStorageDidProcessEditing() {
+        invalidateTaskControls()
     }
 
     /// A control gets the touch ahead of the text view's own gestures.
