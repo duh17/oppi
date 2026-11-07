@@ -71,6 +71,26 @@ struct ProtocolSnapshotTests {
         #expect(nested?.calls.first?.display == startDisplay)
     }
 
+    /// The same `auth_renew_result` bytes reach the focused and dictation decoders as a server
+    /// message and the app-event decoder as a stream frame, never as an app event.
+    @Test func authRenewResultsDecodeOnEveryStream() throws {
+        let renewed = StreamAuthRenewResult.renewed(expiresAt: Date(timeIntervalSince1970: 1_739_751_060))
+        let refused = StreamAuthRenewResult.refused(reason: "wrong_device")
+        #expect(try decodeMessage("auth_renew_result_renewed") == .authRenewResult(renewed))
+        #expect(try decodeMessage("auth_renew_result_rejected") == .authRenewResult(refused))
+        #expect(!renewed.isFinal && !refused.isFinal)
+
+        let messages = try loadSnapshot()
+        for (key, expected) in [("auth_renew_result_renewed", renewed), ("auth_renew_result_rejected", refused)] {
+            let data = try JSONSerialization.data(withJSONObject: try #require(messages[key]))
+            guard case .authRenewResult(let result) = try JSONDecoder().decode(AppEventStreamFrame.self, from: data) else {
+                Issue.record("\(key) decoded as an app event")
+                continue
+            }
+            #expect(result == expected)
+        }
+    }
+
     @Test func settingAuthoritySurvivesWireDecode() throws {
         guard case .toolEnd(_, _, _, _, _, _, let output, _, _) = try decodeMessage("tool_end_setting") else {
             Issue.record("Expected setting tool result"); return

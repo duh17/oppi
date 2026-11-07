@@ -121,6 +121,11 @@ public actor DeviceAuthSession {
         return now.addingTimeInterval(skew) < expiresAt
     }
 
+    /// When `token` expires, if it is the current access token; nil for any other token.
+    public func expiry(of token: String) -> Date? {
+        !token.isEmpty && token == accessToken ? expiresAt : nil
+    }
+
     /// Return a usable access token, refreshing single-flight when near expiry
     /// or when the cached token is empty.
     public func currentAccessToken() async throws -> String {

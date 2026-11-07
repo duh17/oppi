@@ -123,6 +123,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var liveVoice: CapabilityVersion? = nil
         /// The server pushes end to end encrypted through this relay (`push.mode` relay).
         var pushNotifications: PushNotificationsCapability? = nil
+        /// Live streams take `auth_renew`, so access-token rotation never reconnects them.
+        var streamAuthRenewal: CapabilityVersion? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).

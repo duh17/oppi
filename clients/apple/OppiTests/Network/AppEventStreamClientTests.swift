@@ -618,6 +618,75 @@ struct AppEventStreamClientTests {
         await secondConsumer.value
     }
 
+    @Test func reconnectOpensWithTheSessionsNewestTokenWithoutSpendingA401() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let currentCounter = RefreshCounter()
+        let refreshCounter = RefreshCounter()
+        let client = makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            currentTokenProvider: { "at_current_\(currentCounter.incrementAndGet())" },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_minted"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+        #expect(await waitForMainActorCondition { factory.sockets.count == 1 })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current_1")
+
+        // A drop that is not an auth close: the session has moved on since this socket opened.
+        try #require(factory.sockets.first).fail(URLError(.networkConnectionLost), closeCode: .invalid)
+        #expect(await waitForMainActorCondition { factory.sockets.count == 2 })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current_2")
+        #expect(refreshCounter.current() == 0)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func renewalRunsOnTheOpenSocketAndItsAnswerIsNotAnAppEvent() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let clock = ManualRenewalClock()
+        let tokens = RenewalTokenSource(
+            expiries: ["test-token": clock.now.addingTimeInterval(600)],
+            fresh: ["at_renewed"]
+        )
+        let renewer = StreamAuthRenewer(source: tokens.source, streamRole: "test", now: { clock.now }, sleep: clock.sleep)
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 0 }, authRenewer: renewer)
+        let stream = client.connect()
+        var received: [AppEventMessage] = []
+        let consumer = Task { @MainActor in
+            for await event in stream {
+                received.append(event)
+            }
+        }
+        let socket = try #require(factory.sockets.first)
+
+        #expect(await waitForMainActorCondition { clock.sleeps == [540] })
+        clock.elapse()
+        #expect(await waitForMainActorCondition {
+            socket.sentTexts == [#"{"token":"at_renewed","type":"auth_renew"}"#]
+                || socket.sentTexts == [#"{"type":"auth_renew","token":"at_renewed"}"#]
+        })
+
+        let expiresAtMs = Int64(clock.now.addingTimeInterval(600).timeIntervalSince1970 * 1_000)
+        socket.yield(.string(#"{"type":"auth_renew_result","ok":true,"expiresAt":\#(expiresAtMs)}"#))
+        socket.yield(.string(Self.connectedJSON))
+        #expect(await waitForMainActorCondition { received.count == 1 })
+        #expect(received == [.connected(serverTime: 42, snapshotRequired: false)])
+        #expect(await waitForMainActorCondition { clock.sleeps == [540, StreamAuthRenewer.retryDelay, 540] })
+
+        // The renewed token is the socket's now: a later reconnect opens with it.
+        socket.fail(URLError(.networkConnectionLost), closeCode: .invalid)
+        #expect(await waitForMainActorCondition { factory.sockets.count == 2 })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_renewed")
+
+        client.disconnect()
+        await consumer.value
+    }
+
     private func makeClient(
         factory: ScriptedAppEventSocketFactory,
         token: String = "test-token",
@@ -627,7 +696,8 @@ struct AppEventStreamClientTests {
         onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil,
         leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
-        refreshTokenProvider: (@Sendable () async throws -> String)? = nil
+        refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
+        authRenewer: StreamAuthRenewer? = nil
     ) -> AppEventStreamClient {
         let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
@@ -636,6 +706,7 @@ struct AppEventStreamClientTests {
             leftoverExpiresAtMs: leftoverExpiresAtMs,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
+            authRenewer: authRenewer,
             pingInterval: pingInterval,
             pingTimeout: pingTimeout,
             reconnectDelay: reconnectDelay,
@@ -1334,6 +1405,7 @@ private final class ScriptedAppEventSocket {
     private var taskResponse: URLResponse?
     private var taskCloseCode: URLSessionWebSocketTask.CloseCode = .invalid
     private let pingBehavior: ScriptedPingBehavior
+    private(set) var sentTexts: [String] = []
 
     init(pingBehavior: ScriptedPingBehavior = .succeed) {
         self.pingBehavior = pingBehavior
@@ -1349,6 +1421,9 @@ private final class ScriptedAppEventSocket {
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
             return try await self.receive()
+        },
+        send: { [weak self] message in
+            if case .string(let text) = message { self?.sentTexts.append(text) }
         },
         sendPing: { [weak self] handler in
             switch self?.pingBehavior {

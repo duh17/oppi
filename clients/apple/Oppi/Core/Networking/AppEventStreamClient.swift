@@ -13,6 +13,8 @@ struct AppEventWebSocketTransport {
     let identity: ObjectIdentifier
     let resume: () -> Void
     let receive: () async throws -> Message
+    /// The stream's one client frame is `auth_renew`.
+    let send: (Message) async throws -> Void
     let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
     let cancel: (CloseCode, Data?) -> Void
     let state: () -> URLSessionTask.State
@@ -23,6 +25,7 @@ struct AppEventWebSocketTransport {
         identity = ObjectIdentifier(task)
         resume = { task.resume() }
         receive = { try await task.receive() }
+        send = { message in try await task.send(message) }
         sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
         cancel = { code, reason in task.cancel(with: code, reason: reason) }
         state = { task.state }
@@ -34,6 +37,7 @@ struct AppEventWebSocketTransport {
         identity: AnyObject,
         resume: @escaping () -> Void,
         receive: @escaping () async throws -> Message,
+        send: @escaping (Message) async throws -> Void = { _ in },
         sendPing: @escaping (@escaping @Sendable (Error?) -> Void) -> Void,
         cancel: @escaping (CloseCode, Data?) -> Void,
         state: @escaping () -> URLSessionTask.State,
@@ -43,11 +47,36 @@ struct AppEventWebSocketTransport {
         self.identity = ObjectIdentifier(identity)
         self.resume = resume
         self.receive = receive
+        self.send = send
         self.sendPing = sendPing
         self.cancel = cancel
         self.state = state
         self.response = response
         self.closeCode = closeCode
+    }
+}
+
+/// One frame on the app-event socket: an app event, or the answer to this socket's
+/// `auth_renew`, which is not one. Decoded in one pass.
+enum AppEventStreamFrame: Decodable {
+    case event(AppEventMessage)
+    case authRenewResult(StreamAuthRenewResult)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if try c.decode(String.self, forKey: .type) == "auth_renew_result" {
+            self = .authRenewResult(try StreamAuthRenewResult(from: decoder))
+        } else {
+            self = .event(try AppEventMessage(from: decoder))
+        }
+    }
+
+    static func decode(from text: String) throws -> AppEventStreamFrame {
+        try JSONDecoder().decode(AppEventStreamFrame.self, from: Data(text.utf8))
     }
 }
 
@@ -80,6 +109,9 @@ final class AppEventStreamClient {
     private let diagnosticRemoteIdentity: String?
     private let pingInterval: Duration
     private let pingTimeout: Duration
+    /// Renews the live socket's access in band; nil when the server does not take `auth_renew`
+    /// or the stream has no device auth session.
+    private let authRenewer: StreamAuthRenewer?
     var onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)?
 
     private var webSocket: AppEventWebSocketTransport?
@@ -114,6 +146,7 @@ final class AppEventStreamClient {
         leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
+        authRenewer: StreamAuthRenewer? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
@@ -128,6 +161,7 @@ final class AppEventStreamClient {
         self.leftoverExpiresAtMs = leftoverExpiresAtMs
         self.currentTokenProvider = currentTokenProvider
         self.refreshTokenProvider = refreshTokenProvider
+        self.authRenewer = authRenewer
         self.reconnectDelay = reconnectDelay
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
         self.pingInterval = pingInterval
@@ -258,6 +292,7 @@ final class AppEventStreamClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
         webSocket?.cancel(.normalClosure, nil)
         webSocket = nil
         continuation?.finish()
@@ -275,6 +310,14 @@ final class AppEventStreamClient {
         ws.resume()
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
+        authRenewer?.start(
+            token: token,
+            send: { text in try await ws.send(.string(text)) },
+            onRenewed: { [weak self] renewed in
+                guard let self, self.webSocket?.identity == ws.identity else { return }
+                self.token = renewed
+            }
+        )
     }
 
     private func startReceiveLoop(
@@ -300,7 +343,16 @@ final class AppEventStreamClient {
 
                     let event: AppEventMessage
                     do {
-                        event = try AppEventMessage.decode(from: text)
+                        switch try AppEventStreamFrame.decode(from: text) {
+                        case .event(let decoded):
+                            event = decoded
+                        case .authRenewResult(let result):
+                            await MainActor.run { [weak self] in
+                                guard self?.webSocket?.identity == ws.identity else { return }
+                                self?.authRenewer?.handle(result)
+                            }
+                            continue
+                        }
                     } catch {
                         appEventClientLogger.error("App event decode failed: \(error.localizedDescription, privacy: .public)")
                         await MainActor.run { [weak self] in
@@ -591,17 +643,33 @@ final class AppEventStreamClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
         reconnectTask?.cancel()
         webSocket?.cancel(.goingAway, nil)
         webSocket = nil
 
+        // Auth recovery already chose the token to open with.
+        let resolveToken = reason != .authCurrentToken && reason != .authRefresh
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
-            await MainActor.run { [weak self] in
-                guard let self, let continuation = self.continuation else { return }
-                self.open(continuation: continuation)
+            await self?.reopen(resolvingToken: resolveToken)
+        }
+    }
+
+    /// Any other reconnect opens with the session's newest token. The one this client last used
+    /// may have expired, or been replaced by a sibling's refresh, while the socket was down:
+    /// opening with it would spend a 401 before the auth recovery found the newer one.
+    private func reopen(resolvingToken: Bool) async {
+        if resolvingToken, let currentTokenProvider {
+            do {
+                token = ServerAuthorization.resolvedToken(try await currentTokenProvider(), fallback: token)
+            } catch {
+                // Offline or refusing: open with what we have; a 401 still recovers once.
+                logStreamWarning("Reconnect token resolution failed", error: error)
             }
         }
+        guard !Task.isCancelled, let continuation else { return }
+        open(continuation: continuation)
     }
 }

@@ -188,6 +188,7 @@ final class ServerConnection {
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
+
     /// The server pushes and the user turned push on for it, so it skips this device's push
     /// only while this device holds a live stream.
     var pushNotificationsAvailable: Bool {
@@ -1967,7 +1968,8 @@ final class ServerConnection {
             tlsServerName: selection.tlsServerName,
             tailnetRoute: route.configuredTailnetRoute,
             currentTokenProvider: currentTokenProvider,
-            refreshTokenProvider: refreshTokenProvider
+            refreshTokenProvider: refreshTokenProvider,
+            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "dictation")
         )
         activeDictationClient = client
         return client
@@ -1995,7 +1997,8 @@ final class ServerConnection {
             diagnosticRemoteIdentity: nil,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
-            authSession: httpAuthSession
+            authSession: httpAuthSession,
+            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "live_voice")
         )
         client.setPreferredEndpoint(selection)
         client.setStreamURL(streamURL, sessionId: sessionId, workspaceId: routeScope.workspaceId)
@@ -2047,6 +2050,7 @@ final class ServerConnection {
             leftoverExpiresAtMs: credentials.deviceCredential?.expiresAt,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
+            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "app_event_stream"),
             webSocketFactory: webSocketFactory
         )
         client.onTransportHealthFailure = { @MainActor [weak self, weak client] failure in
@@ -2236,6 +2240,7 @@ extension ServerConnection: ServerRouteHost {
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             authSession: httpAuthSession,
+            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "focused_session"),
             tailnetRoute: route.configuredTailnetRoute
         )
         wsClient.onTransportHealthFailure = { @MainActor [weak self, weak wsClient] failure in

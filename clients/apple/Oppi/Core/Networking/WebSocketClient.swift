@@ -108,9 +108,13 @@ final class WebSocketClient {
     /// Device-key auth session. When set, the WebSocket bearer comes from this
     /// session and a 401 handshake refreshes single-flight before one reconnect.
     private var authSession: DeviceAuthSession?
-    /// Bearer last applied to the live socket. 401 recovery compares this to the
-    /// session's current token so a sibling refresh is reused instead of reminted.
+    /// Bearer the server holds for the live socket: the one it opened with, or the last one
+    /// it accepted in `auth_renew`. 401 recovery compares this to the session's current token
+    /// so a sibling refresh is reused instead of reminted.
     private var appliedAccessToken: String = ""
+    /// Renews the live socket's access in band; nil when the server does not take `auth_renew`
+    /// or the stream has no device auth session.
+    private let authRenewer: StreamAuthRenewer?
     var configuredTLSServerName: String? { trustDelegate.expectedServerName }
     private var preferredEndpoint: EndpointSelection?
     let tailnetRoute: TailnetTransportRoute.Snapshot
@@ -149,6 +153,7 @@ final class WebSocketClient {
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
         authSession: DeviceAuthSession? = nil,
+        authRenewer: StreamAuthRenewer? = nil,
         tailnetRoute: TailnetTransportRoute.Snapshot? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
@@ -159,6 +164,7 @@ final class WebSocketClient {
         self.tailnetRoute = tailnetRoute ?? .forHost(preferredEndpoint?.baseURL.host ?? credentials.host)
         self.credentials = credentials
         self.authSession = authSession
+        self.authRenewer = authRenewer
         self.preferredEndpoint = preferredEndpoint
         self.diagnosticRole = diagnosticRole
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
@@ -527,6 +533,7 @@ final class WebSocketClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
 
         webSocket?.cancel(.normalClosure, nil)
         webSocket = nil
@@ -704,6 +711,26 @@ final class WebSocketClient {
         ws.resume()
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
+        authRenewer?.start(
+            token: token,
+            send: { text in try await Self.sendText(text, over: ws) },
+            onRenewed: { [weak self] renewed in
+                guard let self, self.webSocket?.identity == ws.identity else { return }
+                self.appliedAccessToken = renewed
+            }
+        )
+    }
+
+    private static func sendText(_ text: String, over ws: FocusedWebSocketTransport) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            ws.send(.string(text)) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     /// Handle an auth 401 on `ws`: force-refresh exactly once via the device-key
@@ -820,6 +847,11 @@ final class WebSocketClient {
                     guard ownsCurrentSocket else {
                         shouldAttemptReconnect = false
                         break
+                    }
+
+                    if case .authRenewResult(let result) = streamMessage.message {
+                        await MainActor.run { [weak self] in self?.authRenewer?.handle(result) }
+                        continue
                     }
 
                     if case .unknown(let type) = streamMessage.message {
@@ -988,6 +1020,7 @@ final class WebSocketClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
         reconnectTask?.cancel()
         webSocket?.cancel(.goingAway, nil)
         webSocket = nil

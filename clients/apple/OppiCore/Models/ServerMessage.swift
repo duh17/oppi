@@ -233,6 +233,10 @@ enum ServerMessage: Sendable, Equatable {
     /// The frames carry no `sessionId`: the focused socket is bound to one session.
     case conversationStream(ConversationStreamServerMessage)
 
+    /// The answer to this socket's `auth_renew`. The stream client consumes it; it never
+    /// reaches session routing.
+    case authRenewResult(StreamAuthRenewResult)
+
     // Unknown server message types are skipped, not fatal.
     case unknown(type: String)
 }
@@ -770,6 +774,9 @@ extension ServerMessage: Decodable {
         case "snapshot", "update", "older":
             self = .conversationStream(try ConversationStreamServerMessage(from: decoder))
 
+        case "auth_renew_result":
+            self = .authRenewResult(try StreamAuthRenewResult(from: decoder))
+
         default:
             self = .unknown(type: type)
         }
@@ -916,6 +923,7 @@ extension ServerMessage {
         case .dictationError: "dictationError"
         case .error: "error"
         case .conversationStream: "conversationStream"
+        case .authRenewResult: "authRenewResult"
         case .unknown(let type): "unknown(\(type))"
         }
     }

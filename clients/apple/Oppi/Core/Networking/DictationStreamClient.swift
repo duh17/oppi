@@ -61,6 +61,9 @@ final class DictationStreamClient: DictationTransport {
     private var token: String
     private let currentTokenProvider: (@Sendable () async throws -> String)?
     private let refreshTokenProvider: (@Sendable () async throws -> String)?
+    /// Renews the live socket's access in band; nil when the server does not take `auth_renew`
+    /// or the stream has no device auth session.
+    private let authRenewer: StreamAuthRenewer?
     private let urlSession: URLSession
     private let webSocketFactory: (URLRequest) -> DictationWebSocketTransport
     private var task: DictationWebSocketTransport?
@@ -88,6 +91,7 @@ final class DictationStreamClient: DictationTransport {
         tailnetRoute: TailnetTransportRoute.Snapshot? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
+        authRenewer: StreamAuthRenewer? = nil,
         webSocketFactory: ((URLRequest) -> DictationWebSocketTransport)? = nil
     ) {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
@@ -100,6 +104,7 @@ final class DictationStreamClient: DictationTransport {
         self.token = token
         self.currentTokenProvider = currentTokenProvider
         self.refreshTokenProvider = refreshTokenProvider
+        self.authRenewer = authRenewer
 
         let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute ?? .forHost(baseURL.host))
         config.timeoutIntervalForRequest = 60
@@ -216,6 +221,14 @@ final class DictationStreamClient: DictationTransport {
         receiveTask = Task { [weak self, task] in
             await self?.receiveLoop(task: task)
         }
+        authRenewer?.start(
+            token: token,
+            send: { text in try await task.send(.string(text)) },
+            onRenewed: { [weak self] renewed in
+                guard let self, self.task?.identity == task.identity else { return }
+                self.token = renewed
+            }
+        )
     }
 
     func sendDictation(_ message: ClientMessage) async throws {
@@ -311,6 +324,7 @@ final class DictationStreamClient: DictationTransport {
     func disconnect() {
         receiveTask?.cancel()
         receiveTask = nil
+        authRenewer?.stop()
         task?.cancel(.normalClosure, nil)
         task = nil
         pendingDictationStart = nil
@@ -325,22 +339,27 @@ final class DictationStreamClient: DictationTransport {
         return try JSONDecoder().decode(ServerMessage.self, from: data)
     }
 
+    /// Hand a decoded frame on: renewal answers go to the renewer, the rest to the take.
+    private func deliver(_ message: ServerMessage) {
+        if status == .connecting { status = .connected }
+        if case .authRenewResult(let result) = message {
+            authRenewer?.handle(result)
+            return
+        }
+        clearPendingStartIfAcceptedOrCompleted(message)
+        continuation?.yield(message)
+    }
+
     private func receiveLoop(task: DictationWebSocketTransport) async {
         while !Task.isCancelled {
             do {
                 let message = try await task.receive()
                 switch message {
                 case .string(let text):
-                    let decoded = try decodeMessage(from: text)
-                    if status == .connecting { status = .connected }
-                    clearPendingStartIfAcceptedOrCompleted(decoded)
-                    continuation?.yield(decoded)
+                    deliver(try decodeMessage(from: text))
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        let decoded = try decodeMessage(from: text)
-                        if status == .connecting { status = .connected }
-                        clearPendingStartIfAcceptedOrCompleted(decoded)
-                        continuation?.yield(decoded)
+                        deliver(try decodeMessage(from: text))
                     }
                 @unknown default:
                     break
