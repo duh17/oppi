@@ -347,6 +347,17 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+    /// Chat folds a long table behind "Show all N rows"; the reader and export
+    /// render every row. The hint lets the table plan its columns for the width it
+    /// will be laid out at instead of redrawing once it has one.
+    private func configureTableChrome(
+        _ tableView: NativeTableBlockView,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        tableView.rowFoldLimit = config.renderingMode == .live ? NativeTableBlockView.chatFoldRowLimit : nil
+        tableView.availableWidthHint = preparationWidth
+    }
+
     /// Runway probes prepare image metadata/decode without creating WKWebView.
     /// A real cell activates SVG display when it installs the prepared view.
     var preparesImagesForDisplay = true
@@ -662,6 +673,7 @@ final class AssistantMarkdownSegmentApplier {
                 serverID: config.resourceAccess.identity.serverID,
                 workspaceID: config.resourceAccess.identity.workspaceID
             )
+            configureTableChrome(tableView, config: config)
             tableView.apply(headers: headers, rows: rows, palette: palette)
             stackView.addArrangedSubview(tableView)
             tableViews[index] = tableView
@@ -1011,6 +1023,7 @@ final class AssistantMarkdownSegmentApplier {
                         serverID: config.resourceAccess.identity.serverID,
                         workspaceID: config.resourceAccess.identity.workspaceID
                     )
+                    configureTableChrome(tableView, config: config)
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
 

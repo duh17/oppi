@@ -65,6 +65,19 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
         return super.hitTest(point, with: event)
     }
 
+    /// Text Copy puts on the pasteboard for the selection, when the drawn glyphs
+    /// are not what the selection means (a table's padding and separators). Nil
+    /// from the closure, or no closure, copies the selected glyphs as usual.
+    var copyTextProvider: ((_ text: NSAttributedString, _ selection: NSRange) -> String?)?
+
+    override func copy(_ sender: Any?) {
+        if let text = copyTextProvider?(attributedText, selectedRange) {
+            UIPasteboard.general.string = text
+            return
+        }
+        super.copy(sender)
+    }
+
     func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>? {
         reviewCommentSourceLineRangeResolver?(range)
     }

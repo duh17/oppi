@@ -773,9 +773,10 @@ extension NativeCodeBlockView: UITextViewDelegate {
 /// UIKit markdown table.
 ///
 /// Default path keeps monospaced single-line columns with horizontal scroll
-/// (pixel-aligned via tab stops). Grid mode is used only when a column's
-/// natural width exceeds the readable clamp; short columns stay one line and
-/// the table may scroll sideways instead of squeezing to the viewport.
+/// (pixel-aligned via tab stops). Grid mode is used when a column's natural
+/// width exceeds the readable clamp, or when wrapping lets a too-wide table fit
+/// the viewport (`MarkdownTableColumnLayout.plan`); a table that cannot fit
+/// scrolls sideways. `TableChrome` adds the overflow cue and the fold bar.
 final class NativeTableBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -853,9 +854,30 @@ final class NativeTableBlockView: UIView {
     private var tableLabelContentConstraints: [NSLayoutConstraint] = []
     private var gridViewContentConstraints: [NSLayoutConstraint] = []
 
+    /// The overflow cue over the scroller and the "Show all N rows" bar under it.
+    private lazy var chrome = TableChrome(
+        card: cardView,
+        scrollView: scrollView,
+        open: { [unowned self] in openFullScreen() },
+        copy: { [unowned self] in copyTable($0) }
+    )
+
     /// Stored for long-press copy — rebuilt as markdown table text.
     private var currentHeaders: [[MarkdownInline]] = []
+    /// The rows drawn: `fullRows`, or its first `rowFoldLimit` rows when folded.
     private var currentRows: [[[MarkdownInline]]] = []
+    /// Every row, drawn or not: what copy and the full-screen viewer take.
+    private var fullRows: [[[MarkdownInline]]] = []
+    static let chatFoldRowLimit = 20
+    /// Rows past this many fold behind "Show all N rows"; nil never folds.
+    var rowFoldLimit: Int?
+    /// The width the owner expects to lay this table out at, used until the view
+    /// has a width of its own, so it is not drawn for one width and then redrawn.
+    var availableWidthHint: CGFloat?
+    /// The column widths, the plan on screen, and the width it was made for.
+    private var planning = TablePlanning()
+    /// Right edge of each column in scroller content coordinates.
+    private var columnTrailingEdges: [CGFloat] = []
     private var currentPalette: ThemePalette?
     /// Whether any cell contains a link (enables text view selectability for taps).
     private var hasLinks = false
@@ -921,6 +943,8 @@ final class NativeTableBlockView: UIView {
         scrollView.addSubview(gridView)
 
         tableLabel.delegate = self
+        tableLabel.copyTextProvider = { TableSelectionText.text(in: $0, range: $1) }
+        scrollView.delegate = self
         gridView.cellTextViewDelegate = self
         gridView.onOpenLink = { [weak self] url, view in
             self?.openLink(url, from: view)
@@ -964,8 +988,8 @@ final class NativeTableBlockView: UIView {
             scrollView.topAnchor.constraint(equalTo: cardView.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
         ])
+        chrome.install { [unowned self] in updateOverflowCue() }
         NSLayoutConstraint.activate(tableLabelContentConstraints)
     }
 
@@ -977,7 +1001,17 @@ final class NativeTableBlockView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if replanIfNeeded(forWidth: bounds.width) {
+            notifyHeightMayHaveChanged()
+            super.layoutSubviews()
+        }
         updateCardWidth()
+        updateOverflowCue()
+    }
+
+    private func updateOverflowCue() {
+        let visible = scrollView.bounds.width
+        chrome.updateCue(visibleMaxX: scrollView.contentOffset.x + visible, contentWidth: currentContentWidth(), trailingEdges: columnTrailingEdges)
     }
 
     /// UIScrollView has no useful intrinsic height. Measure the active table
@@ -994,6 +1028,9 @@ final class NativeTableBlockView: UIView {
         let width = targetSize.width.isFinite && targetSize.width > 0
             ? targetSize.width
             : max(1, bounds.width)
+        // The height depends on the width the columns are fit to: plan for the
+        // width being measured, not the last one laid out.
+        if replanIfNeeded(forWidth: width) { cachedTableHeight = nil }
         return CGSize(width: width, height: cachedOrMeasureTableHeight())
     }
 
@@ -1013,6 +1050,11 @@ final class NativeTableBlockView: UIView {
     }
 
     private func measuredTableHeight() -> CGFloat {
+        scrollerHeight() + chrome.footerHeight
+    }
+
+    /// Height of the rows, without the fold footer.
+    private func scrollerHeight() -> CGFloat {
         if isWrapMode {
             return max(1, ceil(gridView.layout?.contentHeight ?? 0))
         }
@@ -1085,7 +1127,9 @@ final class NativeTableBlockView: UIView {
     var debugMeasuredHeightForTesting: CGFloat { cachedOrMeasureTableHeight() }
     #endif
 
-    func apply(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], palette: ThemePalette) {
+    func apply(headers: [[MarkdownInline]], rows allRows: [[[MarkdownInline]]], palette: ThemePalette) {
+        fullRows = allRows
+        let rows = rowFoldLimit.map { allRows.count > $0 ? Array(allRows.prefix($0)) : allRows } ?? allRows
         let headerChanged = renderedMode == nil || headers != currentHeaders
         let unchangedRows = Self.commonPrefixCount(currentRows, rows)
         let contentChanged = headerChanged
@@ -1097,6 +1141,9 @@ final class NativeTableBlockView: UIView {
         // A streaming tick that finished no row applies the same table again.
         // Nothing to measure, lay out, or draw.
         if !contentChanged, !fontsChanged, currentPalette?.uiCache === palette.uiCache {
+            // Same rows, but the hidden ones may have grown, and the width the
+            // table is laid out at may have changed the plan.
+            refreshChromeAndPlan(palette: palette)
             return
         }
         #if DEBUG
@@ -1128,7 +1175,7 @@ final class NativeTableBlockView: UIView {
         cardView.backgroundColor = palette.ui.bgDark
         cardView.layer.borderColor = palette.ui.mdCodeBlockBorder.withAlphaComponent(0.5).cgColor
 
-        let metrics = Self.naturalColumnMetrics(
+        planning.natural = Self.naturalColumnMetrics(
             headerWidths: measuredHeaderWidths,
             rowWidths: measuredRowWidths,
             columnCount: Self.columnCount(headers: headers, rows: rows)
@@ -1138,31 +1185,16 @@ final class NativeTableBlockView: UIView {
         if contentChanged {
             scrollView.contentOffset = .zero
         }
+        let foldChanged = chrome.update(shownRows: rows.count, totalRows: allRows.count, palette: palette)
 
-        // Mode is content-only and chosen once per apply. Layout width never
-        // rebuilds the table or flips clip vs grid.
+        // Mode and column widths come from the content and the layout width; a
+        // later width change re-plans in `replanIfNeeded`.
         let previousMode = isWrapMode
-        let keptRows = headerChanged ? nil : unchangedRows
-        if MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
-            let widths = MarkdownTableColumnLayout.clampedColumnWidths(
-                naturalWidths: metrics.columnWidths
-            )
-            renderWrapMode(
-                columnWidths: widths,
-                palette: palette,
-                force: contentChanged,
-                keptRows: keptRows
-            )
-        } else {
-            renderClipMode(
-                columnWidths: metrics.columnWidths,
-                palette: palette,
-                force: contentChanged,
-                keptRows: keptRows
-            )
-        }
+        let plan = planning.plan(width: bounds.width, hint: availableWidthHint, displayScale: traitCollection.displayScale)
+        let force = contentChanged || plan != planning.rendered
+        render(plan, palette: palette, force: force, keptRows: headerChanged ? nil : unchangedRows)
 
-        if previousMode != isWrapMode {
+        if previousMode != isWrapMode || foldChanged {
             notifyHeightMayHaveChanged()
         }
         updateCardWidth()
@@ -1170,6 +1202,35 @@ final class NativeTableBlockView: UIView {
         // Do not `layoutIfNeeded()` here. The document reader measures this
         // view inside a collection-view layout pass; a nested layout re-enters
         // `cellForItem`, reuses table cells, and overflows the main thread.
+    }
+
+    private func refreshChromeAndPlan(palette: ThemePalette) {
+        let foldChanged = chrome.update(shownRows: currentRows.count, totalRows: fullRows.count, palette: palette)
+        let plan = planning.plan(width: bounds.width, hint: availableWidthHint, displayScale: traitCollection.displayScale)
+        if plan != planning.rendered { render(plan, palette: palette, force: true, keptRows: nil) }
+        if foldChanged { notifyHeightMayHaveChanged() }
+    }
+
+    private func render(_ plan: MarkdownTableColumnLayout.Plan, palette: ThemePalette, force: Bool, keptRows: Int?) {
+        switch plan.presentation {
+        case .grid:
+            renderWrapMode(columnWidths: plan.columnWidths, palette: palette, force: force, keptRows: keptRows)
+        case .clip:
+            renderClipMode(columnWidths: plan.columnWidths, palette: palette, force: force, keptRows: keptRows)
+        }
+        if force { columnTrailingEdges = MarkdownTableColumnLayout.trailingEdges(for: plan) }
+        planning.rendered = plan
+    }
+
+    /// The viewport changed: redraw if the columns plan differently for `width`,
+    /// and say so, because wrapped rows are as tall as the columns are narrow.
+    @discardableResult
+    private func replanIfNeeded(forWidth width: CGFloat) -> Bool {
+        guard let palette = currentPalette,
+              let plan = planning.replan(forWidth: width, displayScale: traitCollection.displayScale)
+        else { return false }
+        render(plan, palette: palette, force: true, keptRows: nil)
+        return true
     }
 
     private func updateGridInteractivity() {
@@ -1435,126 +1496,6 @@ final class NativeTableBlockView: UIView {
         return NSAttributedString(attributedString: text.storage)
     }
 
-    /// Append inline content to the result, rendering links with `.link` attribute.
-    static func appendTableCellInlines(
-        _ inlines: [MarkdownInline],
-        to result: NSMutableAttributedString,
-        font: UIFont,
-        defaultColor: UIColor,
-        linkColor: UIColor,
-        paragraph: NSParagraphStyle
-    ) {
-        // Fast path: single plain text (most common table cell).
-        if inlines.count == 1, case .text(let s) = inlines[0] {
-            result.append(NSAttributedString(string: s, attributes: [
-                .font: font,
-                .foregroundColor: defaultColor,
-                .paragraphStyle: paragraph,
-            ]))
-            return
-        }
-        for inline in inlines {
-            appendTableInline(
-                inline, to: result, font: font,
-                defaultColor: defaultColor, linkColor: linkColor,
-                paragraph: paragraph
-            )
-        }
-    }
-
-    private static func appendTableInline(
-        _ inline: MarkdownInline,
-        to result: NSMutableAttributedString,
-        font: UIFont,
-        defaultColor: UIColor,
-        linkColor: UIColor,
-        paragraph: NSParagraphStyle
-    ) {
-        switch inline {
-        case .text(let s):
-            result.append(NSAttributedString(string: s, attributes: [
-                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
-            ]))
-        case .link(let children, let destination):
-            let text = plainText(from: children)
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: linkColor,
-                .paragraphStyle: paragraph,
-            ]
-            if let dest = destination, let url = URL(string: dest), url.scheme != nil {
-                attrs[.link] = url
-                // File links skip the underline; it breaks around `_` glyphs.
-                if !ResourceReferenceURL.isReference(url) {
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                }
-            }
-            result.append(NSAttributedString(string: text, attributes: attrs))
-        case .code(let s):
-            result.append(NSAttributedString(string: s, attributes: [
-                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
-            ]))
-        case .emphasis(let children), .strong(let children), .strikethrough(let children):
-            for child in children {
-                appendTableInline(
-                    child, to: result, font: font,
-                    defaultColor: defaultColor, linkColor: linkColor,
-                    paragraph: paragraph
-                )
-            }
-        case .softBreak, .hardBreak:
-            result.append(NSAttributedString(string: " ", attributes: [
-                .font: font, .paragraphStyle: paragraph,
-            ]))
-        case .html(let raw):
-            result.append(NSAttributedString(string: raw, attributes: [
-                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
-            ]))
-        case .image(let alt, _):
-            if !alt.isEmpty {
-                result.append(NSAttributedString(string: "[\(alt)]", attributes: [
-                    .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
-                ]))
-            }
-        case .videoEmbed(let embed):
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: linkColor,
-                .paragraphStyle: paragraph,
-            ]
-            if let url = ResourceReferenceURL.make(embed.reference) {
-                attrs[.link] = url
-            } else {
-                attrs[.foregroundColor] = defaultColor
-            }
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
-        case .audioEmbed(let embed):
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: linkColor,
-                .paragraphStyle: paragraph,
-            ]
-            if let url = ResourceReferenceURL.make(embed.reference) {
-                attrs[.link] = url
-            } else {
-                attrs[.foregroundColor] = defaultColor
-            }
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
-        case .usdzEmbed(let embed):
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: linkColor,
-                .paragraphStyle: paragraph,
-            ]
-            if let url = ResourceReferenceURL.make(embed.reference) {
-                attrs[.link] = url
-            } else {
-                attrs[.foregroundColor] = defaultColor
-            }
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
-        }
-    }
-
     @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began else { return }
 
@@ -1574,7 +1515,7 @@ final class NativeTableBlockView: UIView {
         let separatorLine = "| " + currentHeaders.map { _ in "---" }.joined(separator: " | ") + " |"
         lines.append(separatorLine)
 
-        for row in currentRows {
+        for row in fullRows {
             let rowLine = "| " + row.map { markdownText(from: $0) }.joined(separator: " | ") + " |"
             lines.append(rowLine)
         }
@@ -1706,6 +1647,41 @@ extension NativeTableBlockView: UITextViewDelegate {
         let lineText = nsText.substring(with: lineRange)
         let normalized = ReviewCommentSelectionTextFormatter.normalizedSelectedText(lineText)
         return normalized.isEmpty ? nil : normalized
+    }
+}
+
+// MARK: - Full-screen viewer and copy
+
+extension NativeTableBlockView: UIScrollViewDelegate {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateOverflowCue()
+    }
+
+    /// Opens the whole table, every row and column, in the full-screen viewer.
+    func openFullScreen() {
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            .document(.delimitedTable(text: tableText(.tsv), filePath: "table.tsv")),
+            from: self
+        )
+    }
+
+    /// The whole table as copied text: Markdown keeps inline syntax, TSV is plain cells.
+    func tableText(_ format: TableCopyFormat) -> String {
+        switch format {
+        case .markdown:
+            return markdownTableText()
+        case .tsv:
+            return TableTextFormat.tsv(
+                headers: currentHeaders.map { plainText(from: $0) },
+                rows: fullRows.map { $0.map { plainText(from: $0) } }
+            )
+        }
+    }
+
+    fileprivate func copyTable(_ format: TableCopyFormat) {
+        UIPasteboard.general.string = tableText(format)
+        AppHaptics.impact(style: .light, intensity: 0.7)
+        showCopiedFlash()
     }
 }
 

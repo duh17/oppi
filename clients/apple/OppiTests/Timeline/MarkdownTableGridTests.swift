@@ -168,7 +168,8 @@ struct MarkdownTableGridTests {
         #expect(layout.cells.count == 31, "header plus 30 body rows")
         #expect(layout.columnWidths.count == 3)
         #expect(timelineAllTextViews(in: table).filter { !$0.isHidden }.isEmpty)
-        #expect(timelineAllViews(in: table).count < 20, "a 93-cell grid should not mount a view per cell")
+        // The card's overflow cue and fold bar add a handful of views of their own.
+        #expect(timelineAllViews(in: table).count < 40, "a 93-cell grid should not mount a view per cell")
         #expect(!table.debugGridViewForTesting.isInteractive)
 
         // Wrapped notes make rows taller than a single line.

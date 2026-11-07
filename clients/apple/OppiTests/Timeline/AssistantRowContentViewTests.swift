@@ -1160,9 +1160,6 @@ struct AssistantTimelineRowContentViewTests {
         container.layoutIfNeeded()
 
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: markdownView))
-        let tableTextViews = timelineAllTextViews(in: tableView).filter { !$0.isHidden }
-        let tableTextView = try #require(tableTextViews.first)
-
         let initialText = timelineRenderedTableText(in: tableView)
         #expect(initialText.contains("Selection menu"))
         #expect(initialText.contains("WKWebView support"))
@@ -1192,7 +1189,6 @@ struct AssistantTimelineRowContentViewTests {
             )
         }
         // Keep a named binding so the clip-mode path stays exercised too.
-        _ = tableTextView
     }
 
     @MainActor

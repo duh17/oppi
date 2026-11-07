@@ -43,12 +43,102 @@ struct MarkdownTableColumnLayoutTests {
             )
         )
     }
+
+    // MARK: - Fit to the viewport
+
+    private static func plan(
+        _ naturals: [CGFloat],
+        available: CGFloat?,
+        scale: CGFloat = 3
+    ) -> MarkdownTableColumnLayout.Plan {
+        // Clip text is wider than the grid: `  │  ` separators instead of 8pt gaps.
+        let clipWidth = naturals.reduce(0, +) + 40 * CGFloat(naturals.count)
+        return MarkdownTableColumnLayout.plan(
+            naturalWidths: naturals,
+            clipContentWidth: clipWidth,
+            availableWidth: available,
+            displayScale: scale
+        )
+    }
+
+    @Test func tableWiderThanViewportFitsWhenEveryColumnCanStayReadable() {
+        let naturals: [CGFloat] = [90, 200, 274]
+        let plan = Self.plan(naturals, available: 370)
+
+        #expect(plan.presentation == .grid)
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= 370)
+        for (fitted, natural) in zip(plan.columnWidths, naturals) {
+            #expect(fitted <= natural)
+            #expect(fitted >= MarkdownTableColumnLayout.minimumFitColumnWidth - 0.5)
+        }
+        #expect(plan.columnWidths[2] > plan.columnWidths[0], "The wide column gets the room")
+    }
+
+    @Test func shortColumnsKeepTheirNaturalWidthWhenTheTableIsFit() {
+        let protected = MarkdownTableColumnLayout.protectedColumnWidth
+        let naturals: [CGFloat] = [protected, protected, 274, 274]
+        let plan = Self.plan(naturals, available: 370)
+
+        #expect(plan.presentation == .grid)
+        #expect(plan.columnWidths[0] == protected)
+        #expect(plan.columnWidths[1] == protected)
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= 370)
+    }
+
+    @Test func tableScrollsWhenColumnsCannotStayReadable() {
+        // Six columns of prose need 6 x 8 characters plus gaps: more than 300pt.
+        let naturals = [CGFloat](repeating: 274, count: 6)
+        let plan = Self.plan(naturals, available: 300)
+
+        #expect(plan == Self.plan(naturals, available: nil), "No fit: the content-only layout, which scrolls")
+        #expect(plan.columnWidths == naturals)
+    }
+
+    @Test func clipTableThatFitsStaysClipText() {
+        let plan = Self.plan([80, 80], available: 370)
+        #expect(plan.presentation == .clip)
+        #expect(plan.columnWidths == [80, 80])
+    }
+
+    @Test func fittedWidthsNeverOvershootTheViewport() {
+        let naturals: [CGFloat] = [120, 90, 274, 150]
+        for available in stride(from: CGFloat(330), through: 600, by: 7) {
+            let plan = Self.plan(naturals, available: available)
+            #expect(
+                MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= available,
+                "Plan overshoots \(available): \(plan.columnWidths)"
+            )
+        }
+    }
+
+    @Test func hiddenColumnCountCountsColumnsPastTheVisibleEdge() {
+        let edges: [CGFloat] = [100, 220, 340, 460]
+        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 370) == 1)
+        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 300) == 2, "A cut column counts")
+        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 460) == 0)
+        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 50) == 4)
+    }
+
+    @Test func trailingEdgesFollowTheDrawnLayouts() {
+        let grid = MarkdownTableColumnLayout.gridTrailingEdges(columnWidths: [50, 60])
+        #expect(grid == [58, 126])
+        let clip = MarkdownTableColumnLayout.clipTrailingEdges(
+            columnWidths: [50, 60],
+            leadPad: 16,
+            separator: 40,
+            buffer: 1
+        )
+        #expect(clip == [67, 168])
+    }
 }
 
 @Suite("Native table wrap-to-fit")
 @MainActor
 struct NativeTableWrapToFitTests {
-    @Test func shortColumnStaysSingleLineAndLongColumnClamps() {
+    /// A table wider than the phone is fit to it when every column can stay
+    /// readable: no sideways scroll, short values on one line, the long column
+    /// wrapping into what is left.
+    @Test func widerThanPhoneTableFitsWithoutScrollAndKeepsShortValuesOnOneLine() {
         let tableView = NativeTableBlockView()
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -83,13 +173,13 @@ struct NativeTableWrapToFitTests {
         #expect(horizontalScroll != nil, "Grid tables stay hosted in the horizontal scroller")
         #expect(horizontalScroll?.isHidden == false)
         #expect(
-            (horizontalScroll?.contentSize.width ?? 0) > (horizontalScroll?.bounds.width ?? 0) + 1,
-            "Clamped grid wider than the bubble must enable horizontal scroll"
+            (horizontalScroll?.contentSize.width ?? 0) <= (horizontalScroll?.bounds.width ?? 0) + 1,
+            "A table whose columns can stay readable must fit the bubble, not scroll"
         )
 
         let shortCells = visibleTableCells(in: tableView).filter { cell in
             let text = timelineRenderedText(of: cell)
-            return text == "Feature" || text == "Tables" || text == "Streaming markdown"
+            return text == "Feature" || text == "Tables"
         }
         #expect(!shortCells.isEmpty)
         for cell in shortCells {
@@ -104,14 +194,51 @@ struct NativeTableWrapToFitTests {
         }
         #expect(!longCells.isEmpty)
         for cell in longCells {
-            #expect(!cellIsSingleLine(cell), "Long cell should wrap at the readable clamp")
+            #expect(!cellIsSingleLine(cell), "Long cell should wrap")
+            #expect(
+                cell.bounds.width < MarkdownTableColumnLayout.maxReadableColumnWidth - 1,
+                "Long column should be fit below the readable clamp, got \(cell.bounds.width)"
+            )
+        }
+
+        #expect(tableView.bounds.width <= 320.5)
+    }
+
+    /// With room to spare, the long column wraps at the readable clamp and the
+    /// table does not stretch to the viewport.
+    @Test func longColumnClampsAtReadableWidthWhenViewportIsWide() {
+        let tableView = NativeTableBlockView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 700, height: 400))
+        container.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        let longNotes = "Incremental tail parse keeps first paint cheap on long turns."
+        tableView.apply(
+            headers: [[.text("Feature")], [.text("Notes")]],
+            rows: [[[.text("Streaming markdown")], [.text(longNotes)]]],
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let longCells = visibleTableCells(in: tableView).filter {
+            timelineRenderedText(of: $0).contains(longNotes)
+        }
+        #expect(!longCells.isEmpty)
+        for cell in longCells {
             #expect(
                 abs(cell.bounds.width - MarkdownTableColumnLayout.maxReadableColumnWidth) <= 1,
                 "Long column should wrap at maxReadable, got \(cell.bounds.width)"
             )
         }
-
-        #expect(tableView.bounds.width <= 320.5)
+        let card = tableView.subviews.first { $0.layer.cornerRadius == 8 }
+        #expect((card?.bounds.width ?? 700) < 700, "A table that fits keeps its own width")
     }
 
     @Test func wrappedHeightIsKnownDuringSelfSizingBeforeFirstLayout() {
@@ -413,8 +540,11 @@ struct NativeTableStreamingTests {
             let fresh = NativeTableBlockView()
             fresh.apply(headers: headers, rows: tick, palette: ThemeRuntimeState.currentPalette())
 
+            // Both are measured at the chat width first: the columns are fit to it.
+            let streamedHeight = Self.fittedHeight(of: streamed)
+            let freshHeight = Self.fittedHeight(of: fresh)
             #expect(Self.gridSnapshot(of: streamed) == Self.gridSnapshot(of: fresh), "tick \(index)")
-            #expect(Self.fittedHeight(of: streamed) == Self.fittedHeight(of: fresh), "tick \(index) height")
+            #expect(streamedHeight == freshHeight, "tick \(index) height")
 
             let rowCells = Self.bodyRowCells(of: streamed)
             let unchanged = zip(previousTick, tick).prefix { $0 == $1 }.count
@@ -543,6 +673,21 @@ private func visibleTableCells(in tableView: NativeTableBlockView) -> [UITextVie
     return cells
 }
 
+/// Frame of every cell in the table's own coordinates, in either mode.
+@MainActor
+private func tableCellFrames(in table: NativeTableBlockView) -> [CGRect] {
+    guard let grid = visibleGrid(in: table), let layout = grid.layout else {
+        return timelineAllTextViews(in: table)
+            .filter { !$0.isHidden && $0.bounds.width > 1 }
+            .map { $0.convert($0.bounds, to: table) }
+    }
+    return layout.cells.indices.flatMap { row in
+        layout.columnWidths.indices.map { column in
+            grid.convert(layout.cellFrame(row: row, column: column), to: table)
+        }
+    }
+}
+
 /// Frame of every grid row (header, then body rows) in `target`'s coordinates.
 @MainActor
 private func wrapRowFrames(in tableView: NativeTableBlockView, to target: UIView) -> [CGRect] {
@@ -570,4 +715,339 @@ private func cellIsSingleLine(_ cell: UITextView) -> Bool {
         ).height
     )
     return atAllocatedWidth <= singleLine + 1
+}
+
+// MARK: - Fit to width and the cues around it
+
+@Suite("Native table fit and chrome")
+@MainActor
+struct NativeTableFitAndChromeTests {
+    @MainActor
+    private final class Host {
+        let container: UIView
+        let table = NativeTableBlockView()
+        let widthConstraint: NSLayoutConstraint
+
+        init(width: CGFloat) {
+            container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 1200))
+            table.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(table)
+            widthConstraint = table.widthAnchor.constraint(equalToConstant: width)
+            NSLayoutConstraint.activate([
+                table.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                table.topAnchor.constraint(equalTo: container.topAnchor),
+                widthConstraint,
+            ])
+        }
+
+        /// What a self-sizing cell does at `width`: measure, then lay out.
+        @discardableResult
+        func layout(at width: CGFloat) -> CGFloat {
+            container.frame.size.width = width
+            widthConstraint.constant = width
+            let fitted = table.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            container.layoutIfNeeded()
+            return fitted
+        }
+    }
+
+    private static func cells(_ rows: [[String]]) -> [[[MarkdownInline]]] {
+        rows.map { $0.map { [.text($0)] } }
+    }
+
+    // MARK: Regression for ee911a546 (overlapping rows after fitting to the viewport)
+
+    /// `ee911a546` removed fitting columns to the viewport: a squeezed timestamp
+    /// column wrapped, and after a width change the table kept the height it had
+    /// measured for the old width, so later rows painted over earlier ones. Fit
+    /// is back, so this holds it to what that fix promised, across width changes:
+    /// short values stay on one line, the reported height holds every cell, and
+    /// no two cells in a column overlap.
+    @Test func fitToWidthKeepsShortValuesOnOneLineAndRowsApartAcrossWidthChanges() {
+        let host = Host(width: 390)
+        host.table.apply(
+            headers: [[.text("Time")], [.text("Event")], [.text("Detail")]],
+            rows: Self.cells([
+                ["01:46:42", "auth.refresh_succeeded", "JSONL start, cwd ~/.config/dotfiles, host session (not Gondolin) with a long trailing explanation"],
+                ["01:48:21", "ws.keepalive_timeout", "iOS background again; last websocket activity before the keepalive timeout fired after 27s"],
+                ["01:49:48", "session.resumed", "Foreground recovery reran after the socket was replaced."],
+            ]),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+
+        for width in [390, 320, 390, 280, 360] as [CGFloat] {
+            let fitted = host.layout(at: width)
+            let cells = visibleTableCells(in: host.table)
+            #expect(!cells.isEmpty, "No cells at width \(width)")
+
+            // 1. The short column never wraps (the timestamps in the old report).
+            for cell in cells where timelineRenderedText(of: cell).hasPrefix("01:4") || timelineRenderedText(of: cell) == "Time" {
+                #expect(cellIsSingleLine(cell), "Timestamp wrapped at width \(width): \(timelineRenderedText(of: cell))")
+            }
+
+            // 2. The table fits: nothing is cut at the right edge and no scroll is needed.
+            let scroll = timelineAllScrollViews(in: host.table).first { !($0 is UITextView) }
+            #expect(
+                (scroll?.contentSize.width ?? 0) <= (scroll?.bounds.width ?? 0) + 1,
+                "Table scrolls at width \(width): content \(scroll?.contentSize.width ?? 0) in \(scroll?.bounds.width ?? 0)"
+            )
+
+            // 3. The measured height holds every cell, and is the height laid out.
+            let frames = tableCellFrames(in: host.table)
+            #expect(
+                (frames.map(\.maxY).max() ?? 0) <= fitted + 0.5,
+                "Cells reach past the measured height at width \(width): \(frames.map(\.maxY).max() ?? 0) > \(fitted)"
+            )
+            #expect(
+                abs(host.table.bounds.height - fitted) <= 1,
+                "Laid-out height \(host.table.bounds.height) disagrees with the measured \(fitted) at width \(width)"
+            )
+
+            // 4. Cells in a column never overlap.
+            let columns = Dictionary(grouping: frames) { Int($0.minX.rounded()) }
+            for (x, column) in columns {
+                let sorted = column.sorted { $0.minY < $1.minY }
+                for (above, below) in zip(sorted, sorted.dropFirst()) {
+                    #expect(above.maxY <= below.minY + 0.5, "Rows overlap in column x=\(x) at width \(width): \(above) vs \(below)")
+                }
+            }
+        }
+    }
+
+    /// The same table measured narrow, then wide, must not keep the narrow height.
+    @Test func measuredHeightFollowsTheWidthItIsMeasuredAt() {
+        let host = Host(width: 390)
+        host.table.apply(
+            headers: [[.text("Check")], [.text("Result")]],
+            rows: Self.cells([
+                ["Build", "Compiled every target and linked the app without a single warning from the compiler or the linker."],
+                ["Tests", "Every suite passed on the first run, including the slow integration suites and the UI suites."],
+            ]),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        let narrow = host.layout(at: 300)
+        let wide = host.layout(at: 600)
+        let narrowAgain = host.layout(at: 300)
+
+        #expect(narrow > wide + 10, "Narrower columns wrap into more lines (narrow \(narrow), wide \(wide))")
+        #expect(abs(narrowAgain - narrow) <= 1, "Returning to the narrow width restores its height (\(narrowAgain) vs \(narrow))")
+    }
+
+    /// A streamed table is measured at the chat width before it has a frame of its
+    /// own. Each later apply must plan for that width, not fall back to the
+    /// content-only layout, or every tick would redraw every row.
+    @Test func tableMeasuredAtAWidthKeepsItsFitPlanAcrossAppliesBeforeFirstLayout() throws {
+        let table = NativeTableBlockView()
+        let long = "A long value that has to wrap inside the fitted column to stay on the phone."
+        var rows = Self.cells([["Build", long], ["Tests", long]])
+        let headers = Self.cells([["Check", "Result"]])[0]
+        table.apply(headers: headers, rows: rows, palette: ThemeRuntimeState.currentPalette())
+        _ = table.systemLayoutSizeFitting(
+            CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let grid = try #require(timelineFirstView(ofType: MarkdownTableGridView.self, in: table))
+        let fitted = try #require(grid.layout?.columnWidths)
+        let firstRow = try #require(grid.layout?.cells[1][0])
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: fitted) <= 320)
+
+        rows.append(contentsOf: Self.cells([["Lint", long]]))
+        table.apply(headers: headers, rows: rows, palette: ThemeRuntimeState.currentPalette())
+
+        #expect(grid.layout?.columnWidths == fitted, "The plan for 320pt survives an apply that has no width")
+        #expect(grid.layout?.cells[1][0] === firstRow, "An unchanged row is not rebuilt")
+    }
+
+    // MARK: Overflow cue
+
+    private static func wideTable() -> (headers: [[MarkdownInline]], rows: [[[MarkdownInline]]]) {
+        (
+            (0 ..< 5).map { [.text("Col\($0)")] },
+            cells([(0 ..< 5).map { String(repeating: "value\($0)-", count: 4) }])
+        )
+    }
+
+    private func overlay(in table: NativeTableBlockView) -> TableOverflowOverlayView? {
+        timelineAllViews(in: table).compactMap { $0 as? TableOverflowOverlayView }.first
+    }
+
+    private func pill(in table: NativeTableBlockView) -> UIButton? {
+        timelineAllViews(in: table).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "markdown.table.moreColumns"
+        }
+    }
+
+    @Test func scrollingTableShowsAHiddenColumnCountThatFollowsTheScroll() throws {
+        let host = Host(width: 320)
+        let wide = Self.wideTable()
+        host.table.apply(headers: wide.headers, rows: wide.rows, palette: ThemeRuntimeState.currentPalette())
+        host.layout(at: 320)
+
+        let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
+        let overlay = try #require(overlay(in: host.table))
+        let pill = try #require(pill(in: host.table))
+        #expect(scroll.contentSize.width > scroll.bounds.width + 1, "Fixture must overflow")
+        #expect(overlay.isCueVisible)
+        let atStart = try #require(pill.accessibilityLabel)
+        #expect(atStart.hasSuffix("more columns"), "Got \(atStart)")
+
+        // Scrolling updates the count without a layout pass.
+        scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
+        #expect(!overlay.isCueVisible, "Nothing is hidden at the right end")
+
+        scroll.contentOffset.x = 0
+        #expect(overlay.isCueVisible)
+        #expect(pill.accessibilityLabel == atStart)
+    }
+
+    @Test func overflowCueAddsNoLayoutAndIsReachableForVoiceOver() throws {
+        let host = Host(width: 320)
+        let wide = Self.wideTable()
+        host.table.apply(headers: wide.headers, rows: wide.rows, palette: ThemeRuntimeState.currentPalette())
+        let heightWithCue = host.layout(at: 320)
+        let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
+        let overlay = try #require(overlay(in: host.table))
+        let pill = try #require(pill(in: host.table))
+
+        scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
+        #expect(overlay.frame == scroll.frame, "The overlay covers the scroller and takes no space of its own")
+        #expect(abs(host.layout(at: 320) - heightWithCue) <= 1, "The cue must not move the table")
+        #expect(pill.accessibilityTraits.contains(.button))
+        #expect(pill.accessibilityHint?.isEmpty == false)
+        #expect(
+            overlay.hitTest(CGPoint(x: 2, y: overlay.bounds.midY), with: nil) == nil,
+            "Only the pill takes touches; the table underneath keeps scrolling and selecting"
+        )
+    }
+
+    @Test func tableThatFitsShowsNoCue() throws {
+        let host = Host(width: 390)
+        host.table.apply(
+            headers: [[.text("Name")], [.text("Role")]],
+            rows: Self.cells([["Ada", "Engineer"], ["Grace", "Admiral"]]),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        host.layout(at: 390)
+        let overlay = try #require(overlay(in: host.table))
+        #expect(!overlay.isCueVisible)
+    }
+
+    @Test func narrowingATableUntilItNoLongerFitsTurnsTheCueOn() throws {
+        let host = Host(width: 390)
+        host.table.apply(
+            headers: [[.text("Name")], [.text("Role")], [.text("Team")], [.text("Region")]],
+            rows: Self.cells([["Ada Lovelace", "Principal engineer", "Analytical Engines", "London"]]),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        host.layout(at: 390)
+        let overlay = try #require(overlay(in: host.table))
+        #expect(!overlay.isCueVisible)
+
+        host.layout(at: 160)
+        #expect(overlay.isCueVisible, "At 160pt the columns cannot stay readable, so the table scrolls and says so")
+        host.layout(at: 390)
+        #expect(!overlay.isCueVisible)
+    }
+
+    // MARK: Fold
+
+    @Test func longTableFoldsBehindShowAllRowsAndCopiesEveryRow() throws {
+        let rows = (1 ... 30).map { ["item-\($0)", "value \($0)"] }
+        let folded = Host(width: 390)
+        folded.table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
+        folded.table.apply(
+            headers: [[.text("Item")], [.text("Value")]],
+            rows: Self.cells(rows),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        let foldedHeight = folded.layout(at: 390)
+
+        let button = try #require(timelineAllViews(in: folded.table).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "markdown.table.showAll"
+        })
+        #expect(button.accessibilityLabel == "Show all 30 rows")
+        #expect(!button.isHidden)
+
+        // Twenty rows are drawn, the rest only behind the button.
+        let drawn = timelineAllTextViews(in: folded.table).map(timelineRenderedText).joined(separator: "\n")
+        #expect(drawn.contains("item-20"))
+        #expect(!drawn.contains("item-21"))
+
+        // The footer is part of the measured height: a table of exactly the
+        // folded size plus the bar.
+        let twenty = Host(width: 390)
+        twenty.table.apply(
+            headers: [[.text("Item")], [.text("Value")]],
+            rows: Self.cells(Array(rows.prefix(20))),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        let twentyHeight = twenty.layout(at: 390)
+        #expect(abs(foldedHeight - (twentyHeight + TableFoldFooterView.height)) <= 1)
+        #expect(abs(folded.table.bounds.height - foldedHeight) <= 1)
+
+        // Copy and the viewer take every row.
+        let tsv = folded.table.tableText(.tsv)
+        #expect(tsv.split(separator: "\n").count == 31)
+        #expect(tsv.hasSuffix("item-30\tvalue 30"))
+        #expect(folded.table.tableText(.markdown).split(separator: "\n").count == 32)
+    }
+
+    private func showAllIsVisible(in table: NativeTableBlockView) -> Bool {
+        timelineAllViews(in: table).contains {
+            $0.accessibilityIdentifier == "markdown.table.showAll" && !$0.isHidden && $0.superview?.isHidden == false
+        }
+    }
+
+    @Test func tableAtOrUnderTheLimitDoesNotFoldAndReaderNeverFolds() throws {
+        let atLimit = Host(width: 390)
+        atLimit.table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
+        atLimit.table.apply(
+            headers: [[.text("Item")]],
+            rows: Self.cells((1 ... 20).map { ["row-\($0)"] }),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        atLimit.layout(at: 390)
+        #expect(!showAllIsVisible(in: atLimit.table))
+
+        let reader = Host(width: 390)
+        reader.table.rowFoldLimit = nil
+        reader.table.apply(
+            headers: [[.text("Item")]],
+            rows: Self.cells((1 ... 60).map { ["row-\($0)"] }),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        reader.layout(at: 390)
+        #expect(!showAllIsVisible(in: reader.table))
+        #expect(timelineAllTextViews(in: reader.table).map(timelineRenderedText).joined().contains("row-60"))
+    }
+
+    @Test func foldTracksARowThatStreamsPastTheLimit() throws {
+        let host = Host(width: 390)
+        host.table.rowFoldLimit = 20
+        let palette = ThemeRuntimeState.currentPalette()
+        func rows(_ count: Int) -> [[[MarkdownInline]]] { Self.cells((1 ... count).map { ["row-\($0)"] }) }
+
+        host.table.apply(headers: [[.text("Item")]], rows: rows(20), palette: palette)
+        host.layout(at: 390)
+        let heightAtTwenty = host.table.bounds.height
+
+        host.table.apply(headers: [[.text("Item")]], rows: rows(21), palette: palette)
+        host.layout(at: 390)
+        let footer = try #require(timelineAllViews(in: host.table).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "markdown.table.showAll"
+        })
+        #expect(footer.accessibilityLabel == "Show all 21 rows")
+        #expect(abs(host.table.bounds.height - (heightAtTwenty + TableFoldFooterView.height)) <= 1)
+
+        host.table.apply(headers: [[.text("Item")]], rows: rows(25), palette: palette)
+        host.layout(at: 390)
+        #expect(footer.accessibilityLabel == "Show all 25 rows")
+    }
 }

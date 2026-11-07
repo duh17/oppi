@@ -977,6 +977,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
             case .table(let headers, let rows):
                 let table = NativeTableBlockView()
+                table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
                 table.apply(headers: headers, rows: rows, palette: palette)
                 bodyStack.addArrangedSubview(table)
                 tableBlockViews.append(table)

@@ -33,6 +33,7 @@ final class MarkdownTableClipText {
     private let dimColor: UIColor
     private let cellColor: UIColor
     private let linkColor: UIColor
+    private let codeColor: UIColor
     private let altRowBackground: UIColor
     /// The line break between rows. It carries the table font: a bare newline
     /// takes whatever default a text view fills in, so the string would depend
@@ -49,6 +50,7 @@ final class MarkdownTableClipText {
         dimColor = palette.ui.comment.withAlphaComponent(0.4)
         cellColor = palette.ui.fg
         linkColor = palette.ui.blue
+        codeColor = palette.ui.mdCode
         altRowBackground = palette.ui.bgHighlight.withAlphaComponent(0.45)
 
         storage.addLayoutManager(layoutManager)
@@ -133,6 +135,8 @@ final class MarkdownTableClipText {
             }
             result.append(NSAttributedString(string: text, attributes: [
                 .font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph,
+                // Selection reads the cell back from this, not the padding.
+                TableSelectionText.cellAttribute: TableSelectionText.attributeValue(row: 0, column: index),
             ]))
             if index < columnWidths.count - 1 {
                 result.append(NSAttributedString(string: "\t  │  ", attributes: [
@@ -177,13 +181,20 @@ final class MarkdownTableClipText {
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
                 ]))
             }
-            NativeTableBlockView.appendTableCellInlines(
+            let cellStart = result.length
+            TableInlineText.appendCell(
                 inlines,
                 to: result,
                 font: cellFont,
                 defaultColor: cellColor,
                 linkColor: linkColor,
+                codeColor: codeColor,
                 paragraph: paragraph
+            )
+            result.addAttribute(
+                TableSelectionText.cellAttribute,
+                value: TableSelectionText.attributeValue(row: rowIndex + 1, column: index),
+                range: NSRange(location: cellStart, length: result.length - cellStart)
             )
             if index < columnCount - 1 {
                 result.append(NSAttributedString(string: "\t  │  ", attributes: [

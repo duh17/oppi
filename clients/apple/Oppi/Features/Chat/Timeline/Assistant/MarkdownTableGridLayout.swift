@@ -12,6 +12,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     let headerText: UIColor
     let bodyText: UIColor
     let link: UIColor
+    let code: UIColor
     let headerFont: UIFont
     let bodyFont: UIFont
 
@@ -23,6 +24,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         headerText = palette.ui.cyan.resolvedColor(with: traits)
         bodyText = palette.ui.fg.resolvedColor(with: traits)
         link = palette.ui.blue.resolvedColor(with: traits)
+        code = palette.ui.mdCode.resolvedColor(with: traits)
         headerFont = AppFont.monoMediumBold
         bodyFont = AppFont.monoMedium
     }
@@ -173,12 +175,13 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
         let color = isHeader ? style.headerText : style.bodyText
         let paragraph = cellParagraphStyle()
         let result = NSMutableAttributedString()
-        NativeTableBlockView.appendTableCellInlines(
+        TableInlineText.appendCell(
             inlines,
             to: result,
             font: font,
             defaultColor: color,
             linkColor: style.link,
+            codeColor: style.code,
             paragraph: paragraph
         )
         if result.length == 0 {
