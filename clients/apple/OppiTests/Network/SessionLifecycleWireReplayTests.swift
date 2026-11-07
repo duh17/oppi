@@ -29,7 +29,6 @@ struct SessionLifecycleWireReplayTests {
         "classic.wake_hold",
         "mirror.busy_idle_stop",
         "mirror.abort_mid_turn",
-        "durable.commit_before_agent_start",
     ]
 
     // MARK: - Named disagreements
@@ -48,9 +47,10 @@ struct SessionLifecycleWireReplayTests {
             name: "agentStartLeadsSummary",
             closedBy: Self.statusFromServer,
             reason: "The client marks the row busy on the agent_start event. The server sends the busy "
-                + "summary after the event, so its status at that frame is still ready.",
+                + "summary after the event, so its status at that frame is still ready. That includes "
+                + "the durable run released after an abort that landed before its agent_start.",
             fields: [.status, .keepAlive, .awake],
-            expectedFires: 72
+            expectedFires: 78
         ) { path, frame, diff in
             path != .app && frame == "agent_start" && diff[.status] == LifecycleDifference("busy", "ready")
         },
@@ -58,9 +58,10 @@ struct SessionLifecycleWireReplayTests {
             name: "agentSettledLeadsSummary",
             closedBy: Self.statusFromServer,
             reason: "The client marks the row ready on agent_settled. The server's ready summary "
-                + "follows, so its status at that frame is still busy.",
+                + "follows, so its status at that frame is still busy. That includes the durable run "
+                + "released after an abort that landed before its agent_start.",
             fields: [.status, .keepAlive, .awake],
-            expectedFires: 42
+            expectedFires: 48
         ) { path, frame, diff in
             path != .app && frame == "agent_settled" && diff[.status] == LifecycleDifference("ready", "busy")
         },
@@ -70,9 +71,11 @@ struct SessionLifecycleWireReplayTests {
             reason: "An abort's stop_confirmed arrives at agent_end, while the server row is still "
                 + "stopping until agent_settled. The client rewrites stopping to ready on stop_confirmed "
                 + "and releases the screen-awake reason. The next stopping summary puts the row back, "
-                + "and agent_settled releases it again before the server's ready summary.",
+                + "and agent_settled releases it again before the server's ready summary. A durable "
+                + "abort that lands before agent_start really stops too: the server holds stopping "
+                + "through stop_confirmed until its ready summary.",
             fields: [.status, .keepAlive, .awake],
-            expectedFires: 51
+            expectedFires: 60
         ) { _, frame, diff in
             ["stop_confirmed", "agent_settled"].contains(frame) && diff[.status] == LifecycleDifference("ready", "stopping")
         },
@@ -127,9 +130,10 @@ struct SessionLifecycleWireReplayTests {
             name: "keepAliveIgnoresStopping",
             closedBy: Self.oneActivityRule,
             reason: "BackgroundKeepAlive.hasActiveAgent counts busy and starting rows. A stopping "
-                + "session has an agent still winding down, so the server-implied answer is true.",
+                + "session has an agent still winding down, so the server-implied answer is true. "
+                + "That includes a durable abort that lands before agent_start.",
             fields: [.keepAlive],
-            expectedFires: 95
+            expectedFires: 101
         ) { _, _, diff in
             diff[.keepAlive] == LifecycleDifference("false", "true")
         },
@@ -138,9 +142,10 @@ struct SessionLifecycleWireReplayTests {
             closedBy: Self.oneActivityRule,
             reason: "The screen-awake reason is set by focused-stream agent events and by stop "
                 + "events, never by a session summary. The app-event channel alone carries "
-                + "summaries, so a running session holds no screen-awake reason.",
+                + "summaries, so a running session holds no screen-awake reason. That includes the "
+                + "durable run released after an abort that landed before its agent_start.",
             fields: [.awake],
-            expectedFires: 34
+            expectedFires: 36
         ) { path, _, diff in
             path == .app && diff[.awake] == LifecycleDifference("false", "true")
         },
@@ -158,12 +163,13 @@ struct SessionLifecycleWireReplayTests {
         .init(
             name: "stopFromIdleDoesNotSetAwake",
             closedBy: Self.oneActivityRule,
-            reason: "A terminate of an idle session moves the server to stopping. Only agent_start "
-                + "sets the screen-awake reason, so the client holds none while stopping. If the "
-                + "activity rule decides an idle terminate holds nothing, the server-implied "
-                + "answer changes instead.",
+            reason: "A terminate of an idle session, or a durable abort that lands before agent_start "
+                + "while the row is still ready, moves the server to stopping. On the stream paths only "
+                + "agent_start or a running state or summary sets the screen-awake reason, so the "
+                + "client holds none at stop_requested. If the activity rule decides an idle stop "
+                + "holds nothing, the server-implied answer changes instead.",
             fields: [.awake],
-            expectedFires: 2
+            expectedFires: 4
         ) { path, frame, diff in
             path != .app && frame == "stop_requested" && diff[.awake] == LifecycleDifference("false", "true")
         },
