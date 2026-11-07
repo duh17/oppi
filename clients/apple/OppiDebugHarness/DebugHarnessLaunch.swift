@@ -105,6 +105,9 @@ enum DebugHarnessLaunch {
             return ChatRoutesPreviewController(root: root, topBar: ChatTopBarLayout(
                 order: [.outline, .files, .context, .git, .terminal], shown: Set(ChatTopBarAction.allCases)
             ))
+        // The chat pushed above a session-list stand-in, for popping it while
+        // its trailing column is open (back button, edge swipe, cancelled swipe).
+        case "chat-pop-column": return ChatPopColumnPreviewController(root: root)
         case "session-timeline": return SessionTimelinePreviewController(root: root)
         case "markdown-tables": return MarkdownTablesPreviewController(root: root)
         // The files, terminal, and audio family: the motion captures, the
