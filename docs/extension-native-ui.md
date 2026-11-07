@@ -371,6 +371,8 @@ In managed sessions Oppi creates the `ctx.ui` bridge, so the server translates e
 
 A server plugin can publish a composable surface: a pill in the strip above or below the composer, and a drawer of sections with actions. Define it with `surface()` from `oppi/v1` and publish it with `panel.publish({ surfaces: oppiHost().surfaces(env) }, state)`. A section is one of the closed composites (`statusCard`, `checklist`, `dataTable`, `actionBar`) or a `blocks` section, whose `body` is a tree of the nodes below. The pill, when the surface has one, is one row of inline nodes. The server rejects a surface that breaks a rule; it never repairs one.
 
+The drawer has a maximum height and scrolls. While its body is taller than that, the drawer's header offers full screen: every section without the height cap, following the surface's updates, with working actions.
+
 ### Blocks nodes
 
 `oppi/v1` has one builder per node kind, with the same name (`row`, `text`, `elapsed`, and so on). Every node can take an `id` and `accessibility` (`label`, `value`, `hint`). An `id` is a stable identifier, unique across the whole surface, and a node that offers an `action` must have one.
@@ -389,7 +391,7 @@ A server plugin can publish a composable surface: a pill in the strip above or b
 | `keyValue` | `pairs` | Each pair is `{ key, value, tone? }`; at most 24. |
 | `table` | `columns`, `rows`, `truncated?` | A row is `{ id?, cells, actions? }`. A row with actions needs an `id`, and so does its table. |
 | `chart` | `kind`, `labels`, `series`, `title?`, `truncated?` | `kind`: `bar`, `line`, `pie`. |
-| `code` | `text`, `language?` | |
+| `code` | `text`, `language?` | In a drawer, the block's header opens the text full screen. |
 | `divider` | | |
 | `spacer` | `size?` | `small`, `medium`, `large`. |
 | `button` | `id`, `title`, `action`, `role?`, `icon?`, `selected?`, `disabled?` | `role`: `primary`, `secondary`, `destructive`. |

@@ -46,12 +46,15 @@ redirects), and the job id with a live age counter or how it ended
 (`Exit 1`, `Stopped`, `Timed out`). The client ticks the age itself. A running
 job has a **Stop** button, which kills it as `background_job cancel` does.
 Under the title, a running job shows its folder, the time left before its
-timeout if it has one, and its live output: the last 12 lines, at most 480
-characters, with escape codes removed and a progress line that redraws itself
-with a carriage return shown at its latest state. When the output passes the
-64,000 characters the result keeps, the row says "Output truncated".
-**Details**, folded by default, holds the full command, with the full working
-directory while the job runs or the end of its output once it has finished.
+timeout if it has one, and its live output: the last 3 lines, at most 160
+characters, so the row fits in the drawer without scrolling. Escape codes are
+removed, and a progress line that redraws itself with a carriage return is
+shown at its latest state. When the output passes the 64,000 characters the
+result keeps, the row says "Output truncated". **Details**, folded by default,
+holds the full command and, while the job runs, the full working directory. It
+also holds the end of the output, up to the last 12 lines and 480 characters:
+always for a finished job, and for a running job when that is more than the
+row shows.
 
 New output redraws the panel at most once every 2 seconds, and only when a
 running row's lines would change. Several jobs printing at once share that
