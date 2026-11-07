@@ -812,6 +812,38 @@ describe("stop lifecycle", () => {
     }
   });
 
+  it("idle expiry terminates an abort confirmed at agent_end whose agent_settled never comes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, events, dispose, session } = makeManagerHarness("busy");
+      const lifecycle = (
+        manager as unknown as { lifecycleCoordinator: { resetIdleTimer(key: string): void } }
+      ).lifecycleCoordinator;
+      lifecycle.resetIdleTimer("s1");
+      await manager.sendAbort("s1");
+      (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+        "s1",
+        { type: "agent_end" },
+      );
+
+      // A hung agent_end or agent_settled extension handler holds Pi's agent_settled. The abort's
+      // deadline backs off from its claim, so only idle expiry can end the `stopping` row: it
+      // holds the stop for one timeout, then treats it as stuck.
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(session.status).toBe("stopping");
+      await vi.advanceTimersByTimeAsync(600_000);
+      await vi.advanceTimersByTimeAsync(
+        (manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs,
+      );
+
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(events.some((event) => event.type === "session_ended")).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("clears the terminate deadline as soon as agent_end starts disposal", async () => {
     const timers = new ManualStopTimers();
     const { manager, dispose } = makeManagerHarness("busy", timers);

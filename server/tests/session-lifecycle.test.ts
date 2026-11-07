@@ -2557,17 +2557,18 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
-  it("never expires a session whose stop is already in progress; the stop's own deadline governs", async () => {
+  it("holds a stop under way for one more timeout, then stops it as stuck despite a pending wake", async () => {
     const active = makeLifecycleActiveSession({ status: "stopping" });
+    active.sdkBackend.hasPendingWake = vi.fn(async () => true) as never;
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
     await vi.advanceTimersByTimeAsync(300_000);
-    await vi.advanceTimersByTimeAsync(300_000);
-    await vi.advanceTimersByTimeAsync(300_000);
-
     expect(deps.stopSession).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
   it("resumes ordinary idle expiry once a stop fails back to a settled phase", async () => {

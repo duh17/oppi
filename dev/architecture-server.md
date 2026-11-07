@@ -34,7 +34,7 @@ graph TD
 
 ## Session lifecycle
 
-`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` check rejects an assignment anywhere else (new rows set it in an object literal). Callers apply events with `applyLifecycle`; one the phase disallows is logged and ignored. The six wire values are a frozen projection of the phase: Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn; idle expiry reads the phase too, holding a running turn two hours but never a stopping session. A stop during `starting` wins before registration, never saving `ready`. `aborting` and `terminating` carry their stop's timers and completion (`StopState`) in every engine, mirror included; `runtime_ended` broadcasts a stopped summary before `session_ended`.
+`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` check rejects an assignment anywhere else (new rows set it in an object literal). Callers apply events with `applyLifecycle`; one the phase disallows is logged and ignored. The six wire values are a frozen projection of the phase: Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn; idle expiry reads the phase, holding a quiet running turn two hours and a stop one timeout. A stop during `starting` wins before registration, never saving `ready`. `aborting` and `terminating` carry their stop's timers and completion (`StopState`) in every engine, mirror included; `runtime_ended` broadcasts a stopped summary before `session_ended`.
 
 ## Program status
 

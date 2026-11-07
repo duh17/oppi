@@ -11,7 +11,6 @@ import { createLogger } from "./logger.js";
 import {
   activeStop,
   applyLifecycle,
-  isStopping,
   lifecyclePhase,
   type StopState,
 } from "./session-lifecycle-state.js";
@@ -67,6 +66,8 @@ export class SessionLifecycleCoordinator {
   private autoStopChecks: Map<string, object> = new Map();
   /** When each session's running turn last sent an event, while the idle timeout holds for it. */
   private quietTurnSince: Map<string, number> = new Map();
+  /** Stops idle expiry already held once; one still under way at the next expiry is stuck. */
+  private heldStops = new WeakSet<StopState>();
 
   constructor(private readonly deps: SessionLifecycleCoordinatorDeps) {}
 
@@ -323,15 +324,31 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
-    // A stop already has its own deadline (StopState's timers in session-stop.ts); idle
-    // expiry must never race it into a second, redundant stop. It just checks back later.
-    if (isStopping(idleActive.session)) {
+    // A stop under way finishes within seconds on its own deadlines; expiring it would turn a
+    // user's abort into a terminate, so it gets one more timeout. Not every stop stays bounded:
+    // an abort Pi confirmed at agent_end waits unbounded for agent_settled, which a hung extension
+    // handler holds. A stop still under way a whole timeout later is stuck, and stopSession
+    // promotes or retries it under a bounded deadline. A pending wake cannot hold it: the stop
+    // was already decided.
+    const stop = activeStop(idleActive.session);
+    if (stop && !this.heldStops.has(stop)) {
+      this.heldStops.add(stop);
       log.info("session_lifecycle.idle_timeout.held_for_stop", {
         sessionId: idleActive.session.id,
         key,
         timeoutMs,
       });
       this.resetIdleTimer(key);
+      return;
+    }
+    if (stop) {
+      log.warn("session_lifecycle.idle_timeout.stuck_stop", {
+        sessionId: idleActive.session.id,
+        key,
+        phase: lifecyclePhase(idleActive.session).name,
+        timeoutMs,
+      });
+      this.expire(key, idleActive);
       return;
     }
 
