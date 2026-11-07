@@ -2366,6 +2366,7 @@
 		E7F61700024B578B620FF15B /* MermaidParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C5B379ED83CA2067BC8BB8 /* MermaidParser.swift */; };
 		E802D100937E349F8EBB55B6 /* PushPairingPlaintextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102D18AD71072B6D8DC4124C /* PushPairingPlaintextTests.swift */; };
 		E81D0CFAFC7319B9C6EF5FEC /* MacBundledCodeFontRegistrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1A8B2D61EC5178EE290F29 /* MacBundledCodeFontRegistrationTests.swift */; };
+		E81F265C86C6AD1A4957BA68 /* OrgTableMarkupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9489D8A4DABC4C102E2417 /* OrgTableMarkupTests.swift */; };
 		E82E73CD23EDA989413A923D /* MarkdownReaderRenderAheadContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C590F11E0D08BBA3B4C67B8 /* MarkdownReaderRenderAheadContractTests.swift */; };
 		E83122BA98B616259715DA34 /* BashEmbeddedLanguageDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F5FDDD24D3D58CDACF27DDD /* BashEmbeddedLanguageDetector.swift */; };
 		E846E810973CB1FADE3EECDA /* AudioScriptReaderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E531A21443703CCD702DAA7 /* AudioScriptReaderUITests.swift */; };
@@ -4652,6 +4653,7 @@
 		DF0CEFBB1251B28049C48C05 /* StreamingApplyPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingApplyPerfBench.swift; sourceTree = "<group>"; };
 		DF43D886206813232577FD18 /* SequenceDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceDiff.swift; sourceTree = "<group>"; };
 		DF85E4D412BDDB553B3E8AB2 /* TrailingSidePanelPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailingSidePanelPolicy.swift; sourceTree = "<group>"; };
+		DF9489D8A4DABC4C102E2417 /* OrgTableMarkupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgTableMarkupTests.swift; sourceTree = "<group>"; };
 		DFB6FF234145BA14C73D8F07 /* ClientLogUploadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientLogUploadQueue.swift; sourceTree = "<group>"; };
 		DFE201D900A66D7101E91F6C /* ModelDonutChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDonutChart.swift; sourceTree = "<group>"; };
 		DFE933D38E38DE964B1DF64E /* OppiDictationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiDictationProvider.swift; sourceTree = "<group>"; };
@@ -6088,6 +6090,7 @@
 				0A37588169C0D20F543BB99D /* OrgParserConformanceTests.swift */,
 				8A4BAF27B0787756180D319F /* OrgParserErrorRecoveryTests.swift */,
 				43800E9618984B58D831C353 /* OrgRendererTests.swift */,
+				DF9489D8A4DABC4C102E2417 /* OrgTableMarkupTests.swift */,
 				7348BE85347697B8FE748871 /* OrgToMarkdownConverterTests.swift */,
 				59E478BBA284457E39D9032D /* ReaderTaskControlTests.swift */,
 				1DD3216A60563C42ABBA1923 /* TaskSourceEditTests.swift */,
@@ -10169,6 +10172,7 @@
 				FCDB7801564DB1CC260CFFFB /* OrgParserConformanceTests.swift in Sources */,
 				F06B1F8FB156F63E060514BF /* OrgParserErrorRecoveryTests.swift in Sources */,
 				D5D0CAB6A68D67504391821F /* OrgRendererTests.swift in Sources */,
+				E81F265C86C6AD1A4957BA68 /* OrgTableMarkupTests.swift in Sources */,
 				B6F741FC198F696FE77A8B64 /* OrgToMarkdownConverterTests.swift in Sources */,
 				5A36657933995229D5D07645 /* PairedDeviceRosterTests.swift in Sources */,
 				FE7807A2AB960BC5BC966FA4 /* PairedServerTests.swift in Sources */,

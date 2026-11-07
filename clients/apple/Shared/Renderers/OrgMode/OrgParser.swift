@@ -744,13 +744,15 @@ struct OrgParser: DocumentParser, Sendable {
             return (.paragraph([.text("")]), cursor)
         }
 
-        // First row (or row before separator) is the header
+        // First row (or row before separator) is the header. Each cell's text
+        // is parsed the same as a paragraph's, so `*bold*`, `/italic/`,
+        // `=verbatim=`, `~code~`, `+strike+` and links work inside a table too.
         let headerRowIndex = separatorIndex != nil ? 0 : 0
-        let headerCells = dataRows[headerRowIndex].map { [OrgInline.text($0)] }
+        let headerCells = dataRows[headerRowIndex].map { parseInlines($0) }
 
         let bodyStartIndex = separatorIndex != nil ? 1 : 1
         let bodyRows = dataRows[bodyStartIndex...].map { row in
-            row.map { [OrgInline.text($0)] }
+            row.map { parseInlines($0) }
         }
 
         return (.table(headers: headerCells, rows: Array(bodyRows)), cursor)
