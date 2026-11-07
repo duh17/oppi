@@ -248,6 +248,18 @@ struct TaskSourceEditTests {
         #expect(Edit.setPlanningDate(in: dateOnly, headingLine: 1, kind: .deadline, to: date(2026, 11, 13, (8, 0))) == "* TODO Ship\nDEADLINE: <2026-11-13 Fri 08:00 .+1d>")
     }
 
+    @Test func changingATimeRangeKeepsItsLength() {
+        let source = "* TODO Meet\nSCHEDULED: <2026-11-11 Wed 09:00-10:30 +1w>"
+        func scheduled(_ value: Edit.OrgDateValue?) -> String? {
+            Edit.setPlanningDate(in: source, headingLine: 1, kind: .scheduled, to: value)
+        }
+        #expect(scheduled(date(2026, 11, 12, (9, 0))) == "* TODO Meet\nSCHEDULED: <2026-11-12 Thu 09:00-10:30 +1w>")
+        #expect(scheduled(date(2026, 11, 11, (14, 15))) == "* TODO Meet\nSCHEDULED: <2026-11-11 Wed 14:15-15:45 +1w>")
+        // A range past midnight, or no time at all, has no end to keep.
+        #expect(scheduled(date(2026, 11, 11, (23, 30))) == "* TODO Meet\nSCHEDULED: <2026-11-11 Wed 23:30 +1w>")
+        #expect(scheduled(date(2026, 11, 11)) == "* TODO Meet\nSCHEDULED: <2026-11-11 Wed +1w>")
+    }
+
     @Test func clearingADateRemovesOnlyThatEntry() {
         let source = "* TODO Ship\nSCHEDULED: <2026-11-11 Wed +1w> DEADLINE: <2026-11-13 Fri>\nbody"
         #expect(Edit.setPlanningDate(in: source, headingLine: 1, kind: .scheduled, to: nil) == "* TODO Ship\nDEADLINE: <2026-11-13 Fri>\nbody")

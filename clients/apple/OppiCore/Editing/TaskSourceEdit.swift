@@ -145,7 +145,8 @@ enum TaskSourceEdit {
 
     /// Sets the Scheduled or Deadline date of the heading at `line`, or clears
     /// it when `value` is nil. An existing stamp keeps its brackets, repeater and
-    /// warning period; a new entry joins the heading's planning line, which is
+    /// warning period, and a time range (`09:00-10:30`) keeps its length from the
+    /// new start time; a new entry joins the heading's planning line, which is
     /// created under the heading when it has none.
     static func setPlanningDate(
         in source: String,
@@ -156,8 +157,36 @@ enum TaskSourceEdit {
         guard kind != .closed else { return nil }
         var lines = Lines(source)
         guard lines.rows.indices.contains(line - 1), isOrgHeading(lines.body(line - 1)) else { return nil }
-        setPlanning(kind, at: line - 1, in: &lines, value: value.map { "<" + $0.orgText + ">" }, keepsSuffix: true)
+        let stamp = value.map { value in
+            var text = value.orgText
+            // The picker sets one time; a range keeps its length unless it would
+            // run past midnight, which one stamp cannot say.
+            if let time = value.time,
+               let existing = planningLine(under: line - 1, in: lines)?.entries.first(where: { $0.kind == kind }),
+               let length = rangeMinutes(ofStamp: existing.timestamp.text) {
+                let end = time.hour * 60 + time.minute + length
+                if end < 24 * 60 { text += String(format: "-%02d:%02d", end / 60, end % 60) }
+            }
+            return "<" + text + ">"
+        }
+        setPlanning(kind, at: line - 1, in: &lines, value: stamp, keepsSuffix: true)
         return lines.text
+    }
+
+    /// Minutes from start to end of a stamp's time range (`09:00-10:30`).
+    private static func rangeMinutes(ofStamp text: String) -> Int? {
+        func minutes(_ clock: Substring) -> Int? {
+            let parts = clock.split(separator: ":")
+            guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
+            return hour * 60 + minute
+        }
+        for token in text.split(separator: " ") {
+            let ends = token.split(separator: "-")
+            if ends.count == 2, let start = minutes(ends[0]), let end = minutes(ends[1]), end > start {
+                return end - start
+            }
+        }
+        return nil
     }
 
     // MARK: - Planning line
