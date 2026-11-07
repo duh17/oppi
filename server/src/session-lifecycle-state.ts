@@ -90,7 +90,6 @@ export function nextLifecyclePhase(
       return between ? { name: "aborting", back: between } : undefined;
     case "terminate_requested":
       if (stopping) return { name: "terminating", back: stopping.back };
-      if (name === "starting") return { name: "terminating", back: "idle" };
       return between ? { name: "terminating", back: between } : undefined;
     case "stop_failed":
       return stopping ? { name: stopping.back } : undefined;

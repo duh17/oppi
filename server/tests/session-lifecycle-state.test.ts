@@ -33,7 +33,7 @@ const parse = (text: string): LifecyclePhase => {
 
 // Each row: the phase every event leads to, in EVENTS order. "—" is an event the phase ignores.
 const EXPECTED: Record<string, string> = {
-  starting: "starting idle stopped — — — terminating>idle — stopped failed",
+  starting: "starting idle stopped — — — — — stopped failed",
   idle: "starting — — running idle aborting>idle terminating>idle — stopped failed",
   running: "starting — — running idle aborting>running terminating>running — stopped failed",
   failed: "starting — — running failed aborting>failed terminating>failed — stopped failed",
