@@ -81,7 +81,6 @@ import {
   activeStop,
   applyLifecycle,
   lifecyclePhase,
-  type StopRequestSource,
   type StopState,
 } from "./session-lifecycle-state.js";
 import type { Storage } from "./storage.js";
@@ -943,14 +942,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (active && connection) {
       this.cancelPendingAsk(active, connection);
     }
-    // Only a running turn gets the shared stop phase and its `stopping` wire status; an idle
-    // session's abort still reaches the bridge (it decides), matching the SDK's "already idle" answer.
-    if (active && lifecyclePhase(active.session).name === "running") {
-      this.beginMirrorStop(sessionId, active, "abort_requested", "user");
+    // Only a running turn opens a stop; an idle session's abort still reaches the bridge.
+    const stop =
+      active && lifecyclePhase(active.session).name === "running"
+        ? this.beginMirrorStop(sessionId, active, "abort_requested")
+        : undefined;
+    try {
+      const data = await this.dispatchBridgeCommand(sessionId, { type: "abort" });
+      this.applyQueueFromCommandData(sessionId, data, "command_result:abort");
+    } catch (error) {
+      if (active && stop) this.failMirrorStop(sessionId, active, stop, error);
+      throw error;
     }
-
-    const data = await this.dispatchBridgeCommand(sessionId, { type: "abort" });
-    this.applyQueueFromCommandData(sessionId, data, "command_result:abort");
   }
 
   async stopSession(sessionId: string): Promise<void> {
@@ -967,79 +970,73 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (active) {
       this.cancelPendingAsk(active, connection);
     }
-    const stop = active
-      ? this.beginMirrorStop(sessionId, active, "terminate_requested", "user")
-      : undefined;
-    // Only a terminate arms this: an abort with no precedent timeout can wait on the bridge's own
-    // busy/idle reporting indefinitely, same as before this slice.
-    if (active && stop) {
-      stop.timeoutHandle = setTimeout(() => {
-        if (activeStop(active.session) !== stop) return;
-        log.warn("mirror_bridge.stop_timeout", {
-          runtime: MIRROR_RUNTIME_LOG_TAG,
-          sessionId,
-          timeoutMs: PI_TUI_STOP_TIMEOUT_MS,
-        });
-        this.finishMirrorStopWithFailure(
-          sessionId,
-          active,
-          stop,
-          new Error("pi-tui did not shut down in time"),
-        );
-      }, PI_TUI_STOP_TIMEOUT_MS);
-    }
+    const stop = active && this.beginMirrorStop(sessionId, active, "terminate_requested");
 
     try {
       await this.sendFireAndForgetBridgeCommand(connection, { type: "stop" });
     } catch (error) {
-      if (active && stop) this.finishMirrorStopWithFailure(sessionId, active, stop, error);
+      if (active && stop) this.failMirrorStop(sessionId, active, stop, error);
       throw error;
     }
 
-    if (stop) await stop.completion;
+    const failure = await stop?.completion;
+    if (failure) throw failure;
   }
 
   /**
-   * Begin a stop episode through the shared `abort_requested`/`terminate_requested` lifecycle
-   * event: broadcast `stop_requested` and the new `stopping` state. A stop already under way is
-   * returned unchanged — a duplicate tap does not start a second one.
+   * Opens the shared stop phase, or promotes an abort to a terminate, and arms its deadline. The
+   * bridge settles a stop by reporting idle or disconnecting; one that does neither in time fails
+   * it, so the row never stays `stopping`, where Build 57 and older offer no stop control.
    */
   private beginMirrorStop(
     sessionId: string,
     active: MirrorActiveSession,
     event: "abort_requested" | "terminate_requested",
-    source: StopRequestSource,
   ): StopState | undefined {
     const existing = activeStop(active.session);
-    if (existing) return existing;
-    if (!applyLifecycle(active.session, event, source)) return undefined;
-    active.session.lastActivity = Date.now();
-    this.storage.saveSession(active.session);
-    this.broadcast(sessionId, { type: "stop_requested", source });
-    this.broadcast(sessionId, { type: "state", session: active.session });
-    return activeStop(active.session);
+    const promotes = event === "terminate_requested" && activeStop(active.session, "aborting");
+    if (existing && !promotes) return existing;
+    applyLifecycle(active.session, event, "user");
+    const stop = activeStop(active.session);
+    if (!stop) return undefined;
+    if (!existing) {
+      active.session.lastActivity = Date.now();
+      this.storage.saveSession(active.session);
+      this.broadcast(sessionId, { type: "stop_requested", source: "user" });
+      this.broadcast(sessionId, { type: "state", session: active.session });
+    }
+    clearTimeout(stop.timeoutHandle);
+    stop.timeoutHandle = setTimeout(() => {
+      log.warn("mirror_bridge.stop_timeout", {
+        runtime: MIRROR_RUNTIME_LOG_TAG,
+        sessionId,
+        event,
+        timeoutMs: PI_TUI_STOP_TIMEOUT_MS,
+      });
+      const what = event === "abort_requested" ? "stop the turn" : "shut down";
+      this.failMirrorStop(sessionId, active, stop, new Error(`pi-tui did not ${what} in time`));
+    }, PI_TUI_STOP_TIMEOUT_MS);
+    return stop;
   }
 
-  /** Returns a stop to the phase it interrupted, broadcasts `stop_failed`, and rejects whichever
-   * `stopSession` call is still waiting on its completion. */
-  private finishMirrorStopWithFailure(
+  /** Settles `stop` with `error`; if it is still under way, returns it to its phase first. */
+  private failMirrorStop(
     sessionId: string,
     active: MirrorActiveSession,
     stop: StopState,
     error: unknown,
   ): void {
-    if (stop.timeoutHandle !== undefined) {
-      clearTimeout(stop.timeoutHandle);
-      stop.timeoutHandle = undefined;
-    }
-    const reason = safeErrorMessage(error);
-    if (applyLifecycle(active.session, "stop_failed")) {
+    clearTimeout(stop.timeoutHandle);
+    const failure = error instanceof Error ? error : new Error(safeErrorMessage(error));
+    if (activeStop(active.session) === stop) {
+      applyLifecycle(active.session, "stop_failed");
       active.session.lastActivity = Date.now();
       this.storage.saveSession(active.session);
       this.broadcast(sessionId, { type: "state", session: active.session });
+      const reason = safeErrorMessage(failure);
+      this.broadcast(sessionId, { type: "stop_failed", source: "server", reason });
     }
-    this.broadcast(sessionId, { type: "stop_failed", source: "server", reason });
-    stop.rejectCompletion(error instanceof Error ? error : new Error(reason));
+    stop.settle(failure);
   }
 
   private async sendFireAndForgetBridgeCommand(
@@ -1449,8 +1446,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         const error = new Error(message.error || "pi-tui command failed");
         const active = this.active.get(connection.sessionId);
         const stop = active && activeStop(active.session);
-        if (active && stop)
-          this.finishMirrorStopWithFailure(connection.sessionId, active, stop, error);
+        if (active && stop) this.failMirrorStop(connection.sessionId, active, stop, error);
         log.warn("mirror_bridge.fire_and_forget_command_failed", {
           runtime: MIRROR_RUNTIME_LOG_TAG,
           bridgeId: connection.bridgeId,
@@ -1483,6 +1479,20 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       this.broadcast(active.session.id, message);
     }
 
+    // Only a terminate the bridge ended confirms; a gone bridge fails any other stop.
+    const ended = isTerminalStoppedReason(options.reason);
+    const stop = activeStop(active.session);
+    const confirmsStop = ended && activeStop(active.session, "terminating") !== undefined;
+    if (stop && !confirmsStop) {
+      const reason = `pi-tui disconnected before stop completed (${options.reason})`;
+      this.failMirrorStop(
+        active.session.id,
+        active,
+        stop,
+        new RuntimeDisconnectedError("pi-tui", reason),
+      );
+    }
+
     const disconnectedAt = Date.now();
     const terminal = {
       ...(active.session.mirror?.terminal ?? {}),
@@ -1509,15 +1519,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       terminal,
     };
 
-    // A terminate's stop timer no longer matters once the bridge is gone, whatever ends it.
-    const stop = activeStop(active.session);
-    const wasTerminating = lifecyclePhase(active.session).name === "terminating";
-    if (stop?.timeoutHandle !== undefined) {
-      clearTimeout(stop.timeoutHandle);
-      stop.timeoutHandle = undefined;
-    }
-
-    if (isTerminalStoppedReason(options.reason)) {
+    if (ended) {
       applyLifecycle(active.session, "runtime_ended");
       active.session.currentTurnStartedAt = undefined;
       active.session.lastActivity = disconnectedAt;
@@ -1526,22 +1528,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     this.storage.saveSession(active.session);
     this.broadcast(active.session.id, { type: "state", session: active.session });
 
-    // The shared stop phases' own confirmation: a deliberate stop (goodbye, or a disconnect
-    // reclassified as one below) confirms; any other disconnect mid-terminate rejects the
-    // `stopSession` call still waiting on it, the same answer `waitForBridgeStop` gave before.
-    if (wasTerminating && stop) {
-      if (isTerminalStoppedReason(options.reason)) {
-        this.broadcast(active.session.id, {
-          type: "stop_confirmed",
-          source: stop.source,
-          reason: "Session terminated",
-        });
-        stop.resolveCompletion();
-      } else {
-        const reason = `pi-tui disconnected before stop completed (${options.reason})`;
-        this.broadcast(active.session.id, { type: "stop_failed", source: "server", reason });
-        stop.rejectCompletion(new RuntimeDisconnectedError("pi-tui", reason));
-      }
+    if (stop && confirmsStop) {
+      clearTimeout(stop.timeoutHandle);
+      const confirmed = { source: stop.source, reason: "Session terminated" };
+      this.broadcast(active.session.id, { type: "stop_confirmed", ...confirmed });
+      stop.settle();
     }
 
     this.broadcastSessionSummaryIfChanged(active, `mirror_${options.reason}`);
@@ -1554,11 +1545,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const active =
       this.active.get(connection.sessionId) ?? this.ensureActiveFromStorage(connection.sessionId);
 
-    // Any disconnect ends a pending terminate: reclassify a bare close or goodbye as "stopped" so
-    // `teardownMirrorBridgeSession` confirms it instead of leaving the row stuck "stopping".
+    // A bare close or goodbye during a terminate is that terminate's own shutdown.
     const effectiveReason =
       active &&
-      lifecyclePhase(active.session).name === "terminating" &&
+      activeStop(active.session, "terminating") &&
       (reason === "closed" || reason === "goodbye")
         ? "stopped"
         : reason;
@@ -1974,20 +1964,17 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
     this.applyContextUsage(session, state.contextUsage);
     if (state.isIdle !== undefined) {
-      // An abort confirms the moment the bridge reports idle: there is no separate agent_end to
-      // confirm it early, unlike the SDK path. Broadcast before settling, same order
-      // `confirmAbortWithoutRun` uses: stop_confirmed carries no session data, so it still shows
-      // the stopping status and program it interrupted; the state frame the caller sends once
-      // this call returns (its session fingerprint changed) carries the settled ones.
-      const stop = state.isIdle ? activeStop(session) : undefined;
-      const wasAborting = stop !== undefined && lifecyclePhase(session).name === "aborting";
-      if (wasAborting && stop) {
-        this.broadcast(session.id, { type: "stop_confirmed", source: stop.source });
+      // The bridge's idle confirms an abort. stop_confirmed goes before the settle, as in
+      // `confirmAbortWithoutRun`; the caller's next state frame carries the settled status.
+      const abort = state.isIdle ? activeStop(session, "aborting") : undefined;
+      if (abort) {
+        clearTimeout(abort.timeoutHandle);
+        this.broadcast(session.id, { type: "stop_confirmed", source: abort.source });
+        abort.settle();
       }
       applyLifecycle(session, state.isIdle ? "run_settled" : "run_started");
       session.currentTurnStartedAt =
         session.status === "busy" ? (session.currentTurnStartedAt ?? now) : undefined;
-      if (wasAborting && stop) stop.resolveCompletion();
     }
     this.syncProgramStatus(active);
 

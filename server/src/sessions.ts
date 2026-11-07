@@ -1175,8 +1175,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.incomingWork.delete(sessionId);
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
-    if (active?.session.status === "ready" && !isStopping(active.session))
-      this.lifecycleCoordinator.handleSessionSettled(key);
+    if (active?.session.status === "ready") this.lifecycleCoordinator.handleSessionSettled(key);
   }
 
   /** Set by close(); no session starts or registers afterward. */

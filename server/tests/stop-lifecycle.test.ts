@@ -454,6 +454,26 @@ describe("stop lifecycle", () => {
     }
   });
 
+  it("releases the permit of an abort confirmed at agent_end whose Pi abort never resolves", async () => {
+    const timers = new ManualStopTimers();
+    const { manager, events, sdkBackend, abort, dispose } = makeManagerHarness("busy", timers);
+    abort.mockImplementation(() => deferred<void>().promise);
+    const transaction = installRuntimeTransactionHarness(sdkBackend, abort, dispose);
+
+    const stop = manager.sendAbort("s1");
+    await flushMicrotasks();
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      "s1",
+      { type: "agent_end" },
+    );
+    timers.fire((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
+    await stop;
+
+    expect(transaction.isExclusiveActive).toBe(false);
+    expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "stop_failed")).toHaveLength(0);
+  });
+
   it("supervises a never-resolving abort without retaining the runtime permit forever", async () => {
     const timers = new ManualStopTimers();
     const { manager, active, events, sdkBackend, abort, dispose, session } = makeManagerHarness(
@@ -493,6 +513,24 @@ describe("stop lifecycle", () => {
     await flushMicrotasks();
     expect(events.filter((event) => event.type === "stop_failed")).toHaveLength(1);
     expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(0);
+  });
+
+  it("keeps an abort confirmed at agent_end confirmed when Pi's abort then rejects", async () => {
+    const { manager, events, abort } = makeManagerHarness("busy");
+    const abortCompletion = deferred<void>();
+    abort.mockImplementation(() => abortCompletion.promise);
+
+    const stop = manager.sendAbort("s1");
+    await flushMicrotasks();
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      "s1",
+      { type: "agent_end" },
+    );
+    abortCompletion.reject(new Error("late abort rejection"));
+    await stop;
+
+    expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "stop_failed")).toHaveLength(0);
   });
 
   it("restores acknowledged steering and follow-up intent when abort rejects", async () => {

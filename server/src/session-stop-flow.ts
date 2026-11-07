@@ -1,5 +1,5 @@
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
-import { activeStop, isStopping, lifecyclePhase, turnRunning } from "./session-lifecycle-state.js";
+import { activeStop, isStopping, turnRunning, type StopState } from "./session-lifecycle-state.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { ServerMessage } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
@@ -67,7 +67,10 @@ export class SessionStopFlowCoordinator {
       const active = this.deps.getActiveSession(key);
       if (!active || !this.hasTurnToAbort(key, active)) return;
 
-      let ownedStop = activeStop(active.session);
+      let ownedStop: StopState | undefined;
+      // An agent_end confirmation or a terminate takes the stop over from this abort.
+      const ownsStop = (): boolean =>
+        !!ownedStop && !ownedStop.claimed && activeStop(active.session, "aborting") === ownedStop;
       let queueClear: SessionAbortQueueClear | undefined;
       try {
         await active.sdkBackend.withRuntimeLifecycleTransaction("abort", async (permit) => {
@@ -113,7 +116,7 @@ export class SessionStopFlowCoordinator {
             if (outcome === "accepted")
               this.deps.stopCoordinator.confirmAbortWithoutRun(key, active);
           } catch (error) {
-            if (activeStop(active.session) !== ownedStop) {
+            if (!ownsStop()) {
               // Agent-end/timeout ownership already settled this request. A
               // late abort rejection cannot roll back or report a second result.
               if (queueClear) this.deps.acceptQueueClearOnAbort(queueClear);
@@ -129,7 +132,7 @@ export class SessionStopFlowCoordinator {
           }
         });
       } catch (error) {
-        if (ownedStop && activeStop(active.session) === ownedStop) {
+        if (ownsStop()) {
           const message = error instanceof Error ? error.message : String(error);
           this.deps.stopCoordinator.finishPendingStopWithFailure(
             key,
@@ -202,11 +205,9 @@ export class SessionStopFlowCoordinator {
       await this.deps.runtimeManager.withWorkspaceLock(active.workspaceId, async () => {
         if (this.deps.getActiveSession(key) !== active) return;
         const wasBusy = turnRunning(active);
-        if (!this.deps.stopCoordinator.beginPendingStop(key, active, "terminate", "user")) {
-          this.deps.stopCoordinator.promotePendingStop(key, active, "terminate", "user");
-        }
-        const ownedStop = activeStop(active.session);
-        if (!ownedStop || lifecyclePhase(active.session).name !== "terminating") return;
+        this.deps.stopCoordinator.requestTerminate(key, active);
+        const ownedStop = activeStop(active.session, "terminating");
+        if (!ownedStop) return;
 
         const runtimeStop = active.sdkBackend.withRuntimeLifecycleTransaction(
           "stop",

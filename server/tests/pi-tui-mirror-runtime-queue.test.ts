@@ -964,6 +964,85 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(runtime.getActiveSession(sessionId)?.status).toBe("ready");
   });
 
+  it("fails an abort the bridge never settles, so the row leaves stopping", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime } = makeRuntime();
+      const { ws, sessionId } = await connectBridge(runtime);
+      ws.receive({ type: "state", state: { isIdle: false } });
+      const received: ServerMessage[] = [];
+      runtime.subscribe(sessionId, (message) => received.push(message));
+
+      const abortPromise = runtime.sendAbort(sessionId);
+      const command = await waitForLatestCommand(ws);
+      ws.receive({ type: "command_result", id: command.id, success: true, data: {} });
+      await abortPromise;
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(received.filter((m) => m.type === "stop_failed")).toHaveLength(1);
+      expect(runtime.getActiveSession(sessionId)?.status).toBe("busy");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails an abort the bridge rejects, or that its disconnect cuts short", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = await connectBridge(runtime);
+    ws.receive({ type: "state", state: { isIdle: false } });
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const abortPromise = runtime.sendAbort(sessionId);
+    const command = await waitForLatestCommand(ws);
+    ws.receive({ type: "command_result", id: command.id, success: false, error: "no abort" });
+    await expect(abortPromise).rejects.toThrow("no abort");
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("busy");
+
+    void runtime.sendAbort(sessionId).catch(() => {});
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("stopping");
+    ws.emit("close");
+
+    expect(received.filter((m) => m.type === "stop_failed")).toHaveLength(2);
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("busy");
+  });
+
+  it("promotes an abort to a terminate that the bridge's goodbye confirms", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = await connectBridge(runtime);
+    ws.receive({ type: "state", state: { isIdle: false } });
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const abortPromise = runtime.sendAbort(sessionId);
+    const abort = await waitForLatestCommand(ws);
+    ws.receive({ type: "command_result", id: abort.id, success: true, data: {} });
+    await abortPromise;
+
+    const stopPromise = runtime.stopSession(sessionId);
+    await waitForNextCommand(ws, abort.id);
+    ws.receive({ type: "goodbye", reason: "stopped", state: { isIdle: true } });
+    await stopPromise;
+
+    expect(received.filter((m) => m.type === "stop_requested")).toHaveLength(1);
+    expect(received.filter((m) => m.type === "stop_confirmed")).toMatchObject([
+      { source: "user", reason: "Session terminated" },
+    ]);
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("stopped");
+  });
+
+  it("fails a terminate whose stop command cannot be sent", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = await connectBridge(runtime);
+    ws.receive({ type: "state", state: { isIdle: false } });
+    ws.send = () => {
+      throw new Error("socket gone");
+    };
+
+    await expect(runtime.stopSession(sessionId)).rejects.toThrow("socket gone");
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("busy");
+  });
+
   it("backfills the first user message from the terminal session file", async () => {
     const root = makeTempDir("oppi-mirror-title-");
     const sessionFile = join(root, "session.jsonl");

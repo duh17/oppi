@@ -333,8 +333,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     app: ['stop_confirmed "Session already idle"'],
     steps: ["start: ready/idle wait:idle saved:starting>ready"],
   },
-  // S3's stopped summary on `runtime_ended` adds one `state`/`session_summary` pair, carrying
-  // `stopped`/`idle`, right before the stop's own confirmation.
+  // `runtime_ended` broadcasts a stopped summary (`stopped`/`idle`) before the stop's outcome.
   "classic.terminate_busy": {
     ws: [
       "state ready/idle",
@@ -680,7 +679,6 @@ describe("recorded fixture", () => {
         .filter((found) => found.plannedChange)
         .map((found) => [found.id, found.plannedChange]),
     );
-    // S3 landed the mirror's shared stop states, so those two rows dropped their tag.
     expect(planned).toEqual({
       "classic.wake_hold": "waiting-shows-working",
     });

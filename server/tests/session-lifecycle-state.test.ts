@@ -28,7 +28,7 @@ const label = (phase: LifecyclePhase | undefined): string =>
 
 const parse = (text: string): LifecyclePhase => {
   const [name, back] = text.split(">");
-  return (back ? { name, back } : { name }) as LifecyclePhase;
+  return (back ? { name, back, stop: {} } : { name }) as LifecyclePhase;
 };
 
 // Each row: the phase every event leads to, in EVENTS order. "—" is an event the phase ignores.

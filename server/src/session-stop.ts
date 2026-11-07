@@ -12,8 +12,6 @@ import {
 } from "./session-lifecycle-state.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
-export type { StopRequestSource } from "./session-lifecycle-state.js";
-
 export interface SessionStopTimers {
   setTimeout(callback: () => void, timeoutMs: number): NodeJS.Timeout;
   clearTimeout(handle: NodeJS.Timeout): void;
@@ -49,9 +47,6 @@ export class SessionStopCoordinator {
     private readonly timers: SessionStopTimers = DEFAULT_STOP_TIMERS,
   ) {}
 
-  /** Clears `stop`'s timer and resolves its completion. Leaves the phase itself untouched: an
-   * abort confirmed at `agent_end` clears this way while its phase still reads `aborting` until
-   * `agent_settled`; a caller that also leaves the phase calls `applyLifecycle` right after. */
   private clearStopTimer(stop: StopState): void {
     if (stop.timeoutHandle !== undefined) {
       this.timers.clearTimeout(stop.timeoutHandle);
@@ -59,12 +54,10 @@ export class SessionStopCoordinator {
     }
   }
 
-  clearStop(active: StopSessionState): StopState | null {
-    const stop = activeStop(active.session);
-    if (!stop) return null;
+  /** Clears `stop`'s timer and settles it; leaving its phase is the caller's part. */
+  endStop(stop: StopState): void {
     this.clearStopTimer(stop);
-    stop.resolveCompletion();
-    return stop;
+    stop.settle();
   }
 
   beginPendingStop(
@@ -78,7 +71,8 @@ export class SessionStopCoordinator {
       return false;
     }
 
-    if (!this.applyStopRequest(active.session, mode, source)) return false;
+    const event = mode === "abort" ? "abort_requested" : "terminate_requested";
+    if (!applyLifecycle(active.session, event, source)) return false;
     active.session.lastActivity = Date.now();
     this.deps.persistSessionNow(key, active.session);
 
@@ -87,30 +81,13 @@ export class SessionStopCoordinator {
     return true;
   }
 
-  promotePendingStop(
-    key: string,
-    active: StopSessionState,
-    mode: "abort" | "terminate",
-    source: StopRequestSource,
-    reason?: string,
-    emitLifecycleEvent = false,
-  ): void {
+  /** A user terminate: a new stop, or the stop under way promoted to one (still `stopping`). */
+  requestTerminate(key: string, active: StopSessionState): void {
+    if (this.beginPendingStop(key, active, "terminate", "user")) return;
     const stop = activeStop(active.session);
-    if (!stop) {
-      this.beginPendingStop(key, active, mode, source, reason);
-      return;
-    }
+    if (!stop) return;
     this.clearStopTimer(stop);
-
-    if (this.applyStopRequest(active.session, mode, source)) {
-      active.session.lastActivity = Date.now();
-      this.deps.persistSessionNow(key, active.session);
-    }
-
-    if (emitLifecycleEvent) {
-      this.deps.broadcast(key, { type: "stop_requested", source, reason });
-      this.deps.broadcast(key, { type: "state", session: active.session });
-    }
+    applyLifecycle(active.session, "terminate_requested", "user");
   }
 
   finishPendingStopWithFailure(
@@ -119,11 +96,9 @@ export class SessionStopCoordinator {
     source: StopRequestSource,
     reason: string,
   ): void {
-    const stop = this.clearStop(active);
-    if (!stop) {
-      return;
-    }
-
+    const stop = activeStop(active.session);
+    if (!stop) return;
+    this.endStop(stop);
     if (applyLifecycle(active.session, "stop_failed")) {
       active.session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, active.session);
@@ -131,16 +106,6 @@ export class SessionStopCoordinator {
     }
 
     this.deps.broadcast(key, { type: "stop_failed", source, reason });
-  }
-
-  private applyStopRequest(
-    session: Session,
-    mode: "abort" | "terminate",
-    source: StopRequestSource,
-  ): boolean {
-    return mode === "abort"
-      ? applyLifecycle(session, "abort_requested", source)
-      : applyLifecycle(session, "terminate_requested", source);
   }
 
   /**
@@ -153,7 +118,7 @@ export class SessionStopCoordinator {
     const phase = lifecyclePhase(active.session);
     if (!stop || stop.claimed || phase.name !== "aborting" || phase.back === "running") return;
     if (active.sdkBackend.isStreaming || active.sdkBackend.isCompacting) return;
-    this.clearStop(active);
+    this.endStop(stop);
     this.deps.broadcast(key, { type: "stop_confirmed", source: stop.source });
     if (applyLifecycle(active.session, "run_settled")) {
       active.session.lastActivity = Date.now();
@@ -168,9 +133,9 @@ export class SessionStopCoordinator {
       return;
     }
 
-    if (lifecyclePhase(active.session).name === "aborting") {
+    if (activeStop(active.session, "aborting")) {
+      // The abort deadline stays armed: it sees the claim and settles without acting.
       stop.claimed = true;
-      this.clearStopTimer(stop);
       this.deps.broadcast(key, { type: "stop_confirmed", source: stop.source });
       return;
     }
@@ -202,10 +167,7 @@ export class SessionStopCoordinator {
         resolveCompletion();
         return;
       }
-      if (!this.beginPendingStop(key, current, "terminate", "user")) {
-        this.promotePendingStop(key, current, "terminate", "user");
-      }
-
+      this.requestTerminate(key, current);
       log.warn("session_stop.lifecycle_deadline_force_shutdown", {
         sessionId: current.session.id,
         timeoutMs,
@@ -230,30 +192,19 @@ export class SessionStopCoordinator {
     };
   }
 
-  /** The stop's completion, armed with a grace timeout that force-terminates when it elapses. A
-   * concurrent caller can await the returned promise instead of re-arming its own timer. */
+  /** The terminate's completion, with a grace timeout that force-terminates when it elapses. */
   armPendingTerminateTimeout(
     key: string,
     active: StopSessionState,
     timeoutMs: number,
-  ): Promise<void> {
-    const stop = activeStop(active.session);
-    if (!stop || lifecyclePhase(active.session).name !== "terminating") {
-      return Promise.resolve();
-    }
+  ): Promise<unknown> {
+    const stop = activeStop(active.session, "terminating");
+    if (!stop) return Promise.resolve();
 
     this.clearStopTimer(stop);
-
     stop.timeoutHandle = this.timers.setTimeout(() => {
       const current = this.deps.getActiveSession(key);
-      const currentStop = current && activeStop(current.session);
-      if (
-        !current ||
-        currentStop !== stop ||
-        lifecyclePhase(current.session).name !== "terminating"
-      ) {
-        return;
-      }
+      if (!current || activeStop(current.session, "terminating") !== stop) return;
 
       log.warn("session_stop.terminate_timeout_force_shutdown", {
         sessionId: current.session.id,
@@ -279,9 +230,8 @@ export class SessionStopCoordinator {
     permit?: SessionRuntimeTransactionPermit,
     emergencyDispose?: () => SdkBackendDisposeResult | Promise<SdkBackendDisposeResult>,
   ): Promise<void> {
-    const stop = activeStop(active.session);
-    if (!stop || lifecyclePhase(active.session).name !== "terminating") return;
-    if (stop.claimed && !emergencyDispose) return;
+    const stop = activeStop(active.session, "terminating");
+    if (!stop || (stop.claimed && !emergencyDispose)) return;
     stop.claimed = true;
     stop.source = source;
     this.clearStopTimer(stop);
@@ -319,37 +269,25 @@ export class SessionStopCoordinator {
     }
   }
 
-  /**
-   * Settles once this abort gives up and escalates, or is no longer the session's active stop:
-   * a stop confirmed at `agent_end` claims it without changing its phase or identity, so that
-   * check (not just "is it still `aborting`") is what lets this promise settle on every exit.
-   */
+  /** Resolves when the abort gives up, or once it is no longer this unclaimed, aborting stop. */
   scheduleAbortStopTimeout(
     key: string,
     active: StopSessionState,
     onGiveUp: () => Promise<void>,
   ): Promise<void> {
-    const stop = activeStop(active.session);
-    if (!stop || lifecyclePhase(active.session).name !== "aborting") {
-      return Promise.resolve();
-    }
+    const stop = activeStop(active.session, "aborting");
+    if (!stop) return Promise.resolve();
 
-    // The session still active and owning this exact stop, unclaimed and still aborting, or
-    // undefined when any of that no longer holds.
     const ownedActive = (): StopSessionState | undefined => {
       const current = this.deps.getActiveSession(key);
-      if (
-        !current ||
-        activeStop(current.session) !== stop ||
-        stop.claimed ||
-        lifecyclePhase(current.session).name !== "aborting"
-      ) {
-        return undefined;
-      }
-      return current;
+      return current && !stop.claimed && activeStop(current.session, "aborting") === stop
+        ? current
+        : undefined;
     };
 
     return new Promise<void>((resolve) => {
+      // A cleared timer (stop failed, promoted, or the runtime ended) never fires.
+      void stop.completion.then(() => resolve());
       stop.timeoutHandle = this.timers.setTimeout(() => {
         const current = ownedActive();
         if (!current) {

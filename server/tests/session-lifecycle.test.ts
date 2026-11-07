@@ -2406,7 +2406,7 @@ function makeLifecycleDeps(
   return {
     getActiveSession: vi.fn(() => active),
     removeActiveSession: vi.fn(),
-    clearStop: vi.fn(() => null),
+    endStop: vi.fn(),
     broadcast: vi.fn(),
     persistSessionNow: vi.fn(),
     releaseSession: vi.fn(),
@@ -2448,7 +2448,7 @@ describe("SessionLifecycleCoordinator.handleSessionEnd", () => {
       workspaceId: "ws-1",
       sessionId: "session-1",
     });
-    // One broadcast for the stopped summary this transition now owes (S3), one for session_ended.
+    // The stopped summary, then session_ended.
     expect(order).toEqual(["dispose", "broadcast", "broadcast"]);
   });
 });

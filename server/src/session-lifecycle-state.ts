@@ -19,41 +19,25 @@ type SettledPhase = "idle" | "running" | "failed";
 export type StopRequestSource = "user" | "timeout" | "server";
 
 /**
- * A stop's bookkeeping, carried on the `aborting`/`terminating` phase it belongs to instead of a
- * separate `PendingStop` record. A phase with a `stop` payload *is* "a stop is pending", so
- * `mode` (abort vs terminate) is gone too: it only ever duplicated the phase name.
- *
- * `claimed` marks that something has already taken ownership of finishing this stop — an abort
- * confirmed early at `agent_end` while its phase still shows `aborting` until `agent_settled`, or
- * a force-terminate already under way — so a second event racing the same stop backs off instead
- * of acting twice. A promotion from `aborting` to `terminating` clears it: the new terminate
- * episode has not claimed anything yet, even if the abort it replaces had.
+ * A stop's bookkeeping, carried on its `aborting`/`terminating` phase. `claimed` marks a stop
+ * something already finishes (an abort confirmed at agent_end before agent_settled, or a force
+ * terminate under way), so a racing event backs off; promotion to a terminate clears it.
  */
 export interface StopState {
   source: StopRequestSource;
   claimed?: boolean;
   timeoutHandle?: NodeJS.Timeout;
-  /**
-   * Settles once this stop's phase ends: resolves for code that only needs to know it is over
-   * (every caller in `session-stop.ts`). The mirror runtime's `stopSession` also awaits it as its
-   * own call's outcome, so it can reject — a bridge that reports its stop command failed, or
-   * never shuts down in time, rejects the caller that is still waiting on this specific stop.
-   */
-  completion: Promise<void>;
-  resolveCompletion: () => void;
-  rejectCompletion: (error: Error) => void;
-  /** Opaque runtime-transaction permit a later continuation reads without closing over it. */
+  /** Resolves once the stop is over: with the error when it failed, so it never rejects. */
+  completion: Promise<Error | undefined>;
+  settle: (error?: Error) => void;
+  /** The runtime-transaction permit a later continuation reads without closing over it. */
   permit?: SessionRuntimeTransactionPermit;
 }
 
 function newStopState(source: StopRequestSource): StopState {
-  let resolveCompletion!: () => void;
-  let rejectCompletion!: (error: Error) => void;
-  const completion = new Promise<void>((resolve, reject) => {
-    resolveCompletion = resolve;
-    rejectCompletion = reject;
-  });
-  return { source, completion, resolveCompletion, rejectCompletion };
+  let settle!: (error?: Error) => void;
+  const completion = new Promise<Error | undefined>((resolve) => (settle = resolve));
+  return { source, completion, settle };
 }
 
 export type LifecyclePhase =
@@ -65,17 +49,17 @@ export type LifecyclePhase =
    */
   | { name: "aborting" | "terminating"; back: SettledPhase; stop: StopState };
 
-/** The phase's stop bookkeeping, or undefined when it is not between `abort_requested`/
- * `terminate_requested` and whatever ends that stop. */
-export function activeStop(session: Session): StopState | undefined {
+/** The stop under way from its request until its outcome; with `name`, only in that phase. */
+export function activeStop(
+  session: Session,
+  name?: "aborting" | "terminating",
+): StopState | undefined {
   const phase = lifecyclePhase(session);
-  return phase.name === "aborting" || phase.name === "terminating" ? phase.stop : undefined;
+  return "stop" in phase && (!name || phase.name === name) ? phase.stop : undefined;
 }
 
-/** Whether `session` is between a stop request and its outcome, abort or terminate alike. */
 export function isStopping(session: Session): boolean {
-  const { name } = lifecyclePhase(session);
-  return name === "aborting" || name === "terminating";
+  return activeStop(session) !== undefined;
 }
 
 export type LifecycleEvent =
@@ -106,12 +90,7 @@ const WIRE_STATUS: Record<LifecyclePhase["name"], Session["status"]> = {
   failed: "error",
 };
 
-/**
- * A row with no live phase (a fresh `Session` object after a restart or reload, or a status the
- * e2e UI harness set directly): reconstruct a phase that fits its persisted status. A `stopping`
- * row with no recollection of which stop it was gets a synthetic one (an escalation can still
- * force it; nothing else can tell abort from terminate after the fact).
- */
+/** The phase of a row whose status was written elsewhere (a reload, the e2e UI harness). */
 const PHASE_OF_STATUS: Record<Session["status"], () => LifecyclePhase> = {
   starting: () => ({ name: "starting" }),
   ready: () => ({ name: "idle" }),
@@ -124,11 +103,7 @@ const PHASE_OF_STATUS: Record<Session["status"], () => LifecyclePhase> = {
 /** A settled turn leaves its runtime idle; an error outlives the turn that settles after it. */
 const settled = (phase: SettledPhase): SettledPhase => (phase === "running" ? "idle" : phase);
 
-/**
- * The next phase, or undefined when `event` is not allowed in `phase`. `stopSource` names who is
- * asking for `abort_requested`/`terminate_requested`; omit it only where a caller never starts a
- * fresh stop (the reducer-table test exercises every phase × event without one).
- */
+/** The next phase, or undefined when `event` is not allowed in `phase`. */
 export function nextLifecyclePhase(
   phase: LifecyclePhase,
   event: LifecycleEvent,
@@ -157,11 +132,10 @@ export function nextLifecyclePhase(
         : undefined;
     case "terminate_requested":
       if (stopping) {
-        // A promotion from an abort has not claimed anything as this terminate: its own
-        // force-terminate must still run, not be blocked by the abort's early agent_end claim.
-        if (stopping.name === "aborting" && stopping.stop) stopping.stop.claimed = false;
-        if (stopSource && stopping.stop) stopping.stop.source = stopSource;
-        return { name: "terminating", back: stopping.back, stop: stopping.stop };
+        // An abort's agent_end claim does not cover the terminate it becomes: its force must run.
+        if (name === "aborting") stopping.stop.claimed = false;
+        if (stopSource) stopping.stop.source = stopSource;
+        return { ...stopping, name: "terminating" };
       }
       return between
         ? { name: "terminating", back: between, stop: newStopState(stopSource ?? "user") }
@@ -179,15 +153,14 @@ const phases = new WeakMap<Session, LifecyclePhase>();
 
 export function lifecyclePhase(session: Session): LifecyclePhase {
   const phase = phases.get(session);
-  return phase && WIRE_STATUS[phase.name] === session.status
-    ? phase
-    : PHASE_OF_STATUS[session.status]();
+  if (phase && WIRE_STATUS[phase.name] === session.status) return phase;
+  // Remembered, so a reconstructed stop keeps one identity across reads.
+  const reconstructed = PHASE_OF_STATUS[session.status]();
+  phases.set(session, reconstructed);
+  return reconstructed;
 }
 
-/**
- * Move `session` through `event`. True when its status changed: persist and broadcast it.
- * `stopSource` names who is asking, for `abort_requested`/`terminate_requested`.
- */
+/** Move `session` through `event`. True when its status changed: persist and broadcast it. */
 export function applyLifecycle(
   session: Session,
   event: LifecycleEvent,

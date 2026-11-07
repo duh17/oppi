@@ -8,7 +8,12 @@ type SessionEndReason = EventTags<"server.session_end">["reason"];
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
-import { applyLifecycle, lifecyclePhase, type StopState } from "./session-lifecycle-state.js";
+import {
+  activeStop,
+  applyLifecycle,
+  lifecyclePhase,
+  type StopState,
+} from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
@@ -22,7 +27,7 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
 export interface SessionLifecycleCoordinatorDeps {
   getActiveSession: (key: string) => SessionLifecycleSessionState | undefined;
   removeActiveSession: (key: string) => void;
-  clearStop: (active: SessionLifecycleSessionState) => StopState | null;
+  endStop: (stop: StopState) => void;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
@@ -74,12 +79,10 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
-    // `runtime_ended` leaves the phase, so whether this was a terminate (vs an abort, vs no stop
-    // at all) is only readable now, and `clearStop` only finds its timer/completion now too.
-    const priorPhase = lifecyclePhase(active.session);
-    const wasTerminating = priorPhase.name === "terminating";
-    const wasAborting = priorPhase.name === "aborting";
-    const stop = this.deps.clearStop(active);
+    // Read before `runtime_ended` leaves the stop's phase.
+    const { name: stopPhase } = lifecyclePhase(active.session);
+    const wasTerminating = stopPhase === "terminating";
+    const stop = activeStop(active.session);
 
     const isIdleTimeout = this.pendingIdleTimeoutKeys.delete(key);
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
@@ -151,10 +154,10 @@ export class SessionLifecycleCoordinator {
       recordFailure("workspace_release", error);
     }
 
-    // The stopped summary this transition owes every caller: it goes out before `session_ended`,
-    // while the active entry still has subscribers, and the app-event stream relays it as a
-    // session_summary. Closes the gap where a client kept the last `working` program status
-    // through a terminate because no frame carried the lifecycle's own `idle`.
+    if (stop) this.deps.endStop(stop);
+    // The stopped summary, with its idle program status, goes out while subscribers remain, before
+    // any stop outcome: Build 57 then ignores stop_confirmed's `ready` (it applies only from
+    // `stopping`), so the row never flickers ready before session_ended.
     this.deps.broadcast(key, { type: "state", session: active.session });
 
     try {
@@ -182,7 +185,7 @@ export class SessionLifecycleCoordinator {
             reason: stopConfirmationReason || "Session terminated",
           });
         }
-      } else if (wasAborting) {
+      } else if (stopPhase === "aborting") {
         this.deps.broadcast(key, {
           type: "stop_failed",
           source: "server",
