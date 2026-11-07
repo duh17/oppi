@@ -2557,6 +2557,34 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
+  it("never expires a session whose stop is already in progress; the stop's own deadline governs", async () => {
+    const active = makeLifecycleActiveSession({ status: "stopping" });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("resumes ordinary idle expiry once a stop fails back to a settled phase", async () => {
+    const active = makeLifecycleActiveSession({ status: "stopping" });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // The stop failed and returned the row to `ready`; nothing else resets the timer.
+    active.session.status = "ready";
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
   it("does not stop when input resets the timer while the wake check runs", async () => {
     const active = makeLifecycleActiveSession();
     let answer: (pending: boolean) => void = () => {};

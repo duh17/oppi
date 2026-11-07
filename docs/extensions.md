@@ -254,7 +254,7 @@ export default function (pi: ExtensionAPI) {
 
 ### Pending wake extension API
 
-Oppi stops a session idle for the configured idle timeout (one hour by default). An extension that will wake its session later, such as a running background job or a supervised child session, keeps it alive by reporting its pending total:
+Oppi stops a session idle for the configured idle timeout (10 minutes by default). An extension that will wake its session later, such as a running background job or a supervised child session, keeps it alive by reporting its pending total:
 
 ```typescript
 pi.events.emit("oppi:pending-wake:v1", { source: "my-extension", count: runningJobs.size });

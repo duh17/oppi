@@ -11,6 +11,7 @@ import { createLogger } from "./logger.js";
 import {
   activeStop,
   applyLifecycle,
+  isStopping,
   lifecyclePhase,
   type StopState,
 } from "./session-lifecycle-state.js";
@@ -223,6 +224,27 @@ export class SessionLifecycleCoordinator {
     void this.autoStop(key, active, check);
   }
 
+  /**
+   * `active`'s pending-wake read; `undefined` means the read failed, which each caller below
+   * treats differently for its own deadline.
+   */
+  private async readPendingWake(
+    active: SessionLifecycleSessionState,
+    key: string,
+    scope: "auto_stop" | "idle_timeout",
+  ): Promise<boolean | undefined> {
+    try {
+      return await active.sdkBackend.hasPendingWake();
+    } catch (error) {
+      log.warn(`session_lifecycle.${scope}.pending_wake_check_failed`, {
+        sessionId: active.session.id,
+        key,
+        error: safeErrorMessage(error),
+      });
+      return undefined;
+    }
+  }
+
   private async autoStop(
     key: string,
     active: SessionLifecycleSessionState,
@@ -231,22 +253,9 @@ export class SessionLifecycleCoordinator {
     // A newer settle or the session's end replaced this decision.
     const current = (): boolean =>
       this.autoStopChecks.get(key) === check && this.deps.getActiveSession(key) === active;
-    // A running background job or a supervised child wakes this session when it finishes.
-    // Stopping now would kill that job or drop the child's report: the turn its wake starts
-    // settles again and decides then.
-    let pendingWake: boolean;
-    try {
-      pendingWake = await active.sdkBackend.hasPendingWake();
-    } catch (error) {
-      // Kept; the idle timeout decides later.
-      log.warn("session_lifecycle.auto_stop.pending_wake_check_failed", {
-        sessionId: active.session.id,
-        key,
-        error: safeErrorMessage(error),
-      });
-      return;
-    }
-    if (!current()) {
+    // A failed read is kept; the idle timeout decides later.
+    const pendingWake = await this.readPendingWake(active, key, "auto_stop");
+    if (pendingWake === undefined || !current()) {
       return;
     }
     if (pendingWake) {
@@ -314,12 +323,24 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
+    // A stop already has its own deadline (StopState's timers in session-stop.ts); idle
+    // expiry must never race it into a second, redundant stop. It just checks back later.
+    if (isStopping(idleActive.session)) {
+      log.info("session_lifecycle.idle_timeout.held_for_stop", {
+        sessionId: idleActive.session.id,
+        key,
+        timeoutMs,
+      });
+      this.resetIdleTimer(key);
+      return;
+    }
+
     // "Idle" here only means no events for the timeout; a turn can be busy and quiet (a long
-    // tool or MCP call). Stopping then would kill live work. The backend must agree the turn
-    // runs: a `busy` status with no live run or compaction is stale (a missed settle), and
-    // that session still expires. So does a turn quiet past QUIET_RUNNING_TURN_LIMIT_MS.
+    // tool or MCP call). Stopping then would kill live work. The hold below reads the phase,
+    // not status: a `running` phase with no live engine run or compaction is stale (a missed
+    // settle), and that session still expires. So does a turn quiet past QUIET_RUNNING_TURN_LIMIT_MS.
     if (
-      idleActive.session.status === "busy" &&
+      lifecyclePhase(idleActive.session).name === "running" &&
       (idleActive.sdkBackend.isStreaming || idleActive.sdkBackend.isCompacting)
     ) {
       const now = Date.now();
@@ -346,18 +367,10 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
-    // A running background job or a supervised child wakes this session when it
-    // finishes. Stopping now would kill that job or drop the child's report.
-    let pendingWake = false;
-    try {
-      pendingWake = await idleActive.sdkBackend.hasPendingWake();
-    } catch (error) {
-      log.warn("session_lifecycle.idle_timeout.pending_wake_check_failed", {
-        sessionId: idleActive.session.id,
-        key,
-        error: safeErrorMessage(error),
-      });
-    }
+    // A running background job or a supervised child wakes this session when it finishes.
+    // Stopping now would kill that job or drop the child's report. A failed read defaults to
+    // no wake: this timer must still decide.
+    const pendingWake = (await this.readPendingWake(idleActive, key, "idle_timeout")) ?? false;
     // Input, a stop, or a new turn while the check ran replaced or cleared this timer.
     if (this.idleTimers.get(key) !== timer || this.deps.getActiveSession(key) !== idleActive) {
       return;

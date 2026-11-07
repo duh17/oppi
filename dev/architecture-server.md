@@ -34,7 +34,7 @@ graph TD
 
 ## Session lifecycle
 
-`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` architecture check rejects an assignment anywhere else (new rows set it in an object literal). Callers apply events with `applyLifecycle`; one the phase disallows is logged and ignored. The six wire values are a frozen projection of the phase, because Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn. A stop during `starting` wins before registration, so it never saves `ready`. `aborting` and `terminating` carry their stop's timers and completion (`StopState`) in every engine, mirror included; `runtime_ended` broadcasts a stopped summary before `session_ended`.
+`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` check rejects an assignment anywhere else (new rows set it in an object literal). Callers apply events with `applyLifecycle`; one the phase disallows is logged and ignored. The six wire values are a frozen projection of the phase: Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn; idle expiry reads the phase too, holding a running turn two hours but never a stopping session. A stop during `starting` wins before registration, never saving `ready`. `aborting` and `terminating` carry their stop's timers and completion (`StopState`) in every engine, mirror included; `runtime_ended` broadcasts a stopped summary before `session_ended`.
 
 ## Program status
 
@@ -97,7 +97,7 @@ Untrusted JSON (parsed files, wire payloads, Pi and provider events) narrows thr
 
 `server/src/settings/registry.ts` declares every server-owned setting (key, scope, storage, default, `revisioned`, `validate`). Routes and stores validate through the definition; `validate` throws `SettingValidationError` (400). `server/tests/settings-registry.test.ts` holds `protocol/settings.json` to the registry; a new setting adds both together.
 
-Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `ConfigStore` carries the guide's old `settings/mobile-output-guide.json` into `config.json` once and renames it `.migrated`. `oppi config set` does not bump a revision.
+Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `oppi config set` does not bump a revision.
 
 ### Route registry
 
