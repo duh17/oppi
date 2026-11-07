@@ -1476,3 +1476,87 @@ struct WebSocketClientBackgroundTests {
         await resumedConsumer.value
     }
 }
+
+/// The one 401/4001 decision all three persistent sockets share. Each client's
+/// suite proves its own wiring; this pins the branch order those suites rely on.
+@Suite("Persistent stream auth refresh")
+@MainActor
+struct PersistentStreamAuthRefreshTests {
+    struct Case: Sendable, CustomTestStringConvertible {
+        let testDescription: String
+        /// `nil` means the stream has no current-token provider.
+        let current: Result<String, URLError>?
+        let refresh: Result<String, URLError>
+        /// How many `stillOwnsSocket` checks pass before the socket is lost.
+        let ownedChecks: Int
+        let expected: String
+        let expectedRefreshCalls: Int
+    }
+
+    nonisolated static let cases: [Case] = [
+        Case(testDescription: "no current provider forces a refresh",
+             current: nil, refresh: .success("minted"), ownedChecks: .max,
+             expected: "token(minted, forced)", expectedRefreshCalls: 1),
+        Case(testDescription: "newer sibling token is reused without a refresh",
+             current: .success("sibling"), refresh: .success("minted"), ownedChecks: .max,
+             expected: "token(sibling, reused)", expectedRefreshCalls: 0),
+        Case(testDescription: "current equal to the applied token forces a refresh",
+             current: .success("applied"), refresh: .success("minted"), ownedChecks: .max,
+             expected: "token(minted, forced)", expectedRefreshCalls: 1),
+        Case(testDescription: "empty current token forces a refresh",
+             current: .success(""), refresh: .success("minted"), ownedChecks: .max,
+             expected: "token(minted, forced)", expectedRefreshCalls: 1),
+        Case(testDescription: "socket lost while resolving current stops before a refresh",
+             current: .success("sibling"), refresh: .success("minted"), ownedChecks: 0,
+             expected: "socketReplaced", expectedRefreshCalls: 0),
+        Case(testDescription: "socket lost while refreshing drops the minted token",
+             current: .success("applied"), refresh: .success("minted"), ownedChecks: 1,
+             expected: "socketReplaced", expectedRefreshCalls: 1),
+        Case(testDescription: "empty refresh is terminal",
+             current: .success("applied"), refresh: .success(""), ownedChecks: .max,
+             expected: "emptyRefresh", expectedRefreshCalls: 1),
+        Case(testDescription: "current provider failure is terminal without a refresh",
+             current: .failure(URLError(.badServerResponse)), refresh: .success("minted"), ownedChecks: .max,
+             expected: "refreshThrew", expectedRefreshCalls: 0),
+        Case(testDescription: "refresh failure is terminal",
+             current: .success("applied"), refresh: .failure(URLError(.userAuthenticationRequired)), ownedChecks: .max,
+             expected: "refreshThrew", expectedRefreshCalls: 1),
+    ]
+
+    @Test(arguments: cases)
+    func resolvesEachBranch(_ testCase: Case) async {
+        let probe = Probe()
+        var currentProvider: (@MainActor @Sendable () async throws -> String)?
+        if let current = testCase.current {
+            currentProvider = { try current.get() }
+        }
+        let refresh = testCase.refresh
+        let outcome = await PersistentStreamAuthRefresh.resolve(
+            appliedToken: { "applied" },
+            currentTokenProvider: currentProvider,
+            refreshTokenProvider: { @MainActor in
+                probe.refreshCalls += 1
+                return try refresh.get()
+            },
+            stillOwnsSocket: {
+                probe.ownershipChecks += 1
+                return probe.ownershipChecks <= testCase.ownedChecks
+            }
+        )
+
+        let summary = switch outcome {
+        case .token(let token, let forced): "token(\(token), \(forced ? "forced" : "reused"))"
+        case .socketReplaced: "socketReplaced"
+        case .emptyRefresh: "emptyRefresh"
+        case .refreshThrew: "refreshThrew"
+        }
+        #expect(summary == testCase.expected)
+        #expect(probe.refreshCalls == testCase.expectedRefreshCalls)
+    }
+
+    @MainActor
+    private final class Probe {
+        var refreshCalls = 0
+        var ownershipChecks = 0
+    }
+}
