@@ -147,6 +147,17 @@ struct MarkdownTableGridTests {
         return CGPoint(x: frame.minX + 6, y: frame.minY + MarkdownTableGridLayout.cellVerticalInset + 4)
     }
 
+    /// The text view a touch at `point` lands in: the hit view or the text view
+    /// that holds it (a laid-out text view hit-tests to its text's own view).
+    private static func touchedTextView(_ grid: MarkdownTableGridView, at point: CGPoint) -> UITextView? {
+        var view = grid.hitTest(point, with: nil)
+        while let current = view, current !== grid {
+            if let textView = current as? UITextView { return textView }
+            view = current.superview
+        }
+        return nil
+    }
+
     // MARK: - One view, not one text view per cell
 
     @Test func wrapGridIsDrawnWithoutCellTextViews() throws {
@@ -219,7 +230,7 @@ struct MarkdownTableGridTests {
         #expect(grid.isInteractive)
         #expect(grid.subviews.compactMap { $0 as? UITextView }.isEmpty)
 
-        let hit = try #require(grid.hitTest(Self.textCellPoint(layout, row: 3, column: 2), with: nil) as? UITextView)
+        let hit = try #require(Self.touchedTextView(grid, at: Self.textCellPoint(layout, row: 3, column: 2)))
         #expect(hit.isSelectable)
         #expect(hit.delegate === table)
         #expect(hit.frame == layout.cellFrame(row: 3, column: 2))
@@ -227,7 +238,7 @@ struct MarkdownTableGridTests {
         #expect(grid.activeCell?.row == 3 && grid.activeCell?.column == 2)
 
         // Another cell takes the text view; the first draws itself again.
-        let second = try #require(grid.hitTest(Self.textCellPoint(layout, row: 5, column: 0), with: nil) as? UITextView)
+        let second = try #require(Self.touchedTextView(grid, at: Self.textCellPoint(layout, row: 5, column: 0)))
         #expect(second !== hit)
         #expect(hit.superview == nil)
         #expect(grid.subviews.compactMap { $0 as? UITextView }.count == 1)
@@ -276,13 +287,46 @@ struct MarkdownTableGridTests {
         let layout = try Self.gridLayout(table)
         #expect(grid.isInteractive)
 
-        let textView = try #require(grid.hitTest(Self.textCellPoint(layout, row: 1, column: 0), with: nil) as? UITextView)
+        let textView = try #require(Self.touchedTextView(grid, at: Self.textCellPoint(layout, row: 1, column: 0)))
         #expect(textView.isSelectable)
         let range = (textView.attributedText.string as NSString).range(of: "docs")
         let url = try #require(textView.attributedText.attribute(.link, at: range.location, effectiveRange: nil) as? URL)
         #expect(url.absoluteString == "https://example.com/docs")
         #expect(!textView.isScrollEnabled)
         #expect(textView.gestureRecognizerShouldBegin(textView.panGestureRecognizer) == false)
+    }
+
+    @Test func drawnLinkTakesTheThemeLinkColorLikeTheTextViewOverIt() throws {
+        let link: [MarkdownInline] = [.link(children: [.text("docs page")], destination: "https://example.com/docs")]
+        let rows: [[[MarkdownInline]]] = [[
+            link,
+            [.text(String(repeating: "wrap-column-notes-", count: 20))],
+        ]]
+        let (table, window) = Self.mount(headers: [[.text("Link")], [.text("Notes")]], rows: rows)
+        defer { window.isHidden = true }
+        let grid = table.debugGridViewForTesting
+        let layout = try Self.gridLayout(table)
+        let pixels = try Self.render(grid)
+
+        // The underline is a solid run of the link color: the pixel farthest
+        // from the transparent background in the link's cell is that color.
+        let frame = layout.cellFrame(row: 1, column: 0)
+        var strongest: [UInt8] = [0, 0, 0, 0]
+        for y in Int(frame.minY) ..< Int(frame.maxY) {
+            for x in Int(frame.minX) ..< Int(frame.maxX) {
+                let offset = (y * pixels.width + x) * 4
+                let pixel = Array(pixels.bytes[offset ..< offset + 4])
+                if pixel[3] > strongest[3] { strongest = pixel }
+            }
+        }
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        layout.style.link.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let expected = [red, green, blue].map { Int(($0 * 255).rounded()) }
+        let drawn = strongest.prefix(3).map(Int.init)
+        #expect(
+            zip(expected, drawn).allSatisfy { abs($0 - $1) <= 6 },
+            "drawn link \(drawn) vs theme link \(expected)"
+        )
     }
 
     // MARK: - VoiceOver

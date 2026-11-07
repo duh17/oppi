@@ -70,7 +70,7 @@ final class MarkdownTableGridRenderer: NSObject, CALayerDelegate, @unchecked Sen
             for column in columns {
                 if let hiddenCell, hiddenCell.row == row, hiddenCell.column == column { continue }
                 let frame = layout.cellFrame(row: row, column: column)
-                layout.cells[row][column].draw(
+                layout.drawnCells[row][column].draw(
                     with: CGRect(
                         x: frame.minX,
                         y: frame.minY + MarkdownTableGridLayout.cellVerticalInset,
@@ -285,6 +285,10 @@ final class MarkdownTableGridView: UIView {
         textView.attributedText = text
         textView.frame = layout.cellFrame(row: row, column: column)
         addSubview(textView)
+        // The touch that mounted the text view is its first. A text view finds
+        // the link under a touch in laid-out text; one laid out on the next
+        // pass lets the first tap on a link fall through.
+        textView.layoutIfNeeded()
 
         activeCell = (row, column)
         activeTextView = textView

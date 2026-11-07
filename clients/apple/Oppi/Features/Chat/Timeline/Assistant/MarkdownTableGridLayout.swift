@@ -50,6 +50,11 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     let columnOrigins: [CGFloat]
     /// `cells[row][column]`, row 0 the header.
     private(set) var cells: [[NSAttributedString]] = []
+    /// What the grid draws: `cells` without `.link`. String drawing paints a
+    /// link run in the system link color over the run's own color, while the
+    /// text view mounted on a touched cell paints it in the theme's. A cell
+    /// without a link is the same object as in `cells`.
+    private(set) var drawnCells: [[NSAttributedString]] = []
     private(set) var rowHeights: [CGFloat] = []
     /// Top edge of each row. The separator occupies the gap after row 0.
     private(set) var rowOrigins: [CGFloat] = []
@@ -112,6 +117,7 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     mutating func replaceBodyRows(keeping keptRows: Int, with rows: [[[MarkdownInline]]]) {
         let keptViews = min(cells.count, 1 + keptRows)
         cells.removeSubrange(keptViews...)
+        drawnCells.removeSubrange(keptViews...)
         rowHeights.removeSubrange(keptViews...)
         rowOrigins.removeSubrange(keptViews...)
         for row in rows[min(keptRows, rows.count)...] {
@@ -122,12 +128,15 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     @MainActor
     private mutating func appendRow(_ inlines: [[MarkdownInline]], isHeader: Bool) {
         var rowCells: [NSAttributedString] = []
+        var drawnRow: [NSAttributedString] = []
         rowCells.reserveCapacity(columnWidths.count)
+        drawnRow.reserveCapacity(columnWidths.count)
         var tallest: CGFloat = 0
         for (column, width) in columnWidths.enumerated() {
             let cell = column < inlines.count ? inlines[column] : [.text("")]
             let text = Self.cellText(cell, isHeader: isHeader, style: style)
             rowCells.append(text)
+            drawnRow.append(Self.withoutLinks(text))
             tallest = max(tallest, Self.cellHeight(text, width: width))
         }
         // Round each row up to the pixel grid.
@@ -139,6 +148,7 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
             origin = Self.verticalPadding
         }
         cells.append(rowCells)
+        drawnCells.append(drawnRow)
         rowHeights.append(height)
         rowOrigins.append(origin)
     }
@@ -179,6 +189,21 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
             ]))
         }
         return result
+    }
+
+    private static func withoutLinks(_ text: NSAttributedString) -> NSAttributedString {
+        let range = NSRange(location: 0, length: text.length)
+        var hasLink = false
+        text.enumerateAttribute(.link, in: range) { value, _, stop in
+            if value != nil {
+                hasLink = true
+                stop.pointee = true
+            }
+        }
+        guard hasLink else { return text }
+        let drawn = NSMutableAttributedString(attributedString: text)
+        drawn.removeAttribute(.link, range: range)
+        return drawn
     }
 
     @MainActor
