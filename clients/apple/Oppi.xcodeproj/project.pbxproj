@@ -554,6 +554,7 @@
 		34F539E0193F96B74C237B57 /* ToolTimelineRowLayoutPerformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7288AA21C5EA628F50504445 /* ToolTimelineRowLayoutPerformance.swift */; };
 		35009184390672059B35386A /* ToolCallFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB8887E41CCBAC0B9A146C2 /* ToolCallFormattingTests.swift */; };
 		350CFC58BF9E6567811E7CF5 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D70BF27FE1793A085A826C /* APIClient.swift */; };
+		353CF818CB053E502B1056FB /* FileViewerVideoScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB2FE4FA64252769A7690EF /* FileViewerVideoScreenshotPreview.swift */; };
 		354CAA9516652F76D5066F27 /* NearbyPairingInviteMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 036E70B04782CB208DE18873 /* NearbyPairingInviteMessage.swift */; };
 		35AF16B57ABAF4FAAE13EEE5 /* ServerSettingsRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B7B96D6E0AEE7633A3DC162 /* ServerSettingsRouteTests.swift */; };
 		35E546DC4684A0EE0B924C05 /* QuickSessionLaunchRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1558C763E23EC22ADD01AE4 /* QuickSessionLaunchRouting.swift */; };
@@ -4423,6 +4424,7 @@
 		BF0EE9336AA75DA9CF4EFBBE /* ServerExtensionListPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionListPresentationTests.swift; sourceTree = "<group>"; };
 		BF3CE35BDDA9F008DCFB4A3E /* FileViewerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerViews.swift; sourceTree = "<group>"; };
 		BF56FF6B20CD6DE367E3A32E /* eleven-chapters.m4a */ = {isa = PBXFileReference; path = "eleven-chapters.m4a"; sourceTree = "<group>"; };
+		BFB2FE4FA64252769A7690EF /* FileViewerVideoScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerVideoScreenshotPreview.swift; sourceTree = "<group>"; };
 		BFB76D3C9EC9853CB06809C5 /* MermaidClassParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidClassParser.swift; sourceTree = "<group>"; };
 		BFF83F29DBFB9DE129123A79 /* RendererTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererTestSupport.swift; sourceTree = "<group>"; };
 		C020F95B7C718E1A14020872 /* TableTextFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableTextFormatTests.swift; sourceTree = "<group>"; };
@@ -6846,6 +6848,7 @@
 			children = (
 				6C690BCB7DB5ED460BE52B2E /* AudioScreenshotPreview.swift */,
 				BBF572092BBA00A70FA494F8 /* FileBrowserMotionPreviewSupport.swift */,
+				BFB2FE4FA64252769A7690EF /* FileViewerVideoScreenshotPreview.swift */,
 				81CFAA61EC2DEBB9AC1B9284 /* MarkdownTablesPreview.swift */,
 				35750EA103C3BAE8B56699EE /* PreviewComposerController.swift */,
 				8D45BECE748C8D9B96D7AC60 /* PreviewServerActivation.swift */,
@@ -10963,6 +10966,7 @@
 				6C7622612A3FBA41C2E32453 /* FileViewerFileAccess.swift in Sources */,
 				4C05D937BECC87083F004792 /* FileViewerPlan.swift in Sources */,
 				2E82D0D834143FAAA2AF0A13 /* FileViewerPolicies.swift in Sources */,
+				353CF818CB053E502B1056FB /* FileViewerVideoScreenshotPreview.swift in Sources */,
 				9B44DCE6CD42C144D9896C37 /* FileViewerViewController.swift in Sources */,
 				88FEDE6B7DBCF691A73F6962 /* FileViewerViews.swift in Sources */,
 				425082935735C3C328A1A30F /* FloatingProgressPanel.swift in Sources */,

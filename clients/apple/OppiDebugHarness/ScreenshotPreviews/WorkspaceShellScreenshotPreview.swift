@@ -52,6 +52,8 @@ final class WorkspaceShellPreviewController: PreviewRootController {
         connection.sessionStore.sessions = [
             session(id: "rail-1", name: "Fill the Duo side rail", status: .busy, minutesAgo: 2),
             session(id: "rail-2", name: "Keep Message on the phone bar", status: .ready, minutesAgo: 18),
+            // A third section, Stopped · Today: the list's headers are the screen's own.
+            session(id: "rail-3", name: "Wire the sidebar toggle", status: .stopped, minutesAgo: 25),
         ]
         return coordinator
     }
