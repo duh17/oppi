@@ -285,9 +285,15 @@ extension TrailingColumnResizeHandle: UIPointerInteractionDelegate {
 /// transition; nil, from nothing, and from something each animate. The panel
 /// is one UIKit screen at the root of the column's own navigation controller,
 /// shown in a `TrailingColumnOverlayView` on top of the navigation controller
-/// that holds the screen (the screen's top ancestor outside one), whose child
-/// the column's controller becomes: UIKit raises when a child's view sits
-/// outside its parent's. It attaches while the screen is on screen, so a page
+/// that holds the screen (the screen's top ancestor outside one). The panel's
+/// navigation controller joins no parent: it is embedded by its view alone,
+/// and the column forwards its appearance itself. Making it a child of the
+/// host navigation controller stopped that controller sending the popped
+/// screen its disappearance callbacks (`viewWillDisappear`,
+/// `viewDidDisappear`), so Back left the screen's own teardown and this
+/// column's unrun and the host's trailing inset stuck at the panel's width;
+/// a child of any other controller raises, as its view sits outside that
+/// controller's. It attaches while the screen is on screen, so a page
 /// pushed above the screen, or a full-screen modal over it, never shows it,
 /// and the panel's own pushed pages survive until the screen returns.
 final class TrailingColumnController: UIViewController {
@@ -397,8 +403,8 @@ final class TrailingColumnController: UIViewController {
     /// Runs `body` once no panel is mounted: now when none is, otherwise
     /// after the one being removed has slid out and left the host. Close
     /// the panel (`show(nil, root:)`) first. A push onto the host's stack
-    /// waits for this: the close animates the host's layout and re-parents
-    /// its child, which under a running push transition left the screen's
+    /// waits for this: the close animates the host's layout and removes
+    /// the column's view, which under a running push transition left the screen's
     /// view out of the window after Back.
     func whenClosed(_ body: @escaping () -> Void) {
         guard container != nil || isRemoving else {
@@ -445,23 +451,13 @@ final class TrailingColumnController: UIViewController {
             newContainer.onSafeAreaInsetsChange = { [weak self] in
                 self?.overlay?.setNeedsLayout()
             }
-            if let host = self.host {
-                if !host.shouldAutomaticallyForwardAppearanceMethods {
-                    container.beginAppearanceTransition(false, animated: false)
-                }
-                container.willMove(toParent: nil)
+            if self.host != nil {
+                container.beginAppearanceTransition(false, animated: false)
                 container.view.removeFromSuperview()
-                container.removeFromParent()
-                if !host.shouldAutomaticallyForwardAppearanceMethods {
-                    container.endAppearanceTransition()
-                }
-                host.addChild(newContainer)
+                container.endAppearanceTransition()
                 overlay.replaceColumn(newContainer.view)
-                newContainer.didMove(toParent: host)
-                if !host.shouldAutomaticallyForwardAppearanceMethods {
-                    newContainer.beginAppearanceTransition(true, animated: false)
-                    newContainer.endAppearanceTransition()
-                }
+                newContainer.beginAppearanceTransition(true, animated: false)
+                newContainer.endAppearanceTransition()
             }
             self.panelID = panel.id
             self.container = newContainer
@@ -565,14 +561,10 @@ final class TrailingColumnController: UIViewController {
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         let target = restingWidth(overlay: overlay)
         overlay.width = animated ? 0 : target
-        host.addChild(container)
         host.view.addSubview(overlay)
-        container.didMove(toParent: host)
-        // A navigation controller forwards appearance to its stack only.
-        if !host.shouldAutomaticallyForwardAppearanceMethods {
-            container.beginAppearanceTransition(true, animated: false)
-            container.endAppearanceTransition()
-        }
+        // No parent forwards appearance to the column's navigation controller.
+        container.beginAppearanceTransition(true, animated: false)
+        container.endAppearanceTransition()
         host.view.layoutIfNeeded()
         if animated {
             animateWidth(to: target, initialVelocity: 0)
@@ -586,16 +578,10 @@ final class TrailingColumnController: UIViewController {
         }
         let finish: () -> Void = { [weak self] in
             guard let self else { return }
-            if let container = self.container, container.parent === host {
-                if !host.shouldAutomaticallyForwardAppearanceMethods {
-                    container.beginAppearanceTransition(false, animated: false)
-                }
-                container.willMove(toParent: nil)
+            if let container = self.container, self.overlay?.superview === host.view {
+                container.beginAppearanceTransition(false, animated: false)
                 self.overlay?.removeFromSuperview()
-                container.removeFromParent()
-                if !host.shouldAutomaticallyForwardAppearanceMethods {
-                    container.endAppearanceTransition()
-                }
+                container.endAppearanceTransition()
             }
             self.makeRoom(for: 0)
             self.screenFollowsKeyboard(true)
@@ -653,7 +639,7 @@ final class TrailingColumnController: UIViewController {
         }
         guard let container else { return }
         var insets = UIEdgeInsets.zero
-        if width > 0, container.parent === host {
+        if width > 0, overlay?.superview === host.view {
             let current = container.view.safeAreaInsets
             let added = container.additionalSafeAreaInsets
             insets.top = host.view.safeAreaInsets.top - (current.top - added.top)

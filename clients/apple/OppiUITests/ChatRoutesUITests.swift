@@ -1078,7 +1078,12 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Starting a session must close the column's commit")
         XCTAssertFalse(panel.exists, "Starting a session must close the Git panel")
         let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
-        XCTAssertEqual(backButtons.count, 1, "The new chat must be the only chat on screen, not one inside the column")
+        // The push is still animating when its title first exists: the chat
+        // underneath keeps its Back until the transition ends.
+        XCTAssertTrue(
+            waitFor(backButtons.count == 1, timeout: 5),
+            "The new chat must be the only chat on screen, not one inside the column"
+        )
         XCTAssertEqual(
             app.descendants(matching: .any)["chatRoutes.createdSessions"].value as? String, "1",
             "The stub must have received the new session"

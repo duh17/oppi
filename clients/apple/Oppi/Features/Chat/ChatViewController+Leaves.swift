@@ -66,11 +66,11 @@ extension ChatViewController {
     }
 
     /// Closes the Git panel, then pushes `chat` once the trailing column has
-    /// slid out. The column's close lays out and re-parents a child of this
-    /// chat's navigation controller; run under a push, it left this chat's
-    /// view out of the window after Back, so the bar's buttons changed the
-    /// model with no update pass to show a panel again. A sheet (compact
-    /// width) has no column to wait for.
+    /// slid out. The column's close animates this chat's navigation
+    /// controller's layout; run under a push, it left this chat's view out of
+    /// the window after Back, so the bar's buttons changed the model with no
+    /// update pass to show a panel again. A sheet (compact width) has no
+    /// column to wait for.
     private func closeSidePanelThenPush(_ chat: ChatViewController) {
         model.showGit = false
         updateSidePanels()
