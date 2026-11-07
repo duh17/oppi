@@ -476,7 +476,7 @@ final class WorkspaceContextBarView: UIView {
     /// bar type. This is chrome, not reading text, so a fold steps it one
     /// text style with the rest of the regular layout.
     private var usesRegularTypography: Bool {
-        traitCollection.horizontalSizeClass == .regular
+        AdaptiveWidth.isWide(traitCollection)
     }
 
     private func font(

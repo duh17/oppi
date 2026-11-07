@@ -268,6 +268,6 @@ enum FileBrowserColumnPolicy {
         layoutMode: FileBrowserLayoutMode,
         horizontalSizeClass: UIUserInterfaceSizeClass
     ) -> Bool {
-        layoutMode == .adaptive && TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
+        layoutMode == .adaptive && AdaptiveWidth.isWide(horizontalSizeClass)
     }
 }

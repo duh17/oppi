@@ -97,7 +97,7 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
         if width > 0 {
             measureHeight(for: width)
         }
-        if traitCollection.horizontalSizeClass == .regular {
+        if AdaptiveWidth.isWide(traitCollection) {
             modalPresentationStyle = .popover
             preferredContentSize = CGSize(width: 340, height: measuredHeight)
             if let popover = popoverPresentationController {

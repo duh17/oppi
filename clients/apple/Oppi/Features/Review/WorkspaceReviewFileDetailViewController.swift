@@ -318,7 +318,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private var showsFileListEntry: Bool {
         configuration.showsFileListInspector
             && WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles).count > 1
-            && (hostedInPanel || TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: traitCollection.horizontalSizeClass))
+            && (hostedInPanel || AdaptiveWidth.isWide(traitCollection))
     }
 
     /// Whether the file list lays out as this screen's own column: never

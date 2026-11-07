@@ -743,7 +743,7 @@ private extension UIFont {
 
 extension ChatViewController {
     var usesTrailingSidePanel: Bool {
-        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: traitCollection.horizontalSizeClass)
+        AdaptiveWidth.isWide(traitCollection)
     }
 
     func toggleChatFilePanel(source: String) {

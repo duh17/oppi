@@ -384,7 +384,7 @@ final class FullScreenViewingOptionsController: UIViewController {
         if let barItem {
             modalPresentationStyle = .popover
             popoverPresentationController?.barButtonItem = barItem
-        } else if horizontalSizeClass == .regular, let sourceButton {
+        } else if AdaptiveWidth.isWide(horizontalSizeClass), let sourceButton {
             modalPresentationStyle = .popover
             popoverPresentationController?.sourceView = sourceButton
             popoverPresentationController?.sourceRect = sourceButton.bounds

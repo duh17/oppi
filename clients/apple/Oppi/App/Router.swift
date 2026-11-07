@@ -36,10 +36,10 @@ struct ModalPresentation {
     /// `sourceView` a UIKit caller passes.
     static var popover: Self { Self(style: .popover) }
 
-    /// Document and file viewers: covers the window in regular width, a large
-    /// page sheet with a grabber in compact width.
+    /// Document and file viewers: covers the window when wide, a large page
+    /// sheet with a grabber when compact.
     static func largeViewer(for traitCollection: UITraitCollection) -> Self {
-        if FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(for: traitCollection) {
+        if AdaptiveWidth.isWide(traitCollection) {
             return Self(style: .overFullScreen)
         }
         return Self(style: .pageSheet, detents: [.large()], prefersGrabberVisible: true)

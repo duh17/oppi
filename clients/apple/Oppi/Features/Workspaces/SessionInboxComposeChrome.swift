@@ -26,7 +26,7 @@ enum SessionInboxComposeChrome {
         hasActivePlayback: Bool
     ) -> Bool {
         guard !hasActivePlayback else { return false }
-        return horizontalSizeClass != .regular
+        return !AdaptiveWidth.isWide(horizontalSizeClass ?? .unspecified)
     }
 
     /// Finite min width so the leading capsule covers the title line without

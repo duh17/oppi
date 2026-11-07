@@ -1,18 +1,5 @@
 import UIKit
 
-/// When auxiliary side content opens as a trailing column instead of a sheet:
-/// chat's side panels (Outline, Files, Context, the reader), a commit's diff,
-/// and a review's file list. Regular width gets the column, with or without a
-/// vertical toolbar rail: iPad and the Duo's inner portrait are regular
-/// without one, and a rotation must not turn an open column into a sheet.
-/// Compact, including the Duo's cover display, keeps the sheet or stack so a
-/// column does not adapt into a second one.
-enum TrailingSidePanelPolicy {
-    static func usesTrailingColumn(horizontalSizeClass: UIUserInterfaceSizeClass) -> Bool {
-        horizontalSizeClass == .regular
-    }
-}
-
 /// A screen beside a trailing column that follows the keyboard itself (the
 /// chat). While the column is up, the column turns `followsKeyboard` off when
 /// a field in its panel has the keyboard, so the screen's own inputs stay

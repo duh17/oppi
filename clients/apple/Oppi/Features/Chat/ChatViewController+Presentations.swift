@@ -146,7 +146,7 @@ extension ChatViewController {
     /// timeline, and composer.
     func updateSidePanels() {
         guard let root else { return }
-        if traitCollection.horizontalSizeClass == .compact, let target = model.sidePanelReaderTarget {
+        if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelReaderTarget {
             // Narrow width reads the reader as the pushed route it opens as
             // there. Pushed first, so the panel reader leaving keeps the
             // payload the route still names.

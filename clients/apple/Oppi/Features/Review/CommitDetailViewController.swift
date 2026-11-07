@@ -137,7 +137,7 @@ final class CommitDetailViewController: UIViewController {
     }
 
     private var usesTrailingColumn: Bool {
-        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: traitCollection.horizontalSizeClass)
+        AdaptiveWidth.isWide(traitCollection)
     }
 
     // MARK: Lifecycle

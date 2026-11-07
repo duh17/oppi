@@ -815,9 +815,7 @@ enum FullScreenImageDataPreviewPresenter {
                 data: data,
                 mimeType: mimeType,
                 title: title,
-                prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
-                    for: presenter.traitCollection
-                ),
+                prefersFullScreenOverlay: AdaptiveWidth.isWide(presenter.traitCollection),
                 addToChatDestination: destination
             ),
             from: presenter

@@ -12,7 +12,7 @@ extension ModalPresentation {
         horizontal: UIUserInterfaceSizeClass,
         vertical: UIUserInterfaceSizeClass
     ) -> ModalPresentation {
-        if horizontal == .compact {
+        if !AdaptiveWidth.isWide(horizontal) {
             return ModalPresentation(style: .overFullScreen).inNavigation()
         }
         if vertical == .compact {
