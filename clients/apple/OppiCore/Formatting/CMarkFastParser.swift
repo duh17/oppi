@@ -764,7 +764,11 @@ private func cmarkParsedDocument(
 ) -> CMarkParsedDocument? {
     cmark_gfm_core_extensions_ensure_registered()
 
+    // Only `~~x~~` strikes through. A single tilde is everyday text in agent
+    // output (`~10~20ms`, `List~int~`, Org's `~code~`), and struck-through
+    // text is visible, so the single-tilde form would cross out real content.
     let options = CMARK_OPT_DEFAULT | CMARK_OPT_SMART | CMARK_OPT_SOURCEPOS
+        | CMARK_OPT_STRIKETHROUGH_DOUBLE_TILDE
     let parser = cmark_parser_new(options)
 
     // Attach table + strikethrough extensions.

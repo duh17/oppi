@@ -832,12 +832,37 @@ struct FlatSegmentBuildTests {
         "plain ~~struck~~ text",
     ])
     func strikethroughReachesTheTextView(markdown: String) throws {
+        let attributed = try firstTextSegment(markdown)
+        #expect(hasUIKitStrikethrough(attributed))
+    }
+
+    @Test(arguments: ["about ~10~20ms", "a List~int~ field", "Org ~code~ markup"])
+    func singleTildesStayPlainText(markdown: String) throws {
+        let attributed = try firstTextSegment(markdown)
+        #expect(String(attributed.characters) == markdown)
+        #expect(!hasUIKitStrikethrough(attributed))
+    }
+
+    @Test func inlineCodeInAHeadingKeepsItsChip() throws {
+        let palette = ThemeID.dark.palette
+        let rendered = NSAttributedString(try firstTextSegment("## Release `[1/3]`"))
+        let text = rendered.string as NSString
+        let code = text.range(of: "[1/3]").location
+        let title = text.range(of: "Release").location
+
+        let codeFont = try #require(rendered.attribute(.font, at: code, effectiveRange: nil) as? UIFont)
+        #expect(codeFont.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
+        #expect(rendered.attribute(.foregroundColor, at: code, effectiveRange: nil) as? UIColor == palette.ui.mdCode)
+        #expect(rendered.attribute(.backgroundColor, at: code, effectiveRange: nil) as? UIColor == palette.ui.bgHighlight)
+        #expect(rendered.attribute(.font, at: title, effectiveRange: nil) as? UIFont == AppFont.messageHeading(level: 2))
+    }
+
+    private func firstTextSegment(_ markdown: String) throws -> AttributedString {
         let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
-        let attributed = try #require(segments.compactMap { segment -> AttributedString? in
+        return try #require(segments.compactMap { segment -> AttributedString? in
             if case let .text(attributed) = segment { return attributed }
             return nil
         }.first)
-        #expect(hasUIKitStrikethrough(attributed))
     }
 }
 

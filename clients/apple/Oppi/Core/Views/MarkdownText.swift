@@ -2041,17 +2041,22 @@ enum FlatSegment: Sendable {
                 return AttributedString(heading)
             }
 
-            let renderedInlines = renderInlines(inlines, palette: palette)
-            let mutable = NSMutableAttributedString(attributedString: NSAttributedString(renderedInlines))
-            mutable.addAttributes(
-                [
-                    .font: font,
-                    .foregroundColor: color,
-                    .paragraphStyle: paragraphStyle,
-                ],
-                range: NSRange(location: 0, length: mutable.length)
-            )
-            return AttributedString(mutable)
+            // Inline code is the only inline that sets a font. It keeps its
+            // chip (code ink and background), scaled from the body to the
+            // heading as body inline code is; every other run takes the
+            // heading font and colour.
+            var rendered = renderInlines(inlines, palette: palette)
+            let codeScale = font.pointSize / AppFont.messageBody.pointSize
+            for run in rendered.runs {
+                if let codeFont = run.uiKit.font {
+                    rendered[run.range].uiKit.font = codeFont.withSize(codeFont.pointSize * codeScale)
+                } else {
+                    rendered[run.range].uiKit.font = font
+                    rendered[run.range].uiKit.foregroundColor = color
+                }
+            }
+            rendered.uiKit.paragraphStyle = paragraphStyle
+            return rendered
 
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody
