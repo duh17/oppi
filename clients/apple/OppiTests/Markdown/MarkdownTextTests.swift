@@ -811,9 +811,33 @@ struct FlatSegmentBuildTests {
             Issue.record("Expected .text segment")
             return
         }
-        // Find a run that contains strikethrough
-        let hasStrikethrough = attr.runs.contains { $0.strikethroughStyle == .single }
-        #expect(hasStrikethrough, "Checked task item text should have strikethrough")
+        #expect(hasUIKitStrikethrough(attr), "Checked task item text should have strikethrough")
+    }
+
+    /// What the text view draws is the `NSAttributedString` the segment converts to.
+    private func hasUIKitStrikethrough(_ attributed: AttributedString) -> Bool {
+        let rendered = NSAttributedString(attributed)
+        var found = false
+        rendered.enumerateAttribute(
+            .strikethroughStyle,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, _, _ in
+            if value != nil { found = true }
+        }
+        return found
+    }
+
+    @Test(arguments: [
+        "## *DONE* ~~Draft the brief~~",
+        "plain ~~struck~~ text",
+    ])
+    func strikethroughReachesTheTextView(markdown: String) throws {
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        let attributed = try #require(segments.compactMap { segment -> AttributedString? in
+            if case let .text(attributed) = segment { return attributed }
+            return nil
+        }.first)
+        #expect(hasUIKitStrikethrough(attributed))
     }
 }
 

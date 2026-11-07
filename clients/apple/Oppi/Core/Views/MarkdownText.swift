@@ -1262,7 +1262,7 @@ enum FlatSegment: Sendable {
                     bodyColor: bodyColor,
                     bodyFont: bodyFont
                 )
-                rendered.attributed.strikethroughStyle = .single
+                rendered.attributed.uiKit.strikethroughStyle = .single
                 result.attributed.append(rendered.attributed)
                 result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
             }
@@ -2147,7 +2147,7 @@ enum FlatSegment: Sendable {
                     var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
                     if item.checked {
                         content.uiKit.foregroundColor = palette.ui.comment
-                        content.strikethroughStyle = .single
+                        content.uiKit.strikethroughStyle = .single
                     }
                     result.append(content)
                 }
@@ -2433,7 +2433,7 @@ enum FlatSegment: Sendable {
                 let end = text.utf8.count
                 if end > start {
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.strikethroughStyle = .single
+                        sub.uiKit.strikethroughStyle = .single
                     })
                 }
             }
@@ -2487,7 +2487,7 @@ enum FlatSegment: Sendable {
             return result
         case .strikethrough(let children):
             var result = renderInlines(children, palette: palette)
-            result.strikethroughStyle = .single
+            result.uiKit.strikethroughStyle = .single
             return result
         }
     }
@@ -2661,7 +2661,7 @@ enum FlatSegment: Sendable {
             return result
         case .strikethrough(let children):
             var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
-            result.strikethroughStyle = .single
+            result.uiKit.strikethroughStyle = .single
             return result
         case .code(let code):
             var result = AttributedString(code)
