@@ -1975,16 +1975,19 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     this.applyContextUsage(session, state.contextUsage);
     if (state.isIdle !== undefined) {
       // An abort confirms the moment the bridge reports idle: there is no separate agent_end to
-      // confirm it early, unlike the SDK path.
+      // confirm it early, unlike the SDK path. Broadcast before settling, same order
+      // `confirmAbortWithoutRun` uses: stop_confirmed carries no session data, so it still shows
+      // the stopping status and program it interrupted; the state frame the caller sends once
+      // this call returns (its session fingerprint changed) carries the settled ones.
       const stop = state.isIdle ? activeStop(session) : undefined;
       const wasAborting = stop !== undefined && lifecyclePhase(session).name === "aborting";
+      if (wasAborting && stop) {
+        this.broadcast(session.id, { type: "stop_confirmed", source: stop.source });
+      }
       applyLifecycle(session, state.isIdle ? "run_settled" : "run_started");
       session.currentTurnStartedAt =
         session.status === "busy" ? (session.currentTurnStartedAt ?? now) : undefined;
-      if (wasAborting && stop) {
-        this.broadcast(session.id, { type: "stop_confirmed", source: stop.source });
-        stop.resolveCompletion();
-      }
+      if (wasAborting && stop) stop.resolveCompletion();
     }
     this.syncProgramStatus(active);
 

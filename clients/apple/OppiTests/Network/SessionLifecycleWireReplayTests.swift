@@ -41,26 +41,13 @@ struct SessionLifecycleWireReplayTests {
     /// and matches claims it.
     static let disagreements: [LifecycleDisagreement] = [
         .init(
-            name: "sessionEndedKeepsProgress",
-            closedBy: "unowned: needs a server summary when the session reaches stopped",
-            reason: "After a terminate the server's programStatus is idle. The client keeps the last "
-                + "working programStatus on stop_confirmed and session_ended, which carry none; "
-                + "only a summary or state frame replaces it, and the server sends none once the "
-                + "row is stopped. Rows and the Live Activity do not show it: a stopped session "
-                + "with a working program status reads Stopped.",
-            fields: [.program],
-            expectedFires: 6
-        ) { _, frame, diff in
-            ["stop_confirmed", "session_ended"].contains(frame) && diff[.program] == LifecycleDifference("working", "idle")
-        },
-        .init(
             name: "programFollowsSummaryOnly",
             closedBy: "none: by design",
             reason: "Dialog, settle and compaction events carry no program status. The client keeps "
                 + "the previous value until the summary frame; the server's value at that frame is "
-                + "already the new one.",
+                + "already the new one. The mirror's own agent_settled relay lags the same way.",
             fields: [.program],
-            expectedFires: 6
+            expectedFires: 10
         ) { _, frame, diff in
             ["extension_ui_request", "extension_ui_settled", "compaction_start", "agent_settled"].contains(frame)
                 && diff[.program] != nil
@@ -72,31 +59,53 @@ struct SessionLifecycleWireReplayTests {
                 + "server's state and summaries. The row keeps its prior value for that one frame, "
                 + "until the state/session_summary that follows it on the wire.",
             fields: [.status],
-            expectedFires: 24
+            expectedFires: 30
         ) { _, frame, diff in
             frame == "stop_requested" && diff[.status] != nil
         },
         .init(
             name: "statusLagsAtStopConfirmedOrCompactionStart",
             closedBy: "none: the next state/session_summary always catches it up",
-            reason: "A terminate's stop_confirmed, and compaction_start, carry no status. The row "
-                + "keeps its prior value for that one frame. keepAlive and "
-                + "awake only differ here too, at compaction_start, where the lag briefly "
-                + "undercounts a wrapping-up session, and at a terminate's stop_confirmed, where "
-                + "the row still looks busy enough to need the app alive and awake.",
+            reason: "compaction_start carries no status, so the row keeps its prior value for that "
+                + "one frame, briefly undercounting a wrapping-up session's keep-alive and awake "
+                + "need too. A terminate's stop_confirmed used to lag the same way; this slice's "
+                + "stopped summary now catches the row up before stop_confirmed ever arrives.",
             fields: [.status, .awake, .keepAlive],
-            expectedFires: 21
+            expectedFires: 6
         ) { _, frame, diff in
             ["stop_confirmed", "compaction_start"].contains(frame) && diff[.status] != nil
+        },
+        .init(
+            name: "mirrorAgentStartLagsBridgeState",
+            closedBy: "none: the state/summary that follows always catches it up",
+            reason: "The mirror relays agent_start from the bridge's raw event feed, separate from "
+                + "the state push that carries status. When no busy state preceded it — an abort "
+                + "with no earlier bridge busy report — the row lags one frame at agent_start, until "
+                + "the state or summary that follows.",
+            fields: [.status, .program, .awake],
+            expectedFires: 6
+        ) { path, frame, diff in
+            path != .app && frame == "agent_start" && diff[.status] == LifecycleDifference("ready", "busy")
+        },
+        .init(
+            name: "mirrorAgentSettledLagsBridgeState",
+            closedBy: "none: the state/summary that follows always catches it up",
+            reason: "The mirror's agent_settled relay carries no status either, and no stop_confirmed "
+                + "precedes it outside a stop: the row lags busy or stopping one frame until the "
+                + "state or summary that follows.",
+            fields: [.status, .keepAlive, .awake],
+            expectedFires: 10
+        ) { _, frame, diff in
+            frame == "agent_settled" && diff[.status] != nil
         },
         .init(
             name: "keepAliveIgnoresStopping",
             closedBy: Self.oneActivityRule,
             reason: "BackgroundKeepAlive.hasActiveAgent counts busy and starting rows. A stopping "
                 + "session has an agent still winding down, so the server-implied answer is true. "
-                + "That includes a durable abort that lands before agent_start.",
+                + "That includes a durable abort that lands before agent_start, and the mirror engine.",
             fields: [.keepAlive],
-            expectedFires: 103
+            expectedFires: 122
         ) { _, _, diff in
             diff[.keepAlive] == LifecycleDifference("false", "true")
         },
@@ -105,9 +114,9 @@ struct SessionLifecycleWireReplayTests {
             closedBy: Self.oneActivityRule,
             reason: "The screen-awake reason follows state frames and summaries on the session "
                 + "stream only; app-event summaries never set it, so on the app-event channel a "
-                + "running session holds no screen-awake reason. That includes the durable run released after an abort that landed before its agent_start.",
+                + "running session holds no screen-awake reason. That includes the durable run released after an abort that landed before its agent_start, and the mirror engine.",
             fields: [.awake],
-            expectedFires: 68
+            expectedFires: 79
         ) { path, _, diff in
             path == .app && diff[.awake] == LifecycleDifference("false", "true")
         },
@@ -120,7 +129,7 @@ struct SessionLifecycleWireReplayTests {
                 + "client holds none at stop_requested. If the activity rule decides an idle stop "
                 + "holds nothing, the server-implied answer changes instead.",
             fields: [.awake],
-            expectedFires: 4
+            expectedFires: 6
         ) { path, frame, diff in
             path != .app && frame == "stop_requested" && diff[.awake] == LifecycleDifference("false", "true")
         },
@@ -201,18 +210,22 @@ struct SessionLifecycleWireReplayTests {
     /// A terminate: the row lags stopping→stopped by one frame at stop_requested and
     /// stop_confirmed (neither carries status), and session_ended, the one event the client
     /// still turns into a status, is what catches it up to stopped.
-    @Test func terminateLagsStoppedUntilSessionEnded() async throws {
+    @Test func terminateStoppedSummaryCatchesUpBeforeConfirmation() async throws {
         let focused = try await observe("classic.terminate_busy", .focused)
         #expect(focused[3].frameType == "stop_requested")
         #expect(focused[3].client.status == "busy" && focused[3].server.status == "stopping")
         #expect(focused[4].frameType == "state")
         #expect(focused[4].client.status == "stopping" && focused[4].server.status == "stopping")
-        #expect(focused[7].frameType == "stop_confirmed")
-        #expect(focused[7].client.status == "stopping" && focused[7].server.status == "stopped")
-        #expect(focused[8].frameType == "session_ended")
+        // The stopped summary this slice broadcasts on runtime_ended arrives before stop_confirmed
+        // and session_ended, so neither carries a status or program lag anymore.
+        #expect(focused[7].frameType == "state")
+        #expect(focused[7].client.status == "stopped" && focused[7].server.status == "stopped")
+        #expect(focused[7].client.program == "idle" && focused[7].server.program == "idle")
+        #expect(focused[8].frameType == "stop_confirmed")
         #expect(focused[8].client.status == "stopped" && focused[8].server.status == "stopped")
-        // programStatus is not cleared by either frame.
-        #expect(focused[8].client.program == "working" && focused[8].server.program == "idle")
+        #expect(focused[8].client.program == "idle" && focused[8].server.program == "idle")
+        #expect(focused[9].frameType == "session_ended")
+        #expect(focused[9].client.status == "stopped" && focused[9].server.status == "stopped")
     }
 
     /// Keep-alive still ignores `stopping` once the row catches up to it: the session_summary

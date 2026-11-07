@@ -1117,13 +1117,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (!this.active.has(key) || this.incomingWork.has(sessionId)) return false;
       if (!(await guard.idle())) return false;
       const active = this.active.get(key);
-      if (
-        !active ||
-        isStopping(active.session) ||
-        this.incomingWork.has(sessionId) ||
-        !guard.still()
-      )
-        return false;
+      if (!active || isStopping(active.session)) return false;
+      if (this.incomingWork.has(sessionId) || !guard.still()) return false;
       this.stopCoordinator.beginPendingStop(key, active, "terminate", "user");
       return true;
     });
