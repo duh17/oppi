@@ -94,6 +94,7 @@ describe("control conversation marker gates", () => {
     const crashed = queueOrphanedSessionsForRestart({
       listSessions: () => stored,
       queueRestartResume: (e) => crashQueue.push(...e),
+      runMigrationOnceSync: (_key, run) => run(),
       saveSession: () => {},
     });
     expect(crashed).toEqual([{ sessionId: "control", wasBusy: false }]);

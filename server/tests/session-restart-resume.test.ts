@@ -208,6 +208,36 @@ describe("session restart resume", () => {
       expect(status("legacy-error")).toEqual({ state: "error", since: 666 });
     });
 
+    it("backfills program status once per data directory, not on every start", () => {
+      const { storage, workspace } = makeStorage();
+      const ws = { workspaceId: workspace.id };
+      const legacyWriter = new SessionSqliteStore(storage.getDataDir());
+      const legacy = (id: string, lastActivity: number) =>
+        legacyWriter.saveSession({
+          id,
+          ...ws,
+          status: "stopped",
+          createdAt: 1,
+          lastActivity,
+          messageCount: 1,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          cost: 0,
+        });
+      legacy("legacy", 555);
+
+      queueOrphanedSessionsForRestart(storage, 9_000);
+      expect(storage.getSession("legacy")?.programStatus).toEqual({ state: "idle", since: 555 });
+
+      // A row an old process wrote between the two starts, the same way the first legacy row
+      // arrived: no program status, via the raw store so `Storage.saveSession`'s own stopped/error
+      // derivation does not give it one before the boot ever sees it.
+      legacy("legacy-2", 999);
+
+      // The backfill's walk never runs again, so the row the second boot found stays unbackfilled.
+      queueOrphanedSessionsForRestart(storage, 20_000);
+      expect(storage.getSession("legacy-2")?.programStatus).toBeUndefined();
+    });
+
     it("is read back by a fresh process, on both list projections", () => {
       const { storage, workspace } = makeStorage();
       saveSession(storage, "s1", {

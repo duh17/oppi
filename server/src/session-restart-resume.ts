@@ -56,8 +56,11 @@ type RestartStorage = Pick<
   | "listRestartResume"
   | "listSessions"
   | "queueRestartResume"
+  | "runMigrationOnceSync"
   | "saveSession"
 >;
+
+const PROGRAM_STATUS_BACKFILL_MIGRATION = "program_status_backfill_v1";
 
 /**
  * A session being terminated was on its way out; do not bring it back. One whose turn was
@@ -116,7 +119,10 @@ export function recordLiveSessionsForRestart(
  * Must run only after this process owns the data directory.
  */
 export function queueOrphanedSessionsForRestart(
-  storage: Pick<Storage, "listSessions" | "queueRestartResume" | "saveSession">,
+  storage: Pick<
+    Storage,
+    "listSessions" | "queueRestartResume" | "runMigrationOnceSync" | "saveSession"
+  >,
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
   const orphaned = storage
@@ -138,12 +144,16 @@ export function queueOrphanedSessionsForRestart(
     syncProgramStatus({ session }, nowMs);
     storage.saveSession(session);
   }
-  // Sessions stored before program status existed get the value their lifecycle implies.
-  for (const session of storage.listSessions()) {
-    if (session.programStatus) continue;
-    syncProgramStatus({ session }, session.lastActivity);
-    storage.saveSession(session);
-  }
+  // Sessions stored before program status existed get the value their lifecycle implies. Once
+  // per data directory: every session already has one after its first backfilled start.
+  storage.runMigrationOnceSync(PROGRAM_STATUS_BACKFILL_MIGRATION, () => {
+    for (const session of storage.listSessions()) {
+      if (session.programStatus) continue;
+      syncProgramStatus({ session }, session.lastActivity);
+      storage.saveSession(session);
+    }
+    return true;
+  });
   if (orphaned.length > 0) {
     log.info("startup.healed_orphaned_sessions", { count: orphaned.length });
   }

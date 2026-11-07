@@ -109,6 +109,14 @@ export class Storage {
     return this.sessionStore.runMigrationOnce(key, run);
   }
 
+  /**
+   * Synchronous `runMigrationOnce`, for a rewrite a caller cannot await. `run` returns false
+   * when it did not finish: that is not recorded, so the next start tries again.
+   */
+  runMigrationOnceSync(key: string, run: () => boolean): boolean {
+    return this.sessionStore.runMigrationOnceSync(key, run);
+  }
+
   // ─── Config ───
 
   static getDefaultConfig(dataDir: string = DEFAULT_DATA_DIR): ServerConfig {
