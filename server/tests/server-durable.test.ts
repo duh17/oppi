@@ -4582,6 +4582,41 @@ describe("server durable managed runtime", () => {
     },
   );
 
+  it("ends a row stopped without registering when a stop wins the durable start race", async () => {
+    const f = await fixture([]);
+    const realCreate = DurableBackend.create.bind(DurableBackend);
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const create = vi.spyOn(DurableBackend, "create").mockImplementation(async (config) => {
+      await gate;
+      return realCreate(config);
+    });
+    const savedStatuses: Array<Session["status"]> = [];
+    const realSaveSession = f.storage.saveSession.bind(f.storage);
+    vi.spyOn(f.storage, "saveSession").mockImplementation((session) => {
+      savedStatuses.push(session.status);
+      return realSaveSession(session);
+    });
+
+    const start = f.manager.startSession(f.session.id, f.workspace);
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    const stop = f.manager.stopSession(f.session.id);
+    releaseGate();
+    const [startedSession] = await Promise.all([start, stop]);
+
+    // The start resolves rather than rejects: a stop that wins the race is a cooperative
+    // return, not a failure.
+    expect(startedSession.status).toBe("stopped");
+    expect(f.manager.isActive(f.session.id)).toBe(false);
+    expect(f.storage.getSession(f.session.id)?.status).toBe("stopped");
+    // The start never registers a runtime: the row is never saved `ready` on the way to
+    // `stopped`, and none of the live-session stop machinery (which needs a registered
+    // runtime) runs either.
+    expect(savedStatuses).not.toContain("ready");
+  });
+
   it("persists a busy sandbox restart attachment until its original submission settles once", async () => {
     let finishReply!: () => void;
     const replyGate = new Promise<void>((resolve) => {

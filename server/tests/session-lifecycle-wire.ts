@@ -65,14 +65,12 @@ export interface LifecycleCheckpoint {
 /**
  * A decided lifecycle change that alters a row on purpose. The change that lands updates the
  * row's expectation and drops its tag.
- * - `start-phase-owns-stop`: a stop during a start ends that start before it registers a runtime.
  * - `explicit-stop-states`: every engine's abort and stop, the mirror's included, go through the
  *   same stop states and broadcast the same stop frames.
  * - `waiting-shows-working`: program status says working while a background job will wake the
  *   session, matching the CLI wait.
  */
-export type PlannedChange =
-  "start-phase-owns-stop" | "explicit-stop-states" | "waiting-shows-working";
+export type PlannedChange = "explicit-stop-states" | "waiting-shows-working";
 
 export interface LifecycleScenario {
   id: string;
@@ -730,10 +728,7 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "classic.stop_during_start",
         engine: "classic",
         description:
-          "Stop while the session is still starting wins: the start finishes, nothing stays live, and the row ends stopped.",
-        // Once the start owns the stop, such a start ends without registering a runtime: the row
-        // is no longer saved ready on its way to stopped, and the stop frames of a live session go.
-        plannedChange: "start-phase-owns-stop",
+          "Stop while the session is still starting wins before the start registers a runtime: nothing goes live and the row ends stopped, with no ready row along the way and no stop frames of a live session.",
         row: { status: "stopped" },
         holdCreate: true,
       },

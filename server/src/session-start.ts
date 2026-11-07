@@ -68,7 +68,17 @@ export interface SessionStartCoordinatorDeps {
 export class SessionStartCoordinator {
   constructor(private readonly deps: SessionStartCoordinatorDeps) {}
 
-  async startSessionInner(key: string, sessionId: string, workspace?: Workspace): Promise<Session> {
+  /**
+   * `isStopRequested` answers for the starting session's own stop race: the `starting` phase
+   * owns it (`SessionManager.stopSession`), so a stop that wins ends this start without
+   * registering a runtime, the same as a failed build.
+   */
+  async startSessionInner(
+    key: string,
+    sessionId: string,
+    workspace?: Workspace,
+    isStopRequested: () => boolean = () => false,
+  ): Promise<Session> {
     const session = this.deps.storage.getSession(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -175,6 +185,20 @@ export class SessionStartCoordinator {
             abandoned = true;
             await sdkBackend.dispose().catch(() => undefined);
             assertOpen();
+          }
+
+          // A stop requested while the backend was building wins: it ends this start before a
+          // runtime registers, the same as a failed build, but it resolves rather than rejects
+          // — dismissing a startup dialog to unblock the stop is a cooperative return, not a
+          // failure. No live session, and no `ready` row on the way to `stopped`.
+          if (isStopRequested()) {
+            await sdkBackend.dispose().catch(() => undefined);
+            applyLifecycle(session, "start_failed");
+            session.currentTurnStartedAt = undefined;
+            session.lastActivity = Date.now();
+            this.deps.persistSessionNow(key, session);
+            this.deps.runtimeManager.releaseSession(identity);
+            return session;
           }
 
           const activeSession: SessionStartActiveSession = {

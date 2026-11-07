@@ -7,10 +7,6 @@ import type { ProgramStatusChangeListener } from "./program-status.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
-  SessionActivationCoordinator,
-  type SessionActivationActiveSession,
-} from "./session-activation.js";
-import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
 } from "./session-agent-events.js";
@@ -48,7 +44,6 @@ export interface SessionCoordinatorBundle {
   stateCoordinator: SessionStateCoordinator;
   commandCoordinator: SessionCommandCoordinator;
   startCoordinator: SessionStartCoordinator;
-  activationCoordinator: SessionActivationCoordinator;
   lifecycleCoordinator: SessionLifecycleCoordinator;
   inputCoordinator: SessionInputCoordinator;
   turnCoordinator: SessionTurnCoordinator;
@@ -184,14 +179,6 @@ export function createSessionCoordinatorBundle(
     liveVoiceExtension: (sessionId) => deps.getLiveVoiceExtension?.()?.(sessionId),
   });
 
-  const activationCoordinator = new SessionActivationCoordinator({
-    runtimeManager: deps.runtimeManager,
-    getActiveSession: (key) => deps.active.get(key) as SessionActivationActiveSession | undefined,
-    resetIdleTimer: (key) => deps.resetIdleTimer(key),
-    startSessionInner: (key, sessionId, workspace) =>
-      startCoordinator.startSessionInner(key, sessionId, workspace),
-  });
-
   const lifecycleCoordinator = new SessionLifecycleCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionLifecycleSessionState | undefined,
     removeActiveSession: (key) => deps.active.delete(key),
@@ -284,7 +271,6 @@ export function createSessionCoordinatorBundle(
     stateCoordinator,
     commandCoordinator,
     startCoordinator,
-    activationCoordinator,
     lifecycleCoordinator,
     inputCoordinator,
     turnCoordinator,

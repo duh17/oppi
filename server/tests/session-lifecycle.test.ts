@@ -411,10 +411,20 @@ describe("SessionManager extension UI", () => {
     const manager = new SessionManager(storage);
     (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
     const key = "s1";
-    (manager as unknown as { startupUI: Map<string, unknown> }).startupUI.set(key, {
+    const starting = (
+      manager as unknown as {
+        starting: {
+          claim: (
+            key: string,
+            priorStatus: () => string,
+          ) => { dialogs?: unknown; stopRequested: boolean; subscribers: Set<unknown> };
+        };
+      }
+    ).starting;
+    starting.claim(key, () => "ready").dialogs = {
       bridge: { respond: () => false },
       state: { session: { id: key }, pendingUIRequests: new Map() },
-    });
+    };
 
     const socketFrames: ServerMessage[] = [];
     manager.subscribeStartupUI(key, (msg) => {

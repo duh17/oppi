@@ -51,7 +51,6 @@ import {
   handleExtensionUIRequest,
   respondToExtensionUIRequest,
   settleExtensionUIRequest,
-  type ExtensionUIState,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
 import type { DurableSearchSource, SearchIndex } from "./search-index.js";
@@ -65,7 +64,7 @@ import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { sessionEventRingCapacity } from "./session-runtime-state.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
-import type { SdkUiBridge } from "./sdk-ui-bridge.js";
+import { StartingRegistry } from "./session-starting.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import { SessionSurfaces, type SessionMessageSubscriber } from "./session-surfaces.js";
@@ -98,8 +97,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly durableHarness: Promise<DurableHarness>;
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
-  /** Pre-start status of sessions inside `startSession`, before they are active. */
-  private readonly startingIds = new Map<string, Session["status"]>();
+  /** Sessions between `start_begun` and `start_registered`/`start_failed`; see `StartingRegistry`. */
+  private readonly starting = new StartingRegistry();
   /** Callers of `withIncomingWork` per session whose work has not committed yet. */
   private readonly incomingWork = new Map<string, number>();
   private readonly config: ServerConfig;
@@ -109,8 +108,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   private durableSessionsOn: boolean;
   private readonly runtimeManager: WorkspaceRuntime;
-  private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
-  private readonly startupUISubscribers = new Map<string, Set<(message: ServerMessage) => void>>();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -149,7 +146,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly broadcaster: SessionCoordinatorBundle["broadcaster"];
   private readonly stateCoordinator: SessionCoordinatorBundle["stateCoordinator"];
   private readonly commandCoordinator: SessionCoordinatorBundle["commandCoordinator"];
-  private readonly activationCoordinator: SessionCoordinatorBundle["activationCoordinator"];
   private readonly lifecycleCoordinator: SessionCoordinatorBundle["lifecycleCoordinator"];
   private readonly inputCoordinator: SessionCoordinatorBundle["inputCoordinator"];
   private readonly queueCoordinator: SessionCoordinatorBundle["queueCoordinator"];
@@ -256,19 +252,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         this.emit("program_status_change", session, change),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
       hasUI: (key) =>
-        (this.startupUISubscribers.get(key)?.size ?? 0) > 0 ||
+        (this.starting.get(key)?.subscribers.size ?? 0) > 0 ||
         (this.active.get(key)?.subscribers.size ?? 0) > 0,
       onUIBridgeReady: (key, bridge) => {
+        const entry = this.starting.get(key);
+        if (!entry) return;
         if (bridge)
-          this.startupUI.set(key, {
-            bridge,
-            state: { session: { id: key }, pendingUIRequests: new Map() },
-          });
-        else if (!this.startupUI.get(key)?.state.pendingUIRequests.size) this.startupUI.delete(key);
+          entry.dialogs = { bridge, state: { session: { id: key }, pendingUIRequests: new Map() } };
+        else if (!entry.dialogs?.state.pendingUIRequests.size) entry.dialogs = undefined;
       },
       takeStartupUIRequests: (key) => {
-        const requests = this.startupUI.get(key)?.state.pendingUIRequests;
-        this.startupUI.delete(key);
+        const entry = this.starting.get(key);
+        const requests = entry?.dialogs?.state.pendingUIRequests;
+        if (entry) entry.dialogs = undefined;
         return requests;
       },
       onSessionEnd: (key, reason, stopConfirmationReason) =>
@@ -294,7 +290,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.broadcaster = bundle.broadcaster;
     this.stateCoordinator = bundle.stateCoordinator;
     this.commandCoordinator = bundle.commandCoordinator;
-    this.activationCoordinator = bundle.activationCoordinator;
     this.lifecycleCoordinator = bundle.lifecycleCoordinator;
     this.inputCoordinator = bundle.inputCoordinator;
     this.queueCoordinator = bundle.queueCoordinator;
@@ -307,24 +302,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Focused streams can relay startup dialogs before the SDK runtime exists. */
   subscribeStartupUI(sessionId: string, send: (message: ServerMessage) => void): () => void {
-    let subscribers = this.startupUISubscribers.get(sessionId);
-    if (!subscribers) {
-      subscribers = new Set();
-      this.startupUISubscribers.set(sessionId, subscribers);
-    }
+    const priorStatus = (): Session["status"] =>
+      this.storage.getSession(sessionId)?.status ?? "stopped";
+    const { subscribers, dialogs } = this.starting.claim(this.sessionKey(sessionId), priorStatus);
     subscribers.add(send);
-    const state = this.startupUI.get(sessionId)?.state;
-    if (state)
-      for (const message of buildPendingExtensionUIRequestMessages(state)) {
-        send({ ...message, sessionId });
-      }
+    for (const message of dialogs ? buildPendingExtensionUIRequestMessages(dialogs.state) : [])
+      send({ ...message, sessionId });
     let detached = false;
     return () => {
       if (detached) return;
       detached = true;
       subscribers.delete(send);
-      if (subscribers.size === 0 && this.startupUISubscribers.get(sessionId) === subscribers)
-        this.startupUISubscribers.delete(sessionId);
     };
   }
 
@@ -332,11 +320,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const framed: ServerMessage = { ...message, sessionId: key };
     // Same app-event ingress live notifies use (`emitSessionEvent` → mux).
     // Startup runs before `active`, so SessionBroadcaster cannot emit this.
-    this.emit("session_event", {
-      sessionId: key,
-      event: framed,
-    });
-    for (const send of this.startupUISubscribers.get(key) ?? []) send(framed);
+    this.emit("session_event", { sessionId: key, event: framed });
+    for (const send of this.starting.get(key)?.subscribers ?? []) send(framed);
   }
 
   get mobileRenderer(): MobileRendererRegistry {
@@ -388,20 +373,42 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return sessionId;
   }
 
-  /**
-   * Start a new session — creates an in-process pi SDK session.
-   */
+  /** Starts a session. Concurrent callers share one start; a stop before it registers wins. */
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
-    if (!this.startingIds.has(sessionId)) {
-      this.startingIds.set(sessionId, this.storage.getSession(sessionId)?.status ?? "stopped");
+
+    const activeNow = this.active.get(key);
+    if (activeNow) {
+      this.resetIdleTimer(key);
+      return activeNow.session;
     }
+
+    const existing = this.starting.get(key);
+    if (existing?.promise) return existing.promise;
+
+    const priorStatus = (): Session["status"] =>
+      this.storage.getSession(sessionId)?.status ?? "stopped";
+    const entry = this.starting.claim(key, priorStatus);
+    entry.promise = this.runtimeManager.withSessionLock(sessionId, async () => {
+      const activeAgain = this.active.get(key);
+      if (activeAgain) {
+        this.resetIdleTimer(key);
+        return activeAgain.session;
+      }
+      return this.startCoordinator.startSessionInner(
+        key,
+        sessionId,
+        startWorkspace,
+        () => entry.stopRequested,
+      );
+    });
+
     try {
-      return await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
+      return await entry.promise;
     } finally {
-      this.startingIds.delete(sessionId);
+      this.starting.release(key, entry);
     }
   }
 
@@ -428,7 +435,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Process a pi agent event from the SDK subscribe callback. */
   private handlePiEvent(key: string, data: SessionBackendEvent): void {
     try {
-      const startup = !this.active.has(key) ? this.startupUI.get(key) : undefined;
+      const startup = !this.active.has(key) ? this.starting.get(key)?.dialogs : undefined;
       if (startup && data.type === "extension_ui_request") {
         handleExtensionUIRequest(startup.state, data, {
           broadcast: (message) => this.broadcastStartupUI(key, message),
@@ -462,7 +469,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) {
-      const startup = this.startupUI.get(key);
+      const startup = this.starting.get(key)?.dialogs;
       return respondToExtensionUIRequest(startup?.state, response, {
         deliver: (payload) => startup?.bridge.respond(payload) ?? false,
         broadcastSettled: (message) => this.broadcastStartupUI(key, message),
@@ -1070,14 +1077,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   async stopSession(sessionId: string, preserveRestartResume = false): Promise<void> {
     if (!preserveRestartResume) this.storage.clearRestartResume(sessionId);
     const key = this.sessionKey(sessionId);
-    // A start in flight registers its runtime when it finishes and would then save `ready`
-    // over this stop. Wait for it, then stop what it started: the stop wins.
-    const starting = this.activationCoordinator.pendingStart(key);
-    if (starting) {
+    // A start in flight sees `stopRequested` before it registers a runtime and ends without
+    // one: the stop wins before the row is ever saved `ready`.
+    const starting = this.starting.get(key);
+    if (starting?.promise) {
+      starting.stopRequested = true;
       // A dialog an extension opened at startup holds the start until it is answered: Stop
       // dismisses it rather than wait for an answer that may never come.
-      this.startupUI.get(key)?.bridge.cancelDialogs();
-      await starting.catch(() => undefined);
+      starting.dialogs?.bridge.cancelDialogs();
+      await starting.promise.catch(() => undefined);
     }
     if (!this.isActive(sessionId)) {
       const session = this.storage.getSession(sessionId);
@@ -1266,7 +1274,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
         // `startSession` opens the store after writing "starting": keep a live session's work, but
         // still fence a stopped one being reopened so leftover jobs stay aborted.
-        const prior = this.startingIds.get(session.id);
+        const prior = this.starting.get(this.sessionKey(session.id))?.priorStatus;
         if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
         ids.add(conversationId);
       }

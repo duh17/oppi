@@ -378,19 +378,14 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "stop: stopped/idle not live wait:idle saved:stopping>stopped",
     ],
   },
-  // No socket can attach before the runtime registers, so only the app-event stream sees this. The
-  // start registers (saving ready) and then the stop runs; the row ends stopped.
+  // No socket can attach before the runtime registers, and the stop wins the race before one
+  // ever does: the row never goes live, so no stop frames of a live session broadcast either.
   "classic.stop_during_start": {
     ws: [],
-    app: [
-      "stop_requested",
-      "summary stopping/idle",
-      'stop_confirmed "Session terminated"',
-      'session_ended "stopped"',
-    ],
+    app: [],
     steps: [
       "start_begun: starting/idle not live wait:waiting saved:starting",
-      "create_finished: stopped/idle not live wait:idle saved:ready>stopping>stopped",
+      "create_finished: stopped/idle not live wait:idle saved:stopped",
     ],
   },
   "classic.start_fails": {
@@ -657,7 +652,6 @@ describe("recorded fixture", () => {
         .map((found) => [found.id, found.plannedChange]),
     );
     expect(planned).toEqual({
-      "classic.stop_during_start": "start-phase-owns-stop",
       "classic.wake_hold": "waiting-shows-working",
       "mirror.busy_idle_stop": "explicit-stop-states",
       "mirror.abort_mid_turn": "explicit-stop-states",
@@ -698,6 +692,24 @@ describe("session lifecycle on the wire", () => {
       app: sequence(found, "app"),
       steps: steps(found),
     }).toEqual(expected);
+  });
+});
+
+describe("the starting phase owns the start", () => {
+  it("shares one start promise between two concurrent callers", async () => {
+    const world = await classicWorld({ holdCreate: true });
+    try {
+      const first = world.manager.startSession(SESSION_ID, world.workspace);
+      const second = world.manager.startSession(SESSION_ID, world.workspace);
+      await flush();
+      world.finishCreate();
+      const [firstSession, secondSession] = await Promise.all([first, second]);
+      expect(firstSession).toBe(secondSession);
+      expect(firstSession.status).toBe("ready");
+      expect(world.manager.isActive(SESSION_ID)).toBe(true);
+    } finally {
+      await world.dispose();
+    }
   });
 });
 

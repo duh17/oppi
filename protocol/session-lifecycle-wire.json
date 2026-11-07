@@ -284,17 +284,14 @@
       ]
     },
     {
-      "id":"classic.stop_during_start","engine":"classic","description":"Stop while the session is still starting wins: the start finishes, nothing stays live, and the row ends stopped.","plannedChange":"start-phase-owns-stop",
+      "id":"classic.stop_during_start","engine":"classic","description":"Stop while the session is still starting wins before the start registers a runtime: nothing goes live and the row ends stopped, with no ready row along the way and no stop frames of a live session.",
       "frames": [
-        {"channel":"app","step":"create_finished","frame":{"type":"stop_requested","sessionId":"lifecycle-session","workspaceId":"workspace-1","emittedAt":1800000000000,"source":"user"},"server":{"status":"stopping","programStatus":{"state":"idle"}}},
-        {"channel":"app","step":"create_finished","frame":{"type":"session_summary","sessionId":"lifecycle-session","workspaceId":"workspace-1","emittedAt":1800000000000,"summary":{"id":"lifecycle-session","workspaceId":"workspace-1","workspaceName":"project","name":"lifecycle","status":"stopping","createdAt":1800000000000,"lastActivity":1800000000000,"programStatus":{"state":"idle","since":1800000000000},"model":"anthropic/claude-sonnet-4-0","messageCount":0,"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0,"thinkingLevel":"medium","runtime":"oppi","pendingAskCount":0}},"server":{"status":"stopping","programStatus":{"state":"idle"}}},
-        {"channel":"app","step":"create_finished","frame":{"type":"stop_confirmed","sessionId":"lifecycle-session","workspaceId":"workspace-1","emittedAt":1800000000000,"source":"user","reason":"Session terminated"},"server":{"status":"stopped","programStatus":{"state":"idle"}}},
-        {"channel":"app","step":"create_finished","frame":{"type":"session_ended","sessionId":"lifecycle-session","workspaceId":"workspace-1","emittedAt":1800000000000,"reason":"stopped"},"server":{"status":"stopped","programStatus":{"state":"idle"}}}
+
       ],
       "checkpoints": [
         {"step":"start_begun","persisted":["starting"],"row":{"status":"starting","programStatus":{"state":"idle"}},"live":false,"cliWait":"waiting","pendingWake":false},
         {"step":"stop_requested_during_start","persisted":[],"row":{"status":"starting","programStatus":{"state":"idle"}},"live":false,"cliWait":"waiting","pendingWake":false},
-        {"step":"create_finished","persisted":["ready","stopping","stopped"],"row":{"status":"stopped","programStatus":{"state":"idle"}},"live":false,"cliWait":"idle","pendingWake":false}
+        {"step":"create_finished","persisted":["stopped"],"row":{"status":"stopped","programStatus":{"state":"idle"}},"live":false,"cliWait":"idle","pendingWake":false}
       ]
     },
     {

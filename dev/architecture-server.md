@@ -34,7 +34,7 @@ graph TD
 
 ## Session lifecycle
 
-`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` architecture check rejects an assignment anywhere else (new rows set it in an object literal). Coordinators and engines apply lifecycle events with `applyLifecycle`; an event the phase does not allow is logged and ignored. The six wire values are a frozen projection of the phase, because Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn.
+`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` architecture check rejects an assignment anywhere else (new rows set it in an object literal). Coordinators and engines apply lifecycle events with `applyLifecycle`; an event the phase does not allow is logged and ignored. The six wire values are a frozen projection of the phase, because Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn. The `starting` phase owns its own stop race: a stop wins before a runtime ever registers, so a session stopped mid-start never saves `ready`.
 
 ## Program status
 

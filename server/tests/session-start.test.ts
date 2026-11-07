@@ -231,4 +231,27 @@ describe("SessionStartCoordinator status persistence", () => {
       sessionId: session.id,
     });
   });
+
+  it("ends a row stopped without registering when a stop wins the start race", async () => {
+    const session = makeSession({ status: "ready" });
+    const deps = makeDeps(session);
+    const workspace = makeWorkspace();
+    const dispose = vi.fn(async () => {});
+    vi.spyOn(SdkBackend, "create").mockResolvedValue({ dispose } as unknown as SdkBackend);
+
+    // The start resolves rather than rejects: a stop that wins the race is a cooperative
+    // return, not a failure.
+    const result = await new SessionStartCoordinator(deps).startSessionInner(
+      "key",
+      session.id,
+      workspace,
+      () => true,
+    );
+
+    expect(result).toBe(session);
+    expect(deps.persistedStatuses).toEqual(["starting", "stopped"]);
+    expect(session.status).toBe("stopped");
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(deps.registerActiveSession).not.toHaveBeenCalled();
+  });
 });
