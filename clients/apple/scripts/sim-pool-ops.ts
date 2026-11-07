@@ -501,9 +501,9 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     profileName,
     claimSlotStart: profile?.claimSlotStart ?? 0,
     claimCount: profile?.claimCount ?? 0,
-    idleMinutes: parsePositiveInt(env.OPPI_SIM_POOL_IDLE_MINUTES ?? "30", "OPPI_SIM_POOL_IDLE_MINUTES", 0),
+    idleMinutes: parsePositiveInt(env.OPPI_SIM_POOL_IDLE_MINUTES ?? "15", "OPPI_SIM_POOL_IDLE_MINUTES", 0),
     keepWarm: parsePositiveInt(env.OPPI_SIM_POOL_KEEP_WARM ?? "2", "OPPI_SIM_POOL_KEEP_WARM", 0),
-    maxBooted: parsePositiveInt(env.OPPI_SIM_POOL_MAX_BOOTED ?? "12", "OPPI_SIM_POOL_MAX_BOOTED", 0),
+    maxBooted: parsePositiveInt(env.OPPI_SIM_POOL_MAX_BOOTED ?? "6", "OPPI_SIM_POOL_MAX_BOOTED", 0),
   };
 }
 
@@ -1058,7 +1058,16 @@ export async function prepareSimulator(
   firstBoot = false,
 ): Promise<void> {
   if (mode === "recovery") {
-    log(`[sim-pool] Recovery: shutting down + erasing simulator ${udid}`);
+    // Erase is for a device that hung or is corrupt, never a way to reclaim disk or reset state
+    // (delete the symbolication cache instead, see shutdownPoolSlot in sim-pool-lifecycle.ts). It costs a lot: the device
+    // loses sim-slim's launchd overrides, so PosterBoard and the other disabled daemons come back, and
+    // its next boot is a first boot (about two minutes of migration, machine load past 100).
+    // Template-clone recovery would replace this block: `simctl delete` this device, then
+    // `simctl clone <slimmed, booted-once, shut-down golden device for this profile> <pool name>`.
+    log(
+      `[sim-pool] WARNING: Recovery is ERASING simulator ${udid}: all its data is lost, sim-slim's disabled daemons come back, ` +
+        "and its next boot is a first boot (about two minutes of load). Erase is for a hung or corrupt device only.",
+    );
     await runSimctl(session, ["shutdown", udid], "simctl shutdown");
     await runSimctl(session, ["erase", udid], "simctl erase");
   } else if (config.forceCleanBoot || cleanBoot) {
@@ -1123,21 +1132,35 @@ export async function prepareSimulator(
   }
 }
 
-async function takeFirstBootGate(session: CommandSession, config: PoolConfig): Promise<HeldLock> {
+/**
+ * Take a machine-wide heavy.sh slot of `heavyClass`, waiting at most OPPI_SIM_POOL_WAIT seconds and
+ * logging the wait. Dies when the wait times out, the run is canceled, or the caller is gone.
+ * `heldEnv` is what a child must carry so a nested heavy.sh of the class does not wait on us; an
+ * ancestor that already holds the class (OPPI_HEAVY_HELD) leaves no lock of ours to release.
+ */
+async function takeHeavyGate(
+  session: CommandSession,
+  config: PoolConfig,
+  heavyClass: Parameters<typeof acquireHeavySlot>[0],
+  purpose: string,
+): Promise<{ lock: HeldLock; heldEnv: string; waitedSeconds: number }> {
   let heavy: Awaited<ReturnType<typeof acquireHeavySlot>>;
   try {
-    heavy = await acquireHeavySlot("sim-first-boot", process.env, session, log, config.waitSeconds * 1000);
+    heavy = await acquireHeavySlot(heavyClass, process.env, session, log, config.waitSeconds * 1000);
   } catch (error) {
     return die(`${error instanceof Error ? error.message : String(error)} (OPPI_SIM_POOL_WAIT=${config.waitSeconds})`);
   }
   if (!heavy) {
-    return die(session.canceled ? "canceled while waiting for the first-boot slot" : "caller is gone; not booting a new simulator");
+    return die(session.canceled ? `canceled while waiting for the ${heavyClass} slot` : `caller is gone; not ${purpose}`);
   }
   if (heavy.waitedSeconds > 0) {
-    log(`[sim-pool] waited ${heavy.waitedSeconds}s for the machine-wide sim-first-boot slot`);
+    log(`[sim-pool] waited ${heavy.waitedSeconds}s for the machine-wide ${heavyClass} slot`);
   }
-  // An ancestor that already holds the class (OPPI_HEAVY_HELD) leaves no lock of ours to release.
-  return heavy.lock ?? { path: "", release: () => {} };
+  return { lock: heavy.lock ?? { path: "", release: () => {} }, heldEnv: heavy.heldEnv, waitedSeconds: heavy.waitedSeconds };
+}
+
+async function takeFirstBootGate(session: CommandSession, config: PoolConfig): Promise<HeldLock> {
+  return (await takeHeavyGate(session, config, "sim-first-boot", "booting a new simulator")).lock;
 }
 
 /** The app the pool resets between runs (project.yml `Oppi` target; sim-pool-ops.test.ts checks they agree). */
@@ -2112,6 +2135,8 @@ export async function commandRun(
   let finalArtifact = "";
   let logFile = "";
   let derivedData = "";
+  let testToken: Awaited<ReturnType<typeof takeHeavyGate>> | undefined;
+  let testTokenWait = 0;
   let exitCode = 1;
   let hangDetected = false;
   let hostCrash: string | undefined;
@@ -2189,6 +2214,11 @@ export async function commandRun(
       derivedData = runDirectory(config.buildBase, stamp);
       completionArgv = completionArgvForXctestrun(split.argv);
     }
+    // The machine-wide cap on concurrent test phases. Taken before the simulator slot, so a run
+    // that waits for it holds no simulator and boots nothing; held until the run's cleanup.
+    const tokenStart = nowEpoch();
+    testToken = await takeHeavyGate(session, config, "ui-suite", "starting a queued test run");
+    testTokenWait = nowEpoch() - tokenStart;
     slotWaitStartHolder.value = nowEpoch();
     const acquired = await acquireRunSlot(config, ["run", ...args], session);
     owned = acquired.owned;
@@ -2277,7 +2307,12 @@ export async function commandRun(
         // The test phase runs prebuilt products; build settings went to the build phase.
         extraSettings: build ? [] : extraSettings,
         // Tests that need a checkout file read OPPI_SOURCE_ROOT: #filePath is a mapped path.
-        env: { TEST_RUNNER_OPPI_SOURCE_ROOT: config.oppiRoot, ...process.env },
+        env: {
+          TEST_RUNNER_OPPI_SOURCE_ROOT: config.oppiRoot,
+          ...process.env,
+          // A nested heavy.sh ui-suite inside the test run must not wait on the token we hold.
+          ...(testToken ? { OPPI_HEAVY_HELD: testToken.heldEnv } : {}),
+        },
       });
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;
@@ -2402,6 +2437,7 @@ export async function commandRun(
       uncertain = true;
     }
     sharedDerivedData?.release();
+    testToken?.lock.release();
     const slotWaitStart = slotWaitStartHolder.value;
     const slotWaitEnd = slotWaitEndHolder.value;
     const runEnd = nowEpoch();
@@ -2486,6 +2522,7 @@ export async function commandRun(
                 xcode_build_slot_wait: build.heavyWaitSeconds,
                 build: build.endedAt - build.startedAt,
               } : {}),
+              ui_suite_slot_wait: testTokenWait,
               slot_wait: slotWaitEnd - slotWaitStart,
               simulator_prepare: simPrep,
               simulator_reset: slotReset,
@@ -2769,7 +2806,9 @@ xcode-toolchain.txt (Xcode 27.1); an explicit DEVELOPER_DIR wins.
 run builds outside the simulator slots. Every build goes to one DerivedData per
 checkout (clients/apple/.build/dd) for a generic arm64 simulator, under a
 checkout lock and one of the machine-wide heavy.sh xcode-build slots
-(OPPI_HEAVY_XCODE_BUILD, default 2). A build with no test action
+(OPPI_HEAVY_XCODE_BUILD, default 2). Every test phase takes one of the
+machine-wide ui-suite slots (OPPI_HEAVY_UI_SUITE, default 4) before it takes a
+simulator, waiting at most OPPI_SIM_POOL_WAIT seconds and logging the wait. A build with no test action
 (build, build-for-testing) takes no simulator at all. A test run builds, clones
 the products into .build/runs/<run> (APFS clone), then acquires a pool slot
 only for test-without-building -xctestrun on that clone, so every slot and
@@ -2780,10 +2819,10 @@ slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
 stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; at the end of each
 run, claim, and release the reaper shuts down pool simulators idle for
-OPPI_SIM_POOL_IDLE_MINUTES (30) except the OPPI_SIM_POOL_KEEP_WARM (2) most
+OPPI_SIM_POOL_IDLE_MINUTES (15) except the OPPI_SIM_POOL_KEEP_WARM (2) most
 recently used. Before booting, the
 pool shuts down least recently used idle pool simulators to keep at most
-OPPI_SIM_POOL_MAX_BOOTED (12) simulators booted, counting simulators it does not
+OPPI_SIM_POOL_MAX_BOOTED (6) simulators booted, counting simulators it does not
 manage; when nothing is idle it waits up to OPPI_SIM_POOL_WAIT seconds for
 capacity and then fails, never booting past the ceiling. Unused simulator
 daemons are disabled unless OPPI_SIM_SLIM=0. Compiler index store is

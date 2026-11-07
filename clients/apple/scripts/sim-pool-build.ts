@@ -13,7 +13,9 @@
 //      caller's own `test-without-building` reads `.build/dd` directly.
 //   2. a machine-wide `xcode-build` slot from scripts/heavy.sh (same slot files, same gate
 //      markers), only around the xcodebuild build itself.
-//   3. the simulator slot, taken after 1 and 2 are released.
+//   3. a machine-wide `ui-suite` slot for the test phase (heavy.sh class; sim-pool-ops.ts), taken
+//      before the simulator slot so a run waiting for it holds no simulator.
+//   4. the simulator slot, taken after 1 and 2 are released.
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -476,6 +478,11 @@ const HEAVY_CLASSES = {
   // One at a time: a new or erased device's first boot (about two minutes of migration) spikes
   // the load average to 100+ on this host, so concurrent first boots slow every run that is already going.
   "sim-first-boot": { knob: "OPPI_HEAVY_SIM_FIRST_BOOT", slots: 1 },
+  // The test phase of every `run`: at most this many simulators run tests at once on the machine,
+  // whatever the pool size. Eleven pool devices running at once drove the host to load 60+ with
+  // idle CPUs (each booted simulator is about 115 processes), so the cap is on concurrent test
+  // phases, not on slots.
+  "ui-suite": { knob: "OPPI_HEAVY_UI_SUITE", slots: 4 },
 } as const;
 
 /** Where a waiting gate job (LAND_QUEUE_BATCH) leaves `<class>.<pid>` markers, next to the slot files. */

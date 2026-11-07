@@ -17,7 +17,7 @@ import {
   sharedCacheArguments,
   stripUnitTestBundles,
 } from "./sim-pool-build";
-import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
+import { SUBPROCESS_TEST_TIMEOUT_MS, waitUntil } from "./sim-pool-test-support";
 
 // Every test builds a git checkout fixture and runs the pool CLI; see sim-pool-test-support.ts for the sizing.
 setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
@@ -326,6 +326,83 @@ describe("sharedCacheArguments", () => {
   test("a build opted out of the cache gets no arguments", () => {
     const { appleDir, env, derived } = fixture();
     expect(sharedCacheArguments({ ...env, OPPI_SIM_POOL_COMPILATION_CACHE: "0" }, appleDir, derived)).toEqual([]);
+  });
+});
+
+describe("acquireHeavySlot ui-suite tokens", () => {
+  const dirs: string[] = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function env(): NodeJS.ProcessEnv {
+    const root = mkdtempSync(join(tmpdir(), "heavy-ui-"));
+    dirs.push(root);
+    const base: NodeJS.ProcessEnv = { ...process.env, OPPI_HEAVY_DIR: join(root, "heavy"), OPPI_HEAVY_POLL: "0.1" };
+    for (const name of ["OPPI_HEAVY_HELD", "OPPI_HEAVY_PARENT_PID", "LAND_QUEUE_BATCH", "OPPI_HEAVY_UI_SUITE"]) {
+      delete base[name];
+    }
+    return base;
+  }
+
+  const session = { canceled: false, waitWhileIdle: async () => {} };
+
+  test("a fifth concurrent test phase waits for a token and logs the wait", async () => {
+    const e = env();
+    const held = [];
+    for (let i = 0; i < 4; i += 1) {
+      const token = await acquireHeavySlot("ui-suite", e, session, () => {}, 0);
+      expect(token?.lock).toBeDefined();
+      held.push(token!);
+    }
+    let message = "";
+    // The waiter is canceled after its first busy round: it got no token and said it was waiting.
+    const canceling = { canceled: false, waitWhileIdle: async () => { canceling.canceled = true; } };
+    expect(await acquireHeavySlot("ui-suite", e, canceling, (line) => { message = line; })).toBeUndefined();
+    expect(message).toContain("all 4 machine-wide ui-suite slots busy");
+    for (const token of held) token.lock!.release();
+  });
+
+  test("OPPI_HEAVY_UI_SUITE sets the number of tokens", async () => {
+    const e = { ...env(), OPPI_HEAVY_UI_SUITE: "1" };
+    const first = await acquireHeavySlot("ui-suite", e, session, () => {}, 0);
+    await expect(acquireHeavySlot("ui-suite", e, session, () => {}, 0)).rejects.toThrow("timed out");
+    first!.lock!.release();
+  });
+
+  test("a released token unblocks a waiter", async () => {
+    const e = env();
+    const held = [];
+    for (let i = 0; i < 4; i += 1) held.push((await acquireHeavySlot("ui-suite", e, session, () => {}, 0))!);
+    // Each poll round yields to the event loop and is counted, so the test waits on rounds in which
+    // every token was busy rather than on the clock.
+    let busyRounds = 0;
+    let settled = false;
+    const polling = {
+      canceled: false,
+      waitWhileIdle: async () => {
+        busyRounds += 1;
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+    };
+    const waiter = acquireHeavySlot("ui-suite", e, polling, () => {}).finally(() => { settled = true; });
+    await waitUntil(() => busyRounds >= 3, "the waiter to poll three busy rounds");
+    expect(settled).toBe(false);
+    held[2]!.lock!.release();
+    // The bound only fails the test: the waiter resolves as soon as it sees the freed token.
+    const token = await Promise.race([
+      waiter,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the waiter never got the released token")), 10_000).unref()),
+    ]);
+    expect(token?.lock).toBeDefined();
+    token!.lock!.release();
+    for (const other of held) other.lock!.release();
+  });
+
+  test("a caller inside a job that holds ui-suite takes no token of its own", async () => {
+    const e = { ...env(), OPPI_HEAVY_HELD: ":ui-suite:" };
+    const nested = await acquireHeavySlot("ui-suite", e, session, () => {}, 0);
+    expect(nested?.lock).toBeUndefined();
   });
 });
 

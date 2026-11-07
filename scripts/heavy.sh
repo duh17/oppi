@@ -7,7 +7,7 @@
 # Classes and slot counts (env override in parentheses):
 #   xcode-build  2   build / build-for-testing phases      (OPPI_HEAVY_XCODE_BUILD)
 #   server-full  1   full vitest suite                     (OPPI_HEAVY_SERVER_FULL)
-#   ui-suite     2   XCUITest / E2E runs                   (OPPI_HEAVY_UI_SUITE)
+#   ui-suite     4   simulator test phases (sim-pool takes it) (OPPI_HEAVY_UI_SUITE)
 #   sim-first-boot 1 sim-pool's first boot of a new or erased simulator (OPPI_HEAVY_SIM_FIRST_BOOT)
 #
 # Other env: OPPI_HEAVY_DIR (slot files, default ~/Library/Caches/oppi-heavy),
@@ -24,9 +24,11 @@
 # newcomer for the same class takes no slot and waits behind it. Stale markers are ignored, gate
 # jobs never defer to each other or to themselves, and a held class still runs nested use directly.
 #
-# sim-pool takes xcode-build and sim-first-boot slots itself (clients/apple/scripts/sim-pool-build.ts:
+# sim-pool takes xcode-build, sim-first-boot and ui-suite slots itself (clients/apple/scripts/sim-pool-build.ts:
 # flock(2) on these same slot files, the same env knobs, the same gate markers), so `sim-pool run`
-# needs no heavy.sh wrapper.
+# needs no heavy.sh wrapper. Its ui-suite slot covers the test phase only (ui-shards, unit-shards and
+# e2e.sh all run their tests through `sim-pool run`).
+# A wait for a ui-suite slot gives up after OPPI_SIM_POOL_WAIT seconds, like a wait for a simulator.
 #
 # The kernel holds each slot through lockf(1) exactly as long as the command runs; a crashed
 # holder frees its slot at once, so there is no stale-lock takeover logic. The command's exit
@@ -39,7 +41,7 @@ class="$1"; shift
 case "$class" in
   xcode-build) slots="${OPPI_HEAVY_XCODE_BUILD:-2}" ;;
   server-full) slots="${OPPI_HEAVY_SERVER_FULL:-1}" ;;
-  ui-suite) slots="${OPPI_HEAVY_UI_SUITE:-2}" ;;
+  ui-suite) slots="${OPPI_HEAVY_UI_SUITE:-4}" ;;
   sim-first-boot) slots="${OPPI_HEAVY_SIM_FIRST_BOOT:-1}" ;;
   *) echo "heavy.sh: unknown class $class" >&2; exit 2 ;;
 esac

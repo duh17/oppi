@@ -105,6 +105,11 @@ Test Suite 'All tests' started.
     expect(timing).not.toContain("Test Suite");
   });
 
+  test("pool defaults keep few simulators booted: 6 booted, idle after 15 minutes, 2 kept warm", () => {
+    const config = loadConfig({}, process.cwd(), scriptDir);
+    expect([config.maxBooted, config.idleMinutes, config.keepWarm]).toEqual([6, 15, 2]);
+  });
+
   test("index store injection respects overrides", () => {
     const config = loadConfig({ OPPI_SIM_POOL_COUNT: "1" }, process.cwd(), scriptDir);
     expect(applyPoolBuildSettings(config, ["xcodebuild", "test"])).toEqual([

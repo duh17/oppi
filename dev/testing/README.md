@@ -35,7 +35,7 @@
 
 ## Heavy-job slots
 
-`scripts/heavy.sh <class> -- <command...>` is a machine-wide counting semaphore (BSD `lockf`): `xcode-build` 2, `server-full` 1, `ui-suite` 2, `sim-first-boot` 1 (overrides `OPPI_HEAVY_XCODE_BUILD` and the like; `OPPI_HEAVY_DIR`, `OPPI_HEAVY_POLL`). Run a hand-started full server suite as `scripts/heavy.sh server-full -- npm test` from `server/`.
+`scripts/heavy.sh <class> -- <command...>` is a machine-wide counting semaphore (BSD `lockf`): `xcode-build` 2, `server-full` 1, `ui-suite` 4 (sim-pool's test phases), `sim-first-boot` 1 (overrides `OPPI_HEAVY_XCODE_BUILD` and the like; `OPPI_HEAVY_DIR`, `OPPI_HEAVY_POLL`). Run a hand-started full server suite as `scripts/heavy.sh server-full -- npm test` from `server/`.
 
 - Ordinary jobs get no queue or fairness. A waiting land-gate job (`LAND_QUEUE_BATCH` set) leaves a `<class>.<pid>` marker under `$OPPI_HEAVY_DIR/gate-waiting`, and no non-gate newcomer for that class takes a slot while a live marker exists; gate jobs never defer to each other.
 - A waiter exits 143 once `OPPI_HEAVY_PARENT_PID` dies or it is orphaned; nested use of a held class runs directly.

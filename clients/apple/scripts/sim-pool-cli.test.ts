@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acquireHeavySlot } from "./sim-pool-build";
 import { INTERRUPTED_NOTE, needsCleanBoot, readSlotState, releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
 import { SPAWN_WAIT_MS, SUBPROCESS_TEST_TIMEOUT_MS, waitUntil } from "./sim-pool-test-support";
 
@@ -561,6 +562,33 @@ describe("sim-pool CLI", () => {
     holder.kill("SIGKILL");
     expect(await exited).toBe(0);
     expect(fx.calls()).toHaveLength(1);
+  });
+
+  test("a test run waits for a machine-wide ui-suite token before it takes a simulator", async () => {
+    const fx = slotlessFixture("ui-suite-busy");
+    const env = { ...fx.env, OPPI_SIM_POOL_WAIT: "60" };
+    const idle = { canceled: false, waitWhileIdle: async () => {} };
+    // Four test phases already run on the machine: every default token is taken.
+    const held = [];
+    for (let i = 0; i < 4; i += 1) held.push((await acquireHeavySlot("ui-suite", env, idle, () => {}, 0))!);
+    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests"], {
+      cwd: fx.apple, env,
+    });
+    procs.push(child);
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => { stderr += chunk; });
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    await waitUntil(() => stderr.includes("ui-suite slots busy"), "the run to report busy ui-suite slots");
+    // The message comes from inside the token wait, which runs before any simulator work, so the
+    // build phase (it takes no token) has run and the test phase and its simulator have not.
+    expect(fx.calls()).toHaveLength(1);
+    expect(fx.simctl()).toBe("");
+    expect(existsSync(join(fx.root, "locks", "slot-0.lock"))).toBe(false);
+    held[1]!.lock!.release();
+    expect(await exited).toBe(0);
+    expect(fx.calls()).toHaveLength(2);
+    expect(stderr).toContain("machine-wide ui-suite slot");
+    for (const token of held) token.lock!.release();
   });
 
   test("mismatch device is replaced under the slot lock", () => {
@@ -1267,7 +1295,7 @@ sleep 30
     expect(result.status).not.toBe(0);
     // Prove the failure came from the hang-recovery path, not from an earlier step.
     expect(result.stderr).toContain("hang detected");
-    expect(result.stderr).toContain("Recovery: shutting down + erasing");
+    expect(result.stderr).toContain("WARNING: Recovery is ERASING simulator");
     const simctl = existsSync(join(fake, "simctl.log")) ? readFileSync(join(fake, "simctl.log"), "utf8") : "";
     expect(simctl).toContain("shutdown");
     expect(simctl).not.toContain("erase");
