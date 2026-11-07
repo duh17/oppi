@@ -722,23 +722,28 @@ describe("server durable MCP (host)", () => {
 });
 
 describe("DurableMcp tool offers", () => {
-  it("retries a failed tool-list commit at the next prompt instead of failing every prompt", async () => {
-    writeMcpJson(agentDir, {
-      docs: { command: join(agentDir, "missing-mcp-server"), exposure: "codemode" },
-    });
+  /** A conversation whose first `failures` tool-list commits throw. */
+  function flakyConversation(failures: number) {
     const agent = { tools: [] as string[], modelTools: [] as string[] };
-    let failuresLeft = 1;
-    let commits = 0;
+    let failuresLeft = failures;
+    const state = { agent, commits: 0 };
     const conversation = {
       id: "c1",
       commit: async (run: (tx: unknown) => Promise<unknown>) => {
-        commits++;
+        state.commits++;
         if (failuresLeft-- > 0) throw new Error("store busy");
         return run({ doc: async () => agent });
       },
       agent: async () => ({ tools: agent.tools.map((name) => ({ name })) }),
     };
-    const mcp = await DurableMcp.open({
+    return { conversation, state };
+  }
+
+  function openCodemodeMcp() {
+    writeMcpJson(agentDir, {
+      docs: { command: join(agentDir, "missing-mcp-server"), exposure: "codemode" },
+    });
+    return DurableMcp.open({
       sessionId: "s1",
       cwd: agentDir,
       agentDir,
@@ -750,14 +755,41 @@ describe("DurableMcp tool offers", () => {
       uninstall: () => {},
       namespaces: () => {},
     });
+  }
+
+  it("fails every prompt while the tool-list commit keeps failing", async () => {
+    const { conversation, state } = flakyConversation(Number.POSITIVE_INFINITY);
+    const mcp = await openCodemodeMcp();
     expect(mcp).toBeDefined();
     try {
       mcp!.attach(conversation as never);
-      await waitFor(() => commits > 0, "the attach commit");
+      await waitFor(() => state.commits > 0, "the attach commit");
+
+      // The first prompt's startup read fails on the same store.
+      await expect(mcp!.beforePrompt()).rejects.toThrow("store busy");
+      const afterFirst = state.commits;
+      await expect(mcp!.beforePrompt()).rejects.toThrow(
+        "Could not offer MCP tools to this session: store busy",
+      );
+      // The prompt retried the tool-list commit once, not in a loop.
+      expect(state.commits).toBe(afterFirst + 1);
+      expect(state.agent.tools).not.toContain("codemode");
+    } finally {
+      await mcp!.close();
+    }
+  });
+
+  it("retries a failed tool-list commit at the next prompt instead of failing every prompt", async () => {
+    const { conversation, state } = flakyConversation(1);
+    const mcp = await openCodemodeMcp();
+    expect(mcp).toBeDefined();
+    try {
+      mcp!.attach(conversation as never);
+      await waitFor(() => state.commits > 0, "the attach commit");
 
       // The failed commit left codemode off the tool list; this prompt retries it and lands it.
       await expect(mcp!.beforePrompt()).resolves.toBeUndefined();
-      expect(agent.tools).toContain("codemode");
+      expect(state.agent.tools).toContain("codemode");
       // The error cleared with the commit that landed.
       await expect(mcp!.beforePrompt()).resolves.toBeUndefined();
     } finally {
