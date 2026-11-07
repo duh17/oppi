@@ -121,6 +121,33 @@ struct ReaderTaskControlTests {
         #expect(try controlAttachments(rendered(source, offering: false)).map(\.line) == [2, 2, 4])
     }
 
+    @Test func aTaskItemsCodeAndTableRenderBetweenItsTasks() throws {
+        let source = "- [ ] run\n  #+begin_src sh\n  echo hi\n  #+end_src\n- [ ] check\n  | a | b |\n- [ ] done"
+        let segments = FlatSegment.build(from: parseCommonMark(DocumentRenderPipeline.orgToMarkdown(source)), themeID: .dark)
+        let kinds = segments.map { segment -> String in
+            switch segment {
+            case .text(let attributed): "text \(String(attributed.characters).filter { $0.isLetter })"
+            case .codeBlock(_, let code): "code \(code)"
+            case .table: "table"
+            default: "other"
+            }
+        }
+        #expect(kinds == ["text run", "code echo hi", "text check", "table", "text done"])
+        var lines: [Int] = []
+        for case let .text(attributed) in segments {
+            lines += controlAttachments(NSAttributedString(attributed)).map(\.line)
+        }
+        #expect(lines == [1, 5, 7])
+    }
+
+    @Test func aDoneItemDoesNotStrikeItsOpenSubItems() throws {
+        let text = try rendered("- [X] parent\n  - [ ] open child")
+        let child = (text.string as NSString).range(of: "open child")
+        #expect(text.attribute(.strikethroughStyle, at: child.location, effectiveRange: nil) == nil)
+        let parent = (text.string as NSString).range(of: "parent")
+        #expect(text.attribute(.strikethroughStyle, at: parent.location, effectiveRange: nil) != nil)
+    }
+
     // MARK: - Text view
 
     @MainActor

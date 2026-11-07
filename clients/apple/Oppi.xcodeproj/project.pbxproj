@@ -1157,6 +1157,7 @@
 		7229E5F30929F0936BFC8995 /* McpAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA379241A871A3765C21DBE9 /* McpAPIClientTests.swift */; };
 		72309FA71270957C6FC05BBD /* WorkspaceDetailViewController+Chrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FCA2AF51C1A8FE5480B00FD /* WorkspaceDetailViewController+Chrome.swift */; };
 		724BD11FED154EF73524CE44 /* UserTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E582445F6793942A2B4D7 /* UserTimelineRowContent.swift */; };
+		725668B8EA296881225E1199 /* MarkdownTaskListSplit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2E3B0BD381ACF6CD4BFC24 /* MarkdownTaskListSplit.swift */; };
 		7261B2A60876E5E4A07363EC /* MacInlineOutputFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159A60643B3F79AD0FA799C3 /* MacInlineOutputFormatter.swift */; };
 		72A1134D23FD38745F3AD76F /* ModelColorHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B2BC0C9C2FCEE1A15B6726B /* ModelColorHelpers.swift */; };
 		72A3D18EF5A5061D4BE3BC2D /* TreeSitterCPP in Frameworks */ = {isa = PBXBuildFile; productRef = 1A7CE2572EAC26E135A45560 /* TreeSitterCPP */; };
@@ -1942,6 +1943,7 @@
 		BD1F2A2210BF71A76651472E /* SettingsTextPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A29AFAB8E368D0E865B8EB /* SettingsTextPage.swift */; };
 		BD2D435698B87C5392C7460D /* ChatFileBrowserPanelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786983930627F07708352C26 /* ChatFileBrowserPanelTests.swift */; };
 		BD51D56DA983E49B8991CBE1 /* StreamingRenderPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE2100110E798F90E4B98AF /* StreamingRenderPolicy.swift */; };
+		BD60B00FB73370B81BC5916B /* MarkdownTaskListSplit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2E3B0BD381ACF6CD4BFC24 /* MarkdownTaskListSplit.swift */; };
 		BD6C6F5EE582CDE989C59AA4 /* MessageSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 798A4FA283A530A34D954D31 /* MessageSender.swift */; };
 		BD9E7DEFD600A0F40E29B2CC /* SettingsDeclaredRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62CADDD5BD03BBF8DB9DC7B7 /* SettingsDeclaredRows.swift */; };
 		BDE5F62E917076BE24226637 /* ThemeColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08F00F2DAAABB72A3795982D /* ThemeColorHex.swift */; };
@@ -4508,6 +4510,7 @@
 		CE0DB040FE4B219823572802 /* OrgToMarkdownConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgToMarkdownConverter.swift; sourceTree = "<group>"; };
 		CE146ABA4C127E29F196C697 /* VoiceLevelSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLevelSmoother.swift; sourceTree = "<group>"; };
 		CE2469FD6695321894352D87 /* IconPickerModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerModel.swift; sourceTree = "<group>"; };
+		CE2E3B0BD381ACF6CD4BFC24 /* MarkdownTaskListSplit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTaskListSplit.swift; sourceTree = "<group>"; };
 		CE4915EA491A69D211F8D463 /* CodeEditorKeyBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorKeyBar.swift; sourceTree = "<group>"; };
 		CE5460DA8E5696A189E4A488 /* RexDirectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexDirectStore.swift; sourceTree = "<group>"; };
 		CE6987CB77C4BE671312351D /* DailyCostChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyCostChart.swift; sourceTree = "<group>"; };
@@ -7855,6 +7858,7 @@
 				0C3E2292E082C2BDAC152D8A /* MarkdownBlockSerializer.swift */,
 				B9A015298DA3CF5F4B9A1489 /* MarkdownNode.swift */,
 				BA73F8952DA811631CE45052 /* MarkdownTableMarkupRewriter.swift */,
+				CE2E3B0BD381ACF6CD4BFC24 /* MarkdownTaskListSplit.swift */,
 				13CA6479159C69BBB3B76EA2 /* MarkdownWikiLink.swift */,
 				4DD6A213944460875EF7C3BF /* MediaExtractor.swift */,
 				C5FDAF51A5A8D7D8600313E5 /* NotebookCellPlan.swift */,
@@ -9421,6 +9425,7 @@
 				10F9C91247308E121ED85978 /* MarkdownBlockSerializer.swift in Sources */,
 				77C523971EDBF9D698890FB7 /* MarkdownNode.swift in Sources */,
 				02B1C1FE07B070120EDF08EA /* MarkdownTableMarkupRewriter.swift in Sources */,
+				BD60B00FB73370B81BC5916B /* MarkdownTaskListSplit.swift in Sources */,
 				6AE3100BAD0627139DF399B8 /* MarkdownWikiLink.swift in Sources */,
 				628974CED22D6748E7029880 /* MathCoreGraphicsRenderer.swift in Sources */,
 				BFAD9B94AA836C5C1F82D998 /* MathLayoutEngine.swift in Sources */,
@@ -10970,6 +10975,7 @@
 				CEA7E742B4D0AEC520FF32D8 /* MarkdownTableColumnLayout.swift in Sources */,
 				F60F0E23C5748811BB74F04A /* MarkdownTableMarkupRewriter.swift in Sources */,
 				CB03E6ACBEA300D38B3525D3 /* MarkdownTaskCheckbox.swift in Sources */,
+				725668B8EA296881225E1199 /* MarkdownTaskListSplit.swift in Sources */,
 				790007ADEEDB2032747DFCE9 /* MarkdownText.swift in Sources */,
 				212413C9EB1BB42D6ABE5F83 /* MarkdownWikiLink.swift in Sources */,
 				9E64D682A1FD5415B1F1E22D /* MathCoreGraphicsRenderer.swift in Sources */,

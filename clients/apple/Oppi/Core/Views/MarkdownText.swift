@@ -473,13 +473,14 @@ enum FlatSegment: Sendable {
         mergeAdjacentTextSegments: Bool
     ) -> BuildResult {
         let palette = themeID.palette
-        let blocks = MarkdownWikiLinkRewriter.rewrite(
+        let rewritten = MarkdownWikiLinkRewriter.rewrite(
             blocks: blocks,
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             sourceDirectory: sourceDirectory
         )
+        let (blocks, sourceLineRanges) = MarkdownTaskListSplit.split(rewritten, lineRanges: sourceLineRanges)
         var result: [Self] = []
         result.reserveCapacity(blocks.count)
         var resultLineRanges: [ClosedRange<Int>?] = []
@@ -2149,7 +2150,13 @@ enum FlatSegment: Sendable {
                         paragraph = AttributedString("\n")
                     }
                     var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
-                    if item.checked {
+                    // A done item strikes its own text, not the sub-items under
+                    // it, which draw their own state.
+                    let isSubList: Bool = switch block {
+                    case .taskList, .unorderedList, .orderedList: true
+                    default: false
+                    }
+                    if item.checked, !isSubList {
                         content.uiKit.foregroundColor = palette.ui.comment
                         content.uiKit.strikethroughStyle = .single
                     }
