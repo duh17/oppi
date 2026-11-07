@@ -340,7 +340,10 @@ final class DictationStreamClient: DictationTransport {
     }
 
     /// Hand a decoded frame on: renewal answers go to the renewer, the rest to the take.
-    private func deliver(_ message: ServerMessage) {
+    /// A read that returns after its socket was replaced or closed is dropped: only the
+    /// current socket's frames may promote the status or reach the renewer and the take.
+    private func deliver(_ message: ServerMessage, from socket: DictationWebSocketTransport) {
+        guard self.task?.identity == socket.identity else { return }
         if status == .connecting { status = .connected }
         if case .authRenewResult(let result) = message {
             authRenewer?.handle(result)
@@ -356,10 +359,10 @@ final class DictationStreamClient: DictationTransport {
                 let message = try await task.receive()
                 switch message {
                 case .string(let text):
-                    deliver(try decodeMessage(from: text))
+                    deliver(try decodeMessage(from: text), from: task)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        deliver(try decodeMessage(from: text))
+                        deliver(try decodeMessage(from: text), from: task)
                     }
                 @unknown default:
                     break
