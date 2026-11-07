@@ -1588,6 +1588,8 @@ struct ChatSessionManagerTests {
             await MainActor.run { manager.entryState == .streaming }
         })
 
+        // agent_start carries no status now; a busy state frame is what drives screen-awake.
+        streams.yield(index: 0, message: .state(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)))
         streams.yield(index: 0, message: .agentStart)
         streams.yield(index: 0, message: .thinkingDelta(delta: "thinking..."))
 
@@ -1628,8 +1630,11 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
 
+        // One meta entry per stream message: connected, state(busy), agentStart,
+        // thinkingDelta, then the reconnecting connected.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
+            nil,
             nil,
             nil,
             .init(seq: nil, currentSeq: 2, runtimeEpoch: "epoch-1"),
@@ -1669,6 +1674,8 @@ struct ChatSessionManagerTests {
             await MainActor.run { manager.entryState == .streaming }
         })
 
+        // agent_start carries no status now; a busy state frame is what drives screen-awake.
+        streams.yield(index: 0, message: .state(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)))
         streams.yield(index: 0, message: .agentStart)
         streams.yield(index: 0, message: .thinkingDelta(delta: "thinking..."))
 

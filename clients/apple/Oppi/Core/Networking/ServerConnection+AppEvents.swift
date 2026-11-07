@@ -23,21 +23,22 @@ extension ServerConnection {
             removeSessionFromAppEvent(event, sessionId: sessionId, workspaceId: workspaceId)
 
         case .sessionEnded(let sessionId, let workspaceId, _, _):
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .stopped)
+            // Kept until the server broadcasts a stopped summary when its runtime ends: 0.54.0
+            // servers never follow session_ended with a state/session_summary.
+            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)
             clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
-        case .stopRequested(let sessionId, let workspaceId, _, _, _):
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .stopping)
+        case .stopRequested:
+            // The server's session_summary carries the authoritative status.
+            break
 
-        case .stopConfirmed(let sessionId, let workspaceId, _, _, _):
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .ready, onlyFrom: .stopping)
+        case .stopConfirmed(let sessionId, _, _, _, _):
             clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
-        case .stopFailed(let sessionId, let workspaceId, _, _, _):
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .busy, onlyFrom: .stopping)
+        case .stopFailed:
+            break
 
-        case .sessionError(let sessionId, let workspaceId, _, _, _, let fatal):
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .error)
+        case .sessionError(let sessionId, _, _, _, _, let fatal):
             if fatal {
                 clearSessionScopedAppEventState(for: event, sessionId: sessionId)
             }
@@ -163,36 +164,29 @@ extension ServerConnection {
         syncLiveActivityState()
     }
 
+    /// `session_ended` is the one app event the client still turns into a status write:
+    /// the terminal `stopped` fact, kept until a server summary covers it (see the caller).
     private func updateSessionStatusFromAppEvent(
         sessionId: String,
-        workspaceId: String?,
-        status: SessionStatus,
-        onlyFrom: SessionStatus? = nil
+        workspaceId: String?
     ) {
         guard var current = sessionStore.session(id: sessionId) else { return }
-        if let onlyFrom, current.status != onlyFrom { return }
         let wasRunning = current.status.isRunning
         let completedAt = Date()
-        current.status = status
-        if status == .ready || status == .stopped || status == .error {
-            current.currentTurnStartedAt = nil
-        }
+        current.status = .stopped
+        current.currentTurnStartedAt = nil
         current.lastActivity = completedAt
         if current.workspaceId == nil, !current.isControlConversation {
             current.workspaceId = workspaceId
         }
         sessionStore.upsert(current)
-        if wasRunning, status.isTerminal {
+        if wasRunning {
             notePushDiscoveryMoment()
         }
         if let resolvedWorkspaceId = current.workspaceId ?? workspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }
-        if status.isRunning {
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-        } else {
-            screenAwakeController.clearSessionActivity(sessionId: sessionId)
-        }
+        screenAwakeController.clearSessionActivity(sessionId: sessionId)
         syncLiveActivityState()
     }
 

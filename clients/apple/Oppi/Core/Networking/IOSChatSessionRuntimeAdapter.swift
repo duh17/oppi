@@ -313,10 +313,7 @@ final class IOSChatSessionRuntimeAdapter:
         sessionId: String,
         storeResult: ChatSessionStoreUpdateResult
     ) {
-        let connectionResult = ServerConnection.StoreUpdateResult(
-            stateContext: nil,
-            handled: true
-        )
+        let connectionResult = ServerConnection.StoreUpdateResult(stateContext: nil)
         // State transition finalization is owned by the shared manager. The iOS
         // UI router only needs the previous workspace when refreshing commands.
         // Preserve it by handling state directly when present.

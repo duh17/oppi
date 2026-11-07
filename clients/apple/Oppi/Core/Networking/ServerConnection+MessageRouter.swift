@@ -308,23 +308,6 @@ extension ServerConnection {
         }
     }
 
-    // MARK: - Stop Lifecycle
-
-    func updateStopStatus(
-        _ sessionId: String,
-        status: SessionStatus,
-        onlyFrom: SessionStatus? = nil
-    ) {
-        guard var current = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
-        if let onlyFrom, current.status != onlyFrom { return }
-        current.status = status
-        if status == .ready || status == .stopped || status == .error {
-            current.currentTurnStartedAt = nil
-        }
-        current.lastActivity = Date()
-        sessionStore.upsert(current)
-    }
-
     // MARK: - Command Result Routing
 
     /// Handle command result: resolve waiters, sync UI state, and return

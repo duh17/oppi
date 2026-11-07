@@ -212,7 +212,7 @@ struct AppEventRoutingTests {
         cleanupCase.assertStore(connection)
     }
 
-    @Test func appEventNonFatalErrorKeepsSessionScopedUIAndUsageMetrics() {
+    @Test func appEventNonFatalErrorKeepsSessionScopedUIUsageMetricsAndStatus() {
         let connection = makeAppEventCleanupConnection(status: .busy)
         seedAppEventSessionScopedState(connection)
 
@@ -231,7 +231,9 @@ struct AppEventRoutingTests {
         // Kept: the seeded snapshot is a duplicate and a changed one is still debounced.
         #expect(!usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 3))
         #expect(!usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 4))
-        #expect(connection.sessionStore.session(id: "s2")?.status == .error)
+        // A non-fatal error carries no status; the server sets .error only for
+        // launch failures, and this turn's next summary restores the row anyway.
+        #expect(connection.sessionStore.session(id: "s2")?.status == .busy)
     }
 
     @Test func focusedStopConfirmedLeavesSurfacesAndQueue() {
@@ -407,13 +409,17 @@ enum AppEventSessionCleanupCase: CaseIterable {
     func assertStore(_ connection: ServerConnection) {
         switch self {
         case .stopConfirmed:
-            #expect(connection.sessionStore.session(id: "s2")?.status == .ready)
+            // stop_confirmed clears dialogs/ask state but carries no status; the
+            // server's next state/session_summary restores it.
+            #expect(connection.sessionStore.session(id: "s2")?.status == .stopping)
         case .sessionEnded:
             #expect(connection.sessionStore.session(id: "s2")?.status == .stopped)
         case .sessionDeleted:
             #expect(connection.sessionStore.session(id: "s2") == nil)
         case .fatalError:
-            #expect(connection.sessionStore.session(id: "s2")?.status == .error)
+            // A fatal error carries no status either; the server sets .error only for
+            // launch failures, and its next summary is what the row follows.
+            #expect(connection.sessionStore.session(id: "s2")?.status == .busy)
         }
     }
 }

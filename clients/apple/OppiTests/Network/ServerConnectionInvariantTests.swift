@@ -6,19 +6,16 @@ import Testing
 @MainActor
 struct ServerConnectionInvariantTests {
 
-    @Test func stopLifecycleFollowsStateMachineAcrossDeterministicSequences() async {
+    @Test func stopLifecycleEventsNeverMutateLocalStatus() async {
         for sequence in stopLifecycleSequences(length: 4) {
             let scenario = await ServerConnectionScenario(sessionId: "s-stop")
                 .givenStoredSession(status: .busy)
 
-            var expected: SessionStatus = .busy
-
             for event in sequence {
                 scenario.whenHandle(event.message, sessionId: "s-stop")
-                expected = reduceStopLifecycleModel(current: expected, event: event)
                 #expect(
-                    scenario.firstSessionStatus() == expected,
-                    "sequence=\(sequence.map(\.label).joined(separator: ","))"
+                    scenario.firstSessionStatus() == .busy,
+                    "stop_requested/stop_confirmed/stop_failed carry no status; sequence=\(sequence.map(\.label).joined(separator: ","))"
                 )
             }
         }
@@ -80,17 +77,6 @@ private func stopLifecycleSequences(length: Int) -> [[StopLifecycleEvent]] {
         results = next
     }
     return results
-}
-
-private func reduceStopLifecycleModel(current: SessionStatus, event: StopLifecycleEvent) -> SessionStatus {
-    switch event {
-    case .requested:
-        return .stopping
-    case .confirmed:
-        return current == .stopping ? .ready : current
-    case .failed:
-        return current == .stopping ? .busy : current
-    }
 }
 
 private func deterministicForeignSessionMessages() -> [ServerMessage] {

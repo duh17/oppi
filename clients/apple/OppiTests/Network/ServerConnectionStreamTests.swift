@@ -256,7 +256,7 @@ struct ServerConnectionStreamTests {
             sessionId: "background",
             seq: 1,
             currentSeq: nil,
-            message: .agentStart
+            message: .state(session: makeTestSession(id: "background", status: .busy))
         ))
 
         #expect(
@@ -277,7 +277,7 @@ struct ServerConnectionStreamTests {
             sessionId: "background",
             seq: 1,
             currentSeq: nil,
-            message: .agentStart
+            message: .state(session: makeTestSession(id: "background", status: .busy))
         ))
 
         #expect(conn.sessionStore.session(id: "background")?.status == .busy)

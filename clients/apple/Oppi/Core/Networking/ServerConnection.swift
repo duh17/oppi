@@ -959,26 +959,8 @@ final class ServerConnection {
             return
         }
 
-        let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+        applySharedStoreUpdate(for: message, sessionId: sessionId)
         handleInactiveSessionUI(message, sessionId: sessionId)
-
-        if result.handled {
-            return
-        }
-
-        // Events not handled by the shared helper
-        switch message {
-        case .error(let errorMessage, _, _):
-            if !errorMessage.hasPrefix("Retrying ("),
-               var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                current.status = .error
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            syncLiveActivityState()
-        default:
-            break
-        }
     }
 
     private func shouldDeferSharedStoreUpdateToLiveSessionConsumer(_ message: ServerMessage) -> Bool {

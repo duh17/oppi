@@ -41,19 +41,26 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
-    @Test func agentLifecycleTracksCurrentTurnStart() async {
+    @Test func agentLifecycleCarriesNoLocalStatusOrTurnStart() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
+        // agent_start/agent_end/agent_settled carry no status or turn timing:
+        // the row waits for the server's state/session_summary.
         pipe.handle(.agentStart, sessionId: "s1")
-        let turnStartedAt = conn.sessionStore.session(id: "s1")?.currentTurnStartedAt
-        #expect(turnStartedAt != nil)
+        #expect(conn.sessionStore.session(id: "s1")?.status == .ready)
+        #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
 
         pipe.handle(.agentEnd, sessionId: "s1")
-        #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt != nil)
-
         pipe.handle(.agentSettled, sessionId: "s1")
+        #expect(conn.sessionStore.session(id: "s1")?.status == .ready)
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
+
+        pipe.handle(
+            .state(session: makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: Date())),
+            sessionId: "s1"
+        )
+        #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt != nil)
     }
 
     @Test func sessionSummaryTransitionInterruptsOpenTools() async {
@@ -119,7 +126,12 @@ struct ServerConnectionRoutingTests {
         conn.sessionStore.switchServer(to: "srv1")
         conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy, messageCount: 2, firstMessage: "go"))
 
-        _ = conn.applySharedStoreUpdate(for: .agentSettled, sessionId: "background")
+        _ = conn.applySharedStoreUpdate(
+            for: .state(session: makeTestSession(
+                id: "background", status: .ready, lastActivity: Date(), messageCount: 2, firstMessage: "go"
+            )),
+            sessionId: "background"
+        )
 
         let settled = conn.sessionStore.session(id: "background")!
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "background")) == .done)
@@ -134,9 +146,8 @@ struct ServerConnectionRoutingTests {
         conn.sessionStore.switchServer(to: "srv1")
         conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready, messageCount: 2, firstMessage: "go"))
 
-        pipe.handle(.agentStart, sessionId: "focused")
-        pipe.handle(.agentEnd, sessionId: "focused")
-        pipe.handle(.agentSettled, sessionId: "focused")
+        pipe.handle(.state(session: makeTestSession(id: "focused", status: .busy, messageCount: 2, firstMessage: "go")), sessionId: "focused")
+        pipe.handle(.state(session: makeTestSession(id: "focused", status: .ready, messageCount: 2, firstMessage: "go")), sessionId: "focused")
 
         let settled = conn.sessionStore.session(id: "focused")!
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "focused")) == .idle)
@@ -159,7 +170,7 @@ struct ServerConnectionRoutingTests {
         previous.workspaceId = "w1"
         conn.sessionStore.upsert(previous)
 
-        _ = conn.applySharedStoreUpdate(for: .agentStart, sessionId: "s1")
+        _ = conn.applySharedStoreUpdate(for: .state(session: previous), sessionId: "s1")
 
         #expect(conn.screenAwakeController.isPreventingSleep)
 
@@ -186,7 +197,8 @@ struct ServerConnectionRoutingTests {
         )
 
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
-        pipe.handle(.agentStart, sessionId: "s1")
+        // agent_start carries no status/activity now; a busy state frame is what seeds it.
+        pipe.handle(.state(session: makeTestSession(id: "s1", workspaceId: "w1", status: .busy)), sessionId: "s1")
         conn.handleActiveSessionUI(
             .extensionUIRequest(ExtensionUIRequest(
                 id: "ask-1",
@@ -519,7 +531,7 @@ struct ServerConnectionRoutingTests {
         #expect(errors.isEmpty, "Failed remove_queued_message command_result should not leak to timeline")
     }
 
-    @Test func routeStopRequestedMarksStopping() async {
+    @Test func routeStopRequestedCarriesNoStatusButShowsTimelineFeedback() async {
         let scenario = await EventFlowServerConnectionScenario()
 
         scenario
@@ -529,11 +541,13 @@ struct ServerConnectionRoutingTests {
                 flushAfter: true
             )
 
-        #expect(scenario.firstSessionStatus() == .stopping)
+        // The row's status waits for the server's state/session_summary; only
+        // the timeline feedback is local.
+        #expect(scenario.firstSessionStatus() == .busy)
         #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 
-    @Test func routeStopFailedRestoresBusyAndEmitsError() async {
+    @Test func routeStopFailedCarriesNoStatusButEmitsError() async {
         let scenario = await EventFlowServerConnectionScenario()
 
         scenario
@@ -543,18 +557,19 @@ struct ServerConnectionRoutingTests {
                 flushAfter: true
             )
 
-        #expect(scenario.firstSessionStatus() == .busy)
+        #expect(scenario.firstSessionStatus() == .stopping)
         #expect(scenario.timelineItemCount(of: .error) == 1)
     }
 
-    @Test func routeStopConfirmedRestoresReady() async {
+    @Test func routeStopConfirmedCarriesNoStatus() async {
         let scenario = await EventFlowServerConnectionScenario()
 
         scenario
             .givenStoredSession(status: .stopping)
             .whenHandle(.stopConfirmed(source: .user, reason: nil), flushAfter: true)
 
-        #expect(scenario.firstSessionStatus() == .ready)
+        // ready comes from the server's next state/session_summary, not from this event.
+        #expect(scenario.firstSessionStatus() == .stopping)
     }
 
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() async {
@@ -657,22 +672,14 @@ struct ServerConnectionRoutingTests {
         #expect(text == "Hello")
     }
 
-    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() async {
+    @Test func routeAgentStartAndSettledCarryNoStatusWithoutAStateMessage() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .ready))
 
         pipe.handle(.agentStart, sessionId: "s1")
-
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
-    }
-
-    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() async {
-        let (conn, pipe) = await makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .busy))
+        #expect(conn.sessionStore.sessions.first?.status == .ready)
 
         pipe.handle(.agentEnd, sessionId: "s1")
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
-
         pipe.handle(.agentSettled, sessionId: "s1")
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }

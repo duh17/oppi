@@ -30,7 +30,7 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
-    @Test func routeStopRequestedMarksStopping() async {
+    @Test func routeStopRequestedCarriesNoStatusButShowsTimelineFeedback() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
@@ -40,7 +40,9 @@ struct ServerConnectionTests {
         )
         pipe.flushNow()
 
-        #expect(conn.sessionStore.sessions.first?.status == .stopping)
+        // The row's status waits for the server's state/session_summary; only
+        // the timeline feedback is local.
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
 
         let system = pipe.reducer.items.filter {
             if case .systemEvent = $0 { return true }
@@ -49,7 +51,7 @@ struct ServerConnectionTests {
         #expect(system.count == 1)
     }
 
-    @Test func routeStopFailedRestoresBusyAndEmitsError() async {
+    @Test func routeStopFailedCarriesNoStatusButEmitsError() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
@@ -59,7 +61,7 @@ struct ServerConnectionTests {
         )
         pipe.flushNow()
 
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
+        #expect(conn.sessionStore.sessions.first?.status == .stopping)
 
         let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
@@ -68,7 +70,7 @@ struct ServerConnectionTests {
         #expect(errors.count == 1)
     }
 
-    @Test func routeStopConfirmedRestoresReady() async {
+    @Test func routeStopConfirmedCarriesNoStatus() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
@@ -78,7 +80,8 @@ struct ServerConnectionTests {
         )
         pipe.flushNow()
 
-        #expect(conn.sessionStore.sessions.first?.status == .ready)
+        // ready comes from the server's next state/session_summary, not from this event.
+        #expect(conn.sessionStore.sessions.first?.status == .stopping)
     }
 
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() async {
@@ -180,22 +183,14 @@ struct ServerConnectionTests {
         #expect(text == "Hello")
     }
 
-    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() async {
+    @Test func routeAgentStartAndSettledCarryNoStatusWithoutAStateMessage() async {
         let (conn, pipe) = await makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .ready))
 
         pipe.handle(.agentStart, sessionId: "s1")
-
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
-    }
-
-    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() async {
-        let (conn, pipe) = await makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .busy))
+        #expect(conn.sessionStore.sessions.first?.status == .ready)
 
         pipe.handle(.agentEnd, sessionId: "s1")
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
-
         pipe.handle(.agentSettled, sessionId: "s1")
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }

@@ -93,7 +93,8 @@ struct PushDiscoveryTests {
         conn.sessionStore.switchServer(to: serverId)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
-        _ = conn.applySharedStoreUpdate(for: .agentSettled, sessionId: "s1")
+        // agent_settled carries no status; the server's ready state/summary is the moment.
+        _ = conn.applySharedStoreUpdate(for: .state(session: makeTestSession(id: "s1", status: .ready)), sessionId: "s1")
 
         #expect(PushDiscovery.stage(serverId: serverId) == .ready)
     }
@@ -114,7 +115,7 @@ struct PushDiscoveryTests {
         conn.sessionStore.switchServer(to: serverId)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
-        _ = conn.applySharedStoreUpdate(for: .agentStart, sessionId: "s1")
+        _ = conn.applySharedStoreUpdate(for: .state(session: makeTestSession(id: "s1", status: .busy)), sessionId: "s1")
 
         #expect(PushDiscovery.stage(serverId: serverId) == nil)
     }
@@ -151,22 +152,31 @@ struct PushDiscoveryTests {
     /// A session that stops running because it ended, was stopped, or hit a fatal error is
     /// as much a first moment as one that settled; a session that was not running is not.
     @Test func aBackgroundSessionEndingStoppingOrFailingMakesTheCardDue() async throws {
-        let events: [(String, AppEventMessage)] = [
-            ("ended", .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done")),
-            ("stop confirmed", .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil)),
-            ("error", .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true)),
+        let events: [(String, AppEventMessage, SessionStatus, SessionStatus)] = [
+            ("ended", .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done"), .busy, .stopped),
+            ("stop confirmed", .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil), .stopping, .ready),
+            ("error", .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true), .busy, .error),
         ]
-        for (name, event) in events {
+        for (name, event, seedStatus, terminalStatus) in events {
             let (conn, serverId) = try await makeConnection()
             defer { PushDiscovery.forget(serverId: serverId) }
             conn.sessionStore.switchServer(to: serverId)
-            // Stop confirmation only applies to a session that was stopping.
-            let status: SessionStatus = name == "stop confirmed" ? .stopping : .busy
-            conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: status))
+            conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: seedStatus))
 
             conn.handleAppEvent(event)
 
-            #expect(PushDiscovery.stage(serverId: serverId) == .ready, "\(name)")
+            if name == "ended" {
+                #expect(PushDiscovery.stage(serverId: serverId) == .ready, "\(name)")
+            } else {
+                // stop_confirmed and a non-launch error carry no status now; the server's
+                // next summary is what makes the card due.
+                #expect(PushDiscovery.stage(serverId: serverId) == nil, "\(name) before its summary")
+                let terminal = makeTestSession(id: "background", workspaceId: "w1", status: terminalStatus)
+                conn.handleAppEvent(.sessionSummary(
+                    sessionId: "background", workspaceId: "w1", emittedAt: 3, summary: SessionSummary(from: terminal)
+                ))
+                #expect(PushDiscovery.stage(serverId: serverId) == .ready, "\(name) after its summary")
+            }
         }
     }
 

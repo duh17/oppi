@@ -22,21 +22,15 @@ extension ServerConnection {
 
         /// Pre-update context for `.state(session:)` messages.
         var stateContext: SessionStateContext?
-        /// Whether this message type was handled by the shared helper.
-        var handled: Bool
 
-        init(
-            stateContext: SessionStateContext? = nil,
-            handled: Bool
-        ) {
+        init(stateContext: SessionStateContext? = nil) {
             self.stateContext = stateContext
-            self.handled = handled
         }
 
         var previousWorkspaceId: String? { stateContext?.previousWorkspaceId }
         var didTransitionOutOfRunning: Bool { stateContext?.didTransitionOutOfRunning ?? false }
 
-        static let notHandled = Self(handled: false)
+        static let notHandled = Self()
     }
 
     /// Apply store-level mutations shared by both active-session and cross-session paths.
@@ -59,71 +53,18 @@ extension ServerConnection {
 
         // MARK: Agent lifecycle
 
-        case .agentStart:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status != .stopping {
-                let now = Date()
-                current.status = .busy
-                current.currentTurnStartedAt = now
-                current.lastActivity = now
-                sessionStore.upsert(current)
-                if let workspaceId = current.workspaceId {
-                    syncWorkspaceSummary(workspaceId: workspaceId)
-                }
-            }
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
-
-        case .agentEnd:
-            // agent_end closes one low-level Pi run, but an automatic retry may
-            // follow. agent_settled is the authoritative idle transition.
-            return StoreUpdateResult(handled: true)
-
-        case .agentSettled:
-            let completedAt = Date()
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status.isRunning {
-                current.status = .ready
-                current.currentTurnStartedAt = nil
-                current.lastActivity = completedAt
-                sessionStore.upsert(current)
-                if let workspaceId = current.workspaceId {
-                    syncWorkspaceSummary(workspaceId: workspaceId)
-                }
-                notePushDiscoveryMoment()
-            }
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
+        case .agentStart, .agentEnd, .agentSettled:
+            // The server's busy/ready status and its side effects (screen awake,
+            // workspace summary, push discovery, Live Activity) arrive on the
+            // state/session_summary that follows; these events carry none.
+            return StoreUpdateResult()
 
         // MARK: Stop lifecycle
 
-        case .stopRequested:
-            updateStopStatus(sessionId, status: .stopping)
-            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
-
-        case .stopConfirmed:
-            updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
-            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
-
-        case .stopFailed:
-            updateStopStatus(sessionId, status: .busy, onlyFrom: .stopping)
-            if let workspaceId = sessionStore.session(id: sessionId)?.workspaceId {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
+        case .stopRequested, .stopConfirmed, .stopFailed:
+            // The server's state frame carries the authoritative stopping/ready/busy
+            // status and side effects; these events carry none.
+            return StoreUpdateResult()
 
         // MARK: Session state
 
@@ -147,7 +88,7 @@ extension ServerConnection {
             }
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
             syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
+            return StoreUpdateResult()
 
         case .sessionDeleted(let deletedId):
             let workspaceId = sessionStore.session(id: deletedId)?.workspaceId
@@ -161,7 +102,7 @@ extension ServerConnection {
             sessionUsageMetrics.forget(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityState()
-            return StoreUpdateResult(handled: true)
+            return StoreUpdateResult()
 
         default:
             return .notHandled
@@ -212,7 +153,7 @@ extension ServerConnection {
         }
 
         syncLiveActivityState()
-        return StoreUpdateResult(stateContext: stateContext, handled: true)
+        return StoreUpdateResult(stateContext: stateContext)
     }
 
     func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {

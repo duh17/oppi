@@ -45,64 +45,6 @@ struct SessionLifecycleWireReplayTests {
     /// and matches claims it.
     static let disagreements: [LifecycleDisagreement] = [
         .init(
-            name: "agentStartLeadsSummary",
-            closedBy: Self.statusFromServer,
-            reason: "The client marks the row busy on the agent_start event. The server sends the busy "
-                + "summary after the event, so its status at that frame is still ready. That includes "
-                + "the durable run released after an abort that landed before its agent_start.",
-            fields: [.status, .keepAlive, .awake],
-            expectedFires: 78
-        ) { path, frame, diff in
-            path != .app && frame == "agent_start" && diff[.status] == LifecycleDifference("busy", "ready")
-        },
-        .init(
-            name: "agentSettledLeadsSummary",
-            closedBy: Self.statusFromServer,
-            reason: "The client marks the row ready on agent_settled. The server's ready summary "
-                + "follows, so its status at that frame is still busy. That includes the durable run "
-                + "released after an abort that landed before its agent_start.",
-            fields: [.status, .keepAlive, .awake],
-            expectedFires: 48
-        ) { path, frame, diff in
-            path != .app && frame == "agent_settled" && diff[.status] == LifecycleDifference("ready", "busy")
-        },
-        .init(
-            name: "stopConfirmedReleasesStopping",
-            closedBy: Self.statusFromServer,
-            reason: "An abort's stop_confirmed arrives at agent_end, while the server row is still "
-                + "stopping until agent_settled. The client rewrites stopping to ready on stop_confirmed "
-                + "and releases the screen-awake reason. The next stopping summary puts the row back, "
-                + "and agent_settled releases it again before the server's ready summary. A durable "
-                + "abort that lands before agent_start really stops too: the server holds stopping "
-                + "through stop_confirmed until its ready summary.",
-            fields: [.status, .keepAlive, .awake],
-            expectedFires: 60
-        ) { _, frame, diff in
-            ["stop_confirmed", "agent_settled"].contains(frame) && diff[.status] == LifecycleDifference("ready", "stopping")
-        },
-        .init(
-            name: "stopConfirmedReleasesTerminate",
-            closedBy: Self.statusFromServer,
-            reason: "A terminate sends stop_confirmed while the server row is already stopped. The client "
-                + "shows ready for the frame, then stopped on session_ended.",
-            fields: [.status],
-            expectedFires: 9
-        ) { _, frame, diff in
-            frame == "stop_confirmed" && diff[.status] == LifecycleDifference("ready", "stopped")
-        },
-        .init(
-            name: "nonFatalErrorMarksSessionError",
-            closedBy: Self.statusFromServer,
-            reason: "Any non-fatal error or session_error frame marks the row .error, unless the "
-                + "message starts \"Retrying (\". The server sets error only for launch failures; the "
-                + "turn continues busy and its next summary restores the row. Only the background "
-                + "and app paths show it: the focused path ignores the error frame.",
-            fields: [.status, .keepAlive, .awake],
-            expectedFires: 10
-        ) { path, frame, diff in
-            path != .focused && ["error", "session_error"].contains(frame) && diff[.status] == LifecycleDifference("error", "busy")
-        },
-        .init(
             name: "sessionEndedKeepsProgress",
             closedBy: "unowned: needs a server summary when the session reaches stopped",
             reason: "After a terminate the server's programStatus is idle. The client keeps the last "
@@ -128,13 +70,37 @@ struct SessionLifecycleWireReplayTests {
                 && diff[.program] != nil
         },
         .init(
+            name: "statusLagsAtStopRequested",
+            closedBy: "none: the state frame that always follows it catches it up",
+            reason: "stop_requested carries no status (deleted by this change). The row keeps its "
+                + "prior value for that one frame, until the state/session_summary that follows "
+                + "(always the very next frame on the wire) catches it up.",
+            fields: [.status],
+            expectedFires: 24
+        ) { _, frame, diff in
+            frame == "stop_requested" && diff[.status] != nil
+        },
+        .init(
+            name: "statusLagsAtStopConfirmedOrCompactionStart",
+            closedBy: "none: the next state/session_summary always catches it up",
+            reason: "A terminate's stop_confirmed, and compaction_start, carry no status (deleted "
+                + "by this change). The row keeps its prior value for that one frame. keepAlive and "
+                + "awake only differ here too, at compaction_start, where the lag briefly "
+                + "undercounts a wrapping-up session, and at a terminate's stop_confirmed, where "
+                + "the row still looks busy enough to need the app alive and awake.",
+            fields: [.status, .awake, .keepAlive],
+            expectedFires: 21
+        ) { _, frame, diff in
+            ["stop_confirmed", "compaction_start"].contains(frame) && diff[.status] != nil
+        },
+        .init(
             name: "keepAliveIgnoresStopping",
             closedBy: Self.oneActivityRule,
             reason: "BackgroundKeepAlive.hasActiveAgent counts busy and starting rows. A stopping "
                 + "session has an agent still winding down, so the server-implied answer is true. "
                 + "That includes a durable abort that lands before agent_start.",
             fields: [.keepAlive],
-            expectedFires: 101
+            expectedFires: 103
         ) { _, _, diff in
             diff[.keepAlive] == LifecycleDifference("false", "true")
         },
@@ -144,22 +110,13 @@ struct SessionLifecycleWireReplayTests {
             reason: "The screen-awake reason is set by focused-stream agent events and by stop "
                 + "events, never by a session summary. The app-event channel alone carries "
                 + "summaries, so a running session holds no screen-awake reason. That includes the "
-                + "durable run released after an abort that landed before its agent_start.",
+                + "durable run released after an abort that landed before its agent_start. Stop "
+                + "events no longer set it locally either, so the window this covers is longer "
+                + "than before this change.",
             fields: [.awake],
-            expectedFires: 36
+            expectedFires: 68
         ) { path, _, diff in
             path == .app && diff[.awake] == LifecycleDifference("false", "true")
-        },
-        .init(
-            name: "appStopFailedLeavesAwakeOn",
-            closedBy: Self.oneActivityRule,
-            reason: "stop_failed sets the screen-awake reason, and only an agent_settled event clears "
-                + "it. On the app-event channel the ready summary does not, so the reason outlives "
-                + "the run.",
-            fields: [.awake],
-            expectedFires: 1
-        ) { path, _, diff in
-            path == .app && diff[.awake] == LifecycleDifference("true", "false")
         },
         .init(
             name: "stopFromIdleDoesNotSetAwake",
@@ -210,66 +167,69 @@ struct SessionLifecycleWireReplayTests {
         #expect(fires == expected)
     }
 
-    /// A non-fatal error frame marks the session errored on a background session and on
-    /// the app-event channel, while the server stays busy; the next summary puts it right.
-    @Test func nonFatalErrorFrameMarksTheSessionErrored() async throws {
+    /// A non-fatal error frame carries no status on any path now (deleted by this change): the
+    /// row stays busy, matching the server, through error/session_error.
+    @Test func nonFatalErrorFrameCarriesNoStatus() async throws {
         let background = try await observe("classic.run_error", .background)
         #expect(background[3].frameType == "error")
-        #expect(background[3].client.status == "error" && background[3].server.status == "busy")
+        #expect(background[3].client.status == "busy" && background[3].server.status == "busy")
 
         let app = try await observe("classic.run_error", .app)
         #expect(app[1].frameType == "session_error")
-        #expect(app[1].client.status == "error" && app[1].server.status == "busy")
-        #expect(app[2].client.status == "busy" && app[2].server.status == "busy")
+        #expect(app[1].client.status == "busy" && app[1].server.status == "busy")
 
-        // The focused session ignores the error frame.
+        // The focused session ignores the error frame too.
         let focused = try await observe("classic.run_error", .focused)
         let errorFrame = try #require(focused.first { $0.frameType == "error" })
         #expect(errorFrame.client.status == "busy" && errorFrame.server.status == "busy")
     }
 
-    /// An abort's stop_confirmed releases `stopping` to ready while the server stays stopping until
-    /// agent_settled, on all three paths.
-    @Test func stopConfirmedReleasesStoppingBeforeTheServerDoes() async throws {
+    /// stop_requested carries no status (deleted by this change): the row lags one frame, busy
+    /// until the state frame that follows. stop_confirmed and agent_settled carry none either,
+    /// so the row stays stopping through both, matching the server until its ready summary.
+    @Test func stopConfirmedNoLongerReleasesStoppingEarly() async throws {
         let focused = try await observe("classic.abort_mid_turn", .focused)
-        #expect(focused[3].frameType == "stop_requested" && focused[3].client.status == "stopping")
+        #expect(focused[3].frameType == "stop_requested")
+        #expect(focused[3].client.status == "busy" && focused[3].server.status == "stopping")
+        #expect(focused[4].frameType == "state")
+        #expect(focused[4].client.status == "stopping" && focused[4].server.status == "stopping")
         #expect(focused[7].frameType == "stop_confirmed")
-        #expect(focused[7].client.status == "ready" && focused[7].server.status == "stopping")
-        #expect(focused[8].frameType == "session_summary")
-        #expect(focused[8].client.status == "stopping" && focused[8].server.status == "stopping")
+        #expect(focused[7].client.status == "stopping" && focused[7].server.status == "stopping")
         #expect(focused[9].frameType == "agent_settled")
-        #expect(focused[9].client.status == "ready" && focused[9].server.status == "stopping")
+        #expect(focused[9].client.status == "stopping" && focused[9].server.status == "stopping")
+        #expect(focused[10].frameType == "session_summary")
+        #expect(focused[10].client.status == "ready" && focused[10].server.status == "ready")
 
         let app = try await observe("classic.abort_mid_turn", .app)
         #expect(app[3].frameType == "stop_confirmed")
-        #expect(app[3].client.status == "ready" && app[3].server.status == "stopping")
+        #expect(app[3].client.status == "stopping" && app[3].server.status == "stopping")
     }
 
-    /// A terminate sends stop_confirmed with the server already stopped; session_ended is what
-    /// finally puts the client on stopped.
-    @Test func terminateShowsReadyBetweenStoppingAndStopped() async throws {
+    /// A terminate: the row lags stopping→stopped by one frame at stop_requested and
+    /// stop_confirmed (neither carries status), and session_ended — the inference this plan
+    /// still keeps — is what catches it up to stopped.
+    @Test func terminateLagsStoppedUntilSessionEnded() async throws {
         let focused = try await observe("classic.terminate_busy", .focused)
-        #expect(focused[3].client.status == "stopping")
+        #expect(focused[3].frameType == "stop_requested")
+        #expect(focused[3].client.status == "busy" && focused[3].server.status == "stopping")
+        #expect(focused[4].frameType == "state")
+        #expect(focused[4].client.status == "stopping" && focused[4].server.status == "stopping")
         #expect(focused[7].frameType == "stop_confirmed")
-        #expect(focused[7].client.status == "ready" && focused[7].server.status == "stopped")
+        #expect(focused[7].client.status == "stopping" && focused[7].server.status == "stopped")
         #expect(focused[8].frameType == "session_ended")
         #expect(focused[8].client.status == "stopped" && focused[8].server.status == "stopped")
         // programStatus is not cleared by either frame.
         #expect(focused[8].client.program == "working" && focused[8].server.program == "idle")
     }
 
-    /// The activity readers: keep-alive ignores `stopping`, and a stop_failed on the app channel
-    /// leaves the screen-awake reason on after the server is ready.
-    @Test func activityReadersDisagreeWithTheServerWhileStopping() async throws {
+    /// Keep-alive still ignores `stopping` once the row catches up to it: the session_summary
+    /// right after stop_requested shows the server's winding-down verdict, but
+    /// BackgroundKeepAlive.hasActiveAgent only counts busy and starting.
+    @Test func keepAliveIgnoresStoppingOnceTheRowCatchesUp() async throws {
         let abort = try await observe("classic.abort_mid_turn", .app)
-        #expect(abort[1].frameType == "stop_requested")
-        #expect(abort[1].client.status == "stopping" && abort[1].server.status == "stopping")
-        #expect(abort[1].client.keepAlive == false && abort[1].server.keepAlive == true)
-
-        let rejected = try await observe("classic.abort_rejected", .app)
-        #expect(rejected[7].frameType == "session_summary")
-        #expect(rejected[7].client.status == "ready" && rejected[7].server.status == "ready")
-        #expect(rejected[7].client.awake == true && rejected[7].server.awake == false)
+        #expect(abort[2].frameType == "session_summary")
+        #expect(abort[2].client.status == "stopping" && abort[2].server.status == "stopping")
+        #expect(abort[2].client.keepAlive == false && abort[2].server.keepAlive == true)
     }
 
     private func observe(_ id: String, _ path: LifecycleReplayPath) async throws -> [LifecycleObservation] {

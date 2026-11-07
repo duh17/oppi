@@ -144,12 +144,8 @@ struct LANFirstConnectionPolicyTests {
         defer { cleanup(connection); withExtendedLifetime(dictation) {} }
         let ready = makeTestSession(id: "turn", workspaceId: "w1", status: .ready)
         switch work {
-        case .starting:
+        case .starting, .busy, .stopping:
             connection.applySharedStoreUpdate(for: .state(session: ready), sessionId: "turn")
-        case .busy:
-            connection.applySharedStoreUpdate(for: .agentSettled, sessionId: "turn")
-        case .stopping:
-            connection.applySharedStoreUpdate(for: .stopConfirmed(source: .user, reason: nil), sessionId: "turn")
         case .pendingTurnSend:
             connection.commands.unregisterTurnSend(requestId: "req", clientTurnId: "turn")
         case .dictation:
