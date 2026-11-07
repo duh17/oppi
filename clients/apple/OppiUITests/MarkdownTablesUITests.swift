@@ -14,6 +14,9 @@ final class MarkdownTablesUITests: XCTestCase {
         throw XCTSkip("UI harness tests are simulator-only")
 #endif
         continueAfterFailure = false
+        // The simulator keeps the orientation an earlier test left; the preview's
+        // scroll distances assume a portrait window.
+        XCUIDevice.shared.orientation = .portrait
         let application = OppiTestLaunch.makeApp()
         application.launchArguments.append("--screenshot-preview")
         application.launchEnvironment["SCREENSHOT_SCREEN"] = "markdown-tables"

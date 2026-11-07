@@ -545,10 +545,10 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     private func launchShell() {
-        // iPad splits in landscape; iPhone and the Duo outer display stay compact.
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            XCUIDevice.shared.orientation = .landscapeLeft
-        }
+        // iPad splits in landscape; iPhone and the Duo outer display stay compact in
+        // portrait. The simulator keeps the orientation an earlier test left, and an
+        // iPhone in landscape shows the drawer too short to reach the workspace rows.
+        XCUIDevice.shared.orientation = UIDevice.current.userInterfaceIdiom == .pad ? .landscapeLeft : .portrait
         // Appearance lists one Theme row in Manual and two in Match System; a
         // simulator that an earlier run left on Match System must not change
         // which rows the page walk finds.
