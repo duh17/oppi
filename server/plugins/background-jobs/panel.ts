@@ -8,7 +8,6 @@ import {
   group,
   icon,
   pill,
-  progress,
   row,
   stack,
   surface,
@@ -294,8 +293,9 @@ function pillLine(jobs: readonly PanelJob[]): ReturnType<typeof pill> {
   const failed = jobs.filter((job) => job.status === "failed").length;
   return pill({
     content: [
-      // No value: an indeterminate spinner while anything runs.
-      ...(running.length > 0 ? [progress({ id: "pill:spinner", tone: "accent" })] : []),
+      // The count is the pill's title and the rest its secondary line, like a pill the strip
+      // derives from a header. A client that would draw `headline` at a card title's size is sent
+      // `caption` by the server instead (`surfaceForAudience`).
       text({ id: "pill:count", text: label, style: "headline" }),
       ...(running.length > 0
         ? // `short` (5m): the pill is narrow, and the oldest job's order of magnitude is the point.

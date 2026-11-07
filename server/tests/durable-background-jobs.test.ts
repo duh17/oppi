@@ -602,7 +602,7 @@ describe("native Durable background jobs", () => {
     expectPaced(loop.published.slice(before - 1));
     const live = loop.published.at(-1)!;
     expect(panelNode(live.surface, "tail:bash-1")).toMatchObject({ type: "code" });
-    expect(JSON.stringify(live.surface.pill)).toContain("progress");
+    expect(JSON.stringify(live.surface.pill)).not.toContain("progress");
     expect(JSON.stringify(live.surface.pill)).toContain('"fetch 100%"');
 
     // The tail is shown while the job runs and nothing reaches the document store for it.

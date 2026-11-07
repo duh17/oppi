@@ -168,14 +168,13 @@ describe("background jobs panel view", () => {
     });
   });
 
-  it("shows a spinner and the newest running job's last line in the pill, trimmed", () => {
+  it("shows the newest running job's last line in the pill, trimmed, with no spinner", () => {
     const surface = render([
       job("old", { startedAt: AT - 60_000, output: "old output\n" }),
       job("new", { output: `\u001b[32m${"x".repeat(80)}\u001b[0m\n\n` }),
     ]);
     const pillNodes = JSON.stringify(surface.pill);
-    expect(pillNodes).toContain('"type":"progress"');
-    expect(pillNodes).not.toContain('"value"');
+    expect(pillNodes).not.toContain('"type":"progress"');
     const line = words(surface.pill!.content).find((word) => word.startsWith("x"))!;
     expect(Array.from(line)).toHaveLength(40);
     expect(pillNodes).not.toContain("old output");
@@ -183,6 +182,22 @@ describe("background jobs panel view", () => {
     const quiet = render([job("quiet")]).pill!.content;
     expect(words(quiet)).toEqual(["1 job running"]);
     expect(find(quiet, "pill:elapsed")).toMatchObject({ type: "elapsed", format: "short" });
+  });
+
+  it("titles the pill with its count and keeps the age and last line secondary", () => {
+    const pill = render([
+      job("a", { output: "building\n" }),
+      job("b", { status: "failed", exitCode: 1 }),
+    ]).pill!.content;
+    const styles = (node: ExtensionUISurfaceNode): Array<[string | undefined, unknown]> => [
+      ...(node.type === "text" || node.type === "elapsed" ? [[node.id, node.style] as const] : []),
+      ...("children" in node ? node.children.flatMap(styles) : []),
+    ];
+    expect(styles(pill)).toEqual([
+      ["pill:count", "headline"],
+      ["pill:elapsed", "caption"],
+      ["pill:line", "caption"],
+    ]);
   });
 
   it("says in the pill how many jobs failed, so it shows without opening the panel", () => {

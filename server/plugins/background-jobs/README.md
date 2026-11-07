@@ -34,11 +34,11 @@ generic input presentation metadata shared by live and history projections.
 
 The job pill in a durable session is a surface (`panel.ts`), not the classic
 widget. It shows while a backgrounded job runs or its result waits for delivery,
-and clears once every result is delivered. The pill counts the jobs ("1 job
-running", "2 jobs · 1 running"); it never repeats a command. While a job runs,
-the pill also shows a spinner, how long the oldest running job has run, and the
-last line the newest running job printed, cut to 40 characters. When a listed
-job failed or was interrupted, a red badge counts it ("2 failed").
+and clears once every result is delivered. The pill's title counts the jobs
+("1 job running", "2 jobs · 1 running"); it never repeats a command. While a job
+runs, the pill also shows, in secondary text, how long the oldest running job
+has run and the last line the newest running job printed, cut to 40 characters.
+When a listed job failed or was interrupted, a red badge counts it ("2 failed").
 
 In the drawer, each job is one row: a status glyph, a short title (the program
 and its first plain arguments, without a leading `cd … &&`, options, pipes, or
