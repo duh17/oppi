@@ -1865,7 +1865,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         // searches in its own field.
         if layout == .list, !isHostHome {
             installSearch()
-            search.searchController.hidesNavigationBarDuringPresentation = UIDevice.current.userInterfaceIdiom != .pad
+            search.keepsNavigationBarInWideWindow()
             search.setText(state.searchText)
             search.setScopes(scopeTitles, selected: effectiveSearchScope.rawValue)
         } else {

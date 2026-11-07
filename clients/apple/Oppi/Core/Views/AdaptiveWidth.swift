@@ -33,6 +33,6 @@ enum AdaptiveWidth {
     /// compact through `isWide` but sits in a wide window.
     @MainActor
     static func windowIsWide(_ view: UIView) -> Bool {
-        isWide(view.window?.windowScene?.traitCollection ?? view.traitCollection)
+        isWide(view.window?.windowScene?.traitCollection ?? view.window?.traitCollection ?? view.traitCollection)
     }
 }

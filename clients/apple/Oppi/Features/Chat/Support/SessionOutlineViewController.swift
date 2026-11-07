@@ -149,9 +149,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         navigationItem.leftBarButtonItem = close
 
         search.install(on: self, alwaysVisible: false)
-        // iPad keeps the title and Close while searching: its search bar has
-        // no Cancel to end the search.
-        search.searchController.hidesNavigationBarDuringPresentation = UIDevice.current.userInterfaceIdiom != .pad
+        search.keepsNavigationBarInWideWindow()
         search.onTextChange = { [weak self] text in
             self?.searchTextChanged(text)
         }

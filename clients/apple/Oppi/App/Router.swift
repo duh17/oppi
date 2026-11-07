@@ -429,6 +429,7 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
     /// segmented control itself, when it first shows, so it is tagged then.
     var scopeAccessibilityIdentifier: String?
     private var hidesWhenScrolling = true
+    private var keepsBarInWideWindow = false
     /// The search became active or ended, by the user or by `setPresented`.
     var onPresentationChange: (Bool) -> Void = { _ in }
 
@@ -460,6 +461,22 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
     func hostDidAppear(_ host: UIViewController) {
         guard host.navigationItem.searchController === searchController else { return }
         host.navigationItem.hidesSearchBarWhenScrolling = hidesWhenScrolling
+        applyNavigationBarPolicy()
+    }
+
+    /// A panel keeps its title and Close while searching in a wide window,
+    /// because the bar has room and no Cancel to end the search. The window's
+    /// width decides, not the screen's: a panel in a trailing column reads
+    /// compact but sits in a wide window (`AdaptiveWidth.windowIsWide`).
+    /// A narrow window hides the bar, as UIKit does by default.
+    func keepsNavigationBarInWideWindow() {
+        keepsBarInWideWindow = true
+        applyNavigationBarPolicy()
+    }
+
+    private func applyNavigationBarPolicy() {
+        guard keepsBarInWideWindow else { return }
+        searchController.hidesNavigationBarDuringPresentation = !AdaptiveWidth.windowIsWide(searchController.searchBar)
     }
 
     /// Takes the bar off `host` again (the screen stopped asking for search).
@@ -523,6 +540,10 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
 
     func searchBar(_ searchBar: UISearchBar, selectedScopeButtonIndexDidChange selectedScope: Int) {
         onScopeChange(selectedScope)
+    }
+
+    func willPresentSearchController(_ searchController: UISearchController) {
+        applyNavigationBarPolicy()
     }
 
     func didPresentSearchController(_ searchController: UISearchController) {

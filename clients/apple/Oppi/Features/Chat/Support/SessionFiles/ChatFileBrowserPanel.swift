@@ -120,7 +120,7 @@ final class ChatFilePanelViewController: UIViewController {
             searchScope = FileBrowserSearchScope(rawValue: index) ?? .everywhere
             setNeedsUpdateProperties()
         }
-        search.searchController.hidesNavigationBarDuringPresentation = UIDevice.current.userInterfaceIdiom != .pad
+        search.keepsNavigationBarInWideWindow()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
