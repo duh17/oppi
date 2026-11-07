@@ -70,6 +70,9 @@ extension ChatViewController {
         trailingColumn.view.frame = .zero
         view.addSubview(trailingColumn.view)
         trailingColumn.didMove(toParent: self)
+        // Dragging or flinging the divider past the close threshold closes
+        // the open panel the same way its own Close or Done control does.
+        trailingColumn.onDismissRequested = { [weak self] in self?.showSidePanel(nil) }
 
         modals.anchor = self
         barItems.chat = self

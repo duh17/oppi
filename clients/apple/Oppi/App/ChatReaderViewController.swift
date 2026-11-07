@@ -1,7 +1,11 @@
 import UIKit
 
 /// The shell's `.chatReader` route: a full-screen reader pushed from a chat's
-/// timeline, an extension drawer, or another reader.
+/// timeline, an extension drawer, or another reader, at narrow width. At
+/// regular width this same screen mounts as a trailing column's panel root
+/// instead (`Hosting.panel`), so the reader and document viewers, and the
+/// jobs/subagents drawers' full-screen button, go through the one container
+/// every other top-bar destination uses, beside the chat rather than over it.
 ///
 /// The payload lives in `ChatReaderPayloadStore`, never in the route; this
 /// screen keeps the first one it resolves, so a later eviction cannot blank a
@@ -17,6 +21,22 @@ import UIKit
 /// covered, with Close, while any lock exists.
 @MainActor
 final class ChatReaderViewController: UIViewController, NavigationBarHiding {
+    /// How this reader was mounted, which decides how it leaves and how a
+    /// reader opened from inside it joins the screen.
+    enum Hosting {
+        /// Pushed on the shell's own stack (the default, and every width
+        /// below regular): leaving pops it off that stack, and a nested open
+        /// joins `AppNavigation`'s own route list, like this reader's own
+        /// push.
+        case pushedRoute
+        /// Hosted as a trailing column's panel root (regular width): there is
+        /// nothing to pop, so leaving asks the owner to close the panel
+        /// instead, and a nested open pushes locally within the panel's own
+        /// navigation stack, the way the Files panel's own document pushes
+        /// already do.
+        case panel(onClose: @MainActor () -> Void)
+    }
+
     let target: ChatReaderNavTarget
 
     private enum Shown: Equatable {
@@ -28,6 +48,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
 
     private let store: ChatReaderPayloadStore
     private let navigation: AppNavigation
+    private let hosting: Hosting
     /// What serves a live document on this reader's server. The app root answers
     /// by default; a caller that already holds a connection (and a test) can hand
     /// one in.
@@ -44,11 +65,13 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         target: ChatReaderNavTarget,
         store: ChatReaderPayloadStore,
         navigation: AppNavigation,
-        editBackend: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)? = nil
+        editBackend: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)? = nil,
+        hosting: Hosting = .pushedRoute
     ) {
         self.target = target
         self.store = store
         self.navigation = navigation
+        self.hosting = hosting
         editBackendOverride = editBackend
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
@@ -57,6 +80,18 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     convenience init(target: ChatReaderNavTarget, root: AppRootEnvironment) {
         self.init(target: target, store: root.chatReaderPayloadStore, navigation: root.navigation)
         traitOverrides.appRootEnvironment = root
+    }
+
+    /// A trailing column's panel root: a timeline-opened reader at regular
+    /// width. `onClose` closes the panel the same way its own Close control
+    /// does.
+    convenience init(
+        target: ChatReaderNavTarget,
+        store: ChatReaderPayloadStore,
+        navigation: AppNavigation,
+        onClose: @escaping @MainActor () -> Void
+    ) {
+        self.init(target: target, store: store, navigation: navigation, hosting: .panel(onClose: onClose))
     }
 
     @available(*, unavailable)
@@ -166,7 +201,10 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     }
 
     private func leave() {
-        Router.finish(self)
+        switch hosting {
+        case .pushedRoute: Router.finish(self)
+        case .panel(let onClose): onClose()
+        }
     }
 
     // MARK: Pages
@@ -174,12 +212,24 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     private func mountPage(for payload: ChatReaderPayload) {
         let openNested: (ChatReaderPayload) -> Void = { [weak self] nested in
             guard let self else { return }
-            navigation.openChatReader(
-                store.store(
-                    nested.inheritingDestination(from: payload),
-                    retaining: navigation.containsChatReader
+            let stamped = nested.inheritingDestination(from: payload)
+            switch hosting {
+            case .pushedRoute:
+                // Joins `AppNavigation`'s own route list, exactly as this
+                // reader's own push did, so the nested reader survives a
+                // backgrounding or a stack/split swap the same way.
+                navigation.openChatReader(store.store(stamped, retaining: navigation.containsChatReader))
+            case .panel:
+                // Pushes within the panel's own navigation stack, as the
+                // Files panel's document pushes already do: no app-route
+                // bookkeeping, since the column's own open/closed state is
+                // already the source of truth for whether this is on screen.
+                let target = store.store(stamped, retaining: { _ in true })
+                let nestedReader = ChatReaderViewController(
+                    target: target, store: store, navigation: navigation, editBackend: editBackendOverride
                 )
-            )
+                Router.push(nestedReader, from: self)
+            }
         }
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.leave() }
 

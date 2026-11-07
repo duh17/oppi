@@ -760,6 +760,8 @@ extension ChatViewController {
             model.showOutline = false
             model.showGit = false
             model.showContextInspector = false
+            closeSidePanelReader()
+            closeShareRedactionSheet()
         }
     }
 
@@ -795,6 +797,34 @@ extension ChatViewController {
         model.showOutline = panel == .outline
         model.showGit = panel == .git
         model.showContextInspector = panel == .context
+        if case .reader(let target) = panel {
+            model.sidePanelReaderTarget = target
+        } else {
+            closeSidePanelReader()
+        }
+        if panel == .share {
+            model.showShareRedactionSheet = true
+        } else {
+            closeShareRedactionSheet()
+        }
+    }
+
+    /// Cancels any running preflight and drops the flag, the same outcome the
+    /// redaction screen's own Cancel reaches, so a drag-to-close or another
+    /// panel opening never leaves a stale preflight running behind it.
+    func closeShareRedactionSheet() {
+        guard model.showShareRedactionSheet else { return }
+        cancelSharePreflight()
+        model.showShareRedactionSheet = false
+    }
+
+    /// Drops the side-panel reader's target and its stored payload. Closing
+    /// through the model, not the column directly, so the next update pass
+    /// never reopens it from a flag the column itself cannot see.
+    func closeSidePanelReader() {
+        guard let target = model.sidePanelReaderTarget else { return }
+        model.sidePanelReaderTarget = nil
+        root?.chatReaderPayloadStore.remove(target)
     }
 
     func presentRenameAlert() {
@@ -829,9 +859,15 @@ extension ChatViewController {
     }
 }
 
-/// The chat's side panels. A new panel replaces the column's screen.
+/// The chat's side panels. A new panel replaces the column's screen. The
+/// reader carries its own target, so two different reader opens are two
+/// different panels even while both are "the reader". Share is reached from
+/// the title's menu, not a top-bar button, but it is the same container: a
+/// regular-width window used to show it full screen over everything else,
+/// which the column's own full-window drag now covers instead.
 enum ChatSidePanel: Hashable {
-    case files, outline, git, context
+    case files, outline, git, context, share
+    case reader(ChatReaderNavTarget)
 }
 
 extension ChatViewController {

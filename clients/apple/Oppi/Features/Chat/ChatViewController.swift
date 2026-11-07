@@ -51,6 +51,10 @@ final class ChatScreenModel {
     @ObservationIgnored var sessionTouchedListTask: Task<Void, Never>?
     var isFilePanelVisible = false
     var showContextInspector = false
+    /// A timeline-opened reader (a document, image, or an extension drawer's
+    /// full screen) shown in the trailing column at regular width, instead of
+    /// the narrow width's pushed `.chatReader` route.
+    var sidePanelReaderTarget: ChatReaderNavTarget?
     var showModelPicker = false
     var showComposer = false
     var showShareRedactionSheet = false

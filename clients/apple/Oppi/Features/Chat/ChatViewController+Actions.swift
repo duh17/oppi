@@ -86,7 +86,11 @@ extension ChatViewController {
         }
 
         shareReview.reset()
-        model.showShareRedactionSheet = true
+        if usesTrailingSidePanel {
+            showSidePanel(.share)
+        } else {
+            model.showShareRedactionSheet = true
+        }
     }
 
     func sendShareSlashCommand(

@@ -30,78 +30,61 @@ final class ChatModalSlots {
     }
 }
 
-/// A chat panel modal; the id is whether it is full screen, so a new style
-/// is a new modal.
-private struct ChatAuxiliaryModalID: Hashable {
-    let fullScreen: Bool
-}
-
 extension ChatViewController: TrailingColumnKeyboardScreen {}
 
 extension ChatViewController {
-    /// A regular-width window (iPad, the iPhone Duo inner display, a large
-    /// iPhone in landscape) shows Share full screen. The side panels are in
-    /// the column there, so they present only as sheets.
-    private var prefersFullScreenAuxiliaryPresentation: Bool {
-        traitCollection.horizontalSizeClass == .regular
+    /// A chat panel modal, in a router navigation controller for its bar and
+    /// its pushes, at the one width where it presents as a modal at all:
+    /// Files and Context push with `Router.push`; the outline is a UIKit
+    /// screen that owns its bar and search; Git presents its reviews over
+    /// itself. Every slot uses this same id, so a size-class change that
+    /// opens or replaces one never races the id of another.
+    private var chatAuxiliaryModalID: AnyHashable { AnyHashable("chat.auxiliary") }
+
+    /// Outline, Files, Git, Context, and Share all sit in this one sheet style
+    /// at compact width; regular width mounts every one of them in the
+    /// trailing column instead (`updateSidePanels`), Share included, so none
+    /// of them needs a second, full-screen presentation of its own.
+    private var auxiliaryPresentation: ModalPresentation {
+        .sheet.detents([.medium(), .large()], grabber: true, selected: .large).inNavigation()
     }
 
-    /// A chat panel as a router modal in a router navigation controller, for
-    /// its bar and its pushes: a sheet with medium and large detents in
-    /// compact width, full screen in regular width. The style is part of the
-    /// id, so a size-class change (rotation, a fold, iPad multitasking)
-    /// replaces an open sheet with the full-screen modal and back. Full screen
-    /// is `.overFullScreen`: the chat stays in the window and keeps rendering,
-    /// so the panel's chat values stay live.
-    private func auxiliaryPresentation(fullScreen: Bool) -> ModalPresentation {
-        (fullScreen
-            ? ModalPresentation(style: .overFullScreen)
-            : .sheet.detents([.medium(), .large()], grabber: true, selected: .large)
-        ).inNavigation()
-    }
-
-    /// Every chat modal is a router modal. Outline, Files, Git, and Context sit
-    /// in a router navigation controller, as a modal here or in the trailing
-    /// column (`updateSidePanels`). Files and Context push with `Router.push`;
-    /// the outline is a UIKit screen that owns its bar and search; Git presents
-    /// its reviews over itself.
+    /// Every chat modal is a router modal.
     func updateModals() {
         guard let root else { return }
         let sidePanel = usesTrailingSidePanel
-        let fullScreen = prefersFullScreenAuxiliaryPresentation
-        let auxiliaryID = AnyHashable(ChatAuxiliaryModalID(fullScreen: fullScreen))
-        let auxiliary = auxiliaryPresentation(fullScreen: fullScreen)
+        let auxiliary = auxiliaryPresentation
 
         modals.outline.update(
-            id: !sidePanel && model.showOutline ? auxiliaryID : nil,
+            id: !sidePanel && model.showOutline ? chatAuxiliaryModalID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showOutline = false },
             screen: outlineScreen
         )
         modals.files.update(
-            id: !sidePanel && model.isFilePanelVisible ? auxiliaryID : nil,
+            id: !sidePanel && model.isFilePanelVisible ? chatAuxiliaryModalID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.isFilePanelVisible = false },
             screen: filePanelScreen
         )
         modals.git.update(
-            id: !sidePanel && model.showGit ? auxiliaryID : nil,
+            id: !sidePanel && model.showGit ? chatAuxiliaryModalID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showGit = false },
             screen: gitPanelScreen
         )
         modals.context.update(
-            id: !sidePanel && model.showContextInspector ? auxiliaryID : nil,
+            id: !sidePanel && model.showContextInspector ? chatAuxiliaryModalID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showContextInspector = false },
             screen: contextScreen
         )
         modals.share.update(
-            id: model.showShareRedactionSheet ? auxiliaryID : nil,
+            id: !sidePanel && model.showShareRedactionSheet ? chatAuxiliaryModalID : nil,
             presentation: auxiliary,
             root: root,
             onDismiss: { [weak self] in self?.cancelSharePreflight() },
@@ -165,6 +148,10 @@ extension ChatViewController {
         guard let root else { return }
         let panel: ChatSidePanel? = {
             guard usesTrailingSidePanel else { return nil }
+            // Share wins: it is a deliberate action from the title menu, not
+            // a toggle, and used to draw over every other panel full screen.
+            if model.showShareRedactionSheet { return .share }
+            if let target = model.sidePanelReaderTarget { return .reader(target) }
             if model.isFilePanelVisible { return .files }
             if model.showOutline { return .outline }
             if model.showGit { return .git }
@@ -173,10 +160,12 @@ extension ChatViewController {
         }()
         trailingColumn.show(
             panel.map { panel in
-                TrailingColumnController.Panel(
+                let width = panelWidth(panel)
+                return TrailingColumnController.Panel(
                     id: AnyHashable(panel),
-                    minWidth: 320,
-                    idealWidth: 400,
+                    minWidth: width.minimum,
+                    idealWidth: width.ideal,
+                    maxWidth: width.maximum,
                     makeScreen: sidePanelController(panel)
                 )
             },
@@ -184,13 +173,40 @@ extension ChatViewController {
         )
     }
 
-    /// Outline, Git, Context, and Files are UIKit screens.
+    /// Outline, Git, Context, and Files are UIKit screens; the reader is a
+    /// `ChatReaderViewController` hosted as the panel's root instead of
+    /// pushed onto the shell's stack.
     private func sidePanelController(_ panel: ChatSidePanel) -> () -> UIViewController {
         switch panel {
         case .files: filePanelController()
         case .outline: outlineController()
         case .git: gitPanelController()
         case .context: contextController()
+        case .share: shareRedactionController()
+        case .reader(let target): readerPanelController(target)
+        }
+    }
+
+    /// A document, image, or the share redaction review reads comfortably
+    /// wider than Files, Git, Outline, and Context, which are mostly lists.
+    private func panelWidth(_ panel: ChatSidePanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
+        switch panel {
+        case .files, .outline, .git, .context: (320, 400, 640)
+        case .reader, .share: (360, 520, 820)
+        }
+    }
+
+    private func readerPanelController(_ target: ChatReaderNavTarget) -> () -> UIViewController {
+        { [weak self] in
+            guard let self, let root else {
+                preconditionFailure("The reader panel presents only while its chat is alive")
+            }
+            return ChatReaderViewController(
+                target: target,
+                store: root.chatReaderPayloadStore,
+                navigation: self.appNavigation,
+                onClose: { [weak self] in self?.closeSidePanelReader() }
+            )
         }
     }
 

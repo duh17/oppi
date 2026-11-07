@@ -149,9 +149,16 @@ extension ChatViewController {
         if case .document(let content, _) = readerPayload.kind {
             readerPayload.editSubject = liveFileSubject(for: content)
         }
-        appNavigation.openChatReader(
-            store.store(readerPayload, retaining: appNavigation.containsChatReader)
-        )
+        // Regular width shows every top-bar destination in the trailing
+        // column beside this chat, the reader included; narrow width keeps
+        // the pushed `.chatReader` route.
+        if usesTrailingSidePanel {
+            showSidePanel(.reader(store.store(readerPayload, retaining: { _ in true })))
+        } else {
+            appNavigation.openChatReader(
+                store.store(readerPayload, retaining: appNavigation.containsChatReader)
+            )
+        }
     }
 
     /// The live file a reader's bytes name, when this chat can resolve one. The

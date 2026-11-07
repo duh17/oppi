@@ -251,10 +251,15 @@ extension ChatViewController {
         })
     }
 
-    /// Share with redaction review. The sheet reads `shareReview` itself, so
-    /// the preview updates while it is up.
+    /// Share with redaction review, as a sheet in compact width or the
+    /// trailing column in regular width (`sidePanelController`). The sheet
+    /// reads `shareReview` itself, so the preview updates while it is up.
     func shareRedactionScreen() -> RouterScreen {
-        .controller({ [weak self] in
+        .controller(shareRedactionController())
+    }
+
+    func shareRedactionController() -> () -> UIViewController {
+        { [weak self] in
             guard let self else { preconditionFailure("Share presents only while its chat is alive") }
             return ShareSessionRedactionViewController(
                 review: self.shareReview,
@@ -266,7 +271,7 @@ extension ChatViewController {
                     self?.model.showShareRedactionSheet = false
                 }
             )
-        })
+        }
     }
 
     /// The session title's widest size, from the chat's own width (the
