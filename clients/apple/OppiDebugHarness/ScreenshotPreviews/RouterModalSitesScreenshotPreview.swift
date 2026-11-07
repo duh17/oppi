@@ -9,10 +9,10 @@ import UIKit
 /// full-screen player over active playback), `inbox-threads` (the session list
 /// over a launch tree that spans two workspaces; tap `thread.nav.thread-root`
 /// to open it), and `quick-session` (its pickers, model sheet, and expanded
-/// composer). The presenters and their modals share one app root over the
-/// fixture server, in the dark theme. Quick Session starts on plain Pi: an
-/// Agent an earlier run remembered would load its default from the stub server,
-/// which fails.
+/// composer; `SCREENSHOT_QUICK_SESSION_WIDTH=<pt>` narrows its window). The
+/// presenters and their modals share one app root over the fixture server, in
+/// the dark theme. Quick Session starts on plain Pi: an Agent an earlier run
+/// remembered would load its default from the stub server, which fails.
 final class RouterModalSitesPreviewController: PreviewRootController {
     init() {
         let environment = ProcessInfo.processInfo.environment
@@ -69,8 +69,45 @@ final class RouterModalSitesPreviewController: PreviewRootController {
                 )
             }
         default:
-            return QuickSessionViewController(root: root, onDismiss: {})
+            let quickSession = QuickSessionViewController(root: root, onDismiss: {})
+            // `SCREENSHOT_QUICK_SESSION_WIDTH=<pt>` runs it in a window of that
+            // width, as a Split View or Stage Manager window does (still regular
+            // width from about 640 pt).
+            guard let width = ProcessInfo.processInfo.environment["SCREENSHOT_QUICK_SESSION_WIDTH"]
+                .flatMap(Double.init).map({ CGFloat($0) }) else { return quickSession }
+            return NarrowWindowHostController(content: quickSession, width: width)
         }
+    }
+}
+
+/// Holds a full-height child at a fixed width, centered, over a dim backdrop.
+@MainActor
+private final class NarrowWindowHostController: UIViewController {
+    private let content: UIViewController
+    private let width: CGFloat
+
+    init(content: UIViewController, width: CGFloat) {
+        self.content = content
+        self.width = width
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor(white: 0.03, alpha: 1)
+        addChild(content)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content.view)
+        NSLayoutConstraint.activate([
+            content.view.widthAnchor.constraint(equalToConstant: width),
+            content.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        content.didMove(toParent: self)
     }
 }
 
