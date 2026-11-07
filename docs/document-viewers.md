@@ -88,11 +88,20 @@ Options apply to one content family and are stored on this device only: markdown
 
 - **Wrap Text** applies to code, source text, and terminal output. Off keeps horizontal scrolling so indentation, columns, and diff structure stay intact. Plain source text defaults to wrapped; code and terminal output default to unwrapped. Diffs always stay unwrapped so line numbers and highlights align.
 - **Spacing** (Compact, Standard, Relaxed) changes the gap between Markdown blocks and line spacing. Standard adds no extra line spacing; Relaxed adds some. It never changes the source or an export.
-- **Reading width.** On a wide window, such as an iPad in landscape, rendered Markdown and Org files read in a centered column about 75 characters wide, which grows with Text Size. Tables and code blocks widen past it, up to the full window, before they scroll sideways. A narrower window uses its full width.
+- **Reading width.** On a wide window, such as an iPad in landscape, rendered Markdown and Org files read in a centered column about 75 characters wide, which grows with Text Size. Tables and code blocks widen past it, up to the full window, before they wrap or scroll sideways ([Tables](#tables)). A narrower window uses its full width.
 
 ### Source and rendered modes
 
 The toolbar toggles Markdown (Reader / Source), HTML (Preview / Source), HTML diffs (Diff / Render), LaTeX, Org, and Mermaid (Rendered / Source), and GeoJSON and TopoJSON (Rendered / Source). Viewing Options apply to the mode on screen.
+
+## Tables
+
+A Markdown table in chat or in the reader keeps short values, such as dates, times, and counts, on one line. A table wider than the screen wraps its longer columns to fit when every column stays readable and no word breaks in the middle. Otherwise it scrolls sideways, and a fade and an **N more columns** button at its edge count the columns that are out of view.
+
+- **Long tables.** In chat, a table longer than 20 rows shows its first 20 and a **Show all N rows** bar. The reader and exports show every row.
+- **Table viewer.** **N more columns** and **Show all N rows** open the whole table full screen. Its header row stays at the top while the rows scroll. Tap a cell to read its full text and copy it. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**. The viewer shows up to 500 rows, 32 columns, and 256 characters per cell, as for CSV and TSV files, and when a table is cut, copy takes only the part shown.
+- **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
+- **Formatting.** Bold, italic, strikethrough, `code`, and links show in cells.
 
 ## Tasks in Markdown and Org
 
