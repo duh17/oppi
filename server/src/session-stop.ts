@@ -2,11 +2,7 @@ import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
-import {
-  applyLifecycle,
-  lifecyclePhase,
-  type RuntimeLiveMarkers,
-} from "./session-lifecycle-state.js";
+import { applyLifecycle, lifecyclePhase } from "./session-lifecycle-state.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
 export type StopRequestSource = "user" | "timeout" | "server";
@@ -45,8 +41,6 @@ export interface StopSessionState extends PendingStopSessionState {
 export interface SessionStopCoordinatorDeps {
   getActiveSession: (key: string) => StopSessionState | undefined;
   persistSessionNow: (key: string, session: Session) => void;
-  /** Where a terminate is recorded, so a crash during it does not resume the session. */
-  markers: RuntimeLiveMarkers;
   broadcast: (key: string, message: ServerMessage) => void;
   handleSessionEnd: (
     key: string,
@@ -158,7 +152,7 @@ export class SessionStopCoordinator {
       return;
     }
 
-    if (applyLifecycle(active.session, "stop_failed", this.deps.markers)) {
+    if (applyLifecycle(active.session, "stop_failed")) {
       active.session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, active.session);
       this.deps.broadcast(key, { type: "state", session: active.session });
@@ -170,7 +164,7 @@ export class SessionStopCoordinator {
   private applyStopRequest(session: Session, mode: PendingStop["mode"]): boolean {
     return mode === "abort"
       ? applyLifecycle(session, "abort_requested")
-      : applyLifecycle(session, "terminate_requested", this.deps.markers);
+      : applyLifecycle(session, "terminate_requested");
   }
 
   /**

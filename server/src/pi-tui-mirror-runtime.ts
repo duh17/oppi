@@ -1782,7 +1782,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     session.workspaceId = workspace.id;
     session.runtime = "pi-tui";
     // The terminal's Pi is this session's runtime from its hello on.
-    applyLifecycle(session, "start_begun", this.storage);
+    applyLifecycle(session, "start_begun");
     applyLifecycle(session, "start_registered");
     if (state.isIdle === false) applyLifecycle(session, "run_started");
     const nextName = meaningfulSessionName(state.sessionName, session.id);

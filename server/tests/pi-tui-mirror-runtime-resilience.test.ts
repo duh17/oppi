@@ -165,7 +165,6 @@ function makeHarness(root: string) {
     },
     getConfig: () => ({ dataDir: join(root, ".oppi-test-data") }),
     getDataDir: () => join(root, ".oppi-test-data"),
-    markRuntimeLive: () => {},
   } as unknown as Storage;
 
   const mirror = new PiTuiMirrorRuntime(storage, { mobileRenderers: new MobileRendererRegistry() });

@@ -85,7 +85,7 @@ export class SessionStartCoordinator {
     return this.deps.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
       assertOpen();
       this.deps.runtimeManager.reserveSessionStart(identity);
-      applyLifecycle(session, "start_begun", this.deps.storage);
+      applyLifecycle(session, "start_begun");
       session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, session);
 

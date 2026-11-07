@@ -7,7 +7,7 @@ Part of [Oppi server architecture](../architecture-server.md).
 `SessionRuntimes` (`runtime-router.ts`) dispatches runtime-owned calls by persisted `Session.runtime`: `"oppi"` → `SessionManager` and the in-process backends, `"pi-tui"` → `PiTuiMirrorRuntime`. Route and stream code use it for any command that applies to either owner.
 
 - A stopped, disconnected mirror session with a canonical session file may be promoted to `"oppi"` on resume or stream open; a connected or stale one stays terminal-owned. A bridge takes over an `"oppi"` session only after explicit terminal confirmation, and the managed runtime stops first.
-- After a crash, startup resumes only the sessions `session_runtime_live` names: a dormant `ready` row stays as it is, and a session that was aborting a turn comes back idle.
+- After a crash, startup resumes the sessions stored as running, except one stored `stopping`: abort and terminate both persist that, so it stays stopped. A create-only `ready` row stays as it is.
 
 ## Managed SDK runtime
 

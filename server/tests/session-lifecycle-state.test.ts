@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   applyLifecycle,
@@ -71,13 +71,11 @@ describe("session lifecycle transitions", () => {
 });
 
 describe("applyLifecycle", () => {
-  const markers = () => ({ markRuntimeLive: vi.fn() });
-
   it("keeps abort and terminate apart while both show stopping", () => {
     const aborted = makeSession("busy");
     applyLifecycle(aborted, "abort_requested");
     const terminated = makeSession("busy");
-    applyLifecycle(terminated, "terminate_requested", markers());
+    applyLifecycle(terminated, "terminate_requested");
 
     expect([aborted.status, terminated.status]).toEqual(["stopping", "stopping"]);
     applyLifecycle(aborted, "run_settled");
@@ -88,18 +86,18 @@ describe("applyLifecycle", () => {
   it("returns a failed stop to what the session was doing", () => {
     const busy = makeSession("busy");
     applyLifecycle(busy, "abort_requested");
-    expect(applyLifecycle(busy, "stop_failed", markers())).toBe(true);
+    expect(applyLifecycle(busy, "stop_failed")).toBe(true);
     expect(busy.status).toBe("busy");
 
     const idle = makeSession("ready");
-    applyLifecycle(idle, "terminate_requested", markers());
-    applyLifecycle(idle, "stop_failed", markers());
+    applyLifecycle(idle, "terminate_requested");
+    applyLifecycle(idle, "stop_failed");
     expect(idle.status).toBe("ready");
 
     // A launch failure still stands after a stop of its runtime failed.
     const failed = makeSession("error");
-    applyLifecycle(failed, "terminate_requested", markers());
-    applyLifecycle(failed, "stop_failed", markers());
+    applyLifecycle(failed, "terminate_requested");
+    applyLifecycle(failed, "stop_failed");
     expect(failed.status).toBe("error");
   });
 
@@ -121,24 +119,6 @@ describe("applyLifecycle", () => {
     expect(applyLifecycle(stopped, "run_started")).toBe(false);
     expect(applyLifecycle(stopped, "run_settled")).toBe(false);
     expect(stopped.status).toBe("stopped");
-  });
-
-  it("records a live runtime at its start, a terminate, and a terminate that failed", () => {
-    const store = markers();
-    const session = makeSession("ready");
-    applyLifecycle(session, "start_begun", store);
-    applyLifecycle(session, "start_registered");
-    applyLifecycle(session, "terminate_requested", store);
-    applyLifecycle(session, "stop_failed", store);
-    const aborted = makeSession("busy");
-    applyLifecycle(aborted, "abort_requested");
-    applyLifecycle(aborted, "stop_failed", store);
-
-    expect(store.markRuntimeLive.mock.calls).toEqual([
-      ["s1", "live"],
-      ["s1", "terminating"],
-      ["s1", "live"],
-    ]);
   });
 
   it("lets a status written elsewhere stand for the phase", () => {

@@ -4,15 +4,10 @@
  * a closed enum, so abort and terminate both show `stopping`. The phase is kept per Session object.
  * A row with no runtime, or a status the e2e UI harness set, is read from its status. An event
  * the phase does not allow is logged and ignored, because engines, timers and clients race.
- *
- * `session_runtime_live` names the runtimes a crash restart resumes: `start_begun` records one
- * `live`, `terminate_requested` records it `terminating` (a failed terminate records it `live`
- * again), and saving the row stopped deletes it.
  */
 
 import type { AgentBackend } from "./agent-backend.js";
 import { createLogger } from "./logger.js";
-import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
@@ -46,11 +41,6 @@ export type LifecycleEvent =
   | "runtime_ended"
   /** Launch or start configuration failed: the row shows `error`. */
   | "launch_failed";
-
-/** Events that write the live-runtime record. */
-type MarkerEvent = "start_begun" | "terminate_requested" | "stop_failed";
-
-export type RuntimeLiveMarkers = Pick<Storage, "markRuntimeLive">;
 
 const WIRE_STATUS: Record<LifecyclePhase["name"], Session["status"]> = {
   starting: "starting",
@@ -121,20 +111,7 @@ export function lifecyclePhase(session: Session): LifecyclePhase {
 }
 
 /** Move `session` through `event`. True when its status changed: persist and broadcast it. */
-export function applyLifecycle(
-  session: Session,
-  event: MarkerEvent,
-  markers: RuntimeLiveMarkers,
-): boolean;
-export function applyLifecycle(
-  session: Session,
-  event: Exclude<LifecycleEvent, MarkerEvent>,
-): boolean;
-export function applyLifecycle(
-  session: Session,
-  event: LifecycleEvent,
-  markers?: RuntimeLiveMarkers,
-): boolean {
+export function applyLifecycle(session: Session, event: LifecycleEvent): boolean {
   const from = lifecyclePhase(session);
   const to = nextLifecyclePhase(from, event);
   if (!to) {
@@ -144,11 +121,6 @@ export function applyLifecycle(
       event,
     });
     return false;
-  }
-  if (event === "start_begun" || (event === "stop_failed" && from.name === "terminating")) {
-    markers?.markRuntimeLive(session.id, "live");
-  } else if (event === "terminate_requested") {
-    markers?.markRuntimeLive(session.id, "terminating");
   }
   phases.set(session, to);
   const status = WIRE_STATUS[to.name];

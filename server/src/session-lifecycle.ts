@@ -105,8 +105,9 @@ export class SessionLifecycleCoordinator {
     applyLifecycle(active.session, "runtime_ended");
     active.session.currentTurnStartedAt = undefined;
     try {
-      // The live-runtime record outlives a failed final write, so the next start still finds
-      // the session; a terminate under way keeps it from being resumed.
+      // A terminate request persists `stopping` before backend cleanup. If this
+      // final write fails, that durable marker remains retryable while runtime
+      // ownership is still detached below.
       this.deps.persistSessionNow(key, active.session);
     } catch (error) {
       recordFailure("final_persistence", error);

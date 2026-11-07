@@ -34,7 +34,7 @@ graph TD
 
 ## Session lifecycle
 
-`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` architecture check rejects an assignment anywhere else (new rows set it in an object literal). Coordinators and engines apply lifecycle events with `applyLifecycle`; an event the phase does not allow is logged and ignored. The six wire values are a frozen projection of the phase, because Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn. `session_runtime_live` records which runtimes are live, and crash recovery resumes only those.
+`server/src/session-lifecycle-state.ts` is the only writer of `Session.status`; the `session-status-writer` architecture check rejects an assignment anywhere else (new rows set it in an object literal). Coordinators and engines apply lifecycle events with `applyLifecycle`; an event the phase does not allow is logged and ignored. The six wire values are a frozen projection of the phase, because Build 57 and older decode a closed enum, so abort and terminate both show `stopping`. Read paths never transition. `turnRunning` is the one test for a running turn.
 
 ## Program status
 
