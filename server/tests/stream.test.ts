@@ -20,6 +20,8 @@ import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import { buildExtensionUIRequestMessage } from "../src/extension-ui-contract.js";
 import { SessionManager } from "../src/sessions.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { SdkBackend } from "../src/sdk-backend.js";
+import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
   return {
@@ -1025,6 +1027,65 @@ describe("BoundSessionStreamMux", () => {
       [session.id, 10],
       [session.id, 600],
     ]);
+  });
+
+  it("ends a stream whose start lost to a stop with the stopped row and a terminal close", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-stream-stop-wins-"));
+    const rendererLoad = vi
+      .spyOn(MobileRendererRegistry.prototype, "loadAllRenderers")
+      .mockResolvedValue({ loaded: [], errors: [] });
+    const storage = new Storage(dir);
+    const workspace = storage.createWorkspace({ name: "project", hostMount: dir });
+    const session = storage.createSession("stop-wins", "anthropic/claude-sonnet-4-0");
+    session.workspaceId = workspace.id;
+    session.status = "stopped";
+    storage.saveSession(session);
+    const manager = new SessionManager(storage);
+    const { sdkBackend } = makeSdkBackendStub();
+    let finishCreate!: (backend: SdkBackend) => void;
+    const create = vi.spyOn(SdkBackend, "create").mockReturnValue(
+      new Promise<SdkBackend>((resolve) => {
+        finishCreate = resolve;
+      }),
+    );
+    // The stream drives the real manager: its start, startup relay, runtime, and catch-up.
+    const { ctx } = createMockContext([session]);
+    Object.assign(ctx.sessions, {
+      startSession: (id: string) => manager.startSession(id, workspace),
+      subscribeStartupUI: (id: string, send: (message: ServerMessage) => void) =>
+        manager.subscribeStartupUI(id, send),
+      getActiveSession: (id: string) => manager.getActiveSession(id),
+      getCurrentSeq: (id: string) => manager.getCurrentSeq(id),
+      getCatchUp: (id: string, sinceSeq: number) => manager.getCatchUp(id, sinceSeq),
+      subscribe: (id: string, cb: (msg: ServerMessage) => void) => manager.subscribe(id, cb),
+    });
+    const ws = new FakeWebSocket();
+    try {
+      const opening = new BoundSessionStreamMux(ctx).handleWebSocket(
+        workspace.id,
+        session.id,
+        ws as unknown as WebSocket,
+      );
+      await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+      const stop = manager.stopSession(session.id);
+      finishCreate(sdkBackend);
+      await Promise.all([opening, stop]);
+
+      // Not 1011: a client retries that, and the retry would start the session again.
+      expect(ws.closeCode).toBe(1008);
+      expect(ws.sentOfType("connected")).toHaveLength(0);
+      expect(ws.sentOfType("state", session.id)).toEqual([
+        expect.objectContaining({ session: expect.objectContaining({ status: "stopped" }) }),
+      ]);
+      expect(create).toHaveBeenCalledOnce();
+      expect(manager.isActive(session.id)).toBe(false);
+      expect(storage.getSession(session.id)?.status).toBe("stopped");
+    } finally {
+      ws.close();
+      await manager.close();
+      rendererLoad.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("tags replayed extension UI notifications with the bound session id", async () => {

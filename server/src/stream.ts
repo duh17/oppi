@@ -753,6 +753,20 @@ export class BoundSessionStreamMux {
       });
       if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
       const hydratedSession = openResult.session;
+      // A stop that won this open's start leaves no runtime, and a retry would only start the
+      // session again. Show the stopped row, then close with 1008, which every client since
+      // Build 57 treats as terminal (`WebSocketRecoveryPolicy.isTerminalReceiveFailure`).
+      if (
+        openResult.owner === "oppi" &&
+        hydratedSession.status === "stopped" &&
+        !this.ctx.sessionRuntimes.isSessionConnected(sessionId)
+      ) {
+        log.info("ws.bound_session_stream_stopped_before_live", { connId, sessionId });
+        sendForSession({ type: "state", session: hydratedSession });
+        cleanupBoundConnection(1008);
+        ws.close(1008, "Session stopped");
+        return;
+      }
 
       let bootstrapping = true;
       // Frames that arrive while the bootstrap runs, with the audience they were built for:

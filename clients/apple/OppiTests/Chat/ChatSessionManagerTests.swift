@@ -682,6 +682,71 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    /// A stop that won the start this stream opened: the server sends the stopped row and closes
+    /// 1008. The socket must not reopen (a reopen starts the session again) and the chat must not
+    /// schedule its own reconnect.
+    @Test func stoppedRowThenPolicyCloseLeavesChatStoppedWithoutReconnect() async throws {
+        let sessionId = "stop-won-start"
+        let sockets = ScriptedFocusedWebSocketFactory()
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(),
+            webSocketFactory: { request in sockets.makeTransport(for: request) }
+        )
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let frames = client.connect()
+
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager._streamEventsForTesting = { _ in
+            AsyncStream { continuation in
+                let relay = Task { @MainActor in
+                    for await frame in frames {
+                        continuation.yield(SessionStreamEvent(
+                            sessionId: frame.sessionId ?? sessionId,
+                            message: frame.message,
+                            meta: frame.meta
+                        ))
+                    }
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in relay.cancel() }
+            }
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
+        let sessionStore = connection.sessionStore
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .starting))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { sockets.sockets.count == 1 })
+        let socket = try #require(sockets.sockets.first)
+        socket.yield(.string("""
+        {"type":"state","sessionId":"\(sessionId)","session":{"id":"\(sessionId)",\
+        "workspaceId":"w1","status":"stopped","createdAt":1800000000000,\
+        "lastActivity":1800000000000,"messageCount":0,\
+        "tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0}}
+        """))
+        socket.fail(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTCONN)),
+            responseStatusCode: 101,
+            closeCode: .policyViolation
+        )
+        await connectTask.value
+
+        #expect(sessionStore.session(id: sessionId)?.status == .stopped)
+        #expect(client.status == .disconnected)
+        // Past the first reconnect backoff (500 ms, +25% jitter): nothing reopened.
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(sockets.sockets.count == 1)
+        #expect(manager.connectionGeneration == 0)
+        #expect(manager.entryState == .disconnected(reason: .streamEnded))
+
+        manager.cleanup()
+    }
+
     @Test func cancelledStreamExitDoesNotScheduleReconnect() async {
         let manager = ChatSessionManager(sessionId: "cancelled-exit")
         let streams = ScriptedStreamFactory()

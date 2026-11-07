@@ -40,7 +40,7 @@ private actor RecordingDeviceAuthTransport: DeviceAuthTransport {
 }
 
 @MainActor
-private final class ScriptedFocusedWebSocketFactory {
+final class ScriptedFocusedWebSocketFactory {
     private(set) var requests: [URLRequest] = []
     private(set) var sockets: [ScriptedFocusedWebSocket] = []
 
@@ -53,7 +53,7 @@ private final class ScriptedFocusedWebSocketFactory {
 }
 
 @MainActor
-private final class ScriptedFocusedWebSocket {
+final class ScriptedFocusedWebSocket {
     typealias Message = URLSessionWebSocketTask.Message
 
     private var queuedResults: [Result<Message, Error>] = []
