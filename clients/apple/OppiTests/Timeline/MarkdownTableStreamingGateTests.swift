@@ -119,6 +119,43 @@ struct MarkdownTableStreamingGateTests {
         #expect(AssistantMarkdownSegmentSource.droppingUnfinishedTableRow([table, paragraph], content: "x") == [table, paragraph])
     }
 
+    /// The flush that ends a table's last rows can also start the paragraph after
+    /// it. The table stops being the tail there and is frozen until the message
+    /// settles, so it must take those rows in that same flush.
+    @Test func rowsThatEndInTheFlushThatStartsTheNextBlockStillShow() throws {
+        let markdown = AssistantMarkdownContentView()
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 370, height: 1_600))
+        markdown.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(markdown)
+        NSLayoutConstraint.activate([
+            markdown.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            markdown.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            markdown.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        let headers: [[MarkdownInline]] = [[.text("Item")], [.text("State")]]
+        func rows(_ count: Int) -> [[[MarkdownInline]]] {
+            (1 ... count).map { [[.text("item-\($0)")], [.text("open")]] }
+        }
+        func stream(_ content: String) {
+            markdown.apply(configuration: .make(content: content, isStreaming: true, themeID: .dark))
+        }
+
+        let upToRow23 = markdownSource(headers: headers, rows: rows(23)) + "\n"
+        stream(upToRow23)
+        let table = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: markdown))
+        #expect(table.tableText(.tsv).split(separator: "\n").count == 24)
+
+        // Rows 24 and 25 end, and the paragraph after the table starts, in one flush.
+        stream(markdownSource(headers: headers, rows: rows(25)) + "\n\nThat is")
+        container.layoutIfNeeded()
+        #expect(timelineFirstView(ofType: NativeTableBlockView.self, in: markdown) === table)
+        #expect(table.tableText(.tsv).split(separator: "\n").count == 26, "header plus 25 rows")
+        let showAll = try #require(timelineAllViews(in: table).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "markdown.table.showAll"
+        })
+        #expect(showAll.accessibilityLabel == "Show all 25 rows")
+    }
+
     private func markdownSource(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]]) -> String {
         func line(_ cells: [[MarkdownInline]]) -> String {
             "| " + cells.map { plainText(from: $0) }.joined(separator: " | ") + " |"

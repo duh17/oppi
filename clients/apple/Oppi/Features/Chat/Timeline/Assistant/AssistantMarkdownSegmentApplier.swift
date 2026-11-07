@@ -868,6 +868,18 @@ final class AssistantMarkdownSegmentApplier {
             return
         }
 
+        // A table kept in the prefix stops being the streaming tail here, and the
+        // flush that started the next block may also have ended its last rows.
+        // Give it those rows now: once frozen it is not applied again until the
+        // message settles, so its rows and "Show all N rows" would lag until then.
+        let oldTail = oldSigs.count - 1
+        if oldTail >= 0, oldTail < commonPrefix,
+           case .table(let headers, let rows) = segments[oldTail],
+           let tableView = tableViews[oldTail] {
+            configureTableChrome(tableView, config: config)
+            tableView.apply(headers: headers, rows: rows, palette: config.themeID.palette)
+        }
+
         // Earlier prefix views are already configured. Skip re-assigning them.
         // incrementalRebuild is only called during streaming; non-streaming
         // structural changes use full rebuild.
