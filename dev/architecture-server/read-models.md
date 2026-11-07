@@ -12,14 +12,6 @@ Part of [Oppi server architecture](../architecture-server.md).
 ## Session change views
 
 - **Touched list** (`changeStats.changedFiles`, `GET …/changes`, `…/diff?path=`): paths the session's own `edit`/`write` calls named, recorded without git by `updateSessionChangeStats`; approximate, and the only view a main-checkout session has. Harness URLs (`agent://`, `local://`) never count. The per-file diff is rebuilt from the trace (`diff-core.ts`).
-- **Worktree view** (`changeStats.worktree`, `GET …/worktree-changes`, `…/worktree-diff?path=`): for a session in its own worktree, git's change set against the merge-base with `main-worktree/HEAD`, shared by every session in that worktree; `sessionTouched` marks this session's files.
-
-`session-git-changes.ts` owns the worktree view and its git budget:
-
-- Git is read-only plumbing (`rev-parse`, `merge-base`, `diff-index`, `ls-files`, `cat-file`). Porcelain `git diff`/`status` rewrite the index and collide with an agent's own `git commit` on `index.lock`.
-- Nothing runs per tool call: a tool end bumps an in-memory generation. One read runs on `agent_settled` (not `agent_end`, which precedes an automatic retry) of a turn that ran a tool and stores a bounded result; summaries carry counts only, so list rows never run git. One read per worktree runs at a time, shared by concurrent callers; `worktree-changes` reuses the snapshot while its generation, git mtimes, and age still match.
-- A HEAD that is the merge-base counts as a landing only with reflog evidence that the worktree made those commits (else the commits stored at the last turn end); a HEAD that arrived from outside (fast-forward sync, reset, checkout) is never a landing. Evidence rules and known misses live in `session-git-changes.ts`.
-- A removed worktree answers the list stored at the last turn end (`live: false`) and diffs from the main checkout's object store, falling back to the trace diff.
 
 ## App event stream
 

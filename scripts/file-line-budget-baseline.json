@@ -211,7 +211,7 @@
       "reason": "The composition root stays; the WS registry, HTTP gate, upload GC, and Bonjour come out with SV1."
     },
     "server/src/session-protocol.ts": {
-      "budget": 1700,
+      "budget": 1600,
       "owner": "SP1 session protocol modules",
       "reason": "Four topics and a 590-line translatePiEvent; a move-only split later."
     },

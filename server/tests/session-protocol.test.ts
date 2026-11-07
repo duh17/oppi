@@ -295,22 +295,6 @@ describe("updateSessionChangeStats", () => {
     expect(session.changeStats?.filesChanged).toBe(1);
   });
 
-  it("keeps the stored worktree change set across tool calls", () => {
-    const session = makeSession();
-    const worktree = {
-      filesChanged: 3,
-      changedFiles: ["a", "b", "c"],
-      addedLines: 4,
-      removedLines: 1,
-      baseSha: "base",
-      headSha: "head",
-      computedAt: 1,
-    };
-    session.changeStats = { mutatingToolCalls: 0, filesChanged: 0, changedFiles: [], worktree };
-    updateSessionChangeStats(session, "edit", { path: "a", oldText: "x", newText: "y" });
-    expect(session.changeStats?.worktree).toEqual(worktree);
-  });
-
   it.each(["ext.edit", "my.write", "ask.edit", "something.write"])(
     "does not treat namespaced tool %s as a mutation",
     (toolName) => {

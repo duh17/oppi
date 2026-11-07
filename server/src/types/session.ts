@@ -24,29 +24,6 @@ export interface SessionChangeStats {
   changedFiles: string[];
   /** Count of additional changed files not included in changedFiles sample. */
   changedFilesOverflow?: number;
-  /**
-   * Worktree sessions only: the worktree's changes vs its base (merge-base with the
-   * main checkout's HEAD), read from git at the last turn end. Shared by every
-   * session in that worktree. Kept after the worktree is removed.
-   */
-  worktree?: SessionWorktreeChangeStats;
-}
-
-export interface SessionWorktreeChangeStats {
-  /** Files that differ from the base, untracked files included. */
-  filesChanged: number;
-  /**
-   * Repo-relative paths, sorted (bounded sample of 100). Kept on the session for
-   * the removed-worktree fallback; omitted from session summaries.
-   */
-  changedFiles?: string[];
-  changedFilesOverflow?: number;
-  addedLines: number;
-  removedLines: number;
-  baseSha: string;
-  headSha: string;
-  /** Unix ms when git was read. */
-  computedAt: number;
 }
 
 /**

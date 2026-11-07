@@ -632,16 +632,6 @@ extension APIClientEndpoint {
                 workspaceId: Placeholder.workspace, sessionId: Placeholder.session, path: Placeholder.path
             )
         },
-        APIClientEndpoint("getSessionWorktreeChanges") {
-            _ = try? await $0.getSessionWorktreeChanges(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session
-            )
-        },
-        APIClientEndpoint("getSessionWorktreeDiff") {
-            _ = try? await $0.getSessionWorktreeDiff(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session, path: Placeholder.path
-            )
-        },
         APIClientEndpoint("putPushRegistration") {
             _ = try? await $0.putPushRegistration(
                 PushRegistrationRequest(

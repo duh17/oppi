@@ -448,24 +448,6 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
     var filesChanged: Int
     var changedFiles: [String]
     var changedFilesOverflow: Int?
-    /// Worktree sessions: the worktree's changes vs its base, read from git at
-    /// the last turn end. Shared by every session in that worktree.
-    var worktree: SessionWorktreeChangeStats? = nil
-}
-
-/// Mirrors `SessionWorktreeChangeStats`: stored at turn end. Summaries carry the
-/// counts only; the file list comes from `getSessionWorktreeChanges`.
-struct SessionWorktreeChangeStats: Codable, Sendable, Equatable {
-    var filesChanged: Int
-    /// Full session snapshots only: repo-relative, sorted, at most 100.
-    var changedFiles: [String]? = nil
-    var changedFilesOverflow: Int? = nil
-    var addedLines: Int
-    var removedLines: Int
-    var baseSha: String
-    var headSha: String
-    /// Unix ms when the server read git.
-    var computedAt: Double
 }
 
 struct SessionSummaryAttentionCounts: Sendable, Equatable {

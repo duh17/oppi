@@ -64,15 +64,6 @@ const TEST_SESSION: Session = {
     filesChanged: 6,
     changedFiles: ["src/main.ts", "README.md"],
     changedFilesOverflow: 4,
-    worktree: {
-      filesChanged: 3,
-      changedFiles: ["README.md", "scripts/build.sh", "src/main.ts"],
-      addedLines: 42,
-      removedLines: 7,
-      baseSha: "0123456789abcdef0123456789abcdef01234567",
-      headSha: "89abcdef0123456789abcdef0123456789abcdef",
-      computedAt: 1700000000000,
-    },
   },
   contextTokens: 2300,
   contextWindow: 200000,
@@ -97,11 +88,7 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   messageCount: TEST_SESSION.messageCount,
   tokens: TEST_SESSION.tokens,
   cost: TEST_SESSION.cost,
-  // Summaries carry the worktree's counts, not its paths.
-  changeStats: {
-    ...TEST_SESSION.changeStats!,
-    worktree: { ...TEST_SESSION.changeStats!.worktree!, changedFiles: undefined },
-  },
+  changeStats: TEST_SESSION.changeStats,
   contextTokens: TEST_SESSION.contextTokens,
   contextWindow: TEST_SESSION.contextWindow,
   firstMessage: TEST_SESSION.firstMessage,

@@ -2,12 +2,7 @@ import { isAbsolute } from "node:path";
 
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import { hasUrlScheme } from "./tool-mutations.js";
-import type {
-  Session,
-  SessionChangeStats,
-  SessionSummary,
-  SessionWorktreeChangeStats,
-} from "./types.js";
+import type { Session, SessionChangeStats, SessionSummary } from "./types.js";
 
 /**
  * Build the mobile/session-list projection for a Session.
@@ -82,15 +77,7 @@ function buildSessionSummaryChangeStats(
     filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
-    // Counts only: list rows need no git and no paths; the paths stay on the
-    // session for the removed-worktree fallback of the worktree-changes route.
-    ...(stats.worktree ? { worktree: withoutPaths(stats.worktree) } : {}),
   };
-}
-
-function withoutPaths(worktree: SessionWorktreeChangeStats): SessionWorktreeChangeStats {
-  const { changedFiles: _paths, changedFilesOverflow: _overflow, ...counts } = worktree;
-  return counts;
 }
 
 function isSummarySafeChangedFile(file: string): boolean {

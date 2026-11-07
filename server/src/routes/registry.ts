@@ -683,20 +683,6 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
   },
-  {
-    method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/worktree-changes",
-    operationId: "getSessionWorktreeChanges",
-    surface: "core",
-    auth: "owner",
-  },
-  {
-    method: "GET",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/worktree-diff",
-    operationId: "getSessionWorktreeDiff",
-    surface: "core",
-    auth: "owner",
-  },
 
   {
     method: "GET",

@@ -107,8 +107,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     sessionFileHandlers,
     handleGetSessionAttachment,
     handleGetSessionOverallDiff,
-    handleGetSessionWorktreeChanges,
-    handleGetSessionWorktreeDiff,
     handleGenericGetSession,
     handleGenericGetSessionTrace,
     handleGenericGetSessionDialogs,
@@ -835,23 +833,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (wsSessionDiffMatch && method === "GET") {
       const admitted = requireWorkspaceSession(wsSessionDiffMatch[1], wsSessionDiffMatch[2], res);
       if (admitted) await handleGetSessionOverallDiff(admitted.session, url, res);
-      return true;
-    }
-
-    const wsSessionWorktreeMatch = path.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/worktree-(changes|diff)$/,
-    );
-    if (wsSessionWorktreeMatch && method === "GET") {
-      const admitted = requireWorkspaceSession(
-        wsSessionWorktreeMatch[1],
-        wsSessionWorktreeMatch[2],
-        res,
-      );
-      if (admitted && wsSessionWorktreeMatch[3] === "changes") {
-        await handleGetSessionWorktreeChanges(admitted.session, res);
-      } else if (admitted) {
-        await handleGetSessionWorktreeDiff(admitted.session, url, res);
-      }
       return true;
     }
 
